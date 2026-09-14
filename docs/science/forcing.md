@@ -337,11 +337,37 @@ silently degraded run into one that looks clean. What is *not* a gap: the determ
 total→four-stream partition, humidity from dewpoint, the de-accumulation boundary sample the prep script
 drops rather than writes — which compute a variable the source does not store from variables it does.
 
+## 8. Longwave synthesis, for a source without `LWdown`
+
+`lwdown_source = "synthesize"` reconstructs downwelling longwave from temperature and humidity:
+
+```math
+\mathrm{LW}_\downarrow = \varepsilon_{clear}\,\sigma\,T_a^4\,\bigl[1 + a\,(1-k_t)\bigr] \qquad(11)
+```
+
+`lw_clear_form` picks the clear-sky emissivity — Brutsaert (1975), a power law in the screen-level
+vapour pressure, or Idso & Jackson (1969), temperature alone (the fallback when a source carries
+humidity you do not trust). $`k_t`$ is the **same** clearness index the shortwave partition uses;
+`lw_cloud_a` (default 0.22) is the cloud coefficient.
+
+**Why the cloud term is not optional in practice.** Against the Ithaca ERA5-Land file, clear-sky
+Brutsaert alone underestimates `strd` by a mean of **−29.9 W m⁻²** (RMSE 43.6) on a file mean of
+312.3 — clear-sky formulations miss the cloud enhancement, and a temperate site is cloudy most of the
+time. Setting `lw_cloud_a = 0` gives a pure clear-sky sky and that bias back.
+
+**At night $`k_t`$ is undefined** — there is no shortwave to divide — and `clearness_index` returns a
+*negative sentinel* rather than zero, because a zero would read as fully overcast and apply the
+maximum cloud correction to every night. The driver holds the **last daytime** $`k_t`$ through the
+dark, which is dusk's cloudiness carried forward. That one scalar is updated in `met_advance`, not
+`met_instant`: `met_instant` is `intent(in)` and runs per sub-step, and the advance sits outside the
+patch loop, so the state cannot become a data race when the patch axis is threaded.
+
+**It is a fallback, not a substitute.** Driving the Ithaca run from synthesis instead of the file's
+`strd` leaves the soil surface **1.37 K cooler** in the annual mean. Use the file's longwave when the
+file has it; this exists so a source that lacks the field can drive MEDS at all.
+
 ## What is not here
 
-- **No longwave synthesis.** `lwdown_source = "synthesize"` is a declared selector with no implementation,
-  and the config validator **rejects** it rather than silently running the file path under a name that
-  promises Brutsaert/Idso clear-sky synthesis — `LWdown` must be in the file.
 - **No multi-polygon runtime.** The `(time, grid)` format, `grid_index` and nearest-cell matching are in
   place — file and reader are ready for N locations — but the model runs one site.
 - **No transient CO₂ stream.** `CO2air` may be in the file; a run that omits it takes one constant
@@ -375,6 +401,8 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 - Weiss & Norman (1985), *Agric. For. Meteorol.* 34:205 — band-specific direct/diffuse partitioning;
   ED2 `../ED2/ED/src/utils/radiate_utils.f90` (`short_bdown_weissnorman`).
 - Bolton (1980), *Mon. Weather Rev.* 108:1046 — saturation vapour pressure.
+- Brutsaert (1975), *Water Resour. Res.* 11:742 — clear-sky emissivity.
+- Idso & Jackson (1969), *J. Geophys. Res.* 74:5397 — temperature-only clear-sky emissivity.
 - Spencer (1971), *Search* 2:172 — Fourier series for the equation of time.
 - Jin et al. (1999) — precipitation phase partitioning; ED2 `ed_met_driver.f90`.
 - Longo et al. (2019), *GMD* 12:4309 — ED-2.2 technical description (the meteorological driver).

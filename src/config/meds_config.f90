@@ -702,8 +702,11 @@ contains
          !      under a name that promised Brutsaert/Idso clear-sky synthesis. Reject it until the    !
          !      synthesis exists (MEDS_FORCING_DESIGN.md section 5.7, docs/ROADMAP.md), because a      !
          !      forcing switch that does nothing is worse than one that is absent. -------------------!
-         if (cfg%forcing%lwdown_source == LW_SYNTHESIZE)                                         &
-            error stop tag//'forcing.lwdown_source = "synthesize" is not implemented; use "file"'
+         !----- #182: the synthesis is implemented, so the rejection is gone. What is validated     !
+         !      instead is that its coefficient is physical -- a negative cloud term would make a    !
+         !      cloudy sky emit LESS than a clear one.  --------------------------------------------!
+         if (cfg%forcing%lwdown_source == LW_SYNTHESIZE .and. cfg%forcing%lw_cloud_a < 0.0_wp)     &
+            error stop tag//'forcing.lw_cloud_a must be >= 0 (a cloudy sky emits MORE, not less)'
          !----- avg_convention: "instant" and "center" PARSE and then run the end-of-interval      !
          !      disaggregation path anyway, because only METAVG_BEGIN has a branch and everything   !
          !      else falls through to METAVG_END. Selecting either therefore got a scheme the user   !

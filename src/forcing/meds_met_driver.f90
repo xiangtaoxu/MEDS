@@ -21,14 +21,15 @@ module meds_met_driver
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,     &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
-                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
+                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_driver_t
    use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
                                    great_circle_distance, wind_log_profile,                    &
-                                   lapse_air_temperature, lapse_pressure
+                                   lapse_air_temperature, lapse_pressure,                          &
+                                   clearness_index, synthesize_lwdown
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
                                    nc_get_att_text_f, nc_get_vara_double, nc_close, nc_check,   &
                                    NC_NOERR, NC_NOWRITE, NC_GLOBAL
@@ -288,7 +289,31 @@ contains
          if (drv%time_sec(i) > now_sec) then ; i = i - 1_ik ; else ; exit ; end if
       end do
       if (i /= drv%irec_prev) call load_bracket(drv, i)
+      !----- #182: refresh the DAYTIME clearness memory the longwave synthesis falls back on after   !
+      !      dark. Done HERE, not in met_instant, for two reasons: met_instant is intent(in) and is   !
+      !      called per sub-step, and this block sits outside the patch loop, so the one scalar of    !
+      !      state cannot become a data race once the patch axis is threaded.  ------------------------!
+      if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) call remember_clearness(drv, now)
    end subroutine met_advance
+
+   !----- Update drv%kt_last_day when the sun is up. The clearness index is formed from the        !
+   !      bracketing record's TOTAL shortwave against the instantaneous TOA irradiance -- a mean    !
+   !      over an interval against an instant at its sample point. That mismatch is deliberate and  !
+   !      second-order here: the cloud term it feeds is a one-coefficient empirical correction on a !
+   !      FALLBACK synthesis, and the alternative is to rebuild the interval-mean-cosz machinery    !
+   !      for a factor that multiplies a 0.22 coefficient.  -----------------------------------------!
+   subroutine remember_clearness(drv, now)
+      type(met_driver_t), intent(inout) :: drv
+      type(meds_time_t),  intent(in)    :: now
+      real(wp) :: cosz_now, sw_total, kt
+      associate (f => drv%fcfg, r => drv%rec_next)
+         cosz_now = met_solar_cosz(now, seconds_into_day(now), f%latitude_deg, f%longitude_deg, &
+                                   f%utc_offset_h, f%apply_solar_longitude)
+         sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
+         kt = clearness_index(sw_total, cosz_now)
+         if (kt >= 0.0_wp) drv%kt_last_day = kt      ! negative = night: keep dusk's value
+      end associate
+   end subroutine remember_clearness
 
    !=======================================================================================!
    !  INSTANT: interpolate/disaggregate the loaded window to the model instant `now`.           !
@@ -310,7 +335,23 @@ contains
       met%cosz = cosz_now
 
       if (drv%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
-         met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
+         !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
+      !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
+      !      this instant's clearness index, and after dark it falls back to the last daytime value  !
+      !      met_advance remembered. Overwrites whatever the file read, which is the point -- the    !
+      !      selector says the file's longwave is not to be trusted or is not there.  ----------------!
+      if (f%lwdown_source == LW_SYNTHESIZE) then
+         block
+            real(wp) :: sw_now, kt_now
+            sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
+            kt_now = clearness_index(sw_now, cosz_now)
+            if (kt_now < 0.0_wp) kt_now = drv%kt_last_day
+            met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
+                                           kt_now, f%lw_cloud_a)
+         end block
+      end if
+
+      met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
          return
       end if
 
@@ -361,6 +402,22 @@ contains
       met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
       met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
       met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
+
+      !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
+      !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
+      !      this instant's clearness index, and after dark it falls back to the last daytime value  !
+      !      met_advance remembered. Overwrites whatever the file read, which is the point -- the    !
+      !      selector says the file's longwave is not to be trusted or is not there.  ----------------!
+      if (f%lwdown_source == LW_SYNTHESIZE) then
+         block
+            real(wp) :: sw_now, kt_now
+            sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
+            kt_now = clearness_index(sw_now, cosz_now)
+            if (kt_now < 0.0_wp) kt_now = drv%kt_last_day
+            met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
+                                           kt_now, f%lw_cloud_a)
+         end block
+      end if
 
       met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
       end associate
@@ -506,14 +563,23 @@ contains
       rec%psurf_pa = read_scalar(drv, 'PSurf', irec)
       rec%wind     = read_scalar(drv, 'Wind',  irec)
       rec%rainf    = read_scalar(drv, 'Rainf', irec)                 ! total rainfall rate [kg/m2/s]
-      rec%lwdown   = read_scalar(drv, 'LWdown', irec)
+      !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
+      !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
+      !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
+      !      the record complete for diagnostics.  ---------------------------------------------------!
+      if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) then
+         rec%lwdown = read_scalar_default(drv, 'LWdown', irec, 0.0_wp)
+      else
+         rec%lwdown = read_scalar(drv, 'LWdown', irec)
+      end if
       rec%co2      = read_scalar_default(drv, 'CO2air', irec, drv%fcfg%co2_const)
       call assert_finite(rec%tair_k, 'Tair', irec, drv%grid_index)
       call assert_finite(rec%qair, 'Qair', irec, drv%grid_index)
       call assert_finite(rec%psurf_pa, 'PSurf', irec, drv%grid_index)
       call assert_finite(rec%wind, 'Wind', irec, drv%grid_index)
       call assert_finite(rec%rainf, 'Rainf', irec, drv%grid_index)
-      call assert_finite(rec%lwdown, 'LWdown', irec, drv%grid_index)
+      if (drv%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
+         call assert_finite(rec%lwdown, 'LWdown', irec, drv%grid_index)
 
       !----- wind-height + elevation-lapse corrections at ingest (opt-in; both default OFF, so    !
       !      CONST and un-flagged runs are untouched). Wind is a per-record height rescale (commutes !

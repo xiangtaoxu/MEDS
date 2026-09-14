@@ -16,6 +16,41 @@ before and after.
 
 ### Added
 
+- **Longwave synthesis for a forcing source without `LWdown`** (#182). `lwdown_source =
+  "synthesize"` was a declared selector that parsed and then took longwave from the file anyway;
+  PR #149 made `validate_config` reject it rather than let it lie. It is now implemented and the
+  rejection is gone:
+
+  ```
+  LW↓ = ε_clear · σ · Tₐ⁴ · [1 + a·(1−kt)]
+  ```
+
+  `lw_clear_form` selects Brutsaert (1975), a power law in screen-level vapour pressure, or Idso &
+  Jackson (1969), temperature alone — the fallback when a source's humidity is not trustworthy. `kt`
+  is the **same** clearness index the shortwave partition uses, exposed rather than recomputed, so
+  there is one definition of "how clear is the sky" in the forcing path. `lw_cloud_a` defaults to
+  0.22.
+
+  **The cloud term is not cosmetic.** Against the Ithaca ERA5-Land file, clear-sky Brutsaert alone
+  underestimates `strd` by a mean of **−29.9 W/m²** (RMSE 43.6) on a file mean of 312.3 — clear-sky
+  formulations miss the cloud enhancement and a temperate site is cloudy most of the time.
+
+  **At night `kt` is undefined**, and `clearness_index` returns a **negative sentinel** rather than
+  zero: zero would read as fully overcast and give every night the maximum cloud correction. The
+  driver holds the last *daytime* index through the dark. That scalar is updated in `met_advance`,
+  not `met_instant` — `met_instant` is `intent(in)` and runs per sub-step, while the advance sits
+  outside the patch loop, so the state cannot become a data race when the patch axis is threaded.
+
+  **It is a fallback, not a substitute**: driving Ithaca from synthesis instead of the file's `strd`
+  leaves the soil surface **1.37 K cooler** in the annual mean. Use the file's longwave when the file
+  has it.
+
+  `LWdown` is now read *optionally* when synthesizing — demanding a variable the feature exists to
+  do without would have defeated it. The two selector codes live in `meds_forcing_config`, beside
+  `LW_FILE`/`LW_SYNTHESIZE`, not with the kernel that evaluates them: `meds_forcing` links
+  `meds_config`, so putting them in the kernel would have pointed the config layer at the forcing
+  layer and closed a dependency cycle.
+
 - **Leaf resorption on shed** (#151), per-PFT `retained_carbon_fraction`. A fraction of the **active**
   (senescence) leaf shed returns to the non-structural pool instead of entering litter; until now
   every gram of shed leaf carbon became litter, which overstates litter input and understates the

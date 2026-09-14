@@ -18,7 +18,7 @@ module meds_forcing_config
    public :: MET_BACKEND_CONST, MET_BACKEND_NETCDF
    public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
-   public :: LW_FILE, LW_SYNTHESIZE
+   public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
@@ -46,6 +46,12 @@ module meds_forcing_config
    !----- Downwelling longwave source. -----------------------------------------------------!
    integer(ik), parameter :: LW_FILE       = 0_ik   !< read from file (ERA5-Land has strd)
    integer(ik), parameter :: LW_SYNTHESIZE = 1_ik   !< Brutsaert/Idso clear-sky synthesis (source lacking LW)
+   !----- Clear-sky emissivity forms for that synthesis (#182). They live HERE, beside the source  !
+   !      selector they qualify, rather than with the kernel that evaluates them: meds_forcing      !
+   !      links meds_config, so putting them in the kernel would point the config layer at the      !
+   !      forcing layer and close a cycle.  ----------------------------------------------------------!
+   integer(ik), parameter :: LW_CLEAR_BRUTSAERT = 0_ik   !< Brutsaert (1975), vapour-pressure power law
+   integer(ik), parameter :: LW_CLEAR_IDSO      = 1_ik   !< Idso & Jackson (1969), temperature only
 
    !----- Model-start-before-first-record policy. ------------------------------------------!
    integer(ik), parameter :: CLAMP_ERROR = 0_ik   !< hard stop
@@ -74,6 +80,13 @@ module meds_forcing_config
       integer(ik)        :: avg_convention = METAVG_END          !< flux vars mean over the hour ENDING at the stamp
       integer(ik)        :: sw_partition = SWPART_CLEARIDX        !< ERA5-Land total SW -> partition required
       integer(ik)        :: lwdown_source = LW_FILE              !< file (ERA5-Land strd) | synthesize
+      !----- Longwave SYNTHESIS parameters (#182), read only when lwdown_source = synthesize.        !
+      !      `lw_clear_form` picks the clear-sky emissivity: Brutsaert (1975) uses the screen-level   !
+      !      vapour pressure, Idso & Jackson (1969) temperature alone -- the fallback when a source   !
+      !      carries humidity you do not trust. `lw_cloud_a` is the coefficient in the cloud term     !
+      !      (1 + a(1-kt)); 0 gives a pure clear-sky sky, which UNDERESTIMATES under cloud.           !
+      integer(ik)        :: lw_clear_form = 0_ik                  !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
+      real(wp)           :: lw_cloud_a    = 0.22_wp               !< [-] cloud-correction coefficient
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] ERA5-Land has no CO2 (single authority)
       real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
       !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it now REQUIRES a       !
