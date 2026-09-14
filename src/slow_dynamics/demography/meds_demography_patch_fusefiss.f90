@@ -26,7 +26,7 @@ module meds_demography_patch_fusefiss
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_clear_slot, patch_diag_grow
+                                     patch_diag_clear_slot, patch_diag_grow, PD_DISTURB_AREA
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
                                       blend_litter_input, &
@@ -435,6 +435,23 @@ contains
       if (frac <= tiny_num) return
       new_area = frac * sum(site%patch%area(1:np0))
       if (new_area <= tiny_num) return
+
+      !----- Report the disturbed-area flux (#170). The slot was declared and never written, so     !
+      !      PD_DISTURB_AREA read as a silent zero rather than a missing variable -- the harder      !
+      !      failure to notice.                                                                      !
+      !      WRITTEN ON THE DONORS, and written HERE, before patch%n grows: every patch loses the    !
+      !      same fraction `frac`, and at this point the diag block's slots still line up with the   !
+      !      donor patches. The new gap gets nothing, which is right twice over -- it was not        !
+      !      disturbed, it IS the disturbance -- and patch_diag_clear_slot zeroes its slot at the    !
+      !      end of this routine anyway. Writing after the append is the out-of-bounds trap that     !
+      !      has already been paid for once in this file's history.                                  !
+      !      Accumulated as an AMOUNT (the fraction disturbed this step), matching PD_RECRUIT_NPLANT !
+      !      -- the reader divides the block by its own dt weight to recover a [1/yr] rate.          !
+      if (site%patch%diag%active) then
+         do i = 1_ik, np0
+            site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i) + frac
+         end do
+      end if
 
       !----- Count understorey survivors (all current cohorts live in donor patches). ------!
       nsurv = 0_ik

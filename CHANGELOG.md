@@ -16,6 +16,18 @@ before and after.
 
 ### Fixed
 
+- **`PD_DISTURB_AREA` is written and emitted** (#170). The slot was declared in the patch
+  diagnostic block with no writer and no registry row, so the disturbed-area flux read as a **silent
+  zero** rather than a missing variable — the harder failure to notice, and one no conservation
+  check can see, because zero disturbed area is a perfectly conservative answer. Written on the
+  donor patches inside `apply_patch_disturbance` *before* the gap is appended, which is where the
+  diag slots still line up with the donors; writing after the append is the out-of-bounds trap this
+  file has already paid for once. New output variable `disturb_area_site`.
+- **A run selecting `time_integrator = "rk45"` above `dt_fast` = 300 s is now warned** (#160). The
+  transpiration corrector that cut a ~1 MPa `psi_leaf` error by 314× (PR #91) lives in
+  `advance_water_mass_full`, which ARK calls and RK45 does not, so an RK45 production run silently
+  carried an error the default path does not. A warning rather than an error, because RK45 is the
+  accuracy baseline and is meant for a fine step.
 - **Γ\* now responds to `o2_mol_frac`, so the O₂ knob propagates to both places oxygen enters the
   C3 demand** (#117). The compensation point is set by Rubisco's CO₂/O₂ specificity and is
   proportional to the O₂ partial pressure, but it was computed with no O₂ dependence at all — so
