@@ -21,10 +21,10 @@ Baseline at planning time: `main` at `2ee6d5f`, 45/45 green on ifx.
 
 ## 1. Scope
 
-48 of the 66 open issues have work in v0.2.0; 18 are deferred to v0.3+. The deferral line is
+47 of the 66 open issues have work in v0.2.0; 19 are deferred to v0.3+. The deferral line is
 **major enhancements** — new subsystems rather than completions of existing ones. §9 lists them.
 
-**47 of the 48 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
+**46 of the 47 close. #1 does not** — it carries a stale-reference fix in Phase 0 but is held open
 deliberately as a standing design question; see §2.1.
 
 Six working phases plus release. Phases are ordered by *risk and dependency*, not by issue number:
@@ -32,7 +32,7 @@ Six working phases plus release. Phases are ordered by *risk and dependency*, no
 | Phase | Theme | Issues | Number-moving? |
 |---|---|---|---|
 | [0](#2-phase-0--clear-the-board) | Clear the board | 13 | No |
-| [1](#3-phase-1--silent-wrongness) | Silent wrongness | 7 | Bit-identical at default, or new signal only |
+| [1](#3-phase-1--silent-wrongness) | Silent wrongness | 6 | Bit-identical at default, or new signal only |
 | [2](#4-phase-2--structure-and-performance) | Structure and performance | 7 | Byte-identical, verified |
 | [3](#5-phase-3--the-rebaseline-window) | The rebaseline window | 6 | **Yes — one golden re-cut** |
 | [4](#6-phase-4--configurability-unlocks) | Configurability unlocks | 7 | Only on newly selectable paths |
@@ -156,7 +156,8 @@ v0.2.0 as the design question it was written to be.
 
 **SHIPPED 2026-09-13 except #104** (PRs #209, #210, #211, #212, #213). Six of seven closed.
 
-**#104 is stopped on a physics decision the plan should not have pre-empted — see §3.1.**
+**#104 is DEFERRED to v0.3.0** — it is an open physics decision the plan should not have
+pre-empted. See §3.1 and §9.
 
 Every item here produces a wrong or unmeasured number **with no signal**. Each is bit-identical on
 the default configuration, or adds signal only.
@@ -165,7 +166,7 @@ the default configuration, or adds signal only.
 |---|---|---|
 | #117 | Scale the CO2 compensation point by O2: `gstar_ppm = ... * (p%o2_mol_frac / o2_ref_gstar)` with `o2_ref_gstar = 0.209` a named constant. **Exactly 1.0 at the shipped default, so the default path is bit-identical.** Note the O2 reference in `docs/science/leaf_gas_exchange.md` and the `gstar25` comment. | S |
 | #148 | Export the tissue-water floor's clamped mass from `advance_water_mass_full` into the existing `budget%clamp_mass` channel, reduced to `site%work_clamp_mass`. Both callers (`ark2_column_step`, the RK4 oracle) already thread clamp counters. **Do not** build the per-cohort identity check the issue warns against — it fires on correct corrector behaviour (measured 4.5e-2 kg/plant over a July). | M |
-| #104 | **NOT DONE — see §3.1.** E1b (surface the condition) turned out to be already shipped with #105. E1 is blocked on an open physics decision. | — |
+| #104 | **DEFERRED to v0.3.0** (decision, 2026-09-13). E1b was already shipped with #105. E1 is an open physics decision, not a numerics fix — see §3.1. The detector ships and reports the condition, so it is visible while unfixed. | — |
 | #160 | Warn from `validate_config` when `time_integrator = "rk45"` runs at the production `dt_fast`. The PR #91 transpiration corrector lives in `advance_water_mass_full`, which RK45 does not call, so RK45 carries a psi_leaf error the default path does not. Porting the corrector to RK45 is the larger alternative and is **not** in v0.2.0. | S |
 | #170 | Write `PD_DISTURB_AREA` (slot 29) from the disturbance step and add the registry row. Confirmed: the slot is declared in `meds_site_diag_types.f90` and appears in no `use` list in `meds_output_registry.f90`. | S |
 | #185 | Five sub-items, each decided independently: `sw_input_kind`, `timestep_seconds`, `avg_convention`, `elevation(grid)`, and the `SWPART_SIB` / `METAVG_INSTANT` / `METAVG_CENTER` codes that parse but do not route. Default disposition: **validate against the config and stop on mismatch**; where that is not meaningful, stop writing the attribute. | M |
@@ -205,10 +206,13 @@ engaging with the consequence. The three differ in what they claim:
 3. **Kill the cohort.** Defensible ecology — a fully desiccated plant is dead — and it removes the
    state rather than modelling it, but it is a mortality pathway, not a numerics fix.
 
-**Recommendation: (1).** The −10⁴ MPa potential is an artefact of `rwc_floor = 1e-4`, not a pressure
-any tissue reaches; clamping it treats the artefact rather than its symptom, and it is the only one
-of the three that leaves the physics recoverable. It needs a measurement of what it does to the
-collapsed-state cost and to the energy integral before it ships.
+**Recommendation was (1)** — the −10⁴ MPa potential is an artefact of `rwc_floor = 1e-4`, not a
+pressure any tissue reaches, and clamping it is the only option that leaves the physics recoverable.
+
+**Decided 2026-09-13: deferred to v0.3.0.** It is a physics choice with demographic consequences,
+not a numerics cleanup, and v0.2.0 does not need to make it. The condition is not invisible in the
+meantime: `work_hydro_thrash_site` reports it, and a nonzero value is both a cost flag and a
+correctness flag — the states that cause it have pinned stores whose answer is not to be trusted.
 
 ## 4. Phase 2 — structure and performance
 
@@ -335,10 +339,11 @@ What makes the release legible to someone who is not its author.
 
 ## 9. Deferred to v0.3+
 
-18 issues. The line is **new subsystems, not completions**.
+19 issues. The line is **new subsystems, not completions**.
 
 | # | Title | Why deferred |
 |---|---|---|
+| #104 | Plant hydraulics burns 13× wall clock on a collapsed store | **Targeted at v0.3.0** by decision, 2026-09-13. E1b already shipped (#105). E1 is a physics choice — clamp the artefact potential, arrest the solve, or kill the cohort — with demographic consequences, and arresting (the plan's original pick) makes a collapsed cohort permanently dead. See §3.1. |
 | #157 | Fire | New subsystem. Named by the user as explicitly deferred. |
 | #155 | Vertically resolved soil-carbon pools | Named by the user as explicitly deferred. |
 | #156 | Coarse woody debris pool | Pairs with #155. |

@@ -110,7 +110,10 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 - **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Open question.* A floored relative water
   content maps to a potential of about −10⁴ MPa, which is not a pressure any tissue reaches.
   The detector ships; whether to clamp the potential, arrest the solve, or kill the cohort is a
-  physics decision.
+  physics decision. **Deferred to v0.3.0** (2026-09-13). Note that *arresting* is not the free
+  option it looks: the collapsed store diagnoses ψ at about −1.5×10⁴ MPa against a soil at perhaps
+  −2 MPa, so the cohort recovers today — that enormous artificial gradient IS the 13× cost — and
+  removing uptake would make a transiently desiccated cohort permanently dead.
 - **E5 — the RK45 rescue snapshot.** *Candidate.* [#161](https://github.com/xiangtaoxu/MEDS/issues/161) The rescue currently re-runs the step on ARK
   from the last accepted state.
 - **`psi_leaf` is the one state that does not converge at 900 s.** *Open question.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) Its error is
