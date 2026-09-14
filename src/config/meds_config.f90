@@ -17,7 +17,7 @@ module meds_config
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_column_params, only : n_soil_layer_max
-   use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE
+   use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biogeochem_opts, only : decomp_opts_t
@@ -642,6 +642,17 @@ contains
          !      forcing switch that does nothing is worse than one that is absent. -------------------!
          if (cfg%forcing%lwdown_source == LW_SYNTHESIZE)                                         &
             error stop tag//'forcing.lwdown_source = "synthesize" is not implemented; use "file"'
+         !----- avg_convention: "instant" and "center" PARSE and then run the end-of-interval      !
+         !      disaggregation path anyway, because only METAVG_BEGIN has a branch and everything   !
+         !      else falls through to METAVG_END. Selecting either therefore got a scheme the user   !
+         !      did not ask for, silently. Reject until each has its own branch (#185), on the same  !
+         !      precedent as lwdown_source above. ----------------------------------------------------!
+         if (cfg%forcing%avg_convention == METAVG_INSTANT)                                       &
+            error stop tag//'forcing.avg_convention = "instant" is not implemented (it would '//  &
+                            'silently run the "end" path); use "end" or "begin"'
+         if (cfg%forcing%avg_convention == METAVG_CENTER)                                        &
+            error stop tag//'forcing.avg_convention = "center" is not implemented (it would '//   &
+                            'silently run the "end" path); use "end" or "begin"'
          !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
          !      number of calendar years. A window of any other length cannot be wrapped without     !
          !      drifting BOTH hour-of-day and day-of-year: the real ERA5-Land Ithaca file spans       !

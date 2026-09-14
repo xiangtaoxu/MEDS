@@ -17,7 +17,7 @@ module meds_forcing_config
    public :: forcing_config_t
    public :: MET_BACKEND_CONST, MET_BACKEND_NETCDF
    public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
-   public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_SIB, SWPART_CLEARIDX
+   public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
    public :: LW_FILE, LW_SYNTHESIZE
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
@@ -37,7 +37,11 @@ module meds_forcing_config
    integer(ik), parameter :: SWPART_PASSTHROUGH  = 0_ik   !< file already carries the four streams
    integer(ik), parameter :: SWPART_CLEARIDX     = 1_ik   !< clearness-index (Erbs) split -- the ERA5-Land P0 default
    integer(ik), parameter :: SWPART_WEISS_NORMAN = 2_ik   !< Weiss-Norman band-specific (P1)
-   integer(ik), parameter :: SWPART_SIB          = 3_ik   !< SiB (Sellers 1986) (reserved)
+   !----- A SWPART_SIB = 3 code (SiB, Sellers 1986) was declared here and RESERVED. It had no
+   !      implementation and no TOML spelling, so it could never be selected -- and
+   !      partition_shortwave's default branch would have routed it to Erbs if it had been.
+   !      Deleted 2026-09-13 (#185): a reserved code with no implementation is a promise the
+   !      code cannot keep. Add it back WITH the kernel if SiB is ever wanted.
 
    !----- Downwelling longwave source. -----------------------------------------------------!
    integer(ik), parameter :: LW_FILE       = 0_ik   !< read from file (ERA5-Land has strd)

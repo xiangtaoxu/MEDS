@@ -175,7 +175,7 @@ contains
       select case (scheme)
       case (SWPART_WEISS_NORMAN)
          call weiss_norman_partition(sw, cosz, psurf_pa, par_beam, par_diffuse, nir_beam, nir_diffuse)
-      case default   ! SWPART_CLEARIDX (also SWPART_SIB / anything-else fallback)
+      case default   ! SWPART_CLEARIDX (and anything else -- the reader rejects unknown spellings)
          i_toa = SOLAR_CONSTANT * cosz                        ! TOA irradiance on a horizontal surface
          kt    = min(1.0_wp, max(0.0_wp, sw / max(i_toa, tiny_num)))
          fdiff = erbs_diffuse_fraction(kt)
