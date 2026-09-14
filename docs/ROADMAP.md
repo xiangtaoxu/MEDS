@@ -29,7 +29,6 @@ failure, not from a plan.
 | [#1](https://github.com/xiangtaoxu/MEDS/issues/1) | Equal-height shading ambiguity: capped large trees and same-height recruits | Enhancement |
 | [#6](https://github.com/xiangtaoxu/MEDS/issues/6) | ED2 two-stream RT bugs found during the port, and the MEDS ↔ ED2 mapping | Upstream record |
 | [#7](https://github.com/xiangtaoxu/MEDS/issues/7) | nvfortran miscompiles array-valued function results passed as actual arguments | Standing toolchain rule, not a fix |
-| [#47](https://github.com/xiangtaoxu/MEDS/issues/47) | Reconcile leaf water-stress (`beta_stomata` / `beta_nonstomata`) with ED2's Manzoni-style form | |
 | [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#104](https://github.com/xiangtaoxu/MEDS/issues/104) | Plant hydraulics burns 13× wall clock on a collapsed (floored) wood store | Detector shipped (#105); the physics decision is open — see §4 |

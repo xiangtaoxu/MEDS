@@ -223,6 +223,49 @@ Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp
 > time is ~9 s at $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10, so a droughted cohort never
 > equilibrates overnight — which is why the kernel field is named plainly `psi` (issue #99).
 
+### 4.3 Where this diverges from ED2 — deliberately (issue #47)
+
+MEDS uses the Sabot two-limb scheme; ED2's `farq_katul.f90` uses a Manzoni-style single
+`stoma_beta` plus a turgor-loss capacity term. **The decision is to keep Sabot and state the
+difference**, rather than adopt ED2's forms. Three divergences, and why each one stands:
+
+| | MEDS | ED2 (`farq_katul.f90`) |
+|---|---|---|
+| **capacity shape** | linear ramp in $\psi_{leaf}$ between $\psi_{open}$ and $\psi_{close}$ | $`1/\bigl(1+0.1(\psi_{leaf}/\psi_{tlp})^{6}\bigr)`$, a 6th-power turgor-loss curve |
+| **capacity targets** | $V_{cmax}$, $J_{max}$ **and** TPU | $J_{max}$ and quantum yield $\alpha$ only ($V_{cmax}$ and TPU are commented out) |
+| **stomatal scope** | Leuning/Medlyn $g_1$ **and** Katul $\lambda$ | Katul $\lambda$ only |
+| **stomatal driver** | predawn (previous-day daily-max) leaf $\psi$ | `dmax_leaf_psi` — the same quantity |
+| **parameter split** | $s_{ref}$ (shared with the $g_1$ limb) $\times$ $e$ (Katul-only) | one `stoma_beta` |
+
+**Capacity shape and targets.** ED2's turgor-loss form is anchored on a measurable trait,
+$\psi_{tlp}$, which is an advantage; but it is applied to $J_{max}$ and $\alpha$ while leaving
+$V_{cmax}$ untouched, which makes the capacity limb act only on the light-limited branch. The Sabot
+formulation downregulates all three potential rates together, which is what the underlying
+observations describe, and it keeps the limb's effect independent of which limitation a leaf happens
+to be under. MEDS also applies it for **every** stomatal model, not just Katul, because capacity
+downregulation is biochemistry and should not depend on the aperture scheme selected.
+
+The cost of the linear ramp is that it is a **linear amplifier on a $\psi_{leaf}$ that is itself
+`dt_fast`-dependent** — at 900 s a 1 MPa $\psi_{leaf}$ error became a 33 % GPP shift. That is why
+`wstress_nonstomata` ships **off** and the shipped configs say so. ED2's 6th power would amplify the
+same error harder still, not less; this is an argument about the input, not the curve.
+
+**Stomatal scope.** Restricting $\beta_s$ to Katul, as ED2 does, would leave the two explicit
+schemes with no stomatal drought response at all. MEDS applies it to both, and the exponent
+$e = 2$ makes them exactly equivalent because Medlyn gives $`g_1 \propto \lambda^{-1/2}`$ (§4.2).
+
+**Parameter split.** MEDS's $s_{ref}\,e$ is precisely ED2's `stoma_beta` — the same exponential in
+the same potential — so a value calibrated for one transfers to the other as
+$`\texttt{stoma\_beta} = -s_{ref}\,e`$. For Katul alone only the product matters, so the split is
+degenerate there; it earns its keep because $s_{ref}$ *alone* drives the Leuning/Medlyn limb, which
+ED2 has no equivalent of.
+
+> **The `psi_soil` wiring this issue also filed is already closed.** #47 recorded that the driver
+> left the stomatal potential at 0 while `soil_psi_root` was computed only after the leaf call. That
+> was fixed under issue #95: the field is `psi`, the driver passes `dmax_psi_leaf` on both call
+> paths, and unset cohorts are seeded from the surface-layer soil potential. See the #95 note in
+> §4.2 for what it was worth — $`\beta_s \equiv 1`$, i.e. no stomatal water stress at all.
+
 ### Arrestors: stopping a plant that has run out of water
 
 $`\beta_s`$ scales $`g_1`$ only, so as it goes to zero the conductance falls to the residual
