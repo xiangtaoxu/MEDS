@@ -16,6 +16,29 @@ before and after.
 
 ### Fixed
 
+- **The forcing file and the config are now checked against each other** (#185). Five items, decided
+  individually:
+  - **`dt_forcing` is validated against the file's actual record spacing**, and the axis against
+    itself for uniformity. This was the real hazard and it is *not* the one the issue named: the
+    value was read straight from the config and **never compared with the file at all**, while
+    placing interval midpoints, disaggregating shortwave and bracketing the recycle seam. A config
+    saying 3600 s against a half-hourly file mis-timed all three, plausibly. Checking the spacing is
+    strictly stronger than checking the `timestep_seconds` attribute, which stays provenance.
+  - **`avg_convention` and `sw_input_kind` are read and validated** when present, skipped when
+    absent so older files still load. `sw_input_kind = "total"` against `sw_partition =
+    "passthrough"` used to crash on a missing variable; it is now a clear rejection.
+  - **`avg_convention = "instant"` and `"center"` are rejected.** Both parsed and then ran the
+    end-of-interval path anyway, because only `METAVG_BEGIN` has a branch — so selecting either got
+    a scheme the user did not ask for, silently. Same precedent as `lwdown_source`.
+  - **`SWPART_SIB` deleted.** A reserved code with no implementation and no TOML spelling: it could
+    never be selected, and `partition_shortwave`'s default branch would have routed it to Erbs.
+  - **`elevation(grid)` stays unread**, deliberately: site elevation is a `[site]` property and the
+    variable is provenance about the source grid.
+
+  Reported through `met_open`'s existing status channel rather than `error stop`, which is what
+  makes each rejection testable — the module's own comment says that is what the channel is for.
+  The synthetic test fixture now writes the two global attributes the prep script writes; without
+  that the new checks would have been skipped in the test while firing in production.
 - **The tissue-water floor now reports the water it creates** (#148). `advance_water_mass_full`
   floors `leaf_water_mass` and `wood_water_mass` at a tiny positive value so the linear mass Euler
   step cannot go negative — and creates water doing so. The code's own comment called the case

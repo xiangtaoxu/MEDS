@@ -31,13 +31,14 @@ module meds_met_driver
                                    lapse_air_temperature, lapse_pressure
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
                                    nc_get_att_text_f, nc_get_vara_double, nc_close, nc_check,   &
-                                   NC_NOERR, NC_NOWRITE
+                                   NC_NOERR, NC_NOWRITE, NC_GLOBAL
    implicit none
    private
 
    public :: met_open, met_advance, met_instant, met_close
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
-             MET_ERR_WINDOW_NOT_COVERED
+             MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
+             MET_ERR_ATTR_MISMATCH
 
    real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
@@ -47,6 +48,9 @@ module meds_met_driver
    integer(ik), parameter :: MET_ERR_WINDOW_NOT_WHOLE_YEARS  = 1_ik   !< recycle_end - recycle_start /= N years
    integer(ik), parameter :: MET_ERR_START_NOT_A_RECORD      = 2_ik   !< recycle_start is not a record stamp
    integer(ik), parameter :: MET_ERR_WINDOW_NOT_COVERED      = 3_ik   !< file stops short of recycle_end
+   integer(ik), parameter :: MET_ERR_DT_MISMATCH             = 4_ik   !< dt_forcing /= the file's record spacing
+   integer(ik), parameter :: MET_ERR_AXIS_NOT_UNIFORM        = 5_ik   !< the file's time axis is ragged
+   integer(ik), parameter :: MET_ERR_ATTR_MISMATCH           = 6_ik   !< a file global attribute contradicts the config
 
    !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
    !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
@@ -119,6 +123,18 @@ contains
 
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
       call read_time_axis(drv)
+
+      !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
+      !      global attributes the prep script writes against the config that claims to describe    !
+      !      the same file. All three used to be written and never read, so a file that disagreed   !
+      !      with its config was silently mis-timed or mis-partitioned. ------------------------------!
+      call validate_file_against_config(drv, ncid, vstat)
+      if (vstat /= MET_OK) then
+         if (present(stat)) then
+            stat = vstat ; st = nc_close(ncid) ; return
+         end if
+         error stop 'met_open: the forcing file contradicts [forcing] (see the message above)'
+      end if
 
       !----- V2/V3: check the DECLARED recycle window against this file's actual record stamps.  !
       !      Cannot live in the config sanity check (V1, whole-year span) -- it needs the time      !
@@ -597,5 +613,91 @@ contains
       if (idx == 0) then ; ok = .false. ; return ; end if
       call time_from_string(adjustl(units(idx + 5:)), base_time, ok)
    end subroutine parse_time_units
+
+
+   !---------------------------------------------------------------------------------------!
+   ! validate_file_against_config -- the forcing file describes itself; the config also describes  !
+   ! it. When they disagree, the run is wrong in a way no later check can see, so stop here (#185). !
+   !                                                                                          !
+   ! THE SPACING CHECK IS THE IMPORTANT ONE. dt_forcing is taken verbatim from the config and used  !
+   ! to place interval midpoints, disaggregate shortwave and bracket the recycle seam; nothing ever  !
+   ! compared it against the file. A config saying 3600 s against a half-hourly file mis-times every !
+   ! one of those. Checking the ACTUAL record spacing is strictly stronger than checking the         !
+   ! `timestep_seconds` attribute, which is why that attribute stays provenance and this does the     !
+   ! work.                                                                                            !
+   !                                                                                          !
+   ! The two text attributes are checked when PRESENT and skipped when absent, so a file written     !
+   ! before the prep script emitted them still loads. `elevation(grid)` stays unread on purpose:     !
+   ! site elevation is a [site] property, and the variable is provenance about the source grid.      !
+   !---------------------------------------------------------------------------------------!
+   subroutine validate_file_against_config(drv, ncid, vstat)
+      type(met_driver_t), intent(in)  :: drv
+      integer(c_int),     intent(in)  :: ncid
+      integer(ik),        intent(out) :: vstat
+      character(len=64) :: attr
+      real(wp)          :: dt_file
+      integer(c_int)    :: st
+      integer(ik)       :: i
+
+      vstat = MET_OK
+
+      !----- (a) record spacing. Uniform by construction for every source MEDS reads, so the first  !
+      !      interval is the file's cadence; a ragged axis is a different (unsupported) thing and    !
+      !      shows up as a mismatch on whichever interval differs. ------------------------------------!
+      if (drv%nrec >= 2_ik) then
+         dt_file = drv%time_sec(2) - drv%time_sec(1)
+         if (abs(dt_file - drv%dt_forcing) > REC_MATCH_TOL) then
+            write(*,'(a,f12.3,a)') ' met_open: [forcing].dt_forcing = ', drv%dt_forcing, ' s'
+            write(*,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
+            write(*,'(a)')         '   dt_forcing places interval midpoints, disaggregates shortwave and'
+            write(*,'(a)')         '   brackets the recycle seam. A wrong value mis-times all three.'
+            vstat = MET_ERR_DT_MISMATCH ; return
+         end if
+         do i = 3_ik, drv%nrec
+            if (abs((drv%time_sec(i) - drv%time_sec(i-1)) - dt_file) > REC_MATCH_TOL) then
+               write(*,'(a,i0,a)') ' met_open: forcing record spacing changes at record ', i, '.'
+               write(*,'(a)')      '   MEDS assumes a uniform time axis.'
+               vstat = MET_ERR_AXIS_NOT_UNIFORM ; return
+            end if
+         end do
+      end if
+
+      !----- (b) avg_convention: the file says which end of the interval its flux means belong to.  !
+      st = nc_get_att_text_f(ncid, NC_GLOBAL, 'avg_convention', attr)
+      if (st == NC_NOERR .and. len_trim(attr) > 0) then
+         if (trim(attr) /= trim(avg_convention_name(drv%fcfg%avg_convention))) then
+            write(*,'(4a)') ' met_open: file avg_convention = "', trim(attr),                     &
+                            '", config = "', trim(avg_convention_name(drv%fcfg%avg_convention))//'"'
+            vstat = MET_ERR_ATTR_MISMATCH ; return
+         end if
+      end if
+
+      !----- (c) sw_input_kind: "total" needs a partition, "components" must not be partitioned.   !
+      st = nc_get_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', attr)
+      if (st == NC_NOERR .and. len_trim(attr) > 0) then
+         if (trim(attr) == 'total' .and. drv%fcfg%sw_partition == SWPART_PASSTHROUGH) then
+            write(*,'(a)') ' met_open: the file carries TOTAL shortwave (sw_input_kind = "total")'
+            write(*,'(a)') '   but [forcing].sw_partition = "passthrough", which expects the four'
+            write(*,'(a)') '   component streams. The run would read fields the file does not have.'
+            vstat = MET_ERR_ATTR_MISMATCH ; return
+         end if
+         if (trim(attr) == 'components' .and. drv%fcfg%sw_partition /= SWPART_PASSTHROUGH) then
+            write(*,'(a)') ' met_open: the file already carries the four shortwave components'
+            write(*,'(a)') '   (sw_input_kind = "components") but [forcing].sw_partition asks for a'
+            write(*,'(a)') '   split. Partitioning an already-split stream double-counts the beam.'
+            vstat = MET_ERR_ATTR_MISMATCH ; return
+         end if
+      end if
+   end subroutine validate_file_against_config
+
+   !----- The config code's own spelling, so the mismatch message quotes both sides in one vocabulary. !
+   pure function avg_convention_name(code) result(nm)
+      integer(ik), intent(in) :: code
+      character(len=8) :: nm
+      select case (code)
+      case (METAVG_BEGIN) ; nm = 'begin'
+      case default        ; nm = 'end'
+      end select
+   end function avg_convention_name
 
 end module meds_met_driver

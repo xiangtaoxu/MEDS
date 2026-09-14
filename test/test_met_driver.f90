@@ -13,7 +13,8 @@ program test_met_driver
    use meds_therm_lib,          only : sat_vapor_pressure
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
-                                    INTERP_STEP, METAVG_END, CLAMP_HOLD, CLAMP_ERROR,           &
+                                    INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
+                                    CLAMP_HOLD, CLAMP_ERROR,                                   &
                                     GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_forcing_types,   only : met_forcing_t, met_driver_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
@@ -23,7 +24,8 @@ program test_met_driver
                                     lapse_air_temperature, lapse_pressure
    use meds_met_driver,      only : met_open, met_advance, met_instant, met_close,             &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
-                                   MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED
+                                   MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
+                                   MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH
    use meds_netcdf_c
    use iso_c_binding,        only : c_int, c_size_t, c_double
    implicit none
@@ -41,6 +43,7 @@ program test_met_driver
    call test_wind_lapse()
    call test_multiyear_cycling()
    call test_recycle_anchor_phase()
+   call test_file_config_agreement()
 
    call test_report('test_met_driver')
 
@@ -228,6 +231,53 @@ contains
       call test_edge_paths(base)
    end subroutine test_netcdf_roundtrip
 
+   !----- 13. THE FILE AND THE CONFIG MUST AGREE (#185). Three things the reader used to take on   !
+   !      trust: the record spacing (dt_forcing was read straight from the config and never checked !
+   !      against the file at all), and the two self-describing global attributes the prep script    !
+   !      writes and nothing read. A file that disagreed with its config was silently mis-timed or   !
+   !      mis-partitioned -- no later check can see either, because both produce a plausible run.    !
+   subroutine test_file_config_agreement()
+      type(met_driver_t)     :: drv
+      type(forcing_config_t) :: fc
+      type(meds_time_t)      :: base
+      integer(ik)            :: st
+      print '(a)', '-- test 13: the forcing file must agree with [forcing] --'
+      base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
+      call write_synthetic_forcing(NCFILE, base)
+
+      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp ; fc%utc_offset_h = 0.0_wp
+      fc%apply_solar_longitude = .true. ; fc%recycle = .false.
+
+      !----- the honest config opens cleanly. A validator that rejects the good case is useless. --!
+      call met_open(drv, fc, stat=st)
+      call check_true('a matching config opens (MET_OK)', st == MET_OK, real(st, wp))
+      call met_close(drv)
+
+      !----- dt_forcing lying about the cadence. THIS is the one nothing checked: dt_forcing places !
+      !      interval midpoints, disaggregates shortwave and brackets the recycle seam. -------------!
+      fc%dt_forcing = 1800.0_wp
+      call met_open(drv, fc, stat=st)
+      call check_true('a half-hourly config against an hourly file is rejected',                   &
+                      st == MET_ERR_DT_MISMATCH, real(st, wp))
+      fc%dt_forcing = 3600.0_wp
+
+      !----- the file says its flux means end at the stamp; the config says they begin there. ------!
+      fc%avg_convention = METAVG_BEGIN
+      call met_open(drv, fc, stat=st)
+      call check_true('avg_convention contradicting the file attribute is rejected',               &
+                      st == MET_ERR_ATTR_MISMATCH, real(st, wp))
+      fc%avg_convention = METAVG_END
+
+      !----- the file carries TOTAL shortwave; passthrough would read component fields it lacks. ---!
+      fc%sw_partition = SWPART_PASSTHROUGH
+      call met_open(drv, fc, stat=st)
+      call check_true('passthrough against a total-shortwave file is rejected',                    &
+                      st == MET_ERR_ATTR_MISMATCH, real(st, wp))
+      fc%sw_partition = SWPART_CLEARIDX
+   end subroutine test_file_config_agreement
+
    !----- 8. Edge paths the review flagged (regression tests for the CLAMP_HOLD + recycle fixes). !
    subroutine test_edge_paths(base)
       type(meds_time_t), intent(in) :: base
@@ -357,6 +407,14 @@ contains
          st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k))
          call nc_check(st, 'write: var '//trim(vnames(k)))
       end do
+      !----- The two SELF-DESCRIBING global attributes the prep script writes. The fixture has to    !
+      !      carry them or it is not the file the reader validates against, and the #185 checks      !
+      !      would be skipped here while firing in production -- the fixture-must-mirror-the-driver  !
+      !      trap. This file is hourly, ERA5-Land-style, with total shortwave.                        !
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'avg_convention', int(len_trim('end'), c_size_t), 'end')
+      call nc_check(st, 'write: avg_convention')
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', int(len_trim('total'), c_size_t), 'total')
+      call nc_check(st, 'write: sw_input_kind')
       st = nc_enddef(ncid) ; call nc_check(st, 'write: enddef')
 
       do it = 1, NT
