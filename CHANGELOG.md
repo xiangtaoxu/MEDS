@@ -14,6 +14,23 @@ before and after.
 
 ## [Unreleased]
 
+### Documentation
+
+- **The leaf water-stress divergence from ED2 is now recorded as a decision, not an open question**
+  (#47), in `docs/science/leaf_gas_exchange.md` §4.3. MEDS keeps the Sabot et al. (2022) two-limb
+  scheme; ED2's `farq_katul.f90` uses a Manzoni-style single `stoma_beta` plus a turgor-loss
+  capacity term. The three divergences and the reason each one stands: the capacity limb's shape
+  (linear $\psi_{leaf}$ ramp vs ED2's 6th-power turgor-loss) and its targets ($V_{cmax}$, $J_{max}$
+  and TPU vs ED2's $J_{max}$ and $\alpha$ only, which acts only on the light-limited branch); the
+  stomatal limb's scope (Leuning/Medlyn $g_1$ **and** Katul $\lambda$ vs Katul only, which would
+  leave the two explicit schemes with no drought response at all); and the parameter split, where
+  MEDS's $s_{ref}\,e$ is exactly ED2's `stoma_beta`, so a calibrated value transfers as
+  `stoma_beta = -sref_stomata * lambda_psi_exp`.
+
+  **The `psi_soil` wiring defect the issue also filed was already closed by #95** and needed no work
+  here: the field is `psi`, the driver passes `dmax_psi_leaf` on both call paths, and unset cohorts
+  are seeded from the surface-layer soil potential. Verified rather than assumed.
+
 ### Fixed
 
 - **Saturation over a frozen surface now uses the ice curve** (#89). `sat_vapor_pressure`,
