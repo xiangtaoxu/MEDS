@@ -1,6 +1,6 @@
 # MEDS v0.2.0 release plan
 
-**Status: Phases 0-3 COMPLETE (2026-09-14). Phases 4-6 remain.** Planned 2026-09-13; all decisions
+**Status: Phases 0-4 COMPLETE (2026-09-14). Phases 5-6 remain.** Planned 2026-09-13; all decisions
 taken — see §10. This document
 groups every open issue into phased pull requests for the v0.2.0 release, and records the decisions
 taken to get there.
@@ -343,56 +343,46 @@ fast loop is a gap worth filing for v0.3.0.
 
 ---
 
-## 6. Phase 4 — configurability unlocks
+## 6. Phase 4 — configurability unlocks — **COMPLETE 2026-09-14**
 
-Things the model claims to support and cannot select. Two pull requests.
+All seven items landed, PRs #228-#234.
 
-### 6.1 PR A — the daily-reduction machinery, then its two consumers
-
-**#150 and #176 need the same machinery**: a fast-loop daily reduction feeding a running-mean
-cohort structure-of-arrays column, with the lockstep reorder, every creation site, and the fusion
-blend. Build it once. This is why #176 is in v0.2.0 at all — on its own it would be a phase of its
-own; behind #150's machinery it is a consumer.
-
-| # | Work | Size |
+| # | Outcome | PR |
 |---|---|---|
-| #150 | Phenology P3. Four cohort columns (`pheno_water_avg`, `pheno_low_psi_days`, `pheno_high_psi_days`, `pheno_light_avg`) — today they are locals, so they are re-zeroed daily. Thread the real drivers: a soil-water running mean, a daily **maximum** leaf water potential, a running-mean radiation, and the shallow soil-layer temperature in place of the air-temperature proxy (`meds_vegetation_dynamics` hard-codes `avail_water = 0`, `dmax_leaf_psi = 0`, `rad = 0`). Lift the `validate_config` rejection per cue as its driver lands. **Acceptance:** the tropical drought-deciduous and light-driven leaf-exchanging strategies run from configuration alone. **Decided (§10.1): flush keeps the present fixed high `k_flush_max` for the light-driven strategy** — it is what `test_plant_phenology` pins today (`'leaf-exch: flush = k_flush_max (permissive)'`), so matching flush to shed is a deliberate behaviour change, not a wiring detail. Revisit only if the emergent leaf-area cycle is implausible once the cues run. **Ships with a stated validation caveat — see §6.1.1.** | L |
+| #150 | **Shipped.** All five phenology cues wired; the drought-deciduous and light-exchanging strategies run from a TOML config and reproduce the design's patterns 3 and 4 end to end. The issue named three cues fed zeros; it did not name the half that would have made the drivers useless anyway — the four cue sub-accumulators were **locals**, re-zeroed every slow step, so a 10-day running mean was its own instantaneous input and a consecutive-day counter never exceeded one. Also **fixed a restart hole affecting the two strategies shipped since v0.1.0**: no phenology state was written to the state file at all. | #228 |
+| #176 | **Shipped, opt-in.** Kattge & Knorr acclimation; Vcmax optimum 28.2 → 35.0 °C over a 20 K growth range. GPP +42.8 %, **decomposed**: dS shift +12.5 %, Jmax:Vcmax ratio +26.8 % — two thirds is the ratio, because the fit gives 2.24 at Ithaca against the PFT file's fixed 1.7. | #229 |
+| #178 | **Shipped.** Fine-root respiration summed over layers. The Jensen gap is **seasonal, not annual**: +4.8 % December, −8.3 % June, −0.17 % annual mean — the peaked form is convex when cold and concave near its optimum, so the sign flips. | #230 |
+| #177 | **Shipped, default 0.** Storage maintenance respiration, ED2's form, no temperature dependence (ED2 has none here). The **ledger caught the first implementation**: decrementing the pool in place left −2.43e-3 kgC undeclared in `allocate` against +2.43e-3 over-declared in `grow+mortality`. Routing it as a tendency closes it to −6.0e-17. | #231 |
+| #151 | **Shipped, default 0.** Leaf resorption with the full-removal closure. Only the **active excess** is resorbed — `shed_rate` is a `max`, so the excess is `shed_rate − base_rate`, exact in both regimes — because baseline turnover is calibrated against observed litterfall, which already has resorption in it. | #232 |
+| #182 | **Shipped.** Brutsaert/Idso LWdown synthesis; the `validate_config` rejection is gone. Clear-sky alone underestimates ERA5-Land's `strd` by **−29.9 W/m²**, which is why the cloud term is not optional. A fallback, not a substitute: driving Ithaca from synthesis leaves the soil surface 1.37 K cooler. | #233 |
+| #179 | **Shipped, byte-identical by default.** Thirteen per-PFT hydraulic traits. `solve_plant_water` itself untouched — only the parameter selection moved. | #234 |
 
-#### 6.1.1 The phenology validation caveat
+### 6.1 The fixture trap, and the answer to it
 
-**Decided (§10.1): wire the strategies, and say plainly that the phenology is not validated.**
+**Five fixtures did not mirror their driver this release**: #185's synthetic forcing file, #170's
+unallocated diagnostic, #89's liquid-saturated CAS, #150's 0 K soil temperature, and #179's
+unpopulated hydraulics table. Each produced a *plausible* failure — a green suite, a deposition
+experiment, a July cold-soil drop, a segfault.
 
-Be precise about what is and is not covered, because "untested" would be wrong:
+#179 stopped patching symptoms. `apply_hydraulics_config` now **is** the table builder, and the
+PFT-uniform companion field is gone, so a fixture that forgets it fails to **compile** rather than
+segfaulting. Removing the second, easier-to-reach copy of a parameter set is also what stops a
+caller silently running every PFT on the first one's values.
 
-- **The kernel is unit-tested.** `test_plant_phenology.f90` already exercises **all four**
-  strategies — evergreen, temperate-deciduous, drought-deciduous and light-exchanging — by feeding
-  the cue values in directly, plus the rate mapping and the [0,1] drive bounds.
-- **The driver is unit-tested for two of the four.** `test_phenology_driver.f90` covers the
-  temperature-driven pair end to end, plus birth state and the no-temperature no-op.
-- **What #150 adds is untested by construction:** the cue *drivers* themselves — the soil-water
-  running mean, the daily-maximum leaf water potential, the running-mean radiation, and the
-  shallow-layer soil temperature. Nothing has checked that the values the fast loop computes are
-  the values the kernel was written against.
-- **Nothing at all has validated the emergent behaviour.** No MEDS run's leaf-area cycle has been
-  scored against a phenology observation, at any site, under any strategy — including the two
-  temperature strategies that have shipped since v0.1.0.
+### 6.2 What is selectable but not validated
 
-**What v0.2.0 therefore claims:** the four strategies are *selectable and self-consistent*, not
-*correct*. The two new drivers each need a unit test against a hand-computed cue value, and the
-release notes must carry the caveat alongside #162. Do not describe the drought-deciduous or
-light-driven strategies as working in the CHANGELOG or the ED2 comparison — describe them as
-runnable.
-| #176 | Thermal acclimation: a running-mean tissue temperature shifting the peaked-Arrhenius reference, on #150's machinery. The `t_acclim` seams were shaped in and then dropped from the environment records, so they need re-adding. | M |
-| #151 | Phenology P4: `retained_carbon_fraction` on leaf shed, with the full-removal closure. Optional companion `root_phen_factor`. Today every gram of shed leaf carbon goes to litter. | M |
-| #177 | Charge maintenance respiration on the storage pool. Today a large reserve is thermodynamically free to hold. | S |
-| #178 | Layered fine-root maintenance respiration, replacing the single root-fraction-weighted mean soil temperature. Pairs with #145 — both are about the model using the per-layer soil temperature it already resolves. | M |
+Three of these ship switched **off** or **uncalibrated**, and the release notes must say so:
 
-### 6.2 PR B — forcing and traits
-
-| # | Work | Size |
-|---|---|---|
-| #182 | Implement the Brutsaert/Idso clear-sky LWdown synthesis and lift the `validate_config` rejection. Until this lands, a forcing source without a longwave field cannot drive MEDS at all. | M |
-| #179 | Per-PFT hydraulic traits — conductance, vulnerability shape, pressure-volume curve. Today wood density is the only axis on which PFTs differ hydraulically. The constitutive curves are already in a shared library, which is what makes this cheap. | M |
+- **Phenology** (#150): all four strategies are selectable and self-consistent, and every driver has
+  a hand-computed test — but **no MEDS run's leaf-area cycle has been scored against a phenology
+  observation, under any strategy**, including the two shipped since v0.1.0. The thresholds are
+  literature values for the biome each strategy describes, not site calibrations: `CUE_LIGHT` at its
+  default 200 W/m² onset strips an Ithaca canopy every summer.
+- **Thermal acclimation** (#176) and **storage maintenance** (#177) are opt-in and off, because both
+  move numbers substantially and Phase 3 — the rebaseline window — is closed. Turning either on by
+  default is a v0.3.0 decision.
+- **Per-PFT hydraulics** (#179) is selectable but **uncalibrated**: MEDS ships with hydraulically
+  identical PFTs until real trait values go in.
 
 ---
 
