@@ -28,7 +28,8 @@ module meds_capi_demography
    use meds_init,                   only : init_bare_ground
    use meds_vegetation_dynamics,    only : vegetation_dynamics, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
-   use meds_allometry,              only : b1Ht, b2Ht, agb_c1, agb_c2, lai_b1, lai_b2
+   use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
+                                          size2leaf_carbon, size2wood_carbon
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
@@ -128,7 +129,7 @@ contains
       real(wp)              :: seed_c
       logical :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp
-      real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new, size_var
+      real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new
       real(wp) :: lc_new, fc_new, wc_new, nc_new
 
       associate (site => g_site(sh), cfg => g_cfg(ch))
@@ -161,15 +162,17 @@ contains
          call cohort_deriv_alloc(site%deriv, site%cohort%n)
          associate (cohort => site%cohort)
             do i = 1_ik, cohort%n
-               !----- Forward allometry from the supplied dbh growth (inlined; mirrors set_cohort_size). !
+               !----- Forward allometry from the supplied dbh growth. CALLS meds_allometry rather   !
+               !      than inlining it (#200): these relations used to be copied here from             !
+               !      set_cohort_size, so a coefficient change updated the model and not the shim.     !
                dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
-               height_new = min(exp(b1Ht + b2Ht * log(dbh_new)), cohort%p_hgt_max(i))
+               height_new = dbh_to_height(dbh_new, cohort%p_hgt_max(i))
                ba_new     = pio4 * dbh_new * dbh_new
-               size_var   = dbh_new * dbh_new * height_new
-               agb_new    = agb_c1 * cohort%p_wood_density(i) ** agb_c2 * size_var ** agb_c2
-               la_new     = lai_b1 * size_var ** lai_b2
-               lc_new     = la_new / max(cohort%sla(i), tiny_num)
-               wc_new     = agb_new / max(cohort%p_aboveground_frac(i), tiny_num)
+               agb_new    = dbh_to_agb(dbh_new, height_new, cohort%p_wood_density(i))
+               la_new     = dbh_to_leaf_area(dbh_new, height_new)
+               lc_new     = size2leaf_carbon(dbh_new, height_new, cohort%sla(i))
+               wc_new     = size2wood_carbon(dbh_new, height_new, cohort%p_wood_density(i),            &
+                                             cohort%p_aboveground_frac(i))
                fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
                nc_new     = cohort%p_storage_cushion(i) * lc_new
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !

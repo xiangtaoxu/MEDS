@@ -5,8 +5,6 @@
 !                                                                                          !
 !   * veg_energy_balance    -- the quasi-steady leaf OR wood surface temperature + its CAS/budget  !
 !                                 flux contributions (the operator-split / ARK-diagnostic closure).    !
-!   * veg_energy_step_implicit -- one L-stable linearized BE step on the prognostic tissue energy  !
-!                                 (leaf OR wood); fluxes go OUT to the CAS as twins.                 !
 !   * intercept_canopy_layer   -- per-cohort capacity-limited interception bucket (Beer fraction);   !
 !                                 the caller sweeps height-sorted cohorts top->bottom.                !
 !==========================================================================================!

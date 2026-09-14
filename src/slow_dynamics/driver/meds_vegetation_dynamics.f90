@@ -614,8 +614,8 @@ contains
    ! of its own (capacity grows, mass stays put, rwc reads lower next touch). Root sheds into the    !
    ! LUMPED wood node's water (bwood = bsap+broot; only broot sheds under the current turnover        !
    ! model, so fineroot_carbon's own fractional loss is used as the proxy for the lumped pool's        !
-   ! shed fraction -- an approximation, but bsap itself is still an MVP placeholder, so a more exact   !
-   ! split is not yet meaningful). MUST run before update_cohort_states commits this step's new         !
+   ! shed fraction -- an approximation, since only the fine-root half of the lumped node actually      !
+   ! sheds). MUST run before update_cohort_states commits this step's new                               !
    ! leaf_carbon/fineroot_carbon (the caller sequences it right after compute_carbon_allocation, well    !
    ! before that commit), since the shed FRACTION is computed against the PRE-step pool.                  !
    !                                                                                          !

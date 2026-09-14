@@ -127,7 +127,7 @@ carved (temp/fliq are re-diagnosed, never blended).
 | soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
-| leaf/wood energy | `meds_plant_biophysics`: `veg_energy_diagnostic` (shared diagnostic solve), `veg_energy_step_implicit` (prognostic store) |
+| leaf/wood energy | `meds_plant_biophysics`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |
 | ground skin fluxes | `meds_ground_biophysics`: `ground_surface_fluxes` |
 | soil heterotrophic Rh | `meds_soil_biogeochem`: `heterotrophic_respiration_flux`, `heterotrophic_respiration_damm` |
 | snow energy / base conductance | `meds_ground_biophysics`: `snow_energy_step`, `snow_base_conductance` |

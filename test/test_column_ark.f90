@@ -192,8 +192,8 @@ contains
    !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
    !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
-   !      the L-stable veg_energy_step_implicit kernel, now available on ARK and RK45 (it used to      !
-   !      hard error-stop). Three assertions:                                                          !
+   !      the L-stable veg_energy_balance store term (store_hcap_per_dt > 0), available on ARK and     !
+   !      RK45 (prognostic wood used to hard error-stop). Three assertions:                            !
    !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !
    !            radiation both had to enter it, since surface_derivs no longer folds wood into          !
    !            coh_rnet when the frozen diagnostic inputs are zeroed;                                  !

@@ -136,13 +136,14 @@ Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science 
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
   has no independent thermal state and cannot freeze.
-- **Retire `veg_energy_step_implicit`.** *Candidate.* [#166](https://github.com/xiangtaoxu/MEDS/issues/166) The exact-exponential
-  `veg_energy_diagnostic` is the one closure both paths share; the prognostic sibling is a
-  second code path for the same physics.
+- **Retire `veg_energy_step_implicit`.** *Done* ([#166](https://github.com/xiangtaoxu/MEDS/issues/166)). This entry was **stale**: the kernel was
+  deleted in PR #120, and `veg_energy_diagnostic` does not exist either. `veg_energy_balance` is
+  the single closure, diagnostic at `store_hcap_per_dt = 0` and prognostic above it.
 - **The free-convection slope.** *Candidate.* [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The 1.25·h term is absent from the linearization.
-- **Honest wood sizing.** *Planned.* [#168](https://github.com/xiangtaoxu/MEDS/issues/168) `bsap` is still a placeholder in the vegetation driver,
-  which makes the modelled wood time constant unrealistic even though the wood-area allometry is
-  now ED2's real `b1WAI`/`b2WAI`.
+- **Honest wood sizing.** *Done, 2026-09-13* ([#168](https://github.com/xiangtaoxu/MEDS/issues/168)). This entry was **stale**: `bsap` stopped
+  being a placeholder in PR #125. `set_cohort_wood_geometry` derives it from ED2's real
+  `b1SA`/`b2SA` sapwood-area allometry. Measured, the old `0.10 * wood_carbon` placeholder made
+  the wood thermal time constant 6.5–10× too short across the whole size range.
 
 ---
 

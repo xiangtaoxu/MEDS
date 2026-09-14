@@ -101,6 +101,20 @@ module meds_pft_params
       real(wp),    allocatable :: wai_b2(:)                 !< [--] WAI exponent   (ED2 b2WAI)
       !----- SAPWOOD-AREA allometry (ED2 b1SA/b2SA, dbh2sf): sapwood area = b1sa*dbh**b2sa, and the  !
       !      sapwood FRACTION of basal area sets bsap. REPLACES bsap = 0.10*wood_carbon. ------------!
+      !                                                                                          !
+      !      MEASURED consequence for the wood thermal time constant, which scales linearly with   !
+      !      bsap (#168). With the shipped b1SA = 1.582, b2SA = 1.764 the real fraction exceeds     !
+      !      the old 0.10 placeholder EVERYWHERE, so the placeholder made tau_wood 6.5-10x too       !
+      !      SHORT across the whole size range:                                                      !
+      !                                                                                          !
+      !        dbh [cm]     1     10     20     40     60     80    100    117                      !
+      !        f_sap     1.000  1.000  0.993  0.843  0.766  0.716  0.679  0.655                     !
+      !        vs 0.10   10.0x  10.0x   9.9x   8.4x   7.7x   7.2x   6.8x   6.5x                     !
+      !                                                                                          !
+      !      f_sap saturates at 1.0 below dbh ~ 19.4 cm -- all sapwood, no heartwood -- because      !
+      !      2.014*dbh**(-0.236) exceeds one there. That is ED2's own behaviour, not a MEDS          !
+      !      approximation: dbh2sf applies the identical min(1, A_sap/A_basal) clamp. It does mean    !
+      !      the sapwood allometry is inert across a young stand, where every cohort is all sapwood.  !
       real(wp),    allocatable :: sapwood_area_b1(:)        !< [cm2/cm^b2] sapwood-area intercept (ED2 b1SA)
       real(wp),    allocatable :: sapwood_area_b2(:)        !< [--]        sapwood-area exponent  (ED2 b2SA)
       !----- Canopy-element geometry the aerodynamic boundary layers read. These were three     !

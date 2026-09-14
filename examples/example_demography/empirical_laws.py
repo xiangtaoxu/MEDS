@@ -7,16 +7,34 @@ state read back through the C-API, they return the three rate arrays the engine'
 law-free apply-primitives consume (via ``Site.apply_rates``).
 
 A faithful port of the deleted ``meds_demography_rates`` + the pan-tropical
-allometry; the PFT parameters mirror ``meds_config_pft.toml`` / the test config.
+allometry. The allometry coefficients are READ from the shipped
+``example_config_pft.toml``; the PFT table below still mirrors it by hand.
 """
+import os
+
+try:
+    import tomllib                      # py3.11+
+except ModuleNotFoundError:             # pragma: no cover -- py3.10 and older
+    import tomli as tomllib
+
 import numpy as np
 
 TINY = 1.0e-20
 GROWTH_AVG_UNSET = -1.0
 
-# --- pan-tropical allometry (from set_allometry in the shipped/test config) --------------
-B1HT, B2HT = 1.139963, 0.564899
-AGB_C1, AGB_C2 = 0.06080334, 1.0044785
+# --- pan-tropical allometry, READ from the [allometry] block of the PFT config -----------
+# These used to be hard-coded here (#200), so editing the TOML changed the Fortran model and
+# not this file, and the example silently ran two different allometries. Reading them keeps
+# one source of truth. `MEDS_PFT_CONFIG` overrides the default for a config living elsewhere.
+_PFT_CONFIG = os.environ.get(
+    "MEDS_PFT_CONFIG",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "example_config_pft.toml"),
+)
+with open(_PFT_CONFIG, "rb") as _fh:
+    _ALLOM = tomllib.load(_fh)["allometry"]
+
+B1HT, B2HT = _ALLOM["b1Ht"], _ALLOM["b2Ht"]
+AGB_C1, AGB_C2 = _ALLOM["agb_c1"], _ALLOM["agb_c2"]
 
 
 def dbh_to_height(dbh, hgt_max):

@@ -292,7 +292,7 @@ stream**, because a window longer than a month would straddle the disturbance re
 | Compilers | ifx and nvfortran verified each release; gfortran supported | gfortran, ifort, others |
 | Dependencies | netCDF-C (mandatory) | HDF5, optionally MPI |
 | Tests | 38 CTest targets, run on both compilers, Release and Debug | `EDTS` regression suite comparing whole-model output |
-| Parallelism | OpenMP over patches (bit-identical), OpenMP `target` GPU offload | MPI over polygons + OpenMP within a rank |
+| Parallelism | OpenMP over patches, bit-identical at any thread count. (GPU offload exists and is measured 1.4× *slower* than the CPU.) | MPI over polygons + OpenMP within a rank |
 | Scale | One site | Single points, regional grids, or coupled to BRAMS |
 
 MEDS has no equivalent of EDTS. That is the gap behind the "not benchmarked" caveat at the top of

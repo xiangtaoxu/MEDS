@@ -14,8 +14,38 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two roadmap items described code that no longer exists**, found by re-measuring every filed
+  premise before scheduling it (#168, #166). `bsap` stopped being a placeholder in PR #125 —
+  `set_cohort_wood_geometry` derives it from ED2's real `b1SA`/`b2SA` sapwood-area allometry. The
+  old `0.10 * wood_carbon` placeholder made the wood thermal time constant **6.5–10× too short**
+  across the whole size range (`f_sap` runs 1.00 at dbh ≤ 19 cm to 0.655 at 117 cm, against 0.10).
+  `veg_energy_step_implicit` was deleted in PR #120, and `veg_energy_diagnostic` does not exist
+  either; `veg_energy_balance` is the single closure. Both entries corrected in `docs/ROADMAP.md`
+  and their four stale source/doc references removed.
+- **`scripts/numerics_sweep.py` could not run a cross-scheme comparison.** The `--parity` preset
+  pinned three config keys that no longer exist (`fast.integration_scheme`,
+  `fast.leaf_energy_model`, `fast.wood_energy_model` — #199 named two), and the `SCHEMES` table
+  still offered `split` and `picard`, which are now a hard error. The preset is removed rather than
+  repointed: every difference it pinned has since been closed by making the schemes agree.
+- **The C-API demography shim inlined the allometry** instead of calling `meds_allometry`, so a
+  coefficient change updated the model and not the shim (#200). It now calls `dbh_to_height`,
+  `dbh_to_agb`, `dbh_to_leaf_area`, `size2leaf_carbon` and `size2wood_carbon`.
+  `examples/example_demography/empirical_laws.py` reads the four allometry coefficients from the
+  `[allometry]` block of its shipped PFT config instead of hard-coding them; the values are
+  unchanged, so the example's behaviour is unchanged.
+
 ### Documentation
 
+- **The build files no longer describe GPU offload as the parallel path** (#194). Measured, the
+  offload build runs **1.4× slower** than the CPU (49.8 s against 36.2 s), one kernel sits at 0.4 %
+  occupancy, and the device treated as 20 slow cores is 26× slower than 4 CPU cores. Patch-axis CPU
+  threading is the parallel path. `MEDS_GPU=gpu` is kept as a reproducible experiment.
+  `CMakeLists.txt`, `docs/building.md`, `src/README.md` and `docs/ed2_comparison.md` corrected.
+- **A v0.2.0 release plan** in [`docs/dev_plans/MEDS_V02_RELEASE_PLAN.md`](docs/dev_plans/MEDS_V02_RELEASE_PLAN.md):
+  all 66 open issues triaged into six phases plus release, 48 in scope and 18 deferred to v0.3+,
+  with twelve decisions recorded.
 - **The documentation was reorganized against the restructured source tree.** Thirty design
   plans moved to `docs/dev_plans/archive/` with tombstones; eleven stay live or as reference.
   The README dropped from 310 lines to a reader's entry point, with building, configuration
@@ -24,6 +54,17 @@ before and after.
   `CLAUDE.md` split into a short always-loaded file plus path-scoped rules. This file and
   `docs/ROADMAP.md` were created. Three missing science pages were written:
   `docs/science/soil_carbon.md`, `forcing.md`, `plant_respiration.md`.
+
+### Changed
+
+- **One implementation of each test assertion helper** (#191). Twenty-three local copies across
+  nineteen files, consolidated behind generic interfaces so all ~1000 call sites compile unchanged;
+  net −403 lines. The two families (fatal condition-first, accumulating name-first) are kept
+  deliberately — they differ in failure behaviour, not just signature. A new `meds_test_assert`
+  holds the assertions and depends on nothing but a kind, because seventeen tests deliberately link
+  one narrow library each. Found and closed one coverage hole: `test_biogeochem_dynamics`' local
+  helper error-stopped while the shared one accumulates, which turned four assertions into no-ops
+  until a verdict call was added.
 
 ### Fixed
 
