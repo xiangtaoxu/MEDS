@@ -252,25 +252,36 @@ contains
       !----- SLOW patch diagnostics: litterfall and recruitment. Recorded HERE, before the       !
       !      restructuring below permutes the patch axis.                                          !
       !                                                                                            !
-      !      UNITS. The accumulator is dt-weighted and the reader divides by Sum(dt), so what is     !
-      !      added here must be (rate * dt). `lit` holds this step's litter AMOUNT [kgC/m2], whose   !
-      !      rate is amount/dt -- so (rate * dt) is just the amount. `recruitment` is already a RATE !
-      !      [plant/m2/yr], so it is multiplied by cfg%dt_years. Getting these two the same way round is    !
-      !      the whole content of the line, which is why they look different.                        !
+      !      UNITS (#239). The block's weight `w` is Sum(dt) in SECONDS -- accumulate_patch_diag     !
+      !      adds cfg%dt_fast every fast step -- and the reader returns v/w. So EVERY row, fast or   !
+      !      slow, must contribute (its rate, in the units the registry declares) x (dt in SECONDS). !
+      !      The fast rows do that with flux*dt_fast. These slow rows must do it with dt_slow, and   !
+      !      their declared rates are per YEAR, so the per-year rate is formed first and weighted    !
+      !      second: `lit` holds this step's litter AMOUNT [kgC/m2], whose per-year rate is          !
+      !      amount/dt_years; `recruitment` is already [plant/m2/yr] and needs only the weight.      !
+      !                                                                                            !
+      !      Contributing the bare amount (and, for recruitment, rate*dt_years) is what this did,    !
+      !      and it emitted a per-SECOND rate under a per-YEAR label -- every one of these variables !
+      !      read a factor yr_sec = 3.1557e7 too small. No ledger sees a diagnostic, and the slow    !
+      !      ledger's litter term reads patch%litter_in directly rather than this slot, so nothing   !
+      !      in the suite disagreed with it.                                                         !
       !                                                                                            !
       !      `lit` is the SAME accumulator biogeochemistry consumes, so litter_*_site and the        !
       !      soil-carbon input are one number by construction, not two derivations that agree.  ----!
       if (site%patch%diag%active) then
          do ip = 1_ik, site%patch%n
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
-                                                      + site%patch%litter_in(ip)%labile_grnd
+                                                      + (site%patch%litter_in(ip)%labile_grnd           &
+                                                         / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
-                                                      + site%patch%litter_in(ip)%labile_soil
+                                                      + (site%patch%litter_in(ip)%labile_soil           &
+                                                         / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
-                                                      + (site%patch%litter_in(ip)%struct_grnd            &
-                                                       + site%patch%litter_in(ip)%struct_soil)
+                                                      + ((site%patch%litter_in(ip)%struct_grnd          &
+                                                        + site%patch%litter_in(ip)%struct_soil)         &
+                                                         / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
-                                                      + sum(recruitment(:, ip)) * cfg%dt_years
+                                                      + sum(recruitment(:, ip)) * cfg%dt_slow
          end do
       end if
 

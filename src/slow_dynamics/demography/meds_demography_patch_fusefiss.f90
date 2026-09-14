@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : tiny_num, almost_one
+   use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_allometry,  only : light_ext
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
@@ -445,11 +445,15 @@ contains
       !      disturbed, it IS the disturbance -- and patch_diag_clear_slot zeroes its slot at the    !
       !      end of this routine anyway. Writing after the append is the out-of-bounds trap that     !
       !      has already been paid for once in this file's history.                                  !
-      !      Accumulated as an AMOUNT (the fraction disturbed this step), matching PD_RECRUIT_NPLANT !
-      !      -- the reader divides the block by its own dt weight to recover a [1/yr] rate.          !
+      !      UNITS (#239): the block's weight is Sum(dt) in SECONDS, so the contribution is the      !
+      !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
+      !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is           !
+      !      dt_yr*yr_sec -- their product is frac*yr_sec, with dt_yr cancelling. Contributing the   !
+      !      bare `frac` emitted a per-SECOND rate under the per-year label.                         !
       if (site%patch%diag%active) then
          do i = 1_ik, np0
-            site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i) + frac
+            site%patch%diag%v(PD_DISTURB_AREA, i) = site%patch%diag%v(PD_DISTURB_AREA, i)          &
+                                                  + frac * yr_sec
          end do
       end if
 

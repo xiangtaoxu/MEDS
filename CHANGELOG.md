@@ -345,6 +345,33 @@ before and after.
 
 ### Fixed
 
+- **Slow per-patch diagnostics emitted a per-SECOND rate under a per-YEAR label** (#239). **Six
+  shipped variables read a factor `yr_sec = 3.1557e7` too small**: `litter_leaf_site`,
+  `litter_leaf_patch`, `litter_fineroot_site`, `litter_struct_site`, `nplant_recruit_site` and
+  `disturb_area_site`. Anyone who plotted litterfall or recruitment from a MEDS run before this
+  should re-read those series.
+
+  The patch diagnostic block is `(value, weight)` and the reader returns `value/weight`. The weight
+  is `Σ dt` in **seconds** — `accumulate_patch_diag` adds `dt_fast` every fast step — so every row
+  must contribute *(its rate, in the units the registry declares)* × *(dt in seconds)*. The fast rows
+  always did, with `flux * dt_fast`. The five slow rows, added later, contributed a bare per-step
+  **amount** (and, for recruitment, `rate * dt_years`) — dimensionally a per-second rate.
+
+  On a spun-up Ithaca stand (114 cohorts, AGB 16.7 kgC/m², LAI 5.56), annual means before → after:
+  `litter_leaf_site` **9.80e-09 → 0.309 kgC/m²/yr**, `litter_fineroot_site` **1.21e-08 → 0.380**,
+  `litter_struct_site` **2.07e-08 → 0.654**, `nplant_recruit_site` **1.11e-09 → 0.0349 plant/m²/yr**.
+  The corrected leaf number is the independent check: LAI 5.56 at SLA ≈ 20 m²/kgC is ≈ 0.28 kgC/m² of
+  leaf carbon turned over annually.
+
+  **Why nothing caught it.** A diagnostic is downstream of every conservation ledger, and the slow
+  ledger's own litter term reads `patch%litter_in` directly rather than this slot, so the two never
+  had to agree. The one test that did touch a slow slot — `test_disturbance`, added with #170 —
+  asserted the **raw accumulator** rather than the number `patch_diag_value` emits, so it certified
+  the contribution and was blind to the convention it was written against. It now asserts through the
+  reader, and a new `slow_diag_units` test asserts, for all five slow slots, the identity the
+  per-year label *means*: `reported rate × elapsed years == the amount that actually flowed`, against
+  oracles outside the diagnostic path (`patch%litter_in`, the recruit pool, the configured hazard).
+
 - **The phenology memory now survives a restart** (#150). No phenology state was written to the state
   file at all — not the two governors, not the GDD and chilling sums. A restart resurrected every
   cohort at its **birth** values (`flush_drive = 1`, `shed_drive = 0`, `gdd = chill = 0`, the
