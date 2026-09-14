@@ -463,6 +463,12 @@ than a convergence proof.
    conductances got — same defect class, one seam over — and is tracked as N2b in
    `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md`.
 
+   **`rk45` carries more of this error than `ark` does, and now says so.** The transpiration
+   corrector that cut a ~1 MPa `psi_leaf` error by 314× lives in `advance_water_mass_full`, which
+   the ARK path calls and the RK45 path does not. `validate_config` warns when `rk45` is selected
+   above `dt_fast` = 300 s. It is a warning rather than an error because `rk45` is the accuracy
+   baseline and is meant for a fine step, where the uncorrected error is small.
+
 2. **The stability threshold has only been mapped on one forcing.** §5a′ sweeps stand height, but on
    a single synthetic diurnal cycle at one wind speed. The feedback that drove the oscillation is a
    *stability-dependent* one, and its gain varies strongly with wind: at `u_ref = 10 m/s` the frozen

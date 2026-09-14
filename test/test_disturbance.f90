@@ -4,6 +4,7 @@ program test_disturbance
    use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
+   use meds_site_diag_types,           only : PD_DISTURB_AREA, patch_diag_alloc
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -12,7 +13,7 @@ program test_disturbance
    type(meds_config_t) :: cfg
    type(site_t)     :: site
    integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts
-   real(wp)            :: n_before, h_tall, h_short, film_before, film_after
+   real(wp)            :: n_before, h_tall, h_short, film_before, film_after, frac_expect
 
    call banner('treefall patch disturbance')
    cfg = build_test_config()
@@ -32,11 +33,24 @@ program test_disturbance
    site%cohort%leaf_surf_water(site%cohort%n) = 0.25_wp
    film_before = site%patch%area(1) * 0.25_wp
 
+   !----- Turn the per-patch diagnostic block ON. It defaults OFF (a run with no diagnostics    !
+   !      allocates nothing and every entry point no-ops), so a test that wants to read a slot     !
+   !      must ask for it -- and #170's silent zero was invisible partly because nothing did.      !
+   call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
+
    call apply_patch_disturbance(site, cfg, 1.0_wp)
 
    !----- A new age-0 treefall gap patch was opened; area is conserved. --------------------!
    call check(site%patch%n == 2_ik, 'disturbance should add exactly one gap patch')
    call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'disturbance broke area conservation')
+
+   !----- The disturbed-area flux is REPORTED (#170). The slot was declared and never written, so   !
+   !      it read as a silent zero -- which no conservation check can see, because zero disturbed   !
+   !      area is a perfectly conservative answer. Assert the VALUE, not merely that it is finite.  !
+   frac_expect = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)
+   call check(frac_expect > 1.0e-6_wp, 'the fixture must actually disturb something')
+   call check_close(site%patch%diag%v(PD_DISTURB_AREA, 1), frac_expect, 1.0e-12_wp,                 &
+                    'PD_DISTURB_AREA must record the fraction the donor lost')
 
    ig = 0_ik
    do ip = 1_ik, site%patch%n

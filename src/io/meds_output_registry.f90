@@ -63,7 +63,7 @@ module meds_output_registry
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
                                     CS_GROWTH_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT,           &
-                                    PD_LITTER_STRUCT, PD_RECRUIT_NPLANT
+                                    PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
    private
 
@@ -601,6 +601,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_STRUCT)
       call add_variable(reg, 'nplant_recruit_site', 'recruitment density flux', 'plant/m2/yr',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PD_RECRUIT_NPLANT)
+   call add_variable(reg, 'disturb_area_site', 'patch area fraction disturbed', '1/yr',           &
+                     DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_P_DIAG0 + PD_DISTURB_AREA)
       call add_variable(reg, 'litter_leaf_patch', 'patch leaf litterfall carbon', 'kgC/m2/yr',   &
                         DIM_PATCH, AGG_TMEAN, GRP_BIOGEOCHEM, MON, FLD_P_DIAG0 + PD_LITTER_LEAF)
       call add_variable(reg, 'agb_growth_pft', 'AGB growth rate by PFT', 'kgC/m2/yr',            &
