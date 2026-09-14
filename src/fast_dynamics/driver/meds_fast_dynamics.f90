@@ -27,6 +27,7 @@ module meds_fast_dynamics
    use meds_output_types,     only : output_manager_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
                                      PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
+                                     PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, &
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
                                      PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
@@ -764,7 +765,9 @@ contains
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
                                           gpp_patch, budget%nee_last, forc%rainfall + forc%snowfall,             &
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
-                                          budget%whole_water%resid)
+                                          budget%whole_water%resid,                                         &
+                                          forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
+                                          forc%lw_up)
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1101,6 +1104,17 @@ contains
                          + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))
       forc%abs_lw_ground = flux%dn_ground(RAD_LW) - flux%up_ground(RAD_LW)          ! NET ground LW (soil emission incl.)
       forc%par_per_w     = PAR_W_2_UMOL                        ! true VIS absorbed -> photon flux
+      !----- TOP-OF-CANOPY fluxes (#171). canopy_radiation already forms albedo(b) = utop/incid, so   !
+      !      the upwelling is that ratio times the incident it was formed from -- no second solve.    !
+      !      Kept as FLUXES rather than as a time-averaged albedo on purpose: a period-mean albedo is  !
+      !      the mean of a RATIO, which is not the ratio of the means, and at night the SW ratio is    !
+      !      0/0. A reader forms the albedo as sum(up)/sum(down) over the period, which is what a      !
+      !      satellite product is.  --------------------------------------------------------------------!
+      forc%sw_in_vis = rf%incid_beam(RAD_VIS) + rf%incid_diff(RAD_VIS)
+      forc%sw_in_nir = rf%incid_beam(RAD_NIR) + rf%incid_diff(RAD_NIR)
+      forc%sw_up_vis = flux%albedo(RAD_VIS) * forc%sw_in_vis
+      forc%sw_up_nir = flux%albedo(RAD_NIR) * forc%sw_in_nir
+      forc%lw_up     = flux%albedo(RAD_LW)  * (rf%incid_beam(RAD_LW) + rf%incid_diff(RAD_LW))
    end subroutine apply_rt_forcing
 
    !----- Fill the aerodynamics env from the reference met + the patch's current CAS/ground. -!
@@ -1129,7 +1143,8 @@ contains
    !=======================================================================================!
    subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_in, sw_ground, lw_ground,       &
                                     ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
-                                    precip_total, ground_temp, resid_energy, resid_water)
+                                    precip_total, ground_temp, resid_energy, resid_water,           &
+                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip
       real(wp),               intent(in)    :: dt                        !< [s]        sample weight
@@ -1144,12 +1159,19 @@ contains
       real(wp),               intent(in)    :: precip_total              !< [kg/m2/s]  rain + snow
       real(wp),               intent(in)    :: ground_temp               !< [K]        top soil-node temperature
       real(wp),               intent(in)    :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
+      !----- Top-of-canopy radiative fluxes per band (#171). -----------------------------------!
+      real(wp),               intent(in)    :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
       pd%v(PD_SW_IN,        ip) = pd%v(PD_SW_IN,        ip) + sw_in                  * dt
       pd%v(PD_SW_GROUND,    ip) = pd%v(PD_SW_GROUND,    ip) + sw_ground              * dt
       pd%v(PD_LW_GROUND,    ip) = pd%v(PD_LW_GROUND,    ip) + lw_ground              * dt
+      pd%v(PD_SW_IN_VIS,    ip) = pd%v(PD_SW_IN_VIS,    ip) + sw_in_vis              * dt
+      pd%v(PD_SW_IN_NIR,    ip) = pd%v(PD_SW_IN_NIR,    ip) + sw_in_nir              * dt
+      pd%v(PD_SW_UP_VIS,    ip) = pd%v(PD_SW_UP_VIS,    ip) + sw_up_vis              * dt
+      pd%v(PD_SW_UP_NIR,    ip) = pd%v(PD_SW_UP_NIR,    ip) + sw_up_nir              * dt
+      pd%v(PD_LW_UP,        ip) = pd%v(PD_LW_UP,        ip) + lw_up                  * dt
       pd%v(PD_USTAR,        ip) = pd%v(PD_USTAR,        ip) + ustar                  * dt
       pd%v(PD_GGNET,        ip) = pd%v(PD_GGNET,        ip) + ggnet                  * dt
       pd%v(PD_ROUGH,        ip) = pd%v(PD_ROUGH,        ip) + rough                  * dt

@@ -175,8 +175,11 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   slow-loop ledger now values mortality per phase, which is the seam this needs.
 - **Disturbance area flux.** *Planned.* [#170](https://github.com/xiangtaoxu/MEDS/issues/170) `PD_DISTURB_AREA` is declared as an accumulator slot but
   has no writer and no registry row.
-- **Per-band albedo and up-welling shortwave and longwave.** *Planned.* [#171](https://github.com/xiangtaoxu/MEDS/issues/171) Needs a surface
-  radiative-flux record.
+- **A spectrally resolved surface radiative record.** *Candidate, follow-up to
+  [#171](https://github.com/xiangtaoxu/MEDS/issues/171).* Per-band incident and upwelling fluxes
+  shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
+  multispectral product (MODIS bands, Sentinel-2) needs finer bands, which is a change to the RT's
+  band structure rather than to its output.
 - **Unify the FAST tier's extraction path.** *Planned.* [#172](https://github.com/xiangtaoxu/MEDS/issues/172) `fast_sample_t`, `extract_fast_scalar`
   and `output_integrate_fast` were slated for deletion when the FAST tier moved onto the general
   registry, and were not deleted. The tier still has a bespoke staging path.
