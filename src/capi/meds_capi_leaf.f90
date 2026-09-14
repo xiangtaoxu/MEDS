@@ -36,11 +36,12 @@ module meds_capi_leaf
       integer(c_int) :: converged
    end type leaf_flux_c
 
-   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 35 doubles, same order). ---!
+   !----- C-interoperable mirror of leaf_photo_params_t (1 int + 37 doubles, same order). ---!
    type, bind(c) :: leaf_params_c
       integer(c_int) :: pathway
       real(c_double) :: vcmax25, jmax25, tpu25, rd25, kp25
-      real(c_double) :: g0, g1, d0, quantum_yield, theta_j, theta_cj, theta_ic
+      real(c_double) :: g0, g1, d0, quantum_yield, theta_j
+      real(c_double) :: theta_cj_c3, theta_ip_c3, theta_cj_c4, theta_ic_c4
       real(c_double) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
       real(c_double) :: kc25, ko25, gstar25
       real(c_double) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
@@ -83,18 +84,19 @@ contains
    ! and NO temperature scaling: the caller passes already-in-situ values -- vcmax, j (the      !
    ! electron-transport RATE, from meds_electron_transport_j), tpu, and the mole-fraction        !
    ! kinetics gstar/kc/ko/o2 [umol/mol]. Returns gross A and the Ac/Aj/Ap limitation rates      !
-   ! (net = gross - Rd is the caller's business). colim is a COLIM_* code; theta is the C3        !
-   ! co-limitation curvature (use COLIM_MIN for a sharp min(Ac,Aj,Ap) envelope).                 !
+   ! (net = gross - Rd is the caller's business). colim is a COLIM_* code; theta_cj and theta_ip  !
+   ! are the TWO C3 co-limitation curvatures -- Ac/Aj and then (Ac,Aj)/Ap (#118). Neither is      !
+   ! theta_j, the electron-transport hyperbola's curvature. Use COLIM_MIN for a sharp min().      !
    !---------------------------------------------------------------------------------------!
-   subroutine meds_assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta, dem_c)  &
-                                   bind(c, name="meds_assimilation_demand_c3")
-      real(c_double), value, intent(in) :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta
+   subroutine meds_assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta_cj,      &
+                                   theta_ip, dem_c) bind(c, name="meds_assimilation_demand_c3")
+      real(c_double), value, intent(in) :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta_cj, theta_ip
       integer(c_int), value, intent(in) :: colim
       type(leaf_c3_demand_c), intent(out) :: dem_c
       real(wp) :: a_gross, ac, aj, ap
       call assimilation_demand_c3(real(ci, wp), real(vcmax, wp), real(j, wp), real(tpu, wp),           &
                            real(gstar, wp), real(kc, wp), real(ko, wp), real(o2, wp),           &
-                           int(colim), real(theta, wp), a_gross, ac, aj, ap)
+                           int(colim), real(theta_cj, wp), real(theta_ip, wp), a_gross, ac, aj, ap)
       dem_c%A_gross = a_gross ; dem_c%Ac = ac ; dem_c%Aj = aj ; dem_c%Ap = ap
    end subroutine meds_assimilation_demand_c3
 
@@ -157,8 +159,10 @@ contains
       !      break for any existing caller. --------------------------------------------------------!
       p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &
              tpu25=p_c%tpu25, rd25=p_c%rd25, kp25=p_c%kp25, g0=p_c%g0, g1=p_c%g1, d0=p_c%d0,      &
-             quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j, theta_cj=p_c%theta_cj,         &
-             theta_ic=p_c%theta_ic, lambda25=p_c%lambda25, psi_open=p_c%psi_open,                 &
+             quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j,                                &
+             theta_cj_c3=p_c%theta_cj_c3, theta_ip_c3=p_c%theta_ip_c3,                            &
+             theta_cj_c4=p_c%theta_cj_c4, theta_ic_c4=p_c%theta_ic_c4,                            &
+             lambda25=p_c%lambda25, psi_open=p_c%psi_open,                                        &
              psi_close=p_c%psi_close, lambda_psi_exp=p_c%lambda_psi_exp,                          &
              sref_stomata=p_c%sref_stomata,                                                       &
              kc25=p_c%kc25, ko25=p_c%ko25, gstar25=p_c%gstar25, ea_kc=p_c%ea_kc,                  &

@@ -99,7 +99,9 @@ contains
       q%rd25    = 0.9_c_double   ; q%kp25   = 0.0_c_double
       q%g0      = 0.01_c_double  ; q%g1     = 4.0_c_double   ; q%d0    = 1500.0_c_double
       q%quantum_yield = 0.0_c_double
-      q%theta_j = 0.85_c_double  ; q%theta_cj = 0.80_c_double ; q%theta_ic = 0.95_c_double
+      q%theta_j     = 0.85_c_double
+      q%theta_cj_c3 = 0.98_c_double ; q%theta_ip_c3 = 0.95_c_double
+      q%theta_cj_c4 = 0.80_c_double ; q%theta_ic_c4 = 0.95_c_double
       q%lambda25 = 600.0_c_double
       q%psi_open = -0.5_c_double ; q%psi_close = -2.5_c_double ; q%lambda_psi_exp = 1.0_c_double
       q%sref_stomata = 2.0_c_double

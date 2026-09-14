@@ -530,6 +530,26 @@ contains
          end block
       end if
 
+      !----- Co-limitation and hyperbola curvatures must lie in (0, 1]. A curvature of zero makes the  !
+      !      smoothing quadratic degenerate and a value above one has no root in the physical branch,   !
+      !      so either produces a silently wrong assimilation rather than a crash. This guard exists    !
+      !      because #118's own fixture reached the solver with the two new C3 curvatures unset. -------!
+      block
+         integer(ik) :: pf
+         do pf = 1_ik, cfg%pft%n
+            if (cfg%pft%theta_j(pf)     <= 0.0_wp .or. cfg%pft%theta_j(pf)     > 1.0_wp)         &
+               error stop tag//'pft.theta_j outside (0, 1]'
+            if (cfg%pft%theta_cj_c3(pf) <= 0.0_wp .or. cfg%pft%theta_cj_c3(pf) > 1.0_wp)         &
+               error stop tag//'pft.theta_cj_c3 outside (0, 1]'
+            if (cfg%pft%theta_ip_c3(pf) <= 0.0_wp .or. cfg%pft%theta_ip_c3(pf) > 1.0_wp)         &
+               error stop tag//'pft.theta_ip_c3 outside (0, 1]'
+            if (cfg%pft%theta_cj_c4(pf) <= 0.0_wp .or. cfg%pft%theta_cj_c4(pf) > 1.0_wp)         &
+               error stop tag//'pft.theta_cj_c4 outside (0, 1]'
+            if (cfg%pft%theta_ic_c4(pf) <= 0.0_wp .or. cfg%pft%theta_ic_c4(pf) > 1.0_wp)         &
+               error stop tag//'pft.theta_ic_c4 outside (0, 1]'
+         end do
+      end block
+
       !----- Canopy optics. reflect + transmit is the single-scatter albedo: at or above 1 the      !
       !      two-stream conserves or creates energy in a scattering layer and the solve stops        !
       !      meaning anything, so it is a hard error rather than a clamp. Emissivity outside (0,1]   !

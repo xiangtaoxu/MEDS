@@ -64,15 +64,15 @@ contains
    !---------------------------------------------------------------------------------------!
    ! C3 demand: gross assimilation A_gross and the three raw limitation rates (Ac/Aj/Ap).   !
    !---------------------------------------------------------------------------------------!
-   pure subroutine assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim, theta,        &
-                                   A_gross, Ac, Aj, Ap)
-      real(wp),    intent(in)  :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta
+   pure subroutine assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, colim,               &
+                                   theta_cj, theta_ip, A_gross, Ac, Aj, Ap)
+      real(wp),    intent(in)  :: ci, vcmax, j, tpu, gstar, kc, ko, o2, theta_cj, theta_ip
       integer(ik), intent(in)  :: colim
       real(wp),    intent(out) :: A_gross, Ac, Aj, Ap
       Ac = vcmax * (ci - gstar) / (ci + kc * (1.0_wp + o2 / ko))
       Aj = j     * (ci - gstar) / (4.0_wp * ci + 8.0_wp * gstar)
       Ap = 3.0_wp * tpu
-      A_gross = combine_limits(Ac, Aj, Ap, colim, theta)
+      A_gross = combine_limits(Ac, Aj, Ap, colim, theta_cj, theta_ip)
    end subroutine assimilation_demand_c3
 
    !---------------------------------------------------------------------------------------!
@@ -100,14 +100,22 @@ contains
    ! Combine the three C3 limitation rates: sharp min, or two nested smoothing quadratics.  !
    ! (The smaller root of the co-limitation quadratic is the shared                         !
    ! meds_numerics%quadratic_smaller_root.)                                                 !
+   !                                                                                          !
+   ! TWO CURVATURES, ONE PER TRANSITION, and neither of them is theta_j (#118). A co-limitation !
+   ! curvature says how sharply the leaf switches between two LIMITING PROCESSES; theta_j is the !
+   ! curvature of the electron-transport hyperbola, a different quantity that happens to live in !
+   ! the same units. C3 used theta_j for both smoothings here while C4 already had its own pair. !
+   ! Because Ac and Aj sit close together at ambient CO2, the penalty landed exactly where the   !
+   ! model spends most of its time: ~29 % of assimilation against min(Ac,Aj,Ap), and the shortfall!
+   ! is nearly independent of Vcmax, so no measured Vcmax reproduced a measured rate.            !
    !---------------------------------------------------------------------------------------!
-   pure function combine_limits(Ac, Aj, Ap, colim, theta) result(A)
-      real(wp),    intent(in) :: Ac, Aj, Ap, theta
+   pure function combine_limits(Ac, Aj, Ap, colim, theta_cj, theta_ip) result(A)
+      real(wp),    intent(in) :: Ac, Aj, Ap, theta_cj, theta_ip
       integer(ik), intent(in) :: colim
       real(wp)                :: A, Ai
       if (colim == COLIM_QUADRATIC) then
-         Ai = quadratic_smaller_root(theta, Ac, Aj)      ! co-limit Rubisco & RuBP
-         A  = quadratic_smaller_root(theta, Ai, Ap)      ! co-limit with product (TPU)
+         Ai = quadratic_smaller_root(theta_cj, Ac, Aj)   ! co-limit Rubisco & RuBP
+         A  = quadratic_smaller_root(theta_ip, Ai, Ap)   ! co-limit with product (TPU)
       else
          A = min(Ac, Aj, Ap)
       end if
@@ -336,11 +344,12 @@ contains
          real(wp), intent(in)  :: ci
          real(wp), intent(out) :: Ag, Rac, Raj, Rap
          if (p%pathway == PATH_C4) then
-            call assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, p%theta_cj, p%theta_ic,   &
+            call assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, p%theta_cj_c4,             &
+                                 p%theta_ic_c4,                                                 &
                                  Ag, Rac, Raj, Rap)
          else
             call assimilation_demand_c3(ci, vcmax, jrate, tpu, gstar_ppm, kc_ppm, ko_ppm, o2_ppm,     &
-                                 colim, p%theta_j, Ag, Rac, Raj, Rap)
+                                 colim, p%theta_cj_c3, p%theta_ip_c3, Ag, Rac, Raj, Rap)
          end if
       end subroutine eval_assimilation_demand
 

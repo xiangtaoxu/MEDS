@@ -16,6 +16,53 @@ before and after.
 
 ### Added
 
+- **C3 gets its own co-limitation curvatures** (#118): `theta_cj_c3` (default 0.98, the
+  $A_c$/$A_j$ transition) and `theta_ip_c3` (0.95, the transition with $A_p$). Both are new
+  **required** keys in the `[pft]` table. C3 previously passed `theta_j` — the curvature of the
+  electron-transport hyperbola — into both of its smoothings, while C4 already had a dedicated pair.
+  A co-limitation curvature and a light-saturation curvature share units and a functional form and
+  nothing else; CLM and FATES put the C3 $A_c$/$A_j$ curvature near 0.98 against the 0.7–0.9 that
+  fits the $J$ hyperbola.
+
+  **At the leaf**, PFT-1 kinetics, $C_i = 280$ µmol mol⁻¹, saturating light
+  ($A_c = 14.40$, $A_j = 17.53$, $A_p = 45.0$, so $\min = 14.40$):
+
+  | curvatures | after $A_c$/$A_j$ | after $A_p$ | total vs min() |
+  |---|---|---|---|
+  | `theta_j` = 0.85 (before) | 11.31 (−21.4 %) | 10.80 (−4.5 %) | **−25.0 %** |
+  | 0.98 / 0.95 (now) | 13.49 (−6.3 %) | 13.22 (−2.0 %) | **−8.2 %** |
+
+  i.e. **+22.4 % gross assimilation** at that point. The shortfall was nearly independent of
+  $V_{cmax}$ (30, 31, 31, 32 % at $V_{cmax,25}$ = 60, 90, 120, 150), so it was a systematic offset,
+  not a regime effect — no measured $V_{cmax}$ reproduced a measured rate.
+
+  **In the coupled model**, Ithaca, one year from a common spun-up stand with **demography frozen**,
+  so stand structure cannot diverge and the difference is physiology:
+
+  | | `theta_j` | `theta_*_c3` | change |
+  |---|---|---|---|
+  | GPP | 0.07633 | 0.09039 | **+18.4 %** |
+  | NPP | 0.06496 | 0.07869 | **+21.1 %** |
+  | NEE | −1.4888 | −1.8274 | −22.8 % |
+  | LAI (allocation still runs) | 0.9796 | 1.0128 | +3.4 % |
+
+  With demography **live**, 10 years from cold start, the same change reads GPP +66 % and AGB +89 %
+  — that is the *compounded* figure, because a persistent rate increase accelerates stand
+  development, and it is not an equilibrium sensitivity. The controlled number above is the one to
+  quote.
+
+  **The $V_{cmax,25}$ presets were re-examined and deliberately left alone.** The concern was that
+  they might have been tuned against the over-smoothing, in which case the compensation would have
+  been hidden inside a parameter named for a different process. They were not: `vcmax25 = [60, 45,
+  40]` entered in the commit that first added the leaf module and has never been revised, the values
+  sit mid-range for their PFT descriptions, and the only other GPP-facing knob (`gpp_ref`) is the
+  stub used when the fast loop is off. So this is a correction, not the unwinding of a calibration,
+  and the presets should not be lowered to absorb it.
+
+  `leaf_photo_params_t%theta_cj`/`theta_ic` are renamed `theta_cj_c4`/`theta_ic_c4` so the pathway is
+  visible at the point of use — which is the whole defect — and the C API mirror, `meds/plant/_ffi.py`
+  and `LeafParams` follow. `meds_assimilation_demand_c3` now takes two curvatures instead of one.
+
 - **A Dirichlet bottom thermal boundary for the soil column** (#145), selected by
   `[energy].bottom_bc = "dirichlet"` with `deep_temp` [K] and `deep_depth` [m]. The bottom node
   conducts to a plane held at `deep_temp`, a distance `deep_depth - |z_node(n)|` below it. The
@@ -66,6 +113,14 @@ before and after.
   deep-soil bias — the very thing this boundary condition removes.
 
 ### Fixed
+
+- **The PFT-parameter CSV dump lost its last two columns and printed a bit pattern** (#118). The
+  `write_pft_params_csv` format had 44 item slots against a 46-item output list. A Fortran format
+  shorter than its list does not fail — it reverts to the last repeat group and keeps going — so an
+  integer edit descriptor silently received a real (`fineroot_turnover_rate` printed as
+  `4605380978949069210`) and `f_labile_stem` / `struct_lignin_frac` vanished. Introduced by adding
+  the two curvature columns in this same release and caught by a new column-count assertion in
+  `test_pft_optics_config`, which is verified to fail on the broken format.
 
 - **The forcing file and the config are now checked against each other** (#185). Five items, decided
   individually:

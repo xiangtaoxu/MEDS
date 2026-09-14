@@ -75,6 +75,38 @@ The three rates are combined into $A_g$ either as a sharp $\min(A_c,A_j,A_p)$ (`
 two nested smoothing quadratics (`COLIM_QUADRATIC`, the same `quadratic_smaller_root` used for $J$).
 Then $A = A_g - R_d$.
 
+### The co-limitation curvatures are not $`\theta_J`$
+
+Each pathway has **its own pair** of co-limitation curvatures, and neither is `theta_j`:
+
+| | first transition | second transition |
+|---|---|---|
+| C3 | `theta_cj_c3` — $A_c$ vs $A_j$ | `theta_ip_c3` — $\min(A_c,A_j)$ vs $A_p$ |
+| C4 | `theta_cj_c4` — $A_c$ vs $A_j$ | `theta_ic_c4` — $\min(A_c,A_j)$ vs $A_p$ |
+
+A co-limitation curvature says **how sharply the leaf switches between two limiting processes**;
+`theta_j` is the curvature of the electron-transport hyperbola, describing light saturation of $J$.
+They share units and a functional form, and nothing else. Implementations generally put the
+co-limitation curvature much closer to 1 (CLM and FATES use ~0.98 for the C3 $A_c/A_j$ transition)
+than the 0.7–0.9 that fits the $J$ hyperbola.
+
+C3 used to pass `theta_j` into **both** of its smoothings while C4 already had its own pair. Because
+$A_c$ and $A_j$ sit close together at ambient CO₂, that penalty landed exactly where the model spends
+most of its time. Measured at PFT-1 kinetics, $C_i = 280$ µmol mol⁻¹, saturating light:
+
+| curvature used | $A_g$ | vs $\min(A_c,A_j,A_p) = 14.40$ |
+|---|---|---|
+| `theta_j` = 0.85 (before) | 10.80 | **−25.0 %** |
+| `theta_cj_c3` = 0.98, `theta_ip_c3` = 0.95 | 13.22 | −8.2 % |
+
+The shortfall was nearly independent of $V_{cmax}$ — 30, 31, 31, 32 % at $V_{cmax,25}$ = 60, 90, 120,
+150 — so it was a systematic offset rather than a regime effect, and **no measured $V_{cmax}$
+reproduced a measured assimilation rate**. The shipped $V_{cmax,25}$ presets were checked against
+this and left alone: they were set when the leaf module first landed and never revised, they sit
+mid-range for their PFT descriptions, and the only other GPP-facing knob (`gpp_ref`) is the stub used
+when the fast loop is off. The smoothing loss was therefore never compensated anywhere — so removing
+it is a correction, not the unwinding of a hidden calibration.
+
 Kernels: `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`, `combine_limits`.
 
 ---

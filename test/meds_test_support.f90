@@ -115,6 +115,8 @@ contains
          p%stomatal_d0      = [ 1500.0_wp, 1500.0_wp, 1500.0_wp ]
          p%quantum_yield_c4 = [ 0.0_wp, 0.0_wp, 0.04_wp ]
          p%theta_j          = [ 0.85_wp, 0.90_wp, 0.85_wp ]
+         p%theta_cj_c3      = [ 0.98_wp, 0.98_wp, 0.98_wp ]
+         p%theta_ip_c3      = [ 0.95_wp, 0.95_wp, 0.95_wp ]
          p%theta_cj_c4      = [ 0.80_wp, 0.80_wp, 0.80_wp ]
          p%theta_ic_c4      = [ 0.95_wp, 0.95_wp, 0.95_wp ]
          p%katul_lambda25   = [ 600.0_wp, 800.0_wp, 350.0_wp ]

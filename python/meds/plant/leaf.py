@@ -83,9 +83,11 @@ class Params:
     g1: float = 4.0                # stomatal slope (units depend on the model)
     d0: float = 1500.0             # [Pa]         Leuning VPD sensitivity
     quantum_yield: float = 0.0     # [mol CO2/mol photon]  C4 light slope (0 for C3)
-    theta_j: float = 0.85          # [--]  C3 electron-transport curvature
-    theta_cj: float = 0.80         # [--]  C4 co-limitation curvature 1
-    theta_ic: float = 0.95         # [--]  C4 co-limitation curvature 2
+    theta_j: float = 0.85          # [--]  C3 electron-transport curvature (NOT a co-limitation one)
+    theta_cj_c3: float = 0.98      # [--]  C3 Ac/Aj co-limitation curvature
+    theta_ip_c3: float = 0.95      # [--]  C3 (Ac,Aj)/Ap co-limitation curvature
+    theta_cj_c4: float = 0.80      # [--]  C4 co-limitation curvature 1
+    theta_ic_c4: float = 0.95      # [--]  C4 co-limitation curvature 2
     lambda25: float = 600.0        # [umol CO2/mol H2O]  Katul marginal water-use efficiency
     psi_open: float = -0.5         # [MPa]  leaf potential at beta = 1 (no water stress)
     psi_close: float = -2.5        # [MPa]  leaf potential at beta = 0 (full water stress)
@@ -113,7 +115,7 @@ class Params:
 
 #----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
 _C4_DEFAULTS = dict(pathway=Pathway.C4, vcmax25=40.0, jmax25=160.0, rd25=1.0, kp25=0.7,
-                    g0=0.04, g1=1.6, quantum_yield=0.04, theta_cj=0.80, theta_ic=0.95,
+                    g0=0.04, g1=1.6, quantum_yield=0.04, theta_cj_c4=0.80, theta_ic_c4=0.95,
                     lambda25=350.0, psi_close=-2.0)
 
 
@@ -183,7 +185,7 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
 
 
 def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
-                    colimitation=Colimitation.MINIMUM, theta=0.85) -> C3Rates:
+                    colimitation=Colimitation.MINIMUM, theta_cj=0.98, theta_ip=0.95) -> C3Rates:
     """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling).
 
     The caller passes already-in-situ values: vcmax [umol/m2/s], j (the electron-transport RATE, from
@@ -192,10 +194,15 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     subtract Rd yourself for net assimilation. Use colimitation=Colimitation.MINIMUM for a sharp
     min(Ac,Aj,Ap) envelope (the black "limiting rate" curve), or QUADRATIC for the smoothed version.
 
+    theta_cj and theta_ip are the two CO-LIMITATION curvatures -- Ac/Aj, then (Ac,Aj)/Ap. They are not
+    theta_j, the electron-transport hyperbola's curvature; passing theta_j here is what issue #118 was
+    about, and at 0.85 it costs about 29% of assimilation against the sharp min().
+
     This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
     A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.
     """
-    result = _ffi.assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation), theta)
+    result = _ffi.assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation),
+                                  theta_cj, theta_ip)
     return C3Rates(**result)
 
 

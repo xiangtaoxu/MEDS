@@ -968,6 +968,8 @@ contains
       call req_pa(tp, 'pft.stomatal_d0',      cfg%pft%stomatal_d0,      npft, miss)
       call req_pa(tp, 'pft.quantum_yield_c4', cfg%pft%quantum_yield_c4, npft, miss)
       call req_pa(tp, 'pft.theta_j',          cfg%pft%theta_j,          npft, miss)
+      call req_pa(tp, 'pft.theta_cj_c3',      cfg%pft%theta_cj_c3,      npft, miss)
+      call req_pa(tp, 'pft.theta_ip_c3',      cfg%pft%theta_ip_c3,      npft, miss)
       call req_pa(tp, 'pft.theta_cj_c4',      cfg%pft%theta_cj_c4,      npft, miss)
       call req_pa(tp, 'pft.theta_ic_c4',      cfg%pft%theta_ic_c4,      npft, miss)
       call req_pa(tp, 'pft.katul_lambda25',   cfg%pft%katul_lambda25,   npft, miss)
@@ -1065,21 +1067,27 @@ contains
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_reproduction_height,'                                              &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
-           //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c4,theta_ic_c4,'   &
+           //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c3,theta_ip_c3,'   &
+           //'theta_cj_c4,theta_ic_c4,'                                                               &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,17(",",es15.8),9(",",es15.8),",",i0,3(",",es15.8))') &
+            !----- 46 ITEMS: i0 + 9 + i0 + 2 + i0 + 19 + 9 + i0 + 3. A format SHORTER than the value  !
+            !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
+            !      integer slot silently receives a real and prints its bit pattern, and the trailing !
+            !      columns vanish. Keep the count here in step with both the header and the list. ---!
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,19(",",es15.8),9(",",es15.8),",",i0,3(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
                  p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
-                 p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c4(pf), p%theta_ic_c4(pf),           &
+                 p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c3(pf), p%theta_ip_c3(pf),           &
+                 p%theta_cj_c4(pf), p%theta_ic_c4(pf),                                                  &
                  p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf),                                  &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
