@@ -365,6 +365,11 @@ contains
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
                                         frozen%roots%root_share, qloss_total, qface_own,                        &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
+      !----- Record the faces the ENERGY equation was just given, so the stepper can check them        !
+      !      against the theta it actually commits (#189). Taken from eforc -- the assembled forcing   !
+      !      -- rather than from qface_own, so that swapping the argument above to some other array    !
+      !      changes this too and the check keeps its meaning instead of becoming a tautology. --------!
+      f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
       call soil_energy_time_deriv(soil_e, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, f%dedt)
 
       !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !

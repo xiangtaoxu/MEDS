@@ -81,6 +81,10 @@ module meds_driver
       type(fast_context_t)   :: fast_ctx        !< built only if fast_biophysics_on
       type(met_driver_t)     :: met_drv         !< opened only if forcing_on
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
+      !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
+      !      because it answers the question they cannot: not "did the column conserve" but "did the  !
+      !      heat move with the water". ---------------------------------------------------------------!
+      type(budget_t)         :: face_budget
       type(slow_ledger_t)    :: slow_ledger                   !< site store across each SLOW step
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik, fast_step_total = 0_ik
@@ -143,6 +147,7 @@ contains
       run%worst_rh_seam_npatch = 0_ik
       run%energy_budget = budget_t()
       run%water_budget  = budget_t()
+      run%face_budget   = budget_t()
       run%slow_ledger   = slow_ledger_t()
 
       !----- 1. Read the run configuration. --------------------------------------------------!
@@ -324,12 +329,13 @@ contains
                                met_drv=run%met_drv, step_start=run%prev, mgr=run%mgr,            &
                                run_energy_budget=run%energy_budget,                              &
                                run_water_budget=run%water_budget,                                &
+                               run_face_budget=run%face_budget,                                  &
                                slow_ledger=run%slow_ledger, seam=run%seam)
       else
          call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
                                step_start=run%prev, run_energy_budget=run%energy_budget,         &
-                               run_water_budget=run%water_budget, slow_ledger=run%slow_ledger,   &
-                               seam=run%seam)
+                               run_water_budget=run%water_budget, run_face_budget=run%face_budget, &
+                               slow_ledger=run%slow_ledger, seam=run%seam)
       end if
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
@@ -439,6 +445,14 @@ contains
       if (run%cfg%fast_biophysics_on .and. run%verbose) then
          call budget_report(run%energy_budget, 'whole_energy', 'J/m2',  'W/m2')
          call budget_report(run%water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
+         !----- The VERTICAL check (#189), reported in the same place and spirit as the soil-carbon   !
+         !      seam below: a number that should be machine-zero, printed whether or not it breached. !
+         !      A nonzero value means soil enthalpy was advected on a mass flux the committed water    !
+         !      never moved -- a misplacement between LAYERS, which both ledgers above sum away.       !
+         write(*,'(a,es12.3,a,es12.3,a,i0)') ' faces[soil_layer_mass]  worst = ',                  &
+               run%face_budget%worst, ' kg/m2   mean |resid| = ',                                  &
+               run%face_budget%abs_sum / max(real(run%face_budget%n_check, wp), 1.0_wp),           &
+               ' kg/m2   checks = ', run%face_budget%n_check
          if (run%energy_budget%n_fail + run%water_budget%n_fail > 0_ik)                          &
             write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail, &
                ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'

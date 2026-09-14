@@ -267,7 +267,8 @@ contains
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
    subroutine fast_dynamics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
-                            n_budget_fail, mgr, run_energy_budget, run_water_budget)
+                            n_budget_fail, mgr, run_energy_budget, run_water_budget,             &
+                            run_face_budget)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
@@ -281,6 +282,9 @@ contains
       !      the whole run can report the SIGNED cumulative residual (a one-signed bias below the     !
       !      per-step tolerance is invisible to worst_* and n_budget_fail). -------------------------!
       type(budget_t), optional, intent(inout) :: run_energy_budget, run_water_budget
+      !----- The per-layer face-closure residual (#189), folded the same way. It is the only one of   !
+      !      the three that can see a purely VERTICAL misplacement. ----------------------------------!
+      type(budget_t), optional, intent(inout) :: run_face_budget
 
       !----- §7 C1: the n_fast_per_slow met samples + their sample TIMES, precomputed ONCE per slow  !
       !      step. `t_sub` depends only on `isub`, so met_advance (a FILE READER -- it may reload a  !
@@ -296,7 +300,8 @@ contains
       real(wp),    allocatable :: red_site(:,:,:)                  !< (N_RED, sub-step, patch)
       real(wp),    allocatable :: red_worst_energy(:), red_worst_water(:)   !< (patch); max-folded
       type(budget_t), allocatable :: red_budget_energy(:), red_budget_water(:) !< (patch); area-merged
-      type(budget_t) :: site_energy_budget, site_water_budget
+      type(budget_t), allocatable :: red_budget_face(:)                        !< (patch); area-merged
+      type(budget_t) :: site_energy_budget, site_water_budget, site_face_budget
       integer(ik), allocatable :: red_nfail(:)                     !< (patch) budget-failure counts
       type(fast_sample_t), allocatable :: red_fast(:,:)            !< (sub-step, patch) FAST-tier staging
       real(wp),    allocatable :: red_fast_soil_temp(:,:,:)        !< (layer, sub-step, patch)
@@ -452,6 +457,7 @@ contains
       !      is assigned) per call, so this adds O(1) allocations per slow step, not O(n_patch). -----!
       allocate(red_site(N_RED, nsub, max(npatch,1_ik)))
       allocate(red_budget_energy(max(npatch,1_ik)), red_budget_water(max(npatch,1_ik)))
+      allocate(red_budget_face(max(npatch,1_ik)))
       allocate(red_worst_energy(max(npatch,1_ik)), red_worst_water(max(npatch,1_ik)),               &
                red_nfail(max(npatch,1_ik)))
       if (do_fast) then
@@ -803,6 +809,7 @@ contains
          red_worst_water(ip)  = budget%whole_water%worst
          red_budget_energy(ip) = budget%whole_energy
          red_budget_water(ip)  = budget%whole_water
+         red_budget_face(ip)   = budget%soil_face_mass
          red_nfail(ip)        = budget%whole_energy%n_fail + budget%whole_water%n_fail
          end associate
       end do
@@ -881,14 +888,16 @@ contains
          do ip = 1_ik, npatch ; worst_water = max(worst_water, red_worst_water(ip)) ; end do
       end if
       if (present(n_budget_fail)) n_budget_fail = sum(red_nfail(1:npatch))
-      if (present(run_energy_budget) .or. present(run_water_budget)) then
-         site_energy_budget = budget_t() ; site_water_budget = budget_t()
+      if (present(run_energy_budget) .or. present(run_water_budget) .or. present(run_face_budget)) then
+         site_energy_budget = budget_t() ; site_water_budget = budget_t() ; site_face_budget = budget_t()
          do ip = 1_ik, npatch
             call budget_merge(site_energy_budget, red_budget_energy(ip), site%patch%area(ip))
             call budget_merge(site_water_budget,  red_budget_water(ip),  site%patch%area(ip))
+            call budget_merge(site_face_budget,   red_budget_face(ip),   site%patch%area(ip))
          end do
          if (present(run_energy_budget)) call budget_merge(run_energy_budget, site_energy_budget, 1.0_wp)
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
+         if (present(run_face_budget))   call budget_merge(run_face_budget,   site_face_budget,   1.0_wp)
       end if
       if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics

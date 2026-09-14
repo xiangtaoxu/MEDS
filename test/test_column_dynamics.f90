@@ -275,6 +275,22 @@ program test_column_dynamics
            real(budget%whole_water%n_fail, wp))
    call check_true('SATURATED: whole-column energy still closes', budget%whole_energy%n_fail == 0_ik,                 &
            real(budget%whole_energy%n_fail, wp))
+   !----- The VERTICAL check the two above cannot make (#189): the mass the soil-ENERGY equation was    !
+   !      charged for, minus the mass the committed theta actually moved, per interior layer. Both      !
+   !      budgets above stayed at 0 fails through every historical instance of that error, including    !
+   !      one whose soil surface reached 345 K, because a misplacement between LAYERS still sums        !
+   !      correctly against the boundary.                                                               !
+   !                                                                                                    !
+   !      This run is on the ARK path, where the scratch solve's theta is committed VERBATIM -- so its   !
+   !      faces genuinely ARE this column's own and the invariant holds by construction. What is        !
+   !      asserted here is that construction: the scratch solve's own per-layer face closure, at the    !
+   !      saturated corner where its clip and runoff paths are live. The RK45 statement of the same     !
+   !      invariant -- the one that can actually be violated, since RK45 integrates its own theta while !
+   !      a frozen scratch sits there offering its faces -- is asserted in test_column_rk45. ----------!
+   call check_true('SATURATED: per-layer face closure holds (no borrowed advective face)',                            &
+           budget%soil_face_mass%worst < 1.0e-8_wp, budget%soil_face_mass%worst)
+   call check_true('SATURATED: the face check actually ran', budget%soil_face_mass%n_check > 0_ik,                    &
+           real(budget%soil_face_mass%n_check, wp))
    call check_true('SATURATED: soil surface temp stays physical through clip + runoff',                               &
            ss_min > 250.0_wp .and. ss_max < 340.0_wp, ss_max)
    call test_report('test_column_dynamics')

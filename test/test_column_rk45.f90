@@ -228,6 +228,14 @@ contains
               real(budget%whole_energy%n_fail, wp))
       call check_true('RK45 PROG-WOOD: whole_water closes', budget%whole_water%n_fail == 0_ik,                        &
               real(budget%whole_water%n_fail, wp))
+      !----- #189: RK45 is the path all three historical instances of the borrowed-face defect lived    !
+      !      on, because it integrates its OWN theta while a frozen scratch solve sits right there      !
+      !      offering its faces. The per-layer residual is measured at RK45's own commit, on the raw    !
+      !      b-weighted state before the clip/floor guards edit it. -------------------------------!
+      call check_true('RK45 PROG-WOOD: per-layer face closure holds', budget%soil_face_mass%worst < 1.0e-8_wp, &
+              budget%soil_face_mass%worst)
+      call check_true('RK45 PROG-WOOD: the face check actually ran', budget%soil_face_mass%n_check > 0_ik, &
+              real(budget%soil_face_mass%n_check, wp))
       call check_true('RK45 PROG-WOOD: wood temperature lags the CAS', dmax_lag > 1.0e-3_wp, dmax_lag)
       call check_true('RK45 PROG-WOOD: wood temperature physical',                                                    &
               biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp, biophys%wood_temp(1))

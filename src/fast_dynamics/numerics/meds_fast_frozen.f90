@@ -581,6 +581,17 @@ contains
       !      is the temperature the correction has to be neutral against -- and it is the only place    !
       !      the per-layer soil temperature is in scope. ---------------------------------------------!
       frozen%hydrology%w_flux_frozen(1:nsl) = hflux%w_flux(1:nsl)
+      !----- PER-LAYER FACE CLOSURE (#189). advance_soil_water_column already measures, per layer,    !
+      !      |the mass that actually moved - the mass its own faces were charged for| -- and until    !
+      !      now published it to a field nothing read. Record it here, where the budget is in scope.  !
+      !      On the ARK path this IS the committed-path check: theta1 below is committed verbatim and !
+      !      w_flux_frozen is the same solve's face flux, so consistency here is consistency of what  !
+      !      the column actually keeps. RK45 integrates its own theta and records its own residual at !
+      !      its commit. ----------------------------------------------------------------------------!
+      budget%soil_face_mass%resid   = hflux%face_mass_resid
+      budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(hflux%face_mass_resid))
+      budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(hflux%face_mass_resid)
+      budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
       do k = 1_ik, nsl
          frozen%hydrology%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
          frozen%hydrology%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))
