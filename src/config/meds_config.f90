@@ -308,9 +308,9 @@ module meds_config
       character(len=256) :: init_restart_file, init_census_file
 
       !----- netCDF output. ---------------------------------------------------------------!
-      character(len=256) :: io_output_dir, io_output_prefix
-      logical     :: io_write_state
-      integer(ik) :: io_state_interval_years
+      character(len=256) :: state_output_dir, state_output_prefix
+      logical     :: state_write_state
+      integer(ik) :: state_interval_years_cfg
 
       !----- Parameter-config controls. ---------------------------------------------------!
       character(len=256) :: pft_config        !< path to the PFT config file (named in the main file)

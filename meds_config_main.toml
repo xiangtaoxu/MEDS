@@ -226,14 +226,14 @@ restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode 
 census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (init_mode = 1)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 
-[io]
+[state]
 # The STATE (restart) stream + the run's PFT provenance table. The legacy annual DIAGNOSTIC
 # snapshot (-D-output.nc) was RETIRED at v0.1: the [output] block below does everything it did,
 # from a registry rather than a hard-coded list, and the two collided on the `-D-` prefix.
 output_dir            = "."             # directory for the restart files + _pft_parameters.csv
 output_prefix         = "meds_output"   # filename stem for -S-<ts>.nc and _pft_parameters.csv
 write_state           = false           # write state (restart) checkpoints
-state_interval_years  = 50              # write a checkpoint every N years (and the final year)
+interval_years  = 50              # write a checkpoint every N years (and the final year)
 
 # ------------------------------------------------------------------------------------------
 # DIAGNOSTIC output. Writes TIME-AVERAGED per-stream netCDF files

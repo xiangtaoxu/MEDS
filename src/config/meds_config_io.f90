@@ -98,6 +98,55 @@ contains
       if (toml_has(t, key)) then ; out = toml_logical(t, key, .false.) ; else ; call note_missing(m, key) ; end if
    end subroutine req_l
 
+   !----- RENAMED-KEY readers (#173): take the new spelling, else the old one with the caller's   !
+   !      `seen` flag set so ONE warning is printed for the block rather than one per key. A key    !
+   !      missing under BOTH spellings is reported against the NEW name, so the error message tells !
+   !      the user what to write rather than what to stop writing.  ---------------------------------!
+   subroutine req_s_renamed(t, key_new, key_old, out, m, seen_old)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key_new, key_old
+      character(len=*),   intent(out)   :: out
+      type(keymiss_t),    intent(inout) :: m
+      logical,            intent(inout) :: seen_old
+      if (toml_has(t, key_new)) then
+         out = toml_string(t, key_new, '')
+      else if (toml_has(t, key_old)) then
+         out = toml_string(t, key_old, '') ; seen_old = .true.
+      else
+         out = '' ; call note_missing(m, key_new)
+      end if
+   end subroutine req_s_renamed
+
+   subroutine req_l_renamed(t, key_new, key_old, out, m, seen_old)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key_new, key_old
+      logical,            intent(out)   :: out
+      type(keymiss_t),    intent(inout) :: m
+      logical,            intent(inout) :: seen_old
+      if (toml_has(t, key_new)) then
+         out = toml_logical(t, key_new, .false.)
+      else if (toml_has(t, key_old)) then
+         out = toml_logical(t, key_old, .false.) ; seen_old = .true.
+      else
+         out = .false. ; call note_missing(m, key_new)
+      end if
+   end subroutine req_l_renamed
+
+   subroutine req_i_renamed(t, key_new, key_old, out, m, seen_old)
+      type(toml_table_t), intent(in)    :: t
+      character(len=*),   intent(in)    :: key_new, key_old
+      integer(ik),        intent(out)   :: out
+      type(keymiss_t),    intent(inout) :: m
+      logical,            intent(inout) :: seen_old
+      if (toml_has(t, key_new)) then
+         out = toml_int(t, key_new, 0_ik)
+      else if (toml_has(t, key_old)) then
+         out = toml_int(t, key_old, 0_ik) ; seen_old = .true.
+      else
+         out = 0_ik ; call note_missing(m, key_new)
+      end if
+   end subroutine req_i_renamed
+
    subroutine req_s(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
       character(len=*),   intent(in)  :: key
@@ -751,9 +800,15 @@ contains
       type(toml_table_t) :: tm, tp
       type(keymiss_t)    :: miss
       logical            :: found
+      logical            :: io_seen                  !< #173: the deprecated [io] block was used
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
       character(len=64)  :: integrator_str
+
+      !----- Initialised in the BODY, not the declaration: an initialiser would give it the SAVE  !
+      !      attribute, so a second load_meds_config call in one process would inherit the first    !
+      !      call's value. -------------------------------------------------------------------------!
+      io_seen = .false.
 
       !----- MAIN file. -------------------------------------------------------------------!
       call toml_parse_file(path, tm, found)
@@ -914,10 +969,22 @@ contains
       call req_s(tm, 'init.census_file',   cfg%init_census_file,  miss)
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
 
-      call req_s(tm, 'io.output_dir',            cfg%io_output_dir,            miss)
-      call req_s(tm, 'io.output_prefix',         cfg%io_output_prefix,         miss)
-      call req_l(tm, 'io.write_state',           cfg%io_write_state,           miss)
-      call req_i(tm, 'io.state_interval_years',  cfg%io_state_interval_years,  miss)
+      !----- [state], renamed from [io] (#173). The legacy diagnostic writer that gave the block its !
+      !      name was retired at v0.1; what is left is the restart stream, so "io" now names the one   !
+      !      output path it does NOT cover -- the [output] subsystem writes every diagnostic.          !
+      !      DEPRECATION PATH, not a straight edit: [io] still loads, with one warning naming the      !
+      !      keys, because this is a user-visible rename and a config that silently stopped being read !
+      !      would fall back to whatever `miss` reports rather than to the values the user wrote.       !
+      call req_s_renamed(tm, 'state.output_dir',   'io.output_dir',   cfg%state_output_dir,   miss, io_seen)
+      call req_s_renamed(tm, 'state.output_prefix','io.output_prefix',cfg%state_output_prefix,miss, io_seen)
+      call req_l_renamed(tm, 'state.write_state',  'io.write_state',  cfg%state_write_state,  miss, io_seen)
+      call req_i_renamed(tm, 'state.interval_years','io.state_interval_years',                      &
+                             cfg%state_interval_years_cfg, miss, io_seen)
+      if (io_seen) then
+         write(*,'(a)') ' config: DEPRECATED -- the [io] block is now [state]. Rename the block and'
+         write(*,'(a)') '         io.state_interval_years -> state.interval_years. [io] still loads'
+         write(*,'(a)') '         in v0.2.x and will be removed in a later release.'
+      end if
 
       call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
 

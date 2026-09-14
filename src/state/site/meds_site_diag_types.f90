@@ -18,7 +18,7 @@
 !     reset cadence is invented.                                                                          !
 !                                                                                          !
 !  3. TRANSIENT: never written to the restart file. A checkpoint is prognostic state at an instant;       !
-!     a time-averaged diagnostic is not state. This is what keeps the change out of io_write_state.       !
+!     a time-averaged diagnostic is not state. This is what keeps the change out of state_write_state.       !
 !                                                                                          !
 !  4. THEY STILL RIDE THE LOCKSTEP. The reset is per slow step, but restructuring (fuse / split /         !
 !     cull / recruit / disturb) happens INSIDE the slow step, after the fast loop has filled these        !

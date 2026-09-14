@@ -180,8 +180,9 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 - **Unify the FAST tier's extraction path.** *Planned.* [#172](https://github.com/xiangtaoxu/MEDS/issues/172) `fast_sample_t`, `extract_fast_scalar`
   and `output_integrate_fast` were slated for deletion when the FAST tier moved onto the general
   registry, and were not deleted. The tier still has a bespoke staging path.
-- **Rename `[io]` to `[state]`.** *Candidate.* [#173](https://github.com/xiangtaoxu/MEDS/issues/173) The block now carries only restart settings; the
-  diagnostic writer it was named for is gone. Several comments still say "legacy `[io]` path".
+- **Remove the `[io]` deprecation shim.** *Scheduled, post-v0.2.x.* The block was renamed to
+  `[state]` in v0.2.0 (#173) with `[io]` still loading behind one warning. Drop the
+  `req_*_renamed` readers and the warning once users have had a minor release to migrate.
 - **Variance output** (`AGG_MEANSQ`). *Candidate.* [#174](https://github.com/xiangtaoxu/MEDS/issues/174) The aggregation code exists and has no
   consumer; it needs a companion output slot.
 - **An evaluation notebook** against the Ithaca test bed, and a PFT / size-class plotter in

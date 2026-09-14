@@ -53,7 +53,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[hydraulics]` | Plant water transport. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[io]` | Output directory and prefix, and restart checkpointing. |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Renamed from `[io]`; the old name still loads with a warning.)* |
 | `[options]` | `override_derived` and other run switches. |
 
 **`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
@@ -115,21 +115,28 @@ falls back to near-bare ground with a warning.
 
 ## Output
 
-Two streams, both under `[io]` with the stem `<output_dir>/<output_prefix>`:
+Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
 
 - **Diagnostic timeseries** — the `[output]` subsystem. Around 208 variables across 8 groups and
   7 axes, each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
   `meds_main --dump-io-config` to generate a file listing every available variable name; the
   override mechanism always worked, what was missing was any way to learn what exists.
   See [`science/diagnostics.md`](science/diagnostics.md).
-- **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, enabled with `[io].write_state`. The
-  instantaneous prognostic state only, no diagnostics, written every `state_interval_years` and at
+- **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, enabled with `[state].write_state`. The
+  instantaneous prognostic state only, no diagnostics, written every `[state].interval_years` and at
   run end. **The timestamp is the simulated date**, so pointing `[init].restart_file` at one
   resumes from exactly that date.
 
 A checkpoint is raw prognostic state at an instant and a diagnostic record is a time average; the
 two streams are deliberately separate because conflating them is how a restart silently starts from
 a mean.
+
+> **`[io]` was renamed to `[state]`.** The block was named for a legacy diagnostic writer that was
+> retired at v0.1; what remained was the restart stream, so `io` named the one output path it did
+> *not* cover. The old spelling still loads in v0.2.x and prints one deprecation warning naming the
+> keys; `io.state_interval_years` becomes `state.interval_years` (the `state_` prefix was stuttering
+> once the block itself was called `state`). It will be removed in a later release — a 0.x minor is
+> the cheapest moment a rename like this will ever have.
 
 ## The forcing file
 
