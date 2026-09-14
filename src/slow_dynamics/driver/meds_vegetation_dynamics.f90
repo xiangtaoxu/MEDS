@@ -41,7 +41,8 @@ module meds_vegetation_dynamics
    use meds_biogeochem_types, only : litter_input_t
    use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
-                                        CS_NPP_REPRO, CS_GROWTH_RESP, cohort_diag_grow,       &
+                                        CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP,         &
+                                        cohort_diag_grow,                                      &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
                                         PD_RECRUIT_NPLANT,                                     &
                                         cohort_diag_reset
@@ -496,6 +497,7 @@ contains
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
+      real(wp)    :: storage_maint, store_post
       real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost
       real(wp), allocatable :: co2_owed(:)
       logical     :: starving
@@ -512,7 +514,41 @@ contains
             !      reaches the same allometric leaf area with less leaf carbon. --------------------!
             leaf_target  = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
             leaf_turn    = 1.0_wp / max(cohort%llspan(j), tiny_llspan)   ! baseline leaf turnover [1/yr]
-            store_demand = max(0.0_wp, pft%storage_cushion(pf) * leaf_target - cohort%nonstructural_carbon(j))
+            !----- STORAGE MAINTENANCE (#177), charged BEFORE the demand and the allocation, which is  !
+            !      ED2's ordering (apply_maintenance runs ahead of growth). Until now the                !
+            !      non-structural pool was the one live carbon store that cost nothing to hold, so a     !
+            !      cohort could carry an arbitrarily large reserve for free.                             !
+            !                                                                                          !
+            !      Form is ED2's growth_balive.f90: a fractional turnover of the pool per year, with     !
+            !      NO temperature dependence -- ED2 sets its maintenance_temp_dep to 1.0 here and        !
+            !      leaves the temperature form commented out as "experimental and arbitrary", so         !
+            !      inventing one would be going beyond the reference, not following it.                  !
+            !                                                                                          !
+            !      The fraction is clamped to [0,1] rather than the AMOUNT to the pool, so a large       !
+            !      rate x dt cannot make the charge exceed what is there -- and cannot go negative       !
+            !      and manufacture storage.                                                              !
+            !                                                                                          !
+            !      IT IS A TENDENCY, NOT A WRITE. The charge is netted into npp%nonstructural and        !
+            !      applied with every other pool change in the GROW phase; this routine does not touch   !
+            !      cohort%nonstructural_carbon. That is the standing rule -- the driver computes, the    !
+            !      engine applies -- and here it is also what keeps the ledger closed, because the       !
+            !      phase that DECLARES the CO2 efflux (slow_co2_handoff, GROW) has to be the phase       !
+            !      where the pool drops. Decrementing in place cost exactly that, and the ALLOCATE       !
+            !      phase named it immediately: -2.43e-3 kgC undeclared there against +2.43e-3            !
+            !      over-declared in GROW, equal and opposite.                                            !
+            !                                                                                          !
+            !      `store_post` is what the ALLOCATOR sees, so maintenance is still paid before growth   !
+            !      is funded from the reserve (ED2's apply_maintenance-then-allocate ordering) even      !
+            !      though the pool itself moves one phase later.                                         !
+            storage_maint = cohort%nonstructural_carbon(j)                                              &
+                          * min(1.0_wp, max(0.0_wp, pft%storage_turnover_rate(pf) * dt_yr))
+            store_post    = cohort%nonstructural_carbon(j) - storage_maint
+            !----- Rides co2_owed, the SAME per-patch channel growth respiration uses to reach the      !
+            !      fast loop's nee_biotic, and is declared to the ledger by slow_co2_handoff with it.    !
+            co2_owed(cohort%owner_patch(j)) = co2_owed(cohort%owner_patch(j))                           &
+                                            + cohort%nplant(j) * storage_maint
+
+            store_demand = max(0.0_wp, pft%storage_cushion(pf) * leaf_target - store_post)
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%min_reproduction_height)
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
@@ -531,7 +567,7 @@ contains
             !----- Allocate the daily carbon to GROWTH (growth respiration charged on realized     !
             !      growth INSIDE the kernel; storage funds leaf/root growth even when net < 0). ---!
             call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
-                     growth_resp_frac=pft%growth_resp_factor(pf), storage=cohort%nonstructural_carbon(j), &
+                     growth_resp_frac=pft%growth_resp_factor(pf), storage=store_post,                    &
                      leaf_demand=leaf_demand, fineroot_demand=fineroot_demand,                     &
                      storage_demand=store_demand, repro_frac=repro_frac,                           &
                      growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
@@ -541,7 +577,8 @@ contains
             npp%leaf(j)          = g_leaf     - leaf_shed_c
             npp%fineroot(j)      = g_fineroot - fineroot_shed_c
             npp%wood(j)          = g_wood
-            npp%nonstructural(j) = npp_store
+            !----- The storage maintenance leaves the pool HERE, as part of this step's tendency. ----!
+            npp%nonstructural(j) = npp_store - storage_maint
             npp_repro(j)         = g_repro
             !----- SLOW-loop diagnostics: the NPP allocation split and growth respiration were pure  !
             !      locals here -- computed every step for every cohort and discarded, so the carbon   !
@@ -555,6 +592,7 @@ contains
                cohort%sdiag%v(CS_NPP_STORAGE,  j) = npp_store  / dt_yr
                cohort%sdiag%v(CS_NPP_REPRO,    j) = g_repro    / dt_yr
                cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
+               cohort%sdiag%v(CS_STORAGE_RESP, j) = storage_maint / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
             !----- THE ALLOCATOR'S OUTPUTS ALL GET A DESTINATION NOW (plan §10.2.2 items 1, 2, 3).    !

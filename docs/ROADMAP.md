@@ -196,7 +196,12 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   relation calibrated on **leaf** rather than air temperature; applying the air-temperature fit to a
   per-cohort leaf temperature would use it well outside its range. Acclimation of **respiration**
   (as opposed to photosynthetic capacity) is also still open.
-- **Storage-pool respiration.** *Candidate.* [#177](https://github.com/xiangtaoxu/MEDS/issues/177) Same source.
+- **Whether storage maintenance should be ON by default.** *Open, v0.3.0 question.* The mechanism
+  shipped in v0.2.0 (#177) with `storage_turnover_rate` defaulting to **0**, which reproduces the
+  earlier behaviour. ED2's temperate-broadleaf value of 0.6243 yr⁻¹ costs an Ithaca run 35 % of GPP
+  and 43 % of AGB over five years, so switching the default on is a rebaseline decision, not a
+  parameter tweak — and it lands with the same question #118 and #176 raised about presets that were
+  never climate- or biome-specific.
 - **Vertically resolved root respiration** — *shipped in v0.2.0* (#178). Kept here only as the
   pointer that the remaining vertical-resolution gap is **root biomass**, not temperature: the
   response is now summed per layer against the root profile, but `broot` itself is still a single
