@@ -182,8 +182,6 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 - **Remove the `[io]` deprecation shim.** *Scheduled, post-v0.2.x.* The block was renamed to
   `[state]` in v0.2.0 (#173) with `[io]` still loading behind one warning. Drop the
   `req_*_renamed` readers and the warning once users have had a minor release to migrate.
-- **An evaluation notebook** against the Ithaca test bed, and a PFT / size-class plotter in
-  `post_proc/`. *Candidate.* [#175](https://github.com/xiangtaoxu/MEDS/issues/175)
 
 ---
 
