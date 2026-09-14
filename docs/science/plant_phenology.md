@@ -11,7 +11,7 @@ The one generic engine covers every strategy through **two per-PFT cue masks** (
 flushing, which drive shedding); there is no `iphen_scheme`-style global switch. This generalizes ED2's
 per-PFT `phenology(ipft)` habits — in particular the plant-hydraulic scheme 5, which already advances the
 leaf-display fraction at per-day rates — to all habits (Botta 2000 cold-deciduous, drought-deciduous,
-light-driven leaf exchange). See `docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`.
+light-driven leaf exchange). See `docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`.
 
 ## 1. The contract: two governors → two rates
 
@@ -254,7 +254,7 @@ the cue and the arrestor cannot drift apart.
 - **Xu et al. (2016)**, *New Phytologist* — turgor-loss-point (plant-hydraulic) drought deciduousness.
 - **Kim et al. (2012)**, *Glob. Change Biol.* — light phenology (the quality half is out of scope).
 - ED2 `ED/src/dynamics/phenology_driv.f90`, `phenology_aux.f90`;
-  `docs/dev_plans/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`.
+  `docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`.
 
 ## Code map
 

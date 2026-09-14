@@ -33,7 +33,6 @@ a move is safe but a renumber is not.
 |---|---|
 | [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions, the placement rules, and §15 — the phased remainder: `column_cohort_t` removal, the packed state vector, per-layer face budgets, test-support consolidation. |
 | [`MEDS_PRODUCTION_INTEGRATOR_PLAN.md`](MEDS_PRODUCTION_INTEGRATOR_PLAN.md) | The active numerics roadmap: adaptive freeze cadence, soil water in the tableau, the RK45 production warning, the `rwc_floor` clamp artefact. Also the record of what was refuted by measurement. |
-| [`MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`](MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md) | P3 — the water, hydraulic and light cues are coded in the kernel but not threaded from the fast loop, so two of the four phenology strategies cannot be selected. P4, P5. |
 | [`MEDS_BIOGEOCHEMISTRY_DESIGN.md`](MEDS_BIOGEOCHEMISTRY_DESIGN.md) | P1 nitrogen, P1 DAMM (kernel exists, unreachable), P2 vertically resolved pools, fire, coarse woody debris. |
 | [`MEDS_FORCING_DESIGN.md`](MEDS_FORCING_DESIGN.md) | LWdown synthesis, the multi-polygon runtime, a transient CO₂ stream. Also the reference for the forcing NetCDF format (§7.1) and the ERA5-Land de-accumulation recipe (§7.3). |
 | [`MEDS_SNOW_DESIGN.md`](MEDS_SNOW_DESIGN.md) | P1 multi-layer snow with compaction and an aging albedo; P2 canopy snow interception. |
@@ -66,7 +65,7 @@ needs it.
 
 ## `archive/`
 
-Thirty-two documents whose work is done. Each opens with a tombstone: what shipped, in which pull
+Thirty-three documents whose work is done. Each opens with a tombstone: what shipped, in which pull
 request, what changed name on the way in, and where the live description is. Three grades appear:
 
 - **🗃️ ARCHIVED** — complete or superseded. Safe to read as history.

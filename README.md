@@ -58,10 +58,13 @@ same output stream, not three separate studies:
 Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
 threaded and the output is byte-identical at any thread count.
 
-**Status: v0.1.0, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
+**Status: v0.2.0, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
 been compared flux-for-flux, and no output has been scored against observations. What is verified is
 internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
 Treat the numbers a MEDS run produces as a working model's numbers.
+[`CHANGELOG.md`](CHANGELOG.md) states the release's known limitations, and
+[`docs/ed2_comparison.md` §0](docs/ed2_comparison.md) says which v0.1.0 numbers are no longer
+comparable.
 
 ## Quick start
 

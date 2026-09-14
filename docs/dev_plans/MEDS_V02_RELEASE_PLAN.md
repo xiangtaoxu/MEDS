@@ -409,7 +409,7 @@ What makes the release legible to someone who is not its author.
 | #162 | Not fixed. Record `psi_leaf` non-convergence at `dt_fast = 900 s` as a **stated known limitation** in the release notes: the error is inherited from the canopy air and amplified about 4x, and the residual relocates to `psi_wood` through the frozen uptake seam. Every other state and flux converges. |
 | #150 | Carry the **phenology validation caveat** (§6.1.1) into the release notes beside #162: the four strategies are selectable and self-consistent, not validated. No leaf-area cycle has been scored against an observation at any site. |
 | — | `CHANGELOG.md` release section; prune the shipped items out of `docs/ROADMAP.md`; version bump; tag. |
-| — | Give each shipped dev plan a tombstone and move it to `archive/` in the PR that closes its last item, per the `dev_plans/README.md` rule. `MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md` and `MEDS_GPU_EVALUATION.md` both reach zero open items in this release. |
+| — | Give each shipped dev plan a tombstone and move it to `archive/` in the PR that closes its last item, per the `dev_plans/README.md` rule. `MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md` and `MEDS_GPU_EVALUATION.md` both reach zero open items in this release. **Half wrong, corrected at execution:** the phenology plan does reach zero and was archived; the GPU evaluation does **not** — three of its seven recommendations (#195, #196, #197) were *deferred* to v0.3.0, and deferred is not shipped. It stays live with a corrected status line. |
 
 ---
 
@@ -530,3 +530,32 @@ in total.
 
 Confirmed as filed: #1 (behaviour intact, file references stale), #104, #117, #118, #145, #148,
 #153, #160, #163, #170, #172, #174, #185, #188, #190, #195, #199, #200.
+
+
+---
+
+## 11. Execution record — Phase 6, and the release
+
+**PHASE 6 COMPLETE 2026-09-14.** Version bumped to 0.2.0; 49/49 on ifx and nvfortran.
+
+- **#114** — `docs/ed2_comparison.md` refreshed, with a new §0 giving an ED2 user the before/after
+  table for every number the release moved. **Two claims on that page were stale**: soil
+  biogeochemistry was described as opt-in/default-off (the in-type default said on and the loader
+  passed off; both now say on), and it carried a "known bug, root-caused and unfixed" warning about
+  anti-phased shortwave on recycled met that PR #69 had fixed **before v0.1.0 shipped**. Counts
+  corrected 38 → 49 tests, ~75 → 86 source files.
+- **#162, #150** — carried into the CHANGELOG's `[0.2.0]` section as *stated* known limitations,
+  beside the standing "never benchmarked" caveat and the four number-moving features that ship off.
+- **ROADMAP pruned.** Twenty-six shipped items removed. **Five entries pointed at closed issues**
+  while describing genuinely open follow-up work, which breaks the file's own "every item carries an
+  issue number" rule — filed as #254 (deep thermal layers), #255 (spectral radiative record), #256
+  (per-cohort acclimation), #257 (LWdown cloud term), #258 (`root_phen_factor`). §12 is now empty
+  and says so.
+- **The largest thing Phase 6 surfaced is not in its scope.** The release notes had to say that
+  phenology never ran before this release (#245). A plan can be fully implemented, marked LIVE, and
+  reviewed — the 2026-09-13 docs review looked straight at this plan and verified P3 as un-wired —
+  without anyone noticing that the subsystem it describes was unreachable from config. What found it
+  was plotting LAI against the month.
+
+**Not done, and needing a decision:** the `v0.2.0` GitHub milestone and the `phase-0`…`phase-6`
+labels (flagged at every phase, never authorized — it edits the tracker), and the **tag** itself.

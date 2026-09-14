@@ -6,10 +6,15 @@
 > model** as scoped. The GPU build ran 1.4× slower than the CPU (49.8 s against 36.2 s), one kernel
 > sat at 0.4 % occupancy, and the GPU treated as 20 slow cores was 26× slower than 4 CPU cores.
 >
-> **Five of its seven recommendations are still open**, which is why this stays live: marking
-> BB2/BB3 refuted in `MEDS_NUMERICS_SCOPING.md` §7, correcting the GPU claims in the build files,
-> attacking the ~24 % allocator self-time in `build_column_frozen`, threading the **cohort** axis on
-> the CPU, and the single-precision experiment. Tracked in `docs/ROADMAP.md` §11.
+> **Two of its seven recommendations shipped in v0.2.0** — BB2/BB3 marked refuted in
+> `MEDS_NUMERICS_SCOPING.md` §7, and the GPU claims corrected in the build files (#194). **Three are
+> deferred to v0.3.0**, which is why this stays live: the ~24 % allocator self-time in
+> `build_column_frozen` (#195), threading the **cohort** axis on the CPU (#196, the evaluation's
+> headline recommendation), and the single-precision experiment (#197). Tracked in
+> `docs/ROADMAP.md` §11.
+>
+> *(The v0.2.0 release plan listed this document as reaching zero open items. It does not — its
+> remaining recommendations were deferred, not done, and deferred is not shipped.)*
 >
 > Two numbers below have drifted: `src/` is now ~30 k lines rather than 24.5 k, and the single
 > OpenMP `target` region moved to `src/slow_dynamics/demography/meds_demography_update.f90`. There

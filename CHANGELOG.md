@@ -14,6 +14,40 @@ before and after.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-14
+
+**Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,
+and the largest change is that **phenology now runs at all**. See
+[`docs/ed2_comparison.md` §0](docs/ed2_comparison.md) for the before/after table.
+
+### Known limitations, stated
+
+Three things this release does **not** fix, carried here because they would otherwise be found by
+surprise:
+
+- **Leaf water potential does not converge at the shipped `dt_fast`** (#162, open). Daytime mean
+  −0.23 MPa at 12.5 s against −1.19 MPa at 900 s: the plant water-mass update is an explicit step
+  with frozen sapflow and root uptake, so the per-step excursion grows with the step. The error is
+  **inherited from the canopy air and amplified about 4×**, and the residual relocates to
+  `psi_wood` through the frozen uptake seam. Every other state and flux converges. Any study keyed
+  to leaf water potential — hydraulic stress, potential-driven mortality — should run at ≤ 150 s
+  regardless of what the carbon budget looks like.
+- **Phenology is selectable and self-consistent. It is not validated.** No MEDS leaf-area cycle has
+  been scored against an observation, at any site, under any strategy. The thresholds are literature
+  values for the biome each strategy describes, not site calibrations — selecting `CUE_LIGHT` with
+  its default 200 W/m² onset at Ithaca strips the canopy every summer, because temperate summer
+  insolation sits above a threshold chosen for a tropical dry season. And it did not run at all
+  before this release (#245), so **no MEDS result published before v0.2.0 had a leaf-area cycle**.
+- **MEDS has still never been benchmarked.** No EDTS-equivalent regression suite, no site compared
+  flux-for-flux, no output scored against observations. What is verified is internal: 49 CTest
+  targets on two compilers, per-step conservation ledgers that close to machine precision, a
+  per-layer face-closure check, and output byte-identical at any thread count.
+
+Four features that move numbers substantially ship **off**, because the rebaseline window closed
+before they landed: Kattge–Knorr thermal acclimation, storage-pool maintenance respiration, leaf
+resorption on shed, and the non-stomatal water-stress limb. Per-PFT hydraulic traits are selectable
+but uncalibrated, so MEDS ships hydraulically identical PFTs.
+
 ### Added
 
 - **An evaluation notebook and a PFT / size-class plotter** (#175). The PFT and DBH-class output
@@ -1274,5 +1308,6 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xiangtaoxu/MEDS/releases/tag/v0.1.0
