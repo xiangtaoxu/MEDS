@@ -135,6 +135,14 @@ h = 2\pi\!\left(\frac{t_{solar}}{86400}-\tfrac12\right) \qquad(4)
 `met_instant` recomputes $`\cos z`$ every sub-step from the **model** clock; it is never read from a file
 and never interpolated.
 
+That declination is `solar_declination(doy)` (Cooper 1969), and it is the **only** one in the model:
+`daylength`, which drives the photoperiod phenology cue, reads the same function. It used to carry its
+own White (1997) form $`-23.44^\circ\cos\frac{2\pi(\mathrm{doy}+9)}{365}`$. The two are the same
+function offset by 1.25 days — $`-\cos x = \sin(x-\pi/2)`$ puts White's ascending zero crossing at
+doy 82.25 against Cooper's 81 — and Cooper's is the closer to the true vernal equinox near doy 79–80.
+Unifying moved Ithaca daylength by at most **3.7 minutes** (at the equinoxes; ~0 at the solstices) and
+brought the 10.5 h autumn cue **2 days earlier**.
+
 ## 5. Shortwave disaggregation: conserving the interval mean
 
 This is the subtle piece. A shortwave record on an `avg_convention = "end"` file is the **mean over the

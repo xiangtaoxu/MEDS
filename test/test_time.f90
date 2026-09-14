@@ -5,7 +5,8 @@ program test_time
                                  day_of_year, time_advance_days, time_advance_months,          &
                                  days_between, time_lt, time_le, time_eq,                       &
                                  time_from_string, time_to_string, time_to_stamp,              &
-                                 time_to_decimal_year, solar_cosz
+                                 time_to_decimal_year, solar_cosz, daylength,        &
+                                 solar_declination
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -106,5 +107,47 @@ program test_time
               'stamp carries the time of day')
    call check(time_to_string(meds_time_t(2000_ik,1_ik,1_ik)) == '2000-01-01 00:00:00', 'human string')
 
+   !=== ONE declination behind both solar consumers (#152). ================================!
+   !     solar_cosz and daylength each used to carry their own standard approximation -- Cooper  !
+   !     and White (1997) -- which differ by a 1.25-day phase offset. Both now read              !
+   !     solar_declination, and this asserts it by INVERTING each consumer back to a declination !
+   !     rather than by re-implementing the formula, so a future divergence is caught even if     !
+   !     someone changes the formula itself.                                                      !
+   block
+      real(wp)    :: decl, cz, dl, lat, decl_from_cosz, decl_from_dl, arg
+      integer(ik) :: d, doy
+      real(wp),    parameter :: PI_ = 3.14159265358979323846_wp
+      integer(ik), parameter :: DOYS(4) = [ 46_ik, 105_ik, 196_ik, 288_ik ]
+      lat = 42.44_wp
+      do d = 1_ik, size(DOYS, kind=ik)
+         doy  = DOYS(d)
+         decl = solar_declination(doy)
+         !----- At solar NOON the hour angle is zero, so cosz = cos(lat - decl) exactly. -------!
+         cz = solar_cosz(date_of_doy(2025_ik, doy), 43200.0_wp, lat)
+         decl_from_cosz = lat * PI_ / 180.0_wp - acos(min(1.0_wp, max(-1.0_wp, cz)))
+         call check_close(decl_from_cosz, decl, 1.0e-12_wp,                                      &
+                          'solar_cosz must use solar_declination')
+         !----- daylength inverts to the same declination through its own acos. ----------------!
+         dl  = daylength(lat, doy)
+         arg = cos(dl * PI_ / 24.0_wp)                    ! = -tan(lat) tan(decl)
+         decl_from_dl = atan(-arg / tan(lat * PI_ / 180.0_wp))
+         call check_close(decl_from_dl, decl, 1.0e-12_wp,                                        &
+                          'daylength must use solar_declination')
+      end do
+      !----- And the shared function is the Cooper form: zero declination at its ascending      !
+      !      crossing (doy 81), positive in NH summer, negative in NH winter. -------------------!
+      call check_close(solar_declination(81_ik), 0.0_wp, 1.0e-3_wp, 'declination ~ 0 at doy 81')
+      call check(solar_declination(172_ik) > 0.40_wp, 'declination near +23.45 deg at the June solstice')
+      call check(solar_declination(355_ik) < -0.40_wp, 'declination near -23.45 deg at the December solstice')
+   end block
+
    write(*,'(a)') '[test] calendar / time tracking: PASS'
+
+contains
+
+   !----- Calendar date of a day-of-year, so the cosz inversion above can be driven by doy. ----!
+   pure type(meds_time_t) function date_of_doy(year, doy) result(t)
+      integer(ik), intent(in) :: year, doy
+      t = time_advance_days(meds_time_t(year = year, month = 1_ik, day = 1_ik), doy - 1_ik)
+   end function date_of_doy
 end program test_time

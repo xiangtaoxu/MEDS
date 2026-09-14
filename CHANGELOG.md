@@ -14,6 +14,23 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **One solar declination for the whole model** (#152). `solar_cosz` used Cooper (1969),
+  `daylength` used White (1997); both now call `solar_declination(doy)`, which is the Cooper form.
+  The two were the same function offset by 1.25 days — $-\cos x = \sin(x-\pi/2)$ puts White's
+  ascending zero crossing at doy 82.25 against Cooper's 81 — and Cooper's is the closer to the true
+  vernal equinox near doy 79–80. It is also the form the radiation path already used every
+  `dt_fast`, so `daylength` moved rather than `solar_cosz`.
+
+  At Ithaca (42.44 °N) daylength changes by at most **3.7 minutes**, at the equinoxes, and by
+  essentially nothing at the solstices; the 10.5 h autumn phenology cue fires **2 days earlier**
+  (doy 297 → 295). `solar_cosz` and therefore the radiation are unchanged.
+
+  `test_time` now asserts the shared source by **inverting each consumer back to a declination**
+  rather than re-implementing the formula, so a future divergence is caught even if the formula
+  itself changes. Verified to fail on the pre-fix code.
+
 ### Added
 
 - **C3 gets its own co-limitation curvatures** (#118): `theta_cj_c3` (default 0.98, the
