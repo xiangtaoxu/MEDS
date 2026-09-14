@@ -53,6 +53,7 @@ program test_column_derivs
    call test_column_assembler()
    call test_rk4_march()
    call test_be_euler()
+   call test_tissue_water_floor()
    call test_be_coupled()
    call test_arrowhead()
    call test_adaptive_march()
@@ -703,6 +704,46 @@ contains
       end do
       call copy_state(y, y_out, n)
    end subroutine march_ark2
+
+   !----- 11b. THE TISSUE-WATER FLOOR REPORTS THE WATER IT CREATES (#148). The floor stops the      !
+   !      linear mass Euler step going negative, and does so by CREATING water. The whole-column      !
+   !      ledger is blind to it -- it sums leaf + wood over all cohorts, so water created in one       !
+   !      cohort's wood is indistinguishable from a redistribution -- which is why the case sat        !
+   !      documented as "unobserved" on no measurement at all.                                         !
+   subroutine test_tissue_water_floor()
+      type(column_state_t)  :: y, y_out
+      type(column_frozen_t) :: frozen
+      type(surface_tend_t)  :: sf
+      real(wp)    :: fmass, w_before
+      integer(ik) :: fcount, n, nsl
+      n = 2_ik ; nsl = 10_ik
+      print '(a)', 'test_tissue_water_floor:'
+      call make_column(y, frozen, n, nsl)
+
+      !----- (a) An ordinary step must NOT fire the floor. A reporter that fires on healthy state  !
+      !          is worse than none. ------------------------------------------------------------!
+      call column_be_stage(y, frozen, n, nsl, 900.0_wp, y_out, 8_ik, sf_out=sf)
+      call advance_water_mass_full(y, frozen, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
+                                   floor_mass=fmass, floor_n=fcount)
+      call check_true('ordinary step: the tissue-water floor does not fire', fcount == 0_ik, real(fcount, wp))
+      call check_true('ordinary step: no water created', fmass == 0.0_wp, fmass)
+
+      !----- (b) FORCE it: start the stores nearly empty and debit a full step's transpiration.     !
+      !          The floor must fire AND report the mass it invented, per m2 of ground.  ----------!
+      call make_column(y, frozen, n, nsl)
+      w_before = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
+      y%leaf_water_mass(1:n) = 1.0e-12_wp
+      y%wood_water_mass(1:n) = 1.0e-12_wp
+      call column_be_stage(y, frozen, n, nsl, 900.0_wp, y_out, 8_ik, sf_out=sf)
+      call advance_water_mass_full(y, frozen, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
+                                   floor_mass=fmass, floor_n=fcount)
+      call check_true('emptied stores: the floor fires', fcount > 0_ik, real(fcount, wp))
+      call check_true('emptied stores: the created water is reported, not silent', fmass > 0.0_wp, fmass)
+      call check_true('every floored store lands exactly on the floor',                            &
+                      all(y_out%leaf_water_mass(1:n) >= 0.0_wp), minval(y_out%leaf_water_mass(1:n)))
+      call check_true('the reported mass is the sanity scale of the store it replaced',            &
+                      fmass < max(w_before, 1.0_wp), fmass)
+   end subroutine test_tissue_water_floor
 
    !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !
    !      production ESDIRK2, built from the same two kernels ark2_column_step composes -- one         !

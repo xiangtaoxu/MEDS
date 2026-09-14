@@ -74,7 +74,8 @@ contains
    ! adaptive controller (2 solves/step vs step-doubling's 3). Hydraulics WORK counters (section 5.3)     !
    ! now come from the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen), not from       !
    ! this per-stage endpoint update -- there is no more per-stage hydraulics solve to count. -------------!
-   subroutine ark2_column_step(y, frozen, n, nsl, dt, y_out, y_err, niter, bf, clamp_n)
+   subroutine ark2_column_step(y, frozen, n, nsl, dt, y_out, y_err, niter, bf, clamp_n,      &
+                               floor_mass, floor_n)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
@@ -83,10 +84,20 @@ contains
       integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- STAGE-clamp activations (see column_budget_t%clamp_stage_n). The ARK clamps its ARS       !
-      !      stage-3 extrapolation base and NOTHING else -- y_out is committed unclamped -- so this     !
-      !      path contributes to the stage counter only, and its commit counter stays 0 by             !
-      !      construction. That asymmetry against RK45 is a result, not an omission. ------------------!
+      !      stage-3 extrapolation base and NOTHING else in the SOIL/CAS state -- y_out is committed    !
+      !      unclamped there -- so that asymmetry against RK45 is a result, not an omission.            !
+      !                                                                                          !
+      !      Its commit counter is NOT zero, though, and the claim that it was "0 by construction"      !
+      !      was the whole of #148: the tissue-water floor in advance_water_mass_full is a commit       !
+      !      clamp that creates water, and it was simply not reported. It is now, through the same     !
+      !      clamp_mass / clamp_commit_n channel. -----------------------------------------------------!
       integer(ik), optional, intent(inout) :: clamp_n
+      !----- The tissue-water floor is a COMMIT clamp that creates water (#148). ACCUMULATED here     !
+      !      because a march calls this many times per dt_fast; the caller zeroes once per step.      !
+      real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
+      integer(ik), optional, intent(inout) :: floor_n
+      real(wp)    :: fmass_i
+      integer(ik) :: fcount_i
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t)  :: Y2, base3, Y3
@@ -115,7 +126,10 @@ contains
       !      b-weighted identically, sec 1/3/4/5) -- NOT a separate endpoint evaluation, so the mass       !
       !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
       transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
-      call advance_water_mass_full(y, frozen, n, nsl, dt, transp_bw, y_out)
+      call advance_water_mass_full(y, frozen, n, nsl, dt, transp_bw, y_out,                          &
+                                   floor_mass=fmass_i, floor_n=fcount_i)
+      if (present(floor_mass)) floor_mass = floor_mass + fmass_i
+      if (present(floor_n))    floor_n    = floor_n    + fcount_i
       !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
       !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
       !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
@@ -156,7 +170,7 @@ contains
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine adaptive_ark_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
-                                 dt_warm_out, clamp_n)
+                                 dt_warm_out, clamp_n, floor_mass, floor_n)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
@@ -175,6 +189,10 @@ contains
       !      that was then thrown away still says the controller was probing too far, which is the      !
       !      signal wanted. Accumulated (intent(inout)), so the caller zeroes it. -----------------------!
       integer(ik), optional, intent(inout) :: clamp_n
+      !----- Tissue-water floor creation over the whole march, same accumulate-and-caller-zeroes      !
+      !      discipline (#148). -------------------------------------------------------------------!
+      real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
+      integer(ik), optional, intent(inout) :: floor_n
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
@@ -202,7 +220,8 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
-         call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub, clamp_n=clamp_n)
+         call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
+                               clamp_n=clamp_n, floor_mass=floor_mass, floor_n=floor_n)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
          !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
@@ -348,14 +367,16 @@ contains
          call adaptive_ark_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
-                                 clamp_n=budget%clamp_stage_n)
+                                 clamp_n=budget%clamp_stage_n,                                  &
+                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
          biophys%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
-                                  clamp_n=budget%clamp_stage_n)
+                                  clamp_n=budget%clamp_stage_n,                                 &
+                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do

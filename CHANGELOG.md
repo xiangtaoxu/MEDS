@@ -16,6 +16,19 @@ before and after.
 
 ### Fixed
 
+- **The tissue-water floor now reports the water it creates** (#148). `advance_water_mass_full`
+  floors `leaf_water_mass` and `wood_water_mass` at a tiny positive value so the linear mass Euler
+  step cannot go negative — and creates water doing so. The code's own comment called the case
+  "unobserved in this pass's test scenarios", which was **a belief, not a measurement**: the floor
+  fires per cohort per tissue, while the whole-column water ledger sums leaf + wood over all
+  cohorts, so water created in one cohort's wood is indistinguishable from a redistribution between
+  cohorts. The budget closed to ~4×10⁻¹² kg m⁻² with the floor entirely unmonitored. It is now
+  reported through the existing `budget%clamp_mass` / `clamp_commit_n` commit-clamp channel, which
+  already reduces to `site%work_clamp_mass` and already has an output variable — so it surfaces
+  end-to-end with no new reporting surface, which is what the issue asked for. Measured on a forced
+  fixture: 2 activations creating 2.92×10⁻² kg m⁻², and **zero on an ordinary step**. The claim in
+  `ark2_column_step` that its commit counter "stays 0 by construction" was corrected — that claim
+  was the whole of the defect.
 - **`PD_DISTURB_AREA` is written and emitted** (#170). The slot was declared in the patch
   diagnostic block with no writer and no registry row, so the disturbed-area flux read as a **silent
   zero** rather than a missing variable — the harder failure to notice, and one no conservation
