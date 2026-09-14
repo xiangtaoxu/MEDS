@@ -15,6 +15,10 @@ module meds_leaf_gas_exchange
    use meds_temp_response, only : temp_response, arrhenius_scale
    use meds_numerics,      only : quadratic_smaller_root, bisect_root
    implicit none
+
+   !----- O2 mole fraction the shipped gstar25 was MEASURED at (Bernacchi et al. 2001). Gamma* is  !
+   !      proportional to O2, so this is the reference the config's o2_mol_frac is scaled against. !
+   real(wp), parameter :: O2_REF_GSTAR = 0.209_wp   !< [mol/mol]
    private
 
    !----- from meds_leaf_photosynthesis.f90 ----------------------------------------------!
@@ -199,7 +203,17 @@ contains
       !----- Temperature-scale the biochemistry (Kc/Ko/Gamma* always Arrhenius; Pa -> ppm). -!
       kc_ppm    = arrhenius_scale(p%kc25,    p%ea_kc,    t_leaf) / pressure * mol_2_umol
       ko_ppm    = arrhenius_scale(p%ko25,    p%ea_ko,    t_leaf) / pressure * mol_2_umol
-      gstar_ppm = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / pressure * mol_2_umol
+      !----- Gamma* is set by Rubisco's CO2/O2 specificity, Gamma* = 0.5*O/S_(c/o), so it is       !
+      !      PROPORTIONAL to the O2 partial pressure. Scale it off the O2 the shipped gstar25 was  !
+      !      measured at (Bernacchi et al. 2001, 21% O2), so the parameter's provenance is stated  !
+      !      in code rather than implied. Without this, o2_mol_frac reached only Kc(1+O/Ko) and    !
+      !      not the compensation point, so raising O2 inhibited carboxylation but left the whole  !
+      !      photorespiratory penalty on Aj untouched -- an error of exactly zero at 20.9% growing !
+      !      monotonically in both directions (-13% of A at 10% O2, +20% at 35%), which is the     !
+      !      signature of a missing scaling rather than anything else (#117).                      !
+      !      At the shipped 0.209 the factor is EXACTLY 1, so the default path is bit-identical.   !
+      gstar_ppm = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / pressure * mol_2_umol           &
+                  * (p%o2_mol_frac / O2_REF_GSTAR)
       vcmax = temp_response(tresp, p%vcmax25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       jmax  = temp_response(tresp, p%jmax25,  p%ea_jmax,  p%hd_jmax,  p%ds_jmax,  t_leaf)
       tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)

@@ -51,6 +51,22 @@ Michaelis constants. The electron-transport rate $J$ follows the non-rectangular
 $`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
 $`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
 
+**$`\Gamma^*`$ is proportional to the oxygen partial pressure**, because it is set by Rubisco's
+specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. MEDS therefore scales it off
+the O₂ its reference value was measured at,
+
+```math
+\Gamma^*(T, O) = \Gamma^*_{25}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
+\qquad O_\mathrm{ref} = 0.209 \qquad(1)
+```
+
+so `o2_mol_frac` reaches **both** places oxygen enters the C3 demand — the Michaelis term
+$`K_c(1 + O/K_o)`$ and the compensation point. The shipped `gstar25` = 4.275 Pa is Bernacchi et al.
+(2001), measured at 21 % O₂, so the factor is exactly 1 in any default run. It matters for
+palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
+sensitivity experiment that is the standard way to isolate photorespiration: measured on a
+midday tropical leaf, halving O₂ raises $`A_\mathrm{net}`$ by 22 % and 35 % O₂ cuts it by 24 %.
+
 **C4 (Collatz et al. 1992):** $A_c = V_{cmax}$, $A_j$ = a light-limited slope, $A_p = k_p C_i$
 (PEP-case CO₂ limitation), with $`\Gamma^* \approx 0`$ (the CO₂-concentrating mechanism suppresses
 photorespiration).
