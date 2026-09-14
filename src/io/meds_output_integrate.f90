@@ -807,8 +807,21 @@ contains
 
    !=======================================================================================!
    !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of a  !
-   !  live fast_sample_t (the temps reuse the SRC_S_* site ids; the fluxes use SRC_F_*). The   !
-   !  slab (soil / cohort) sources are resolved directly in output_integrate_fast.             !
+   !  staged fast_sample_t. Slab (soil / cohort) sources are resolved in output_integrate_fast. !
+   !                                                                                          !
+   !  THIS IS NOT A SECOND SWITCHBOARD FOR THE SAME THING, and it was once slated for deletion  !
+   !  on the belief that it was (#172, closed 2026-09-13 on the measurement below).              !
+   !                                                                                          !
+   !  The FAST tier is ALREADY on the general machinery: it shares the registry                  !
+   !  (reg%idx_freq(:,1)), the buffers (buf(:,1)), close_tier, and the pending/serialize path.    !
+   !  What is bespoke is only the EXTRACTION SOURCE, and that is forced by the physics of when     !
+   !  the values exist. Sub-daily quantities are sampled DURING the fast loop; by the time main    !
+   !  folds them, `site` holds the post-fast-loop, end-of-slow-step snapshot, so resolving them    !
+   !  against live site state would silently emit end-of-day values on a sub-daily axis.           !
+   !                                                                                          !
+   !  Nor do the two functions overlap: SRC_S_* occupy 4000-4999 and SRC_F_* occupy 5000-5999,     !
+   !  disjoint by construction, so neither can resolve the other's ids. Deleting this would not    !
+   !  remove a duplicate switchboard -- it would remove sub-daily sampling.                        !
    !=======================================================================================!
    pure real(wp) function extract_fast_scalar(source_id, s) result(val)
       integer(ik),        intent(in) :: source_id
