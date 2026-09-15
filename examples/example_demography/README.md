@@ -1,10 +1,28 @@
 # Demography example
 
-A self-contained **250-year demographic spin-up** of MEDS and the figures it produces — **slow-scale
-demography only**: cohort and patch dynamics, fusion and fission, growth, mortality, recruitment and
-treefall disturbance. **No carbon dynamics and no soil carbon.** Growth and the vital rates come from
-phenomenological, **LAI-driven empirical laws** in [`empirical_laws.py`](empirical_laws.py), which
-drive the Fortran engine's law-free apply-primitives through the C-API.
+**This example exists to exercise and show off MEDS's demography component on its own.** It is the
+size- and age-structured engine — cohorts, patches, fusion and fission, growth, mortality,
+recruitment and treefall disturbance — running with **no carbon dynamics and no soil carbon**, so
+that what you see is the demography and nothing else. Everything the rest of MEDS does to supply
+carbon is replaced by phenomenological, **LAI-driven empirical laws** in
+[`empirical_laws.py`](empirical_laws.py), which drive the Fortran engine's law-free
+apply-primitives through the C-API.
+
+It serves two purposes, and both matter:
+
+- **It tests the engine.** The same driver reproduces `test/golden/empirical_spinup_golden.csv`
+  exactly, so this is a regression check on the demographic operators — the apply-primitives, the
+  lockstep reorder, fusion, fission, culling, recruitment and disturbance — isolated from the
+  biophysics that would otherwise sit between a parameter change and its effect. Run it with no
+  arguments and it prints the comparison; see [below](#the-empirical-golden-was-recaptured-2026-09-10).
+- **It shows what the engine does.** A self-contained **250-year spin-up** from near-bare ground to
+  an equilibrated stand, and five figures: site trajectories, per-PFT succession, the animated
+  canopy profile, and two 3-D landscape renders.
+
+Isolating demography is the point rather than a limitation. A demographic model's characteristic
+behaviours — self-thinning, the inverse-J size distribution, successional turnover between PFTs, the
+patch mosaic that disturbance maintains — are properties of the *structure*, and they are much
+easier to read, and to attribute, when no carbon or water feedback is also moving.
 
 **The driver is Python, not `meds_main`.** The reorg moved the empirical laws out of Fortran, so the
 Fortran model has only the *carbon* path: pointing `meds_main` at this config runs a different model
@@ -20,14 +38,28 @@ biophysics, [`../example_biophysics/`](../example_biophysics/).)
 
 ## Reproduce
 
-Run from the **repository root**. The first command runs the model and writes the stand; the rest
-draw it.
+Run from the **repository root**.
 
 ```bash
 export MEDS_LIB=$PWD/build-ifx/libmeds.so
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+```
+
+**As a test** — 40 years against the golden, a few seconds, no arguments needed:
+
+```bash
+PYTHONPATH=python python3 examples/example_demography/empirical_spinup.py
+```
+
+It prints a year-by-year table and a final `max rel-err vs golden` line, which should be `0.00e+00`
+for `total_agb` and `total_nplant`. (`total_lai` is expected to diverge once cohorts restructure —
+see the note at the end of this page.)
+
+**As a showcase** — the 250-year spin-up and the five figures. The first command runs the model and
+writes the stand; the rest draw it. About 22 s for the model, a few minutes for the two 3-D renders.
+
+```bash
 PYTHONPATH=python python3 examples/example_demography/empirical_spinup.py \
-       examples/example_demography/example_config_main.toml \
        --years 250 --write-nc examples/example_demography/example_output/example_output-D-output.nc
 python post_proc/plot_site_timeseries.py  examples/example_demography/example_output/example_output-D-output.nc \
        -o examples/example_demography/example_output.png
