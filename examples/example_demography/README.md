@@ -1,19 +1,66 @@
 # Demography example
 
-A self-contained **demographic spin-up** of MEDS and the figures it produces. The configuration is a
-pair of files: [`example_config_main.toml`](example_config_main.toml) (run/engine/IO settings, which
-names the PFT file) and [`example_config_pft.toml`](example_config_pft.toml) (PFT traits + allometry +
-mortality coefficients) — a **250-year** daily spin-up (2000-01-01 → 2250-01-01) from near-bare
-ground, writing to `example_output/` with the prefix `example_output`. (For the standalone leaf-level
-photosynthesis example, see [`../example_leaf_gas_exchange/`](../example_leaf_gas_exchange/).)
+**This example exists to exercise and show off MEDS's demography component on its own.** It is the
+size- and age-structured engine — cohorts, patches, fusion and fission, growth, mortality,
+recruitment and treefall disturbance — running with **no carbon dynamics and no soil carbon**, so
+that what you see is the demography and nothing else. Everything the rest of MEDS does to supply
+carbon is replaced by phenomenological, **LAI-driven empirical laws** in
+[`empirical_laws.py`](empirical_laws.py), which drive the Fortran engine's law-free
+apply-primitives through the C-API.
+
+It serves two purposes, and both matter:
+
+- **It tests the engine.** The same driver reproduces `test/golden/empirical_spinup_golden.csv`
+  exactly, so this is a regression check on the demographic operators — the apply-primitives, the
+  lockstep reorder, fusion, fission, culling, recruitment and disturbance — isolated from the
+  biophysics that would otherwise sit between a parameter change and its effect. Run it with no
+  arguments and it prints the comparison; see [below](#the-empirical-golden-was-recaptured-2026-09-10).
+- **It shows what the engine does.** A self-contained **250-year spin-up** from near-bare ground to
+  an equilibrated stand, and five figures: site trajectories, per-PFT succession, the animated
+  canopy profile, and two 3-D landscape renders.
+
+Isolating demography is the point rather than a limitation. A demographic model's characteristic
+behaviours — self-thinning, the inverse-J size distribution, successional turnover between PFTs, the
+patch mosaic that disturbance maintains — are properties of the *structure*, and they are much
+easier to read, and to attribute, when no carbon or water feedback is also moving.
+
+**The driver is Python, not `meds_main`.** The reorg moved the empirical laws out of Fortran, so the
+Fortran model has only the *carbon* path: pointing `meds_main` at this config runs a different model
+(stub GPP, no light competition) that diverges rather than equilibrating — issue #260. The
+configuration is still a pair of TOML files, [`example_config_main.toml`](example_config_main.toml)
+and [`example_config_pft.toml`](example_config_pft.toml), because the loader requires a complete
+config; the Python driver reads the PFT table, the demographic settings and the calendar from them,
+and the `[carbon]` / `[fast]` keys are required by the loader but unused here.
+
+(For the standalone leaf-level photosynthesis example, see
+[`../example_leaf_gas_exchange/`](../example_leaf_gas_exchange/); for the coupled carbon–water
+biophysics, [`../example_biophysics/`](../example_biophysics/).)
 
 ## Reproduce
 
-Run from the **repository root** (the config's `output_dir = "examples/example_demography/example_output"`
-is relative to where you launch `meds_main`):
+Run from the **repository root**.
 
 ```bash
-LD_LIBRARY_PATH=$CONDA_PREFIX/lib ./build-ifx/meds_main examples/example_demography/example_config_main.toml
+export MEDS_LIB=$PWD/build-ifx/libmeds.so
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
+```
+
+**As a test** — 40 years against the golden, a few seconds, no arguments needed:
+
+```bash
+PYTHONPATH=python python3 examples/example_demography/empirical_spinup.py
+```
+
+It prints a year-by-year table and a final `max rel-err vs golden` line, which should be `0.00e+00`
+for `total_agb` and `total_nplant`. (`total_lai` is expected to diverge once cohorts restructure —
+see the note at the end of this page.)
+
+**As a showcase** — the 250-year spin-up and the five figures. The first command runs the model and
+writes the stand; the rest draw it. About 22 s for the model, a few minutes for the two 3-D renders.
+
+```bash
+PYTHONPATH=python python3 examples/example_demography/empirical_spinup.py \
+       --years 250 --write-nc examples/example_demography/example_output/example_output-D-output.nc
 python post_proc/plot_site_timeseries.py  examples/example_demography/example_output/example_output-D-output.nc \
        -o examples/example_demography/example_output.png
 python post_proc/plot_forest_structure.py examples/example_demography/example_output/example_output-D-output.nc \
@@ -26,11 +73,22 @@ python post_proc/animate_landscape_growth.py examples/example_demography/example
 
 ## Model output (`example_output/`)
 
-- **`example_output-D-output.nc`** — the diagnostic timeseries (one record per year): full
-  cohort/patch/site state with derived diagnostics, each record stamped with its calendar date.
-- **`example_output_pft_parameters.csv`** — the per-PFT parameter table actually used by the run
-  (one row per PFT: wood density, allometry, growth, mortality-hazard and recruitment parameters), a
-  provenance record written automatically alongside the output.
+- **`example_output-D-output.nc`** — the stand, one record per year, in the ragged cohort/patch
+  layout `post_proc/` reads: per-cohort dbh, height, nplant, agb, leaf area and growth rate; the
+  per-patch areas, ages and the `cohort_offset`/`cohort_count` CSR map; persistent cohort and patch
+  ids; and the site totals. Written by [`_write_nc.py`](_write_nc.py) straight from the engine —
+  nothing in the Fortran output layer is involved, because nothing in Fortran can run this model.
+
+There is no `example_output_pft_parameters.csv` any more. `meds_main` writes one as a provenance
+record; this driver is not `meds_main`, and the file that used to sit here was written by the
+original *Fortran* empirical model — its columns were `growth_dbh_slope`, `growth_lai_slope`,
+`mort_gamma/alpha/beta` and no carbon traits at all — a model that no longer exists. A provenance
+record for a deleted model is worse than none. The provenance for this run is the two TOML files
+plus [`empirical_laws.py`](empirical_laws.py), which is where the laws are.
+
+The stand equilibrates. Over 250 years it settles at **~0.97 stems m⁻², AGB 16.5 kgC m⁻², LAI 7.4**
+and 266–355 cohorts across 12 patches, with a textbook inverse-J size distribution: 0.43 stems m⁻²
+below 1 cm DBH falling to 0.0008 above 50 cm, while **76% of the biomass sits in stems over 20 cm**.
 
 ## Figures
 
