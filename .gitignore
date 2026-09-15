@@ -40,6 +40,17 @@ compile_commands.json
 !examples/example_biophysics/biophysics_july.png
 !examples/example_biophysics/carbon_july.png
 !examples/example_biophysics/soil_july.png
+!examples/example_biophysics/spinup_trajectory.png
+!examples/example_demography/example_output.png
+!examples/example_demography/example_output_pft.png
+!examples/example_demography/forest3d_landscape.png
+!examples/example_leaf_gas_exchange/slot2017.png
+!examples/example_phenology/phenology_patterns.png
+# The list was short of five of these. Four were tracked anyway -- they predate the *.png rule, and
+# .gitignore does not apply to a file already in the index -- so the gap was invisible until a NEW
+# figure appeared: examples/example_phenology/phenology_patterns.png was silently never added, and
+# its README embedded a broken image. Listing every referenced figure keeps the rule honest, and
+# means deleting and regenerating one cannot quietly drop it from the repository.
 # core dumps (anchored to repo root so this does NOT match the src/core/ source dir)
 /core
 core.*
