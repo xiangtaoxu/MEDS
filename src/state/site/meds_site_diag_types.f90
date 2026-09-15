@@ -199,7 +199,13 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 35_ik !< [kgC/m2/yr] continuous hazard mortality
    integer(ik), parameter, public :: PD_MORT_C_CULL       = 36_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
    integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 37_ik !< [kgC/m2/yr] canopy killed by patch disturbance
-   integer(ik), parameter, public :: N_PDIAG            = 37_ik
+   !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the    !
+   !      output tick (#264). A state read at the tick is ONE instantaneous sample per output    !
+   !      window, taken at whatever local time the boundary falls on, so its bias is a function  !
+   !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
+   integer(ik), parameter, public :: PD_CAS_VPD       = 38_ik  !< [Pa]
+   integer(ik), parameter, public :: PD_W_SURFACE     = 39_ik  !< [kg/m2] ponded surface water
+   integer(ik), parameter, public :: N_PDIAG            = 39_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

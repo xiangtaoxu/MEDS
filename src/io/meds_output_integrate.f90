@@ -15,6 +15,7 @@
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
+   use meds_constants,      only : p_std
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t,   &
@@ -215,7 +216,6 @@ module meds_output_integrate
    !      the standard atmosphere makes this a diagnostic-grade signal (right shape, right         !
    !      magnitude for canopy coupling) rather than a thermodynamic state variable, and that      !
    !      limitation is stated here rather than left for a reader to discover from the numbers.    !
-   real(wp), parameter :: PRSS_REF = 101325.0_wp
 
 contains
 
@@ -531,7 +531,7 @@ contains
       case (FLD_P_CAS_VPD)
          do ip = 1_ik, n
             x(ip) = specific_humidity_to_vpd(site%patch%cas(ip)%can_temp,                      &
-                                             site%patch%cas(ip)%can_shv, PRSS_REF)
+                                             site%patch%cas(ip)%can_shv, p_std)
          end do
       case (FLD_P_SOILC_FAST_GRND)
          do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%fast_grnd_carbon   ; end do

@@ -15,11 +15,12 @@
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
    use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
+                                       specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_column_view, only : copy_column_cohort
    use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
@@ -31,7 +32,7 @@ module meds_fast_dynamics
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
                                      PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
-                                     PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     PD_PRECIP, PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
                                      patch_diag_reset
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
@@ -773,7 +774,7 @@ contains
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
                                           budget%whole_water%resid,                                         &
                                           forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
-                                          forc%lw_up)
+                                          forc%lw_up, biophys%soil_w%w_surface)
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1153,7 +1154,7 @@ contains
    subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_in, sw_ground, lw_ground,       &
                                     ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
                                     precip_total, ground_temp, resid_energy, resid_water,           &
-                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up)
+                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip
       real(wp),               intent(in)    :: dt                        !< [s]        sample weight
@@ -1170,6 +1171,7 @@ contains
       real(wp),               intent(in)    :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
       !----- Top-of-canopy radiative fluxes per band (#171). -----------------------------------!
       real(wp),               intent(in)    :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
+      real(wp),               intent(in)    :: w_surface                 !< [kg/m2]   ponded surface water
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
@@ -1188,6 +1190,11 @@ contains
       pd%v(PD_CAS_TEMP,     ip) = pd%v(PD_CAS_TEMP,     ip) + cas_temp               * dt
       pd%v(PD_CAS_SHV,      ip) = pd%v(PD_CAS_SHV,      ip) + cas_shv                * dt
       pd%v(PD_CAS_CO2,      ip) = pd%v(PD_CAS_CO2,      ip) + cas_co2                * dt
+      !----- VPD is NONLINEAR in temperature, so the dt-weighted mean of VPD is not the VPD of the  !
+      !      mean twins -- it has to be formed here, per sub-step, not derived at read time (#264). !
+      pd%v(PD_CAS_VPD,      ip) = pd%v(PD_CAS_VPD,      ip)                                         &
+                                  + specific_humidity_to_vpd(cas_temp, cas_shv, p_std) * dt
+      pd%v(PD_W_SURFACE,    ip) = pd%v(PD_W_SURFACE,    ip) + w_surface              * dt
       pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp                    * dt
       pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + nee                    * dt
       !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !

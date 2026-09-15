@@ -62,6 +62,7 @@ module meds_output_registry
                                     PD_LW_UP,                                                    &
                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
                                     PD_TRANSP, PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY,       &
+                                    PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
                                     PD_RESID_WATER,                                              &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
@@ -360,13 +361,13 @@ contains
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WETNESS)
       !----- Surface water stores. ------------------------------------------------------------!
       call add_variable(reg, 'w_surface_site', 'ponded surface water', 'kg/m2',                  &
-                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_W_SURFACE)
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_W_SURFACE)
       call add_variable(reg, 'swe_site', 'snow water equivalent', 'kg/m2',                       &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_SWE)
       call add_variable(reg, 'snow_depth_site', 'snow depth', 'm',                               &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_SNOW_DEPTH)
       call add_variable(reg, 'w_surface_patch', 'patch ponded surface water', 'kg/m2',           &
-                        DIM_PATCH, AGG_TMEAN, GRP_WATER, MON, FLD_P_W_SURFACE)
+                        DIM_PATCH, AGG_TMEAN, GRP_WATER, MON, FLD_P_DIAG0 + PD_W_SURFACE)
       call add_variable(reg, 'swe_patch', 'patch snow water equivalent', 'kg/m2',                &
                         DIM_PATCH, AGG_TMEAN, GRP_WATER, MON, FLD_P_SWE)
       !----- 2-D (soil layer x patch) columns. Gated by axes_soil_patch (default off): the      !
@@ -385,17 +386,17 @@ contains
    subroutine register_energy(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'cas_temp_site', 'site canopy-air-space temperature', 'K',          &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_CAS_TEMP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_CAS_TEMP)
       call add_variable(reg, 'cas_shv_site', 'site canopy-air specific humidity', 'kg/kg',       &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_CAS_SHV)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_CAS_SHV)
       call add_variable(reg, 'cas_co2_site', 'site canopy-air CO2 mixing ratio', 'umol/mol',     &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_CAS_CO2)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_CAS_CO2)
       call add_variable(reg, 'cas_vpd_site', 'site canopy-air vapour-pressure deficit', 'Pa',    &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_CAS_VPD)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_CAS_VPD)
       call add_variable(reg, 'cas_depth_site', 'site canopy-air-space depth', 'm',               &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_CAS_DEPTH)
       call add_variable(reg, 'soil_temp_top_site', 'site soil-top (layer 1) temperature', 'K',   &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_SOIL_TEMP_TOP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
       call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',            &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
@@ -434,9 +435,9 @@ contains
       call add_variable(reg, 'wood_temp_cohort', 'per-cohort wood temperature', 'K',             &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_WOOD_TEMP)
       call add_variable(reg, 'cas_temp_patch', 'patch canopy-air-space temperature', 'K',        &
-                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_CAS_TEMP)
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_patch', 'patch soil-top temperature', 'K',           &
-                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, MON, FLD_P_SOIL_TEMP_TOP)
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, MON, FLD_P_DIAG0 + PD_GROUND_TEMP)
       call add_variable(reg, 'soil_temp_layer_patch', 'soil temperature by layer and patch', 'K', &
                         DIM_SOIL_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_layer_patch', 'soil liquid fraction by layer and patch', '-', &
