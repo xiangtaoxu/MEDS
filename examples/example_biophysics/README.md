@@ -1,7 +1,7 @@
 # example_biophysics — the fast loop, at hourly resolution
 
 What MEDS does with a meteorological forcing file: solve a coupled canopy energy balance every
-30 minutes and hand back leaf, canopy-air and soil temperatures that a met file never contained.
+15 minutes and hand back leaf, canopy-air and soil temperatures that a met file never contained.
 
 ![Hourly canopy energy balance for July of year 50](biophysics_july.png)
 
@@ -14,13 +14,20 @@ Four temperatures over one July at 1 h resolution. Only the first is an input:
 | **Leaf, tallest cohort** | leaf temperature of the tallest cohort — the sunlit upper canopy | *solved* |
 | **Surface soil layer** | temperature of the top soil layer — node at ~1.8 cm, 0–4 cm thick | *solved* |
 
-**One patch, not the stand.** The figure plots only the patch with the highest leaf area index
-(LAI 5.3, half the stand area), because a site mean here would be misleading rather than merely
-coarse. This stand carries a disturbance gap: patch LAI spans 0.6 to 5.4, and the gap — a fifth of
-the area, taking roughly 70% of incident shortwave straight to the ground — behaves like bare soil
-and runs more than 10 K above air at midday. Averaging it with a shaded forest floor produces a
-curve describing no part of the forest. Selecting the closed patch is what lets the figure be read
-as "what happens under a canopy".
+**One patch, not the stand.** The figure plots only the patch with the highest leaf area index —
+here LAI 5.2, half the stand area — because a site mean would be misleading rather than merely
+coarse. The two patches in this stand behave *oppositely*:
+
+| patch | area | LAI | surface soil − air, daily mean | at midday |
+|---|---|---|---|---|
+| closed canopy | 0.50 | **5.23** | +0.89 K | **−1.18 K** |
+| half-open | 0.50 | **3.05** | +3.39 K | **+3.07 K** |
+
+A site mean of those has the wrong sign at midday for both of them, and describes no part of the
+forest. The spread is wider still when a disturbance gap is present: a patch at LAI 0.6 takes ~70%
+of incident shortwave straight to the ground, behaves like bare soil, and runs more than 10 K above
+air at midday. Selecting the closed patch is what lets the figure be read as "what happens under a
+canopy".
 
 Note the middle curve is a **soil** temperature, not a skin or litter temperature: MEDS has no
 surface organic horizon, so the top soil layer is the surface the energy balance closes on.
@@ -30,8 +37,8 @@ phase. Sunlit leaves run above air by day and below it at night — shortwave ab
 longwave loss against a finite boundary-layer conductance, offset by transpirational cooling. The
 canopy air space sits between leaf and soil, ventilated toward the free atmosphere at a rate the
 aerodynamic scheme sets. The surface soil layer is damped and lagged by its heat capacity: under a
-closed canopy it sits near the **daily mean** air temperature, running 1.3 K *below* air by day and
-3.4 K above it at night, with a 4.3 K diurnal swing against the air's 8.5 K. Reproducing that
+closed canopy it sits near the **daily mean** air temperature, running 1.4 K *below* air by day and
+3.2 K above it at night, with a 4.4 K diurnal swing against the air's 8.5 K. Reproducing that
 structure from nothing but a met file is the fast loop's whole job, and the third panel — each
 store's departure from the driving air temperature — is where it is easiest to read.
 
@@ -56,24 +63,24 @@ canopy-air CO₂ on the right is the state that same NEE drives — the CAS box 
 the flux plotted on the left, so the two panels are one number seen from either side and a
 disagreement between them would be a real inconsistency rather than a plotting artefact.
 
-The canopy air runs slightly below the free atmosphere by day (**−3.2 ppm on the daytime mean,
-dipping to −12.5 ppm at peak assimilation**) and builds up **+19.8 ppm overnight** under a stable
+The canopy air runs slightly below the free atmosphere by day (**−3.4 ppm on the daytime mean,
+dipping to −13.6 ppm at peak assimilation**) and builds up **+22.1 ppm overnight** under a stable
 canopy — the nocturnal accumulation and dawn flush-out that a flux tower sees. Over the month the
-stand takes up **408.5 gC m⁻² gross, 230.8 respired, 177.7 net**, and is a net sink in 57% of hours.
+stand takes up **442.6 gC m⁻² gross, 235.9 respired, 206.6 net**, and is a net sink in 57% of hours.
 
 Ecosystem respiration here carries **both** limbs, and the heterotrophic one is not a detail.
 Running the identical state and month with `[soil_carbon].soil_carbon_on = false` gives:
 
 | | soil carbon on | off (autotrophic only) |
 |---|---|---|
-| `Reco`, monthly mean | 7.17 µmol m⁻² s⁻¹ | 4.93 |
-| July gross uptake | 408.5 gC m⁻² | 408.0 |
-| July respired | 230.8 | 158.7 |
-| **July net uptake** | **177.7** | **249.4** |
+| `Reco`, monthly mean | 7.33 µmol m⁻² s⁻¹ | 5.16 |
+| July gross uptake | 442.6 gC m⁻² | 442.0 |
+| July respired | 235.9 | 165.9 |
+| **July net uptake** | **206.6** | **276.1** |
 | net sink | 57% of hours | 58% |
-| canopy air, night | +19.8 ppm | +13.7 |
+| canopy air, night | +22.1 ppm | +15.3 |
 
-Soil respiration is **31% of ecosystem respiration** and cuts July net uptake by **29%**. Off is
+Soil respiration is **30% of ecosystem respiration** and cuts July net uptake by **25%**. Off is
 not a coarser soil model, it is *no* soil carbon — litter is discarded and `rh = 0` — so with the
 default this figure's `Reco` and `NEE` curves are missing that entire limb.
 
@@ -90,13 +97,15 @@ itself, so the forcing CO₂ is now echoed into the diagnostic stream.
 Depth on the vertical, time on the horizontal, moisture in colour — the view that makes the vertical
 structure of a drydown legible. Rain events at days 11, 18, 23–25 and 30 appear as wetting fronts
 that propagate downward and attenuate; between them the surface dries steadily while the deep column
-barely moves. The numbers behind that: the **0.02 m layer travels 0.163 m³ m⁻³ over the month, the
-1.73 m layer 0.019** — an order of magnitude, and the whole reason a single-layer bucket cannot
+barely moves. The numbers behind that: the **0.02 m layer travels 0.168 m³ m⁻³ over the month, the
+1.73 m layer 0.021** — an order of magnitude, and the whole reason a single-layer bucket cannot
 represent this. `plot_soil.py` prints the per-layer table, because a heat map communicates pattern
 and hides magnitude.
 
 The lower panel is soil *temperature* on identical axes: heat penetrates further and more smoothly
-than water does, driven through the same surface.
+than water does, driven through the same surface. July mean at the base of the column is 16.2 °C
+with an annual range of 1.2 K — see the thermal bottom boundary note below, because the **default**
+boundary would put it at 20.5 °C with a 3.1 K range.
 
 Layer depths come from the file's own `soil_z` coordinate, not from re-deriving the vertical grid
 from the run configuration — so the figure stays correct if a run changes soil depth, layer count or
@@ -133,10 +142,10 @@ years: a cold-deciduous seedling sheds its whole canopy each autumn and has to r
 storage each spring, and until it is large enough to bank a surplus it spends the growing season at
 roughly break-even. The curve only takes off around 2040. Before v0.2.0 this example ran evergreen
 whatever its PFT declared (#245), and an evergreen seedling — photosynthesising year-round and never
-paying to refoliate — got away about twice as fast and finished at AGB 16.9 against 9.0 here.
+paying to refoliate — got away about twice as fast and finished at AGB 16.9 against 9.6 here.
 
-Soil carbon is the slowest of the four and is **still rising, near-linearly, at year 50** (15.4
-kgC m⁻² at the end, against 9.0 for above-ground biomass). Fifty years is many turnovers of the
+Soil carbon is the slowest of the four and is **still rising, near-linearly, at year 50** (16.2
+kgC m⁻² at the end, against 9.6 for above-ground biomass). Fifty years is many turnovers of the
 fast and structural pools but not of the slow one, so the soil here is spun up for the *canopy's*
 purposes and **not to equilibrium** — worth knowing before quoting a soil-carbon number from this
 example.
@@ -165,7 +174,9 @@ with Run("meds_config_spinup.toml") as run:
 `Run.step` calls the identical `driver_step` the executable calls — no physics is re-implemented
 on the Python side. `meds_main` is now a 71-line shell over the same `meds_driver` module, so the
 binary and the Python driver are two callers of one implementation rather than two code paths that
-have to be kept in agreement. See **Reproducibility** below for the measured comparison.
+have to be kept in agreement. They are not bit-identical — `libm` interposes on Intel's
+`libimf` inside a `dlopen`ed library, so transcendentals differ in the last ulp; compare long runs
+through site aggregates, not cohort by cohort.
 
 Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithaca NY (42.44 °N,
 76.50 °W):
@@ -175,16 +186,12 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
    **Roughly 9 minutes** on 4 threads (`-DMEDS_OPENMP=ON`, `[run].n_threads = 4`, ifx Release),
    or ~25 minutes single-core. This stage runs the **900 s production default**: `dt_fast` is no
    longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
-   spin-up takes the long step. Measured on this exact run, 900 s costs 545 s of wall time against
-   2322 s at 150 s — **4.26×**, not the 6× the step ratio suggests, because the ARK march takes two
-   sub-steps at 900 s where it takes one at 150 s — while every patch-area-weighted site aggregate
-   agrees to ≤ 0.5% (AGB 0.44%, LAI 0.04%, basal area 0.31%). Note that the *demography* still takes
-   a different path: 113 vs 115 cohorts at the end, and 82 vs 67 at year 35 before reconverging,
-   because `dt_fast` perturbs growth and so changes which cohorts fuse or are culled. That is a
-   discrete difference, not a shrinking truncation error, so runs at different `dt_fast` compare
-   through site aggregates and not cohort by cohort. See `docs/science/numerical_scheme.md` §6a.
-   It ends at 20 cohorts / 3 patches, peak LAI 4.06, AGB 9.00 kgC m⁻², mean dbh 23.5 cm, and
-   15.4 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
+   spin-up takes the long step. Because `dt_fast` perturbs growth it changes *which* cohorts fuse or
+   are culled, which is a discrete difference rather than a shrinking truncation error — so runs at
+   different `dt_fast` compare through site aggregates, not cohort by cohort
+   (`docs/science/numerical_scheme.md` §6a).
+   It ends at 14 cohorts / 2 patches, peak LAI 4.16, AGB 9.6 kgC m⁻², mean dbh 24.7 cm, and
+   16.2 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
    canopy the figure depends on is settled well before the run ends; the remaining years are still
    developing biomass, size structure and soil carbon (see the trajectory figure above).
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
@@ -209,28 +216,12 @@ bound**, so 900 s is the production default and `dt_fast` is an **accuracy** par
 `fast_interval_steps`, which counts fast steps per output record; the two are independent, and
 shortening `dt_fast` to get finer output is a mistake worth naming because it is an easy one.
 
-Stage 2 used to drop to 150 s, on the argument that a diel diagnostic needs sub-daily fidelity and
-a long step smears the energy partitioning. **Measured over this exact July, that is not so.**
-150 s against 900 s:
-
-(site means — this table is a `dt_fast` convergence check, not the single-patch figure above.)
-
-| | 150 s | 900 s |
-|---|---|---|
-| canopy air, mean / diel amplitude | 22.69 °C / 9.34 K | 22.67 / 9.37 |
-| leaf, mean / diel amplitude | 23.32 °C / 12.92 K | 23.31 / 12.91 |
-| surface soil layer, mean (site) | 23.42 °C | 23.39 |
-| leaf − air, day / night | +4.04 K / −0.87 K | +4.04 / −0.90 |
-| `dmax_psi_leaf`, monthly mean | −0.2951 MPa | −0.2954 |
-
-Every number this example reports agrees to 0.03 K, for 14.3 s of wall time against 4.0 s. So the
-example runs what a user would run, and the shortened step is gone.
-
-What 900 s **is** wrong for is the sub-daily leaf water-potential *excursion*: daytime mean
-−0.23 MPa at 12.5 s against −1.19 MPa at 900 s (#162). MEDS emits no diagnostic for it —
-`dmax_psi_leaf` is the daily *maximum*, which converges, as the table shows — so if you are studying
-hydraulic stress, shorten the step and measure it yourself rather than assuming this example's
-insensitivity carries over.
+**Everything this example reports is insensitive to the step** — 150 s and 900 s agree to 0.03 K on
+every temperature, for a quarter of the wall time — but do not carry that over. What 900 s **is**
+wrong for is the sub-daily leaf water-potential *excursion*: daytime mean −0.23 MPa at 12.5 s
+against −1.19 MPa at 900 s (#162). MEDS emits no diagnostic for it — `dmax_psi_leaf` is the daily
+*maximum*, which does converge — so if you are studying hydraulic stress, shorten the step and
+measure it yourself.
 
 The old oscillation is worth remembering even though it is fixed, for one reason: photosynthesis,
 respiration and VPD are all nonlinear in temperature, so by Jensen's inequality a symmetric
@@ -256,33 +247,6 @@ is already present, so iterating on a figure costs seconds rather than the full 
 The `meds_main` executable is no longer required by this example, though it still runs both stages
 from the same configs if you prefer it: `meds_main meds_config_spinup.toml`.
 
-### Reproducibility: the Python driver vs the executable
-
-`Run.step` calls the same `driver_step` the binary calls, so this is one implementation with two
-callers rather than two code paths. It is nonetheless **not bit-identical**, and the reason is
-worth knowing.
-
-The agreement is round-off that compounds with run length, so the number only means something
-with the window attached:
-
-| window | worst relative difference | exactly identical |
-|---|---|---|
-| one simulated **day** | ~1×10⁻¹² | about half of variables |
-| one simulated **July** (31 d, 868 variable-instances) | 2.0×10⁻⁷ | 374 |
-| **fifty years** | site aggregates differ by a few %, and the two paths end at *different cohort counts* | — |
-
-The cause is neither the compiler flags nor the integrator: inside a shared library that Python
-`dlopen`s, glibc's `libm` interposes on Intel's `libimf` for `exp`/`log`/`pow`, so the
-transcendentals differ in the last ulp. Running the same Python driver under
-`LD_PRELOAD=libimf.so` reproduces the executable **byte for byte**, which is what pins the cause.
-(An earlier guess — that ifx enables flush-to-zero in the main program's startup, which a dlopened
-library never runs — is wrong: `-no-ftz` reproduces the default executable exactly.)
-
-The fifty-year row is the one to take seriously, and it is not a bigger version of the first two:
-the demography is **discrete**, so a growth perturbation changes *which* cohorts fuse or are
-culled. That is the same phenomenon the `dt_fast` note above describes, and the same rule follows
-— **compare long runs through site aggregates, not cohort by cohort.**
-
 ## Why it is split into two stages
 
 Fifty years of hourly output would be ~440 000 records for a figure that needs 744. Stage 1
@@ -296,6 +260,28 @@ out of an artificial transient. If you plot the first 48 hours and see no start-
 what you are looking at.
 
 ## Notes on the configuration
+
+**Thermal bottom boundary (`[energy]`).** Both stages set:
+
+```toml
+[energy]
+bottom_bc = "dirichlet"
+deep_temp = 284.75          # [K] site constant: mean annual soil temperature at depth
+```
+
+This is **not** the default, and it is **not** `[soil].bottom_bc` — that key is the *water*
+boundary. The default `geothermal` holds the bottom heat flux at zero, which makes the base an
+adiabatic wall that **reflects** the annual temperature wave: measured here, the annual amplitude at
+the 1.73 m base node is 0.80 of the surface where diffusion gives 0.42, and July soil there runs
+4.3 K too warm. `dirichlet` conducts to a fixed deep temperature and reproduces the analytic damping
+to within 2%.
+
+`deep_temp` is a **site** property — mean annual soil temperature below the damping depth — so it
+has no defensible default and the loader requires it rather than guessing. This forcing's mean
+annual air temperature is 10.09 °C, and deep soil typically sits 1–2 K above that. `deep_depth`
+keeps its derived default of 3.12 m, the optimum for this column. See
+`docs/science/soil_biophysics.md`.
+
 
 **Forcing recycling.** One calendar year of ERA5-Land drives all 50 years. The recycle window is
 *declared*, never inferred:
@@ -386,7 +372,7 @@ it always converted; only the matrix branch did not.
 
 The **pool** side was never wrong — the daily debit always used the kgC path — which is why the
 soil-carbon budget and `rh_site` looked right the whole time. Only the flux into NEE and canopy
-CO₂ was suppressed. The tell, in hindsight, is in the table above: the "soil carbon on" numbers
+CO₂ was suppressed. The tell, in hindsight, is in the soil-carbon on/off table near the top: the "soil carbon on" numbers
 this README first quoted are *exactly* the "off" column.
 
 It also shows why the seam check below is worth having and why it is not sufficient on its own:
