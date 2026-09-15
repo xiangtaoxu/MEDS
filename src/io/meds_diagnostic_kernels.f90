@@ -20,8 +20,8 @@
 !==========================================================================================!
 module meds_diagnostic_kernels
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : tiny_num, gsw_2_gsc, grav_head, mmdry, r_gas, r_wv
-   use meds_therm_lib, only : sat_vapor_pressure
+   use meds_constants, only : tiny_num, gsw_2_gsc, grav_head
+   use meds_therm_lib, only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
    use meds_hydr_lib,  only : soil_psi_from_theta
    implicit none
    private
@@ -34,7 +34,6 @@ module meds_diagnostic_kernels
    !----- Dry-air / water-vapour gas-constant ratio eps = R_d/R_v (~0.622), the mixing-ratio    !
    !      constant in q <-> e. Derived from the shared constants rather than re-stated, so it     !
    !      can never drift from the thermodynamics the model actually integrates.                  !
-   real(wp), parameter :: EPS_MOL = (r_gas / mmdry) / r_wv
 
 contains
 
@@ -116,24 +115,6 @@ contains
    !  Atmosphere / canopy air                                                               !
    !=======================================================================================!
 
-   !----- Vapour-pressure deficit [Pa] from temperature and ACTUAL vapour pressure. ---------!
-   pure elemental real(wp) function air_vpd(temp, e_vap) result(vpd)
-      real(wp), intent(in) :: temp    !< [K]
-      real(wp), intent(in) :: e_vap   !< [Pa] actual vapour pressure
-      vpd = max(0.0_wp, sat_vapor_pressure(temp) - e_vap)
-   end function air_vpd
-
-   !----- Vapour-pressure deficit [Pa] from the canopy-air-space prognostic twins            !
-   !      (temperature + SPECIFIC humidity) at a given pressure. This is the form the CAS      !
-   !      diagnostics need: e = q*p / (eps + (1-eps)*q), eps = mmh2o/mmdry.                    !
-   pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
-      real(wp), intent(in) :: temp      !< [K]
-      real(wp), intent(in) :: shv       !< [kg/kg] specific humidity
-      real(wp), intent(in) :: pressure  !< [Pa]
-      real(wp) :: e_vap
-      e_vap = shv * pressure / max(EPS_MOL + (1.0_wp - EPS_MOL) * shv, tiny_num)
-      vpd   = air_vpd(temp, e_vap)
-   end function specific_humidity_to_vpd
 
    !=======================================================================================!
    !  Generic                                                                               !

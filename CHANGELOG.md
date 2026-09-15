@@ -39,6 +39,29 @@ before and after.
   through site aggregates rather than cohort by cohort — are kept. Also corrected: the opening
   sentence said the energy balance is solved every 30 minutes; `dt_fast` is 900 s, so it is 15.
 
+### Fixed
+
+- **Sub-daily state variables declared `AGG_TMEAN` were once-per-window snapshots, not time
+  means** (#264). A family of `FLD_P_*` output sources read `site` at the output tick — once per
+  `dt_slow` — and were then folded by `AGG_TMEAN` as though they had been time-integrated. For a
+  quantity with a diurnal cycle that makes the "mean" one instantaneous sample per window, taken at
+  whatever local time the boundary falls on, **so the bias is a function of the site's longitude**.
+  Measured over one July at Ithaca: `soil_temp_top_site` read **27.79 °C** against the identical
+  field accumulated properly at **26.39 °C**, and `cas_temp_site` **23.71 °C** against **22.80 °C**.
+  `cas_temp`, `cas_shv`, `cas_co2`, `cas_vpd`, `soil_temp_top` and `w_surface` (site and patch
+  axes, nine registry entries) now read the dt-weighted `PD_*` accumulators. After the fix
+  `soil_temp_top_site` agrees with the sub-step reference to **0.005 K** and `cas_temp_site` to
+  0.03 K. Stocks that are correct as instants — area, age, the soil-carbon pools, SWE, snow depth —
+  are unchanged. `PD_CAS_VPD` and `PD_W_SURFACE` are new accumulator rows; VPD is nonlinear in
+  temperature, so it is formed per sub-step rather than derived from the averaged twins.
+  `test_output_registry` now asserts over the **whole registry** that no `AGG_TMEAN` variable is
+  sourced from a once-per-tick state read, so a new variable cannot reintroduce it.
+- `air_vpd` and `specific_humidity_to_vpd` moved from `src/io/meds_diagnostic_kernels` to
+  `meds_therm_lib`, where the thermodynamics belongs: the fast loop now needs the same formula the
+  output layer uses, and a kernel may not depend on the output layer. `meds_diagnostic_kernels`
+  re-exports them, so no caller changes. The io layer's private `PRSS_REF` duplicate of `p_std` is
+  retired in the same change.
+
 ## [0.2.0] — 2026-09-14
 
 **Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,

@@ -10,12 +10,16 @@
 module meds_therm_lib
    use meds_kinds,     only : wp
    use meds_constants, only : mmdry, tiny_num, cp_air, cp_vap, cp_liq, cp_ice, latent_heat_fusion,    &
-                              t_3ple, tsupercool_liq, tsupercool_vap, r_dry,                    &
+                              t_3ple, tsupercool_liq, tsupercool_vap, r_dry, r_gas, r_wv,       &
                               rho_h2o, k_water, k_ice
    implicit none
    private
 
    public :: sat_vapor_pressure, sat_specific_humidity, sat_vapor_pressure_temp_deriv
+   public :: air_vpd, specific_humidity_to_vpd
+
+   !----- mmh2o/mmdry, for the specific-humidity -> vapour-pressure conversion. -----------!
+   real(wp), parameter :: EPS_MOL = (r_gas / mmdry) / r_wv
    public :: sat_specific_humidity_temp_deriv
    public :: internal_energy_to_temp, temp_to_internal_energy
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
@@ -249,5 +253,30 @@ contains
       real(wp)             :: dmol
       dmol = rho * (1.0_wp - shv) / mmdry
    end function cas_molar_density
+
+
+   !=======================================================================================!
+   !  Vapour-pressure deficit. Thermodynamics, not a diagnostic: the fast loop accumulates    !
+   !  a dt-weighted CAS VPD (#264) and the output layer reads it back, so both need the SAME  !
+   !  formula and it cannot live in src/io -- a kernel may not depend on the output layer.    !
+   !=======================================================================================!
+
+   !----- VPD [Pa] from temperature and ACTUAL vapour pressure. ---------------------------!
+   pure elemental real(wp) function air_vpd(temp, e_vap) result(vpd)
+      real(wp), intent(in) :: temp    !< [K]
+      real(wp), intent(in) :: e_vap   !< [Pa] actual vapour pressure
+      vpd = max(0.0_wp, sat_vapor_pressure(temp) - e_vap)
+   end function air_vpd
+
+   !----- VPD [Pa] from the canopy-air-space prognostic twins (temperature + SPECIFIC       !
+   !      humidity) at a given pressure: e = q*p / (eps + (1-eps)*q), eps = mmh2o/mmdry.    !
+   pure elemental real(wp) function specific_humidity_to_vpd(temp, shv, pressure) result(vpd)
+      real(wp), intent(in) :: temp      !< [K]
+      real(wp), intent(in) :: shv       !< [kg/kg] specific humidity
+      real(wp), intent(in) :: pressure  !< [Pa]
+      real(wp) :: e_vap
+      e_vap = shv * pressure / max(EPS_MOL + (1.0_wp - EPS_MOL) * shv, tiny_num)
+      vpd   = air_vpd(temp, e_vap)
+   end function specific_humidity_to_vpd
 
 end module meds_therm_lib

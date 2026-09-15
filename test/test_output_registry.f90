@@ -7,7 +7,10 @@ program test_output_registry
    use meds_config,          only : meds_config_t
    use meds_output_config,   only : FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, N_FREQ, N_GRP, &
                                     GRP_STRUCTURE
-   use meds_output_types,    only : output_registry_t, MAX_OUTPUT_VARS, DIM_COHORT, DIM_PATCH
+   use meds_output_types,    only : output_registry_t, MAX_OUTPUT_VARS, DIM_COHORT, DIM_PATCH,     &
+                                    AGG_TMEAN
+   use meds_output_integrate, only : FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD,  &
+                                    FLD_P_SOIL_TEMP_TOP, FLD_P_W_SURFACE
    use meds_output_registry, only : build_output_registry, build_freq_index, find_var_index,     &
                                     apply_variable_override, apply_group_toggles, parse_stream_mask, &
                                     freq_bit, OVR_TRUE, OVR_FALSE, OVR_MASK
@@ -16,7 +19,10 @@ program test_output_registry
 
    type(meds_config_t)     :: cfg
    type(output_registry_t) :: reg
-   integer(ik) :: mask, status, t
+   integer(ik) :: mask, status, t, k
+   integer(ik), parameter :: TICK_READ(6) = [FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2,        &
+                                             FLD_P_CAS_VPD, FLD_P_SOIL_TEMP_TOP, FLD_P_W_SURFACE]
+   logical :: tmean_on_tick_read
    character(len=8) :: bad
    logical :: found
 
@@ -119,6 +125,30 @@ program test_output_registry
    !----- parse_stream_mask flags an unrecognized token. -----!
    call parse_stream_mask('D X', mask, status, bad)
    call check(status == 1_ik .and. trim(bad) == 'X', 'bad stream token flagged')
+
+   !----- A STATE READ AT THE OUTPUT TICK IS NOT A TIME AVERAGE (#264). The FLD_P_* sources above  !
+   !      read `site` once per output tick -- once per dt_slow -- so folding them with AGG_TMEAN     !
+   !      labels one instantaneous sample a mean. The sample lands at whatever local time the       !
+   !      window boundary falls on, so the bias is a function of the site's LONGITUDE: measured at   !
+   !      +1.4 K for the top soil layer and +0.9 K for canopy-air temperature at Ithaca. These       !
+   !      quantities have dt-weighted PD_* accumulators and must be sourced from them.               !
+   !                                                                                                 !
+   !      Asserted over the WHOLE registry rather than on the six names that were wrong, so a new    !
+   !      variable cannot reintroduce the defect. AGG_LAST on the same sources stays legal: a stock  !
+   !      read at an instant is exactly what AGG_LAST claims to be.  --------------------------------!
+   call build_output_registry(reg, cfg)
+   tmean_on_tick_read = .false.
+   do t = 1_ik, reg%nvar
+      if (reg%var(t)%agg /= AGG_TMEAN) cycle
+      do k = 1_ik, size(TICK_READ, kind=ik)
+         if (reg%var(t)%source_id == TICK_READ(k)) then
+            tmean_on_tick_read = .true.
+            write(*,'(a)') '   AGG_TMEAN on a tick-read source: '//trim(reg%var(t)%name)
+         end if
+      end do
+   end do
+   call check(.not. tmean_on_tick_read,                                                           &
+              'no AGG_TMEAN variable is sourced from a once-per-tick state read (#264)')
 
    write(*,'(a)') 'test_output_registry: ALL PASSED'
 
