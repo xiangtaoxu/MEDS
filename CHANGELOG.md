@@ -62,6 +62,27 @@ before and after.
   re-exports them, so no caller changes. The io layer's private `PRSS_REF` duplicate of `p_std` is
   retired in the same change.
 
+- **Exactly-tied cohorts are now co-dominant in the two-stream, not stacked** (#207).
+  `update_overtopping_lai` already treated equal-height cohorts as co-dominant, but
+  `canopy_radiation` builds one discrete RT layer per cohort and its input is merely sorted, so
+  tied cohorts **stacked** and whichever sorted first was placed above. The tie is exact and
+  routine, not hypothetical: `apply_recruitment` uses **one scalar** `recruit_dbh` for every PFT,
+  height is re-derived from it, and the sort is stable — so at every recruitment event the winner
+  was the **lower PFT index**. Nothing about the ecology chose that. Measured on two optically
+  identical tied cohorts, the lower slot absorbed **12.6 % less shortwave at zero overstory,
+  rising to 15.1 % under LAI 6** — worst exactly where a whole-canopy albedo or GPP check is least
+  likely to notice it, because the total is roughly conserved and only the split between PFTs
+  moves. `canopy_radiation` now takes `height` and merges exactly-tied cohorts into one RT layer,
+  weighting the blended optics by area index — the same weight `blend_cohort_optics` already uses
+  to mix leaf against wood inside a cohort — and scattering the layer's absorbed flux back by
+  absorptivity-weighted area, which is identically the quantity `leaf_frac` is built from. A
+  one-member layer takes its cohort's values verbatim, so a canopy with no ties is bit-identical.
+  After the fix the positional penalty is **0.0 % at every overstory LAI**.
+  `test_canopy_radiation` asserts both that optically identical twins absorb equally and that
+  permuting the tied pair's PFT order moves neither one; all five assertions fail on the previous
+  code. **#1 stays open** — breaking the tie *ecologically* is its standing question, and this
+  change does not answer it.
+
 ## [0.2.0] — 2026-09-14
 
 **Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,
