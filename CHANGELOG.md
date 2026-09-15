@@ -14,38 +14,6 @@ before and after.
 
 ## [Unreleased]
 
-## [Unreleased]
-
-### Changed
-
-- **The demography example is slow-scale demography only** (#260), which is what it always claimed
-  to be: cohort and patch dynamics, fusion and fission, growth, mortality, recruitment and treefall.
-  **No carbon dynamics and no soil carbon.**
-
-  It had stopped being that without anyone noticing. Its vital-rate laws are LAI-driven and
-  empirical, and the reorg moved them out of Fortran into `empirical_laws.py`; the Fortran model has
-  only the *carbon* path. So the example's config, brought up to schema in September and never
-  re-run, was silently pointing `meds_main` at **a different model** — stub GPP
-  (`gross_gpp = gpp_ref * leaf_area`) with no light competition, hence no negative feedback on leaf
-  area. It diverged to LAI 501 and AGB 907 kgC/m² and died in `cohort_reorder`. The committed output
-  beside it was older still, from the deleted *Fortran* empirical model.
-
-  The example's driver is now the Python one that actually implements its laws, and it writes its own
-  output: new `meds_site_get_patch_real` / `meds_site_get_patch_int` in the demography C-API expose
-  the patch areas, ages and the cohort→patch CSR map, and `_write_nc.py` writes the ragged
-  cohort/patch netCDF `post_proc/` already reads.
-
-  **The stand now equilibrates and is physically sensible**: 250 years settles at ~0.97 stems m⁻²,
-  **AGB 16.5 kgC m⁻², LAI 7.4**, 266–355 cohorts over 12 patches, with a textbook inverse-J size
-  distribution — 0.43 stems m⁻² below 1 cm DBH down to 0.0008 above 50 cm, and **76% of the biomass
-  in stems over 20 cm**. The previous committed output had AGB 121 kgC m⁻², about four times the
-  densest forest on Earth. The run takes **22 seconds**, against 2 min 18 s for the carbon run that
-  crashed, and `empirical_spinup.py` still reproduces its golden exactly.
-
-  The stale `example_output_pft_parameters.csv` is deleted: it described the deleted Fortran model
-  (`growth_lai_slope`, `mort_gamma/alpha/beta`, no carbon traits), and a provenance record for a
-  model that does not exist is worse than none.
-
 ## [0.2.0] — 2026-09-14
 
 **Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,
@@ -659,6 +627,61 @@ but uncalibrated, so MEDS ships hydraulically identical PFTs.
   two #150 adds. None of it is derivable from the instantaneous state: these are time integrals over
   the preceding weeks. All eight columns are now written, and optional on read, so an older state
   file still restarts exactly as it did.
+
+### Examples
+
+- **Every example regenerated against v0.2.0**, and two of them were broken.
+  `example_leaf_gas_exchange` raised `TypeError` on every run: it passed `theta=p.theta_j` to
+  `assimilation_demand_c3`, which #118 renamed when it split the C3 co-limitation curvatures out —
+  literally the confusion #118 was about, sitting in the example. `example_demography` is the entry
+  below. `example_phenology` now genuinely exercises all four strategies; two could not be selected
+  before #150.
+
+  **`example_biophysics` is re-spun and genuinely cold-deciduous for the first time** (#245). It
+  ends at 20 cohorts / 3 patches, peak LAI 4.06, AGB 9.00 kgC/m², mean dbh 23.5 cm, 15.4 kgC/m² soil
+  carbon — against 128 / 12 / 5.32 / 15.75 / 35.2 / 24.2 when it ran evergreen. Establishment is
+  about twice as slow: a deciduous seedling rebuilds its canopy from storage every spring and spends
+  its early growing seasons near break-even, so little happens until year 15. Its trajectory figure
+  now plots the **annual maximum** LAI — it sampled at the year boundary, which is 1 January, and for
+  a deciduous stand that plotted a bare canopy topping out at 0.28 for a stand whose July LAI is 4.1.
+
+  **Its July stage drops from `dt_fast = 150 s` to the 900 s production default.** The short step was
+  justified on the argument that a diel figure needs sub-daily fidelity and a long step smears the
+  energy partitioning. Measured over that exact July, it does not: canopy air 22.69 vs 22.67 °C mean
+  and 9.34 vs 9.37 K diel amplitude, leaf 23.32 vs 23.31 and 12.92 vs 12.91, soil surface 23.42 vs
+  23.39, leaf−air +4.04 K by day either way, `dmax_psi_leaf` −0.2951 vs −0.2954 MPa. Every number the
+  figures report agrees to 0.03 K, for 14.3 s of wall time against 4.0 s. `dt_fast` is an **accuracy**
+  parameter and not the output cadence — the hourly records come from `fast_interval_steps` — and the
+  config and README now say so, along with what 900 s *is* wrong for (the sub-daily `psi_leaf`
+  excursion, #162, for which MEDS emits no diagnostic).
+
+- **The demography example is slow-scale demography only** (#260), which is what it always claimed
+  to be: cohort and patch dynamics, fusion and fission, growth, mortality, recruitment and treefall.
+  **No carbon dynamics and no soil carbon.**
+
+  It had stopped being that without anyone noticing. Its vital-rate laws are LAI-driven and
+  empirical, and the reorg moved them out of Fortran into `empirical_laws.py`; the Fortran model has
+  only the *carbon* path. So the example's config, brought up to schema in September and never
+  re-run, was silently pointing `meds_main` at **a different model** — stub GPP
+  (`gross_gpp = gpp_ref * leaf_area`) with no light competition, hence no negative feedback on leaf
+  area. It diverged to LAI 501 and AGB 907 kgC/m² and died in `cohort_reorder`. The committed output
+  beside it was older still, from the deleted *Fortran* empirical model.
+
+  The example's driver is now the Python one that actually implements its laws, and it writes its own
+  output: new `meds_site_get_patch_real` / `meds_site_get_patch_int` in the demography C-API expose
+  the patch areas, ages and the cohort→patch CSR map, and `_write_nc.py` writes the ragged
+  cohort/patch netCDF `post_proc/` already reads.
+
+  **The stand now equilibrates and is physically sensible**: 250 years settles at ~0.97 stems m⁻²,
+  **AGB 16.5 kgC m⁻², LAI 7.4**, 266–355 cohorts over 12 patches, with a textbook inverse-J size
+  distribution — 0.43 stems m⁻² below 1 cm DBH down to 0.0008 above 50 cm, and **76% of the biomass
+  in stems over 20 cm**. The previous committed output had AGB 121 kgC m⁻², about four times the
+  densest forest on Earth. The run takes **22 seconds**, against 2 min 18 s for the carbon run that
+  crashed, and `empirical_spinup.py` still reproduces its golden exactly.
+
+  The stale `example_output_pft_parameters.csv` is deleted: it described the deleted Fortran model
+  (`growth_lai_slope`, `mort_gamma/alpha/beta`, no carbon traits), and a provenance record for a
+  model that does not exist is worse than none.
 
 ### Documentation
 
