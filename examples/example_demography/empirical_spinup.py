@@ -58,7 +58,12 @@ for _a in _it:
         N_YEARS = int(next(_it))
     else:
         _ARGV.append(_a)
-CONFIG = _ARGV[0] if _ARGV else "meds_config_main.toml"
+#----- Default to the EXAMPLE's own config, not the repository's shipped one. Running an example
+#      with no arguments should run the example; it used to pick up the root `meds_config_main.toml`,
+#      which is a different stand with different PFTs. Resolved against this file so it works from
+#      wherever you launch it, while an explicit path still wins.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG = _ARGV[0] if _ARGV else os.path.join(_HERE, "example_config_main.toml")
 GOLDEN = "test/golden/empirical_spinup_golden.csv"
 N_PATCH = 4
 #----- Stamp the netCDF with calendar years rather than 1..N. The cadence helper counts steps, not
