@@ -14,6 +14,31 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **The shipped examples now use the absorbing thermal bottom boundary** (#267). #145 built
+  `[energy].bottom_bc = "dirichlet"`, `deep_temp`, the derived `deep_depth = 3.12 m` optimum and
+  `test_soil_annual_damping`, and then nothing switched to it: the default is still `geothermal`,
+  which holds the bottom heat flux at zero and makes the base an adiabatic wall that **reflects**
+  the annual temperature wave. Measured in `examples/example_biophysics`, switching it moves the
+  July soil temperature at the 1.73 m base node from **20.5 °C to 16.2 °C** and its annual range
+  from **3.1 K to 1.2 K**; the analytic damping for that depth is 0.42 of the surface amplitude,
+  against 0.80 for the adiabatic base and 0.46 for the Dirichlet one. The surface moves only
+  0.29 K, so this matters for deep soil temperature — soil-carbon Q10, root-zone temperature, the
+  timing of spring thaw — not for the canopy energy balance. `deep_temp` is a SITE constant with no
+  defensible global value, so the default is unchanged and `meds_config_main.toml` now documents
+  all three keys instead of omitting them.
+- **`examples/example_biophysics` regenerated** against that boundary and against the #266 ground-
+  evaporation fix. The stand ends at 14 cohorts / 2 patches, peak LAI 4.16, AGB 9.6 kgC m⁻², mean
+  dbh 24.7 cm, 16.2 kgC m⁻² soil carbon (was 20 / 3, 4.06, 9.0, 23.5, 15.4). July gross uptake
+  442.6 gC m⁻² against 408.5, net 206.6 against 177.7.
+- **The example README is trimmed to what a reader needs.** The `dt_fast` 150 s-vs-900 s
+  convergence table and the Python-driver-vs-executable agreement study were development evidence,
+  not reader-facing; the substance of the latter is already recorded here under #139. The
+  reader-facing rules both carried — `dt_fast` is not the output cadence, and long runs compare
+  through site aggregates rather than cohort by cohort — are kept. Also corrected: the opening
+  sentence said the energy balance is solved every 30 minutes; `dt_fast` is 900 s, so it is 15.
+
 ## [0.2.0] — 2026-09-14
 
 **Read this before comparing a v0.2.0 run against a v0.1.0 one.** The release moved real numbers,

@@ -140,6 +140,32 @@ dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
 # block. The adaptive-substep keys (rtol, h_init, max_substep) were removed as unread (#163).
 atol           = 1.0e-2       # [K]  budget-closure threshold for the debug halt (NOT a step tolerance)
 
+#----- THERMAL bottom boundary. NOTE this is [energy].bottom_bc, NOT [soil].bottom_bc -- the latter
+#      is the WATER boundary (free_drain | bedrock | aquifer). Two different keys, two different
+#      physics, same name in different blocks.
+#
+#      `geothermal` (the DEFAULT) prescribes the bottom FLUX, hard-wired to zero, which makes the
+#      base an adiabatic wall that REFLECTS the annual temperature wave. Against the analytic
+#      semi-infinite profile it leaves the amplitude at -1.73 m 82 % too large (0.764 of the surface
+#      where the analytic value is 0.421); `dirichlet` lands at 0.412, i.e. -2 %. In a full model run
+#      at Ithaca the difference is 4.3 K in July soil temperature at the column base, and it matters
+#      for anything keyed to deep soil temperature -- soil-carbon Q10, root-zone temperature, and the
+#      timing of spring thaw. See docs/science/soil_biophysics.md and test_soil_annual_damping.
+#
+#      It is NOT switched on by default because `deep_temp` is a SITE property with no defensible
+#      global value, and the loader refuses to guess it. Set both keys, or accept the reflecting base
+#      knowingly. (#267)
+bottom_bc      = "geothermal" # geothermal (adiabatic base, REFLECTS the annual wave) | dirichlet
+#deep_temp     = 284.75       # [K]  REQUIRED by dirichlet. Mean annual soil temperature below the
+                              #      annual damping depth ~ mean annual AIR temperature + 1..2 K.
+                              #      An error here is a steady flux into the column base, i.e. a
+                              #      mean-annual bias of about the same size at depth.
+#deep_depth    = 3.12         # [m]  depth of the anchor PLANE. The default is the derived optimum
+                              #      for the DEFAULT column (2 m, 10 layers, grid_growth 3): a purely
+                              #      resistive termination reflects least at l = d/sqrt(2), giving
+                              #      1.727 + 1.973/sqrt(2) = 3.12 m. CHANGE IT if you change the
+                              #      column depth or the soil's thermal texture.
+
 [snow]
 # Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0). The snow store is
 # ALWAYS ACTIVE -- snowfall is a boundary water input like rain, so there is no on/off switch; a

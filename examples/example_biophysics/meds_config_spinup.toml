@@ -194,3 +194,17 @@ start_clamp    = "hold"
 #      ~5 yr turnover), so 50 years is many turnovers -- the pools are equilibrated by 2074.
 [soil_carbon]
 soil_carbon_on = true
+
+#----- THERMAL bottom boundary (#267). Not the [soil].bottom_bc water boundary -- different key.
+#      The DEFAULT `geothermal` holds the bottom FLUX at zero, making the base an adiabatic wall that
+#      REFLECTS the annual temperature wave: measured here, the annual amplitude at the 1.73 m base
+#      node is 0.80 of the surface where diffusion gives 0.42, and July soil there runs 4.3 K too
+#      warm. `dirichlet` conducts to a fixed deep temperature and reproduces the analytic damping.
+#
+#      deep_temp is a SITE constant -- mean annual soil temperature below the damping depth. This
+#      forcing's mean annual air temperature is 10.09 C (283.24 K), and deep soil typically sits
+#      1-2 K above mean annual air, hence 284.75 K. deep_depth keeps its derived default of 3.12 m,
+#      which is the optimum for this column (2 m, 10 layers, grid_growth 3).
+[energy]
+bottom_bc = "dirichlet"
+deep_temp = 284.75
