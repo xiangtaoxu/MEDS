@@ -14,6 +14,22 @@ before and after.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-09-15
+
+A diagnostics-and-boundaries release. Nothing here changes the demographic core; what it changes is
+**what the model reports and what its lower boundaries do**, and two of the four move numbers a
+reader would otherwise have trusted.
+
+The thread that produced it is worth stating, because it is a methodological caution as much as a
+set of fixes. A question about why the biophysics example's soil ran warmer than the air turned out
+to have a **site-mean artefact** as its main answer: that stand carries a disturbance gap, patch LAI
+spanned 0.64 to 5.36, and the gap supplied ~70 % of the apparent anomaly from 21 % of the area. Per
+patch, a closed canopy was already behaving correctly — 2 cm soil sitting at the daily-mean air
+temperature and running *below* air at midday. **In a demography model a site mean of a nonlinear
+surface quantity is not a coarse answer, it is a wrong one**, and the example now plots one patch
+rather than the stand. Chasing that question nevertheless turned up three real defects, all fixed
+here, and one output gap that hid it (#270, open).
+
 ### Changed
 
 - **The shipped examples now use the absorbing thermal bottom boundary** (#267). #145 built
@@ -41,6 +57,37 @@ before and after.
 
 ### Fixed
 
+- **Ground evaporation used the wrong air-filled porosity, which inverted its moisture response**
+  (#266). `ground_evaporation` referenced CLM5's air-filled pore space to the **bulk** top-layer
+  moisture, `phi_air = phi - theta1`. CLM5 eq 5.80 references it to `theta_air`, the **air-dry**
+  water content of eq 5.78 — a texture constant obtained by inverting the retention curve at
+  `psi = -1e4 m`, not a state. With `phi_air` tied to `theta1` the tortuosity falls as
+  `(phi - theta1)^(10/3)`, faster than the dry-surface-layer thickness falls linearly, so `r_soil`
+  **rises** with wetness and **a wetter soil evaporates less**: for the shipped loam the ground
+  latent flux had a *minimum* at `theta = 0.31`, and the approach to `theta_init` was a 60x cliff
+  rather than a limit. At the biophysics example's actual state — `theta` 0.246, `psi` −0.0106 MPa,
+  soil-surface relative humidity 0.99992, i.e. water not limiting — `r_soil` was **9167 s/m**
+  against an aerodynamic 1389 s/m, pinning ground LE at 3.0 W m⁻² (3.6 % of site ET). Corrected,
+  the response is monotone, joins the DSL-free limit continuously, and the closed-canopy floor's
+  daily-mean warm bias drops from +1.42 K to +0.99 K. The DSL thickness denominator is corrected to
+  `(theta_init - theta_air)` (eq 5.77) at the same time; the tortuosity keeps the Millington–Quirk
+  exponent rather than CLM5's `phi_air^2 (phi_air/phi)^(3/B1)`, because `B1` is Clapp–Hornberger and
+  the shipped curve is van Genuchten — with `phi_air` constant the two differ only by a constant
+  factor, so the response *shape* is unaffected. **Note that simply disabling the DSL also removes
+  the bias but desiccates the top layer to a daily-mean −17.8 MPa**: the DSL does real work and was
+  referenced to the wrong porosity. `test_column_hydrology` now asserts the physics rather than the
+  formula — evaporation monotone in soil moisture, and continuous into the DSL-free limit — and
+  both assertions fail on the previous code. Nothing in the suite had constrained this: the only
+  soil-evaporation assertions were snow-cover area weighting, which is why a 9x error in ground
+  latent flux sat behind a green suite.
+- **`examples/example_biophysics` plots the closed-canopy patch, not a site mean across a gap.**
+  The stand's patch LAI spans 0.64 to 5.36 and the gap — 21 % of the area, passing ~70 % of incident
+  shortwave straight to the ground — behaves like bare soil and runs more than 10 K above air at
+  midday, supplying ~70 % of the site-mean soil warm anomaly on its own. The figure now selects the
+  highest-LAI patch, and the soil series is relabelled **"Surface soil layer"**: it is the top soil
+  layer (node ~1.8 cm, 0–4 cm thick), not a skin or litter temperature, and MEDS has no surface
+  organic horizon to confuse it with. Per-patch sub-daily data comes from the opt-in
+  `[fast].fast_probe`; the carbon and soil figures remain site means (#270).
 - **Sub-daily state variables declared `AGG_TMEAN` were once-per-window snapshots, not time
   means** (#264). A family of `FLD_P_*` output sources read `site` at the output tick — once per
   `dt_slow` — and were then folded by `AGG_TMEAN` as though they had been time-integrated. For a
