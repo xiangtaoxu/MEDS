@@ -12,15 +12,34 @@ Four temperatures over one July at 1 h resolution. Only the first is an input:
 | **Air** | above-canopy air temperature, straight from the ERA5-Land forcing | *boundary condition* |
 | **Canopy air space** | the prognostic CAS temperature | *solved* |
 | **Leaf, tallest cohort** | leaf temperature of the tallest cohort — the sunlit upper canopy | *solved* |
-| **Soil surface** | top soil-layer temperature | *solved* |
+| **Surface soil layer** | temperature of the top soil layer — node at ~1.8 cm, 0–4 cm thick | *solved* |
+
+**One patch, not the stand.** The figure plots only the patch with the highest leaf area index
+(LAI 5.3, half the stand area), because a site mean here would be misleading rather than merely
+coarse. This stand carries a disturbance gap: patch LAI spans 0.6 to 5.4, and the gap — a fifth of
+the area, taking roughly 70% of incident shortwave straight to the ground — behaves like bare soil
+and runs more than 10 K above air at midday. Averaging it with a shaded forest floor produces a
+curve describing no part of the forest. Selecting the closed patch is what lets the figure be read
+as "what happens under a canopy".
+
+Note the middle curve is a **soil** temperature, not a skin or litter temperature: MEDS has no
+surface organic horizon, so the top soil layer is the surface the energy balance closes on.
 
 The three solved curves separate from the forcing in different directions and with different
 phase. Sunlit leaves run above air by day and below it at night — shortwave absorption and
 longwave loss against a finite boundary-layer conductance, offset by transpirational cooling. The
 canopy air space sits between leaf and soil, ventilated toward the free atmosphere at a rate the
-aerodynamic scheme sets. The soil surface is damped and lagged by its heat capacity. Reproducing
-that structure from nothing but a met file is the fast loop's whole job, and the third panel —
-each store's departure from the driving air temperature — is where it is easiest to read.
+aerodynamic scheme sets. The surface soil layer is damped and lagged by its heat capacity: under a
+closed canopy it sits near the **daily mean** air temperature, running 1.3 K *below* air by day and
+3.4 K above it at night, with a 4.3 K diurnal swing against the air's 8.5 K. Reproducing that
+structure from nothing but a met file is the fast loop's whole job, and the third panel — each
+store's departure from the driving air temperature — is where it is easiest to read.
+
+Per-patch sub-daily temperatures come from the opt-in `[fast].fast_probe` CSV, since the FAST
+netCDF tier is staged as a site mean; the daily tier supplies `lai_patch` (which patch to select)
+and `cohort_offset`/`cohort_count` (which cohorts are in it). The **carbon and soil figures below
+remain site means** — per-patch sub-daily carbon fluxes and soil profiles are not currently
+written by any stream.
 
 
 ## The carbon cycle, from the same hourly files
@@ -194,11 +213,13 @@ Stage 2 used to drop to 150 s, on the argument that a diel diagnostic needs sub-
 a long step smears the energy partitioning. **Measured over this exact July, that is not so.**
 150 s against 900 s:
 
+(site means — this table is a `dt_fast` convergence check, not the single-patch figure above.)
+
 | | 150 s | 900 s |
 |---|---|---|
 | canopy air, mean / diel amplitude | 22.69 °C / 9.34 K | 22.67 / 9.37 |
 | leaf, mean / diel amplitude | 23.32 °C / 12.92 K | 23.31 / 12.91 |
-| soil surface, mean | 23.42 °C | 23.39 |
+| surface soil layer, mean (site) | 23.42 °C | 23.39 |
 | leaf − air, day / night | +4.04 K / −0.87 K | +4.04 / −0.90 |
 | `dmax_psi_leaf`, monthly mean | −0.2951 MPa | −0.2954 |
 

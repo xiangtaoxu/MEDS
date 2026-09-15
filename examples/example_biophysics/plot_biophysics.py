@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
-"""Highlight figure for MEDS' fast (sub-daily) biophysics.
+"""Highlight figure for MEDS' fast (sub-daily) biophysics, for ONE closed-canopy patch.
 
-Reads the hourly FAST-tier output written by ``meds_config_july.toml`` and plots the four
-temperatures that define the canopy energy balance, over one July at 1 h resolution:
+Plots the four temperatures that define the canopy energy balance over one July at 1 h
+resolution:
 
-  * air            -- above-canopy air temperature, straight from the met forcing (the boundary
-                      condition; every other curve is something MEDS solved for)
-  * canopy air     -- the prognostic canopy-air-space (CAS) temperature
-  * leaf (tallest) -- leaf temperature of the tallest cohort, i.e. the sunlit upper canopy
-  * soil surface   -- top soil-layer temperature
+  * air                 -- above-canopy air temperature, straight from the met forcing (the
+                           boundary condition; every other curve is something MEDS solved for)
+  * canopy air          -- the prognostic canopy-air-space (CAS) temperature
+  * leaf (tallest)      -- leaf temperature of the tallest cohort, i.e. the sunlit upper canopy
+  * surface soil layer  -- temperature of the TOP SOIL LAYER (node at ~1.8 cm, 0-4 cm thick).
+                           This is a soil temperature, not a skin or litter temperature.
+
+ONE PATCH, NOT THE SITE MEAN. The stand carries a disturbance gap alongside its closed canopy --
+patch LAI here spans 0.6 to 5.4 -- and a site mean across that is an average of a shaded forest
+floor and a sunlit clearing, which is not a state any part of the forest is in. The gap alone
+contributes ~70% of the site-mean soil warm anomaly from ~20% of the area. So the figure selects
+the patch with the highest leaf area index and plots only that, which is the case the eye is
+being invited to read.
+
+Per-patch sub-daily temperatures come from the opt-in ``[fast].fast_probe`` CSV, because the FAST
+netCDF tier is staged as a site mean. The daily tier supplies ``lai_patch`` (which patch to pick)
+and ``cohort_offset``/``cohort_count`` (which cohorts are in it, for the leaf curve).
 
 The point of the figure is that the three solved temperatures separate from the forcing in
 *different* directions and with *different* phase: sunlit leaves run above air by day and below it
 at night (radiative coupling plus transpirational cooling), the canopy air space sits between leaf
-and soil, and the soil surface is damped and lagged by its heat capacity. Reproducing that
-structure from a met file is the whole job of the fast loop.
+and soil, and the surface soil layer is damped and lagged by its heat capacity -- under a closed
+canopy it tracks the DAILY MEAN air temperature, running below air by day and above it at night.
+Reproducing that structure from a met file is the whole job of the fast loop.
 
 Usage
 -----
@@ -47,6 +60,8 @@ from matplotlib.ticker import MultipleLocator
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PATTERN = os.path.join(HERE, "out", "july-F-2074*.nc")
+DAILY = os.path.join(HERE, "out", "july-D-207407.nc")
+PROBE = os.path.join(HERE, "out", "fast_probe.csv")
 OUTPNG = os.path.join(HERE, "biophysics_july.png")
 
 # One colour per store, chosen so the three solved temperatures read as a family against the
@@ -58,48 +73,93 @@ C_SOIL = "#8a6a3d"
 C_SW = "#e8b52f"
 
 
-def load(pattern: str) -> dict[str, np.ndarray]:
-    """Concatenate the per-day FAST files into flat hourly arrays."""
+def pick_patch(daily: str):
+    """Return (patch_index, mean LAI, mean area, per-day cohort slice) for the closed-canopy patch.
+
+    Selected on mean July leaf area index, not on area: the question the figure answers is what a
+    SHADED forest floor does, so the most-shaded patch is the right one even if it is not the
+    largest. Cohort ranges are read per day because fusion and fission can move them within the
+    month; `cohort_offset` is 1-based (Fortran), so it is shifted here once and only here.
+    """
+    if not os.path.exists(daily):
+        sys.exit(f"error: {daily} not found -- the daily tier must be on "
+                 "([output.daily] enabled = true) so the patch can be identified")
+    with nc.Dataset(daily) as d:
+        lai = np.ma.filled(np.asarray(d.variables["lai_patch"][:]), np.nan)
+        area = np.ma.filled(np.asarray(d.variables["area_patch"][:]), np.nan)
+        off = np.ma.filled(np.asarray(d.variables["cohort_offset"][:]), 0).astype(int)
+        cnt = np.ma.filled(np.asarray(d.variables["cohort_count"][:]), 0).astype(int)
+        day = np.asarray(d.variables["day"][:]).ravel().astype(int)
+    lai = np.where(lai > 1e30, np.nan, lai)
+    area = np.where(area > 1e30, np.nan, area)
+    idx = int(np.nanargmax(np.nanmean(lai, axis=0)))
+    rng = {int(day[t]): (off[t, idx] - 1, off[t, idx] - 1 + cnt[t, idx]) for t in range(lai.shape[0])}
+    return idx, float(np.nanmean(lai[:, idx])), float(np.nanmean(area[:, idx])), rng
+
+
+def load(pattern: str, patch: int, coh_range: dict) -> dict[str, np.ndarray]:
+    """Hourly series for ONE patch: air and shortwave from the FAST tier, canopy air and surface
+    soil from the per-patch probe, leaf from the FAST cohort slab restricted to this patch.
+
+    The FAST tier's scalars are site means and are deliberately NOT used for the solved
+    temperatures. Its per-cohort slabs are written by GLOBAL cohort slot, which is what makes the
+    daily `cohort_offset`/`cohort_count` usable to pick this patch's cohorts out of them.
+    """
     files = sorted(glob.glob(pattern))
     if not files:
-        sys.exit(
-            f"error: no output found matching {pattern}\n"
-            "  Run the model first:  ./run_example.sh"
-        )
+        sys.exit(f"error: no output found matching {pattern}\n"
+                 "  Run the model first:  python run_example.py")
 
-    cols: dict[str, list] = {k: [] for k in
-                             ("air", "cas", "leaf", "soil", "sw", "day", "hour")}
+    cols: dict[str, list] = {k: [] for k in ("air", "leaf", "sw", "day", "hour")}
     for path in files:
         with nc.Dataset(path) as d:
             v = d.variables
             get = lambda name: np.asarray(v[name][:]).ravel()
-
             cols["air"] += list(get("air_temp_fast"))
-            cols["cas"] += list(get("cas_temp_fast"))
-            cols["soil"] += list(get("soil_temp_top_fast"))
             cols["sw"] += list(get("sw_in_fast"))
             cols["hour"] += list(get("hour"))
             cols["day"] += list(get("day"))
 
-            # Leaf temperature of the TALLEST cohort, resolved per record: cohort composition
-            # changes as the run proceeds, so "cohort 1" is not a stable identity. Slots beyond
-            # n_cohort hold fill values, hence the explicit mask rather than a bare argmax.
-            leaf = np.asarray(v["leaf_temp_cohort_fast"][:])
-            height = np.asarray(v["height_cohort_fast"][:])
-            ncoh = np.asarray(v["n_cohort"][:]).ravel().astype(int)
-            leaf = np.ma.filled(leaf, np.nan)
-            height = np.ma.filled(height, np.nan)
+            # Leaf temperature of the tallest cohort IN THIS PATCH, resolved per record. Cohort
+            # composition changes as the run proceeds, so "cohort 1" is not a stable identity, and
+            # slots outside the patch (or beyond n_cohort) hold other patches' trees or fill
+            # values -- hence the explicit per-day slice plus a finite mask, not a bare argmax.
+            leaf = np.ma.filled(np.asarray(v["leaf_temp_cohort_fast"][:]), np.nan)
+            height = np.ma.filled(np.asarray(v["height_cohort_fast"][:]), np.nan)
+            days = get("day").astype(int)
             for t in range(leaf.shape[0]):
-                n = max(int(ncoh[t]), 0)
-                h = height[t, :n]
+                lo, hi = coh_range.get(int(days[t]), (0, 0))
+                hi = min(hi, leaf.shape[1])
+                h = height[t, lo:hi]
                 valid = np.isfinite(h)
-                if n == 0 or not valid.any():
+                if hi <= lo or not valid.any():
                     cols["leaf"].append(np.nan)
                 else:
-                    idx = np.arange(n)[valid][np.nanargmax(h[valid])]
-                    cols["leaf"].append(float(leaf[t, idx]))
+                    j = np.arange(lo, hi)[valid][np.nanargmax(h[valid])]
+                    cols["leaf"].append(float(leaf[t, j]))
 
     out = {k: np.asarray(vals, dtype=float) for k, vals in cols.items()}
+
+    #----- Canopy air and surface soil come from the probe, which is the only per-patch sub-daily
+    #      record. It samples every fast sub-step, so it is averaged onto the FAST tier's hourly
+    #      records rather than subsampled -- those records are themselves 4-sub-step means, and
+    #      mixing an instantaneous series with an averaged one would fake a phase difference.
+    if not os.path.exists(PROBE):
+        sys.exit(f"error: {PROBE} not found -- set [fast].fast_probe = true "
+                 "(it is the only per-patch sub-daily output)")
+    raw = np.genfromtxt(PROBE, delimiter=",", names=True, dtype=None, encoding="utf-8")
+    sel = raw["patch"] == patch + 1                      # probe patch ids are 1-based
+    stamp = raw["datetime"][sel]
+    key = np.array([f"{t[8:10]}{t[11:13]}" for t in stamp])   # DDHH
+    for name, col in (("cas", "cas_temp_K"), ("soil", "soil_temp_top_K")):
+        vals = raw[col][sel]
+        table = {}
+        for k, x in zip(key, vals):
+            table.setdefault(k, []).append(x)
+        table = {k: float(np.mean(x)) for k, x in table.items()}
+        out[name] = np.array([table.get(f"{int(dd):02d}{int(hh):02d}", np.nan)
+                              for dd, hh in zip(out["day"], out["hour"])])
+
     out["t"] = out["day"] + out["hour"] / 24.0  # day-of-month, fractional
     return out
 
@@ -127,16 +187,18 @@ def main() -> None:
     ap.add_argument("--dpi", type=int, default=200, help="output resolution (default 200)")
     args = ap.parse_args()
 
-    d = load(PATTERN)
+    patch, lai, area, coh_range = pick_patch(DAILY)
+    d = load(PATTERN, patch, coh_range)
     n_hours = d["t"].size
     print(f"loaded {n_hours} hourly records "
           f"(day {d['day'].min():.0f}-{d['day'].max():.0f} of July 2074)")
+    print(f"closed-canopy patch: index {patch}, LAI {lai:.2f}, area fraction {area:.3f}")
 
     series = [
         ("Air (forcing)", d["air"], C_AIR, 1.6, "-"),
         ("Canopy air space", d["cas"], C_CAS, 1.3, "-"),
         ("Leaf, tallest cohort", d["leaf"], C_LEAF, 1.3, "-"),
-        ("Soil surface", d["soil"], C_SOIL, 1.3, "-"),
+        ("Surface soil layer", d["soil"], C_SOIL, 1.3, "-"),
     ]
 
     plt.rcParams.update({
@@ -176,8 +238,12 @@ def main() -> None:
     ax_ts.xaxis.set_major_locator(MultipleLocator(5))
     ax_ts.xaxis.set_minor_locator(MultipleLocator(1))
     ax_ts.grid(axis="y", color="#000000", alpha=0.06, lw=0.8)
+    #----- Title on its own line, with the patch caveat and the shortwave note sharing the line
+    #      below it. The caveat is not decoration: the figure is one patch, not the stand.
     ax_ts.set_title("Hourly canopy energy balance — July, year 50 of an Ithaca NY simulation",
-                    loc="left", fontsize=11.5, pad=8)
+                    loc="left", fontsize=11.5, pad=22)
+    ax_ts.text(0.0, 1.012, f"closed-canopy patch only:  LAI {lai:.1f},  {area * 100:.0f}% of stand area",
+               transform=ax_ts.transAxes, ha="left", va="bottom", fontsize=8.0, color="#5c6b78")
     leg = ax_ts.legend(loc="upper left", ncol=4, frameon=False, fontsize=8.6,
                        borderaxespad=0.2, columnspacing=1.4, handlelength=1.8)
     for line in leg.get_lines():
@@ -235,6 +301,13 @@ def main() -> None:
     lead = np.nanmax(diel(d['leaf'], d['hour'])[0] - air_mean)
     drop = np.nanmin(diel(d['leaf'], d['hour'])[0] - air_mean)
     print(f"\n  tallest-cohort leaf vs air: up to {lead:+.2f} K by day, {drop:+.2f} K at night")
+    #----- The surface soil layer's signature under a closed canopy: it sits at the DAILY MEAN air
+    #      temperature, below air by day and above it at night. Printed because it is the claim a
+    #      reader is most likely to want to check against their own site.
+    soil_mean, _ = diel(d["soil"], d["hour"])
+    dev = soil_mean - air_mean
+    print(f"  surface soil layer vs air:  {np.nanmin(dev):+.2f} K by day, {np.nanmax(dev):+.2f} K at night, "
+          f"{np.nanmean(dev):+.2f} K on the daily mean")
 
     if args.show:
         plt.show()

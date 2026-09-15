@@ -18,6 +18,12 @@ start_time = "2074-07-01"
 end_time   = "2074-08-01"      # the whole of July 2074 (exclusive)
 
 [fast]
+#----- PER-PATCH sub-daily CSV. The FAST netCDF tier is site-mean only, and a site mean across a
+#      stand whose patch LAI ranges 0.7-5.3 is not a forest floor -- it is an average of a closed
+#      canopy and a disturbance gap. The figure plots ONE patch, so it needs this. Requires
+#      n_threads = 1 (one shared, order-significant file). Written into out/ with the netCDF.
+fast_probe      = true
+fast_probe_file = "out/fast_probe.csv"
 fast_biophysics_on  = true
 dt_fast             = "900s"   # the production default, same as stage 1. dt_fast is an ACCURACY
                                # parameter, not the output cadence -- the hourly records below come
@@ -108,7 +114,7 @@ fast_interval_steps = 4           # <<< 4 * dt_fast(900 s) = 3600 s = HOURLY rec
 enabled    = true                 # <<< the hourly stream
 file_chunk = "day"
 [output.daily]
-enabled    = false
+enabled    = true                 # <<< carries lai_patch / area_patch: which patch is the closed one
 file_chunk = "month"
 [output.monthly]
 enabled    = false

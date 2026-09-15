@@ -27,6 +27,13 @@ soil_temp_top_fast    = "F"   # soil top-layer temperature (the model's surface 
 # --- needed to identify WHICH cohort is the tallest, per record ---------------------------------
 height_cohort_fast    = "F"
 
+# --- needed to identify WHICH PATCH is the closed-canopy one, and which cohorts are in it -------
+#     The FAST tier is site-mean; these daily patch fields pick the patch the figure plots.
+lai_patch             = "D"   # patch leaf area index -- the selector
+area_patch            = "D"   # patch area fraction  -- for the caption
+cohort_offset         = "D"   # first global cohort slot of each patch
+cohort_count          = "D"   # number of cohorts in each patch
+
 # --- context for the energy figure's lower panel and for sanity-checking the run ----------------
 sw_in_fast            = "F"   # incoming shortwave -- the diurnal driver
 rnet_fast             = "F"   # net radiation at the surface

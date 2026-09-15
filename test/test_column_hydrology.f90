@@ -20,7 +20,7 @@ program test_column_hydrology
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_LIN_PICARD, &
                                     SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
    use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
-   use meds_soil_water,       only : advance_soil_water_column
+   use meds_soil_water,       only : advance_soil_water_column, ground_evap_from_state
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
@@ -37,6 +37,7 @@ program test_column_hydrology
    call test_adaptive_substep()
    call test_aquifer_head_bc()
    call test_snow_free_evap()
+   call test_evap_moisture_response()
    call test_clip_layer_decomposition()
 
    call test_report('test_column_hydrology')
@@ -449,6 +450,52 @@ contains
                  1.0e-14_wp * max(e_full, 1.0e-12_wp))
       call check('full snow cover gives exactly zero soil evaporation', e_none, 0.0_wp, 1.0e-30_wp)
    end subroutine test_snow_free_evap
+
+   !=======================================================================================!
+   !  A wetter soil must evaporate MORE.  The dry-surface-layer resistance is                !
+   !  r_soil = d_sl/(D_v*tau): d_sl shrinks linearly as theta rises, but if tau is built       !
+   !  from the BULK layer's air-filled porosity it shrinks as (phi-theta)^(10/3), which wins,    !
+   !  so r_soil RISES with wetness and evaporation runs backwards -- a minimum partway up the     !
+   !  moisture range and a near-cliff at theta_init.  The DSL is dry by construction, so its       !
+   !  tortuosity takes the dry layer's own air-filled porosity and the response is monotone.        !
+   !  Assert the physics (monotone, and continuous into the no-DSL limit), not the formula.          !
+   !---------------------------------------------------------------------------------------!
+   subroutine test_evap_moisture_response()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      real(wp) :: theta, e_prev, e_now, e_sat, e_below, theta_init
+      integer  :: i
+      logical  :: monotone
+      print '(a)', 'test_evap_moisture_response:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
+      forcing%t_ground = 300.0_wp ; forcing%q_air = 0.005_wp
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      forcing%ground_fliq = 1.0_wp ; forcing%snow_free_frac = 1.0_wp
+
+      theta_init = opts%dsl_theta_init * params%theta_sat(1)
+      monotone   = .true.
+      e_prev     = -1.0_wp
+      e_below = 0.0_wp
+      do i = 0, 40
+         theta = params%theta_res(1) + real(i, wp) / 40.0_wp * (theta_init - params%theta_res(1))
+         e_now = ground_evap_from_state(theta, params, forcing, opts, 900.0_wp)
+         if (e_now < e_prev - 1.0e-14_wp) monotone = .false.
+         e_prev = e_now
+      end do
+      call check_true('ground evaporation increases monotonically with soil moisture', monotone, 0.0_wp)
+
+      !----- and it must APPROACH the no-DSL limit as the layer approaches theta_init: at 0.1 % of  !
+      !      the moisture range below it the dry layer is 0.01 mm and can carry almost no resistance.  !
+      !      With the bulk-theta tortuosity it still carries 300 s/m there, i.e. a cliff, not a limit. -!
+      e_sat   = ground_evap_from_state(theta_init, params, forcing, opts, 900.0_wp)
+      e_below = ground_evap_from_state(theta_init - 1.0e-3_wp*(theta_init - params%theta_res(1)), &
+                                       params, forcing, opts, 900.0_wp)
+      call check_true('approaches the DSL-free limit continuously at theta_init',                &
+                      e_below > 0.8_wp * e_sat, e_below / max(e_sat, 1.0e-30_wp))
+   end subroutine test_evap_moisture_response
 
    !=======================================================================================!
    !  The post-solve saturation clip moves water with NO face, so the soil ENERGY column      !

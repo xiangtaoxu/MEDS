@@ -684,19 +684,36 @@ contains
       type(chydro_forcing_t), intent(in) :: forcing
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: e_soil, alpha_soil, q_g, theta_init, dsl, dvap, phi, phi_air, tau, r_soil
+      real(wp) :: theta_air
+      !----- CLM5 eq 5.78: the 'air dry' matric head, psi at which the soil is considered dry.  !
+      real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp        ! [m] = CLM5's 1e7 mm
       alpha_soil = exp(max(-40.0_wp, psi1 * grav / (r_wv * forcing%t_ground)))
       !----- Saturate over ICE when the top layer is frozen (#89): the liquid curve overstates    !
       !      e_sat by 10 % at -10 C and 34 % at -30 C, and a frozen surface sublimes. ------------!
       q_g        = alpha_soil * sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
+      !----- theta_air is the 'air dry' water content (CLM5 eq 5.78), a TEXTURE CONSTANT obtained    !
+      !      by inverting the layer's retention curve at PSI_AIR_DRY -- not a state. Both the DSL      !
+      !      thickness (eq 5.77) and the tortuosity (eq 5.79-5.80) are referenced to it.               !
+      !                                                                                                !
+      !      Referencing the air-filled pore space to the BULK theta1 instead inverts the moisture     !
+      !      response: tau then falls as (phi - theta1)^(10/3), faster than the DSL thickness falls    !
+      !      linearly, so r_soil RISES with wetness and a WETTER soil evaporates LESS -- a minimum      !
+      !      partway up the moisture range and a near-cliff at theta_init. test_column_hydrology's      !
+      !      test_evap_moisture_response asserts the monotone response the corrected form gives. -------!
+      theta_air  = soil_theta_from_psi_l(params%retention, params, 1_ik, PSI_AIR_DRY)
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
       if (theta1 < theta_init) then
-         dsl = opts%dsl_dmax * (theta_init - theta1) / max(theta_init, tiny_num)
+         dsl = opts%dsl_dmax * (theta_init - theta1) / max(theta_init - theta_air, tiny_num)
       else
          dsl = 0.0_wp
       end if
       dvap    = 2.12e-5_wp * (forcing%t_ground / 273.15_wp) ** 1.75_wp
       phi     = params%theta_sat(1)
-      phi_air = max(phi - theta1, tiny_num)
+      phi_air = max(phi - theta_air, tiny_num)                               ! CLM5 eq 5.80
+      !----- Millington-Quirk rather than CLM5's phi_air^2*(phi_air/phi)^(3/b): b is a Clapp-Hornberger !
+      !      parameter and the shipped retention curve is van Genuchten, which has no b. With phi_air a  !
+      !      constant the two differ only by a constant factor (1.5x for this loam), so the SHAPE of the  !
+      !      moisture response -- the thing that was wrong -- is unaffected by the choice. ---------------!
       tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)     ! Millington-Quirk
       r_soil  = dsl / max(dvap * tau, tiny_num)
       !----- AREA-weighted tile flux: only the snow-free fraction of the ground evaporates, and it does  !
