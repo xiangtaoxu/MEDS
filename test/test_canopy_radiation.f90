@@ -33,6 +33,7 @@ program test_canopy_radiation
    call test_longwave_equilibrium()
    call test_lidf_delta()
    call test_cohort_order()
+   call test_tied_cohorts_codominant()
 
    call test_report('test_canopy_radiation')
 
@@ -132,7 +133,8 @@ contains
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 4_ik
       integer(ik) :: pft(NC), b
-      real(wp) :: lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
+      integer :: ih
       print '(a)', '[2] shortwave energy conservation (4 cohorts)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
@@ -140,7 +142,8 @@ contains
       lai  = [2.0_wp, 1.5_wp, 1.0_wp, 0.5_wp]   ! bottom -> top
       wai  = 0.1_wp * lai
       tcan = 298.0_wp
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       do b = RAD_VIS, RAD_NIR
          absorbed   = sum(flux%abs_leaf(b,:)) + sum(flux%abs_wood(b,:))
          net_ground = flux%dn_ground(b) - flux%up_ground(b)
@@ -165,12 +168,14 @@ contains
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 2_ik
       integer(ik) :: pft(NC)
-      real(wp) :: lai(NC), wai(NC), tcan(NC)
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
+      integer :: ih
       print '(a)', '[8] cohort order: top of two equal-LAI cohorts absorbs more than the bottom'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik, 1_ik] ; lai = [2.0_wp, 2.0_wp] ; wai = [0.0_wp, 0.0_wp] ; tcan = 298.0_wp  ! idx1=bottom, idx2=top
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       call check_true('VIS: top cohort (idx2) absorbs more than bottom (idx1)',                 &
                       flux%abs_leaf(RAD_VIS,2) > flux%abs_leaf(RAD_VIS,1),                       &
                       flux%abs_leaf(RAD_VIS,2) - flux%abs_leaf(RAD_VIS,1))
@@ -180,13 +185,75 @@ contains
    end subroutine test_cohort_order
 
    !=======================================================================================!
+   !  EXACTLY-TIED cohorts are CO-DOMINANT, not stacked (#207).                             !
+   !                                                                                         !
+   !  `update_overtopping_lai` already treats equal-height cohorts as co-dominant, but the    !
+   !  two-stream builds one RT layer per cohort, so a merely-sorted input STACKED them and     !
+   !  whichever sorted first was placed above. Recruits tie BIT-EXACTLY -- one scalar           !
+   !  `recruit_dbh` for every PFT -- and the sort is stable, so the winner was the lower PFT     !
+   !  INDEX. Measured before the fix: the lower slot absorbed 12.6 % less shortwave at zero       !
+   !  overstory, rising to 15.1 % under LAI 6.                                                    !
+   !                                                                                               !
+   !  Asserted two ways, because either alone is weak. Equal absorption for optically identical    !
+   !  twins could be met by a broken solver returning zeros; permutation invariance could be met   !
+   !  by ignoring PFT. Together they pin it.                                                       !
+   !=======================================================================================!
+   subroutine test_tied_cohorts_codominant()
+      type(rad_pft_optics_t) :: opt
+      type(rad_forcing_t)    :: f
+      type(rad_flux_t)       :: flux
+      integer(ik), parameter :: NC = 3_ik
+      integer(ik) :: pft(NC)
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
+      real(wp) :: a_pft1, a_pft2, b_pft1, b_pft2, total_a, total_b
+      print '(a)', '[9] exactly-tied cohorts are co-dominant, not stacked (#207)'
+      call build_optics(45.0_wp, opt)
+      call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
+      !----- slots 1,2 tie exactly; slot 3 is a real overstory, the regime where the bias is worst. -!
+      hgt  = [2.0_wp, 2.0_wp, 20.0_wp]
+      lai  = [0.25_wp, 0.25_wp, 4.0_wp]
+      wai  = [0.02_wp, 0.02_wp, 0.40_wp]
+      tcan = 298.0_wp
+
+      !----- (a) two OPTICALLY IDENTICAL tied cohorts must absorb equally. Same PFT, so any         !
+      !      difference is positional and nothing else. -----------------------------------------!
+      pft = [1_ik, 1_ik, 1_ik]
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      call check('tied twins absorb equally (VIS)', flux%abs_leaf(RAD_VIS,1),                    &
+                 flux%abs_leaf(RAD_VIS,2), 1.0e-12_wp * max(flux%abs_leaf(RAD_VIS,2), 1.0e-12_wp))
+      call check('tied twins absorb equally (NIR)', flux%abs_leaf(RAD_NIR,1),                    &
+                 flux%abs_leaf(RAD_NIR,2), 1.0e-12_wp * max(flux%abs_leaf(RAD_NIR,2), 1.0e-12_wp))
+      call check_true('tied twins absorb a non-trivial amount', flux%abs_leaf(RAD_NIR,1) > 1.0_wp, &
+                      flux%abs_leaf(RAD_NIR,1))
+
+      !----- (b) PERMUTING the PFT order of the tied pair must not move either one's absorption.    !
+      !      This is the defect as filed: creation order is `do pf = 1, n_pft`, so the sort handed   !
+      !      PFT 1 the upper slot at every recruitment event. ------------------------------------!
+      pft = [1_ik, 2_ik, 1_ik]
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      a_pft1 = flux%abs_leaf(RAD_NIR,1) ; a_pft2 = flux%abs_leaf(RAD_NIR,2)
+      total_a = a_pft1 + a_pft2
+      pft = [2_ik, 1_ik, 1_ik]
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
+      b_pft2 = flux%abs_leaf(RAD_NIR,1) ; b_pft1 = flux%abs_leaf(RAD_NIR,2)
+      total_b = b_pft2 + b_pft1
+      call check('permuting tied PFTs leaves PFT 1 unchanged', a_pft1, b_pft1,                   &
+                 1.0e-12_wp * max(a_pft1, 1.0e-12_wp))
+      call check('permuting tied PFTs leaves PFT 2 unchanged', a_pft2, b_pft2,                   &
+                 1.0e-12_wp * max(a_pft2, 1.0e-12_wp))
+      call check('permuting tied PFTs conserves the pair total', total_a, total_b,               &
+                 1.0e-12_wp * max(total_a, 1.0e-12_wp))
+   end subroutine test_tied_cohorts_codominant
+
+   !=======================================================================================!
    subroutine test_beers_law()
       type(rad_pft_optics_t) :: opt
       type(rad_forcing_t)    :: f
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 1_ik
       integer(ik) :: pft(NC)
-      real(wp) :: lai(NC), wai(NC), tcan(NC), kdir, gee, absorbed_vis, expect
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), kdir, gee, absorbed_vis, expect
+      integer :: ih
       real(wp) :: elai
       print '(a)', '[3] Beers law (single black cohort, direct beam)'
       call build_optics(45.0_wp, opt)
@@ -197,7 +264,8 @@ contains
       f%incid_diff(RAD_VIS) = 0.0_wp                       ! beam only
       f%grnd_refl(RAD_VIS)  = 0.0_wp                       ! black soil: no reflection to re-absorb
       pft = [1_ik] ; lai = [3.0_wp] ; wai = [0.0_wp] ; tcan = 298.0_wp
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       elai         = opt%clumping_leaf(1) * lai(1)
       gee          = gfun_direct(opt%lidf(:,1), 1.0_wp)
       kdir         = gee / 1.0_wp
@@ -215,12 +283,14 @@ contains
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 1_ik
       integer(ik) :: pft(NC)
-      real(wp) :: lai(NC), wai(NC), tcan(NC)
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC)
+      integer :: ih
       print '(a)', '[4] zero-LAI canopy has albedo = ground albedo'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.7_wp, 290.0_wp, 298.0_wp, f)
       pft = [1_ik] ; lai = [0.0_wp] ; wai = [0.0_wp] ; tcan = 298.0_wp
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       call check('albedo(VIS) = soil albedo', flux%albedo(RAD_VIS), f%grnd_refl(RAD_VIS), 1.0e-9_wp)
       call check('albedo(NIR) = soil albedo', flux%albedo(RAD_NIR), f%grnd_refl(RAD_NIR), 1.0e-9_wp)
    end subroutine test_zero_lai_albedo
@@ -232,7 +302,8 @@ contains
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 2_ik
       integer(ik) :: pft(NC)
-      real(wp) :: lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), absorbed, net_ground, reflected, incid, resid
+      integer :: ih
       print '(a)', '[5] multi-PFT patch: per-cohort optics + conservation (ED2 bug B1 avoided)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.6_wp, 290.0_wp, 298.0_wp, f)
@@ -243,7 +314,8 @@ contains
       else
          print '(a)', '  ok   : PFTs differ in VIS omega (per-cohort optics exercised)'
       end if
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       incid      = f%incid_beam(RAD_VIS) + f%incid_diff(RAD_VIS)
       absorbed   = sum(flux%abs_leaf(RAD_VIS,:)) + sum(flux%abs_wood(RAD_VIS,:))
       net_ground = flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS)
@@ -259,14 +331,16 @@ contains
       type(rad_flux_t)       :: flux
       integer(ik), parameter :: NC = 3_ik
       integer(ik) :: pft(NC), i
-      real(wp) :: lai(NC), wai(NC), tcan(NC), net_lw, maxnet
+      real(wp) :: hgt(NC), lai(NC), wai(NC), tcan(NC), net_lw, maxnet
+      integer :: ih
       real(wp), parameter :: teq = 300.0_wp
       print '(a)', '[6] longwave radiative equilibrium (isothermal -> zero net absorption)'
       call build_optics(45.0_wp, opt)
       call build_forcing(0.5_wp, teq, teq, f)          ! sky and soil both at Teq
       pft  = [1_ik, 2_ik, 1_ik] ; lai = [2.0_wp, 1.0_wp, 0.5_wp] ; wai = 0.1_wp * lai
       tcan = teq                                        ! canopy also at Teq
-      call canopy_radiation(opt, f, NC, pft, lai, wai, tcan, flux)
+      hgt = [(2.0_wp*real(ih,wp), ih = 1, NC)]      ! distinct heights: no ties, per-cohort layers
+      call canopy_radiation(opt, f, NC, pft, hgt, lai, wai, tcan, flux)
       maxnet = 0.0_wp
       do i = 1_ik, NC
          net_lw = flux%abs_leaf(RAD_LW,i) + flux%abs_wood(RAD_LW,i)

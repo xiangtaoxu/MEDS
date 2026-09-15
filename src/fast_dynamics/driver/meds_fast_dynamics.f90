@@ -1034,7 +1034,7 @@ contains
       real(wp),                intent(in)    :: leaf_absorptance !< [-] leaf PAR absorptance (incident-PAR conversion)
       integer(ik) :: j, k, ig, imin
       integer(ik) :: perm(ncoh), pft_bt(ncoh)
-      real(wp)    :: lai_bt(ncoh), wai_bt(ncoh), tcan_bt(ncoh)
+      real(wp)    :: lai_bt(ncoh), wai_bt(ncoh), tcan_bt(ncoh), hgt_bt(ncoh)
       logical     :: used(ncoh)
       real(wp)    :: hmin, lf_bt
       type(rad_forcing_t)   :: rf
@@ -1055,7 +1055,7 @@ contains
             if (.not. used(k) .and. height(k) <= hmin) then ; hmin = height(k) ; imin = k ; end if
          end do
          perm(j) = imin ; used(imin) = .true.
-         pft_bt(j) = pft(imin) ; lai_bt(j) = lai(imin)
+         pft_bt(j) = pft(imin) ; lai_bt(j) = lai(imin) ; hgt_bt(j) = height(imin)
          wai_bt(j) = wai(imin)
          !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
          !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
@@ -1099,7 +1099,7 @@ contains
       he = [.false., .false., .true.]
       call ground_optics(surf, N_RAD_BAND_DEFAULT, he, rf%grnd_refl, rf%grnd_emiss)
 
-      call canopy_radiation(rad_opt, rf, ncoh, pft_bt, lai_bt, wai_bt, tcan_bt, flux)
+      call canopy_radiation(rad_opt, rf, ncoh, pft_bt, hgt_bt, lai_bt, wai_bt, tcan_bt, flux)
 
       !----- inverse-scatter: RT index j (bottom->top) maps to gather index perm(j). --------------!
       do j = 1_ik, ncoh

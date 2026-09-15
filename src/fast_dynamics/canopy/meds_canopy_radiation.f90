@@ -268,17 +268,23 @@ contains
    ! are the true (unclumped) leaf & wood area indices; clumping is applied here from the optics. !
    ! `canopy_temp` [K] drives thermal emission (emission bands only). `flux` is allocated here.   !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_radiation(optics, forcing, ncoh, pft, lai, wai, canopy_temp, flux)
+   subroutine canopy_radiation(optics, forcing, ncoh, pft, height, lai, wai, canopy_temp, flux)
       type(rad_pft_optics_t), intent(in)  :: optics
       type(rad_forcing_t),    intent(in)  :: forcing
       integer(ik),            intent(in)  :: ncoh
       integer(ik),            intent(in)  :: pft(ncoh)
+      real(wp),               intent(in)  :: height(ncoh)   !< [m] ASCENDING; exact ties are co-dominant
       real(wp),               intent(in)  :: lai(ncoh), wai(ncoh), canopy_temp(ncoh)
       type(rad_flux_t),       intent(out) :: flux
 
       real(wp), dimension(max(ncoh,1)) :: elai, ewai, etai, omega, beta, beta0, kdir, leaf_frac
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
-      real(wp)    :: dn_ground, up_ground, albedo, incid_tot
+      !----- LAYER arrays: one entry per RT layer, which is a GROUP of exactly-tied cohorts. -----!
+      real(wp), dimension(max(ncoh,1)) :: etai_l, omega_l, beta_l, beta0_l, kdir_l, emis_l, abs_l
+      real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
+      integer(ik) :: lyr(max(ncoh,1)), nmemb(max(ncoh,1))
+      integer(ik) :: nlayer, il
+      real(wp)    :: gc_l, dn_ground, up_ground, albedo, incid_tot
       integer(ik) :: b, i, ip
 
       call alloc_rad_flux(flux, forcing%n_band, ncoh)
@@ -302,6 +308,32 @@ contains
          etai(i) = elai(i) + ewai(i)
       end do
 
+      !----- CO-DOMINANT TIED COHORTS (#207). `update_overtopping_lai` already treats exactly-tied  !
+      !      cohorts as co-dominant; the two-stream did not, because it builds one discrete RT layer  !
+      !      per cohort and the input is merely sorted, so tied cohorts STACK and whichever sorts      !
+      !      first is placed above. Recruits tie BIT-EXACTLY (`apply_recruitment` uses one scalar      !
+      !      `recruit_dbh` for every PFT, and height is re-derived from it), and the sort is stable,   !
+      !      so the winner was the lower PFT INDEX -- nothing about the ecology chose that. Measured    !
+      !      on two optically IDENTICAL tied cohorts, the lower slot absorbed 12.6% less shortwave at   !
+      !      zero overstory rising to 15.1% under LAI 6, i.e. WORST exactly where a whole-canopy        !
+      !      albedo or GPP check is least likely to notice, because the total is roughly conserved and  !
+      !      only the split between PFTs moves.                                                         !
+      !                                                                                                 !
+      !      Fix: exactly-tied cohorts share ONE RT layer. `height` arrives ascending, so ties are       !
+      !      consecutive. A one-member layer takes its cohort's values verbatim, which keeps a canopy    !
+      !      with no ties BIT-IDENTICAL to the per-cohort solve. ------------------------------------!
+      nlayer = 0_ik
+      do i = 1_ik, ncoh
+         if (i == 1_ik) then
+            nlayer = 1_ik
+         else if (height(i) /= height(i-1_ik)) then
+            nlayer = nlayer + 1_ik
+         end if
+         lyr(i) = nlayer
+      end do
+      nmemb(1:nlayer) = 0_ik
+      do i = 1_ik, ncoh ; nmemb(lyr(i)) = nmemb(lyr(i)) + 1_ik ; end do
+
       !----- Ross-G beam extinction is band-independent: compute once per cohort, reuse each band. -!
       kdir_coh(1:ncoh) = 0.0_wp
       if (any(optics%has_beam(1:forcing%n_band))) then
@@ -322,11 +354,72 @@ contains
             emission(1:ncoh) = 0.0_wp
          end if
 
-         call solve_band(ncoh, etai(1:ncoh), omega(1:ncoh),                                    &
-                         beta(1:ncoh), beta0(1:ncoh), kdir(1:ncoh), emission(1:ncoh),           &
+         !----- Aggregate cohorts onto their RT layer. Every weight is the AREA INDEX etai, which is !
+         !      the same weight blend_cohort_optics uses to mix leaf against wood inside one cohort:  !
+         !      merging tied cohorts is that operation one level up, not new physics. The asymmetry    !
+         !      gc is recovered exactly from beta = 0.5*(1+gc), averaged, and re-formed -- averaging    !
+         !      beta directly would be the same thing, but going through gc keeps beta0, which divides  !
+         !      gc by kdir, consistent with it. ---------------------------------------------------!
+         etai_l(1:nlayer) = 0.0_wp ; omega_l(1:nlayer) = 0.0_wp ; beta_l(1:nlayer) = 0.0_wp
+         beta0_l(1:nlayer) = 0.0_wp ; kdir_l(1:nlayer) = 0.0_wp ; emis_l(1:nlayer) = 0.0_wp
+         do i = 1_ik, ncoh
+            il = lyr(i)
+            etai_l(il)  = etai_l(il)  + etai(i)
+            omega_l(il) = omega_l(il) + omega(i) * etai(i)
+            beta_l(il)  = beta_l(il)  + (2.0_wp*beta(i) - 1.0_wp) * etai(i)    ! accumulate gc*etai
+            kdir_l(il)  = kdir_l(il)  + kdir(i)  * etai(i)
+            emis_l(il)  = emis_l(il)  + emission(i) * etai(i)
+         end do
+         do il = 1_ik, nlayer
+            if (nmemb(il) == 1_ik) cycle       ! single member: filled verbatim below, bit-identical
+            if (etai_l(il) > tiny_num) then
+               omega_l(il) = omega_l(il) / etai_l(il)
+               gc_l        = beta_l(il)  / etai_l(il)
+               kdir_l(il)  = kdir_l(il)  / etai_l(il)
+               emis_l(il)  = emis_l(il)  / etai_l(il)
+            else
+               omega_l(il) = 0.0_wp ; gc_l = 0.0_wp ; kdir_l(il) = 0.0_wp ; emis_l(il) = 0.0_wp
+            end if
+            beta_l(il) = 0.5_wp * (1.0_wp + gc_l)
+            if (optics%has_beam(b)) then
+               beta0_l(il) = 0.5_wp * (1.0_wp + gc_l / max(kdir_l(il), tiny_num))
+            else
+               beta0_l(il) = 0.0_wp
+            end if
+         end do
+         !----- One-member layers take the cohort's own values, so a tie-free canopy is unchanged. -!
+         do i = 1_ik, ncoh
+            if (nmemb(lyr(i)) /= 1_ik) cycle
+            il = lyr(i)
+            etai_l(il) = etai(i) ; omega_l(il) = omega(i) ; beta_l(il) = beta(i)
+            beta0_l(il) = beta0(i) ; kdir_l(il) = kdir(i) ; emis_l(il) = emission(i)
+         end do
+
+         call solve_band(nlayer, etai_l(1:nlayer), omega_l(1:nlayer),                          &
+                         beta_l(1:nlayer), beta0_l(1:nlayer), kdir_l(1:nlayer), emis_l(1:nlayer), &
                          forcing%incid_beam(b), forcing%incid_diff(b), forcing%grnd_refl(b),    &
                          forcing%grnd_emiss(b), optics%has_beam(b), optics%has_emission(b),      &
-                         absorbed(1:ncoh), dn_ground, up_ground, albedo)
+                         abs_l(1:nlayer), dn_ground, up_ground, albedo)
+
+         !----- Scatter the layer's absorbed flux back to its members by ABSORPTIVITY-WEIGHTED area.  !
+         !      (1-omega_i)*etai_i is exactly aleaf_i + awood_i, the quantity leaf_frac is built from, !
+         !      so the two splits are one weighting applied twice and cannot disagree. A one-member    !
+         !      layer normalises to 1 identically. ------------------------------------------------!
+         wsum_l(1:nlayer) = 0.0_wp
+         do i = 1_ik, ncoh
+            wabs(i) = (1.0_wp - omega(i)) * etai(i)
+            wsum_l(lyr(i)) = wsum_l(lyr(i)) + wabs(i)
+         end do
+         do i = 1_ik, ncoh
+            il = lyr(i)
+            if (nmemb(il) == 1_ik) then
+               absorbed(i) = abs_l(il)
+            else if (wsum_l(il) > tiny_num) then
+               absorbed(i) = abs_l(il) * wabs(i) / wsum_l(il)
+            else
+               absorbed(i) = 0.0_wp
+            end if
+         end do
 
          !----- Split absorbed radiation between leaves and wood (same weighting the solver used). -!
          do i = 1_ik, ncoh
