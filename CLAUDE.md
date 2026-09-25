@@ -135,3 +135,8 @@ number. Most cite by bare filename, so moving a file is safe but renumbering it 
 Track Fortran source, CMake files, configs and docs; build artifacts and generated output are
 ignored. Line endings are LF via `.gitattributes`. Keep generated netCDF and large input datasets
 out of the repository. Commit or push only when asked; if on the default branch, branch first.
+
+**`beta` is the integration branch.** Branch from `beta` and open pull requests against it, not
+`main`: `beta` collects merged work that is not yet in a release, and merges into `main` when a
+release is cut. A closing keyword (`Fixes #N`) in a pull request into `beta` does not close the
+issue, because GitHub acts on those only for the default branch; close it when the release lands.
