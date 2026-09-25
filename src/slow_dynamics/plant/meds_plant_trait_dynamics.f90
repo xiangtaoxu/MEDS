@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_trait_dynamics -- within-lifetime CHANGES to a plant's leaf traits.            !
 !                                                                                          !

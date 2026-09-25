@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_surface_energy -- unit tests for the leaf/wood, ground, and canopy-air-space kernels.  !
 !   1. LEAF/WOOD energy CONSERVATION to ~round-off over a march.                                !

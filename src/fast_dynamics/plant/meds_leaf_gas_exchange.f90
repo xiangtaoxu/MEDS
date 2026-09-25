@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_leaf_gas_exchange -- leaf-level gas-exchange COMPUTE kernels (photosynthesis + stomata !
 ! + coupled Ci solver), merged into one module. FvCB C3 / Collatz C4 demand, the electron-     !

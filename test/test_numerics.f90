@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_numerics -- unit tests for the shared numerical primitives + the conservation checker.  !
 !   1. thomas_solve: recover a known solution of a diagonally-dominant tridiagonal system, with  !

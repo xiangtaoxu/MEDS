@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_met_driver -- the meteorological-forcing READER (design MEDS_FORCING_DESIGN.md section  !
 ! 4). Opens the MEDS multi-grid forcing NetCDF (or the no-file CONST backend), holds the two      !

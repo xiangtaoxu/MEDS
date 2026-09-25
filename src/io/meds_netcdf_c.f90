@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_netcdf_c -- a thin ISO_C_BINDING layer over the netCDF *C* library.                  !
 !                                                                                          !

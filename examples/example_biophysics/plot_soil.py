@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Soil-moisture figure for MEDS' fast (sub-daily) loop.
 
 Reads the same hourly FAST-tier output as ``plot_biophysics.py`` and shows the soil water column

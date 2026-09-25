@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_biogeochem_opts -- the [soil_carbon] run-configuration bundle for the SLOW soil-carbon !
 ! matrix (decomposition selectors + rate/respired-fraction/environmental-scalar parameters),    !

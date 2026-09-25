@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_c_api_phenology -- the C-API shim for the PHENOLOGY kernel (`meds.plant.pheno`).       !
 !                                                                                          !

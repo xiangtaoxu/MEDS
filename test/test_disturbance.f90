@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Treefall patch disturbance: area conserved, age-0 gap created, tall die / short survive. !
 program test_disturbance
    use meds_kinds,            only : wp, ik

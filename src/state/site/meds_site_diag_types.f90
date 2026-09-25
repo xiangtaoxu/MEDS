@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_site_diag_types -- the per-COHORT and per-PATCH fast-loop DIAGNOSTIC accumulators.    !
 !                                                                                          !

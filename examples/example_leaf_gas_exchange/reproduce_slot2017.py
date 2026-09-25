@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Reproduce Slot & Winter (2017) Figures 1(b) + 2 as ONE figure, calling the MEDS leaf model FROM PYTHON.
 
 Everything lives HERE, in Python (species parameters from the paper's Table 2, the humidity assumption

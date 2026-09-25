@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """netCDF writer for the empirical demography spin-up (#260).
 
 The demography example drives MEDS's law-free apply-primitives from Python with its own

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_test_assert -- the shared assertion helpers for the CTest programs.                 !
 !                                                                                          !

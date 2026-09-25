@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_rk4_oracle -- TEST-SUPPORT ONLY: the independent cross-validation oracle for the       !
 ! production ARK path (meds_fast_ark) -- NOT production, reachable only from test/test_column_derivs.f90. !

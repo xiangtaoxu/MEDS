@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_budget_check -- shared CONSERVATION-checking facility for the coupled fast loop           !
 ! (MEDS_COLUMN_DYNAMICS_DESIGN.md Part IV). Coupling makes conservation a CROSS-module property: !

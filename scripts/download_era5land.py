@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 # =========================================================================================
 # download_era5land.py -- pull ERA5-Land hourly reanalysis for a grid cell (or box) from the
 # Copernicus Climate Data Store (CDS), as the raw input to prep_era5land_forcing.py (which

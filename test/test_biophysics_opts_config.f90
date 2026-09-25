@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_biophysics_opts_config -- unit tests for the [soil]/[energy]/[snow]/[aerodynamics] TOML  !
 ! wiring of the fast-loop biophysics run-config (meds_config_io load_* helpers -> the            !

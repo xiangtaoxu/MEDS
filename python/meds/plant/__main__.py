@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """`python -m meds.plant` — round-trip self-tests against libmeds.so (leaf + phenology)."""
 from . import leaf, pheno
 

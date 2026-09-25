@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_leaf_opts -- the LEAF-model selector codes, as a low-level config leaf.               !
 !                                                                                          !

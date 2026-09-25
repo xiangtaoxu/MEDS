@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_config -- the ONE seam from meds_config_t to the fast loop's options leaves.     !
 !                                                                                          !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_kernels -- the PURE/ELEMENTAL meteorological-forcing math (design MEDS_FORCING_ !
 ! DESIGN.md section 5): per-variable temporal interpolation, the interval-mean-conserving        !

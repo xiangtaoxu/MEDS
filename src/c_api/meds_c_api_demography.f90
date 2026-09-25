@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_c_api_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /    !
 ! Python (ctypes). It goes into the optional shared library libmeds.so (MEDS_BUILD_PYLIB) and   !

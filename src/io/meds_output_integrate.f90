@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_integrate -- the netCDF-FREE temporal-reduction engine (ED2 integrate_/normalize_/  !
 ! zero_ family): pull the current value of a variable out of live state (extract_variable), fold    !

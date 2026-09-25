@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_kinds -- single source of numeric kinds for the whole demographic engine.           !
 !                                                                                          !

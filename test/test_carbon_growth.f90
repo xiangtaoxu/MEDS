@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Carbon-driven growth (driver level): the growth-only allocation closure, the driver's -----!
 !----- update_biomass_turnover shed/snap, and a carbon-mode step that grows wood_carbon -> dbh. ---!
 program test_carbon_growth

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_io_config_example -- the shipped meds_io_config.toml must list EVERY registered variable   !
 ! (#241).                                                                                        !

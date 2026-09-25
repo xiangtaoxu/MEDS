@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_types -- the derived types of the SUB-DAILY plant kernels: leaf gas exchange,   !
 ! hydraulics, and non-leaf maintenance respiration. Phenology's types live in meds_phenology_types.!

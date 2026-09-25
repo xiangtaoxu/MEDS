@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_biogeochem_dynamics -- the slow-loop BIOGEOCHEMISTRY driver (MEDS_SLOW_DYNAMICS_DESIGN.md !
 ! Part II, B2): the peer of meds_vegetation_dynamics under meds_slow_dynamics. Per patch, it       !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_slow_ledger -- the SITE conservation ledger across a slow step (plan §10.2).            !
 !                                                                                          !

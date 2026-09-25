@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_canopy_aerodynamics -- THE stateless in-canopy aerodynamics kernel (design Part I). A     !
 ! pure function of (free-atmosphere forcing, canopy-air-space state, canopy geometry) that        !

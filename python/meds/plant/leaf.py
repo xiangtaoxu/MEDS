@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.plant.leaf — leaf gas exchange (photosynthesis + stomatal conductance).
 
 A Pythonic front end to the MEDS Fortran leaf-physiology model (FvCB C3 / Collatz C4, the

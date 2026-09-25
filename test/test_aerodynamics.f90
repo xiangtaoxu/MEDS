@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_aerodynamics -- unit tests for the stateless canopy-aerodynamics kernel.                !
 !   1. NEUTRAL log-law: mo_surface_layer recovers ustar = vonk*u/ln(zldis/z0m) and temp1 =       !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_met_driver -- unit tests for the P0 meteorological-forcing library (meds_forcing):       !
 ! the pure disaggregation kernels, the CONST backend, and a NetCDF round-trip (write a small     !

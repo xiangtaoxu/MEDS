@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Score integrator FIDELITY on the sub-daily (FAST) stream of a numerics_sweep run.
 
 docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase B.

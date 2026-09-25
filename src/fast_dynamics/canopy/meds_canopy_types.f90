@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_canopy_types -- the argument records of the canopy kernels: radiative transfer and    !
 ! aerodynamics. Pure DATA, no methods, no hidden state.                                      !

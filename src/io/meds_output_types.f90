@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_types -- the pure DATA descriptors of the diagnostic-aggregation subsystem:      !
 ! the per-variable registry descriptor (var_desc_t), the running per-(variable,tier) reduction   !

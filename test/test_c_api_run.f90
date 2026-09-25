@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_c_api_run -- COVERAGE FOR THE FULL-COUPLED-MODEL C-API SHIM (`meds.model`).           !
 !                                                                                          !

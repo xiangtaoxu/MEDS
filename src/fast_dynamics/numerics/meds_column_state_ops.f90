@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_column_state_ops -- the algebra and bookkeeping helpers on the fast loop's column state     !
 ! (column_state_t / column_tend_t / stage_bflux_t / column_bflux_t), owned by the types they act   !

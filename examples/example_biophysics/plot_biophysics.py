@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Highlight figure for MEDS' fast (sub-daily) biophysics, for ONE closed-canopy patch.
 
 Plots the four temperatures that define the canopy energy balance over one July at 1 h

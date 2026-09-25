@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """MEDS — Modular Ecosystem Dynamics Simulator (Python interface).
 
 Four sub-modules, all backed by ONE compiled library (``libmeds.so``, see ``meds._libmeds``):

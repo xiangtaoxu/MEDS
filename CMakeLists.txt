@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
 # MEDS -- Modular Ecosystem Dynamics Simulator / Modern Ecosystem Demography Simulator        #
 #         (standalone demographic core).                                                     #

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_hydraulics -- the plant-hydraulics NETWORK SOLVER: the coupled matrix-exponential   !
 ! sub-step integrator (solve_plant_water, + its batch wrapper solve_plant_water_batch) that        !

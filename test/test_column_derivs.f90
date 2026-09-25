@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_derivs -- unit tests for the pure fast-loop RHS (P0 increment 1: surface subsystem). !
 ! The IMEX-ARK overhaul (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md) needs a side-effect-free f(y)=dy/dt.     !

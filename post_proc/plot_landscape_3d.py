@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Render the whole MEDS site (all patches of one record) as a continuous 3D landscape (PyVista).
 
 A unified, spatially-explicit synthesis (no grid, no LAI binning):

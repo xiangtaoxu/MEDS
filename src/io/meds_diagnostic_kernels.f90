@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_diagnostic_kernels -- pure/elemental DERIVED diagnostic quantities.                  !
 !                                                                                          !

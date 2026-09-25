@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Shared slow-loop calendar cadence for the example drivers.
 
 Yields the ``(is_new_month, is_new_year)`` flags MEDS's stepper folds into the

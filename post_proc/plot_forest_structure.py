@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Animate MEDS forest structure as a canopy-layer stand profile.
 
 MEDS is spatially implicit: within a patch a cohort's canopy is a thin horizontal disk that

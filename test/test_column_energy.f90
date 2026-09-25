@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_energy -- unit tests for the soil THERMAL column + shared enthalpy inverter.    !
 !   1. INVERTER round-trip (liquid + ice) and CONTINUITY at u_freeze/u_melt (temp = t_3ple).   !

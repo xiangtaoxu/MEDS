@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_step -- the fast-loop TIME-INTEGRATOR DISPATCH. One thin routine, `column_fast_step`, !
 ! hands a dt_fast sub-step to the chosen scheme (INTEG_ARK, the default; INTEG_RK45 = the adaptive  !

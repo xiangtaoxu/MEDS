@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Cohort fusion/fission: conservation of plant number & AGB (carbon), DBH re-derivation. !
 program test_fusion_cohort
    use meds_kinds,           only : wp, ik

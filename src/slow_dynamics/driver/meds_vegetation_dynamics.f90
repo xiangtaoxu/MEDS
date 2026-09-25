@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_vegetation_dynamics -- MEDS's slow-loop VEGETATION-DYNAMICS driver (the analogue of      !
 ! ED2's veg_dynamics_driver), in src/slow_dynamics/driver/ (library meds_slow). It is THE         !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_demography_update -- APPLY/refresh of (derived) cohort + patch state.                     !
 !                                                                                          !

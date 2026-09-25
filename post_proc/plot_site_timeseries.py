@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Plot timeseries of key site-level variables from a MEDS netCDF output file.
 
 MEDS writes one record per output interval with site totals plus the full ragged cohort/patch

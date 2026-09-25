@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_demography_rates -- the per-INDIVIDUAL vital-rate LAWS, as pure scalar functions:      !
 ! a carbon-driven diameter growth rate, the Camac (2018) additive mortality hazard, and the    !

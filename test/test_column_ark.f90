@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_ark -- the INTEG_ARK wiring of the coupled IMEX-ARK integrator into column_fast_step.  !
 !   A. GPP PARITY: build_column_frozen runs the SAME frozen pre-pass as the split, so gpp_coh from     !

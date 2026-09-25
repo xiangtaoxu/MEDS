@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_optics_lib -- shared optical-property kernels: the leaf-inclination distribution        !
 ! (LIDF) and the two-stream single-scatter coefficients. Pure, semi-empirical, scalar/array-in  !

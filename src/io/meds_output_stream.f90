@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_stream -- the netCDF serializer for the diagnostic-aggregation streams: create a  !
 ! per-tier, per-time-chunk file (dims + registry-driven variable defs + CF metadata), append one  !

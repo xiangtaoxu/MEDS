@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_carbon_allocation -- how a plant spends (or fails to pay) its daily carbon.    !
 !                                                                                          !

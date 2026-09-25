@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_c_api_run -- the ISO_C_BINDING shim that exposes the FULL COUPLED MODEL (`meds.model`). !
 !                                                                                          !

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Internal ctypes bridge to libmeds.so. NOT part of the public API.
 
 This is the only module that touches ctypes; everything user-facing lives in `meds.plant`
