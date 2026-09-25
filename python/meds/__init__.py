@@ -16,5 +16,5 @@ Four sub-modules, all backed by ONE compiled library (``libmeds.so``, see ``meds
 Importing `meds` is cheap and does NOT load any compiled library; each sub-module loads the
 shared library lazily on first import, so `import meds` works even without it built.
 """
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __all__ = ["plant", "demography", "model"]

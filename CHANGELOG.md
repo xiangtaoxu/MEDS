@@ -14,6 +14,17 @@ before and after.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-25
+
+An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
+source tree is laid out so that each folder's purpose is clearer from its name. **Nothing in the
+model changes.** The biophysics example's output is byte-identical to v0.2.1, and `libmeds.so`
+exports the same C interface.
+
+It is also the first release made through the **`beta` integration branch**. Pull requests now
+target `beta`, which collects merged work until a release merges it into `main`; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ### Added
 
 - **MEDS is open source under the Apache License 2.0** (#277). Before this, the repository had no
@@ -1510,6 +1521,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...beta
+[0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xiangtaoxu/MEDS/releases/tag/v0.1.0

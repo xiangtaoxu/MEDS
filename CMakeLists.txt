@@ -14,7 +14,7 @@
 # See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.2.1 LANGUAGES Fortran
+project(MEDS VERSION 0.2.2 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
