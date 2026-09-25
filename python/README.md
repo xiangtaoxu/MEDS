@@ -79,3 +79,7 @@ top-level CMake already supports GNU), then add `cibuildwheel` and `auditwheel` 
 `pip install meds` with no compiler at all. That is what turns today's machine-local wheel into a
 redistributable one, and it means vendoring netCDF's dependency closure — a measured ~67 MB, which
 is why it is deferred rather than done. This is the rung that matters for ecology users.
+
+## License
+
+Apache License 2.0, like the rest of MEDS. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

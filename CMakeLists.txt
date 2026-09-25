@@ -623,6 +623,14 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME io_config_example COMMAND test_io_config_example
             ${CMAKE_CURRENT_SOURCE_DIR}/meds_io_config.toml)
 
+   #----- The Python wheel ships COPIES of LICENSE and NOTICE, because python/pyproject.toml     #
+   #      cannot list license files above its own directory. A tracked copy drifts silently,     #
+   #      for the same reason as the io_config_example above, so the build compares them.        #
+   add_test(NAME license_copy COMMAND ${CMAKE_COMMAND} -E compare_files --ignore-eol
+            ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/python/LICENSE)
+   add_test(NAME notice_copy COMMAND ${CMAKE_COMMAND} -E compare_files --ignore-eol
+            ${CMAKE_CURRENT_SOURCE_DIR}/NOTICE ${CMAKE_CURRENT_SOURCE_DIR}/python/NOTICE)
+
    #----- Diagnostic-output serializer round-trip (writes + reopens netCDF; links the io layer). #
    add_executable(test_output_roundtrip test/test_output_roundtrip.f90)
    target_link_libraries(test_output_roundtrip PRIVATE meds_io_stream meds_testsupport)
