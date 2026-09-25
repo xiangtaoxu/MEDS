@@ -7,7 +7,7 @@ unit-test standalone (`cmake --build … --target meds_fast_kernels`), orthogona
 **The daily plant kernels are next door** in `src/slow_dynamics/plant/` — phenology, carbon
 allocation, trait plasticity. The vital-rate laws are demography, not ecophysiology, and live in
 `src/slow_dynamics/demography/`. Structural allometry is a shared geometric constraint reachable by
-state, demography, plant and config alike, so it lives in `src/functions/meds_allometry.f90`.
+state, demography, plant and config alike, so it lives in `src/shared/functions/meds_allometry.f90`.
 
 Every process here is a stateless per-individual kernel driven by an environment record, and all of
 them are wired into the fast loop: the pre-pass calls gas exchange and the two maintenance-respiration
@@ -26,14 +26,15 @@ Each kernel module exposes its own seams; there is no façade.
 | `meds_plant_respiration` | Non-leaf maintenance respiration: `stem_maintenance_respiration` and `fine_root_maintenance_respiration`. Growth respiration is charged in the daily allocator, on realized growth. |
 
 The shared temperature response (`meds_temp_response`, Arrhenius and peaked deactivation) lives in
-`src/functions/`, so leaf, stem and root reach one code path rather than three drifting copies.
+`src/shared/functions/`, so leaf, stem and root reach one code path rather than three drifting
+copies.
 
 The config-flattening assemblers that turn `meds_config_t` into these kernels' option records are
 driver code and live in `fast_dynamics/driver/meds_fast_config`.
 
 ## Python
 
-The `src/capi/meds_capi_*.f90` shims go into the single optional `libmeds.so`
+The `src/c_api/meds_c_api_*.f90` shims go into the single optional `libmeds.so`
 (`-DMEDS_BUILD_PYLIB=ON`) **and** into one mandatory ctest target each, so an ABI or signature
 change is a build failure in a default build rather than a silent break in an optional one.
 

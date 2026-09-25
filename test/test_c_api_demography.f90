@@ -1,5 +1,5 @@
 !==========================================================================================!
-! test_capi_demography -- COVERAGE FOR THE DEMOGRAPHY C-API SHIM.                             !
+! test_c_api_demography -- COVERAGE FOR THE DEMOGRAPHY C-API SHIM.                            !
 !                                                                                          !
 ! WHY THIS TEST EXISTS, in the sharpest possible terms: when it was written, the shim it covers  !
 ! DID NOT COMPILE against main. PR #137 changed `apply_recruitment`'s signature and the shim      !
@@ -18,10 +18,10 @@
 ! The assertions cover what neither of those can: that the opaque-handle registry hands out         !
 ! distinct handles, releases them, and that a site actually advances behind one.                     !
 !==========================================================================================!
-program test_capi_demography
+program test_c_api_demography
    use, intrinsic :: iso_c_binding, only : c_double, c_int, c_char, c_long
    use meds_kinds,            only : wp
-   use meds_capi_demography,  only : meds_config_load, meds_config_n_pft, meds_config_dt_years,   &
+   use meds_c_api_demography,  only : meds_config_load, meds_config_n_pft, meds_config_dt_years,   &
                                      meds_site_create, meds_site_init_bare, meds_site_free,       &
                                      meds_advance_slow, meds_site_n_patch, meds_site_n_cohort,    &
                                      meds_site_total_agb, meds_site_generation
@@ -79,7 +79,7 @@ program test_capi_demography
    call check(agb1 >= 0.0_wp, 'total_agb is readable after advancing')
 
    call meds_site_free(sh)
-   print '(a)', 'test_capi_demography: ALL PASSED'
+   print '(a)', 'test_c_api_demography: ALL PASSED'
 
 contains
 
@@ -94,4 +94,4 @@ contains
       end do
    end function to_c
 
-end program test_capi_demography
+end program test_c_api_demography

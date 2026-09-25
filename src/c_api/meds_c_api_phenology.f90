@@ -1,12 +1,12 @@
 !==========================================================================================!
-! meds_capi_phenology -- the C-API shim for the PHENOLOGY kernel (`meds.plant.pheno`).        !
+! meds_c_api_phenology -- the C-API shim for the PHENOLOGY kernel (`meds.plant.pheno`).       !
 !                                                                                          !
 ! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3).                !
 ! The bind(c) structs are an ABI contract with `python/meds/plant/_ffi.py` and are compiled by !
-! a mandatory ctest target (`test_capi_phenology`) so a field-order change breaks the BUILD --  !
-! see the header of meds_capi_leaf for the incident that rule comes from.                        !
+! a mandatory ctest target (`test_c_api_phenology`) so a field-order change breaks the BUILD--  !
+! see the header of meds_c_api_leaf for the incident that rule comes from.                       !
 !==========================================================================================!
-module meds_capi_phenology
+module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
    use meds_kinds,           only : wp, ik
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
@@ -131,4 +131,4 @@ contains
       out_c%cue_limiting    = int(out%cue_limiting, c_int)
    end subroutine meds_phenology_step
 
-end module meds_capi_phenology
+end module meds_c_api_phenology

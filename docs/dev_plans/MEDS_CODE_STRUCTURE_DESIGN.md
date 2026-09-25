@@ -44,7 +44,7 @@ Both were correct **given** the two-shared-library Python split. That split is r
 |---|----------|
 | **#1** | **ONE Python shared library.** `libmeds_plant_c` + `libmeds_c` → **`libmeds.so`**. Per-subsystem independence moves from the *link* level to the *call* level (verbs, not libraries). The per-domain STATIC libs all stay. |
 | **#2** | **State becomes a LAYER, in two halves.** `src/state/column/` (per-patch reservoirs + params + fusion blends — the boundary types kernels legitimately need) and `src/state/site/` (cohort SoA, patch CSR, lockstep, `site_t`, diag blocks — drivers only). Kernels link `state/column` and stay `site_t`-free. Two folders, not two file prefixes in one folder: every library in the tree is a per-folder GLOB, and the folder boundary *is* the link guard. **Naming (2026-09-09):** `column` is kept although a column is exactly one patch's vertical profile — `patch/` was rejected because `patch_block` (the CSR container of all patches) lives in the *site* half, so a `patch/` folder would point readers at the wrong half. The `state/column` README states the synonym once. **Grid-ready:** a future `state/grid/` (`grid_t` = array of `site_t` + geolocation + the met-forcing handle) is a third folder, not a rework: `met_driver_t` is already passed beside `site` (the stepper takes both), `meds_forcing` links shared + netCDF only and never `site_t`, so `grid_t` can own the forcing with no DAG cycle. Do **not** create an empty `state/grid/` now. |
-| **#3** | **`shared/` dissolves** into `base/` + `functions/` + `config/` + `state/`. The word "shared" stops being a place where things go when no other place fits. |
+| **#3** | **`shared/` dissolves** into `base/` + `functions/` + `config/` + `state/`. The word "shared" stops being a place where things go when no other place fits. **Revised 2026-09-25:** `base/` + `functions/` + `util/` regroup as **`src/shared/`**, because together they *are* the `meds_shared` library, which was the only library whose sources spanned three top-level folders; folder = library again. `config/` and `state/` stay top-level. What made the old `shared/` a catch-all was the two-`.so` link rule that forced `config/` and `state/` into it, and decision **#1** retired that rule. The regrouped folder admits only what `use`s nothing outside it (no model state, no configuration, no external library), a test a reviewer can check against the `use` lines. |
 | **#4** | **Timescale-first top level for processes:** `src/fast_dynamics/` and `src/slow_dynamics/`, each with domain subfolders and its own `driver/`. |
 | **#5** | **`src/core/` splits along the seam it already has.** `meds_core_state_types` + `meds_core_diag_types` → `state/site/` (memory structure). `meds_core_state_update` + both `*_fusefiss` → `slow_dynamics/demography/` (they are daily-cadence apply-operators, not a foundation); library `meds_core` → **`meds_demography`** (the offload flags follow it, as they follow `meds_core` today). **The name goes back to `demography`** (reversing `MEDS_CORE_MODULE_REORG_DESIGN.md`'s rename, not its content): it is what ecologists call birth/death/growth bookkeeping and it is already the name of the Python module (`meds.demography`) and the C shim (`meds_demography_capi.f90`) that wrap exactly these files. **`meds_plant_vital_rates` moves in too**, as `slow_dynamics/demography/meds_demography_rates.f90` (module `meds_demography_rates`): its three `elemental pure` laws (carbon → diameter growth, Camac additive mortality hazard, reproduction carbon → recruits) are demographic rates, depend only on `meds_allometry` (functions layer) and PFT traits, and are called only by the slow driver — so `demography/` needs nothing from `plant/`. `slow_dynamics/plant/` is then pure physiology. **What this costs:** today `meds_core` links shared only, so an operator physically cannot call a rate law; after the move that guard is a signature convention — **rule 8** below — kept honest by review and by the Python `apply_rates` path, which feeds externally computed rates through the same operators every build. Optional mechanical guard: a one-line ctest grepping the operator files for `use meds_demography_rates`. |
 | **#6** | **`src/plant/` splits by timescale**, exactly at file granularity (verified caller-by-caller, §5). `meds_plant_types` splits with it. The fast half lives in `fast_dynamics/plant/` (not `vegetation/`) so the two same-named folders make the timescale split of the plant library visible and match the Python names; `meds_plant_vital_rates` goes to `demography/` per #5, not to `slow_dynamics/plant/`. |
@@ -201,7 +201,7 @@ from meds import demography     # was: from meds.demography import Site
 
 **New capability unlocked.** There is no C-API for the fast loop today — "run submodules
 independently" currently means `{photosynthesis, phenology}` plus `{demography slow loop}` and
-nothing else. A `meds_capi_fast` verb driving `column_fast_step` on a column handle would expose
+nothing else. A `meds_c_api_fast` shim driving `column_fast_step` on a column handle would expose
 the sub-daily integrator to Python, which is where most recent diagnostic work lives
 (`scripts/numerics_sweep.py`, the `runs/ithaca_ark30` probes). Merging the libraries is a
 **precondition**: that verb needs both the kernels *and* `site_t`, so under today's split it has
@@ -209,16 +209,19 @@ no library to live in.
 
 ### 7.6 Python-side work items
 
+Since 2026-09-25 the folder is `src/c_api/` and the shims are `meds_c_api_*`. Items 1 and 2 are
+done and keep the names of their day; items 3 and 4 are standing rules and use the current ones.
+
 1. Swap the build backend `setuptools` → `scikit-build-core` in `python/pyproject.toml`, so
    `pip install python/` compiles and bundles `libmeds.so`. The existing comment there already
    flags this as the plan; one `.so` is what makes it tractable.
 2. Move `src/plant/meds_plant_capi.f90` into `src/capi/`; delete the
    `GLOB src/plant/*_capi.f90` special case in CMake.
-3. One capi file per subsystem, mirroring the Fortran tree: `meds_capi_leaf`,
-   `meds_capi_hydraulics`, `meds_capi_phenology`, `meds_capi_demography`, `meds_capi_fast`,
-   `meds_capi_site`.
-4. **Keep compiling every `*_capi.f90` into a ctest target** (`test_capi_leaf`,
-   `test_capi_demography`, ...). This is the #95 → #100 lesson already recorded in
+3. One C-API file per subsystem, mirroring the Fortran tree: `meds_c_api_leaf`,
+   `meds_c_api_hydraulics`, `meds_c_api_phenology`, `meds_c_api_demography`, `meds_c_api_fast`,
+   `meds_c_api_site`.
+4. **Keep compiling every `src/c_api/*.f90` into a ctest target** (`test_c_api_leaf`,
+   `test_c_api_demography`, ...). This is the #95 → #100 lesson already recorded in
    `CMakeLists.txt`: a component inserted mid-type in `leaf_photo_params_t` broke the C API while
    the whole suite stayed green, because the shim was compiled only by the optional pylib target.
    One `.so` means one ABI and one place for that to break — keep it a *build* failure.

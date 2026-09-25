@@ -1,5 +1,5 @@
 !==========================================================================================!
-! test_capi_leaf -- COVERAGE FOR THE LEAF C-API SHIM (issue #100).                                    !
+! test_c_api_leaf -- COVERAGE FOR THE LEAF C-API SHIM (issue #100).                                   !
 !                                                                                          !
 ! WHY THIS TEST EXISTS -- and why it is MANDATORY, not gated on the pylib option. The shim is        !
 ! library (`-DMEDS_BUILD_PYLIB=ON`), which is in neither the default build nor ctest. So a change   !
@@ -18,10 +18,10 @@
 ! Deliberately does NOT need the .so, Python, or MEDS_BUILD_PYLIB -- it calls the bind(c) procedures !
 ! directly as Fortran.                                                                              !
 !==========================================================================================!
-program test_capi_leaf
+program test_c_api_leaf
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,        only : wp, ik
-   use meds_capi_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
+   use meds_c_api_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
                                  meds_arrhenius, meds_peaked_arrhenius
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
@@ -113,4 +113,4 @@ contains
       q%o2_mol_frac = 0.209_c_double ; q%absorptance = 0.85_c_double ; q%phi_psii = 0.85_c_double
    end function c3_defaults
 
-end program test_capi_leaf
+end program test_c_api_leaf

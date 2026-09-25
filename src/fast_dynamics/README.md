@@ -31,8 +31,8 @@ so every symbol has exactly one legal spelling.
 
 - **Canopy radiative transfer** — ED2 two-stream (`icanrad = 2`). The pure optical-property kernels
   (the Beta leaf-angle distribution, the Ross `G` function, the single-scatter pair) live in the
-  shared `meds_optics_lib` in `src/functions/`. The optics assembly, the unified multi-band VIS /
-  NIR / LW adding solver, and the public seam `canopy_radiation` are together in
+  shared `meds_optics_lib` in `src/shared/functions/`. The optics assembly, the unified multi-band
+  VIS / NIR / LW adding solver, and the public seam `canopy_radiation` are together in
   **`meds_canopy_radiation`**.
 - **Canopy aerodynamics** — **`meds_canopy_aerodynamics`**: a CLM5 Monin-Obukhov surface layer, ED2
   Nusselt leaf and wood boundary layers, per-cohort in-canopy wind extinction, a CLM ground
@@ -69,7 +69,7 @@ so every symbol has exactly one legal spelling.
 respiration debits the same CENTURY pool the daily step does — the one documented fast/slow kernel
 seam in the model.
 
-## Shared constitutive kernels (in `src/functions/`)
+## Shared constitutive kernels (in `src/shared/functions/`)
 
 The soil **material-property** kernels are stateless and `elemental`, grouped with the other
 constitutive relations by physical quantity rather than by caller:

@@ -37,7 +37,8 @@ __all__ = [
 
 
 #===========================================================================================#
-#  ctypes mirrors — field order MUST match the bind(c) types in src/plant/meds_plant_capi.f90.#
+#  ctypes mirrors — field order MUST match the bind(c) types in                             #
+#  src/c_api/meds_c_api_phenology.f90.                                                      #
 #===========================================================================================#
 _ENV_FIELDS = [
     ("temp_day", c_double), ("soil_temp", c_double), ("avail_water", c_double),

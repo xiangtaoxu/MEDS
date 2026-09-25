@@ -1,16 +1,16 @@
 !==========================================================================================!
-! meds_capi_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                 !
+! meds_c_api_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                !
 !                                                                                          !
 ! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3), so a change to !
 ! one subsystem's ABI rebuilds and re-tests only that shim.                                    !
 !                                                                                          !
 ! EVERY bind(c) struct here is an ABI CONTRACT with `python/meds/plant/_ffi.py`: the field     !
 ! ORDER must match, member for member. It is compiled by a mandatory ctest target              !
-! (`test_capi_leaf`) precisely so a mismatch is a BUILD failure -- issue #95 -> #100 was a      !
+! (`test_c_api_leaf`) precisely so a mismatch is a BUILD failure -- issue #95 -> #100 was a     !
 ! component inserted mid-type in `leaf_photo_params_t` that broke the C API while the whole     !
 ! suite stayed green, because this file was compiled only by an optional target.                 !
 !==========================================================================================!
-module meds_capi_leaf
+module meds_c_api_leaf
    use iso_c_binding,          only : c_double, c_int
    use meds_kinds,             only : wp, ik
    use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
@@ -172,4 +172,4 @@ contains
              o2_mol_frac=p_c%o2_mol_frac, absorptance=p_c%absorptance, phi_psii=p_c%phi_psii)
    end function to_params
 
-end module meds_capi_leaf
+end module meds_c_api_leaf
