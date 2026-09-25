@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_pft_optics_config -- the [pft] canopy optics reach the two-stream's per-PFT table,    !
 ! and DIFFERENTIATE the PFTs.                                                                !

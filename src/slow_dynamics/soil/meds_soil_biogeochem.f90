@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_biogeochem -- THE stateless SLOW soil-carbon kernels (design MEDS_BIOGEOCHEMISTRY_ !
 ! DESIGN.md). The per-patch decomposable soil carbon obeys the CENTURY-family carbon matrix ODE  !

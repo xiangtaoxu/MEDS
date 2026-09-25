@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
 # MEDS -- Modular Ecosystem Dynamics Simulator / Modern Ecosystem Demography Simulator        #
 #         (standalone demographic core).                                                     #
@@ -13,7 +14,7 @@
 # See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.2.1 LANGUAGES Fortran
+project(MEDS VERSION 0.2.2 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -107,21 +108,21 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- Foundation: precision, constants, PFT trait table, config, time, temperature response. #
-#      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
-#      from the leaf module so leaf, respiration, and any other tissue share one code path        #
-#      without a plant-domain -> plant-domain library edge.                                        #
-#      `src/shared/` is GONE: decision #3 dissolved it into base/ + functions/ + config/ + state/, #
-#      and the last three folders were still wearing it as a prefix. They are top-level now, so    #
-#      "shared" is not a place anything can be filed for lack of a better one. The library target  #
-#      keeps the name meds_shared: it IS the shared foundation, and that is a fact about the link  #
-#      graph rather than a folder for leftovers.                                                    #
-#      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
-#      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
-#      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/base/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/functions/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/util/*.f90)
+#----- FOUNDATION (src/shared/): kinds and constants (base/), the stateless constitutive laws      #
+#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, canopy        #
+#      optics, temperature response) and the calendar, numerics and budget checks (util/).         #
+#                                                                                                  #
+#      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
+#      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
+#      library. That is what lets every layer above, and the tests that link one narrow library,   #
+#      reach it freely, and it is the test that keeps this folder from becoming the place a file   #
+#      goes when no other place fits. meds_temp_response sits here so leaf, respiration and any    #
+#      other tissue share one code path without a plant-domain -> plant-domain library edge;       #
+#      meds_allometry because it is a geometric CONSTRAINT that state, demography, plant and       #
+#      config all read.                                                                            #
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/base/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/util/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
@@ -130,7 +131,8 @@ meds_fortran_flags(meds_shared)
 #      loader that fills the aggregator from two TOML files. `toml` + `config_io` moved here out   #
 #      of src/io/ (plan decision #9): they are configuration INPUT, not I/O of model results, and   #
 #      they carry no external dependency -- unlike the netCDF output layer they used to sit beside. #
-#      Depends on meds_shared only; nothing here may import state or a kernel (checked: it does not).#
+#      Links meds_shared and meds_state_column (the edge below); nothing here imports site         #
+#      state or a kernel.                                                                          #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
 #      meds_state_column: meds_config takes `n_soil_layer_max` from meds_column_params for the
@@ -146,9 +148,8 @@ meds_fortran_flags(meds_config)
 #  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
 #  snow / canopy-air-space / soil-carbon stores, their fusion blends, and the parameter        #
 #  bundles that describe them. This is BOUNDARY state: the kernels mutate it and the           #
-#  demographic hub owns it. It used to sit in `shared/state`, which by its own docstring is    #
-#  "the foundation, NOT tied to any process" -- a workaround for the fact that `shared` was     #
-#  the only node both sides could see. It is a layer now, so the kernels link it directly.      #
+#  demographic hub owns it. It is not foundation -- src/shared/ admits no model state --     #
+#  so it is a layer of its own, and the kernels link it directly.                            #
 #                                                                                            #
 #  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
 #  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
@@ -350,7 +351,7 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
 #      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
-#      it has two callers: the executable below, and the C-API shim src/capi/meds_capi_run.f90     #
+#      it has two callers: the executable below, and the C-API shim src/c_api/meds_c_api_run.f90   #
 #      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
 #      it is the one place that owns configuration, the calendar, the output manager and the       #
 #      closing conservation reports together.                                                      #
@@ -374,10 +375,10 @@ target_link_libraries(meds_main PRIVATE meds_driver)
 #      the accepted cost of #1, and decision #11 is its consequence (netcdf4 is declared a       #
 #      runtime dependency of the wheel rather than vendored).                                    #
 #                                                                                              #
-#      Plain GLOB, no exclusions: every src/capi/*.f90 belongs in the one library now.           #
+#      Plain GLOB, no exclusions: every src/c_api/*.f90 belongs in the one library now.          #
 if(MEDS_BUILD_PYLIB)
-   file(GLOB CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
-   add_library(meds_py SHARED ${CAPI_SOURCES})
+   file(GLOB C_API_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/*.f90)
+   add_library(meds_py SHARED ${C_API_SOURCES})
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
    target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
@@ -475,49 +476,49 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
-   #----- C-API shim (issue #100). Compiling the capi source INTO a ctest target is the point: the #
+   #----- C-API shim (issue #100). Compiling the C-API source INTO a ctest target is the point: the #
    #      shim used to be built only by the optional -DMEDS_BUILD_PYLIB=ON shared library, so a      #
    #      component inserted mid-type in leaf_photo_params_t could break the C API while the whole    #
    #      suite stayed green on both back ends -- which is exactly what happened (#95 -> #100).       #
    #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
    #      Python: the test calls the bind(c) procedures directly.                                     #
-   #      EVERY shim in src/capi/ gets one (§7.6 #4), not just the leaf one. The demography shim   #
+   #      EVERY shim in src/c_api/ gets one (§7.6 #4), not just the leaf one. The demography shim  #
    #      had none, and it did not compile against main at all: PR #137 changed a signature under   #
    #      it and 42/42 stayed green because only the optional .so built it. That is the same hole,  #
    #      one subsystem over.                                                                        #
-   add_executable(test_capi_leaf test/test_capi_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_leaf.f90)
-   target_link_libraries(test_capi_leaf PRIVATE meds_testsupport meds_fast_kernels)
-   meds_fortran_flags(test_capi_leaf)
-   add_test(NAME capi_leaf COMMAND test_capi_leaf)
+   add_executable(test_c_api_leaf test/test_c_api_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_leaf.f90)
+   target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_fast_kernels)
+   meds_fortran_flags(test_c_api_leaf)
+   add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
 
-   add_executable(test_capi_phenology test/test_capi_phenology.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_phenology.f90)
-   target_link_libraries(test_capi_phenology PRIVATE meds_testsupport meds_slow_kernels)
-   meds_fortran_flags(test_capi_phenology)
-   add_test(NAME capi_phenology COMMAND test_capi_phenology)
+   add_executable(test_c_api_phenology test/test_c_api_phenology.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_phenology.f90)
+   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_slow_kernels)
+   meds_fortran_flags(test_c_api_phenology)
+   add_test(NAME c_api_phenology COMMAND test_c_api_phenology)
 
    #      The demography shim needs the whole model (config + init + both loops), same as the .so.  #
-   add_executable(test_capi_demography test/test_capi_demography.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_demography.f90)
-   target_link_libraries(test_capi_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
-   meds_fortran_flags(test_capi_demography)
+   add_executable(test_c_api_demography test/test_c_api_demography.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_demography.f90)
+   target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
+   meds_fortran_flags(test_c_api_demography)
    #      Runs from the SOURCE dir: it loads examples/example_demography's shipped config, which
    #      gives that config a build-time consumer. It had none, and had drifted 37 required keys
    #      behind the schema -- a config nothing loads rots exactly like a shim nothing compiles.
-   add_test(NAME capi_demography COMMAND test_capi_demography
+   add_test(NAME c_api_demography COMMAND test_c_api_demography
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    #      The FULL-MODEL shim: it holds a meds_driver run, so it links the driver (which is
    #      meds_model + IO plus the open/step/finalize seam) rather than the model directly.
-   add_executable(test_capi_run test/test_capi_run.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_run.f90)
-   target_link_libraries(test_capi_run PRIVATE meds_testsupport meds_driver)
-   meds_fortran_flags(test_capi_run)
+   add_executable(test_c_api_run test/test_c_api_run.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_run.f90)
+   target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_driver)
+   meds_fortran_flags(test_c_api_run)
    #      Runs from examples/example_biophysics: it loads BOTH of that example's shipped configs,
    #      which until now had no build-time consumer at all -- the example is a shell script and
    #      three plotting scripts, none of which the build knows about. That is the same hole the
    #      demography config fell through.
-   add_test(NAME capi_run COMMAND test_capi_run
+   add_test(NAME c_api_run COMMAND test_c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
@@ -622,6 +623,14 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_io_config_example)
    add_test(NAME io_config_example COMMAND test_io_config_example
             ${CMAKE_CURRENT_SOURCE_DIR}/meds_io_config.toml)
+
+   #----- The Python wheel ships COPIES of LICENSE and NOTICE, because python/pyproject.toml     #
+   #      cannot list license files above its own directory. A tracked copy drifts silently,     #
+   #      for the same reason as the io_config_example above, so the build compares them.        #
+   add_test(NAME license_copy COMMAND ${CMAKE_COMMAND} -E compare_files --ignore-eol
+            ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/python/LICENSE)
+   add_test(NAME notice_copy COMMAND ${CMAKE_COMMAND} -E compare_files --ignore-eol
+            ${CMAKE_CURRENT_SOURCE_DIR}/NOTICE ${CMAKE_CURRENT_SOURCE_DIR}/python/NOTICE)
 
    #----- Diagnostic-output serializer round-trip (writes + reopens netCDF; links the io layer). #
    add_executable(test_output_roundtrip test/test_output_roundtrip.f90)

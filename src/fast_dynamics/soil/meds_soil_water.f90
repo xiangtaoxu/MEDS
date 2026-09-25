@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_water -- THE stateless seam of the 1-D soil-water column (design                   !
 ! MEDS_COLUMN_HYDROLOGY_DESIGN.md). It advances one patch's prognostic soil moisture + ponding !

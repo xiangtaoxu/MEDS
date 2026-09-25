@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_biogeochem_dynamics -- the slow soil-carbon biogeochemistry driver seam (B2,             !
 ! MEDS_SLOW_DYNAMICS_DESIGN.md Part II): a REAL fast loop (constant forcing, over the state-hub   !

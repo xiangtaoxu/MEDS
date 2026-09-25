@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.demography — Python companion for the Fortran demographic engine.
 
 Loads ``libmeds_c.so`` (built with ``-DMEDS_BUILD_PYLIB=ON``) and drives the

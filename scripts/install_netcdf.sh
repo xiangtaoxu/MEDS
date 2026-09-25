@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
 # install_netcdf.sh — check for the netCDF C library and offer to install it.              #
 #                                                                                          #

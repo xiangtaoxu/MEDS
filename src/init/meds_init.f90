@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_init -- helpers to build the initial community a run starts from.                    !
 !                                                                                          !

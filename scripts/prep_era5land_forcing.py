@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 # =========================================================================================
 # prep_era5land_forcing.py -- convert a raw ERA5-Land hourly NetCDF (from download_era5land.py)
 # into a MEDS multi-grid forcing NetCDF the Fortran reader (src/forcing/meds_met_driver.f90)

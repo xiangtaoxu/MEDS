@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_config_io -- load a run configuration from TWO mandatory TOML files and a presence-map !
 ! check. Lives in src/io/ (config input) with NO external dependency, so it is always compiled.!

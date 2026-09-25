@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_slow_ledger -- the site conservation ledger's ARITHMETIC and its STORE COVERAGE.       !
 !                                                                                          !

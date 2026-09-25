@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Smoke tests for the meds.plant.leaf Python API (needs libmeds.so built; see python/README.md).
 
 Skips itself cleanly if the shared library hasn't been built, so `pytest` never hard-fails on a

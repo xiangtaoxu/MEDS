@@ -108,6 +108,10 @@ bare `real*8` or `1.0d0`); `allocatable` over `pointer`; `pure`/`elemental` for 
 `error stop` rather than a halt routine, so failures are catchable in tests; one responsibility per
 module, one module per file, at most 132 columns.
 
+**License header.** Every source file starts with an `SPDX-License-Identifier: Apache-2.0` comment,
+on the line after the `#!` line if there is one. A new contributor adds themselves to `AUTHORS`; see
+`CONTRIBUTING.md`.
+
 **No hidden global mutable state.** Config and state are derived types passed as arguments. This is
 what makes routines unit-testable, thread-safe and reentrant.
 
@@ -135,3 +139,8 @@ number. Most cite by bare filename, so moving a file is safe but renumbering it 
 Track Fortran source, CMake files, configs and docs; build artifacts and generated output are
 ignored. Line endings are LF via `.gitattributes`. Keep generated netCDF and large input datasets
 out of the repository. Commit or push only when asked; if on the default branch, branch first.
+
+**`beta` is the integration branch.** Branch from `beta` and open pull requests against it, not
+`main`: `beta` collects merged work that is not yet in a release, and merges into `main` when a
+release is cut. A closing keyword (`Fixes #N`) in a pull request into `beta` does not close the
+issue, because GitHub acts on those only for the default branch; close it when the release lands.

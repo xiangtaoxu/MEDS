@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.plant — a Pythonic front end to the MEDS plant-ecophysiology model (libmeds.so).
 
 The plant module goes beyond a single leaf process, so it is split into submodules (one per process

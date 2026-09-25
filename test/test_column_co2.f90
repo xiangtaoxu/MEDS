@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_co2 -- unit tests for the P0 column CO2 balance (the well-mixed canopy-air-space  !
 ! CO2 box). The box is advanced by the production kernel meds_cas_biophysics::cas_column_step_     !

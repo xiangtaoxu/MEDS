@@ -1,10 +1,11 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_main -- THE executable entry point of MEDS: parse the command line, drive the model,   !
 ! translate a driver status into an exit code.                                                 !
 !                                                                                          !
 ! The model itself lives in `meds_driver` (open / step / finalize). This program used to BE     !
 ! that logic -- 400 lines of it, with no seam -- which meant the only way to run MEDS was to    !
-! exec this binary. It is now one of two callers; the other is the C-API shim `meds_capi_run`,  !
+! exec this binary. It is now one of two callers; the other is the C-API shim `meds_c_api_run`, !
 ! which is what lets examples/example_biophysics drive the full coupled model from Python.      !
 ! Keeping the program this thin is the point: anything added here is, by construction,          !
 ! unreachable from Python.                                                                      !

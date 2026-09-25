@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_dynamics -- the per-SITE fast-biophysics TIER ORCHESTRATOR (the fast-cadence peer   !
 ! of meds_vegetation_dynamics; advance_one_step fans out to both). It owns the ORCHESTRATION      !

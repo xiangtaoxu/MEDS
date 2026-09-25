@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_litter_partition -- the necromass -> litter-destination split.                        !
 !                                                                                          !

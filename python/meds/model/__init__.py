@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.model — drive the FULL coupled MEDS model from Python.
 
 The other sub-packages expose pieces: ``meds.plant.leaf`` and ``meds.plant.pheno`` are

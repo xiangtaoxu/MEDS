@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Patch fusion conserves site_t plant number & area; termination renormalizes area. -----!
 program test_patch
    use meds_kinds,          only : wp, ik

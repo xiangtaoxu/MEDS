@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
 """ctypes backend for the MEDS full-coupled-model C-API.
 
 Declares the argument/return signatures of every ``bind(c)`` entry point in
-``src/capi/meds_capi_run.f90``. Finding and loading the library is
+``src/c_api/meds_c_api_run.f90``. Finding and loading the library is
 ``meds._libmeds``'s job: there is ONE libmeds.so behind every sub-package
 (structure-plan decision #1), so there is one search and one CDLL.
 """

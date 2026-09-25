@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_carbon_allocation -- unit tests for the elemental, GROWTH-ONLY daily carbon      !
 ! allocation kernel + growth_respiration + the turnover baseline rates. (Tissue shed/turnover  !

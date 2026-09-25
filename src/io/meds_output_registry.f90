@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_registry -- the ONE source-defined registration list of diagnostic variables, and !
 ! the config resolution that turns it into per-tier live-variable index lists (§3.2, §3.4, §6.1). !

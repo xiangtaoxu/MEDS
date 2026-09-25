@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_rk45 -- the INTEG_RK45 wiring of the ED2-faithful adaptive Cash-Karp integrator    !
 ! into column_fast_step (MEDS_ED2_RK45_DESIGN.md P2).                                          !

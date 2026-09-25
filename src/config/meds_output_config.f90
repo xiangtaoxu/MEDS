@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_config -- the [output] configuration block for the diagnostic-aggregation      !
 ! subsystem, plus the selector codes shared by the config, the reader, the registry, the       !

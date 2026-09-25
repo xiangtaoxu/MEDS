@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_demography_patch_fusefiss -- PATCH numerical-resolution control for the adaptive patch          !
 ! discretization (the patch half of the ED2 fuse_fiss_utils analogue) plus patch DISTURBANCE.    !

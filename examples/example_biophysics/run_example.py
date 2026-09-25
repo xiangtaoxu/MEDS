@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """MEDS example_biophysics -- run the FULL coupled model from Python, then build the figures.
 
 This example used to be a bash script that exec'd ``meds_main`` twice and then ran three

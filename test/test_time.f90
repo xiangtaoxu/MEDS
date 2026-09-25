@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Calendar arithmetic: leap years, month/day roll-over, day-of-year, parse/format. ------!
 program test_time
    use meds_kinds,        only : wp, ik

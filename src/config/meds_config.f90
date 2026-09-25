@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_config -- immutable run configuration, threaded read-only through the engine.       !
 !                                                                                          !

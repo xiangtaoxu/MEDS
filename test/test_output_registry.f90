@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_output_registry -- the registration list + the §6.1 config resolution (group toggles,     !
 ! per-tier enables, per-variable overrides, unknown-key trap). MEDS_IO_DESIGN.md test 4.          !

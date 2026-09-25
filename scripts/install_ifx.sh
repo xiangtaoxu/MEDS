@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
 # install_ifx.sh — check for the Intel ifx Fortran compiler and offer to install it.       #
 #                                                                                          #

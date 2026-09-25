@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_toml -- a minimal TOML reader for MEDS run configuration.                           !
 !                                                                                          !

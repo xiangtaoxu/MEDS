@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.plant.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
@@ -37,7 +38,8 @@ __all__ = [
 
 
 #===========================================================================================#
-#  ctypes mirrors — field order MUST match the bind(c) types in src/plant/meds_plant_capi.f90.#
+#  ctypes mirrors — field order MUST match the bind(c) types in                             #
+#  src/c_api/meds_c_api_phenology.f90.                                                      #
 #===========================================================================================#
 _ENV_FIELDS = [
     ("temp_day", c_double), ("soil_temp", c_double), ("avail_water", c_double),

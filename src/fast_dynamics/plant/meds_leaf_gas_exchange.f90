@@ -1,9 +1,10 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_leaf_gas_exchange -- leaf-level gas-exchange COMPUTE kernels (photosynthesis + stomata !
 ! + coupled Ci solver), merged into one module. FvCB C3 / Collatz C4 demand, the electron-     !
 ! transport hyperbola, the Leuning / Medlyn / Katul stomatal models, and the bracketed Ci      !
 ! root-find (solve_leaf_gas_exchange). The public seam leaf_gas_exchange lives in               !
-! meds_fast_config; the raw kernels here are also called directly by meds_capi_leaf.         !
+! meds_fast_config; the raw kernels here are also called directly by meds_c_api_leaf.        !
 !==========================================================================================!
 module meds_leaf_gas_exchange
    use meds_kinds,         only : wp, ik
@@ -477,7 +478,7 @@ contains
    ! leaf_gas_exchange_batch -- BARE-ARRAY entry point over n leaves (MEDS_NUMERICS_SCOPING.md    !
    ! "bare-array process kernels": one call solves a whole array of leaf environments, so the      !
    ! per-cohort fast-loop driver loops need no longer thread the leaf_env_t/leaf_flux_t derived     !
-   ! types, and a Python/ctypes wrapper (meds_capi_leaf) can vectorise over numpy arrays instead    !
+   ! types, and a Python/ctypes wrapper (meds_c_api_leaf) can vectorise over numpy arrays instead   !
    ! of calling one leaf at a time). The per-leaf PHYSICS is UNCHANGED: this loops `do i=1,n`        !
    ! calling the SAME leaf_gas_exchange above, so it is bit-identical to an inline caller loop.      !
    !                                                                                          !

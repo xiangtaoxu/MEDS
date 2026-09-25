@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_canopy_radiation -- the canopy radiative-transfer module: the per-PFT / per-cohort       !
 ! optics ASSEMBLY, the unified single-band two-stream SOLVER, and the sealed public SEAM         !

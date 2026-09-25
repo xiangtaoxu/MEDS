@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_types -- the RUNTIME meteorological-forcing types (design MEDS_FORCING_DESIGN   !
 ! .md sections 3.1-3.2): the instantaneous per-site record met_forcing_t (a read-only boundary   !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_reconcile -- make state CONSISTENT before the fast loop marches on it.            !
 !                                                                                          !

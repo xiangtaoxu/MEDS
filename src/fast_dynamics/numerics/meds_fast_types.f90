@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_types -- the shared driver-scope TYPES of the fast-loop: the four working-buffer     !
 ! bundles both integrators pass through the dispatch seam (column_config_t/column_cohort_t/       !

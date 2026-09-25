@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_diagnostic_reduce -- generic WEIGHTED aggregation of the demographic state across scales. !
 ! ONE weighted aggregation, in place of a bag of hand-written per-patch total_* loops.            !

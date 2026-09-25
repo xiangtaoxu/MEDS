@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_cas_biophysics -- the CANOPY-AIR-SPACE (CAS) balance: the well-mixed sub-canopy air box    !
 ! and its three prognostic twins (specific enthalpy, specific humidity, CO2 mixing ratio), all    !

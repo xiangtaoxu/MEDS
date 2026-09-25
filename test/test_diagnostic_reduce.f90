@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_diagnostic_reduce -- the WEIGHTED scale-aggregation layer (MEDS_IO_V01_PLAN.md section 3.3   !
 ! and test plan items 2, 3, 3b, 4, 6).                                                        !

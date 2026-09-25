@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_rk45 -- the ED2-faithful adaptive Cash-Karp RK45 fast-loop integrator            !
 ! (docs/dev_plans/archive/MEDS_ED2_RK45_DESIGN.md, phase P2). Peer of meds_fast_ark: dispatched by     !

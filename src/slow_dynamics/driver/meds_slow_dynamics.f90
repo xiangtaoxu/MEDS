@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_slow_dynamics -- the THIN slow-tier coordinator (MEDS_SLOW_DYNAMICS_DESIGN.md Part II,   !
 ! section 10a). Sequences the slow-tier domain drivers as PEERS -- vegetation dynamics, then     !

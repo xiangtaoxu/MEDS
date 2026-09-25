@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_time -- calendar date tracking with real (leap-year-aware) Gregorian dates.         !
 !                                                                                          !

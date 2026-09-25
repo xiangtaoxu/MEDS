@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_test_support -- the in-code test CONFIGURATION fixture, plus a re-export of the      !
 ! assertion helpers so a test needs one `use` rather than two. The assertions themselves live !

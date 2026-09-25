@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_demography_update -- APPLY/refresh of (derived) cohort + patch state.                     !
 !                                                                                          !
@@ -10,7 +11,7 @@
 ! the host keeps ALL state in normal memory (the discipline the former growth_step used).          !
 !                                                                                          !
 ! fill_cohort_deriv is the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and !
-! empirical (capi) computers: given the new-state values (however the caller derived them) it backs !
+! empirical (C-API) computers: given the new-state values (however the caller derived them) it backs !
 ! out every field's time-derivative and advances the growth-average ring buffer with the caller's  !
 ! sample -- so the field list and the fill/evict logic live in ONE place.                          !
 !                                                                                          !

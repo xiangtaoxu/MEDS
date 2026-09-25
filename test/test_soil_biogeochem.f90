@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_soil_biogeochem -- unit tests for the P0 SLOW soil-carbon matrix kernels                !
 ! (meds_soil_biogeochem), mirroring the design test plan (MEDS_BIOGEOCHEMISTRY_DESIGN.md §8):   !

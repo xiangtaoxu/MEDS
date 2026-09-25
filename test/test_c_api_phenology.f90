@@ -1,7 +1,8 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_capi_phenology -- COVERAGE FOR THE PHENOLOGY C-API SHIM.                               !
+! test_c_api_phenology -- COVERAGE FOR THE PHENOLOGY C-API SHIM.                              !
 !                                                                                          !
-! WHY THIS TEST EXISTS. The same reason test_capi_leaf does, one subsystem over. A C-API shim  !
+! WHY THIS TEST EXISTS. The same reason test_c_api_leaf does, one subsystem over. A C-API shim !
 ! that only the optional `-DMEDS_BUILD_PYLIB=ON` library compiles is invisible to ctest on both  !
 ! back ends, so a field inserted into `pheno_params_t` or a renamed component can leave the C     !
 ! API unable to compile while the whole suite stays green. That is not hypothetical: it happened  !
@@ -14,10 +15,10 @@
 !                                                                                          !
 ! Needs no .so and no Python -- it calls the bind(c) procedure directly as Fortran.                 !
 !==========================================================================================!
-program test_capi_phenology
+program test_c_api_phenology
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,           only : wp, ik
-   use meds_capi_phenology,  only : pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c,      &
+   use meds_c_api_phenology,  only : pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c,      &
                                     meds_phenology_step
    use meds_phenology_types, only : CUE_NONE, CUE_TEMP
    use meds_test_support, only : banner, check, check_close
@@ -62,7 +63,7 @@ program test_capi_phenology
    call meds_phenology_step(env, p, DT, st, out)
    call check_close(st%gdd, 0.0_wp, 1.0e-12_wp, 'a sub-base day accumulates no GDD')
 
-   print '(a)', 'test_capi_phenology: ALL PASSED'
+   print '(a)', 'test_c_api_phenology: ALL PASSED'
 
 contains
 
@@ -117,4 +118,4 @@ contains
       s%high_psi_days= 0.0_c_double ; s%light_avg     = 300.0_c_double
    end function zero_state
 
-end program test_capi_phenology
+end program test_c_api_phenology

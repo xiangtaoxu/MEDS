@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_biophysics_opts -- the run-configuration bundles of the fast (sub-daily) biophysics loop: !
 ! solver selectors + tolerances (soil water / soil energy) and the physical parameter tables      !

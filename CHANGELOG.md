@@ -14,6 +14,48 @@ before and after.
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-09-25
+
+An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
+source tree is laid out so that each folder's purpose is clearer from its name. **Nothing in the
+model changes.** The biophysics example's output is byte-identical to v0.2.1, and `libmeds.so`
+exports the same C interface.
+
+It is also the first release made through the **`beta` integration branch**. Pull requests now
+target `beta`, which collects merged work until a release merges it into `main`; see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+### Added
+
+- **MEDS is open source under the Apache License 2.0** (#277). Before this, the repository had no
+  license at all, so nobody could legally reuse the code, while `python/pyproject.toml` declared
+  MIT. MEDS now ships:
+  - `LICENSE`;
+  - a `NOTICE` holding the copyright line, *The MEDS Authors*, and the attribution to ED2, whose
+    CC BY 4.0 terms cover the portions MEDS adapts from it;
+  - an `AUTHORS` file listing the copyright holders;
+  - a `CONTRIBUTING.md`.
+
+  The license also covers v0.1.0 through v0.2.1. Every source file now starts with an
+  `SPDX-License-Identifier: Apache-2.0` line. The wheel declares `License-Expression: Apache-2.0`
+  and carries `LICENSE` and `NOTICE`, which raises the build floor to scikit-build-core 0.11, the
+  first release that reads a license expression.
+
+### Changed
+
+- **The foundation library is one folder again: `src/shared/`** (#276). `base/`, `functions/` and
+  `util/` together are `libmeds_shared`, and they were the only library whose sources spanned
+  three top-level folders. They now sit under `src/shared/{base,functions,util}`, while `config/`
+  and `state/` stay top-level. `src/README.md` states the admission test: a module belongs in
+  `shared/` only if it uses nothing outside it. That test keeps the regrouped folder from becoming
+  the catch-all that the #125 restructure dissolved. No module, library target or Python name
+  changes.
+- **`src/capi/` is now `src/c_api/`, and its four shims are `meds_c_api_{leaf,phenology,demography,run}`**
+  (#276). Their ctest targets are now `test_c_api_*` (select them with `ctest -R c_api`). The
+  `bind(c)` names are unchanged, so `libmeds.so` exports the same C symbols and the Python package
+  is unaffected. The ctypes-mirror banner in `python/meds/plant/pheno.py` now points at the
+  phenology shim; it named a file an earlier restructure had removed.
+
 ## [0.2.1] — 2026-09-15
 
 A diagnostics-and-boundaries release. Nothing here changes the demographic core; what it changes is
@@ -1479,6 +1521,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...beta
+[0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/xiangtaoxu/MEDS/releases/tag/v0.1.0

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Locate and load ``libmeds.so`` — the ONE compiled backend behind every sub-package.
 
 There used to be two shared libraries (``libmeds_plant_c`` for leaf + phenology, ``libmeds_c``

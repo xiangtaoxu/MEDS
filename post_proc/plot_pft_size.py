@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Plot the per-PFT and per-DBH-class axes of a MEDS diagnostic file.
 
 MEDS aggregates every cohort quantity onto five axes; two of them -- PFT and DBH size class --

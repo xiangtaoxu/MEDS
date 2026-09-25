@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_ark -- the production fast-loop integrator: an L-stable ESDIRK2 (ARS(2,2,2) tableau;   !
 ! the explicit part is empty, so despite the historical "IMEX-ARK" name this is a diagonally       !

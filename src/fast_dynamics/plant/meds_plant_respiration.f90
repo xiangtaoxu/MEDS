@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_respiration -- non-leaf autotrophic-respiration COMPUTE kernels (an ED2 port).  !
 !                                                                                          !

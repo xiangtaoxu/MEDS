@@ -1,8 +1,9 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_capi_run -- the ISO_C_BINDING shim that exposes the FULL COUPLED MODEL (`meds.model`).  !
+! meds_c_api_run -- the ISO_C_BINDING shim that exposes the FULL COUPLED MODEL (`meds.model`). !
 !                                                                                          !
-! The other three shims expose pieces: `meds_capi_leaf` and `meds_capi_phenology` are stateless !
-! kernels, and `meds_capi_demography` drives the slow loop alone (no biophysics, no forcing, no !
+! The other three shims expose pieces: `meds_c_api_leaf` and `meds_c_api_phenology` are stateless !
+! kernels, and `meds_c_api_demography` drives the slow loop alone (no biophysics, no forcing, no !
 ! output streams). This one drives what the `meds_main` EXECUTABLE drives -- coupled fast + slow, !
 ! live met forcing, netCDF output, both conservation ledgers -- by holding a `meds_run_t` from    !
 ! `meds_driver` and handing the caller the OPEN / STEP / FINALIZE seam.                            !
@@ -16,14 +17,14 @@
 !                                                                                          !
 ! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !
-! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_capi_run`      !
-! can call them -- an untestable shim is exactly how `meds_capi_demography` came to stop compiling  !
+! caller-allocated buffer. The bind(c) entry points are also PUBLIC Fortran so `test_c_api_run`     !
+! can call them -- an untestable shim is exactly how `meds_c_api_demography` came to stop compiling !
 ! without anyone noticing.                                                                            !
 !                                                                                          !
 ! `driver_step` RETURNS a NaN status rather than `error stop`ping, which is what makes this safe to  !
 ! call from an interpreter: a bad state surfaces as a Python exception, not a dead process.           !
 !==========================================================================================!
-module meds_capi_run
+module meds_c_api_run
    use iso_c_binding
    use meds_kinds,             only : wp, ik
    use meds_driver,            only : meds_run_t, driver_open, driver_step, driver_finalize,   &
@@ -41,7 +42,7 @@ module meds_capi_run
 
    !----- Small registry: a handful of concurrent runs is plenty (the example opens two, one per   !
    !      stage, and could hold both at once). Fixed-size and module-`save` for the same reason    !
-   !      meds_capi_demography's is: the handle has to survive across ctypes calls.                !
+   !      meds_c_api_demography's is: the handle has to survive across ctypes calls.               !
    integer, parameter :: MAXR = 4
    type(meds_run_t), target, save :: g_run(MAXR)
    logical,                  save :: run_used(MAXR) = .false.
@@ -227,7 +228,7 @@ contains
 
    !=======================================================================================!
    !  Copy-out per-cohort getters (caller allocates buf of length n_cohort). Field ids match !
-   !  meds_capi_demography's, so the two shims read the same way from Python.                !
+   !  meds_c_api_demography's, so the two shims read the same way from Python.               !
    !=======================================================================================!
    subroutine meds_run_get_real(h, field_id, buf) bind(c, name="meds_run_get_real")
       integer(c_int), value, intent(in)  :: h, field_id
@@ -266,4 +267,4 @@ contains
       end associate
    end subroutine meds_run_get_int
 
-end module meds_capi_run
+end module meds_c_api_run

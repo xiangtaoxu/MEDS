@@ -114,3 +114,10 @@ the parallel builds and three compiler traps that cost real time, are in
 - Moorcroft, Hurtt & Pacala (2001), *Ecological Monographs* — the original ED formulation.
 - Medvigy et al. (2009), *JGR Biogeosciences* — ED2.
 - Longo et al. (2019), *Geoscientific Model Development* 12:4309 — the ED-2.2 technical description.
+
+## License
+
+MEDS is released under the [Apache License 2.0](LICENSE), and the license also covers every earlier
+release, v0.1.0 through v0.2.1. [`NOTICE`](NOTICE) carries the copyright notice and the attribution
+to ED2, from which parts of MEDS are adapted, and [`AUTHORS`](AUTHORS) lists the copyright holders.
+Contributions are welcome under the same license; see [`CONTRIBUTING.md`](CONTRIBUTING.md).

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_io -- the STATE (restart) stream: write the full prognostic demographic state to a     !
 ! netCDF-4 checkpoint and read it back, via the netCDF C library (meds_netcdf_c).             !

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """High-level wrapper over the MEDS full-coupled-model C-API.
 
 ``Run`` is an opaque handle to a live simulation -- the same thing the ``meds_main``
@@ -24,7 +25,7 @@ import numpy as np
 
 from ._ffi import lib
 
-#----- Field ids match meds_capi_demography's, so the two sub-packages read the same way. -----#
+#----- Field ids match meds_c_api_demography's, so the two sub-packages read the same way. ----#
 _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
          "overtopping_lai": 5, "growth_avg": 6, "wood_carbon": 7}
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}

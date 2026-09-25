@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_ground_biophysics -- the stateless LAND-SURFACE-INTERFACE kernels: the bare-ground skin  !
 ! energy balance and the snow / temporary-surface-water store. These are the two mutually-        !

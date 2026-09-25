@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- CSR integrity, cohort sort order, and termination compaction. ----------------------!
 program test_containers
    use meds_kinds,           only : wp, ik

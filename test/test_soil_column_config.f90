@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_soil_column_config -- the [soil_column] keys reach the column they describe.         !
 !                                                                                          !

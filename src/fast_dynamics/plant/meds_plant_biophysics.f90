@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_plant_biophysics -- the stateless per-cohort VEGETATION-surface kernels: the        !
 ! leaf/wood tissue energy balance and the canopy interception film they share. Coupled through   !

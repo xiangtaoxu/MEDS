@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Animate MEDS forest growth as a 3D landscape GIF (PyVista), tracking every cohort by its
 persistent ``global_cohort_id`` so trees grow IN PLACE across the 250-year run.
 

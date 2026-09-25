@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Emit the Phase-B scenario base configs for the integrator-parity study.
 
 docs/dev_plans/archive/MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase B.  Four cells, a 2x2 over SEASON x STAND

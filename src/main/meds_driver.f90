@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_driver -- the coupled model as an OPEN / STEP / FINALIZE object, so something other      !
 ! than the `meds_main` program can drive it.                                                    !
@@ -6,7 +7,7 @@
 ! no seam in it: configuration, initial community, fast context, met reader, output manager,     !
 ! the calendar loop and the closing conservation reports were all statements in one PROGRAM, so  !
 ! the ONLY way to run MEDS was to exec the binary. `meds_main` is now a thin shell over this      !
-! module and the C-API shim `meds_capi_run` is a second caller -- which is what lets              !
+! module and the C-API shim `meds_c_api_run` is a second caller -- which is what lets             !
 ! `examples/example_biophysics` drive the full coupled model from Python.                          !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
