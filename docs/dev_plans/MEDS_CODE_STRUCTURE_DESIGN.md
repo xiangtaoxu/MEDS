@@ -201,7 +201,7 @@ from meds import demography     # was: from meds.demography import Site
 
 **New capability unlocked.** There is no C-API for the fast loop today — "run submodules
 independently" currently means `{photosynthesis, phenology}` plus `{demography slow loop}` and
-nothing else. A `meds_capi_fast` verb driving `column_fast_step` on a column handle would expose
+nothing else. A `meds_c_api_fast` shim driving `column_fast_step` on a column handle would expose
 the sub-daily integrator to Python, which is where most recent diagnostic work lives
 (`scripts/numerics_sweep.py`, the `runs/ithaca_ark30` probes). Merging the libraries is a
 **precondition**: that verb needs both the kernels *and* `site_t`, so under today's split it has
@@ -209,16 +209,19 @@ no library to live in.
 
 ### 7.6 Python-side work items
 
+Since 2026-09-25 the folder is `src/c_api/` and the shims are `meds_c_api_*`. Items 1 and 2 are
+done and keep the names of their day; items 3 and 4 are standing rules and use the current ones.
+
 1. Swap the build backend `setuptools` → `scikit-build-core` in `python/pyproject.toml`, so
    `pip install python/` compiles and bundles `libmeds.so`. The existing comment there already
    flags this as the plan; one `.so` is what makes it tractable.
 2. Move `src/plant/meds_plant_capi.f90` into `src/capi/`; delete the
    `GLOB src/plant/*_capi.f90` special case in CMake.
-3. One capi file per subsystem, mirroring the Fortran tree: `meds_capi_leaf`,
-   `meds_capi_hydraulics`, `meds_capi_phenology`, `meds_capi_demography`, `meds_capi_fast`,
-   `meds_capi_site`.
-4. **Keep compiling every `*_capi.f90` into a ctest target** (`test_capi_leaf`,
-   `test_capi_demography`, ...). This is the #95 → #100 lesson already recorded in
+3. One C-API file per subsystem, mirroring the Fortran tree: `meds_c_api_leaf`,
+   `meds_c_api_hydraulics`, `meds_c_api_phenology`, `meds_c_api_demography`, `meds_c_api_fast`,
+   `meds_c_api_site`.
+4. **Keep compiling every `src/c_api/*.f90` into a ctest target** (`test_c_api_leaf`,
+   `test_c_api_demography`, ...). This is the #95 → #100 lesson already recorded in
    `CMakeLists.txt`: a component inserted mid-type in `leaf_photo_params_t` broke the C API while
    the whole suite stayed green, because the shim was compiled only by the optional pylib target.
    One `.so` means one ABI and one place for that to break — keep it a *build* failure.

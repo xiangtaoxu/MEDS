@@ -350,7 +350,7 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 
 #----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
 #      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
-#      it has two callers: the executable below, and the C-API shim src/capi/meds_capi_run.f90     #
+#      it has two callers: the executable below, and the C-API shim src/c_api/meds_c_api_run.f90   #
 #      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
 #      it is the one place that owns configuration, the calendar, the output manager and the       #
 #      closing conservation reports together.                                                      #
@@ -374,10 +374,10 @@ target_link_libraries(meds_main PRIVATE meds_driver)
 #      the accepted cost of #1, and decision #11 is its consequence (netcdf4 is declared a       #
 #      runtime dependency of the wheel rather than vendored).                                    #
 #                                                                                              #
-#      Plain GLOB, no exclusions: every src/capi/*.f90 belongs in the one library now.           #
+#      Plain GLOB, no exclusions: every src/c_api/*.f90 belongs in the one library now.          #
 if(MEDS_BUILD_PYLIB)
-   file(GLOB CAPI_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/*.f90)
-   add_library(meds_py SHARED ${CAPI_SOURCES})
+   file(GLOB C_API_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/*.f90)
+   add_library(meds_py SHARED ${C_API_SOURCES})
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
    target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
@@ -475,49 +475,49 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_leaf_physiology)
    add_test(NAME leaf_physiology COMMAND test_leaf_physiology)
 
-   #----- C-API shim (issue #100). Compiling the capi source INTO a ctest target is the point: the #
+   #----- C-API shim (issue #100). Compiling the C-API source INTO a ctest target is the point: the #
    #      shim used to be built only by the optional -DMEDS_BUILD_PYLIB=ON shared library, so a      #
    #      component inserted mid-type in leaf_photo_params_t could break the C API while the whole    #
    #      suite stayed green on both back ends -- which is exactly what happened (#95 -> #100).       #
    #      Registering it here makes that class of break a normal build failure. Needs no .so and no   #
    #      Python: the test calls the bind(c) procedures directly.                                     #
-   #      EVERY shim in src/capi/ gets one (§7.6 #4), not just the leaf one. The demography shim   #
+   #      EVERY shim in src/c_api/ gets one (§7.6 #4), not just the leaf one. The demography shim  #
    #      had none, and it did not compile against main at all: PR #137 changed a signature under   #
    #      it and 42/42 stayed green because only the optional .so built it. That is the same hole,  #
    #      one subsystem over.                                                                        #
-   add_executable(test_capi_leaf test/test_capi_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_leaf.f90)
-   target_link_libraries(test_capi_leaf PRIVATE meds_testsupport meds_fast_kernels)
-   meds_fortran_flags(test_capi_leaf)
-   add_test(NAME capi_leaf COMMAND test_capi_leaf)
+   add_executable(test_c_api_leaf test/test_c_api_leaf.f90 ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_leaf.f90)
+   target_link_libraries(test_c_api_leaf PRIVATE meds_testsupport meds_fast_kernels)
+   meds_fortran_flags(test_c_api_leaf)
+   add_test(NAME c_api_leaf COMMAND test_c_api_leaf)
 
-   add_executable(test_capi_phenology test/test_capi_phenology.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_phenology.f90)
-   target_link_libraries(test_capi_phenology PRIVATE meds_testsupport meds_slow_kernels)
-   meds_fortran_flags(test_capi_phenology)
-   add_test(NAME capi_phenology COMMAND test_capi_phenology)
+   add_executable(test_c_api_phenology test/test_c_api_phenology.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_phenology.f90)
+   target_link_libraries(test_c_api_phenology PRIVATE meds_testsupport meds_slow_kernels)
+   meds_fortran_flags(test_c_api_phenology)
+   add_test(NAME c_api_phenology COMMAND test_c_api_phenology)
 
    #      The demography shim needs the whole model (config + init + both loops), same as the .so.  #
-   add_executable(test_capi_demography test/test_capi_demography.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_demography.f90)
-   target_link_libraries(test_capi_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
-   meds_fortran_flags(test_capi_demography)
+   add_executable(test_c_api_demography test/test_c_api_demography.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_demography.f90)
+   target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
+   meds_fortran_flags(test_c_api_demography)
    #      Runs from the SOURCE dir: it loads examples/example_demography's shipped config, which
    #      gives that config a build-time consumer. It had none, and had drifted 37 required keys
    #      behind the schema -- a config nothing loads rots exactly like a shim nothing compiles.
-   add_test(NAME capi_demography COMMAND test_capi_demography
+   add_test(NAME c_api_demography COMMAND test_c_api_demography
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
    #      The FULL-MODEL shim: it holds a meds_driver run, so it links the driver (which is
    #      meds_model + IO plus the open/step/finalize seam) rather than the model directly.
-   add_executable(test_capi_run test/test_capi_run.f90
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/capi/meds_capi_run.f90)
-   target_link_libraries(test_capi_run PRIVATE meds_testsupport meds_driver)
-   meds_fortran_flags(test_capi_run)
+   add_executable(test_c_api_run test/test_c_api_run.f90
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_run.f90)
+   target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_driver)
+   meds_fortran_flags(test_c_api_run)
    #      Runs from examples/example_biophysics: it loads BOTH of that example's shipped configs,
    #      which until now had no build-time consumer at all -- the example is a shell script and
    #      three plotting scripts, none of which the build knows about. That is the same hole the
    #      demography config fell through.
-   add_test(NAME capi_run COMMAND test_capi_run
+   add_test(NAME c_api_run COMMAND test_c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #

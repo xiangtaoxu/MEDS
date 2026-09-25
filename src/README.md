@@ -65,7 +65,7 @@ src/                                    30.3 k lines · 86 modules · 19 CMake l
 ├── io/            netCDF C bindings, the restart stream, and the diagnostic
 │                  wall: derive → capture → reduce → integrate → serialize   4 563
 ├── init/          the initial community: bare ground, or a cohort census       181
-├── capi/          bind(c) shims → one libmeds.so: leaf, phenology,
+├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
 │                  demography, and the full coupled run                        887
 └── main/          meds_stepper (the cadence owner), meds_driver
                    (open / step / finalize), meds_main (the PROGRAM)           740
@@ -151,7 +151,7 @@ Two edges are worth knowing because they are easy to get wrong:
 | a numerical, calendar or checking helper every layer needs | `shared/util/`, if it uses nothing outside `shared/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
 | an output variable | one `add_variable` line in `io/meds_output_registry.f90` |
-| a Python entry point | `capi/`, plus its mandatory ctest target |
+| a Python entry point | `c_api/`, plus its mandatory ctest target |
 | a top-level orchestration step | `main/meds_stepper.f90` or a `driver/` folder |
 
 ## Invariants the tree is built on

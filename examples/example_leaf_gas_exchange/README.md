@@ -14,7 +14,7 @@ conversion, the humidity assumption and the sweeps all live in
 [`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
 **same compiled Fortran** the demographic engine uses, reached through the
 [`meds.plant.leaf`](../../python/meds/plant/leaf.py) package (a clean, ctypes-free API over the `bind(c)`
-shared library [`src/capi/meds_capi_leaf.f90`](../../src/capi/meds_capi_leaf.f90)
+shared library [`src/c_api/meds_c_api_leaf.f90`](../../src/c_api/meds_c_api_leaf.f90)
 → the single `libmeds.so`). That is the point of the example: one model, no parameters hard-coded in Fortran,
 the whole experiment a plain Python script.
 

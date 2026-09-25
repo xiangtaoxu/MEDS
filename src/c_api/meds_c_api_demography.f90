@@ -1,5 +1,5 @@
 !==========================================================================================!
-! meds_capi_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /     !
+! meds_c_api_demography -- the ISO_C_BINDING shim that exposes the DEMOGRAPHIC model to C /    !
 ! Python (ctypes). It goes into the optional shared library libmeds.so (MEDS_BUILD_PYLIB) and   !
 ! into a mandatory ctest target, so a signature change is a build failure in a default build.   !
 !                                                                                          !
@@ -18,7 +18,7 @@
 ! per-handle GENERATION counter (bumped every advance_slow, which reorders the SoA on fuse/fiss) !
 ! lets the caller detect a stale positional snapshot -- global_id is the only stable key.        !
 !==========================================================================================!
-module meds_capi_demography
+module meds_c_api_demography
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : pio4, tiny_num
@@ -158,7 +158,7 @@ contains
          !      derivative, and advance the moving-average ring buffer with the supplied rate (the     !
          !      empirical convention -- records the request even when dbh is capped); then let the     !
          !      core engine's pure applier advance the state. There is deliberately NO empirical        !
-         !      twin of the driver's carbon update_cohort_derivatives -- this is thin capi glue, not   !
+         !      twin of the driver's carbon update_cohort_derivatives -- this is thin C-API glue, not  !
          !      a named peer computer. ---------------------------------------------------------------!
          call cohort_deriv_alloc(site%deriv, site%cohort%n)
          associate (cohort => site%cohort)
@@ -349,4 +349,4 @@ contains
       site_used(sh) = .false.
    end subroutine meds_site_free
 
-end module meds_capi_demography
+end module meds_c_api_demography

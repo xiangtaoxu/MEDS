@@ -34,7 +34,7 @@ driver code and live in `fast_dynamics/driver/meds_fast_config`.
 
 ## Python
 
-The `src/capi/meds_capi_*.f90` shims go into the single optional `libmeds.so`
+The `src/c_api/meds_c_api_*.f90` shims go into the single optional `libmeds.so`
 (`-DMEDS_BUILD_PYLIB=ON`) **and** into one mandatory ctest target each, so an ABI or signature
 change is a build failure in a default build rather than a silent break in an optional one.
 

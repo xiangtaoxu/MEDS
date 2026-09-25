@@ -94,7 +94,7 @@ contains
       !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort governor drives ONE daily    !
       !         step, BEFORE compute_carbon_allocation reads them (the folded phenology_driver --    !
       !         ED2 calls it inside the vegetation-dynamics slow loop). Needs the step-start          !
-      !         day-of-year; a caller with no calendar context (e.g. the Python carbon-mode capi      !
+      !         day-of-year; a caller with no calendar context (e.g. the Python carbon-mode C-API     !
       !         path) simply omits doy, so the drives stay at their vanilla-evergreen fixed point.    !
       !         advance_leaf_phenology ALSO no-ops on its own when no fast sub-step has yet supplied   !
       !         a daily-mean temperature (site%pheno_tair_n < 1). --------------------------------------!

@@ -1,7 +1,7 @@
 """ctypes backend for the MEDS demography C-API.
 
 Declares the argument/return signatures of every ``bind(c)`` entry point in
-``src/capi/meds_capi_demography.f90``. Finding and loading the library is
+``src/c_api/meds_c_api_demography.f90``. Finding and loading the library is
 ``meds._libmeds``'s job: there is ONE libmeds.so behind every sub-package now
 (structure-plan decision #1), so there is one search and one CDLL.
 """
