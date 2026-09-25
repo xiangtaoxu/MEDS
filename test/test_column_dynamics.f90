@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_dynamics -- integration test for the fast-loop coupling core: aerodynamics ->     !
 ! {LEAF GAS EXCHANGE (real GPP + stomata + Rd) + PLANT HYDRAULICS, ground balance} -> soil WATER  !

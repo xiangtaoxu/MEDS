@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_energy -- the stateless soil-thermal-column kernels (design                        !
 ! MEDS_ENERGY_BALANCE_DESIGN.md). Prognostic INTERNAL ENERGY / enthalpy per layer (phase-safe);  !

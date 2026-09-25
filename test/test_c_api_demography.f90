@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_c_api_demography -- COVERAGE FOR THE DEMOGRAPHY C-API SHIM.                            !
 !                                                                                          !

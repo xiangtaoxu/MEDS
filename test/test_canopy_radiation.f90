@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_canopy_radiation -- unit tests for the canopy two-stream RT library (src/biophysics). !
 !                                                                                          !

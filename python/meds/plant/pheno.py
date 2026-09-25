@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """meds.plant.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the

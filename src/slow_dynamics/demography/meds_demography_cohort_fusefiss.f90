@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_demography_cohort_fusefiss -- COHORT numerical-resolution control for the adaptive cohort      !
 ! discretization (the cohort half of the ED2 fuse_fiss_utils analogue) plus cohort RECRUITMENT.  !

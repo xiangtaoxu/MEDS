@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Census restart: build a site from a cohort CSV (site filter, patch map, allometry). --!
 program test_init_census
    use meds_kinds,            only : wp, ik

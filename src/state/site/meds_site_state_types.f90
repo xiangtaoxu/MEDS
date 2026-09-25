@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_site_state_types -- the demographic state, as a flat site_t-wide Structure-of-Arrays.            !
 !                                                                                          !

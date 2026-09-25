@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Leaf physiology: temperature response, FvCB C3 + Collatz C4 demand, the three stomatal !
 !      models, the coupled A-gs-Ci solver, water stress, and the night/closed branch.         !
 program test_leaf_physiology

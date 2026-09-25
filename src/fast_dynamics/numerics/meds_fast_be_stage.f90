@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_be_stage -- the IMPLICIT STAGE of the fast-loop march, and the water-mass        !
 ! advance that rides with it.                                                                !

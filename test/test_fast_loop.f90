@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_fast_loop -- the SITE-LEVEL fast-biophysics driver over the state-hub-owned per-patch     !
 ! reservoirs. Builds a two-patch site (one vegetated, one bare ground), seeds the reservoirs,     !

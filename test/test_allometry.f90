@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- Pan-tropical allometry: dbh<->height round-trip, AGB monotonicity, agb_to_dbh inverse. !
 program test_allometry
    use meds_kinds,       only : wp, ik

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """example_demography — drive the MEDS carbon slow loop from Python via libmeds.so.
 
 Loads the shipped config, builds a bare-ground site, and steps the demographic

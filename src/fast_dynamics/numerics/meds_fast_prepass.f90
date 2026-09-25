@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_prepass -- the once-per-dt_fast PRE-PASS of the fast biophysics loop, split into the  !
 ! five processes it fuses (2026-09 review, item 4 #4): canopy aerodynamics from the current       !

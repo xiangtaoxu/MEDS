@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """ctypes backend for the MEDS full-coupled-model C-API.
 
 Declares the argument/return signatures of every ``bind(c)`` entry point in

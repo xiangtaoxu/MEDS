@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_hydr_lib -- hydraulics CONSTITUTIVE relations (material properties of tissue AND soil): !
 ! nonlinear pressure-volume curves (Bartlett/Tyree-Hammel), the xylem vulnerability curve and    !

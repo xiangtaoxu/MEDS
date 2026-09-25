@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_driver -- the coupled model as an OPEN / STEP / FINALIZE object, so something other      !
 ! than the `meds_main` program can drive it.                                                    !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_control -- the shared FAST-LOOP ERROR-CONTROL facility (MEDS_NUMERICS_SCOPING.md      !
 ! goal (a) / §4 / §9.3). One place owns: (1) the per-STATE-GROUP tolerance set that weights the    !

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """example_phenology -- drive the MEDS leaf-phenology kernel over synthetic climates.
 
 For each of the FOUR phenological strategies the Fortran kernel (meds_phenology.f90) supports, this

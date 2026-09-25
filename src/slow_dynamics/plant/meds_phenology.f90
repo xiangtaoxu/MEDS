@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_phenology -- the leaf-phenology SIGNAL kernel.                                       !
 !                                                                                          !

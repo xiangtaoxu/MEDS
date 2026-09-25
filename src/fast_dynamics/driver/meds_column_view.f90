@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_column_view -- the ONE way a column_cohort_t gets built.                              !
 !                                                                                          !

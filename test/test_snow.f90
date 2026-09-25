@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_snow -- unit tests for the MEDS snow store (meds_ground_biophysics, P0).                              !
 !   1. snow-cover fraction is monotone in [0,1].                                                 !

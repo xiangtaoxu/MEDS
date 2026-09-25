@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Plot the MEDS reproduction of Slot & Winter (2017, Plant Cell Environ. 40:3055) as ONE figure.
 
 Layout: a large A-Ci demand-curve panel (F. insipida) on the LEFT, and five stacked leaf-temperature

@@ -108,6 +108,10 @@ bare `real*8` or `1.0d0`); `allocatable` over `pointer`; `pure`/`elemental` for 
 `error stop` rather than a halt routine, so failures are catchable in tests; one responsibility per
 module, one module per file, at most 132 columns.
 
+**License header.** Every source file starts with an `SPDX-License-Identifier: Apache-2.0` comment,
+on the line after the `#!` line if there is one. A new contributor adds themselves to `AUTHORS`; see
+`CONTRIBUTING.md`.
+
 **No hidden global mutable state.** Config and state are derived types passed as arguments. This is
 what makes routines unit-testable, thread-safe and reentrant.
 

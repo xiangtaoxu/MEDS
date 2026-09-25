@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_respiration -- unit tests for the non-leaf respiration kernels.                 !
 !                                                                                          !

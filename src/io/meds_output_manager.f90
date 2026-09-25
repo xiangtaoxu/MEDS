@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_output_manager -- the serializer-side glue: drain the manager's pending stage to disk      !
 ! (output_serialize_pending, the ONLY flush -- called by main), and close the streams at run end   !

@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !----- State restart round-trip: the per-cohort PLASTIC leaf traits (sla/vcmax25/rd25/llspan) ----!
 !----- must be written to and recovered from a state checkpoint, not reset to top-of-canopy.  ----!
 program test_state_roundtrip

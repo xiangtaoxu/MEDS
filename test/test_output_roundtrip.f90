@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_output_roundtrip -- the netCDF serializer end to end: build a manager, walk a 3-day        !
 ! calendar folding site state, flush per-stream files, then RE-OPEN them and assert record counts,  !

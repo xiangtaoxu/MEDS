@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """High-level wrapper over the MEDS demography C-API.
 
 ``Config`` loads a run configuration from TOML; ``Site`` is an opaque handle to a

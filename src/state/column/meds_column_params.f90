@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_column_params -- everything about a column that is NOT state: the compile-time           !
 ! dimensions, the fresh-cohort initial values, and the static per-column parameter bundles       !

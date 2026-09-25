@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_therm_lib -- shared thermodynamic / thermal-property helpers for the fast loop: moist-air  !
 ! psychrometrics (saturation vapour pressure + specific humidity and their temperature slopes),  !

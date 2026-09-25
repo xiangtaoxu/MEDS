@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_soil_types -- the argument records of the ground-column kernels: soil hydrology, soil  !
 ! thermal energy, and the snow store. Pure DATA, no methods, no hidden state.                 !

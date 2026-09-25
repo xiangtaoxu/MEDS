@@ -14,6 +14,22 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **MEDS is open source under the Apache License 2.0** (#277). Before this, the repository had no
+  license at all, so nobody could legally reuse the code, while `python/pyproject.toml` declared
+  MIT. MEDS now ships:
+  - `LICENSE`;
+  - a `NOTICE` holding the copyright line, *The MEDS Authors*, and the attribution to ED2, whose
+    CC BY 4.0 terms cover the portions MEDS adapts from it;
+  - an `AUTHORS` file listing the copyright holders;
+  - a `CONTRIBUTING.md`.
+
+  The license also covers v0.1.0 through v0.2.1. Every source file now starts with an
+  `SPDX-License-Identifier: Apache-2.0` line. The wheel declares `License-Expression: Apache-2.0`
+  and carries `LICENSE` and `NOTICE`, which raises the build floor to scikit-build-core 0.11, the
+  first release that reads a license expression.
+
 ### Changed
 
 - **The foundation library is one folder again: `src/shared/`** (#276). `base/`, `functions/` and

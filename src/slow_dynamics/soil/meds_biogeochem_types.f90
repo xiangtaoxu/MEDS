@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_biogeochem_types -- shared derived types + selector codes for the biogeochemistry     !
 ! domain: the SLOW soil-carbon / nutrient cycle of the ecosystem column. Pure DATA +           !

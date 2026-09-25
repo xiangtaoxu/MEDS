@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """Empirical vital-rate laws (the demography-only "example"), in numpy.
 
 These are the phenomenological growth / mortality / recruitment relationships that

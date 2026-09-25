@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_column_state_types -- the PROGNOSTIC per-patch stores of the fast (sub-daily) loop: the !
 ! canopy-air-space thermal twins, the soil water and soil energy columns, the snow store, the  !

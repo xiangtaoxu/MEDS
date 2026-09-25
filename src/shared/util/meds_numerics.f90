@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_numerics -- shared numerical PRIMITIVES near the root of the library DAG (uses meds_kinds !
 ! + meds_constants for safe_exp; meds_constants itself uses meds_kinds only, so no cycle).       !

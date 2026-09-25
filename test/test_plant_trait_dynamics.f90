@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_trait_dynamics -- unit tests for the light-plasticity kernel.                  !
 !                                                                                          !

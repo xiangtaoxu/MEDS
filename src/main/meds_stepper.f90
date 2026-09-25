@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process        !
 ! top-level loop). Lives in src/main/, beside the program that drives it.                      !

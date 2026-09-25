@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_fast_time_derivs -- the pure whole-column tendency (RHS) for the fast-loop IMEX-ARK        !
 ! integrator (design docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md, phase P0). The overhaul replaces the       !

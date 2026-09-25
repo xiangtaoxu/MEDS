@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_allometry -- pan-tropical (ED2 iallom==3) size allometry, shared across the engine.  !
 !                                                                                          !

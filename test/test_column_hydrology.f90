@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_column_hydrology -- unit tests for the soil-water column (src/biophysics).           !
 !                                                                                          !

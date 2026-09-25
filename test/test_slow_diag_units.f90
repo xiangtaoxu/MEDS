@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_slow_diag_units -- the units contract of the SLOW per-patch diagnostic rows (#239).      !
 !                                                                                          !

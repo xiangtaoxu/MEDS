@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """Carbon-flux figure for MEDS' fast (sub-daily) loop.
 
 Reads the same hourly FAST-tier output as ``plot_biophysics.py`` and plots the sub-daily carbon

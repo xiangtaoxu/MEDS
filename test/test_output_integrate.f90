@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_output_integrate -- the netCDF-free temporal-reduction kernels + the extract switchboard. !
 ! Covers MEDS_IO_DESIGN.md test 1 (integrator arithmetic + zero-sample guard) and test 3         !

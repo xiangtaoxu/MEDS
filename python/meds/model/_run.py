@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 """High-level wrapper over the MEDS full-coupled-model C-API.
 
 ``Run`` is an opaque handle to a live simulation -- the same thing the ``meds_main``

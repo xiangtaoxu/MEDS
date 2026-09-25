@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_c_api_leaf -- the C-API shim for LEAF GAS EXCHANGE (`meds.plant.leaf`).                !
 !                                                                                          !

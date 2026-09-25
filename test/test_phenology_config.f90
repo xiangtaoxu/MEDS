@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_phenology_config -- the [phenology] section actually reaches the PFT table (#245).       !
 !                                                                                          !

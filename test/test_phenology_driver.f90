@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING            !
 ! (meds_vegetation_dynamics.advance_leaf_phenology, the folded phenology driver), as opposed to  !

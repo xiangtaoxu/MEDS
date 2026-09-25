@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_main -- THE executable entry point of MEDS: parse the command line, drive the model,   !
 ! translate a driver status into an exit code.                                                 !

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """example_demography — the EMPIRICAL demography spin-up, driven from Python.
 
 The phenomenological vital-rate laws live HERE, in the example (``empirical_laws``),

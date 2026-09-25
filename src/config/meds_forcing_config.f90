@@ -1,3 +1,4 @@
+! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_forcing_config -- the [forcing]/[site] configuration for meteorological forcing, plus  !
 ! the selector codes shared by the config, the reader, and the disaggregation kernels.         !

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
 """MEDS fast-loop numerics benchmark harness (MEDS_NUMERICS_SCOPING.md goal (b), section 5).
 
 Sweeps the scheme x dt_fast x process-mask cross-product, runs each cell, and emits ONE tidy

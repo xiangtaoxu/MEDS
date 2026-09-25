@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 #==========================================================================================#
 # install_gfortran.sh — check for the GNU gfortran Fortran compiler and offer to install it.#
 #                                                                                          #
