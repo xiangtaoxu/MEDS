@@ -14,6 +14,21 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **The foundation library is one folder again: `src/shared/`** (#276). `base/`, `functions/` and
+  `util/` together are `libmeds_shared`, and they were the only library whose sources spanned
+  three top-level folders. They now sit under `src/shared/{base,functions,util}`, while `config/`
+  and `state/` stay top-level. `src/README.md` states the admission test: a module belongs in
+  `shared/` only if it uses nothing outside it. That test keeps the regrouped folder from becoming
+  the catch-all that the #125 restructure dissolved. No module, library target or Python name
+  changes.
+- **`src/capi/` is now `src/c_api/`, and its four shims are `meds_c_api_{leaf,phenology,demography,run}`**
+  (#276). Their ctest targets are now `test_c_api_*` (select them with `ctest -R c_api`). The
+  `bind(c)` names are unchanged, so `libmeds.so` exports the same C symbols and the Python package
+  is unaffected. The ctypes-mirror banner in `python/meds/plant/pheno.py` now points at the
+  phenology shim; it named a file an earlier restructure had removed.
+
 ## [0.2.1] — 2026-09-15
 
 A diagnostics-and-boundaries release. Nothing here changes the demographic core; what it changes is
