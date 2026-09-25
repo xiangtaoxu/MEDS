@@ -16,12 +16,15 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 src/                                    30.3 k lines · 86 modules · 19 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_shared
-├── base/          kinds, physical and calendar constants                      109
-├── functions/     stateless constitutive laws: allometry, thermodynamics,
-│                  retention and pressure-volume curves, canopy optics,
-│                  temperature response                                      1 085
-├── util/          calendar time, numerics (matrix exponential, Thomas sweep,
+├── shared/        uses nothing outside itself; every layer may use it
+│   ├── base/      kinds, physical and calendar constants                      109
+│   ├── functions/ stateless constitutive laws: allometry, thermodynamics,
+│   │              retention and pressure-volume curves, canopy optics,
+│   │              temperature response                                      1 085
+│   └── util/      calendar time, numerics (matrix exponential, Thomas sweep,
 │                  root finders), budget checks                                882
+│
+│  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        TOML reader and loader, PFT trait table, meds_config_t,
 │                  and the per-domain *_opts leaves                          2 920
 │
@@ -67,6 +70,14 @@ src/                                    30.3 k lines · 86 modules · 19 CMake l
 └── main/          meds_stepper (the cadence owner), meds_driver
                    (open / step / finalize), meds_main (the PROGRAM)           740
 ```
+
+**`shared/` is one library, and it admits only what depends on nothing outside it.** Every module
+there `use`s other `shared/` modules and compiler intrinsics and nothing else: no model state, no
+configuration, no external library. That is what lets every other layer, and the tests that link
+one narrow library, use it freely. A file that needs `meds_config`, a state type or netCDF is not
+foundation however small or widely used it is, and goes to its caller's layer instead; `config/`
+itself is a separate library for exactly that reason, since it links `state_column`. The test is
+what keeps `shared/` from becoming the place a file goes when no other place fits.
 
 ## Four rules, in the order you apply them
 
@@ -136,7 +147,8 @@ Two edges are worth knowing because they are easy to get wrong:
 | a soil, canopy or plant process | `fast_dynamics/<domain>/` or `slow_dynamics/<domain>/`, by the **cadence of its caller** |
 | a reservoir two subsystems mutate | `state/column/` |
 | a per-cohort field | `state/site/` — and the lockstep reorder, every creation site, and the fusion policy |
-| a stateless constitutive curve | `functions/` |
+| a stateless constitutive curve | `shared/functions/` |
+| a numerical, calendar or checking helper every layer needs | `shared/util/`, if it uses nothing outside `shared/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
 | an output variable | one `add_variable` line in `io/meds_output_registry.f90` |
 | a Python entry point | `capi/`, plus its mandatory ctest target |

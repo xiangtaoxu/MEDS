@@ -107,21 +107,21 @@ function(meds_fortran_flags tgt)
    endif()
 endfunction()
 
-#----- Foundation: precision, constants, PFT trait table, config, time, temperature response. #
-#      No heavy deps. meds_temp_response (Arrhenius / peaked deactivation) was promoted here     #
-#      from the leaf module so leaf, respiration, and any other tissue share one code path        #
-#      without a plant-domain -> plant-domain library edge.                                        #
-#      `src/shared/` is GONE: decision #3 dissolved it into base/ + functions/ + config/ + state/, #
-#      and the last three folders were still wearing it as a prefix. They are top-level now, so    #
-#      "shared" is not a place anything can be filed for lack of a better one. The library target  #
-#      keeps the name meds_shared: it IS the shared foundation, and that is a fact about the link  #
-#      graph rather than a folder for leftovers.                                                    #
-#      glob; module names + .mod resolution unchanged). meds_allometry (pure size relationships)  #
-#      now lives in functions/ alongside meds_temp_response / meds_therm_lib -- a shared geometric  #
-#      CONSTRAINT reachable by state, demography, plant, and config_io without a separate library. #
-file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/base/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/functions/*.f90
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/util/*.f90)
+#----- FOUNDATION (src/shared/): kinds and constants (base/), the stateless constitutive laws      #
+#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, canopy        #
+#      optics, temperature response) and the calendar, numerics and budget checks (util/).         #
+#                                                                                                  #
+#      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
+#      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
+#      library. That is what lets every layer above, and the tests that link one narrow library,   #
+#      reach it freely, and it is the test that keeps this folder from becoming the place a file   #
+#      goes when no other place fits. meds_temp_response sits here so leaf, respiration and any    #
+#      other tissue share one code path without a plant-domain -> plant-domain library edge;       #
+#      meds_allometry because it is a geometric CONSTRAINT that state, demography, plant and       #
+#      config all read.                                                                            #
+file(GLOB SHARED_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/base/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/functions/*.f90
+                                          ${CMAKE_CURRENT_SOURCE_DIR}/src/shared/util/*.f90)
 add_library(meds_shared STATIC ${SHARED_SOURCES})
 meds_fortran_flags(meds_shared)
 
@@ -130,7 +130,8 @@ meds_fortran_flags(meds_shared)
 #      loader that fills the aggregator from two TOML files. `toml` + `config_io` moved here out   #
 #      of src/io/ (plan decision #9): they are configuration INPUT, not I/O of model results, and   #
 #      they carry no external dependency -- unlike the netCDF output layer they used to sit beside. #
-#      Depends on meds_shared only; nothing here may import state or a kernel (checked: it does not).#
+#      Links meds_shared and meds_state_column (the edge below); nothing here imports site         #
+#      state or a kernel.                                                                          #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
 #      meds_state_column: meds_config takes `n_soil_layer_max` from meds_column_params for the
@@ -146,9 +147,8 @@ meds_fortran_flags(meds_config)
 #  state/column -- ONE patch's reservoirs, seen vertically: the soil water / soil energy /    #
 #  snow / canopy-air-space / soil-carbon stores, their fusion blends, and the parameter        #
 #  bundles that describe them. This is BOUNDARY state: the kernels mutate it and the           #
-#  demographic hub owns it. It used to sit in `shared/state`, which by its own docstring is    #
-#  "the foundation, NOT tied to any process" -- a workaround for the fact that `shared` was     #
-#  the only node both sides could see. It is a layer now, so the kernels link it directly.      #
+#  demographic hub owns it. It is not foundation -- src/shared/ admits no model state --     #
+#  so it is a layer of its own, and the kernels link it directly.                            #
 #                                                                                            #
 #  state/site -- ALL the patches: the flat cohort SoA, the patch CSR, the lockstep machinery,   #
 #  site_t and the diagnostic blocks. Drivers only. Kernels never link this, which is what keeps #
