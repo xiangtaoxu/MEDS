@@ -1413,7 +1413,7 @@ deliberately left out: each installation sets `data_path` (§15.2).
 | FD2 | Download unit | **Global, one variable × one year.** This fits both sources (§12). |
 | FD3 | Sources | **NSF NCAR GDEX dataset d633008 by default** (anonymous, no queue, July 2002 on). **Copernicus CDS** for years before GDEX coverage and as fallback. |
 | FD4 | CDS format | **GRIB by default**: 1 variable × 12 months per request costs 8,928 of the 12,000 cost limit, half the requests NetCDF needs. Decoding happens in post-processing and is lossless. |
-| FD5 | Separation | **Download and post-processing are separate tools.** Raw files are kept exactly as delivered. |
+| FD5 | Separation | **Download and post-processing are separate tools.** Raw files are kept exactly as delivered until post-processing has written and verified every archive month that uses them; **then they are deleted** (OD2). |
 | FD6 | Archive layout | **One global file per variable per month** on the regular 0.1° grid, `(time, lat, lon)`, with month-long chunks (§14). |
 | FD7 | Reads | **MEDS reads one month at a time** for its whole domain, into memory (§15.3). All land with all 8 variables is about 53 GB: an HPC job, and acceptable on a large desktop. |
 | FD8 | Humidity | **Store dewpoint `Tdew`, not `Qair`.** MEDS converts with its own e_sat (§15.4), so a thermodynamics change never forces reprocessing. |
@@ -1521,6 +1521,17 @@ winter (§19):
 | `LWdown` | 30–650 W m⁻² |
 
 A soft check warns when `Tdew` exceeds `Tair` by more than 0.5 K.
+
+**Raw-file deletion (OD2).** A raw file is deleted once **every archive month that needs it** has
+been written, has passed the gates, and is recorded in the manifest with checksums.
+- **GDEX:** a 5-day file serves only its own month, including that month's closing stamp, so
+  deletion runs month by month.
+- **CDS:** a variable-year GRIB serves all of its year's months. December also needs the first
+  stamp of the next year, from the next year's file or the closing-stamp request. So year Y's file
+  goes after year Y's December is built, and the closing-stamp file goes with it.
+- **Override:** `--keep-raw` keeps the files, for debugging.
+- **Consequence (accepted):** reprocessing means downloading again. That is fast for GDEX; for
+  CDS years it means the queue again.
 
 ## 14. The archive's data structure
 
@@ -1719,8 +1730,8 @@ become `scripts/prepare_forcing/`.
 |---|---|---|
 | **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ written and tested; commit and PR outstanding |
-| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume | ⬜ One GDEX month and one CDS month build and pass the gates; an independent box extract matches §13.1 output. |
-| **F3** archive build | Download and process the user-chosen years (GDEX first, CDS for earlier years), then verify | ⬜ Manifest complete; site spot checks against the CDS point series pass. |
+| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ⬜ The pilot month, **July 2022 from GDEX** (OD1), builds, passes the gates and deletes its raw files. An independent box extract matches §13.1 output. The CDS path is validated on one month when pre-2002 years are first needed. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ⬜ Manifest complete; site spot checks against the CDS point series pass. |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
 | **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ⬜ Remove `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py`, and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
@@ -1742,13 +1753,13 @@ become `scripts/prepare_forcing/`.
 - **F3 needs F2.**
 - **`MEDS_POLYGON_RUNTIME_PLAN.md` needs F4's box domain and monthly reads.**
 
-## 18. Open decisions (forcing data)
+## 18. Forcing-data decisions (formerly open; decided 2026-09-26)
 
-| # | Decision | Recommendation |
+| # | Decision | Outcome |
 |---|---|---|
-| OD1 | Years for the first archive build (FD12: user-defined) | The GDEX years first (fast), then CDS years as needed. |
-| OD2 | Keep the CDS raw GRIB after processing? | Keep it: re-fetching the pre-2002 years is slow. GDEX raw can be deleted, since it re-downloads quickly. |
-| OD3 | Spatial chunk size for a 1 km product (NLDAS-3) | Decide when that adapter starts; 16 × 16 cells at 1 km is a very small area. |
+| OD1 | Period of the first archive build | **July 2022, from GDEX.** It is the pilot month for F2. Later years are added with the same tools, and the period stays user-defined (FD12). |
+| OD2 | Keep raw files after processing? | **No. Raw files from both GDEX and CDS are deleted** once every archive month that needs them is written and verified (§13.2). Reprocessing means downloading again; that cost is accepted. |
+| OD3 | Spatial chunk size for a 1 km product (NLDAS-3) | **Deferred** to the NLDAS-3 adapter work (F6). The 16 × 16 choice (§14.2) applies to ERA5-Land only. |
 
 ## 19. Measurements (evaluation, 2026-09-25/26; single CPU core, warm filesystem cache)
 
