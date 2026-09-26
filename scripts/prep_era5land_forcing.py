@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 # =========================================================================================
-# prep_era5land_forcing.py -- convert a raw ERA5-Land hourly NetCDF (from download_era5land.py)
-# into a MEDS multi-grid forcing NetCDF the Fortran reader (src/forcing/meds_met_driver.f90)
-# consumes. Stage 2 of 2 (design MEDS_FORCING_DESIGN.md sections 5.2, 7).
+# prep_era5land_forcing.py -- convert ERA5-Land hourly NetCDF box files into a MEDS multi-grid
+# forcing NetCDF the Fortran reader (src/forcing/meds_met_driver.f90) consumes (design
+# MEDS_FORCING_DESIGN.md sections 5.2, 7).
+#
+# Input: the box files of scripts/prepare_era5/postprocess_era5land.py --split none (one file per
+# variable over the whole period, raw ERA5-Land names, accumulations left accumulated), or any
+# NetCDF files that together hold the eight variables on one time axis and grid.
 #
 # What it does (all verified against the CDS docs, 2026-07-08 research fact sheet):
 #   1. Read the ERA5-Land vars by their NetCDF names: t2m, d2m, sp, u10, v10, tp, ssrd, strd,
-#      on (valid_time|time, latitude, longitude), UTC.
+#      on (valid_time|time, latitude, longitude), UTC, from one or several files.
 #   2. Select one or more grid cells (nearest to requested lat/lon, or the whole box), stack into
 #      an unstructured `grid` dimension  ->  MEDS `(time, grid)` layout (multi-grid by construction).
 #   3. De-accumulate tp/ssrd/strd. ERA5-Land accumulates from 00 UTC and resets daily; the 00:00
@@ -23,11 +27,15 @@
 #
 # Dependencies: numpy + netCDF4 (dependency-light; no xarray required).
 #
-# Usage:
-#   python prep_era5land_forcing.py --in era5land_ithaca.nc --out ithaca_forcing.nc \
+# Usage (Ithaca NY, June 2022; run the first two from scripts/prepare_era5/):
+#   python download_era5land_cds.py --bbox 42.5,-76.6,42.4,-76.4 --start 2022-06-01 \
+#          --end 2022-06-30 --variables all --out-dir raw_ithaca
+#   python postprocess_era5land.py --source cds --raw-dir raw_ithaca --bbox 42.5,-76.6,42.4,-76.4 \
+#          --start 2022-06-01 --end 2022-06-30 --variables all --split none --out-dir box_ithaca
+#   python prep_era5land_forcing.py --in box_ithaca/*.nc --out ithaca_forcing.nc \
 #          --lat 42.44 --lon -76.50            # single nearest cell (default Ithaca NY)
-#   python prep_era5land_forcing.py --in raw.nc --out multi.nc --all-cells   # every cell -> grid
-#   python prep_era5land_forcing.py --in raw.nc --out multi.nc \
+#   python prep_era5land_forcing.py --in box/*.nc --out multi.nc --all-cells   # every cell -> grid
+#   python prep_era5land_forcing.py --in box/*.nc --out multi.nc \
 #          --cells 42.44,-76.50 44.00,-77.00   # explicit list of locations -> grid
 # =========================================================================================
 import argparse
@@ -88,35 +96,46 @@ def deaccumulate_hourly(accum, hours_utc, clip_eps=NEG_EPS):
 
 
 # ---------------------------------------------------------------------------------------------
-# Read the raw ERA5-Land file. Returns times (list[datetime], UTC), 1-D lat/lon arrays, and a dict
-# of (time, lat, lon) arrays for each needed variable. Handles 'valid_time'|'time' and stray
-# singleton dims (e.g. 'number'/'expver' the new CDS sometimes adds).
+# Read the ERA5-Land input files. Returns times (list[datetime], UTC), 1-D lat/lon arrays, and a dict
+# of (time, lat, lon) arrays for each needed variable. Each variable must come from exactly one file,
+# and every file must share the time axis and grid. Handles 'valid_time'|'time' and stray singleton
+# dims (e.g. 'number'/'expver' the new CDS sometimes adds).
 # ---------------------------------------------------------------------------------------------
-def read_era5land(path):
-    ds = Dataset(path)
-    tname = "valid_time" if "valid_time" in ds.variables else "time"
-    tvar = ds.variables[tname]
-    times = num2date(tvar[:], tvar.units,
+def read_era5land(paths):
+    times = lat = lon = None
+    data = {}
+    for path in paths:
+        ds = Dataset(path)
+        tname = "valid_time" if "valid_time" in ds.variables else "time"
+        tvar = ds.variables[tname]
+        t = num2date(tvar[:], tvar.units,
                      getattr(tvar, "calendar", "standard"),
                      only_use_cftime_datetimes=False, only_use_python_datetimes=True)
-    times = list(np.atleast_1d(times))
-    latname = "latitude" if "latitude" in ds.variables else "lat"
-    lonname = "longitude" if "longitude" in ds.variables else "lon"
-    lat = np.atleast_1d(ds.variables[latname][:]).astype(float)
-    lon = np.atleast_1d(ds.variables[lonname][:]).astype(float)
-
-    def get(v):
-        raw = ds.variables[v][:]
-        arr = np.ma.filled(raw, np.nan).astype(float)
-        # collapse to (time, lat, lon): drop any leading singleton dims (number/expver)
-        while arr.ndim > 3:
-            arr = arr[0]
-        if arr.ndim == 2:                       # (lat, lon): a single time step
-            arr = arr[np.newaxis, :, :]
-        return arr
-
-    data = {k: get(nc) for k, nc in NC_NAMES.items()}
-    ds.close()
+        t = list(np.atleast_1d(t))
+        latname = "latitude" if "latitude" in ds.variables else "lat"
+        lonname = "longitude" if "longitude" in ds.variables else "lon"
+        la = np.atleast_1d(ds.variables[latname][:]).astype(float)
+        lo = np.atleast_1d(ds.variables[lonname][:]).astype(float)
+        if times is None:
+            times, lat, lon = t, la, lo
+        elif t != times or not (np.array_equal(la, lat) and np.array_equal(lo, lon)):
+            raise SystemExit(f"ERROR: {path}: time axis or grid differs from {paths[0]}")
+        for k, nc in NC_NAMES.items():
+            if nc not in ds.variables:
+                continue
+            if k in data:
+                raise SystemExit(f"ERROR: {nc} appears in more than one input file")
+            arr = np.ma.filled(ds.variables[nc][:], np.nan).astype(float)
+            # collapse to (time, lat, lon): drop any leading singleton dims (number/expver)
+            while arr.ndim > 3:
+                arr = arr[0]
+            if arr.ndim == 2:                   # (lat, lon): a single time step
+                arr = arr[np.newaxis, :, :]
+            data[k] = arr
+        ds.close()
+    missing = [nc for k, nc in NC_NAMES.items() if k not in data]
+    if missing:
+        raise SystemExit(f"ERROR: variable(s) {missing} not found in the input files")
     return times, lat, lon, data
 
 
@@ -180,8 +199,10 @@ def write_meds_forcing(path, time_seconds, base_iso, grid_lat, grid_lon, grid_el
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="ERA5-Land raw NetCDF -> MEDS multi-grid forcing NetCDF.")
-    ap.add_argument("--in", dest="inp", required=True, help="raw ERA5-Land NetCDF (download_era5land.py)")
+    ap = argparse.ArgumentParser(description="ERA5-Land NetCDF box files -> MEDS multi-grid forcing NetCDF.")
+    ap.add_argument("--in", dest="inp", nargs="+", required=True,
+                    help="ERA5-Land NetCDF file(s) holding the eight variables, e.g. the box files of "
+                         "scripts/prepare_era5/postprocess_era5land.py --split none")
     ap.add_argument("--out", required=True, help="output MEDS forcing NetCDF")
     ap.add_argument("--lat", type=float, default=42.44, help="site latitude [deg N] (default Ithaca NY)")
     ap.add_argument("--lon", type=float, default=-76.50, help="site longitude [deg E] (default Ithaca NY)")

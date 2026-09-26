@@ -177,9 +177,9 @@ def main():
 
     if not FORCING.exists():
         sys.exit(f"error: forcing file {FORCING} not found.\n"
-                 "  It is not tracked in git (netCDF files are ignored). Build it with:\n"
-                 "    python ../../scripts/download_era5land.py     # needs a CDS API key\n"
-                 "    python ../../scripts/prep_era5land_forcing.py")
+                 "  It is not tracked in git (netCDF files are ignored). Build it with the ERA5-Land\n"
+                 "  tools in ../../scripts/prepare_era5/, then ../../scripts/prep_era5land_forcing.py\n"
+                 "  (needs a CDS API key); the commands are in this example's README.md.")
 
     Run = _require_meds()
     traj = None

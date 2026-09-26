@@ -22,41 +22,10 @@ import argparse
 import concurrent.futures as cf
 import os
 import sys
-import urllib.error
-import urllib.request
 
 import era5land_common as common
 
 MAX_STREAMS = 10              # GDEX per-user limit; flooding IPs get blocked
-
-
-def head_ok(url):
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=60) as r:
-            return r.status == 200
-    except urllib.error.HTTPError:
-        return False
-
-
-def download(url, dest, chunk=8 << 20):
-    """Stream url to dest (via dest.part); verify the byte count against Content-Length. Returns
-    (bytes, seconds)."""
-    t0 = common.monotonic_seconds()
-    part = dest + ".part"
-    with urllib.request.urlopen(url, timeout=120) as r, open(part, "wb") as fh:
-        expected = int(r.headers.get("Content-Length", -1))
-        got = 0
-        while True:
-            buf = r.read(chunk)
-            if not buf:
-                break
-            fh.write(buf)
-            got += len(buf)
-    if expected >= 0 and got != expected:
-        os.remove(part)
-        raise IOError(f"{url}: received {got} of {expected} bytes")
-    os.replace(part, dest)
-    return got, common.monotonic_seconds() - t0
 
 
 def raw_complete(path, expected_stamps):
@@ -97,7 +66,7 @@ def main(argv=None):
                          common.stamps_between(b0, b1)))
     print(f"GDEX d633008: stamps {first:%Y-%m-%d %H}:00 .. {last:%Y-%m-%d %H}:00 UTC, {len(variables)} variable(s), "
           f"{len(jobs)} global file(s), {args.streams} stream(s) -> {args.out_dir}")
-    if not head_ok(jobs[0][1]):
+    if not common.http_head_ok(jobs[0][1]):
         sys.exit(f"GDEX has no file {jobs[0][1]}\nGDEX coverage starts 2002-07-01 01:00 and lags about a month; "
                  f"use download_era5land_cds.py for dates it does not cover.")
     if args.dry_run:
@@ -118,7 +87,7 @@ def main(argv=None):
                 skipped += 1
                 continue
             os.makedirs(os.path.dirname(dest), exist_ok=True)
-            pending[pool.submit(download, url, dest)] = (v, url, dest, stamps)
+            pending[pool.submit(common.http_download, url, dest)] = (v, url, dest, stamps)
         for fut in cf.as_completed(pending):
             v, url, dest, stamps = pending[fut]
             nbytes, seconds = fut.result()

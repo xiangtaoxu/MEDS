@@ -63,12 +63,16 @@ the right direction for multi-cohort patches.
 
 ## Preparing a forcing file
 
-Two scripts produce the file the reader consumes:
+Three steps produce the file the reader consumes. The first two are the ERA5-Land tools in
+`scripts/prepare_era5/`, run in its `meds-era5` environment:
 
 ```bash
-python scripts/download_era5land.py     # fetch from the Copernicus data store
-python scripts/prep_era5land_forcing.py # de-accumulate, convert, write the MEDS format
+python scripts/prepare_era5/download_era5land_cds.py ...           # a box around the site, from the Copernicus data store
+python scripts/prepare_era5/postprocess_era5land.py --split none ...  # decode GRIB: one box file per variable
+python scripts/prep_era5land_forcing.py --in <box files> ...        # de-accumulate, convert, write the MEDS format
 ```
+
+The full commands are in the header of `scripts/prep_era5land_forcing.py`.
 
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
 disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).

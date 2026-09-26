@@ -4,16 +4,22 @@
 The downloaders only fetch source files, unchanged:
   download_era5land_cds.py   the Copernicus Climate Data Store (GRIB by default, for a box)
   download_era5land_gdex.py  NCAR GDEX dataset d633008 (global 5-day NetCDF files, a shared raw pool)
-postprocess_era5land.py turns either source's raw files into uniform NetCDF box files (decode, cut,
-merge, trim), keeping ERA5-Land's own variable names, units and time stamps. Conversion to the MEDS
-forcing format and the split into regions come after that.
+Post-processing turns raw files into model-ready NetCDF:
+  build_era5land_static.py   the archive's static file (valid-data mask, elevation, land fraction)
+  build_era5land_archive.py  the global per-variable monthly ED_ERA5land_ archive (the forcing MEDS reads)
+  postprocess_era5land.py    NetCDF box files with ERA5-Land's own names (a portable box extract)
+The archive layout is specified in docs/dev_plans/MEDS_FORCING_DESIGN.md sections 13-14.
 """
 import calendar
 import datetime as dt
+import fcntl
+import hashlib
 import json
 import math
 import os
 import time
+import urllib.error
+import urllib.request
 
 import numpy as np
 
@@ -32,6 +38,39 @@ VARIABLES = {
 }
 
 GRID_STEP = 0.1   # [deg] ERA5-Land native grid spacing
+
+# The archive's variables (MEDS_FORCING_DESIGN.md section 13.2). Each comes from exactly one raw
+# variable, so every archive variable-month can be built independently.
+#   archive name -> dict(raw, kind, factor, clip_negative, digits, bounds, CF attributes)
+ARCHIVE_VARIABLES = {
+    "Tair":   dict(raw="t2m",  kind="instant", factor=1.0,           clip_negative=False, digits=5,
+                   bounds=(170.0, 340.0), units="K", long_name="air temperature", height=2.0,
+                   standard_name="air_temperature", cell_methods="time: point"),
+    "Tdew":   dict(raw="d2m",  kind="instant", factor=1.0,           clip_negative=False, digits=5,
+                   bounds=(150.0, 320.0), units="K", long_name="dew point temperature", height=2.0,
+                   standard_name="dew_point_temperature", cell_methods="time: point"),
+    "PSurf":  dict(raw="sp",   kind="instant", factor=1.0,           clip_negative=False, digits=6,
+                   bounds=(3.0e4, 1.1e5), units="Pa", long_name="surface pressure", height=None,
+                   standard_name="surface_air_pressure", cell_methods="time: point"),
+    "u10":    dict(raw="u10",  kind="instant", factor=1.0,           clip_negative=False, digits=4,
+                   bounds=(-75.0, 75.0), units="m s-1", long_name="eastward wind", height=10.0,
+                   standard_name="eastward_wind", cell_methods="time: point"),
+    "v10":    dict(raw="v10",  kind="instant", factor=1.0,           clip_negative=False, digits=4,
+                   bounds=(-75.0, 75.0), units="m s-1", long_name="northward wind", height=10.0,
+                   standard_name="northward_wind", cell_methods="time: point"),
+    "Rainf":  dict(raw="tp",   kind="accum",   factor=1000.0 / 3600, clip_negative=True,  digits=4,
+                   bounds=(0.0, 0.2), units="kg m-2 s-1", long_name="total precipitation rate", height=None,
+                   standard_name="precipitation_flux", cell_methods="time: mean"),
+    "SWdown": dict(raw="ssrd", kind="accum",   factor=1.0 / 3600,    clip_negative=True,  digits=4,
+                   bounds=(0.0, 1500.0), units="W m-2", long_name="downward shortwave radiation (total)",
+                   height=None, standard_name="surface_downwelling_shortwave_flux_in_air",
+                   cell_methods="time: mean"),
+    "LWdown": dict(raw="strd", kind="accum",   factor=1.0 / 3600,    clip_negative=False, digits=4,
+                   bounds=(30.0, 650.0), units="W m-2", long_name="downward longwave radiation",
+                   height=None, standard_name="surface_downwelling_longwave_flux_in_air",
+                   cell_methods="time: mean"),
+}
+ARCHIVE_PREFIX = "ED_ERA5land"
 
 
 def parse_variables(text):
@@ -154,6 +193,96 @@ def select_cols(lon, west, east, tol=1e-6):
     if np.any(np.diff(out) <= 0):   # crosses the antimeridian: keep a monotonic 0..360 axis instead
         out = vals % 360.0
     return cols, np.round(out, 4)
+
+
+def month_interval(year, month):
+    """End-stamped hours of one archive month: 01:00 on the 1st through 00:00 on the 1st of the next
+    month (the stamp closing the month's last hour)."""
+    first = dt.datetime(year, month, 1, 1)
+    nxt = dt.datetime(year + (month == 12), 1 if month == 12 else month + 1, 1, 0)
+    return first, nxt
+
+
+def parse_months(start, end):
+    """'YYYY-MM' .. 'YYYY-MM' (inclusive) -> [(year, month), ...]."""
+    try:
+        y0, m0 = (int(x) for x in start.split("-"))
+        y1, m1 = (int(x) for x in end.split("-"))
+    except ValueError:
+        raise SystemExit(f"months must be YYYY-MM (got {start!r}, {end!r})")
+    if (y1, m1) < (y0, m0):
+        raise SystemExit("--end precedes --start")
+    out, y, m = [], y0, m0
+    while (y, m) <= (y1, m1):
+        out.append((y, m))
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
+
+
+def archive_file(data_path, var, year, month):
+    """Archive files sit directly in data_path (no subfolders): the name carries variable and month."""
+    return os.path.join(data_path, f"{ARCHIVE_PREFIX}_{var}_{year:04d}{month:02d}.nc")
+
+
+def static_file(data_path):
+    return os.path.join(data_path, f"{ARCHIVE_PREFIX}_static.nc")
+
+
+def sha256_file(path, chunk=16 << 20):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        while buf := fh.read(chunk):
+            h.update(buf)
+    return h.hexdigest()
+
+
+def update_manifest(data_path, key, record):
+    """Add or replace one entry of <data_path>/manifest.json under an exclusive file lock, so parallel
+    builders never clobber each other's entries."""
+    os.makedirs(data_path, exist_ok=True)
+    path = os.path.join(data_path, "manifest.json")
+    with open(os.path.join(data_path, ".manifest.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            manifest = json.load(open(path)) if os.path.exists(path) else {}
+            manifest[key] = record
+            with open(path + ".part", "w") as fh:
+                json.dump(manifest, fh, indent=1, sort_keys=True)
+            os.replace(path + ".part", path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def read_manifest(data_path):
+    path = os.path.join(data_path, "manifest.json")
+    return json.load(open(path)) if os.path.exists(path) else {}
+
+
+# --- HTTP (anonymous GDEX downloads) ----------------------------------------------------------------
+def http_head_ok(url):
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=60) as r:
+            return r.status == 200
+    except urllib.error.HTTPError:
+        return False
+
+
+def http_download(url, dest, chunk=8 << 20):
+    """Stream url to dest (via dest.part); verify the byte count against Content-Length. Returns
+    (bytes, seconds)."""
+    t0 = time.monotonic()
+    part = dest + ".part"
+    with urllib.request.urlopen(url, timeout=120) as r, open(part, "wb") as fh:
+        expected = int(r.headers.get("Content-Length", -1))
+        got = 0
+        while buf := r.read(chunk):
+            fh.write(buf)
+            got += len(buf)
+    if expected >= 0 and got != expected:
+        os.remove(part)
+        raise IOError(f"{url}: received {got} of {expected} bytes")
+    os.replace(part, dest)
+    return got, time.monotonic() - t0
 
 
 def use_group_umask():

@@ -26,8 +26,7 @@ before and after.
 
   They run in their own `meds-era5` environment (`scripts/prepare_era5/environment.yml`). On a New
   York State box, the CDS and GDEX outputs agree to within 0.00024 K. The old
-  `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py` stay until the forcing
-  reader upgrade lands.
+  `scripts/prep_era5land_forcing.py` stays until the forcing reader upgrade lands.
 - **Forcing-data design and a polygon runtime plan** (#279).
   - `MEDS_FORCING_DESIGN.md` gains Part II (§11–§19): a global per-variable monthly `ED_ERA5land_`
     archive, and a reader upgrade that reads a site or a box from it one month at a time and
@@ -35,6 +34,31 @@ before and after.
     implemented.
   - `MEDS_POLYGON_RUNTIME_PLAN.md` designs regional runs as an OpenMP loop over polygons, without
     MPI.
+- **The global monthly `ED_ERA5land` archive builder** (#280).
+  - `build_era5land_static.py` writes the static file: a valid-data mask defined from the data,
+    ERA5-Land orography and land fraction.
+  - `build_era5land_archive.py` writes one global file per variable per month,
+    `ED_ERA5land_<Var>_<YYYYMM>.nc`, flat in the archive folder:
+    - `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as delivered; `Rainf`, `SWdown`, `LWdown`
+      de-accumulated;
+    - month-long chunks, and quantized;
+    - it checks every hour against the static mask and plausibility bounds, records each file in a
+      manifest with its checksum, and deletes raw files once verified.
+  - It reads GDEX raw files or global CDS GRIB (`--source cds`). The CDS path indexes the GRIB
+    headers and decodes only the valid cells, one field at a time.
+  - The July 2022 pilot (GDEX) built in 457 s on 8 cores (16.0 GB). Its New York values match the
+    independent box output to 0.0039 K, the quantization.
+  - June 2022 was built from CDS in 411 s on 8 cores; its `Tair` and `Rainf` are bit-identical to a
+    GDEX build of the same month.
+- **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
+  (default 3) keeps several requests in the CDS queue at once (#280).
+
+### Removed
+
+- **`scripts/download_era5land.py`** (#280), replaced by `scripts/prepare_era5/download_era5land_cds.py`
+  and `postprocess_era5land.py`. `scripts/prep_era5land_forcing.py` now reads their box files
+  (`--in` takes several files), and the forcing README, science doc, config comment and the
+  `example_biophysics` instructions show the new commands.
 
 ## [0.2.2] — 2026-09-25
 

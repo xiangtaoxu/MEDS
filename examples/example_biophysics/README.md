@@ -240,8 +240,17 @@ is already present, so iterating on a figure costs seconds rather than the full 
   alternative: build with `-DMEDS_BUILD_PYLIB=ON`, then put `python/` on `PYTHONPATH` and point
   `MEDS_LIB` at the resulting `libmeds.so`.)
 - The forcing file `../../data/forcing/ithaca_forcing.nc`. NetCDF files are git-ignored, so it is
-  not in the repo — build it with `scripts/download_era5land.py` (needs a CDS API key) followed by
-  `scripts/prep_era5land_forcing.py`.
+  not in the repo. Build it from ERA5-Land for calendar year 2024, the configs' recycle window. It
+  needs a CDS API key and the `meds-era5` environment (`scripts/prepare_era5/environment.yml`):
+
+  ```bash
+  cd ../../scripts/prepare_era5
+  python download_era5land_cds.py --bbox 42.5,-76.6,42.4,-76.4 --start 2024-01-01 --end 2024-12-31 \
+      --variables all --out-dir raw_ithaca
+  python postprocess_era5land.py --source cds --raw-dir raw_ithaca --bbox 42.5,-76.6,42.4,-76.4 \
+      --start 2024-01-01 --end 2024-12-31 --variables all --split none --out-dir box_ithaca
+  python ../prep_era5land_forcing.py --in box_ithaca/*.nc --out ../../data/forcing/ithaca_forcing.nc
+  ```
 - `matplotlib` for the figures (`numpy` and `netCDF4` come with the package).
 
 The `meds_main` executable is no longer required by this example, though it still runs both stages

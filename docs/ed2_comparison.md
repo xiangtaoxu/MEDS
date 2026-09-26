@@ -316,7 +316,7 @@ simplification; for anything regional it is a wall.
 | Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
 | Sub-daily reconstruction | Interval-mean-conserving disaggregation anchored on the model sun (UTC + longitude + equation of time) | `IMETAVG` 0–3 declares the averaging convention |
 | Multi-year cycling | Calendar recycling with Feb-29 reconciliation, day-of-year exact | `METCYC1` / `METCYCF`, `ISHUFFLE` |
-| Preparation | `scripts/download_era5land.py` + `scripts/prep_era5land_forcing.py` | Community drivers in ED2 format |
+| Preparation | ERA5-Land tools in `scripts/prepare_era5/` + `scripts/prep_era5land_forcing.py` | Community drivers in ED2 format |
 | Downwelling longwave | From the file, or **synthesized** (Brutsaert clear-sky + an Idso-style cloud correction driven by a clearness index) | Required in the driver |
 | CO₂ | Constant from config, or from the forcing file; echoed into the output | `INITIAL_CO2` or from the driver |
 
