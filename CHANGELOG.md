@@ -65,6 +65,8 @@ before and after.
     characters.
   - Box selection, including boxes across 180°, is in the library for the polygon runtime; the
     config does not expose it yet.
+  - With the archive, every output file carries a `forcing_qair` global attribute naming the
+    humidity formula, because a run's humidity then depends on the model version.
 - **The forcing record carries the wind vector** (`wind_u`, `wind_v`, `has_wind_vector`) beside
   the speed when the source supplies components: the archive always, a MEDS forcing file when it
   carries `u10` and `v10`. The components interpolate linearly and take the same height correction

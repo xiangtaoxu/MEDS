@@ -274,7 +274,8 @@ vapour pressure equals the actual one, so the ice branch that `sat_vapor_pressur
 surfaces (`snow_biophysics.md` §1) must not be applied here. And so
 does the ERA5-Land prep script, so a `Qair` built offline reconciles with any reader-side humidity math to
 round-off. The ED_ERA5land archive stores the dewpoint instead of $`q`$, and the reader applies (10) at
-each stamp, so a run's humidity follows the model's own saturation curve. The dewpoint form is the identity that the actual vapour pressure *is* the saturation vapour
+each stamp, so a run's humidity follows the model's own saturation curve; every output file of such
+a run names the formula in its `forcing_qair` global attribute. The dewpoint form is the identity that the actual vapour pressure *is* the saturation vapour
 pressure evaluated at the dewpoint; RH is clipped to $[0,1]$ first.
 
 ```math
