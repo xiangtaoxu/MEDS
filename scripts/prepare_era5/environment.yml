@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Conda environment for the ERA5-Land download scripts in scripts/prepare_era5/.
+# Kept separate from the top-level environment.yml, which serves the Fortran build and post_proc/.
+#   mamba env create -f scripts/prepare_era5/environment.yml      # or: micromamba create -f ...
+#   mamba activate meds-era5                                     # or: micromamba activate meds-era5
+name: meds-era5
+channels:
+  - conda-forge
+  - nodefaults       # search conda-forge only: much faster solve, no channel mixing
+dependencies:
+  - python >=3.10
+  - numpy
+  - netcdf4          # read/subset GDEX files, write box files
+  - cdsapi >=0.7.7   # Copernicus Climate Data Store client (download_era5land_cds.py)
+  - eccodes          # GRIB decoding: the CDS downloads GRIB by default and converts it to NetCDF
+  - python-eccodes

@@ -1,19 +1,40 @@
 # MEDS Meteorological Forcing — Source & Wiring Design
 
-> # ✅ LIVE — status reviewed 2026-09-13.
+> # ✅ LIVE — status reviewed 2026-09-26; revised the same day with the forcing-data plan (§11–§19).
 >
-> **P0–P2 shipped** (PR #36, 2026-07-08) and the declared recycle window in **PR #69**
-> (2026-07-27). The reader, the disaggregation kernels, the canopy-RT join, net longwave,
-> Weiss-Norman shortwave, calendar recycling and nearest-grid matching are all live.
+> **Done (verified in the code, 2026-09-26):**
+> - ✅ The P0 reader, kernels and wiring (PR #36, 2026-07-08).
+> - ✅ The declared recycle window (PR #69).
+> - ✅ Nearest-grid matching.
+> - ✅ The canopy-RT join (§6.3).
+> - ✅ The clearness-index (default) and Weiss–Norman shortwave partitions.
+> - ✅ Longwave synthesis (#182).
+> - ✅ The optional elevation-lapse and 10 m wind log-profile corrections (off by default).
+> - ✅ The daily air-temperature accumulator feeding phenology.
 >
-> **Still open, and why this document stays live:** LWdown synthesis (§5.7 — the `"synthesize"`
-> value is now *rejected* by `validate_config` rather than silently reading the file), the
-> multi-polygon runtime (§8), and a transient CO₂ stream. Tracked in `docs/ROADMAP.md` §8. The
-> daily accumulator listed as deferred is in fact live, as the phenology air-temperature running sum.
+> **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
+> - ✅ Download tools, written and tested; uncommitted when this was written.
+> - ⬜ Post-processing into a global per-variable monthly archive.
+> - ⬜ A reader upgrade (F4): `met_source`, `data_path`, site or box domains, monthly block reads,
+>   and internal conversion of dewpoint and wind components.
+> - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
 >
-> **This document is also the reference for the forcing NetCDF format (§7.1) and the ERA5-Land
-> de-accumulation recipe (§7.3), including the 00Z trap.** Both are now restated in
-> `docs/science/forcing.md`, which is the reader-facing page.
+> **It overrides earlier text:**
+> - the two ERA5-Land scripts of §7.2–§7.3 retire;
+> - `Qair` and wind speed are no longer computed in preprocessing (§4.3, §5.2);
+> - the single `(time, grid)` file of §7.1 continues only as `met_source = "legacy_file"`;
+> - the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`.
+>
+> The overridden subsections carry an **Update 2026-09-26** note, and none is renumbered.
+>
+> **Still open:**
+> - ⬜ the forcing-data phases F2–F6 (§17);
+> - ⬜ a transient CO₂ stream (ROADMAP #184);
+> - ⬜ retiring the `apply_met_to_ctx` shim (§6.2);
+> - ⬜ echoing forcing to the diagnostic output (§6.7), not found in the output config.
+>
+> **This document is also the reference for the de-accumulation recipe (§7.3), including the 00Z
+> trap,** now confirmed on real GDEX data (§19). It is restated in `docs/science/forcing.md`.
 >
 > Module paths below predate the 2026-09 reorganization; the library is `src/forcing/` and its
 > config leaf is `src/config/meds_forcing_config.f90`.
@@ -54,10 +75,11 @@ driver/IO-owned state type, and threads config as a passed derived type — neve
 
 > **DATA NOTE (read first).** The reference test forcing is now **ERA5-Land hourly reanalysis**
 > (Copernicus CDS dataset `reanalysis-era5-land`, ~0.1° / ~9 km, hourly, UTC), sampled at the grid cell
-> covering **Ithaca, NY (~42.44 °N, −76.50 °E; UTC−5 EST / −4 EDT)**. Two Python scripts prepare it
-> (§7): `scripts/download_era5land.py` pulls the raw ERA5-Land NetCDF from the CDS API for a requested
-> lat/lon (or box), and `scripts/prep_era5land_forcing.py` converts it into the **MEDS multi-grid forcing
-> NetCDF** the Fortran reader consumes. The earlier **BCI tower CSV** path is **retired** — the reader now
+> covering **Ithaca, NY (~42.44 °N, −76.50 °E; UTC−5 EST / −4 EDT)**. *Update 2026-09-26:* the two
+> original scripts (§7) are being replaced by the tools in `scripts/prepare_era5/` (§12–§13):
+> separate downloaders for NCAR GDEX and the Copernicus CDS, and a post-processor, feeding a global
+> per-variable monthly archive (§14) that the upgraded reader reads directly (§15). The earlier
+> **BCI tower CSV** path is **retired** — the reader now
 > reads **only** the MEDS forcing NetCDF (plus the no-file CONST backend); BCI or any FLUXNET tower can
 > re-enter later as *another formatter script* that emits the same NetCDF, so the Fortran reader never
 > changes when the raw source does. ERA5-Land carries **no** CO₂, and only **total** downward shortwave
@@ -347,6 +369,10 @@ type :: met_forcing_t                                        ! per-SITE instanta
    real(wp) :: rainf        = 0.0_wp       ! [kg/m2/s] liquid precipitation rate (post phase-split)
    real(wp) :: snowf        = 0.0_wp       ! [kg/m2/s] frozen precip (0 for tropical BCI)
    real(wp) :: wind         = 2.0_wp       ! [m/s]     wind speed at reference height
+   ! added by the reader upgrade (F4, §15.4): the wind VECTOR, kept for direction-aware modules (fire)
+   real(wp) :: wind_u       = 2.0_wp       ! [m/s]     eastward component at reference height
+   real(wp) :: wind_v       = 0.0_wp       ! [m/s]     northward component at reference height
+   logical  :: has_wind_vector = .false.   ! .true. when the source supplied components (not just speed)
    real(wp) :: lwdown       = 380.0_wp     ! [W/m2]    downwelling longwave (positive down)
    ! reference-climate SW: the four streams SUM to 400 W/m2 to reproduce fast_context_t%rad_sw_top=400
    ! (NOT 0 — a zeroed default gives zero canopy light and BREAKS the CONST no-op; see §6.2):
@@ -375,13 +401,16 @@ SW exact) rather than the bit-for-bit claim the earlier draft asserted.
 
 The **only** mutable forcing state, **per polygon/site**. Holds the two bracketing records read from the
 file at this site's `grid_index` plus the read cursor; it is the ED2 `cgrid%metinput` analogue, owned by
-the driver and threaded like `meds_io_t`. For a multi-polygon run there is one `met_driver_t` per polygon,
-each bound to its own `grid_index` (all reading the same file, different `grid` slices).
+the driver and threaded like `meds_io_t`. ~~For a multi-polygon run there is one `met_driver_t` per
+polygon, each bound to its own `grid_index`.~~ *Update 2026-09-26:* superseded.
+`MEDS_POLYGON_RUNTIME_PLAN.md` uses **one shared reader** that loads a month for all polygons, with
+each polygon reading its own view of that in-memory month buffer (§15.3).
 
 ```fortran
 type :: met_record_t                       ! one raw timestamped record as read (pre-interpolation)
    type(meds_time_t) :: when               ! timestamp of this record (interval label per METAVG_*)
    real(wp) :: tair_k, qair, psurf_pa, rainf, wind, lwdown, co2
+   real(wp) :: wind_u, wind_v                  ! wind vector at the record (F4, §15.4); speed stays in `wind`
    real(wp) :: par_beam, par_diffuse, nir_beam, nir_diffuse   ! 4-stream: split at INGEST from total SWdown
 end type met_record_t                      !   (partition_shortwave, §5.6) using the record's interval-mean
                                            !   cosz — so a total-SW file (ERA5-Land) and a pre-split file
@@ -489,6 +518,11 @@ variables `time` (`units = "seconds since <base>"`), `latitude(grid)`, `longitud
 variables shaped `(time, grid)`, ALMA-named (`Tair`, `Qair`, `PSurf`, `Rainf`, `Wind`, `LWdown`, and either
 `SWdown` total or the four `SWdown_*_beam/diffuse` streams — §7).
 
+*Update 2026-09-26:* this per-record slab read continues for `met_source = "legacy_file"`. For the
+archive sources (`met_source = "era5land"`), the reader loads **one month for its whole domain per
+variable** into memory, reading the archive one chunk column at a time, and the bracket window reads
+from that buffer. No netCDF call happens inside the time loop (§15.3).
+
 ### 4.2 `met_advance(drv, now)` — window slide (calendar alignment via `meds_time`)
 
 The bracketing records must satisfy `rec_prev%when ≤ now < rec_next%when`. Advance is a
@@ -533,16 +567,18 @@ The **CSV backend is retired.** The reader consumes exactly one file format — 
 step") is gone: the source is now ERA5-Land, which the CDS delivers as NetCDF, and the formatter script
 (§7) always produces the MEDS NetCDF. Any future tower record (BCI, FLUXNET) re-enters as **another
 formatter script emitting the same NetCDF** — so the Fortran reader is source-agnostic and never changes
-when the raw data source does. All SI unit conversion, de-accumulation, humidity-from-dewpoint, and gap
-handling move **into the formatter** (§7); the reader ingests already-canonical SI values (its only
-per-read math is the SW partition of a total-SW file, §5.6, and the temporal interpolation, §5).
+when the raw data source does.
 
-**One canonical saturation formula, shared reader ↔ formatter.** Any place the reader still computes
-humidity — `rh_to_specific_humidity(RH,T,P)` and `dewpoint_to_specific_humidity(Td,P)` — is built on
-`meds_thermo%sat_vapor_pressure` (the reader carries **no** private `esat`). The formatter script (§7) that
-computes `Qair` from ERA5-Land dewpoint **must use the identical saturation formula and constants** (§7),
-or the same `(Td, P)` yields a different `qair` on the two sides, breaking the Python↔Fortran agreement
-test (§9.5). The formatter is written against the same `meds_thermo` form.
+*Update 2026-09-26 (overrides the original split):*
+- **The preprocessing tools** do only what is unambiguous and model-independent: de-accumulation,
+  unit conversion, and the no-gap-fill check (§13).
+- **The reader** does the model-dependent conversions in a per-source adapter (§15.4):
+  - specific humidity from dewpoint, with MEDS's own `meds_therm_lib%sat_vapor_pressure`;
+  - wind speed, plus its floor, from the two stored components.
+
+So there is **one** saturation formula, the model's, and a change to it never forces reprocessing an
+archive. The old "shared reader ↔ formatter formula" requirement and its agreement test (§9 item 7)
+fall away. The reader still carries **no** private `esat`.
 
 ### 4.4 `met_instant(drv, now, t_sec, lat) -> met_forcing_t`
 
@@ -564,6 +600,8 @@ met%tair_k  = interpolate_forcing(INTERP_LINEAR, prev%tair_k, next%tair_k, w_nex
 met%qair    = interpolate_forcing(INTERP_LINEAR, prev%qair,   next%qair,   w_next)
 met%psurf_pa= interpolate_forcing(INTERP_LINEAR, prev%psurf_pa,next%psurf_pa,w_next)
 met%wind    = interpolate_forcing(INTERP_LINEAR, prev%wind,   next%wind,   w_next)   ! §5.3 energy form
+met%wind_u  = interpolate_forcing(INTERP_LINEAR, prev%wind_u, next%wind_u, w_next)  ! F4 (§15.4): vector, linear
+met%wind_v  = interpolate_forcing(INTERP_LINEAR, prev%wind_v, next%wind_v, w_next)  !   (only when has_wind_vector)
 met%lwdown  = interpolate_forcing(INTERP_LINEAR, prev%lwdown, next%lwdown, w_next)
 met%co2     = merge(fcfg%co2_const, interpolate_forcing(INTERP_LINEAR,prev%co2,next%co2,w_next), no_co2_in_file)
 met%rainf   = interpolate_forcing(INTERP_STEP,   prev%rainf,  next%rainf,  w_next)   ! step-constant
@@ -643,8 +681,12 @@ If the file supplies only *total* SWdown (no PAR/diffuse split — **the ERA5-La
 
 ### 5.2 ERA5-Land → MEDS-field mapping table (with unit conversions)
 
-The **formatter** (`scripts/prep_era5land_forcing.py`, §7) does every conversion below; the reader ingests
-already-canonical SI. Native ERA5-Land is **hourly, UTC**. Two variable classes need care: the
+*Update 2026-09-26:* the post-processor (§13) de-accumulates and converts units, and stores `d2m` as
+**`Tdew`** and keeps `u10`/`v10` **under their ERA5 names**. The reader's `era5land` adapter (§15.4) computes
+`qair` and `wind` from them. The table's conversions still hold; only *where* the humidity and wind
+rows run has moved.
+
+~~The formatter does every conversion below.~~ Native ERA5-Land is **hourly, UTC**. Two variable classes need care: the
 **instantaneous** states (t2m, d2m, sp, u10, v10 — valid *at* the timestamp) vs the **accumulated** fluxes
 (tp, ssrd, strd — accumulated from 00 UTC; **de-accumulate** to a per-hour amount, then to a rate/mean;
 §7). CO₂ and any direct/diffuse or PAR/NIR split are **absent** from ERA5-Land.
@@ -652,11 +694,11 @@ already-canonical SI. Native ERA5-Land is **hourly, UTC**. Two variable classes 
 | ERA5-Land var (cdsapi name) | short | units (raw) | → MEDS field | conversion | interp policy |
 |---|---|---|---|---|---|
 | `2m_temperature` | `t2m` | K | `tair_k` | as-is | linear |
-| `2m_dewpoint_temperature` | `d2m` | K | `qair` | `dewpoint_to_specific_humidity(d2m, sp)` (§7) | linear |
+| `2m_dewpoint_temperature` | `d2m` | K | `qair` | stored as `Tdew`; **reader** `dewpoint_to_specific_humidity(Tdew, PSurf)` (§15.4) | linear |
 | `surface_pressure` | `sp` | Pa | `psurf_pa` | as-is | linear |
-| `total_precipitation` | `tp` | m (accum) | `rainf` | de-accum→ hourly `m`; `× ρ_w(1000)/3600` → kg/m²/s | **step-constant** |
-| `10m_u_component_of_wind` | `u10` | m/s | `wind` | with `v10` | **energy form** (§5.3) |
-| `10m_v_component_of_wind` | `v10` | m/s | `wind` | `wind = √(u10² + v10²)`, floor `u_min` | (at **10 m** — §10) |
+| `total_precipitation` | `tp` | m (accum) | `rainf` | de-accum→ hourly `m`; `× ρ_w(1000)/3600` → kg/m²/s; only negatives clipped (§13.2) | **step-constant** |
+| `10m_u_component_of_wind` | `u10` | m/s | `wind` | stored as `u10` (ERA5 name kept) | **energy form** (§5.3) |
+| `10m_v_component_of_wind` | `v10` | m/s | `wind` | stored as `v10`; **reader** `wind = √(u10² + v10²)`, floor `u_min` (§15.4) | (at **10 m** — §10) |
 | `surface_solar_radiation_downwards` | `ssrd` | J/m² (accum) | total `SWdown` | de-accum→ hourly `J/m²`; `/3600` → W/m²; then **partition** (§5.6) | **cosz-weighted** per stream |
 | `surface_thermal_radiation_downwards` | `strd` | J/m² (accum) | `lwdown` | de-accum→ hourly `J/m²`; `/3600` → W/m² | linear |
 | *(none)* | — | — | `co2` | `fcfg%co2_const` (default 420 µmol/mol) | constant |
@@ -698,6 +740,17 @@ Wind (and `ustar` if ever ingested) interpolate as **squared** quantities then s
 `wind(now) = sqrt(w_prev·wind_prev² + w_next·wind_next²)`, floored at a `u_min` (numerical stability
 of the M–O similarity in aerodynamics).
 
+*Update 2026-09-26 (reader upgrade, §15.4):* when the source supplies components, the record also
+carries `wind_u` and `wind_v`:
+- **Interpolation:** the components interpolate **linearly**, which preserves direction. The speed
+  keeps the energy form above, from each stamp's speed √(u² + v²).
+- **Why the two can disagree:** the speed is therefore at least the length of the interpolated
+  vector. That is intended: aerodynamics wants the energy-consistent speed, and a direction-aware
+  module wants the vector.
+- **Height correction:** the optional log-profile correction multiplies both components by the same
+  factor as the speed.
+- **Floor:** the `u_min` floor applies to the speed only; components are never floored.
+
 ### 5.4 Precipitation — step-constant, phase-split at ingest
 
 `Rainf` is held **step-constant** across the interval (never linearly interpolated — interpolation
@@ -724,9 +777,11 @@ variables it does; those are deterministic conversions, not gap-fills. The de-ac
 (the single leading non-01Z sample, §7.3) is likewise not a data gap — the formatter drops it, so it is
 never written to the MEDS file.
 
-**The formatter does not gap-fill either** (`prep_era5land_forcing.py`, §7): it errors on an unexpected
-NaN in a source variable rather than inventing a value, so the MEDS forcing NetCDF it writes is either
-complete or the pipeline stops — consistent with the reader's contract.
+**The preprocessing tools do not gap-fill either** (§13; formerly `prep_era5land_forcing.py`, §7).
+A missing hour or an unexpected NaN at a valid cell stops the pipeline rather than inventing a value,
+so the archive it writes is either complete or not written. That matches the reader's contract.
+Cells where ERA5-Land has no data at all (ocean, some coastal cells) are NaN by definition and are
+marked invalid in the static mask (§14.3); they are never filled.
 
 ### 5.6 SW partition seam (`partition_shortwave`) — **P0-required** for ERA5-Land (total SW)
 
@@ -738,7 +793,9 @@ index). Ported as `pure` kernels from `radiate_utils.f90`. **Because ERA5-Land s
 the P0 default is `SWPART_CLEARIDX`** (the simplest defensible total→direct/diffuse split, then a fixed
 PAR fraction ≈ 0.45–0.50 of energy for the PAR/NIR split); `SWPART_WEISS_NORMAN` is the P1 upgrade
 (band-specific diffuse fractions). `SWPART_PASSTHROUGH` is used only when the file already carries the
-four streams (`sw_input_kind = "fourstream"`).
+four streams (`sw_input_kind = "components"`). *Update 2026-09-26:* the reader's vocabulary is
+`"components"` (`meds_met_driver.f90:743-757`); the earlier text said `"fourstream"`, which the reader
+does not recognise. The archive (§14) always carries total `SWdown`, so the reader partitions.
 
 ### 5.7 LWdown source / synthesis (`synthesize_lwdown`, `lwdown_source`)
 
@@ -964,6 +1021,10 @@ Regression: July 2053 (29 wraps) now reproduces the exact-forcing July 2024 diel
 before). The 0.03 W/m² residual is physical — 2024 is a leap year and 2053 is not, so solar declination
 differs marginally at the same calendar date.
 
+*Update 2026-09-26:* the reader upgrade (§15.2) adds `met_source`, `data_path`, `domain`, `box_nwse`
+and `max_distance_km`. The `path`/`grid_index`/`grid_match` keys above then belong to
+`met_source = "legacy_file"`, today's single-file format, which stays supported.
+
 `req_dur("forcing.timestep")` reuses the duration parser; `format`/`avg_convention`/`sw_partition`/
 `lwdown_source`/`start_clamp` map strings → the `MET_*`/`METAVG_*`/`SWPART_*`/`LW_*`/`CLAMP_*` codes via
 small mappers (the `req_scheme` pattern). `validate_config` asserts:
@@ -998,6 +1059,19 @@ safe to add at P0 and costs one row of scalars per output record.
 
 ## 7. ERA5-Land prep — two scripts + the MEDS multi-grid forcing NetCDF (comments 2 & 3)
 
+> **Update 2026-09-26:** the two scripts below **retire** once the reader upgrade (§15) lands. Their
+> replacements, in `scripts/prepare_era5/`:
+> - separate GDEX and CDS downloaders (§12);
+> - a post-processor (§13) writing the global per-variable monthly archive (§14).
+>
+> What remains authoritative here:
+> - **§7.1**, as the `legacy_file` format;
+> - **§7.3**, the de-accumulation recipe, which the new post-processor implements unchanged except
+>   for the clip rule.
+>
+> The retirement removes `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py` and
+> updates the references listed in §17 (F5).
+
 Two standalone scripts in `scripts/` (dependency-light: `cdsapi`, `xarray`/`netCDF4`, `numpy`), split by
 concern so the slow network download is separate from the fast, re-runnable formatting:
 
@@ -1009,6 +1083,13 @@ concern so the slow network download is separate from the fast, re-runnable form
 
 ### 7.1 The MEDS forcing NetCDF format (multi-grid, canonical — comment 3)
 
+*Update 2026-09-26:* this is now the **`legacy_file`** format (§15.2). It stays supported for the
+existing examples and tests, for extracts made from the archive, and for tower data. ERA5-Land runs
+read the archive of §14 instead: regular `(time, lat, lon)`, one variable per file, one month per
+file, `Tdew`, `u10` and `v10` stored. The "layout choice" note at the end of this subsection
+still holds for `legacy_file`. For the archive, P0 measurements favoured the regular grid (§14.2,
+§19).
+
 The single file format the reader reads (§4). **Dimensions:** `time` (UNLIMITED) × `grid` (number of
 locations — `1` for a single site). **Coordinates:** `time(time)` (`units="seconds since <base>"`,
 `calendar="proleptic_gregorian"`), `latitude(grid)` (`degrees_north`), `longitude(grid)` (`degrees_east`),
@@ -1019,7 +1100,7 @@ optional `elevation(grid)` (`m`). **Forcing variables, all shaped `(time, grid)`
 | `Tair` | K | `time: point` | instantaneous state |
 | `Qair` | kg/kg | `time: point` | from dewpoint (§7.3) |
 | `PSurf` | Pa | `time: point` | |
-| `Wind` | m/s | `time: point` | √(u10²+v10²) |
+| `Wind` | m/s | `time: point` | √(u10²+v10²). *Update 2026-09-26:* a file may instead (or also) carry `u10` and `v10`. With components the reader fills `wind_u`/`wind_v` and derives the speed (§15.4); with `Wind` alone, `has_wind_vector = .false.` |
 | `Rainf` | kg/m²/s | `time: mean` | de-accumulated hourly-mean rate |
 | `LWdown` | W/m² | `time: mean` | de-accumulated hourly-mean flux |
 | `SWdown` | W/m² | `time: mean` | **total** (default); reader partitions (§5.6). *Or* the four `SWdown_{par,nir}_{beam,diffuse}` if pre-split |
@@ -1028,7 +1109,7 @@ optional `elevation(grid)` (`m`). **Forcing variables, all shaped `(time, grid)`
 **Global attributes:** `Conventions = "MEDS-forcing-1.0"` (ALMA-compatible names), `title`,
 `source` (e.g. `"ERA5-Land hourly (reanalysis-era5-land)"`), `timestep_seconds` (3600),
 `avg_convention = "end"` (flux vars are means over the hour ENDING at the stamp; state vars are point
-values at the stamp), `sw_input_kind = "total" | "fourstream"` (tells the reader whether to partition),
+values at the stamp), `sw_input_kind = "total" | "components"` (tells the reader whether to partition),
 `time_zone = "UTC"`, and provenance (download date range, cell indices, CO₂ constant + note, script
 version). A single-site file is just `grid = 1`; a multi-cell file lists each location in `latitude(grid)`
 / `longitude(grid)` and the reader selects `grid_index` (§4).
@@ -1041,6 +1122,13 @@ version). A single-site file is just `grid = 1`; a multi-cell file lists each lo
 > `grid = 1`.
 
 ### 7.2 `download_era5land.py` — CDS API (ERA5-Land hourly) — verified 2026-07-08
+
+*Update 2026-09-26:* superseded by `scripts/prepare_era5/download_era5land_cds.py` and
+`download_era5land_gdex.py` (§12).
+- **The CDS facts below still hold:** the dataset id, the `~/.cdsapirc` form, and the zip fallback.
+- **The new CDS downloader sidesteps the zip** by requesting one variable per request, in GRIB by
+  default.
+- **It replaces the trailing-day pad** with a single request for the closing 00:00 stamp.
 
 Uses `cdsapi >= 0.7.7` against the **current CDS** (post-2024 migration): dataset id
 **`reanalysis-era5-land`** (hourly, 0.1°, UTC); `~/.cdsapirc` has exactly two lines
@@ -1064,15 +1152,20 @@ The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp
 
 ### 7.3 `prep_era5land_forcing.py` — raw ERA5-Land → MEDS forcing NetCDF
 
+*Update 2026-09-26:*
+- **What survives here** is the **de-accumulation recipe**. It is now **confirmed on real GDEX
+  data** (§19): the 00:00 value holds the previous day's total, and the value resets at 01:00.
+- **Clip rule changed:** only **negative** noise is clipped. The old `NEG_EPS = 1e-5 m` threshold
+  zeroed 0.95% of all rain and 55% of wet hours.
+- **Removed from preprocessing:** the humidity, wind and CO₂ lines of the old code. `Tdew` and
+  `u10`/`v10` are stored as delivered, the reader converts them (§15.4), and `CO2air` is
+  never written (the reader uses `co2_const`).
+- **Implementation:** the post-processor (§13) implements the recipe vectorised over cells and
+  months. The per-cell sketch below is kept only as the reference form.
+
 The load-bearing conversions (§5.2). All operate per selected `grid` cell, then stack into `(time, grid)`:
 
 ```python
-# --- humidity from dewpoint (must match meds_thermo saturation form, §4.3) ---
-def dewpoint_to_q(Td_K, P_Pa):
-    Tdc  = Td_K - 273.15
-    esat = 611.2*np.exp(17.67*Tdc/(Tdc + 243.5))     # e(Td) = saturation vapor pressure AT the dewpoint
-    return 0.622*esat/(P_Pa - 0.378*esat)            # specific humidity [kg/kg]
-
 # --- de-accumulate an ERA5-Land accumulated field (accum since 00 UTC, hourly) to a per-hour amount ---
 # ERA5-Land accumulations run from 00 UTC and reset daily (steps 1..24). THE 00:00 UTC STAMP IS THE
 # WHOLE PREVIOUS DAY'S TOTAL (step 24), NOT zero and NOT a small hourly value — the #1 off-by-one trap.
@@ -1088,39 +1181,53 @@ def deaccumulate_hourly(accum, valid_time_utc):      # accum (time,), valid_time
             per_hour[i] = np.nan                      # cannot difference the very first non-01Z sample
         else:
             per_hour[i] = accum[i] - accum[i-1]
-    return np.where(per_hour > NEG_EPS, per_hour, 0.0)  # clip GRIB-packing negatives (fact sheet)
+    return np.where(per_hour < 0.0, 0.0, per_hour)   # clip ONLY negative packing noise (updated 2026-09-26)
 # NOTE: to fully de-accumulate day D you need the 00:00 UTC stamp of day D+1 (it carries the [23Z,00Z]
-# hour) — so download.py fetches ONE EXTRA trailing day (§7.2).
+# hour). GDEX month-end files already contain it; the CDS downloader fetches it as one tiny request (§12).
 
-# --- per cell ---
+# --- per cell (updated 2026-09-26: conversions that remain in preprocessing) ---
 Tair   = t2m                                         # K
+Tdew   = d2m                                         # K   (reader converts to Qair, §15.4)
 PSurf  = sp                                          # Pa
-Qair   = dewpoint_to_q(d2m, sp)                      # kg/kg
-Wind   = np.hypot(u10, v10).clip(min=U_MIN)          # m/s  (10 m; height noted in attrs, §10)
+# u10, v10: kept as delivered under their ERA5 names  # m/s (10 m; reader forms speed + floor, §15.4)
 Rainf  = deaccumulate_hourly(tp,   time_utc) * RHO_W / 3600.0   # m/hr -> kg/m2/s  (RHO_W = 1000)
 SWdown = deaccumulate_hourly(ssrd, time_utc) / 3600.0          # J/m2/hr -> W/m2  (total; reader splits)
 LWdown = deaccumulate_hourly(strd, time_utc) / 3600.0          # J/m2/hr -> W/m2
-CO2air = np.full_like(Tair, CO2_CONST)               # ERA5-Land has none (attribute-flagged synthetic)
-
-write_meds_forcing_nc(out_path,
-    time_seconds, lat_grid, lon_grid, elev_grid,     # coords: time(time), lat/lon/elev(grid)
-    Tair, Qair, PSurf, Wind, Rainf, LWdown, SWdown, CO2air,   # each (time, grid)
-    attrs=dict(Conventions="MEDS-forcing-1.0", source="ERA5-Land hourly (reanalysis-era5-land)",
-               timestep_seconds=3600, avg_convention="end", sw_input_kind="total",
-               time_zone="UTC", co2_const=CO2_CONST))
 ```
 
 The de-accumulation is the one step most easily gotten wrong (an off-by-one zeroes or doubles the first
 hour of every UTC day) — §9 asserts a known daily SW/precip integral against the raw accumulated totals.
 The **SW split** is deferred to the Fortran reader by default (`sw_input_kind="total"`, so the one
-authoritative partition lives in `partition_shortwave`, §5.6); a `--presplit` flag can instead write the
-four streams (`sw_input_kind="fourstream"`) for models that want them in-file. The formatter can stack
-**multiple cells** into the `grid` dimension in one call (one MEDS file covering N locations), which is how
-a future multi-polygon run gets its forcing.
+authoritative partition lives in `partition_shortwave`, §5.6). *Update 2026-09-26:* the archive
+always stores total `SWdown` (no pre-split option). Multi-location forcing comes from the regular
+global archive (§14), not from stacking cells into a `grid` dimension. `MEDS_POLYGON_RUNTIME_PLAN.md`
+reads a box of cells from it.
 
 ---
 
 ## 8. Phasing
+
+> **Status, checked against the code on 2026-09-26** (✅ done, ⬜ open, ➡ moved):
+>
+> **P0**
+> - ✅ everything (PR #36).
+>
+> **P1**
+> - ✅ the canopy-RT join;
+> - ✅ the Weiss–Norman partition (with clearness-index as the default);
+> - ✅ longwave synthesis (#182);
+> - ✅ multi-year cycling with the declared window (#69);
+> - ✅ the daily accumulator (phenology air temperature);
+> - ⬜ retiring the `apply_met_to_ctx` shim (the `met_forcing_t`-argument cleanup).
+>
+> **P2**
+> - ✅ the elevation-lapse and 10 m → reference-height wind corrections (optional, off by default);
+> - ➡ the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`;
+> - ➡ other reanalysis products move to §16, with the archive design in §14;
+> - ⬜ a transient CO₂ stream (ROADMAP #184);
+> - ⬜ climate-change perturbations.
+>
+> The forcing-data phases F0–F6 are in §17.
 
 **P0 — single-site NetCDF reader wired to the fast loop, ERA5-Land at Ithaca (MVP).**
 - New **`src/forcing/` library** (§2): `met_forcing_t`, `met_record_t`, `met_driver_t` (with
@@ -1165,6 +1272,14 @@ a future multi-polygon run gets its forcing.
 ---
 
 ## 9. Test plan
+
+*Update 2026-09-26:* items 4, 5 and 7 concern the retired formatter:
+- **item 4, de-accumulation:** now checked by the post-processor, and on real data in §19;
+- **item 5, multi-grid round trip:** stays valid for `legacy_file`;
+- **item 7, the Python↔Fortran humidity agreement:** no longer needed, because only the reader
+  computes humidity.
+
+The reader upgrade's tests are in §15.6.
 
 Offline, driving the physics kernels with the **Ithaca NY ERA5-Land** file to reproduce a **diurnal
 cycle** — the model-behaviour analogue of ED2's EDTS, and the first end-to-end use of the fast loop in
@@ -1235,6 +1350,16 @@ production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS do
 
 ## 10. Open questions
 
+> **Status 2026-09-26:**
+> - **Q1 resolved:** the 00Z and 01Z behaviour was confirmed on real GDEX data (§19).
+> - **Q2 partly done:** the log-profile correction exists and is optional.
+> - **Q3 resolved:** clearness-index is the default, and Weiss–Norman is available.
+> - **Q4 open** (#184).
+> - **Q5 resolved:** the accumulator is live.
+> - **Q6 open:** the shim remains.
+> - **Q7 answered:** by the reader's site selection (§15.5) and the polygon plan's selection rules.
+> - **Q8 resolved:** the folder is `forcing/`.
+
 1. **ERA5-Land de-accumulation edge (the sharpest risk — confirm against ECMWF docs, §5.2/§7).** The
    accumulation is since 00 UTC and resets daily; the exact treatment of the **00 UTC step** (is it 0, or
    does it carry the last hour of the previous day?) and the **01 UTC** first-difference determine whether
@@ -1264,3 +1389,418 @@ production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS do
    can be missing) need specifying.
 8. **Folder name (`forcing/` vs `input/`) — your call (§0).** Recommended `forcing/`; a pure rename if you
    prefer `input/`.
+
+---
+
+# Part II — forcing data products, preparation tools, and the reader upgrade (revision 2026-09-26)
+
+Sections §11–§19 fold in the forcing-data plan, drafted 2026-09-25/26 as a separate document and
+merged here. They cover:
+- which data products MEDS uses;
+- how they are downloaded and post-processed into a model-ready archive, and how that archive is
+  organised;
+- how MEDS reads a site or a box region from it.
+
+**Scope:** ERA5-Land (0.1°) is the first product and the only one implemented; NLDAS-3 and the daily
+products follow (§16). Installation-specific locations (data paths, credentials, cluster setup) are
+deliberately left out: each installation sets `data_path` (§15.2).
+
+## 11. Decisions (2026-09-25/26)
+
+| # | Topic | Decision |
+|---|---|---|
+| FD1 | Product | **ERA5-Land hourly at 0.1°** (the land component of ECMWF's reanalysis). Not ERA5 at 0.25°. |
+| FD2 | Download unit | **Global, one variable × one year.** This fits both sources (§12). |
+| FD3 | Sources | **NSF NCAR GDEX dataset d633008 by default** (anonymous, no queue, July 2002 on). **Copernicus CDS** for years before GDEX coverage and as fallback. |
+| FD4 | CDS format | **GRIB by default**: 1 variable × 12 months per request costs 8,928 of the 12,000 cost limit, half the requests NetCDF needs. Decoding happens in post-processing and is lossless. |
+| FD5 | Separation | **Download and post-processing are separate tools.** Raw files are kept exactly as delivered until post-processing has written and verified every archive month that uses them; **then they are deleted** (OD2). |
+| FD6 | Archive layout | **One global file per variable per month** on the regular 0.1° grid, `(time, lat, lon)`, with month-long chunks (§14). |
+| FD7 | Reads | **MEDS reads one month at a time** for its whole domain, into memory (§15.3). All land with all 8 variables is about 53 GB: an HPC job, and acceptable on a large desktop. |
+| FD8 | Humidity | **Store dewpoint `Tdew`, not `Qair`.** MEDS converts with its own e_sat (§15.4), so a thermodynamics change never forces reprocessing. |
+| FD9 | Wind | **Store both components under their ERA5 names, `u10` and `v10`** (10 m; the names in the CDS and GDEX NetCDF, not NCEP's `ugrd`/`vgrd`), not the speed. **MEDS carries the vector too:** its forcing record gains `wind_u` and `wind_v` alongside the speed `wind`, which the reader derives for aerodynamics (§15.4). Direction therefore reaches the model, for a future fire module or anything else that needs it. |
+| FD10 | Names | Prefix **`ED_ERA5land_`**, model-neutral because MEDS will be renamed. **No version number** in names; a processing-version attribute goes inside each file. |
+| FD11 | Portability | No installation-specific paths in the tools or this design. The archive location is the reader's `data_path`, and a tool's `--out-dir`/`--raw-dir`. |
+| FD12 | Period | **Always user-defined.** No tool or config has a default period. |
+| FD13 | Tests | The preparation tools get **no test suite in the MEDS repository**. The Fortran reader upgrade (F4) is core MEDS code and gets CTest targets. |
+| FD14 | Environment | A separate Python environment (`meds-era5`) for the tools, built with **mamba/micromamba** from `scripts/prepare_era5/environment.yml`. |
+| FD15 | Single sites | **A single site is a one-cell box.** There is no separate single-site downloader or product. |
+
+## 12. Download tools (F1) — ✅ written and tested
+
+Uncommitted at the time of writing. All tools live in `scripts/prepare_era5/` and have `--dry-run`,
+resume, and a JSON-lines transfer log.
+
+| Tool | Fetches | Notes |
+|---|---|---|
+| `download_era5land_gdex.py` | GDEX's global 5-day files (6 per variable per month) into a raw pool that mirrors GDEX's directory tree | Needs no box. Checks byte count and hour count. Parallel streams: default 4, capped at GDEX's per-user limit of 10. Discovers coverage and stops with a clear message before it. |
+| `download_era5land_cds.py` | CDS `reanalysis-era5-land` for a box (`area`), or the globe | GRIB by default. One variable per request, whole months grouped (12 per GRIB request, 6 per NetCDF), a partial month on its own, and one tiny request for the closing 00:00 stamp. Checks the GRIB message count. Logs queue and transfer time separately. |
+| `era5land_common.py` | shared helpers | Variable catalogue, box and date handling, GDEX file naming, box selection including across 0° and 180°, group-writable output. |
+| `environment.yml` | the tools' environment | numpy, netcdf4, cdsapi ≥ 0.7.7, eccodes, python-eccodes; conda-forge only. |
+
+**Source facts** (checked or measured 2026-09-25/26; §19):
+
+- **GDEX d633008:**
+  - variables `t2m_167`, `d2m_168`, `sp_134`, `u10_165`, `v10_166`, `tp_228`, `ssrd_169` and
+    `strd_175`;
+  - accumulations run since 00 UTC, as in the CDS;
+  - files are **end-stamped**, 01:00 on the first day to 00:00 after the last, so the closing
+    stamp of each month is included;
+  - missing cells are NaN; chunks are (1 h, 72, 3600);
+  - it also serves the invariants `lsm` and `z`.
+- **GDEX coverage:** July 2002 to about one month ago, and the start has moved earlier twice.
+- **GDEX licence:** CC-BY 4.0 with the Copernicus attribution.
+- **CDS limits:**
+  - cost = variables × days × hours, capped at 12,000 per request, with NetCDF counted double;
+  - the area does not change the cost;
+  - ERA5-Land sits on the CDS's own disks, so month-by-variable request shapes carry no tape
+    penalty;
+  - how many requests run at once per user is unconfirmed; expect queue waits of minutes to hours.
+- **GRIB decoding** is lossless: the result is identical to the CDS's own NetCDF.
+- **Other hosts evaluated and not adopted:**
+  - Earth Engine: adds a second single-site path, where the CDS alone is simpler;
+  - GCP ARCO-ERA5 and the NCAR/AWS ERA5 mirror: ERA5 at 0.25° only;
+  - Open-Meteo: no downward longwave, precipitation rounded to 0.1 mm, pressure derived from sea
+    level, temperature and dewpoint elevation-adjusted by default;
+  - Earthmover ERA5: no longwave;
+  - DestinE Earth Data Hub: quota, and not de-accumulated.
+
+## 13. Post-processing
+
+### 13.1 Today: `postprocess_era5land.py`, box files — ✅
+
+- **Input:** either source's raw files.
+- **Work:** decodes GRIB, cuts a box (including across 0° and 180°), merges across files, and trims
+  to exactly the requested hours.
+- **Output:** NetCDF box files, one per variable per year, month or whole period, with the raw
+  ERA5-Land names and units. Accumulated fields stay accumulated.
+- **Checks:** a missing hour is an error; a duplicate hour keeps the first copy; outputs are written
+  via `.part` files.
+- **Tested** on a New York State box, July–August 2022: CDS and GDEX agree to within 0.00024 K, with
+  identical no-data cells.
+- **Its role after F2:** a portable box-extract tool.
+
+### 13.2 Target (F2): the global monthly archive — ⬜
+
+**Unit of work:** one month × all 8 raw variables, producing 8 output files. De-accumulating `tp`,
+`ssrd` and `strd` needs the **first stamp of the next month**. GDEX's month-end file contains it;
+for CDS it comes from the next year's file or from the closing-stamp request.
+
+| Variable | From | Units | Notes |
+|---|---|---|---|
+| `Tair` | `t2m` | K | as delivered |
+| `Tdew` | `d2m` | K | as delivered (FD8); CF `dew_point_temperature`, 2 m |
+| `PSurf` | `sp` | Pa | as delivered |
+| `u10` | `u10` | m s⁻¹ | as delivered, ERA5 name kept (FD9); CF `eastward_wind`, 10 m |
+| `v10` | `v10` | m s⁻¹ | as delivered, ERA5 name kept (FD9); CF `northward_wind`, 10 m |
+| `Rainf` | `tp` de-accumulated × 1000 / 3600 | kg m⁻² s⁻¹ | total precipitation; only **negative** noise clipped to 0 |
+| `SWdown` | `ssrd` de-accumulated ÷ 3600 | W m⁻² | total shortwave; only negatives clipped |
+| `LWdown` | `strd` de-accumulated ÷ 3600 | W m⁻² | not clipped |
+
+- **De-accumulation** follows §7.3.
+- **The clip rule changed after measurement:** zeroing everything up to 1e-5 m removed **0.95% of
+  all precipitation and 55% of wet hours**, while real negative noise never falls below −3×10⁻⁸ m.
+- **Processing approach:**
+  - read the raw inputs in latitude bands aligned to both chunk grids;
+  - compute in NumPy;
+  - write each output chunk column once, skipping chunks that are entirely no-data.
+- **Estimated cost:** a global variable-month took 13.7 minutes on one core in the evaluation,
+  mostly reading map-chunked raw files. That suggests roughly 2 core-hours per month for all
+  variables, parallel across months. F2 measures the real rate.
+
+**Plausibility gates** (hard errors before writing). They held over a real global week in Antarctic
+winter (§19):
+
+| Variable | Bound |
+|---|---|
+| `Tair` | 170–340 K |
+| `Tdew` | 150–320 K |
+| `PSurf` | 30–110 kPa |
+| `u10`, `v10` | ±75 m s⁻¹ |
+| `Rainf` | 0–0.2 kg m⁻² s⁻¹ |
+| `SWdown` | 0–1500 W m⁻² |
+| `LWdown` | 30–650 W m⁻² |
+
+A soft check warns when `Tdew` exceeds `Tair` by more than 0.5 K.
+
+**Raw-file deletion (OD2).** A raw file is deleted once **every archive month that needs it** has
+been written, has passed the gates, and is recorded in the manifest with checksums.
+- **GDEX:** a 5-day file serves only its own month, including that month's closing stamp, so
+  deletion runs month by month.
+- **CDS:** a variable-year GRIB serves all of its year's months. December also needs the first
+  stamp of the next year, from the next year's file or the closing-stamp request. So year Y's file
+  goes after year Y's December is built, and the closing-stamp file goes with it.
+- **Override:** `--keep-raw` keeps the files, for debugging.
+- **Consequence (accepted):** reprocessing means downloading again. That is fast for GDEX; for
+  CDS years it means the queue again.
+
+## 14. The archive's data structure
+
+### 14.1 Files (relative to the installation's `data_path`)
+
+- **Data files:** `<Var>/<YYYY>/ED_ERA5land_<Var>_<YYYYMM>.nc`, one variable, one month, the whole
+  globe.
+- **Static file:** `static/ED_ERA5land_static.nc`, one for the whole archive.
+- **Metadata:** a `README` and a `manifest.json` (checksums, source per month, processing version).
+- **Size:** about **1.81 GB per variable-month** (measured, §19). With 8 variables that is about
+  175 GB per year, **about 7.8 TB for 45 years**.
+
+### 14.2 Layout inside each data file
+
+- **Dimensions:** `time` (the month's hours: 744, 720, 696 or 672), `lat` (1801, 90 → −90) and `lon`
+  (3600, −180 → 179.9).
+- **Coordinates:**
+  - `time` holds `seconds since 1970-01-01 00:00:00`;
+  - the stamps run from **01:00 on the 1st to 00:00 on the 1st of the next month**, so flux means
+    cover the hour ending at each stamp (`avg_convention = "end"`);
+  - `lat` and `lon` are rounded to 4 decimals.
+- **The variable:** float32, **NaN** where ERA5-Land has no data, declared `_FillValue` NaN.
+- **Chunks: (month length, 16, 16)**, sized for monthly reads (FD7):
+  - a site-month is one chunk;
+  - a box or continent reads each of its chunks once per month;
+  - chunks that are entirely no-data are **never written** (59% of the chunk columns on the globe).
+- **Compression:** zlib level 1 with shuffle, plus netCDF quantization (GranularBitRound):
+  `Tair`, `Tdew` 5 significant digits, `PSurf` 6, and 4 for `u10`, `v10`, `Rainf`, `SWdown`
+  and `LWdown`. Errors are negligible (§19), and files are about 3× smaller.
+- **Attributes:**
+  - CF conventions, ALMA-style names, units, `long_name`, `height`;
+  - `source` (GDEX or CDS, per month), `product = "ERA5-Land hourly"`, `processing_version`,
+    `avg_convention = "end"` and `time_zone = "UTC"`.
+
+**Why this layout** (evaluation, §19):
+- **Against map-shaped chunks** (as GDEX ships): those are about 2,000× slower for a site series.
+- **Against a land-only list:** that is only about 8% smaller, crops boxes more slowly, and is
+  poorly supported by tools.
+- **Against continental files:** those save no space and add routing and border cases.
+- **Crops cost the same from a global file** as from a smaller one, because they touch the same
+  chunks.
+
+### 14.3 Static file
+
+`static/ED_ERA5land_static.nc` holds `lat`, `lon` and:
+
+| Variable | Meaning |
+|---|---|
+| `valid` (int8) | 1 where ERA5-Land has data (2,212,863 cells). Defined from the data, **not** from the land-sea mask: 6,866 valid cells have `lsm = 0` (large lakes), and 115,765 cells with `lsm > 0` have no data. The mask is identical for every variable and time. |
+| `elevation` (m) | ERA5-Land orography, geopotential ÷ 9.80665. The reader uses it for `grid_elevation` (§15.4). |
+| `land_fraction` | `lsm` |
+
+A glacier mask can be added when a consumer needs it, for example the polygon runtime's ice
+exclusion.
+
+## 15. The reader upgrade (F4) — ⬜
+
+### 15.1 Starting point
+
+The reader as described in §4 and §7.1 (`src/forcing/meds_met_driver.f90`):
+- **one file,** `forcing.path`, at most 256 characters;
+- **one grid cell per run,** chosen by `grid_index` or nearest lat/lon;
+- **1×1 reads** per variable per record;
+- **required variables:** `Tair`, `Qair`, `PSurf`, `Wind`, `Rainf`, `LWdown` and `SWdown`;
+- **no support** for multiple files or `_FillValue`.
+
+**The conversions already exist as tested kernels:** `dewpoint_to_specific_humidity`
+(`meds_forcing_kernels.f90:336-347`, tested in `test_met_driver.f90:118-123`), the wind log profile,
+and the lapse corrections.
+
+### 15.2 Configuration
+
+```toml
+[forcing]
+met_source      = "era5land"          # "era5land" (implemented) | "legacy_file" (the §7.1 single file) | later: "nldas3", …
+data_path       = "<installation-specific path to the ED_ERA5land archive>"
+# file_template / static_file default per met_source; override only if the archive is laid out differently:
+# file_template = "{data_path}/{var}/{yyyy}/ED_ERA5land_{var}_{yyyy}{mm}.nc"
+# static_file   = "{data_path}/static/ED_ERA5land_static.nc"
+domain          = "site"              # "site" (one cell, from [site].latitude/longitude) | "box"
+box_nwse        = [45.1, -79.8, 40.4, -71.8]   # used when domain = "box" (the polygon runtime)
+max_distance_km = 15.0                # a site on a no-data cell uses the nearest valid cell within this, else error
+co2_const       = 420.0               # unchanged; a transient CO2 stream is ROADMAP #184
+```
+
+- **`validate_config`** rejects any `met_source` other than `"era5land"` or `"legacy_file"` as not
+  implemented.
+- **`legacy_file`** keeps today's keys (`path`, `grid_index`, `grid_match`) and behaviour.
+- **Path fields** widen to 1024 characters.
+
+### 15.3 Monthly block reads
+
+**At the start of each month**, and at every month rollover, for each variable:
+1. build the path from the template;
+2. open the file and check its time axis (hourly, uniform, month bounds);
+3. read the domain **one chunk column at a time**, `count = [nt_month, 16, 16]`, keeping the series
+   of each valid cell in the domain;
+4. store them in an in-memory month buffer, float32 of shape (cells, nt), and close the file.
+
+**Chunk-column reads are the measured fast path.** Over North America, one large hyperslab took
+24–34 s per variable-month, most of it spent rearranging the array out of the chunk layout.
+Chunk-column reads took **5.0 s**.
+
+**Afterwards:**
+- **Bracket interpolation** (§4.2, §4.4) reads from the buffer, so there are no netCDF calls in the
+  time loop.
+- **The seam between months:** the last stamp of month m (00:00 on the 1st) and the first of month
+  m+1 (01:00) bracket one hour. The reader keeps the previous month's last record, as the recycle
+  seam already does.
+- **Recycling** (§6.6, "P3") walks the month files in the declared window.
+- **Restart:** the state is the current month and bracket, and a restart reloads the month's block.
+
+**Memory** is 8 variables × cells × nt × 4 B:
+
+| Domain | Month buffer |
+|---|---|
+| A site | about 24 KB |
+| 20,000 cells | about 0.5 GB |
+| North America (about 305,000 land cells) | about 7.3 GB |
+| All land (2.2 M cells) | about 53 GB |
+
+**Read cost per variable-month:**
+
+| Domain | Time |
+|---|---|
+| A site | 2.5 ms |
+| A 20°×20° box | about 1 s |
+| North America | 5.0 s |
+| All land | about 35 s (estimated), so about 5 minutes per simulated month for all 8 variables |
+
+### 15.4 Internal conversion: the `era5land` source adapter
+
+| Model field | Computation |
+|---|---|
+| `tair_k`, `psurf_pa`, `rainf`, `lwdown`, total SW | read as stored; units checked against the file's attributes; total SW is then partitioned as before (§5.6) |
+| `qair` | `dewpoint_to_specific_humidity(Tdew, PSurf)` at each forcing stamp, using `meds_therm_lib%sat_vapor_pressure` (liquid curve, the correct one for dewpoint) |
+| `wind_u`, `wind_v` | `u10`, `v10`, interpolated linearly, then scaled by the optional log-profile factor. `has_wind_vector = .true.` (§3.1, §5.3). Never floored. |
+| `wind` | √(`u10`² + `v10`²) at each forcing stamp; then the existing energy-form interpolation (§5.3), the optional log-profile correction and the `u_min` floor. It is what aerodynamics reads, unchanged. |
+| `grid_elevation` | from the static file's `elevation` for the chosen cell, used by the optional lapse correction; users no longer copy it by hand |
+
+- **Unchanged:** the rain/snow split (§5.4), the shortwave partition (§5.6) and longwave synthesis
+  (§5.7).
+- **Provenance:** model output metadata records the humidity formula, because a run's effective
+  `qair` then depends on the model version. That is the purpose of FD8.
+- **Still to confirm:** that ECMWF defines the 2 m dewpoint relative to liquid water, which is
+  assumed and not yet verified.
+
+### 15.5 Domain selection
+
+- **`site`:** the reader turns latitude and longitude into (j, i) by regular-grid arithmetic. If the
+  cell is invalid, it searches outward for the nearest valid cell by great-circle distance (the
+  `nearest_grid_index` rule, lowest index on a tie), up to `max_distance_km`, and otherwise errors.
+  It reports the cell used and its distance. This answers §10 Q7 for single sites.
+- **`box`:** the reader takes the rows and columns covering `box_nwse` (crossing 0° or 180°
+  correctly) and the valid cells within them, in row-major order. That list is the domain
+  `MEDS_POLYGON_RUNTIME_PLAN.md` loops over.
+
+### 15.6 Tests (core MEDS, CTest)
+
+Tiny synthetic archive files (2–3 months, a few cells, written through the netCDF C API as
+`test_met_driver` does today) cover:
+- template substitution;
+- month rollover and the seam bracket;
+- recycling across months;
+- site-to-cell selection, including the nearest valid cell and the distance limit;
+- box selection, including a box across 180°;
+- `Tdew` → `qair` equality with the kernel;
+- the wind speed formed from its components, and the vector carried with its direction preserved
+  through interpolation and the height correction;
+- a `legacy_file` with `Wind` only, giving `has_wind_vector = .false.`;
+- static elevation;
+- the NaN error;
+- the `legacy_file` path, which must stay unchanged.
+
+All build and pass on ifx; nvfortran as well wherever it is available (CLAUDE.md).
+
+## 16. Later products (a space kept open)
+
+Each product becomes a **source adapter**: download, post-process to the same archive convention
+(`ED_<PRODUCT>/<Var>/<YYYY>/ED_<PRODUCT>_<Var>_<YYYYMM>.nc` plus a static file), and a `met_source`
+entry in the reader. Each gets its own subsection here when work starts, and its facts are
+re-verified then.
+
+| Product | Role | What the adapter must supply |
+|---|---|---|
+| **NLDAS-3** (about 1 km, North and Central America, hourly) | an hourly **base** product that can drive MEDS alone if it carries all inputs | If it stores `Qair`, no conversion is needed. About 100× the cells of ERA5-Land, so expect regional archives and a different spatial chunk size. Access is via NASA Earthdata. |
+| **Daymet** (1 km, daily, North America) | a daily **correction** to an hourly base | It has no wind, longwave or pressure. It enters as a correction step, for example rescaling the base's hourly precipitation to the daily totals and adjusting temperature toward the daily extremes. |
+| **CHIRPS** (0.05°, daily precipitation, 50°S–50°N) | a daily **precipitation correction** | It does not cover northern Canada or Alaska. |
+
+The tools' folder stays `scripts/prepare_era5/` until a second product lands; it is then expected to
+become `scripts/prepare_forcing/`.
+
+## 17. Forcing-data phases
+
+| Phase | Content | Status and acceptance |
+|---|---|---|
+| **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
+| **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ written and tested; commit and PR outstanding |
+| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ⬜ The pilot month, **July 2022 from GDEX** (OD1), builds, passes the gates and deletes its raw files. An independent box extract matches §13.1 output. The CDS path is validated on one month when pre-2002 years are first needed. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ⬜ Manifest complete; site spot checks against the CDS point series pass. |
+| **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
+| **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ⬜ Remove `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py`, and update the references (list below). No shims. CHANGELOG. |
+| **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
+
+**References F5 must update when it retires the old scripts:**
+
+| File | Lines |
+|---|---|
+| `meds_config_main.toml` | 385–386 |
+| `src/forcing/README.md` | 69–70 |
+| `docs/science/forcing.md` | 58–60, 396 |
+| `docs/ed2_comparison.md` | 319 |
+| `examples/example_biophysics/README.md` | 243–244 |
+| `examples/example_biophysics/run_example.py` | 181–182 |
+| this document's §2.1 table | (text) |
+
+**Order:**
+- **F2 and F4 can proceed in parallel:** F4 needs only synthetic files.
+- **F3 needs F2.**
+- **`MEDS_POLYGON_RUNTIME_PLAN.md` needs F4's box domain and monthly reads.**
+
+## 18. Forcing-data decisions (formerly open; decided 2026-09-26)
+
+| # | Decision | Outcome |
+|---|---|---|
+| OD1 | Period of the first archive build | **July 2022, from GDEX.** It is the pilot month for F2. Later years are added with the same tools, and the period stays user-defined (FD12). |
+| OD2 | Keep raw files after processing? | **No. Raw files from both GDEX and CDS are deleted** once every archive month that needs them is written and verified (§13.2). Reprocessing means downloading again; that cost is accepted. |
+| OD3 | Spatial chunk size for a 1 km product (NLDAS-3) | **Deferred** to the NLDAS-3 adapter work (F6). The 16 × 16 choice (§14.2) applies to ERA5-Land only. |
+
+## 19. Measurements (evaluation, 2026-09-25/26; single CPU core, warm filesystem cache)
+
+**Sources:**
+
+| Item | Result |
+|---|---|
+| GDEX download | about 83 MB/s per stream, near-linear to about 660 MB/s at 10 streams (the per-user cap) |
+| GDEX HTTP byte-range reads | about 0.33 s per chunk; about 100× slower than whole files for a continent, hence whole files |
+| CDS transfer | about 24–33 MB/s; an uncached box request queued about 4.5 minutes, a cached one seconds |
+| GRIB → NetCDF | lossless (difference exactly 0 against the CDS NetCDF); decoding about 0.5 ms per small-box field, 0.5 s per global field |
+| CDS against GDEX (New York box, July–August 2022) | same grid and no-data cells; largest difference 0.00024 K |
+
+**Data properties:**
+
+| Item | Result |
+|---|---|
+| De-accumulation | at 00:00 the value holds the previous day's total; it resets at 01:00 (confirmed at the Ithaca cell) |
+| Valid cells | 2,212,863, a static mask. Antarctica 668,672; Greenland 67,799 |
+| Quantization | 3.1× smaller; largest errors 0.004 K, 3.8×10⁻⁶ kg/kg, 0.5 Pa, 0.004 m/s, 0.5 and 0.03 W m⁻²; global sums shifted by at most 1.1×10⁻⁶ |
+| Old clip rule (≤ 1e-5 m) | removes 0.95% of rain and 55% of wet hours; negative noise never falls below −3×10⁻⁸ m |
+| Plausibility bounds | all within bounds over a global week in Antarctic winter (`Tair` 192.8–326.3 K) |
+
+**Layout, North America box, one variable-month,** masked grid with empty chunks skipped:
+
+| Chunk shape | Size | Site month | 1°×1° | 5°×5° | 20°×20° | Continent, 1 day |
+|---|---|---|---|---|---|---|
+| 744 h × 16 × 16 | 287 MB | 2.7 ms | 4.3 ms | 0.03 s | 0.76 s | 3.2 s |
+| 24 h × 32 × 32 | 310 MB | 8.0 ms | 12 ms | 0.05 s | 0.89 s | 0.62 s |
+| map-shaped (1, ny, nx) | 345 MB | 5.1 s | 5.1 s | 5.2 s | not measured | not measured |
+| land-only list (744, 256) | 271 MB | 2.3 ms | 19.6 ms | 0.10 s | not measured | not measured |
+
+**Global `Tair`, July 2022,** month chunks (744, 16, 16), the chosen layout:
+
+| Item | Result |
+|---|---|
+| File | **1.81 GB** (1.95 GB with day chunks); 59% of chunk columns empty and never written |
+| One site | 2.5 ms |
+| 1°×1° box | 4.7 ms |
+| 5°×5° box | 0.04 s |
+| 20°×20° box | 1.05 s |
+| North America, chunk-column reads into (cell, time) | **5.0 s** (326,380 valid cells) |
+| North America, one hyperslab | 24–34 s |
+| MEDS-style 1×1 reads, one site-month | 0.08 s |

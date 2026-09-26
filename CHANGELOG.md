@@ -14,6 +14,28 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **ERA5-Land forcing tools in `scripts/prepare_era5/`** (#279). Downloading and post-processing are
+  separate tools:
+  - `download_era5land_gdex.py` fetches NSF NCAR GDEX d633008's global 5-day files unchanged into a
+    raw pool, in parallel (capped at GDEX's per-user limit of 10 streams), verified and resumable;
+  - `download_era5land_cds.py` fetches the Copernicus CDS, in GRIB by default: one variable ×
+    12 months per request, which is half the requests NetCDF needs;
+  - `postprocess_era5land.py` turns either source's raw files into NetCDF box files.
+
+  They run in their own `meds-era5` environment (`scripts/prepare_era5/environment.yml`). On a New
+  York State box, the CDS and GDEX outputs agree to within 0.00024 K. The old
+  `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py` stay until the forcing
+  reader upgrade lands.
+- **Forcing-data design and a polygon runtime plan** (#279).
+  - `MEDS_FORCING_DESIGN.md` gains Part II (§11–§19): a global per-variable monthly `ED_ERA5land_`
+    archive, and a reader upgrade that reads a site or a box from it one month at a time and
+    converts dewpoint to specific humidity inside the model. Its header now marks what is already
+    implemented.
+  - `MEDS_POLYGON_RUNTIME_PLAN.md` designs regional runs as an OpenMP loop over polygons, without
+    MPI.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
