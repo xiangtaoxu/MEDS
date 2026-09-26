@@ -1638,6 +1638,13 @@ exclusion.
 >   `[site].grid_elevation` with `format = "era5land"`.
 > - **Provenance (§15.4):** with the archive, every output file carries a `forcing_qair` global
 >   attribute naming the humidity formula.
+> - **Acceptance (2026-09-26):** July 2024 at Ithaca with the `example_biophysics` settings, run
+>   once from a `prep_era5land_forcing.py` file and once from the archive (same cell, 42.4 N
+>   76.5 W). After the first hour, the forcing the model sees agrees to the archive's quantization
+>   (air temperature 0.0038 K, shortwave 0.031 W m⁻²). The first hour differs (0.33 K) because the
+>   single file starts at 01:00 and holds that record, while the archive also has 00:00 from June's
+>   file. Rain differs only by the prep script's old drizzle clip (107 of 744 hours zeroed, the
+>   month 0.33% drier), which is behind the largest flux differences (latent heat 0.58 W m⁻²).
 
 ### 15.1 Starting point
 
@@ -1782,7 +1789,7 @@ become `scripts/prepare_forcing/`.
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
 | **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
 | **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1, GDEX) and June 2022 (CDS test). ⬜ Further years when chosen; site spot checks against the CDS point series. |
-| **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ✅ **2026-09-26** (see the §15 status note): `format = "era5land"`, site domain, box selection in the library; the §15.6 tests pass (`test_met_era5land`, `test_met_driver`); output files record the humidity formula. ⬜ `example_biophysics` from the archive against the `legacy_file` run. |
+| **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ✅ **2026-09-26** (see the §15 status note): `format = "era5land"`, site domain, box selection in the library; the §15.6 tests pass (`test_met_era5land`, `test_met_driver`); output files record the humidity formula; July 2024 at Ithaca from the archive matches the `legacy_file` run to quantization (§15 status note). |
 | **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ✅ `scripts/download_era5land.py` removed and its references moved to the new tools (2026-09-26, #280); `prep_era5land_forcing.py` reads their box files. ⬜ Remove `scripts/prep_era5land_forcing.py` and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
 
