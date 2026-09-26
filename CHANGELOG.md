@@ -35,6 +35,20 @@ before and after.
     implemented.
   - `MEDS_POLYGON_RUNTIME_PLAN.md` designs regional runs as an OpenMP loop over polygons, without
     MPI.
+- **The global monthly `ED_ERA5land` archive builder** (#280).
+  - `build_era5land_static.py` writes the static file: a valid-data mask defined from the data,
+    ERA5-Land orography and land fraction.
+  - `build_era5land_archive.py` writes one global file per variable per month,
+    `ED_ERA5land_<Var>_<YYYYMM>.nc`, flat in the archive folder:
+    - `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as delivered; `Rainf`, `SWdown`, `LWdown`
+      de-accumulated;
+    - month-long chunks, and quantized;
+    - it checks every hour against the static mask and plausibility bounds, records each file in a
+      manifest with its checksum, and deletes raw files once verified.
+  - The July 2022 pilot built in 457 s on 8 cores (16.0 GB). Its New York values match the
+    independent box output to 0.0039 K, the quantization.
+  - Only GDEX raw files are supported so far; the CDS path follows when years before July 2002 are
+    needed.
 
 ## [0.2.2] — 2026-09-25
 
