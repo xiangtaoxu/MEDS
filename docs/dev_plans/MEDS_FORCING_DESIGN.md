@@ -13,8 +13,10 @@
 > - ✅ The daily air-temperature accumulator feeding phenology.
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
-> - ✅ Download tools, written and tested; uncommitted when this was written.
-> - ⬜ Post-processing into a global per-variable monthly archive.
+> - ✅ Download tools (F1, PR #279).
+> - ✅ The global per-variable monthly archive builder (F2) for the GDEX path. The pilot month,
+>   July 2022, is built and verified (§13.2, §19); the CDS path follows when pre-2002 years are
+>   needed.
 > - ⬜ A reader upgrade (F4): `met_source`, `data_path`, site or box domains, monthly block reads,
 >   and internal conversion of dewpoint and wind components.
 > - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
@@ -1479,7 +1481,20 @@ resume, and a JSON-lines transfer log.
   identical no-data cells.
 - **Its role after F2:** a portable box-extract tool.
 
-### 13.2 Target (F2): the global monthly archive — ⬜
+### 13.2 The global monthly archive (F2) — ✅ GDEX path, pilot July 2022 built 2026-09-26
+
+**Implementation:**
+- **`build_era5land_static.py`** writes the static file (§14.3). It fetches the GDEX invariants,
+  defines the valid mask from a raw data file, and deletes the raw invariants afterwards.
+- **`build_era5land_archive.py`** builds the monthly files, with one process per variable-month
+  (`--workers`):
+  - it checks every rule below, writes via `.part` files, and records each output in
+    `manifest.json` with its sha256;
+  - it deletes the variable-month's raw files once they are verified (OD2);
+  - reruns skip what the manifest records;
+  - `--rows` builds a debug subset.
+- **Not yet implemented:** the CDS source path (`--source cds`).
+
 
 **Unit of work:** one month × all 8 raw variables, producing 8 output files. De-accumulating `tp`,
 `ssrd` and `strd` needs the **first stamp of the next month**. GDEX's month-end file contains it;
@@ -1537,12 +1552,17 @@ been written, has passed the gates, and is recorded in the manifest with checksu
 
 ### 14.1 Files (relative to the installation's `data_path`)
 
-- **Data files:** `<Var>/<YYYY>/ED_ERA5land_<Var>_<YYYYMM>.nc`, one variable, one month, the whole
-  globe.
-- **Static file:** `static/ED_ERA5land_static.nc`, one for the whole archive.
+- **Data files:** `ED_ERA5land_<Var>_<YYYYMM>.nc`, one variable, one month, the whole globe.
+- **Static file:** `ED_ERA5land_static.nc`, one for the whole archive.
+- **The layout is flat:** every file sits directly in `data_path`, with no subfolders. The names
+  carry the variable and month, so a prefix glob selects any subset, and 45 years is about 4,300
+  files.
 - **Metadata:** a `README` and a `manifest.json` (checksums, source per month, processing version).
-- **Size:** about **1.81 GB per variable-month** (measured, §19). With 8 variables that is about
-  175 GB per year, **about 7.8 TB for 45 years**.
+- **Size:** the July 2022 pilot came to **16.0 GB for the 8 variables** (§19). That is about
+  190 GB per year, **about 8.6 TB for 45 years**.
+  - `Tair`, `Tdew` 1.8 GB each; `PSurf` 2.3; `u10`, `v10` 2.7 each; `Rainf` 1.7; `SWdown` 1.3;
+    `LWdown` 1.7.
+  - The signed, noisy wind components compress least.
 
 ### 14.2 Layout inside each data file
 
@@ -1576,7 +1596,7 @@ been written, has passed the gates, and is recorded in the manifest with checksu
 
 ### 14.3 Static file
 
-`static/ED_ERA5land_static.nc` holds `lat`, `lon` and:
+`ED_ERA5land_static.nc` holds `lat`, `lon` and:
 
 | Variable | Meaning |
 |---|---|
@@ -1609,8 +1629,8 @@ and the lapse corrections.
 met_source      = "era5land"          # "era5land" (implemented) | "legacy_file" (the §7.1 single file) | later: "nldas3", …
 data_path       = "<installation-specific path to the ED_ERA5land archive>"
 # file_template / static_file default per met_source; override only if the archive is laid out differently:
-# file_template = "{data_path}/{var}/{yyyy}/ED_ERA5land_{var}_{yyyy}{mm}.nc"
-# static_file   = "{data_path}/static/ED_ERA5land_static.nc"
+# file_template = "{data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc"
+# static_file   = "{data_path}/ED_ERA5land_static.nc"
 domain          = "site"              # "site" (one cell, from [site].latitude/longitude) | "box"
 box_nwse        = [45.1, -79.8, 40.4, -71.8]   # used when domain = "box" (the polygon runtime)
 max_distance_km = 15.0                # a site on a no-data cell uses the nearest valid cell within this, else error
@@ -1711,7 +1731,7 @@ All build and pass on ifx; nvfortran as well wherever it is available (CLAUDE.md
 ## 16. Later products (a space kept open)
 
 Each product becomes a **source adapter**: download, post-process to the same archive convention
-(`ED_<PRODUCT>/<Var>/<YYYY>/ED_<PRODUCT>_<Var>_<YYYYMM>.nc` plus a static file), and a `met_source`
+(`ED_<PRODUCT>/ED_<PRODUCT>_<Var>_<YYYYMM>.nc` plus a static file, flat), and a `met_source`
 entry in the reader. Each gets its own subsection here when work starts, and its facts are
 re-verified then.
 
@@ -1729,9 +1749,9 @@ become `scripts/prepare_forcing/`.
 | Phase | Content | Status and acceptance |
 |---|---|---|
 | **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
-| **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ written and tested; commit and PR outstanding |
-| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ⬜ The pilot month, **July 2022 from GDEX** (OD1), builds, passes the gates and deletes its raw files. An independent box extract matches §13.1 output. The CDS path is validated on one month when pre-2002 years are first needed. |
-| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ⬜ Manifest complete; site spot checks against the CDS point series pass. |
+| **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
+| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **GDEX path, 2026-09-26.** July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. ⬜ The CDS path: implement and validate on one month when pre-2002 years are first needed. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1). ⬜ Further years when chosen; site spot checks against the CDS point series. |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
 | **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ⬜ Remove `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py`, and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
@@ -1804,3 +1824,17 @@ become `scripts/prepare_forcing/`.
 | North America, chunk-column reads into (cell, time) | **5.0 s** (326,380 valid cells) |
 | North America, one hyperslab | 24–34 s |
 | MEDS-style 1×1 reads, one site-month | 0.08 s |
+
+**F2 pilot build, July 2022 from GDEX** (2026-09-26; 8 worker processes on one 40-core Slurm node,
+raw pool and archive on the same NFS-mounted storage):
+
+| Item | Result |
+|---|---|
+| Build time | **457 s wall** for all 8 variables (308–449 s each, one process per variable-month) |
+| Download of the month's raw files | 21.7 GB (7 variables) in 139 s, 156 MB/s at 4 streams |
+| Output | 16.0 GB. Each file `(744, 1801, 3600)`, chunks `(744, 16, 16)`, 10,444 chunk columns written (59% empty, never written) |
+| Checks | no-data pattern identical to the static mask at every hour; every value inside the §13.2 bounds; `Tdew − Tair` at most 0.008 K over 235 M sampled cell-hours |
+| Against an independent box | New York `Tair` matches the §13.1 box output with identical no-data cells, largest difference 0.0039 K |
+| De-accumulation | daily sums of `Rainf` match the raw 00 UTC accumulations to 0.0007 mm at four test cells, checked on a subset before the raw files were deleted |
+| Site read | all 8 variables for one cell, one chunk column each: 49–62 ms |
+| Static file | 2,212,863 valid cells; 16.8 MB |
