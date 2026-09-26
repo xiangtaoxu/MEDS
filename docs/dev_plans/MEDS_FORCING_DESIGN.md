@@ -14,9 +14,9 @@
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
 > - ✅ Download tools (F1, PR #279).
-> - ✅ The global per-variable monthly archive builder (F2) for the GDEX path. The pilot month,
->   July 2022, is built and verified (§13.2, §19); the CDS path follows when pre-2002 years are
->   needed.
+> - ✅ The global per-variable monthly archive builder (F2), from GDEX or CDS raw files. July 2022
+>   (GDEX, the pilot) and June 2022 (CDS) are built and verified; the CDS build is bit-identical to
+>   GDEX (§13.2, §19).
 > - ⬜ A reader upgrade (F4): `met_source`, `data_path`, site or box domains, monthly block reads,
 >   and internal conversion of dewpoint and wind components.
 > - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
@@ -30,7 +30,7 @@
 > The overridden subsections carry an **Update 2026-09-26** note, and none is renumbered.
 >
 > **Still open:**
-> - ⬜ the forcing-data phases F2–F6 (§17);
+> - ⬜ the forcing-data phases F3 (further years) to F6 (§17);
 > - ⬜ a transient CO₂ stream (ROADMAP #184);
 > - ⬜ retiring the `apply_met_to_ctx` shim (§6.2);
 > - ⬜ echoing forcing to the diagnostic output (§6.7), not found in the output config.
@@ -1435,7 +1435,7 @@ resume, and a JSON-lines transfer log.
 | Tool | Fetches | Notes |
 |---|---|---|
 | `download_era5land_gdex.py` | GDEX's global 5-day files (6 per variable per month) into a raw pool that mirrors GDEX's directory tree | Needs no box. Checks byte count and hour count. Parallel streams: default 4, capped at GDEX's per-user limit of 10. Discovers coverage and stops with a clear message before it. |
-| `download_era5land_cds.py` | CDS `reanalysis-era5-land` for a box (`area`), or the globe | GRIB by default. One variable per request, whole months grouped (12 per GRIB request, 6 per NetCDF), a partial month on its own, and one tiny request for the closing 00:00 stamp. Checks the GRIB message count. Logs queue and transfer time separately. |
+| `download_era5land_cds.py` | CDS `reanalysis-era5-land` for a box (`area`), or the globe (`--bbox global`: no `area` key, the native 1801 × 3600 grid) | GRIB by default. One variable per request, whole months grouped (12 per GRIB request, 6 per NetCDF), a partial month on its own, and one tiny request for the closing 00:00 stamp. `--parallel` (default 3) keeps several requests in the CDS queue at once. Checks the GRIB message count. Logs queue and transfer time separately. |
 | `era5land_common.py` | shared helpers | Variable catalogue, box and date handling, GDEX file naming, box selection including across 0° and 180°, group-writable output. |
 | `environment.yml` | the tools' environment | numpy, netcdf4, cdsapi ≥ 0.7.7, eccodes, python-eccodes; conda-forge only. |
 
@@ -1481,7 +1481,7 @@ resume, and a JSON-lines transfer log.
   identical no-data cells.
 - **Its role after F2:** a portable box-extract tool.
 
-### 13.2 The global monthly archive (F2) — ✅ GDEX path, pilot July 2022 built 2026-09-26
+### 13.2 The global monthly archive (F2) — ✅ both sources: July 2022 (GDEX) and June 2022 (CDS) built 2026-09-26
 
 **Implementation:**
 - **`build_era5land_static.py`** writes the static file (§14.3). It fetches the GDEX invariants,
@@ -1493,7 +1493,14 @@ resume, and a JSON-lines transfer log.
   - it deletes the variable-month's raw files once they are verified (OD2);
   - reruns skip what the manifest records;
   - `--rows` builds a debug subset.
-- **Not yet implemented:** the CDS source path (`--source cds`).
+- **`--source cds`** (✅ 2026-09-26) reads global GRIB from `download_era5land_cds.py --bbox global`,
+  whatever the request split:
+  - the main process indexes every GRIB message from its headers (validity time, `paramId`);
+  - each worker decodes its month one field at a time, only the coded (valid) values, into a
+    (hours × valid cells) array of about 6.6 GB, then runs the same band pipeline and checks as GDEX;
+  - each field's bitmap must equal the static mask: in full the first time a bitmap is seen, then
+    by the MD5 of its bitmap section;
+  - June 2022 `Tair` and `Rainf` built from CDS are **bit-identical** to GDEX builds (§19).
 
 
 **Unit of work:** one month × all 8 raw variables, producing 8 output files. De-accumulating `tp`,
@@ -1541,9 +1548,10 @@ A soft check warns when `Tdew` exceeds `Tair` by more than 0.5 K.
 been written, has passed the gates, and is recorded in the manifest with checksums.
 - **GDEX:** a 5-day file serves only its own month, including that month's closing stamp, so
   deletion runs month by month.
-- **CDS:** a variable-year GRIB serves all of its year's months. December also needs the first
-  stamp of the next year, from the next year's file or the closing-stamp request. So year Y's file
-  goes after year Y's December is built, and the closing-stamp file goes with it.
+- **CDS:** a GRIB file goes once every archive month it supplies a stamp to is built. A file's first
+  field (00:00 on the 1st) closes the previous month, so a year file also waits for the previous
+  December, but only when that December's other hours are in the raw pool. A June file downloaded
+  alone therefore goes with June, and the closing-stamp file goes with the month it closes.
 - **Override:** `--keep-raw` keeps the files, for debugging.
 - **Consequence (accepted):** reprocessing means downloading again. That is fast for GDEX; for
   CDS years it means the queue again.
@@ -1750,8 +1758,8 @@ become `scripts/prepare_forcing/`.
 |---|---|---|
 | **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
-| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **GDEX path, 2026-09-26.** July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. ⬜ The CDS path: implement and validate on one month when pre-2002 years are first needed. |
-| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1). ⬜ Further years when chosen; site spot checks against the CDS point series. |
+| **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1, GDEX) and June 2022 (CDS test). ⬜ Further years when chosen; site spot checks against the CDS point series. |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
 | **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ⬜ Remove `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py`, and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
@@ -1838,3 +1846,17 @@ raw pool and archive on the same NFS-mounted storage):
 | De-accumulation | daily sums of `Rainf` match the raw 00 UTC accumulations to 0.0007 mm at four test cells, checked on a subset before the raw files were deleted |
 | Site read | all 8 variables for one cell, one chunk column each: 49–62 ms |
 | Static file | 2,212,863 valid cells; 16.8 MB |
+
+**F2 CDS path, June 2022** (2026-09-26; download on the login node, build on one Slurm node like the
+GDEX pilot):
+
+| Item | Result |
+|---|---|
+| Download | 16 GRIB requests (8 month requests of cost 744, days 1–31, plus 8 closing-stamp requests of cost 1), 4 in the queue at once: **about 40 min wall** for 35 GB. Queue waits 16–871 s; transfer 6–15 MB/s per request |
+| GRIB size | a global field is 5.2 MB (16-bit simple packing, only the 2,212,863 valid cells coded), 7.4 MB for `tp`, `ssrd`, `strd`; a variable-month 3.8 or 5.4 GB |
+| Header index | 5–9 s per variable-month (721 messages, headers only) |
+| Decode | coded values only plus a gather: 0.05 s per field against 0.3 s for the full-grid decode; bitmaps checked by MD5 (5 ms) after one full check |
+| Build time | **411 s wall** for 7 variables on 8 cores (268–324 s each); `Tair` alone 178 s on 1 core. About 8.7 GB per worker |
+| Checks | every gate passed; `Tdew − Tair` at most 0.008 K over 227 M sampled cell-hours |
+| Against GDEX | `Tair` and `Rainf` built from GDEX raw files for the same month: **bit-identical** over 1.59 billion cell-hours each, identical no-data cells, monthly rain totals identical |
+| Output | 15.4 GB for the 8 variables (30 days) |

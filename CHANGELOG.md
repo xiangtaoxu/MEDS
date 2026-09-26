@@ -45,10 +45,14 @@ before and after.
     - month-long chunks, and quantized;
     - it checks every hour against the static mask and plausibility bounds, records each file in a
       manifest with its checksum, and deletes raw files once verified.
-  - The July 2022 pilot built in 457 s on 8 cores (16.0 GB). Its New York values match the
+  - It reads GDEX raw files or global CDS GRIB (`--source cds`). The CDS path indexes the GRIB
+    headers and decodes only the valid cells, one field at a time.
+  - The July 2022 pilot (GDEX) built in 457 s on 8 cores (16.0 GB). Its New York values match the
     independent box output to 0.0039 K, the quantization.
-  - Only GDEX raw files are supported so far; the CDS path follows when years before July 2002 are
-    needed.
+  - June 2022 was built from CDS in 411 s on 8 cores; its `Tair` and `Rainf` are bit-identical to a
+    GDEX build of the same month.
+- **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
+  (default 3) keeps several requests in the CDS queue at once (#280).
 
 ## [0.2.2] — 2026-09-25
 

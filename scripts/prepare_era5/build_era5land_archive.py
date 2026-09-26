@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """build_era5land_archive.py -- build the global per-variable monthly ED_ERA5land archive from raw
-GDEX files (docs/dev_plans/MEDS_FORCING_DESIGN.md sections 13.2 and 14).
+GDEX files or global CDS GRIB files (docs/dev_plans/MEDS_FORCING_DESIGN.md sections 13.2 and 14).
 
 Output, one file per variable per month, directly in data_path (no subfolders; the name carries the
 variable and month, so a prefix glob selects any subset):
@@ -17,23 +17,37 @@ Variables: Tair, Tdew, PSurf, u10, v10 (as delivered) and Rainf, SWdown, LWdown 
 SWdown only; converted to kg m-2 s-1 and W m-2). Each comes from exactly one raw variable, so every
 variable-month is independent and --workers builds them in parallel processes.
 
-Checks, all hard errors (MEDS never gap-fills): the month's six GDEX files give exactly the month's
-hourly stamps; the no-data pattern equals the static file's `valid` mask at every hour; every value is
-inside the variable's plausibility bounds. Soft check (warning, recorded in the manifest): Tdew above
-Tair by more than 0.5 K, on a sample of chunk columns.
+Sources (--source):
+  gdex  the month's six 5-day files from download_era5land_gdex.py, read in row bands.
+  cds   global GRIB files from download_era5land_cds.py --bbox global (any request split: whole months,
+        partial months, the closing 00:00 stamp). The main process indexes every
+        era5land_cds_<raw>_*.grib file in --raw-dir from the GRIB headers (validity time, paramId); a
+        duplicated stamp keeps the first copy in file-name order. Each worker decodes its month one field
+        at a time, only the coded (valid) values, into a (hours x valid cells) array: about 6.6 GB for a
+        31-day month, so size --workers to the node's memory (about 10 GB per worker).
 
-Each output is written via a .part file and recorded in <data_path>/manifest.json with its sha256. The
-variable-month's raw files are then deleted (decision OD2) unless --keep-raw. A rerun skips outputs that
-the manifest already records, unless --force. Only --source gdex is implemented; the CDS path is added
-when years before July 2002 are first needed.
+Checks, all hard errors (MEDS never gap-fills): the raw files give exactly the month's hourly stamps;
+the no-data pattern equals the static file's `valid` mask at every hour; every value is inside the
+variable's plausibility bounds. Soft check (warning, recorded in the manifest): Tdew above Tair by more
+than 0.5 K, on a sample of chunk columns.
 
-Needs the static file first (build_era5land_static.py). Example (the July 2022 pilot):
+Each output is written via a .part file and recorded in <data_path>/manifest.json with its sha256. Raw
+files are then deleted (decision OD2) unless --keep-raw: a GDEX file serves one variable-month and goes at
+once; a CDS GRIB file goes once every archive month it supplies is in the manifest, counting only months
+the raw pool holds more of than their closing stamp (see cds_index). A rerun skips outputs that the
+manifest already records, unless --force.
+
+Needs the static file first (build_era5land_static.py). Examples:
   python build_era5land_archive.py --raw-dir $ERA5LAND_ROOT/raw/gdex --data-path $ERA5LAND_ROOT/ED_ERA5land \
       --start 2022-07 --end 2022-07 --workers 8
+  python build_era5land_archive.py --source cds --raw-dir $ERA5LAND_ROOT/raw/cds \
+      --data-path $ERA5LAND_ROOT/ED_ERA5land --start 2022-06 --end 2022-06 --workers 8
 """
 import argparse
+import collections
 import concurrent.futures as cf
 import datetime as dt
+import glob
 import os
 import sys
 import time
@@ -47,6 +61,9 @@ EPOCH = dt.datetime(1970, 1, 1)
 CHUNK = 16                  # spatial chunk edge (cells)
 BAND = 144                  # rows per read band: a multiple of both the raw chunk rows (72) and CHUNK
 TDEW_MARGIN = 0.5           # [K] soft check: Tdew may not exceed Tair by more than this
+GRIB_GRID_KEYS = ("Ni", "Nj", "latitudeOfFirstGridPointInDegrees", "longitudeOfFirstGridPointInDegrees",
+                  "iDirectionIncrementInDegrees", "jDirectionIncrementInDegrees", "iScansNegatively",
+                  "jScansPositively", "jPointsAreConsecutive")
 
 
 def raw_paths(raw_dir, raw_var, year, month):
@@ -64,20 +81,22 @@ def load_static(data_path):
         return (np.asarray(d["lat"][:]), np.asarray(d["lon"][:]), np.asarray(d["valid"][:]).astype(bool))
 
 
-def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
-    """Build one archive variable-month. Runs in its own process. Returns a status string."""
+def lon_order(rlon, lon_out):
+    """Column order taking raw longitudes (0..360) to the archive's -180..180, checked against the static file."""
+    lon180 = np.where(rlon > 180.0, rlon - 360.0, rlon)
+    order = np.argsort(lon180, kind="stable")
+    if len(order) != len(lon_out) or not np.allclose(lon180[order], lon_out, atol=1e-3):
+        raise RuntimeError("raw longitudes do not match the static file")
+    return order
+
+
+def gdex_reader(spec, year, month, raw_dir, lon_out, expect):
+    """Open the month's six GDEX files and check their stamps. Returns (read_band, raw paths, close)."""
     from netCDF4 import Dataset, num2date
-    spec = common.ARCHIVE_VARIABLES[var]
-    t_start = time.monotonic()
-    lat, lon_out, valid = load_static(data_path)
-    first, last = common.month_interval(year, month)
-    nt = common.stamps_between(first, last)
     paths = raw_paths(raw_dir, spec["raw"], year, month)
     missing = [p for p in paths if not os.path.exists(p)]
     if missing:
-        raise RuntimeError(f"{var} {year}-{month:02d}: {len(missing)} raw file(s) missing, e.g. {missing[0]}")
-
-    # time axis across the month's files must be exactly the month's hours
+        raise RuntimeError(f"{len(missing)} raw file(s) missing, e.g. {missing[0]}")
     stamps, srcs = [], []
     for p in paths:
         d = Dataset(p)
@@ -86,14 +105,132 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
                    num2date(tv[:], tv.units, getattr(tv, "calendar", "standard"), only_use_cftime_datetimes=False)]
         srcs.append(d)
         rlon = np.asarray(d["longitude"][:], dtype=float)
-    expect = [first + dt.timedelta(hours=k) for k in range(nt)]
     if stamps != expect:
-        raise RuntimeError(f"{var} {year}-{month:02d}: raw stamps are not the month's {nt} hours "
+        raise RuntimeError(f"raw stamps are not the month's {len(expect)} hours "
                            f"({stamps[0]} .. {stamps[-1]}, {len(stamps)} stamps)")
-    order = np.argsort(np.where(rlon > 180.0, rlon - 360.0, rlon), kind="stable")
-    if not np.allclose(np.where(rlon > 180.0, rlon - 360.0, rlon)[order], lon_out, atol=1e-3):
-        raise RuntimeError("raw longitudes do not match the static file")
-    hour_is_01 = np.array([s.hour == 1 for s in stamps])
+    order = lon_order(rlon, lon_out)
+
+    def read_band(r0, r1):
+        band = np.concatenate([np.ma.filled(d[spec["raw"]][:, r0:r1, :], np.nan).astype(np.float32) for d in srcs])
+        return band[:, :, order]
+
+    def close():
+        for d in srcs:
+            d.close()
+    return read_band, paths, close
+
+
+def cds_reader(messages, lat, lon_out, valid, expect):
+    """Decode the month's GRIB fields, one at a time, into a (hours x valid cells) array. Only the coded (valid)
+    values are decoded; each field's bitmap must equal the static mask (checked in full the first time a bitmap
+    section is seen, then by its MD5). `messages` holds (path, offset, size) per stamp, None where missing."""
+    import eccodes
+    absent = [k for k, m in enumerate(messages) if m is None]
+    if absent:
+        raise RuntimeError(f"{len(absent)} of {len(expect)} hourly fields missing from the CDS GRIB files, "
+                           f"first {expect[absent[0]]:%Y-%m-%d %H}:00")
+    ny, nx = valid.shape
+    cum = np.concatenate([[0], np.cumsum(valid.sum(axis=1))])   # valid cells before each row (row-major packing)
+    packed = np.empty((len(messages), int(cum[-1])), np.float32)
+    files, grid, perm, bitmaps_ok = {}, None, None, set()
+    try:
+        for k, (path, offset, size) in enumerate(messages):
+            if path not in files:
+                files[path] = open(path, "rb")
+            files[path].seek(offset)
+            h = eccodes.codes_new_from_message(files[path].read(size))
+            try:
+                g = tuple(eccodes.codes_get(h, key) for key in GRIB_GRID_KEYS)
+                if grid is None:
+                    ni, nj, lat0, lon0, dlon, dlat, ineg, jpos, jcons = g
+                    rlat = lat0 + (dlat if jpos else -dlat) * np.arange(nj)
+                    if (nj, ineg, jcons) != (ny, 0, 0) or not np.allclose(rlat, lat, atol=1e-3):
+                        raise RuntimeError(f"{os.path.basename(path)}: GRIB grid {g} is not the static file's grid")
+                    order = lon_order(np.mod(lon0 + dlon * np.arange(ni), 360.0), lon_out)
+                    valid_raw = valid[:, np.argsort(order)]     # the static mask in raw column order
+                    index = np.full(valid.shape, -1, np.int64)
+                    index[valid_raw] = np.arange(int(cum[-1]))  # coded values run row-major over the raw grid
+                    perm = index[:, order][valid]               # coded-value index of each archive valid cell
+                    grid = g
+                elif g != grid:
+                    raise RuntimeError(f"{os.path.basename(path)}: GRIB grid changes at {expect[k]}")
+                if not eccodes.codes_get(h, "bitmapPresent"):
+                    raise RuntimeError(f"no bitmap at {expect[k]:%Y-%m-%d %H}:00: every cell coded, unlike the static mask")
+                md5 = eccodes.codes_get(h, "md5Section3" if eccodes.codes_get(h, "editionNumber") == 1 else "md5Section6")
+                if md5 not in bitmaps_ok:
+                    bitmap = eccodes.codes_get_array(h, "bitmap").reshape(ny, nx).astype(bool)
+                    if not np.array_equal(bitmap, valid_raw):
+                        raise RuntimeError(f"no-data pattern differs from the static mask at {expect[k]:%Y-%m-%d %H}:00 "
+                                           f"({int((bitmap != valid_raw).sum())} cells)")
+                    bitmaps_ok.add(md5)
+                packed[k] = eccodes.codes_get_double_array(h, "codedValues")[perm]
+            finally:
+                eccodes.codes_release(h)
+    finally:
+        for fh in files.values():
+            fh.close()
+
+    def read_band(r0, r1):
+        band = np.full((len(messages), r1 - r0, nx), np.nan, np.float32)
+        band[:, valid[r0:r1]] = packed[:, cum[r0]:cum[r1]]
+        return band
+    return read_band
+
+
+def archive_month(stamp):
+    """(year, month) of the archive file holding an end-stamped hour: 00:00 on the 1st closes the previous month."""
+    s = stamp - dt.timedelta(hours=1)
+    return s.year, s.month
+
+
+def cds_index(raw_dir, raw_var):
+    """Index the variable's CDS GRIB files from their headers. Returns ({stamp: (path, offset, size)}, keeping
+    the first copy of a duplicated stamp, and {path: the archive months that must be built before the file is
+    deleted}). Those are the months the file supplies a stamp to, counting only months the pool holds more of
+    than their closing stamp: a June file's first field (00:00 on 1 June) closes May, but holds the file back
+    only if May's other hours are in the pool too."""
+    import eccodes
+    param = int(common.VARIABLES[raw_var][2].split("_")[1])
+    where, supplies = {}, {}
+    for path in sorted(glob.glob(os.path.join(raw_dir, f"era5land_cds_{raw_var}_*.grib"))):
+        stamps = []
+        with open(path, "rb") as fh:
+            while (h := eccodes.codes_grib_new_from_file(fh, headers_only=True)) is not None:
+                try:
+                    vdate, vtime = eccodes.codes_get(h, "validityDate"), eccodes.codes_get(h, "validityTime")
+                    pid = eccodes.codes_get(h, "paramId")
+                    offset, size = eccodes.codes_get_message_offset(h), eccodes.codes_get_message_size(h)
+                finally:
+                    eccodes.codes_release(h)
+                if pid != param:
+                    raise SystemExit(f"{path}: paramId {pid}, expected {param} for {raw_var}")
+                stamp = dt.datetime.strptime(f"{vdate:08d}{vtime:04d}", "%Y%m%d%H%M")
+                stamps.append(stamp)
+                where.setdefault(stamp, (path, offset, size))
+        supplies[path] = {archive_month(s) for s in stamps}
+    in_pool = collections.Counter(archive_month(s) for s in where)
+    return where, {p: {m for m in months if in_pool[m] > 1} for p, months in supplies.items()}
+
+
+def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None, cds=None):
+    """Build one archive variable-month. Runs in its own process. Returns a status string.
+    cds: None for GDEX raw files, else (messages, own) for this month, from cds_index()."""
+    from netCDF4 import Dataset
+    spec = common.ARCHIVE_VARIABLES[var]
+    t_start = time.monotonic()
+    lat, lon_out, valid = load_static(data_path)
+    first, last = common.month_interval(year, month)
+    nt = common.stamps_between(first, last)
+    expect = [first + dt.timedelta(hours=k) for k in range(nt)]
+    if cds is None:
+        read_band, paths, close = gdex_reader(spec, year, month, raw_dir, lon_out, expect)
+        source = "NSF NCAR GDEX d633008 (ERA5-Land hourly, GDEX subset of the Copernicus CDS product)"
+    else:
+        messages, own = cds
+        read_band, close = cds_reader(messages, lat, lon_out, valid, expect), (lambda: None)
+        paths = sorted(own)
+        source = "Copernicus Climate Change Service Climate Data Store, reanalysis-era5-land (ERA5-Land hourly), GRIB"
+    hour_is_01 = np.array([s.hour == 1 for s in expect])
 
     out = common.archive_file(data_path, var, year, month)
     os.makedirs(os.path.dirname(out), exist_ok=True)
@@ -124,8 +261,7 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
     if rows is not None:                                    # debugging: a latitude subset only
         row_ranges = [(r0, r1) for r0, r1 in row_ranges if r1 > rows[0] and r0 < rows[1]]
     for r0, r1 in row_ranges:
-        band = np.concatenate([np.ma.filled(d[spec["raw"]][:, r0:r1, :], np.nan).astype(np.float32) for d in srcs])
-        band = band[:, :, order]
+        band = read_band(r0, r1)
         if spec["kind"] == "accum":                         # MEDS_FORCING_DESIGN.md section 7.3
             acc = band
             band = np.empty_like(acc)
@@ -139,7 +275,7 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
         fin = np.isfinite(band)
         if not (fin == vband[None]).all():
             bad = np.argwhere(fin != vband[None])[0]
-            raise RuntimeError(f"{var} {year}-{month:02d}: no-data pattern differs from the static mask "
+            raise RuntimeError(f"no-data pattern differs from the static mask "
                                f"({int((fin != vband[None]).sum())} cell-hours; first at hour {bad[0]}, "
                                f"lat {lat[r0 + bad[1]]}, lon {lon_out[bad[2]]})")
         if vband.any():
@@ -147,20 +283,19 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
             vmin, vmax = min(vmin, lo), max(vmax, hi)
             b0, b1 = spec["bounds"]
             if lo < b0 or hi > b1:
-                raise RuntimeError(f"{var} {year}-{month:02d}: values {lo:.6g}..{hi:.6g} outside bounds "
+                raise RuntimeError(f"values {lo:.6g}..{hi:.6g} outside bounds "
                                    f"[{b0:g}, {b1:g}] in rows {r0}-{r1}")
         for j0 in range(0, r1 - r0, CHUNK):
             for i0 in range(0, nx, CHUNK):
                 if vband[j0:j0 + CHUNK, i0:i0 + CHUNK].any():
                     out_v[:, r0 + j0:r0 + j0 + CHUNK, i0:i0 + CHUNK] = band[:, j0:j0 + CHUNK, i0:i0 + CHUNK]
                     written += 1
-    for d in srcs:
-        d.close()
+    close()
 
     dst.Conventions = "CF-1.10"
     dst.title = f"ED_ERA5land {var} {year}-{month:02d}"
     dst.product = "ERA5-Land hourly"
-    dst.source = "NSF NCAR GDEX d633008 (ERA5-Land hourly, GDEX subset of the Copernicus CDS product)"
+    dst.source = source
     dst.processing_version = PROCESSING_VERSION
     dst.time_zone = "UTC"
     dst.avg_convention = "end"
@@ -173,15 +308,24 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None):
     os.replace(part, out)
     common.update_manifest(data_path, f"{var}/{year:04d}{month:02d}", dict(
         file=os.path.relpath(out, data_path), bytes=os.path.getsize(out), sha256=common.sha256_file(out),
-        source="gdex", raw_files=[os.path.relpath(p, raw_dir) for p in paths], stamps=nt,
+        source="gdex" if cds is None else "cds", raw_files=[os.path.relpath(p, raw_dir) for p in paths], stamps=nt,
         min=vmin, max=vmax, chunk_columns_written=written, processing_version=PROCESSING_VERSION,
         seconds=round(time.monotonic() - t_start, 1),
         created_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")))
     deleted = 0
-    if not keep_raw:                                        # OD2: a GDEX file serves only this variable-month
+    if not keep_raw and cds is None:                        # OD2: a GDEX file serves only this variable-month
         for p in paths:
             os.remove(p)
             deleted += 1
+    elif not keep_raw:                                      # OD2: a CDS file goes once all its months are built
+        done = common.read_manifest(data_path)
+        for p, months in cds[1].items():
+            if months and all(f"{var}/{y:04d}{m:02d}" in done for y, m in months):
+                try:
+                    os.remove(p)
+                    deleted += 1
+                except FileNotFoundError:                   # another worker finished the file's last month too
+                    pass
     return (f"  wrote {os.path.relpath(out, data_path)}  {os.path.getsize(out) / 1e9:.2f} GB  "
             f"{vmin:.6g}..{vmax:.6g}  {written} chunk columns  {time.monotonic() - t_start:.0f} s"
             f"{f'  (deleted {deleted} raw files)' if deleted else ''}")
@@ -214,8 +358,9 @@ def tdew_check(data_path, year, month, sample_every=7):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Build the global per-variable monthly ED_ERA5land archive.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--source", default="gdex", choices=("gdex", "cds"), help="raw source (only gdex implemented)")
-    ap.add_argument("--raw-dir", required=True, help="raw pool root (download_era5land_gdex.py --out-dir)")
+    ap.add_argument("--source", default="gdex", choices=("gdex", "cds"), help="raw source (default gdex)")
+    ap.add_argument("--raw-dir", required=True, help="raw pool root: the --out-dir of download_era5land_gdex.py, "
+                                                     "or of download_era5land_cds.py --bbox global for --source cds")
     ap.add_argument("--data-path", required=True, help="archive root (the reader's data_path)")
     ap.add_argument("--start", required=True, help="first month, YYYY-MM")
     ap.add_argument("--end", required=True, help="last month, YYYY-MM (inclusive)")
@@ -227,9 +372,6 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     common.use_group_umask()
-    if args.source == "cds":
-        sys.exit("--source cds is not implemented yet: it is added when years before July 2002 are first needed "
-                 "(MEDS_FORCING_DESIGN.md section 17, F2)")
     names = list(common.ARCHIVE_VARIABLES) if args.variables.strip().lower() == "all" else \
         [v.strip() for v in args.variables.split(",")]
     unknown = [v for v in names if v not in common.ARCHIVE_VARIABLES]
@@ -246,9 +388,25 @@ def main(argv=None):
     print(f"ED_ERA5land archive: {len(months)} month(s) x {len(names)} variable(s); {len(jobs)} to build, "
           f"{skipped} already in the manifest; workers={args.workers}", flush=True)
     t0 = time.monotonic()
+    cds = {}                                                # (var, year, month) -> (messages, own)
+    if args.source == "cds":
+        for raw in dict.fromkeys(common.ARCHIVE_VARIABLES[v]["raw"] for v, _, _ in jobs):
+            t = time.monotonic()
+            where, own = cds_index(args.raw_dir, raw)
+            print(f"  indexed {len(own)} CDS GRIB file(s) for {raw}: {len(where)} stamps, "
+                  f"{time.monotonic() - t:.1f} s", flush=True)
+            for v, y, m in jobs:
+                if common.ARCHIVE_VARIABLES[v]["raw"] != raw:
+                    continue
+                first, last = common.month_interval(y, m)
+                messages = [where.get(first + dt.timedelta(hours=k))
+                            for k in range(common.stamps_between(first, last))]
+                used = {msg[0] for msg in messages if msg is not None}
+                cds[(v, y, m)] = (messages, {p: own[p] for p in used})
     failures = 0
     with cf.ProcessPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        futs = {pool.submit(build_one, v, y, m, args.raw_dir, args.data_path, args.keep_raw, rows): (v, y, m)
+        futs = {pool.submit(build_one, v, y, m, args.raw_dir, args.data_path, args.keep_raw, rows,
+                            cds.get((v, y, m))): (v, y, m)
                 for v, y, m in jobs}
         for fut in cf.as_completed(futs):
             v, y, m = futs[fut]

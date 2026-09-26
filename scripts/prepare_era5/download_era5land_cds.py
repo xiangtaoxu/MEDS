@@ -18,7 +18,8 @@ does not change the cost):
   * a partially requested month gets its own request with an explicit day list;
   * one tiny extra request for (end + 1 day) 00:00, the stamp that closes the last requested hour.
 
-Queue time and transfer time are logged separately in download_log.jsonl.
+Queue time and transfer time are logged separately in download_log.jsonl. --parallel submits several
+requests at once (default 3); --bbox global requests the native global grid (no area key).
 
 Needs ~/.cdsapirc (two lines: "url: https://cds.climate.copernicus.eu/api" and "key: <token>") and
 the ERA5-Land licence accepted once on the CDS website.
@@ -29,9 +30,11 @@ Example (New York State, July-August 2022, 2 m temperature):
 """
 import argparse
 import calendar
+import concurrent.futures as cf
 import datetime as dt
 import os
 import sys
+import threading
 import zipfile
 
 import era5land_common as common
@@ -46,8 +49,9 @@ EXTENSION = {"grib": "grib", "netcdf": "nc"}
 def plan_requests(variable, d0, d1, data_format, area):
     """List of (tag, request, expected_stamps) for one variable over the days d0..d1."""
     cds_name = common.VARIABLES[variable][0]
-    base = {"variable": [cds_name], "area": list(area), "data_format": data_format,
-            "download_format": "unarchived"}
+    base = {"variable": [cds_name], "data_format": data_format, "download_format": "unarchived"}
+    if area is not None:                    # no area key = the native global grid (1801 x 3600, lon 0..359.9)
+        base["area"] = list(area)
     full, partial = [], []
     for first in common.month_starts(dt.datetime.combine(d0, dt.time()), dt.datetime.combine(d1, dt.time())):
         ndays = calendar.monthrange(first.year, first.month)[1]
@@ -127,23 +131,28 @@ def raw_complete(path, expected, data_format):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Download ERA5-Land hourly fields for a lat/lon box from the CDS.",
                                  formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--bbox", required=True, help="N,W,S,E in degrees (snapped outward to the 0.1 deg grid)")
+    ap.add_argument("--bbox", required=True,
+                    help="N,W,S,E in degrees (snapped outward to the 0.1 deg grid), or 'global' for the native "
+                         "global grid (no area key; avoids a duplicated 180 deg column)")
     ap.add_argument("--start", required=True, help="first day, YYYY-MM-DD (UTC)")
     ap.add_argument("--end", required=True, help="last day, YYYY-MM-DD (UTC, inclusive)")
     ap.add_argument("--variables", default="all", help=f"comma list from {list(common.VARIABLES)}, or 'all'")
     ap.add_argument("--out-dir", required=True, help="directory for the raw files, as the CDS delivers them")
     ap.add_argument("--format", choices=("grib", "netcdf"), default="grib",
                     help="what the CDS delivers: grib (default; half the requests) or netcdf")
+    ap.add_argument("--parallel", type=int, default=3,
+                    help="requests submitted at once (default 3); the CDS queues them and runs as many as it allows")
     ap.add_argument("--dry-run", action="store_true", help="print the request plan and costs, download nothing")
     args = ap.parse_args(argv)
 
     common.use_group_umask()
-    area = common.align_bbox(common.parse_bbox(args.bbox))
+    area = None if args.bbox.strip().lower() == "global" else common.align_bbox(common.parse_bbox(args.bbox))
     d0, d1 = common.parse_dates(args.start, args.end)
     variables = common.parse_variables(args.variables)
 
     plan = [(v, tag, req, n) for v in variables for tag, req, n in plan_requests(v, d0, d1, args.format, area)]
-    print(f"CDS {DATASET}: {d0}..{d1}, box [N,W,S,E]={list(area)}, {len(variables)} variable(s), "
+    print(f"CDS {DATASET}: {d0}..{d1}, box [N,W,S,E]={list(area) if area else 'global (native grid)'}, "
+          f"{len(variables)} variable(s), "
           f"{len(plan)} request(s), format={args.format}")
     for v, tag, req, n in plan:
         cost = request_cost(req, args.format)
@@ -161,18 +170,21 @@ def main(argv=None):
         sys.exit(f"{err}: conda env create -f scripts/prepare_era5/environment.yml")
     if not os.path.exists(os.path.expanduser("~/.cdsapirc")) and not os.environ.get("CDSAPI_KEY"):
         sys.exit("no CDS credentials: create ~/.cdsapirc with the url and key lines (see --help)")
-    client = cdsapi.Client(quiet=True, progress=False)
     os.makedirs(args.out_dir, exist_ok=True)
     log = common.RunLog(args.out_dir, "download_log.jsonl")
+    lock = threading.Lock()
+    local = threading.local()
 
-    for v, tag, req, n in plan:
+    def fetch(item):
+        """One request: queue, transfer, verify. Each thread keeps its own CDS client."""
+        v, tag, req, n = item
         raw_path = os.path.join(args.out_dir, f"era5land_cds_{v}_{tag}.{EXTENSION[args.format]}")
         if raw_complete(raw_path, n, args.format):
-            print(f"  skip  {os.path.basename(raw_path)} (already complete)")
-            continue
-        print(f"  get   {os.path.basename(raw_path)} ...", flush=True)
+            return f"  skip  {os.path.basename(raw_path)} (already complete)", True
+        if not hasattr(local, "client"):
+            local.client = cdsapi.Client(quiet=True, progress=False)
         t0 = common.monotonic_seconds()
-        result = client.retrieve(DATASET, req)              # returns when the CDS job is complete
+        result = local.client.retrieve(DATASET, req)         # returns when the CDS job is complete
         queue_s = common.monotonic_seconds() - t0
         t0 = common.monotonic_seconds()
         result.download(raw_path + ".part")
@@ -182,13 +194,21 @@ def main(argv=None):
         os.replace(raw_path + ".part", raw_path)
         nbytes = os.path.getsize(raw_path)
         ok = raw_complete(raw_path, n, args.format)
-        log.write(source="cds", dataset=DATASET, variable=v, tag=tag, request=req, file=os.path.basename(raw_path),
-                  format=args.format, bytes=nbytes, queue_seconds=round(queue_s, 1),
-                  transfer_seconds=round(transfer_s, 2), expected_stamps=n, verified=ok)
-        print(f"        {nbytes / 1e6:.1f} MB: queue {queue_s:.0f} s, transfer {transfer_s:.1f} s "
-              f"({nbytes / 1e6 / max(transfer_s, 1e-9):.1f} MB/s), {'verified' if ok else 'VERIFY FAILED'}")
-        if not ok:
-            sys.exit(f"verification failed for {raw_path}: expected {n} time stamps")
+        with lock:
+            log.write(source="cds", dataset=DATASET, variable=v, tag=tag, request=req, file=os.path.basename(raw_path),
+                      format=args.format, bytes=nbytes, queue_seconds=round(queue_s, 1),
+                      transfer_seconds=round(transfer_s, 2), expected_stamps=n, verified=ok)
+        return (f"  got   {os.path.basename(raw_path)}  {nbytes / 1e6:.1f} MB: queue {queue_s:.0f} s, transfer "
+                f"{transfer_s:.1f} s ({nbytes / 1e6 / max(transfer_s, 1e-9):.1f} MB/s), "
+                f"{'verified' if ok else 'VERIFY FAILED'}"), ok
+
+    failures = 0
+    with cf.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
+        for message, ok in pool.map(fetch, plan):
+            print(message, flush=True)
+            failures += 0 if ok else 1
+    if failures:
+        sys.exit(f"{failures} download(s) failed verification")
     print(f"done: {args.out_dir}")
 
 
