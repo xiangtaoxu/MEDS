@@ -22,7 +22,8 @@
 > - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
 >
 > **It overrides earlier text:**
-> - the two ERA5-Land scripts of §7.2–§7.3 retire;
+> - the two ERA5-Land scripts of §7.2–§7.3 retire: `download_era5land.py` was removed on
+>   2026-09-26 (#280), and `prep_era5land_forcing.py` goes with the reader upgrade;
 > - `Qair` and wind speed are no longer computed in preprocessing (§4.3, §5.2);
 > - the single `(time, grid)` file of §7.1 continues only as `met_source = "legacy_file"`;
 > - the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`.
@@ -339,7 +340,7 @@ small, self-contained change to `CMakeLists.txt` (delete the `option`/`if`-`else
 | `src/io/meds_config_io.f90` (extend) | `[forcing]` + `[site]` key loaders (`req_*`), incl. `grid_index`, `sw_partition`, `latitude`/`longitude` | its `[fast]` block |
 | `src/driver/meds_fast_loop.f90` (edit) | per-sub-step met refresh in `run_fast_biophysics`; `build_forcing`/`fill_aenv` read a `met_forcing_t` | — |
 | `src/driver/meds_main.f90` (edit) | open the driver, seed reservoirs, thread `[site].reference_height` into `ctx%zref`, pass `fast_ctx` | — |
-| `scripts/download_era5land.py` (new) | CDS-API download of ERA5-Land for a requested lat/lon (or box) → raw ERA5-Land NetCDF (§7) | — |
+| `scripts/download_era5land.py` (new; **removed 2026-09-26**, #280, for `scripts/prepare_era5/download_era5land_cds.py` + `postprocess_era5land.py`) | CDS-API download of ERA5-Land for a requested lat/lon (or box) → raw ERA5-Land NetCDF (§7) | — |
 | `scripts/prep_era5land_forcing.py` (new) | raw ERA5-Land NetCDF → **MEDS multi-grid forcing NetCDF** (de-accumulate, unit-convert, humidity from dewpoint) (§7) | — |
 | `test/test_met_driver.f90` (new) | CTest: read multi-grid NetCDF, interpolate, disaggregate, diurnal cycle | `test_fast_loop` |
 
@@ -1071,14 +1072,16 @@ safe to add at P0 and costs one row of scalars per output record.
 > - **§7.3**, the de-accumulation recipe, which the new post-processor implements unchanged except
 >   for the clip rule.
 >
-> The retirement removes `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py` and
-> updates the references listed in §17 (F5).
+> **`scripts/download_era5land.py` was removed on 2026-09-26 (#280).** `prep_era5land_forcing.py`
+> now reads the box files of `download_era5land_cds.py` + `postprocess_era5land.py --split none`
+> (`--in` takes several files), and the references listed in §17 (F5) point there. The prep script
+> itself retires with the reader upgrade.
 
 Two standalone scripts in `scripts/` (dependency-light: `cdsapi`, `xarray`/`netCDF4`, `numpy`), split by
 concern so the slow network download is separate from the fast, re-runnable formatting:
 
-1. **`scripts/download_era5land.py`** — pulls raw ERA5-Land hourly NetCDF from the CDS for a requested
-   lat/lon (or bounding box) and date range.
+1. **`scripts/download_era5land.py`** (removed 2026-09-26) — pulled raw ERA5-Land hourly NetCDF from the
+   CDS for a requested lat/lon (or bounding box) and date range.
 2. **`scripts/prep_era5land_forcing.py`** — converts the raw ERA5-Land NetCDF into the **MEDS multi-grid
    forcing NetCDF** the Fortran reader consumes (de-accumulate fluxes, unit-convert, humidity from
    dewpoint, wind magnitude, optional SW pre-split).
@@ -1126,7 +1129,7 @@ version). A single-site file is just `grid = 1`; a multi-cell file lists each lo
 ### 7.2 `download_era5land.py` — CDS API (ERA5-Land hourly) — verified 2026-07-08
 
 *Update 2026-09-26:* superseded by `scripts/prepare_era5/download_era5land_cds.py` and
-`download_era5land_gdex.py` (§12).
+`download_era5land_gdex.py` (§12); the script itself was removed the same day (#280).
 - **The CDS facts below still hold:** the dataset id, the `~/.cdsapirc` form, and the zip fallback.
 - **The new CDS downloader sidesteps the zip** by requesting one variable per request, in GRIB by
   default.
@@ -1248,8 +1251,8 @@ reads a box of cells from it.
 - Wiring: per-sub-step met refresh in `run_fast_biophysics` (§6.2 shim); `meds_main` builds the driver,
   seeds reservoirs, passes `fast_ctx` + date (closes the gap). Per-cohort SW stays the LAI-share split of
   the **time-varying** `rad_sw_top` (real RT deferred).
-- **ERA5-Land prep scripts (§7):** `download_era5land.py` (CDS API) + `prep_era5land_forcing.py`
-  (→ MEDS multi-grid NetCDF), with **Ithaca NY** as the reference cell. The **file format is multi-grid
+- **ERA5-Land prep scripts (§7):** `download_era5land.py` (CDS API; removed 2026-09-26) +
+  `prep_era5land_forcing.py` (→ MEDS multi-grid NetCDF), with **Ithaca NY** as the reference cell. The **file format is multi-grid
   from P0** (`grid` dimension present); the reader reads `grid_index = 1`.
 - Test: `test_met_driver` reproduces a diurnal GPP/temperature cycle offline from the Ithaca file (§9).
 
@@ -1761,19 +1764,20 @@ become `scripts/prepare_forcing/`.
 | **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
 | **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1, GDEX) and June 2022 (CDS test). ⬜ Further years when chosen; site spot checks against the CDS point series. |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
-| **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ⬜ Remove `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py`, and update the references (list below). No shims. CHANGELOG. |
+| **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ✅ `scripts/download_era5land.py` removed and its references moved to the new tools (2026-09-26, #280); `prep_era5land_forcing.py` reads their box files. ⬜ Remove `scripts/prep_era5land_forcing.py` and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
 
-**References F5 must update when it retires the old scripts:**
+**References F5 must update when it retires `prep_era5land_forcing.py`** (they name it next to the
+new tools since #280):
 
 | File | Lines |
 |---|---|
-| `meds_config_main.toml` | 385–386 |
-| `src/forcing/README.md` | 69–70 |
-| `docs/science/forcing.md` | 58–60, 396 |
+| `meds_config_main.toml` | 385–387 |
+| `src/forcing/README.md` | 66–75 |
+| `docs/science/forcing.md` | 58–61, 397 |
 | `docs/ed2_comparison.md` | 319 |
-| `examples/example_biophysics/README.md` | 243–244 |
-| `examples/example_biophysics/run_example.py` | 181–182 |
+| `examples/example_biophysics/README.md` | 242–253 |
+| `examples/example_biophysics/run_example.py` | 180–182 |
 | this document's §2.1 table | (text) |
 
 **Order:**

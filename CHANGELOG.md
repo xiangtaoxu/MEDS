@@ -26,8 +26,7 @@ before and after.
 
   They run in their own `meds-era5` environment (`scripts/prepare_era5/environment.yml`). On a New
   York State box, the CDS and GDEX outputs agree to within 0.00024 K. The old
-  `scripts/download_era5land.py` and `scripts/prep_era5land_forcing.py` stay until the forcing
-  reader upgrade lands.
+  `scripts/prep_era5land_forcing.py` stays until the forcing reader upgrade lands.
 - **Forcing-data design and a polygon runtime plan** (#279).
   - `MEDS_FORCING_DESIGN.md` gains Part II (§11–§19): a global per-variable monthly `ED_ERA5land_`
     archive, and a reader upgrade that reads a site or a box from it one month at a time and
@@ -53,6 +52,13 @@ before and after.
     GDEX build of the same month.
 - **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
   (default 3) keeps several requests in the CDS queue at once (#280).
+
+### Removed
+
+- **`scripts/download_era5land.py`** (#280), replaced by `scripts/prepare_era5/download_era5land_cds.py`
+  and `postprocess_era5land.py`. `scripts/prep_era5land_forcing.py` now reads their box files
+  (`--in` takes several files), and the forcing README, science doc, config comment and the
+  `example_biophysics` instructions show the new commands.
 
 ## [0.2.2] — 2026-09-25
 

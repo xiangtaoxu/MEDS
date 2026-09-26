@@ -382,8 +382,9 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
 # constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. The file
-# is a MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with scripts/download_era5land.py
-# + scripts/prep_era5land_forcing.py. When forcing_on=true, ALL keys below are required.
+# is a MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with the tools in scripts/prepare_era5/
+# (download_era5land_cds.py, then postprocess_era5land.py --split none) followed by
+# scripts/prep_era5land_forcing.py. When forcing_on=true, ALL keys below are required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
 # longitude             = -76.50         # [deg +E] drives local solar time

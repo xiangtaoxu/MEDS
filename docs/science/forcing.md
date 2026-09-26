@@ -55,8 +55,9 @@ the cell minimising the great-circle distance to the `[site]` coordinates (`grea
 Earth radius is immaterial. Every value is read as one `(time, grid)` hyperslab of count `[1,1]` — the
 reader never loads a variable's whole time series, only the cached `time` coordinate.
 
-**Producing one from ERA5-Land.** `scripts/download_era5land.py` pulls the eight hourly variables (`t2m`,
-`d2m`, `sp`, `u10`, `v10`, `tp`, `ssrd`, `strd`) for a small box around the site from the CDS;
+**Producing one from ERA5-Land.** `scripts/prepare_era5/download_era5land_cds.py` pulls the eight hourly
+variables (`t2m`, `d2m`, `sp`, `u10`, `v10`, `tp`, `ssrd`, `strd`) for a small box around the site from
+the CDS, and `postprocess_era5land.py --split none` decodes them into one box file per variable;
 `scripts/prep_era5land_forcing.py` writes the file above — `Tair = t2m`, `PSurf = sp`, `Qair` from the
 dewpoint by (10) in the *same* Bolton form the model uses, $`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, and
 the three **accumulated** fluxes de-accumulated then unit-converted:
@@ -393,7 +394,7 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`; validated in `meds_config`, read by `meds_config_io` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
 | fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling, `apply_met_to_ctx` |
-| file production | `scripts/download_era5land.py`, `scripts/prep_era5land_forcing.py` |
+| file production | `scripts/prepare_era5/download_era5land_cds.py` and `postprocess_era5land.py`, then `scripts/prep_era5land_forcing.py` |
 | test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years |
 
 ## References
