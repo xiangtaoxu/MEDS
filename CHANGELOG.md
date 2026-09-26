@@ -53,6 +53,13 @@ before and after.
 - **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
   (default 3) keeps several requests in the CDS queue at once (#280).
 
+### Changed
+
+- **`build_era5land_archive.py --work-dir`** writes each output on another disk, such as a compute
+  node's local drive, then copies the finished file into the archive in one sequential pass that
+  also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds
+  3–4 times slower once several ran at once.
+
 ### Removed
 
 - **`scripts/download_era5land.py`** (#280), replaced by `scripts/prepare_era5/download_era5land_cds.py`
