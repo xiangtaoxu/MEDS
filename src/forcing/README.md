@@ -10,9 +10,11 @@ demography or state layer — so a prescribed driver stays low in the library gr
 ## Modules
 
 - **`meds_forcing_types`** — the runtime types. `met_forcing_t` is the instantaneous per-site
-  atmospheric state the fast loop consumes: a read-only boundary-condition value. `met_record_t` is
-  one raw file record, and `met_driver_t` is the mutable per-polygon reader buffer holding the two
-  records that bracket the model time.
+  atmospheric state the fast loop consumes: a read-only boundary-condition value, which carries the
+  wind vector as well as the speed when the source supplies components. `met_record_t` is one raw
+  file record, and `met_driver_t` is the mutable per-polygon reader buffer holding the two records
+  that bracket the model time. `met_domain_t` lists the archive cells a run reads (one for a site,
+  the valid cells of a box), and `met_month_t` holds one month of them.
 - **`meds_forcing_kernels`** — the `pure` and `elemental` math: per-variable temporal interpolation
   (linear or step) with an energy-conserving form for wind, the local apparent-solar-time transform
   (UTC plus longitude plus the equation of time), the **interval-mean-conserving** shortwave
@@ -20,9 +22,15 @@ demography or state layer — so a prescribed driver stays low in the library gr
   Weiss-Norman available), humidity conversions over the shared saturation vapour pressure,
   precipitation phase, nearest-grid matching, and the wind-height and elevation lapse corrections.
 - **`meds_met_driver`** — the reader. `met_open` / `met_advance` / `met_instant` / `met_close` over
-  the MEDS multi-grid `(time, grid)` forcing NetCDF, with a per-polygon hyperslab read, the base time
-  taken from the `time` variable's units attribute, and shortwave partitioned at ingest. Also the
-  no-file constant-climate backend, used by the tests.
+  two file sources, chosen by `[forcing].format`: the MEDS multi-grid `(time, grid)` forcing NetCDF
+  (`"netcdf"`), and the global ED_ERA5land archive (`"era5land"`), whose months it lays end to end
+  as one hourly axis so bracketing and recycling are the same code for both. Dewpoint becomes
+  specific humidity and the wind components become the speed at each stamp; shortwave is
+  partitioned at ingest. Also the no-file constant-climate backend, used by the tests.
+- **`meds_era5land_reader`** — the archive's files: path templates, the static file, site selection
+  (nearest valid cell within `max_distance_km`) and box selection (across 180°), and a month of
+  every domain cell read one chunk column at a time. It returns status codes, so each rejection is
+  testable; the reader turns them into hard errors.
 
 The `[forcing]` and `[site]` config type and all its selector codes live in
 `src/config/meds_forcing_config.f90`, so `meds_config` — the root of the dependency graph — can carry
@@ -61,10 +69,15 @@ against the energy balance's own linearization.
 The same bottom-to-top contract governs the aerodynamics call, so the in-canopy wind cascade runs in
 the right direction for multi-cohort patches.
 
-## Preparing a forcing file
+## Preparing forcing
 
-Three steps produce the file the reader consumes. The first two are the ERA5-Land tools in
-`scripts/prepare_era5/`, run in its `meds-era5` environment:
+**The ED_ERA5land archive** (`format = "era5land"`) is built once per installation with the tools in
+`scripts/prepare_era5/` (`download_era5land_gdex.py` or `download_era5land_cds.py`, then
+`build_era5land_static.py` and `build_era5land_archive.py`); a run then only names its folder in
+`data_path`. See `MEDS_FORCING_DESIGN.md` §12–§14.
+
+**A single forcing file** (`format = "netcdf"`) takes three steps. The first two are the ERA5-Land
+tools in `scripts/prepare_era5/`, run in its `meds-era5` environment:
 
 ```bash
 python scripts/prepare_era5/download_era5land_cds.py ...           # a box around the site, from the Copernicus data store
@@ -79,7 +92,8 @@ disaggregation math are documented in [`docs/science/forcing.md`](../../docs/sci
 The design record is [`docs/dev_plans/MEDS_FORCING_DESIGN.md`](../../docs/dev_plans/MEDS_FORCING_DESIGN.md).
 
 **Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, and a NetCDF round trip
-that writes and reads a two-grid file. Green under ifx and nvfortran multicore.
+that writes and reads a two-grid file, with and without the wind vector. `test/test_met_era5land.f90`
+writes a small synthetic archive and covers the archive backend end to end.
 
 ## Not here yet
 

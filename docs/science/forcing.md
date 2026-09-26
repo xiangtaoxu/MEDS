@@ -15,7 +15,9 @@ the disaggregation math is a separate `pure`/`elemental` kernel module from the 
 
 ## 1. The forcing file
 
-One format: an **unstructured multi-grid NetCDF** whose forcing variables are all shaped `(time, grid)`.
+Two sources, chosen by `[forcing].format`: a single **MEDS forcing file** (`"netcdf"`, below) and the
+global **ED_ERA5land archive** (`"era5land"`, at the end of this section). The single file is an
+**unstructured multi-grid NetCDF** whose forcing variables are all shaped `(time, grid)`.
 `time` is the record axis; `grid` is a plain *list* of locations (`grid = 1` for a single site), because
 a polygon list is a list, not a raster — a regular reanalysis tile is flattened `y×x → grid`. Variables
 marked optional below may be omitted; every other one is required.
@@ -31,6 +33,7 @@ variables:
     double elevation(grid) ["m"] ;                              // optional, not read
     float Tair(time,grid) ["K"], Qair(time,grid) ["kg kg-1"],       // cell_methods = "time: point"
           PSurf(time,grid) ["Pa"], Wind(time,grid) ["m s-1"] ;
+    float u10(time,grid), v10(time,grid) ["m s-1"] ;            // optional wind vector; see below
     float Rainf(time,grid) ["kg m-2 s-1"], LWdown(time,grid) ["W m-2"],  // cell_methods = "time: mean"
           SWdown(time,grid) ["W m-2"] ;                         // SWdown is the TOTAL; see sec. 6
     float CO2air(time,grid) ["umol mol-1"] ;                    // optional -> forcing.co2_const
@@ -43,10 +46,15 @@ variables:
 With `sw_partition = "passthrough"`, `SWdown` is replaced by four pre-split streams `SWdown_par_beam`,
 `SWdown_par_diffuse`, `SWdown_nir_beam`, `SWdown_nir_diffuse` [W m⁻²], all required.
 
-**The time axis is the only metadata the reader parses:** it takes everything after `since` in
+**The time axis is the metadata the reader parses:** it takes everything after `since` in
 `time:units` as the base instant and the `time` values as seconds from it. Record interval, averaging
-convention and shortwave scheme come from the TOML `[forcing]` block, *not* from the global attributes —
-those are for a human, and a file whose attributes disagree with the config is not detected.
+convention and shortwave scheme come from the TOML `[forcing]` block; the reader checks the file's
+record spacing and its `avg_convention` and `sw_input_kind` attributes against them and stops on a
+disagreement (#185).
+
+**The wind vector.** A file that carries `u10` and `v10` supplies the vector: the record keeps both
+components and derives the speed $`\sqrt{u_{10}^2+v_{10}^2}`$ from them, ignoring `Wind`. A file with
+`Wind` alone gives the speed only, and `met_forcing_t%has_wind_vector` stays false.
 
 **Binding a site to a column.** `grid_match = "explicit"` uses `forcing.grid_index` verbatim (range checked
 at open). `grid_match = "nearest"` instead reads the `latitude(grid)`/`longitude(grid)` vectors and picks
@@ -69,9 +77,31 @@ whole previous day's total** (step 24) — not zero, and not one hour. Ordered b
 amount is `raw(H) - raw(H-1)` everywhere *including* the 00:00 stamp (which then yields the prior day's
 23Z–00Z hour), except at **01:00 UTC**, where it is `raw(01:00)` as-is (the first step of the period, with an
 implicit 0 at 00:00). An off-by-one here doubles or zeroes the first hour of every day. Recovering day D's
-last hour needs the 00:00 stamp of day D+1, so the download pads one extra trailing day; the single leading
-sample that cannot be differenced is **dropped** and the time axis rebased, never filled, and GRIB-packing
-negatives are clipped to zero.
+last hour needs the 00:00 stamp of day D+1, so the downloader fetches that closing stamp with one tiny
+extra request; the box files therefore start at 01:00 on the first day and end at 00:00 after the
+last, and nothing is ever filled.
+
+**The ED_ERA5land archive (`format = "era5land"`).** The global archive built by
+`scripts/prepare_era5/` holds one file per variable per month, `ED_ERA5land_<Var>_<YYYYMM>.nc`, each
+a regular `(time, lat, lon)` grid at 0.1°: `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as ERA5-Land
+delivers them, and `Rainf`, `SWdown`, `LWdown` already de-accumulated to hourly means, end-stamped
+from 01:00 on the 1st to 00:00 on the 1st of the next month. A static file carries the `valid`
+mask and the orography (`MEDS_FORCING_DESIGN.md` §14). Given `data_path`, the reader:
+
+- **binds the site to a cell** by regular-grid arithmetic; a site on a no-data cell (a coast, a
+  lake edge) takes the nearest valid cell by great-circle distance, lowest index on a tie, up to
+  `max_distance_km`, and otherwise stops. The cell's orography becomes the grid elevation that the
+  optional lapse correction (§8) starts from;
+- **lays the months end to end** as one hourly axis: the recycle window when recycling, otherwise
+  the run period. Every file the run needs must exist at open, so a gap stops the run before it
+  starts;
+- **reads a month at a time**, one chunk column per variable, into a buffer, checking each file's
+  grid, stamps and units, and rejecting a missing value in the cell;
+- **converts at each stamp:** $`q`$ from the stored dewpoint and pressure by (10), and the wind
+  speed from the stored components, whose vector the record also carries.
+
+Bracketing, recycling and the seam are the same code as for the single file: the record at 00:00 on
+the 1st lives in the previous month's file, and the bracket that spans it reads both.
 
 ## 2. The reader: a two-record window
 
@@ -243,7 +273,8 @@ uses (`meds_therm_lib%sat_vapor_pressure`, $`e_{sat}(T)=611.2\exp[17.67\,T_c/(T_
 vapour pressure equals the actual one, so the ice branch that `sat_vapor_pressure` grew for frozen
 surfaces (`snow_biophysics.md` §1) must not be applied here. And so
 does the ERA5-Land prep script, so a `Qair` built offline reconciles with any reader-side humidity math to
-round-off. The dewpoint form is the identity that the actual vapour pressure *is* the saturation vapour
+round-off. The ED_ERA5land archive stores the dewpoint instead of $`q`$, and the reader applies (10) at
+each stamp, so a run's humidity follows the model's own saturation curve. The dewpoint form is the identity that the actual vapour pressure *is* the saturation vapour
 pressure evaluated at the dewpoint; RH is clipped to $[0,1]$ first.
 
 ```math
@@ -267,7 +298,8 @@ f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qqu
 Two optional ingest-time corrections, both **off by default**, both applied per record before interpolation.
 Reanalysis wind is diagnostic at 10 m, which at a temperate forest can sit below canopy top; a neutral-log
 profile lifts it to the model reference height. The factor is independent of $u$, so it commutes with the
-energy-form interpolation of §3; a degenerate roughness ($`z_0\le 0`$, or either height at or below
+energy-form interpolation of §3, and when the source supplies the wind vector both components take
+the same factor, which keeps its direction; a degenerate roughness ($`z_0\le 0`$, or either height at or below
 $`z_0`$) leaves the wind untouched.
 
 ```math
@@ -388,14 +420,15 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | SW partition | `meds_forcing_kernels`: `partition_shortwave`, `erbs_diffuse_fraction`, `weiss_norman_partition` |
 | humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
 | grid match, wind, lapse | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index`, `wind_log_profile`, `lapse_air_temperature`, `lapse_pressure` |
-| the reader | `meds_met_driver`: `met_open`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite` |
+| the reader | `meds_met_driver`: `met_open`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `ensure_month` |
+| the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
 | recycling | `meds_met_driver`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`, `load_wrap_bracket` |
-| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_driver_t` |
+| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_driver_t`, `met_domain_t`, `met_month_t` |
 | config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`; validated in `meds_config`, read by `meds_config_io` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
 | fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling, `apply_met_to_ctx` |
-| file production | `scripts/prepare_era5/download_era5land_cds.py` and `postprocess_era5land.py`, then `scripts/prep_era5land_forcing.py` |
-| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years |
+| file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `download_era5land_cds.py` and `postprocess_era5land.py`, then `scripts/prep_era5land_forcing.py` |
+| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years; `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open |
 
 ## References
 - Erbs, Klein & Duffie (1982), *Solar Energy* 28:293 — diffuse fraction vs the clearness index.

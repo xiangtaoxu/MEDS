@@ -10,13 +10,13 @@
 ! ever names these types; the reader (meds_met_driver) owns the only mutable forcing state.           !
 !==========================================================================================!
 module meds_forcing_types
-   use meds_kinds,          only : wp, ik
+   use meds_kinds,          only : wp, sp, ik
    use meds_time,           only : meds_time_t
-   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST
+   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_PATH_LEN
    implicit none
    private
 
-   public :: met_forcing_t, met_record_t, met_driver_t
+   public :: met_forcing_t, met_record_t, met_driver_t, met_domain_t, met_month_t
 
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous per-SITE atmospheric state the fast loop consumes.       !
@@ -32,6 +32,12 @@ module meds_forcing_types
       real(wp) :: rainf        = 0.0_wp       !< [kg/m2/s]  liquid precipitation rate (post phase-split)
       real(wp) :: snowfall        = 0.0_wp       !< [kg/m2/s]  frozen rainfall
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
+      !----- The wind VECTOR (§3.1, §5.3), carried beside the speed for a direction-aware consumer.  !
+      !      Filled only when the source supplies components (has_wind_vector); aerodynamics reads   !
+      !      `wind`, whose energy-form interpolation makes it at least the vector's length.          !
+      real(wp) :: wind_u       = 2.0_wp       !< [m/s]      eastward component at reference height
+      real(wp) :: wind_v       = 0.0_wp       !< [m/s]      northward component at reference height
+      logical  :: has_wind_vector = .false.   !< .true. when the source supplied components, not just speed
       real(wp) :: lwdown       = 380.0_wp     !< [W/m2]     downwelling longwave (positive down)
       real(wp) :: par_beam     = 180.0_wp     !< [W/m2]     direct-beam PAR at canopy top
       real(wp) :: par_diffuse  = 40.0_wp      !< [W/m2]     diffuse PAR
@@ -51,8 +57,36 @@ module meds_forcing_types
       type(meds_time_t) :: when
       real(wp) :: tair_k = 288.0_wp, qair = 0.008_wp, psurf_pa = 101325.0_wp
       real(wp) :: rainf = 0.0_wp, wind = 2.0_wp, lwdown = 380.0_wp, co2 = 420.0_wp
+      real(wp) :: wind_u = 2.0_wp, wind_v = 0.0_wp          !< wind vector (only when the source has it)
       real(wp) :: par_beam = 180.0_wp, par_diffuse = 40.0_wp, nir_beam = 150.0_wp, nir_diffuse = 30.0_wp
    end type met_record_t
+
+   !==========================================================================================!
+   !  met_domain_t -- the cells of a regular-grid archive (ED_ERA5land) that a run reads: one for  !
+   !  a site, the valid cells of a box for the polygon runtime (§15.5). Grid indices are 0-based,  !
+   !  as the netCDF C API counts. `by_chunk` lists the cells grouped by the archive's 16 x 16      !
+   !  spatial chunk, `chunk_first` indexes into it (length nchunk+1), so a month load reads each    !
+   !  touched chunk column once (§15.3).                                                            !
+   !==========================================================================================!
+   type :: met_domain_t
+      integer(ik) :: ncell = 0_ik
+      integer(ik) :: nlat = 0_ik, nlon = 0_ik               !< archive grid size
+      integer(ik), allocatable :: row(:), col(:)            !< 0-based (lat, lon) index of each cell
+      real(wp),    allocatable :: lat(:), lon(:)            !< [deg] cell centre
+      real(wp),    allocatable :: elevation(:)              !< [m] static-file orography
+      integer(ik) :: nchunk = 0_ik
+      integer(ik), allocatable :: chunk_row(:), chunk_col(:)!< 0-based first grid row/col of each touched chunk
+      integer(ik), allocatable :: chunk_first(:)            !< by_chunk(chunk_first(k):chunk_first(k+1)-1)
+      integer(ik), allocatable :: by_chunk(:)               !< cell numbers grouped by chunk
+   end type met_domain_t
+
+   !----- One archive month for every cell of a domain: values(hour, cell, variable), float32 as  !
+   !      the archive stores it (§15.3 memory table). Hours run 01:00 on the 1st .. 00:00 on the  !
+   !      1st of the next month, the archive's end-stamped convention. ----------------------------!
+   type :: met_month_t
+      integer(ik) :: year = 0_ik, month = 0_ik, nt = 0_ik
+      real(sp), allocatable :: values(:,:,:)
+   end type met_month_t
 
    !==========================================================================================!
    !  met_driver_t -- the MUTABLE per-POLYGON reader state (the ONLY mutable forcing state).      !
@@ -88,6 +122,16 @@ module meds_forcing_types
       !      is the better guess, and the one scalar of state it needs lives here rather than in a   !
       !      module variable. Seeded to 1 (clear) so a run that starts at night starts clear-sky.    !
       real(wp)    :: kt_last_day    = 1.0_wp                !< [-] last daytime clearness index
+      logical     :: has_wind_vector = .false.              !< the source supplies u10/v10 (§15.4)
+      !----- ED_ERA5land archive backend (§15). The months the run needs form one continuous hourly   !
+      !      axis (time_sec, seconds since 1970-01-01, the archive's own epoch); month k holds records !
+      !      month_rec0(k)+1 .. month_rec0(k)+hours, and one month of the domain sits in `buffer`.    !
+      character(len=MET_PATH_LEN) :: file_template = ''     !< resolved file template
+      character(len=MET_PATH_LEN) :: static_file   = ''     !< resolved static file
+      type(met_domain_t) :: domain                          !< the cells read; this driver uses `cell`
+      integer(ik) :: cell = 1_ik                            !< this polygon's cell within the domain
+      integer(ik), allocatable :: month_year(:), month_month(:), month_rec0(:)
+      type(met_month_t) :: buffer                           !< the loaded month (year = 0 before the first)
    end type met_driver_t
 
 contains

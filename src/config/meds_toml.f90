@@ -20,7 +20,9 @@ module meds_toml
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
 
-   integer, parameter :: KEYLEN = 64, VALLEN = 256, MAXKEYS = 512
+   !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds the   !
+   !      forcing path fields (MET_PATH_LEN, MEDS_FORCING_DESIGN.md §15.2) with room for the key.     !
+   integer, parameter :: KEYLEN = 64, VALLEN = 1024, MAXKEYS = 512
 
    type :: toml_table_t
       integer(ik)                     :: n = 0_ik

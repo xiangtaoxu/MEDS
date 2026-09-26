@@ -24,7 +24,9 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_CLOBBER   = 0_c_int
    integer(c_int), parameter :: NC_NOWRITE   = 0_c_int      ! read-only open mode
    integer(c_int), parameter :: NC_GLOBAL    = -1_c_int
+   integer(c_int), parameter :: NC_BYTE      = 1_c_int
    integer(c_int), parameter :: NC_INT       = 4_c_int
+   integer(c_int), parameter :: NC_FLOAT     = 5_c_int
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
    integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode for nc_def_var_chunking
    integer(c_size_t), parameter :: NC_UNLIMITED = 0_c_size_t

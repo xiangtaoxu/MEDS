@@ -1,11 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_met_driver -- the meteorological-forcing READER (design MEDS_FORCING_DESIGN.md section  !
-! 4). Opens the MEDS multi-grid forcing NetCDF (or the no-file CONST backend), holds the two      !
-! records bracketing the model time at this polygon's grid_index (met_driver_t, the ONLY mutable   !
-! forcing state), slides that window as the model marches, and produces an instantaneous            !
-! met_forcing_t via the pure disaggregation kernels. Owns file I/O (via meds_netcdf_c) -- the ED2    !
-! cgrid%metinput analogue, threaded by the driver, never a global.                                    !
+! meds_met_driver -- the meteorological-forcing READER (design MEDS_FORCING_DESIGN.md sections !
+! 4 and 15). Opens the MEDS multi-grid forcing NetCDF, the global ED_ERA5land archive, or the     !
+! no-file CONST backend; holds the two records bracketing the model time at this polygon's cell   !
+! (met_driver_t, the ONLY mutable forcing state), slides that window as the model marches, and     !
+! produces an instantaneous met_forcing_t via the pure disaggregation kernels. Owns file I/O (via   !
+! meds_netcdf_c and meds_era5land_reader) -- the ED2 cgrid%metinput analogue, threaded by the       !
+! driver, never a global.                                                                              !
+!                                                                                          !
+! The archive's months form one continuous hourly axis over the months a run needs (the recycle   !
+! window, or the run period), so bracketing, recycling and the seam are the same code for both      !
+! file backends; only where a record's values come from differs (read_record).                      !
 !                                                                                          !
 ! MEDS NEVER gap-fills (design §5.5): a missing/NaN required value is a HARD ERROR. netCDF is a       !
 ! hard dependency, so the reader is always the real thing (no stub).                                   !
@@ -20,6 +25,7 @@ module meds_met_driver
                                    is_leap_year, days_in_year, time_to_string,                 &
                                    time_advance_years, whole_years_between
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,     &
+                                   MET_BACKEND_ERA5LAND, MET_PATH_LEN,                          &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE
@@ -30,7 +36,12 @@ module meds_met_driver
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
                                    great_circle_distance, wind_log_profile,                    &
                                    lapse_air_temperature, lapse_pressure,                          &
-                                   clearness_index, synthesize_lwdown
+                                   clearness_index, synthesize_lwdown, dewpoint_to_specific_humidity
+   use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_default_static, &
+                                   era5land_select_site, era5land_load_month, era5land_month_hours, &
+                                   ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10,        &
+                                   ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN, ERA_VAR_NAME, ERA_EPOCH,       &
+                                   ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
                                    nc_get_att_text_f, nc_get_vara_double, nc_close, nc_check,   &
                                    NC_NOERR, NC_NOWRITE, NC_GLOBAL
@@ -40,7 +51,7 @@ module meds_met_driver
    public :: met_open, met_advance, met_instant, met_close
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
-             MET_ERR_ATTR_MISMATCH
+             MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE
 
    real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
@@ -53,6 +64,7 @@ module meds_met_driver
    integer(ik), parameter :: MET_ERR_DT_MISMATCH             = 4_ik   !< dt_forcing /= the file's record spacing
    integer(ik), parameter :: MET_ERR_AXIS_NOT_UNIFORM        = 5_ik   !< the file's time axis is ragged
    integer(ik), parameter :: MET_ERR_ATTR_MISMATCH           = 6_ik   !< a file global attribute contradicts the config
+   integer(ik), parameter :: MET_ERR_ARCHIVE                 = 7_ik   !< archive: static file, site cell or a month missing
 
    !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
    !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
@@ -69,10 +81,13 @@ contains
    !  is exercisable from a test (CLAUDE.md: "errors via error stop / status codes ... so failures  !
    !  are catchable in tests"). Absent -> a rejection is a hard error, which is what a production    !
    !  run wants: a forcing file that does not match its declared window must never be guessed at.   !
-   subroutine met_open(drv, fcfg, stat)
+   !  `run_start`/`run_end` bound the months a non-recycling ED_ERA5land run reads; a recycling    !
+   !  run reads the declared window instead, and the other backends ignore them.                  !
+   subroutine met_open(drv, fcfg, stat, run_start, run_end)
       type(met_driver_t),     intent(inout) :: drv
       type(forcing_config_t), intent(in)    :: fcfg
       integer(ik), optional,  intent(out)   :: stat
+      type(meds_time_t), optional, intent(in) :: run_start, run_end
       integer(c_int)    :: st, ncid
       integer(c_size_t) :: dlen
       character(len=256):: units
@@ -86,10 +101,23 @@ contains
       drv%grid_index = fcfg%grid_index
       drv%dt_forcing = fcfg%dt_forcing
       drv%irec_prev  = 0_ik
+      drv%has_wind_vector = .false.
 
       if (fcfg%backend == MET_BACKEND_CONST) then
          drv%ngrid = 1_ik ; drv%nrec = 0_ik
          drv%rec_prev = met_record_t() ; drv%rec_next = met_record_t()
+         return
+      end if
+
+      if (fcfg%backend == MET_BACKEND_ERA5LAND) then
+         call open_archive(drv, run_start, run_end, vstat)
+         if (vstat == MET_OK) call validate_recycle_window(drv, vstat)
+         if (vstat /= MET_OK) then
+            call met_close(drv)
+            if (present(stat)) then ; stat = vstat ; return ; end if
+            error stop 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
+         end if
+         call load_bracket(drv, 1_ik)
          return
       end if
 
@@ -125,6 +153,14 @@ contains
 
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
       call read_time_axis(drv)
+
+      !----- The wind VECTOR (§7.1, §15.4): a file carrying u10 and v10 supplies it, and the speed  !
+      !      is then derived from the components; a file with Wind alone gives the speed only.     !
+      block
+         integer(c_int) :: vu, vv
+         drv%has_wind_vector = nc_inq_varid_f(ncid, 'u10', vu) == NC_NOERR .and.                  &
+                               nc_inq_varid_f(ncid, 'v10', vv) == NC_NOERR
+      end block
 
       !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
       !      global attributes the prep script writes against the config that claims to describe    !
@@ -378,6 +414,12 @@ contains
       met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
       met%co2      = interpolate_forcing(INTERP_LINEAR, p%co2,      n%co2,      w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
+      !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
+      if (drv%has_wind_vector) then
+         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
+         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+         met%has_wind_vector = .true.
+      end if
 
       !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
       precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
@@ -435,6 +477,9 @@ contains
          drv%ncid = -1_ik
       end if
       if (allocated(drv%time_sec)) deallocate(drv%time_sec)
+      if (allocated(drv%month_year))  deallocate(drv%month_year, drv%month_month, drv%month_rec0)
+      if (allocated(drv%buffer%values)) deallocate(drv%buffer%values)
+      drv%buffer%year = 0_ik
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
@@ -531,6 +576,160 @@ contains
       drv%at_wrap_seam = .true.
    end subroutine load_wrap_bracket
 
+   !=======================================================================================!
+   !  ED_ERA5land OPEN (§15): resolve the paths, bind the site to its cell (whose orography       !
+   !  replaces a hand-copied grid_elevation), and lay the months the run needs end to end as one  !
+   !  hourly axis. Every month file is checked for existence here, so a gap in the archive stops  !
+   !  the run before it starts rather than decades into it.                                       !
+   !=======================================================================================!
+   subroutine open_archive(drv, run_start, run_end, stat)
+      type(met_driver_t),          intent(inout) :: drv
+      type(meds_time_t), optional, intent(in)    :: run_start, run_end
+      integer(ik),                 intent(out)   :: stat
+      character(len=MET_PATH_LEN) :: path
+      real(wp)       :: distance_km, first
+      integer(ik)    :: est, y0, m0, y1, m1, nmonth, k, v, h, y, m, nmiss
+      integer(c_int) :: st, ncid
+      logical        :: exists
+
+      stat = MET_OK
+      associate (f => drv%fcfg)
+      drv%file_template = f%file_template
+      if (len_trim(drv%file_template) == 0) drv%file_template = era5land_default_template()
+      path = f%static_file
+      if (len_trim(path) == 0) path = era5land_default_static()
+      drv%static_file = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
+
+      if (f%sw_partition == SWPART_PASSTHROUGH) then
+         write(*,'(a)') ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but'
+         write(*,'(a)') '   [forcing].sw_partition = "passthrough" expects the four component streams.'
+         stat = MET_ERR_ATTR_MISMATCH ; return
+      end if
+
+      !----- The site's cell (§15.5). ---------------------------------------------------------!
+      call era5land_select_site(drv%static_file, f%latitude_deg, f%longitude_deg, f%max_distance_km, &
+                                drv%domain, distance_km, est)
+      if (est /= ERA_OK) then
+         select case (est)
+         case (ERA_ERR_NO_CELL)
+            write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',          &
+                  f%max_distance_km, ' km of the site (', f%latitude_deg, ', ', f%longitude_deg, ')'
+         case (ERA_ERR_OPEN)
+            write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(drv%static_file)
+         case default
+            write(*,'(3a)') ' met_open: the static file ', trim(drv%static_file),                      &
+                            ' does not hold a regular lat/lon grid with valid and elevation'
+         end select
+         stat = MET_ERR_ARCHIVE ; return
+      end if
+      drv%cell = 1_ik ; drv%grid_index = 1_ik ; drv%ngrid = drv%domain%ncell
+      f%grid_elevation_m = drv%domain%elevation(1)
+      drv%has_wind_vector = .true.
+      write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', drv%domain%lat(1), ', ',  &
+            drv%domain%lon(1), '), ', distance_km, ' km from the site; orography ', drv%domain%elevation(1), ' m'
+
+      !----- The months: the declared recycle window, or the run period. ----------------------!
+      if (f%recycle) then
+         call archive_month_of(f%recycle_start, .false., y0, m0)
+         call archive_month_of(time_advance_seconds(f%recycle_end, -drv%dt_forcing), .false., y1, m1)
+      else
+         if (.not. (present(run_start) .and. present(run_end)))                                     &
+            error stop 'met_open: format = "era5land" without recycling needs the run period'
+         call archive_month_of(run_start, .false., y0, m0)
+         call archive_month_of(run_end,   .true.,  y1, m1)
+      end if
+      nmonth = (y1 - y0) * 12_ik + (m1 - m0) + 1_ik
+      if (nmonth < 1_ik) error stop 'met_open: the ED_ERA5land month range is empty'
+      allocate(drv%month_year(nmonth), drv%month_month(nmonth), drv%month_rec0(nmonth))
+      y = y0 ; m = m0 ; drv%nrec = 0_ik
+      do k = 1_ik, nmonth
+         drv%month_year(k) = y ; drv%month_month(k) = m ; drv%month_rec0(k) = drv%nrec
+         drv%nrec = drv%nrec + era5land_month_hours(y, m)
+         m = m + 1_ik
+         if (m > 12_ik) then ; m = 1_ik ; y = y + 1_ik ; end if
+      end do
+      drv%base_time = ERA_EPOCH
+      if (allocated(drv%time_sec)) deallocate(drv%time_sec)
+      allocate(drv%time_sec(drv%nrec))
+      do k = 1_ik, nmonth
+         first = seconds_between(ERA_EPOCH, meds_time_t(drv%month_year(k), drv%month_month(k), 1_ik, 1_ik))
+         do h = 1_ik, era5land_month_hours(drv%month_year(k), drv%month_month(k))
+            drv%time_sec(drv%month_rec0(k) + h) = first + 3600.0_wp * real(h - 1_ik, wp)
+         end do
+      end do
+
+      nmiss = 0_ik
+      do k = 1_ik, nmonth
+         do v = 1_ik, ERA_NVAR
+            path = era5land_path(drv%file_template, f%data_path, ERA_VAR_NAME(v),                  &
+                                 drv%month_year(k), drv%month_month(k))
+            inquire(file=trim(path), exist=exists)
+            if (.not. exists) then
+               nmiss = nmiss + 1_ik
+               if (nmiss == 1_ik) write(*,'(2a)') ' met_open: ED_ERA5land file missing: ', trim(path)
+            end if
+         end do
+      end do
+      if (nmiss > 0_ik) then
+         write(*,'(a,i0,a,i0,a)') '   ', nmiss, ' of ', nmonth * ERA_NVAR, ' files the run needs are missing.'
+         stat = MET_ERR_ARCHIVE ; return
+      end if
+
+      !----- The first month file describes the archive; check it against the config (#185). ---!
+      path = era5land_path(drv%file_template, f%data_path, 'Tair', y0, m0)
+      st = nc_open_f(trim(path), NC_NOWRITE, ncid)
+      if (st /= NC_NOERR) then
+         write(*,'(2a)') ' met_open: cannot open ', trim(path)
+         stat = MET_ERR_ARCHIVE ; return
+      end if
+      call validate_file_against_config(drv, ncid, stat)
+      st = nc_close(ncid)
+      drv%buffer%year = 0_ik
+      end associate
+   end subroutine open_archive
+
+   !----- The archive month whose file holds the record at t, taken to the hour below (or above,   !
+   !      round_up) on the hourly grid. Files are end-stamped, so 00:00 on the 1st belongs to the   !
+   !      month before. -----------------------------------------------------------------------------!
+   subroutine archive_month_of(t, round_up, year, month)
+      type(meds_time_t), intent(in)  :: t
+      logical,           intent(in)  :: round_up
+      integer(ik),       intent(out) :: year, month
+      type(meds_time_t) :: before
+      real(wp) :: hours
+      hours = seconds_between(ERA_EPOCH, t) / 3600.0_wp
+      if (round_up) then ; hours = real(ceiling(hours), wp) ; else ; hours = real(floor(hours), wp) ; end if
+      before = time_advance_seconds(ERA_EPOCH, hours * 3600.0_wp - 1.0_wp)
+      year = before%year ; month = before%month
+   end subroutine archive_month_of
+
+   !----- Make the month holding record irec the loaded one; h is the record's hour in it. -------!
+   subroutine ensure_month(drv, irec, h)
+      type(met_driver_t), intent(inout) :: drv
+      integer(ik),        intent(in)    :: irec
+      integer(ik),        intent(out)   :: h
+      character(len=MET_PATH_LEN + 128) :: message
+      integer(ik) :: k, est
+      k = size(drv%month_rec0, kind=ik)
+      do while (drv%month_rec0(k) >= irec)
+         k = k - 1_ik
+      end do
+      h = irec - drv%month_rec0(k)
+      if (drv%buffer%year == drv%month_year(k) .and. drv%buffer%month == drv%month_month(k)) return
+      call era5land_load_month(drv%file_template, drv%fcfg%data_path, drv%domain, drv%month_year(k), &
+                               drv%month_month(k), drv%buffer, est, message)
+      if (est /= ERA_OK) then
+         write(*,'(2a)') ' met_driver: ED_ERA5land month failed its checks: ', trim(message)
+         error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
+      end if
+   end subroutine ensure_month
+
+   pure real(wp) function archive_value(drv, h, var) result(val)
+      type(met_driver_t), intent(in) :: drv
+      integer(ik),        intent(in) :: h, var
+      val = real(drv%buffer%values(h, drv%cell, var), wp)
+   end function archive_value
+
    !----- Resolve drv%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
    !      latitude(grid)/longitude(grid) coordinate vectors (multi-polygon P2 subset, §4.1).        !
    subroutine resolve_grid_index(drv)
@@ -552,28 +751,50 @@ contains
       deallocate(lat_grid, lon_grid)
    end subroutine resolve_grid_index
 
-   !----- Read one record at (time=irec, grid=grid_index); partition SW at ingest. ------------!
+   !----- Read one record at (time=irec, this polygon's cell); partition SW at ingest. --------!
    subroutine read_record(drv, irec, rec)
-      type(met_driver_t), intent(in)  :: drv
-      integer(ik),        intent(in)  :: irec
-      type(met_record_t), intent(out) :: rec
-      real(wp) :: sw_total, cosz_mid, mid_sec
+      type(met_driver_t), intent(inout) :: drv
+      integer(ik),        intent(in)    :: irec
+      type(met_record_t), intent(out)   :: rec
+      real(wp)    :: sw_total, cosz_mid, mid_sec
+      integer(ik) :: h
       rec%when   = time_advance_seconds(drv%base_time, drv%time_sec(irec))
-      rec%tair_k   = read_scalar(drv, 'Tair',  irec)
-      rec%qair     = read_scalar(drv, 'Qair',  irec)
-      rec%psurf_pa = read_scalar(drv, 'PSurf', irec)
-      rec%wind     = read_scalar(drv, 'Wind',  irec)
-      rec%rainf    = read_scalar(drv, 'Rainf', irec)                 ! total rainfall rate [kg/m2/s]
-      !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
-      !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
-      !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
-      !      the record complete for diagnostics.  ---------------------------------------------------!
-      if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) then
-         rec%lwdown = read_scalar_default(drv, 'LWdown', irec, 0.0_wp)
+      if (drv%backend == MET_BACKEND_ERA5LAND) then
+         !----- The archive stores dewpoint and the wind components (§15.4): humidity comes from the !
+         !      model's own saturation curve, the speed from the vector at each stamp. -------------!
+         call ensure_month(drv, irec, h)
+         rec%tair_k   = archive_value(drv, h, ERA_TAIR)
+         rec%psurf_pa = archive_value(drv, h, ERA_PSURF)
+         rec%qair     = dewpoint_to_specific_humidity(archive_value(drv, h, ERA_TDEW), rec%psurf_pa)
+         rec%wind_u   = archive_value(drv, h, ERA_U10)
+         rec%wind_v   = archive_value(drv, h, ERA_V10)
+         rec%wind     = sqrt(rec%wind_u**2 + rec%wind_v**2)
+         rec%rainf    = archive_value(drv, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
+         rec%lwdown   = archive_value(drv, h, ERA_LWDOWN)
+         rec%co2      = drv%fcfg%co2_const
       else
-         rec%lwdown = read_scalar(drv, 'LWdown', irec)
+         rec%tair_k   = read_scalar(drv, 'Tair',  irec)
+         rec%qair     = read_scalar(drv, 'Qair',  irec)
+         rec%psurf_pa = read_scalar(drv, 'PSurf', irec)
+         if (drv%has_wind_vector) then
+            rec%wind_u = read_scalar(drv, 'u10', irec)
+            rec%wind_v = read_scalar(drv, 'v10', irec)
+            rec%wind   = sqrt(rec%wind_u**2 + rec%wind_v**2)
+         else
+            rec%wind   = read_scalar(drv, 'Wind',  irec)
+         end if
+         rec%rainf    = read_scalar(drv, 'Rainf', irec)              ! total rainfall rate [kg/m2/s]
+         !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
+         !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
+         !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
+         !      the record complete for diagnostics.  ---------------------------------------------------!
+         if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) then
+            rec%lwdown = read_scalar_default(drv, 'LWdown', irec, 0.0_wp)
+         else
+            rec%lwdown = read_scalar(drv, 'LWdown', irec)
+         end if
+         rec%co2      = read_scalar_default(drv, 'CO2air', irec, drv%fcfg%co2_const)
       end if
-      rec%co2      = read_scalar_default(drv, 'CO2air', irec, drv%fcfg%co2_const)
       call assert_finite(rec%tair_k, 'Tair', irec, drv%grid_index)
       call assert_finite(rec%qair, 'Qair', irec, drv%grid_index)
       call assert_finite(rec%psurf_pa, 'PSurf', irec, drv%grid_index)
@@ -589,6 +810,13 @@ contains
       if (drv%fcfg%apply_wind_profile) then
          rec%wind = wind_log_profile(rec%wind, drv%fcfg%wind_meas_height,                        &
                                      drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+         !----- The components take the same (linear) factor, so the direction is unchanged. -----!
+         if (drv%has_wind_vector) then
+            rec%wind_u = wind_log_profile(rec%wind_u, drv%fcfg%wind_meas_height,                  &
+                                          drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+            rec%wind_v = wind_log_profile(rec%wind_v, drv%fcfg%wind_meas_height,                  &
+                                          drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+         end if
       end if
       if (drv%fcfg%apply_elevation_lapse) then
          block
@@ -610,7 +838,11 @@ contains
          call assert_finite(rec%nir_beam,    'SWdown_nir_beam',    irec, drv%grid_index)
          call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, drv%grid_index)
       else
-         sw_total = read_scalar(drv, 'SWdown', irec)
+         if (drv%backend == MET_BACKEND_ERA5LAND) then
+            sw_total = archive_value(drv, h, ERA_SWDOWN)
+         else
+            sw_total = read_scalar(drv, 'SWdown', irec)
+         end if
          call assert_finite(sw_total, 'SWdown', irec, drv%grid_index)
          !----- interval-mean cosz for the partition (avg_convention=end -> midpoint = when - dt/2). !
          mid_sec  = seconds_into_day(rec%when)

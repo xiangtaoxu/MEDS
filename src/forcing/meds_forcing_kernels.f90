@@ -32,7 +32,7 @@ module meds_forcing_kernels
    real(wp), parameter :: FPAR_BEAM      = 0.43_wp     !< [-] PAR fraction of direct-beam SW energy
    real(wp), parameter :: FPAR_DIFFUSE   = 0.52_wp     !< [-] PAR fraction of diffuse SW energy (diffuse is PAR-enriched)
    real(wp), parameter :: PHASE_BAND_K   = 1.0_wp      !< [K] half-width of the rain/snow phase-transition band
-   real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match; argmin only)
+   real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match)
 
    !----- Weiss & Norman (1985) band-specific SW partition constants (port of ED2 -------------!
    !      short_bdown_weissnorman, radiate_utils.f90). Empirical/physical -> module parameters.  !
@@ -364,8 +364,9 @@ contains
    !=======================================================================================!
    !  GRID MATCH (multi-polygon P2 subset): great-circle distance + nearest-cell argmin.        !
    !  great_circle_distance ports ED2 dist_gc (great_circle.f90); nearest_grid_index ports the    !
-   !  match_poly_grid argmin loop. Only the argmin matters for selection, so EARTH_RADIUS_M is     !
-   !  immaterial; strict '<' keeps the lowest index on ties.                                        !
+   !  match_poly_grid argmin loop; strict '<' keeps the lowest index on ties. The ED_ERA5land site  !
+   !  selection also compares the distance against [forcing].max_distance_km (§15.5), so the radius  !
+   !  sets that limit; the mean Earth radius keeps it within 0.5% of the true distance.              !
    !=======================================================================================!
    pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)
       real(wp), intent(in) :: lon1_deg, lat1_deg, lon2_deg, lat2_deg

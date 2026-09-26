@@ -256,6 +256,7 @@ contains
       call met_open(drv, fc)
       call check_true('opened file: nrec=25', drv%nrec == 25_ik, real(drv%nrec, wp))
       call check_true('opened file: ngrid=2', drv%ngrid == 2_ik, real(drv%ngrid, wp))
+      call check_true('a file with Wind only supplies no wind vector', .not. drv%has_wind_vector)
 
       ! noon (17 UTC): SW positive, Tair follows the diurnal input
       now = time_advance_seconds(base, 17.0_wp*3600.0_wp)
@@ -269,7 +270,21 @@ contains
       now = time_advance_seconds(base, 4.0_wp*3600.0_wp)
       call met_advance(drv, now) ; met_night = met_instant(drv, now)
       call check('night SWdown = 0', met_night%swdown(), 0.0_wp, 1.0e-12_wp)
+      call check_true('an instant from a Wind-only file has no vector', .not. met_night%has_wind_vector)
       call met_close(drv)
+
+      !----- A file carrying u10 and v10 supplies the vector, and the speed comes from it (§7.1). -!
+      call write_synthetic_forcing(NCFILE, base, with_components=.true.)
+      fc%grid_index = 1_ik
+      call met_open(drv, fc)
+      call check_true('a file with u10 and v10 supplies the wind vector', drv%has_wind_vector)
+      now = time_advance_seconds(base, 6.0_wp*3600.0_wp)
+      call met_advance(drv, now) ; met_night = met_instant(drv, now)
+      call check('wind_u = u10', met_night%wind_u, 3.0_wp, 1.0e-12_wp)
+      call check('wind_v = v10', met_night%wind_v, -4.0_wp, 1.0e-12_wp)
+      call check('speed from the components, not Wind', met_night%wind, 5.0_wp, 1.0e-12_wp)
+      call met_close(drv)
+      call write_synthetic_forcing(NCFILE, base)
 
       ! multi-grid: grid_index=2 carries a distinct (scaled) SW series
       fc%grid_index = 2_ik
@@ -429,11 +444,12 @@ contains
    end subroutine test_recycle_anchor_phase
 
    !----- Write a synthetic (time=25 hourly, grid=2) MEDS forcing NetCDF via meds_netcdf_c. ----!
-   subroutine write_synthetic_forcing(path, base)
+   subroutine write_synthetic_forcing(path, base, with_components)
       character(len=*),  intent(in) :: path
       type(meds_time_t), intent(in) :: base
+      logical, optional, intent(in) :: with_components   !< also write u10 = 3, v10 = -4 (speed 5, not Wind's 3)
       integer, parameter :: NT = 25, NG = 2
-      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(8)
+      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(8), vu, vw
       integer(c_int) :: dims2(2), dims1(1)
       real(c_double) :: tsec(NT), lat(NG), lon(NG)
       real(c_double) :: dat(NG, NT)        ! (grid, time) column-major == C [time][grid]
@@ -458,6 +474,12 @@ contains
          st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k))
          call nc_check(st, 'write: var '//trim(vnames(k)))
       end do
+      if (present(with_components)) then
+         if (with_components) then
+            st = nc_def_var_f(ncid, 'u10', NC_DOUBLE, 2, dims2, vu) ; call nc_check(st, 'write: var u10')
+            st = nc_def_var_f(ncid, 'v10', NC_DOUBLE, 2, dims2, vw) ; call nc_check(st, 'write: var v10')
+         end if
+      end if
       !----- The two SELF-DESCRIBING global attributes the prep script writes. The fixture has to    !
       !      carry them or it is not the file the reader validates against, and the #185 checks      !
       !      would be skipped here while firing in production -- the fixture-must-mirror-the-driver  !
@@ -501,6 +523,14 @@ contains
          st = nc_put_vara_double(ncid, vv(k), start2, count2, dat)
          call nc_check(st, 'write: vals '//trim(vnames(k)))
       end do
+      if (present(with_components)) then
+         if (with_components) then
+            dat = 3.0_wp
+            st = nc_put_vara_double(ncid, vu, start2, count2, dat) ; call nc_check(st, 'write: vals u10')
+            dat = -4.0_wp
+            st = nc_put_vara_double(ncid, vw, start2, count2, dat) ; call nc_check(st, 'write: vals v10')
+         end if
+      end if
       st = nc_close(ncid) ; call nc_check(st, 'write: close')
    end subroutine write_synthetic_forcing
 

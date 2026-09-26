@@ -195,7 +195,10 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   1999) or a nocturnal index carried from a longer window would close more of it.
 - **The multi-polygon runtime.** *Candidate.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) A grid → polygon → site state hierarchy, an array
   of readers, a polygon loop and MPI. Large and orthogonal to everything else.
-  `nearest_grid_index` is the reusable atom, already built.
+  `nearest_grid_index` is the reusable atom, already built. The forcing side is ready too: the
+  ED_ERA5land reader's box selection and multi-cell month loads (`meds_era5land_reader`,
+  `MEDS_FORCING_DESIGN.md` §15.5) are implemented and tested, and the `[forcing]` `domain` and
+  `box_nwse` keys arrive with the runtime that consumes them (`MEDS_POLYGON_RUNTIME_PLAN.md`).
 - **A transient or observed CO₂ stream.** *Planned.* [#184](https://github.com/xiangtaoxu/MEDS/issues/184)
 
 ---

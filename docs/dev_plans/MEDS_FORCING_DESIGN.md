@@ -17,8 +17,9 @@
 > - ✅ The global per-variable monthly archive builder (F2), from GDEX or CDS raw files. July 2022
 >   (GDEX, the pilot) and June 2022 (CDS) are built and verified; the CDS build is bit-identical to
 >   GDEX (§13.2, §19).
-> - ⬜ A reader upgrade (F4): `met_source`, `data_path`, site or box domains, monthly block reads,
->   and internal conversion of dewpoint and wind components.
+> - ✅ The reader upgrade (F4), 2026-09-26: `format = "era5land"` reads the archive for a site, one
+>   month at a time, converting dewpoint and wind components inside the model (§15). Box selection
+>   is in the library; the model exposes it with the polygon runtime.
 > - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
 >
 > **It overrides earlier text:**
@@ -1618,7 +1619,24 @@ been written, has passed the gates, and is recorded in the manifest with checksu
 A glacier mask can be added when a consumer needs it, for example the polygon runtime's ice
 exclusion.
 
-## 15. The reader upgrade (F4) — ⬜
+## 15. The reader upgrade (F4) — ✅ 2026-09-26 (site domain; box selection in the library)
+
+> **Status and deviations (2026-09-26).** Implemented in `meds_era5land_reader` (files, selection,
+> month loads) and `meds_met_driver` (`open_archive`, `ensure_month`, `read_record`), tested by
+> `test_met_era5land`. Where the implementation differs from the plan below:
+> - **The source selector is the existing `forcing.format` key** with a new value `"era5land"`,
+>   not a new `met_source` key: one choice, one key, and existing configs keep working. `"netcdf"`
+>   is the `legacy_file` of the text below.
+> - **`domain` and `box_nwse` are not config keys yet.** Box selection (§15.5) and multi-cell month
+>   loads exist and are tested, but the model runs one site, so a `domain = "box"` key would parse
+>   and do nothing, which the config rules forbid. The polygon runtime adds the keys when it
+>   consumes the domain.
+> - **The months read** are the recycle window when recycling, otherwise the run period
+>   (`met_open` takes the run start and end). They are laid end to end as one hourly axis, so the
+>   bracket, recycling and the seam are the legacy code unchanged. Every file must exist at open.
+> - **Keys that do not apply are rejected:** `path`, `grid_index`, `grid_match` and
+>   `[site].grid_elevation` with `format = "era5land"`.
+> - **Still open:** the output-metadata record of the humidity formula (§15.4 "Provenance").
 
 ### 15.1 Starting point
 
@@ -1763,7 +1781,7 @@ become `scripts/prepare_forcing/`.
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
 | **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
 | **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1, GDEX) and June 2022 (CDS test). ⬜ Further years when chosen; site spot checks against the CDS point series. |
-| **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ⬜ The §15.6 tests pass. `example_biophysics` run from the archive reproduces the `legacy_file` run within quantization tolerance. |
+| **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ✅ **2026-09-26** (see the §15 status note): `format = "era5land"`, site domain, box selection in the library; the §15.6 tests pass (`test_met_era5land`, `test_met_driver`). ⬜ `example_biophysics` from the archive against the `legacy_file` run; the output record of the humidity formula. |
 | **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ✅ `scripts/download_era5land.py` removed and its references moved to the new tools (2026-09-26, #280); `prep_era5land_forcing.py` reads their box files. ⬜ Remove `scripts/prep_era5land_forcing.py` and update the references (list below). No shims. CHANGELOG. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
 
