@@ -36,6 +36,7 @@ a move is safe but a renumber is not.
 | [`MEDS_BIOGEOCHEMISTRY_DESIGN.md`](MEDS_BIOGEOCHEMISTRY_DESIGN.md) | P1 nitrogen, P1 DAMM (kernel exists, unreachable), P2 vertically resolved pools, fire, coarse woody debris. |
 | [`MEDS_FORCING_DESIGN.md`](MEDS_FORCING_DESIGN.md) | LWdown synthesis, the multi-polygon runtime, a transient CO₂ stream. Also the reference for the forcing NetCDF format (§7.1) and the ERA5-Land de-accumulation recipe (§7.3). |
 | [`MEDS_SNOW_DESIGN.md`](MEDS_SNOW_DESIGN.md) | P1 multi-layer snow with compaction and an aging albedo; P2 canopy snow interception. |
+| [`MEDS_ERA5_PREP_PLAN.md`](MEDS_ERA5_PREP_PLAN.md) | Design only (2026-09-25), no code yet. `scripts/prepare_era5/`: the single-grid scripts moved and renamed, plus a continental (North America first) download, then a yearly MEDS forcing store, then site extraction. Phases P0–P6; decisions D1–D7 open. |
 | [`MEDS_GPU_EVALUATION.md`](MEDS_GPU_EVALUATION.md) | Five of seven recommendations, including cohort-axis threading and the allocator traffic. The measurement itself is closed: GPU offload is not viable as scoped. |
 
 ## Reference — no open items, but cited by section from the code
