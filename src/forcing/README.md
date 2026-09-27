@@ -80,16 +80,18 @@ the right direction for multi-cohort patches.
 `build_era5land_static.py` and `build_era5land_archive.py`); a run then only names its folder in
 `data_path`. See `MEDS_FORCING_DESIGN.md` §12–§14.
 
-**A single forcing file** (`format = "netcdf"`) takes three steps. The first two are the ERA5-Land
-tools in `scripts/prepare_era5/`, run in its `meds-era5` environment:
+**A single forcing file** (`format = "netcdf"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
+run in the `meds-era5` environment, with either input:
 
 ```bash
-python scripts/prepare_era5/download_era5land_cds.py ...           # a box around the site, from the Copernicus data store
+python scripts/prepare_era5/make_forcing_file.py --data-path <archive> --start ... --end ...  # cut a site from the archive
+# or, without an archive, a small download first:
+python scripts/prepare_era5/download_era5land_cds.py ...              # a box around the site, from the Copernicus data store
 python scripts/prepare_era5/postprocess_era5land.py --split none ...  # decode GRIB: one box file per variable
-python scripts/prep_era5land_forcing.py --in <box files> ...        # de-accumulate, convert, write the MEDS format
+python scripts/prepare_era5/make_forcing_file.py --box-dir <box files> ...   # de-accumulate, convert, write
 ```
 
-The full commands are in the header of `scripts/prep_era5land_forcing.py`.
+The full commands are in the header of `make_forcing_file.py`.
 
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
 disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).

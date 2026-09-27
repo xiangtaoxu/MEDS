@@ -349,7 +349,7 @@ Slurm `R128C40`), forced from the ED_ERA5land archive at the Ithaca cell (2024 r
 the 50-year spin-up from bare ground; from its restart, the July stage (hourly output) and a full year
 with the default daily and monthly output; the same year with output off under VTune (user-mode
 sampling with call stacks); a one-day bare-ground run as the memory baseline; and, as a check on the
-forcing, the same spin-up from a single forcing file made with `prep_era5land_forcing.py`.
+forcing, the same spin-up from a single forcing file (`format = "netcdf"`).
 
 | Measurement | Result |
 |---|---|
