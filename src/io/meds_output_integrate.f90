@@ -26,8 +26,8 @@ module meds_output_integrate
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_site_state_types,   only : site_t
-   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_value,           &
-                                       patch_diag_value
+   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, N_PYDIAG, cohort_diag_value,           &
+                                       patch_diag_value, polygon_diag_value
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential, specific_humidity_to_vpd
@@ -52,7 +52,7 @@ module meds_output_integrate
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
    public :: FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP
-   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0
+   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
    public :: FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD
@@ -141,6 +141,8 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
    !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PD_* + FLD_P_DIAG0). !
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
+   !----- POLYGON diagnostics (4100+, a site-scalar family), read from site%diag (PY_* + FLD_PY_DIAG0). !
+   integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
 
    !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
    integer(ik), parameter :: FLD_P_AREA            = 2001_ik
@@ -765,7 +767,13 @@ contains
       case (SRC_S_WORK_CLAMP_COMMIT) ; val = site%work_clamp_commit
       case (SRC_S_WORK_CLAMP_MASS)   ; val = site%work_clamp_mass
       case (SRC_S_WORK_CLAMP_ENERGY) ; val = site%work_clamp_energy
-      case default            ; val = MISSING_VALUE
+      case default
+         if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PYDIAG) then
+            val = MISSING_VALUE
+            if (site%diag%active) val = polygon_diag_value(site%diag, source_id - FLD_PY_DIAG0)
+         else
+            val = MISSING_VALUE
+         end if
       end select
    end function extract_scalar_source
 

@@ -12,8 +12,8 @@
 > - ✅ The optional elevation-lapse and 10 m wind log-profile corrections (off by default).
 > - ✅ The daily air-temperature accumulator feeding phenology.
 > - ✅ The fast loop reads the forcing record directly; the `apply_met_to_ctx` shim is retired (§6.2).
-> - ✅ The forcing echo (§6.7): the `forcing` output group, site means at the daily to yearly tiers
->   and every sub-step sample at the fast tier.
+> - ✅ The forcing echo (§6.7): the `forcing` output group, polygon means at the daily to yearly
+>   tiers and every sub-step sample at the fast tier.
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
 > - ✅ Download tools (F1, PR #279).
@@ -1071,8 +1071,9 @@ handles it — one code path, both conventions.
 ### 6.7 Forcing provenance — echo the assembled record to the diagnostic stream
 
 > *Update 2026-09-27: done, as the `forcing` output group* (`[output].forcing`, default on).
-> - **Daily, monthly and yearly tiers:** site means of the sub-step forcing, accumulated in the
->   patch-diagnostic block (`PD_MET_*`) like `sw_in_site` and `precip_site`. The variables are
+> - **Daily, monthly and yearly tiers:** means of the sub-step forcing, accumulated once per
+>   polygon in a polygon diagnostic block (`site%diag`, fields `PY_*`), not per patch. `sw_in_site`
+>   and `precip_site` moved there too. The variables are
 >   `air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`, `par_beam_site`,
 >   `par_diffuse_site`, `nir_beam_site`, `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
 >   `cosz_site` and `rho_air_site`.

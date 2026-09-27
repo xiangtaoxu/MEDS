@@ -49,7 +49,8 @@ module meds_site_diag_types
    implicit none
    private
 
-   public :: cohort_diag_block, patch_diag_block
+   public :: cohort_diag_block, patch_diag_block, polygon_diag_block
+   public :: polygon_diag_reset, polygon_diag_value
    public :: cohort_diag_alloc, cohort_diag_free, cohort_diag_grow, cohort_diag_reset
    public :: cohort_diag_reorder, cohort_diag_copy_slot, cohort_diag_fuse, cohort_diag_clear_slot
    public :: patch_diag_alloc, patch_diag_free, patch_diag_grow, patch_diag_reset
@@ -147,44 +148,42 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_LE            =  1_ik  !< [W/m2] latent heat (CAS -> atm)
    integer(ik), parameter, public :: PD_H             =  2_ik  !< [W/m2] sensible heat (CAS -> atm)
    integer(ik), parameter, public :: PD_RNET          =  3_ik  !< [W/m2] net all-wave radiation
-   integer(ik), parameter, public :: PD_SW_IN         =  4_ik  !< [W/m2] incident shortwave at canopy top
-   integer(ik), parameter, public :: PD_SW_GROUND     =  5_ik  !< [W/m2] shortwave reaching the ground
-   integer(ik), parameter, public :: PD_LW_GROUND     =  6_ik  !< [W/m2] net longwave at the ground
-   integer(ik), parameter, public :: PD_USTAR         =  7_ik  !< [m/s]
-   integer(ik), parameter, public :: PD_GGNET         =  8_ik  !< [m/s] ground conductance
-   integer(ik), parameter, public :: PD_ROUGH         =  9_ik  !< [m] roughness length
-   integer(ik), parameter, public :: PD_DISPLACE      = 10_ik  !< [m] displacement height
-   integer(ik), parameter, public :: PD_CAS_TEMP      = 11_ik  !< [K]
-   integer(ik), parameter, public :: PD_CAS_SHV       = 12_ik  !< [kg/kg]
-   integer(ik), parameter, public :: PD_CAS_CO2       = 13_ik  !< [umol/mol]
-   integer(ik), parameter, public :: PD_GPP           = 14_ik  !< [umol CO2/m2/s] patch GPP rate
-   integer(ik), parameter, public :: PD_NEE           = 15_ik  !< [umol CO2/m2/s] net ecosystem exchange
-   integer(ik), parameter, public :: PD_TRANSP        = 16_ik  !< [kg/m2/s] canopy transpiration
-   integer(ik), parameter, public :: PD_ROOT_UPTAKE   = 17_ik  !< [kg/m2/s] realized root uptake
-   integer(ik), parameter, public :: PD_INFILTRATION  = 18_ik  !< [kg/m2/s]
-   integer(ik), parameter, public :: PD_DRAINAGE      = 19_ik  !< [kg/m2/s] bottom-face drainage
-   integer(ik), parameter, public :: PD_RUNOFF        = 20_ik  !< [kg/m2/s] surface runoff
-   integer(ik), parameter, public :: PD_PRECIP        = 21_ik  !< [kg/m2/s] total precipitation
-   integer(ik), parameter, public :: PD_GROUND_TEMP   = 22_ik  !< [K] ground/skin temperature
-   integer(ik), parameter, public :: PD_RESID_ENERGY  = 23_ik  !< [W/m2] whole-column energy residual
-   integer(ik), parameter, public :: PD_RESID_WATER   = 24_ik  !< [kg/m2/s] whole-column water residual
+   integer(ik), parameter, public :: PD_SW_GROUND     =  4_ik  !< [W/m2] shortwave reaching the ground
+   integer(ik), parameter, public :: PD_LW_GROUND     =  5_ik  !< [W/m2] net longwave at the ground
+   integer(ik), parameter, public :: PD_USTAR         =  6_ik  !< [m/s]
+   integer(ik), parameter, public :: PD_GGNET         =  7_ik  !< [m/s] ground conductance
+   integer(ik), parameter, public :: PD_ROUGH         =  8_ik  !< [m] roughness length
+   integer(ik), parameter, public :: PD_DISPLACE      =  9_ik  !< [m] displacement height
+   integer(ik), parameter, public :: PD_CAS_TEMP      = 10_ik  !< [K]
+   integer(ik), parameter, public :: PD_CAS_SHV       = 11_ik  !< [kg/kg]
+   integer(ik), parameter, public :: PD_CAS_CO2       = 12_ik  !< [umol/mol]
+   integer(ik), parameter, public :: PD_GPP           = 13_ik  !< [umol CO2/m2/s] patch GPP rate
+   integer(ik), parameter, public :: PD_NEE           = 14_ik  !< [umol CO2/m2/s] net ecosystem exchange
+   integer(ik), parameter, public :: PD_TRANSP        = 15_ik  !< [kg/m2/s] canopy transpiration
+   integer(ik), parameter, public :: PD_ROOT_UPTAKE   = 16_ik  !< [kg/m2/s] realized root uptake
+   integer(ik), parameter, public :: PD_INFILTRATION  = 17_ik  !< [kg/m2/s]
+   integer(ik), parameter, public :: PD_DRAINAGE      = 18_ik  !< [kg/m2/s] bottom-face drainage
+   integer(ik), parameter, public :: PD_RUNOFF        = 19_ik  !< [kg/m2/s] surface runoff
+   integer(ik), parameter, public :: PD_GROUND_TEMP   = 20_ik  !< [K] ground/skin temperature
+   integer(ik), parameter, public :: PD_RESID_ENERGY  = 21_ik  !< [W/m2] whole-column energy residual
+   integer(ik), parameter, public :: PD_RESID_WATER   = 22_ik  !< [kg/m2/s] whole-column water residual
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
    !      above because the reader normalizes by w either way, and the slow driver writes them as   !
    !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
-   integer(ik), parameter, public :: PD_LITTER_LEAF     = 25_ik !< [kgC/m2/yr] leaf litterfall
-   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 26_ik !< [kgC/m2/yr] fine-root litter
-   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 27_ik !< [kgC/m2/yr] structural litter + CWD
-   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 28_ik !< [plant/m2/yr] recruitment density flux
-   integer(ik), parameter, public :: PD_DISTURB_AREA    = 29_ik !< [1/yr] area fraction disturbed
+   integer(ik), parameter, public :: PD_LITTER_LEAF     = 23_ik !< [kgC/m2/yr] leaf litterfall
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 24_ik !< [kgC/m2/yr] fine-root litter
+   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 25_ik !< [kgC/m2/yr] structural litter + CWD
+   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 26_ik !< [plant/m2/yr] recruitment density flux
+   integer(ik), parameter, public :: PD_DISTURB_AREA    = 27_ik !< [1/yr] area fraction disturbed
    !----- TOP-OF-CANOPY radiative fluxes (#171). Kept as FLUXES, not as a time-averaged albedo:    !
    !      a period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and at  !
    !      night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down) over the  !
    !      period, which these four make computable -- and which is what a satellite product is.      !
-   integer(ik), parameter, public :: PD_SW_IN_VIS       = 30_ik !< [W/m2] incident VIS at canopy top
-   integer(ik), parameter, public :: PD_SW_IN_NIR       = 31_ik !< [W/m2] incident NIR at canopy top
-   integer(ik), parameter, public :: PD_SW_UP_VIS       = 32_ik !< [W/m2] upwelling VIS leaving the canopy top
-   integer(ik), parameter, public :: PD_SW_UP_NIR       = 33_ik !< [W/m2] upwelling NIR leaving the canopy top
-   integer(ik), parameter, public :: PD_LW_UP           = 34_ik !< [W/m2] upwelling LW (surface emission included)
+   integer(ik), parameter, public :: PD_SW_IN_VIS       = 28_ik !< [W/m2] incident VIS at canopy top
+   integer(ik), parameter, public :: PD_SW_IN_NIR       = 29_ik !< [W/m2] incident NIR at canopy top
+   integer(ik), parameter, public :: PD_SW_UP_VIS       = 30_ik !< [W/m2] upwelling VIS leaving the canopy top
+   integer(ik), parameter, public :: PD_SW_UP_NIR       = 31_ik !< [W/m2] upwelling NIR leaving the canopy top
+   integer(ik), parameter, public :: PD_LW_UP           = 32_ik !< [W/m2] upwelling LW (surface emission included)
    !----- MORTALITY CARBON BY PATHWAY (#169). The output already carried mortality RATES and the    !
    !      total litter flux, but nothing separated the three ways a MEDS plant can die, so a user   !
    !      could not tell a stand thinning continuously from one being knocked over. The three are    !
@@ -197,32 +196,40 @@ module meds_site_diag_types
    !      DEMOGRAPHIC question that does not stop being asked when the soil pools are switched off.  !
    !      Whole-individual death carries every pool (leaf + fine root + wood + storage), as the      !
    !      litter partitioning does.                                                                  !
-   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 35_ik !< [kgC/m2/yr] continuous hazard mortality
-   integer(ik), parameter, public :: PD_MORT_C_CULL       = 36_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
-   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 37_ik !< [kgC/m2/yr] canopy killed by patch disturbance
+   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 33_ik !< [kgC/m2/yr] continuous hazard mortality
+   integer(ik), parameter, public :: PD_MORT_C_CULL       = 34_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
+   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 35_ik !< [kgC/m2/yr] canopy killed by patch disturbance
    !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the    !
    !      output tick (#264). A state read at the tick is ONE instantaneous sample per output    !
    !      window, taken at whatever local time the boundary falls on, so its bias is a function  !
    !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
-   integer(ik), parameter, public :: PD_CAS_VPD       = 38_ik  !< [Pa]
-   integer(ik), parameter, public :: PD_W_SURFACE     = 39_ik  !< [kg/m2] ponded surface water
-   !----- The FORCING the patch saw, dt-weighted over the sub-steps (MEDS_FORCING_DESIGN.md §6.7):  !
-   !      site-uniform, so every patch holds the same value and the site mean is that value. The    !
-   !      total shortwave and precipitation are PD_SW_IN and PD_PRECIP above.                        !
-   integer(ik), parameter, public :: PD_MET_TAIR        = 40_ik !< [K] reference-height air temperature
-   integer(ik), parameter, public :: PD_MET_QAIR        = 41_ik !< [kg/kg] specific humidity
-   integer(ik), parameter, public :: PD_MET_PSURF       = 42_ik !< [Pa] surface pressure
-   integer(ik), parameter, public :: PD_MET_WIND        = 43_ik !< [m/s] wind speed at the reference height
-   integer(ik), parameter, public :: PD_MET_LWDOWN      = 44_ik !< [W/m2] downward longwave
-   integer(ik), parameter, public :: PD_MET_PAR_BEAM    = 45_ik !< [W/m2] direct-beam PAR
-   integer(ik), parameter, public :: PD_MET_PAR_DIFFUSE = 46_ik !< [W/m2] diffuse PAR
-   integer(ik), parameter, public :: PD_MET_NIR_BEAM    = 47_ik !< [W/m2] direct-beam NIR
-   integer(ik), parameter, public :: PD_MET_NIR_DIFFUSE = 48_ik !< [W/m2] diffuse NIR
-   integer(ik), parameter, public :: PD_MET_SNOWFALL    = 49_ik !< [kg/m2/s] frozen precipitation
-   integer(ik), parameter, public :: PD_MET_CO2         = 50_ik !< [umol/mol] free-atmosphere CO2
-   integer(ik), parameter, public :: PD_MET_COSZ        = 51_ik !< [-] cosine of the solar zenith angle
-   integer(ik), parameter, public :: PD_MET_RHO_AIR     = 52_ik !< [kg/m3] air density
-   integer(ik), parameter, public :: N_PDIAG            = 52_ik
+   integer(ik), parameter, public :: PD_CAS_VPD       = 36_ik  !< [Pa]
+   integer(ik), parameter, public :: PD_W_SURFACE     = 37_ik  !< [kg/m2] ponded surface water
+   integer(ik), parameter, public :: N_PDIAG            = 37_ik
+
+   !==========================================================================================!
+   !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !
+   !  they are accumulated ONCE, not per patch. The prefixes: CD_ cohort (fast loop), CS_ cohort   !
+   !  (slow loop), PD_ patch, PY_ polygon. The forcing echo (MEDS_FORCING_DESIGN.md §6.7) is the    !
+   !  forcing the fast loop used, after the reader's shortwave partition, rain/snow split and      !
+   !  optional height and lapse corrections, dt-weighted over the sub-steps.                       !
+   !==========================================================================================!
+   integer(ik), parameter, public :: PY_SW_IN          =  1_ik !< [W/m2] incident shortwave at canopy top
+   integer(ik), parameter, public :: PY_PRECIP         =  2_ik !< [kg/m2/s] total precipitation (rain + snow)
+   integer(ik), parameter, public :: PY_TAIR           =  3_ik !< [K] reference-height air temperature
+   integer(ik), parameter, public :: PY_QAIR           =  4_ik !< [kg/kg] specific humidity
+   integer(ik), parameter, public :: PY_PSURF          =  5_ik !< [Pa] surface pressure
+   integer(ik), parameter, public :: PY_WIND           =  6_ik !< [m/s] wind speed at the reference height
+   integer(ik), parameter, public :: PY_LWDOWN         =  7_ik !< [W/m2] downward longwave
+   integer(ik), parameter, public :: PY_PAR_BEAM       =  8_ik !< [W/m2] direct-beam PAR
+   integer(ik), parameter, public :: PY_PAR_DIFFUSE    =  9_ik !< [W/m2] diffuse PAR
+   integer(ik), parameter, public :: PY_NIR_BEAM       = 10_ik !< [W/m2] direct-beam NIR
+   integer(ik), parameter, public :: PY_NIR_DIFFUSE    = 11_ik !< [W/m2] diffuse NIR
+   integer(ik), parameter, public :: PY_SNOWFALL       = 12_ik !< [kg/m2/s] frozen precipitation
+   integer(ik), parameter, public :: PY_CO2            = 13_ik !< [umol/mol] free-atmosphere CO2
+   integer(ik), parameter, public :: PY_COSZ           = 14_ik !< [-] cosine of the solar zenith angle (0 with the sun down)
+   integer(ik), parameter, public :: PY_RHO_AIR        = 15_ik !< [kg/m3] air density
+   integer(ik), parameter, public :: N_PYDIAG          = 15_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !
@@ -244,6 +251,13 @@ module meds_site_diag_types
       real(wp), allocatable :: v(:,:)        !< (N_PDIAG, cap) running Sum(x*dt)
       real(wp), allocatable :: w(:)          !< (cap)          running Sum(dt)
    end type patch_diag_block
+
+   !----- One slot: the polygon (the site). Fixed size, so nothing to allocate or blend. -------!
+   type :: polygon_diag_block
+      logical  :: active = .false.
+      real(wp) :: v(N_PYDIAG) = 0.0_wp      !< running Sum(x*dt)
+      real(wp) :: w = 0.0_wp                !< running Sum(dt)
+   end type polygon_diag_block
 
 contains
 
@@ -497,5 +511,22 @@ contains
          if (d%w(i) > tiny_num) then ; x(i) = d%v(field, i) / d%w(i) ; else ; x(i) = 0.0_wp ; end if
       end do
    end subroutine patch_diag_value
+
+   !=======================================================================================!
+   !  POLYGON block. Reset at the start of each slow step's fast loop, read as the step mean.   !
+   !=======================================================================================!
+   subroutine polygon_diag_reset(d)
+      type(polygon_diag_block), intent(inout) :: d
+      if (.not. d%active) return
+      d%v = 0.0_wp ; d%w = 0.0_wp
+   end subroutine polygon_diag_reset
+
+   !----- The step mean of one field; 0 if nothing was accumulated, as the patch block reads. --!
+   pure real(wp) function polygon_diag_value(d, field) result(x)
+      type(polygon_diag_block), intent(in) :: d
+      integer(ik),              intent(in) :: field
+      x = 0.0_wp
+      if (d%active .and. d%w > tiny_num) x = d%v(field) / d%w
+   end function polygon_diag_value
 
 end module meds_site_diag_types

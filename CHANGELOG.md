@@ -19,14 +19,21 @@ before and after.
 - **The forcing the run used is written to the output** (§6.7 of `MEDS_FORCING_DESIGN.md`), as a new
   `forcing` group (`[output].forcing`, on by default). It is recorded after the reader's shortwave
   partition, rain/snow split and optional corrections:
-  - site means at the daily, monthly and yearly tiers: air temperature, specific humidity, surface
-    pressure, wind speed, downward longwave, the four shortwave streams, snowfall, CO₂, the solar
-    zenith cosine and air density;
+  - polygon means at the daily, monthly and yearly tiers: air temperature, specific humidity,
+    surface pressure, wind speed, downward longwave, the four shortwave streams, snowfall, CO₂, the
+    solar zenith cosine and air density;
   - the same fields plus liquid rain at the fast tier, one value per record from the sub-step
     samples themselves.
 
-  Existing variables are unchanged (six regression cases, 1,267 files). `meds_io_config.toml` is
-  regenerated, and the variable inventory in `docs/science/diagnostics.md` is recounted to 248.
+  The means are accumulated once per polygon, in a new polygon diagnostic block (`site%diag`, fields
+  `PY_*`, beside the patch block's `PD_*` and the cohort blocks' `CD_*`/`CS_*`), since the forcing is
+  the same across the polygon. `sw_in_site` and `precip_site` moved there from the patch block. That
+  fixes them on a year-boundary step: a patch created by the year's disturbance had a cleared
+  diagnostic slot and counted as zero in the area-weighted mean. In one case the daily record of
+  31 December read 272.31 K instead of 276.15 K, and the January means were low by a 1/31 share of
+  that. Every other existing variable is unchanged (six regression cases, 1,267 files).
+  `meds_io_config.toml` is regenerated, and the variable inventory in `docs/science/diagnostics.md`
+  is recounted to 248.
 
 - **`scripts/prepare_era5/make_forcing_file.py`** writes the single forcing file
   (`[forcing].format = "netcdf"`) from either input:

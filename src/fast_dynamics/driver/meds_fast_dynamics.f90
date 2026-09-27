@@ -27,19 +27,18 @@ module meds_fast_dynamics
    use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_buffers_t, fast_sample_t
-   use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
-                                     PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
+   use meds_site_diag_types,  only : N_CDIAG, patch_diag_block, polygon_diag_block,              &
+                                     PD_LE, PD_H, PD_RNET, PD_SW_GROUND, PD_LW_GROUND,           &
                                      PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, &
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
                                      PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
-                                     PD_PRECIP, PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
-                                     PD_MET_TAIR, PD_MET_QAIR, PD_MET_PSURF, PD_MET_WIND, PD_MET_LWDOWN, &
-                                     PD_MET_PAR_BEAM, PD_MET_PAR_DIFFUSE, PD_MET_NIR_BEAM,       &
-                                     PD_MET_NIR_DIFFUSE, PD_MET_SNOWFALL, PD_MET_CO2, PD_MET_COSZ, &
-                                     PD_MET_RHO_AIR,                                             &
+                                     PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
+                                     PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
+                                     PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
-                                     patch_diag_reset
+                                     patch_diag_reset, polygon_diag_reset
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
                                  root_available_water
    use meds_column_state_types, only : xi_accum_t, snow_column_t
@@ -419,6 +418,7 @@ contains
          call patch_diag_reset(site%patch%diag)
          site%patch%diag%n = npatch
       end if
+      call polygon_diag_reset(site%diag)
       if (do_fast) then
          nl = n_soil_layer_max
          if (.not. allocated(out_bufs%fast)) then
@@ -505,6 +505,17 @@ contains
                fs%rainf = m%rainf ; fs%snowfall = m%snowfall
                fs%cosz = m%cosz ; fs%rho_air = m%rho_air
             end associate
+         end do
+      end if
+      !----- The polygon's forcing (PY_*, §6.7), once per sub-step: the same everywhere in the     !
+      !      polygon, so it is not kept per patch. The reference climate stands in without a source. !
+      if (site%diag%active) then
+         do isub = 1_ik, nsub
+            if (do_forcing) then
+               call accumulate_polygon_diag(site%diag, cfg%dt_fast, met_sample(isub))
+            else
+               call accumulate_polygon_diag(site%diag, cfg%dt_fast, met_ref)
+            end if
          end do
       end if
 
@@ -792,14 +803,14 @@ contains
             end if
             if (do_pdiag) then
                call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, le_flux, h_flux, rnet,          &
-                                          met%swdown(), forc%abs_sw_ground, forc%abs_lw_ground,       &
+                                          forc%abs_sw_ground, forc%abs_lw_ground,                     &
                                           aero%ustar, aero%ggnet, aero%rough, aero%displace,               &
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
-                                          gpp_patch, budget%nee_last, forc%rainfall + forc%snowfall,             &
+                                          gpp_patch, budget%nee_last,                                       &
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
                                           budget%whole_water%resid,                                         &
                                           forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
-                                          forc%lw_up, biophys%soil_w%w_surface, met)
+                                          forc%lw_up, biophys%soil_w%w_surface)
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1170,32 +1181,28 @@ contains
    !  steps in different sub-steps. Values are the SAME numbers the physics just used -- nothing  !
    !  is recomputed, which is the point: before this they were computed and dropped.              !
    !=======================================================================================!
-   subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_in, sw_ground, lw_ground,       &
+   subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_ground, lw_ground,              &
                                     ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
-                                    precip_total, ground_temp, resid_energy, resid_water,           &
-                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface, met)
+                                    ground_temp, resid_energy, resid_water,                         &
+                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip
       real(wp),               intent(in)    :: dt                        !< [s]        sample weight
       real(wp),               intent(in)    :: le_flux, h_flux           !< [W/m2]     CAS -> atmosphere
       real(wp),               intent(in)    :: rnet                      !< [W/m2]     net all-wave radiation absorbed
-      real(wp),               intent(in)    :: sw_in                     !< [W/m2]     incident shortwave, canopy top
       real(wp),               intent(in)    :: sw_ground, lw_ground      !< [W/m2]     ground SW / net LW
       real(wp),               intent(in)    :: ustar, ggnet              !< [m/s]      friction velocity, ground conductance
       real(wp),               intent(in)    :: rough, displace           !< [m]        roughness, displacement height
       real(wp),               intent(in)    :: cas_temp, cas_shv, cas_co2 !< [K],[kg/kg],[umol/mol] canopy air
       real(wp),               intent(in)    :: gpp, nee                  !< [umol/m2/s] gross uptake, net exchange (+ to atm)
-      real(wp),               intent(in)    :: precip_total              !< [kg/m2/s]  rain + snow
       real(wp),               intent(in)    :: ground_temp               !< [K]        top soil-node temperature
       real(wp),               intent(in)    :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
       !----- Top-of-canopy radiative fluxes per band (#171). -----------------------------------!
       real(wp),               intent(in)    :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
       real(wp),               intent(in)    :: w_surface                 !< [kg/m2]   ponded surface water
-      type(met_forcing_t),    intent(in)    :: met                       !< the sub-step's forcing (§6.7 echo)
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
-      pd%v(PD_SW_IN,        ip) = pd%v(PD_SW_IN,        ip) + sw_in                  * dt
       pd%v(PD_SW_GROUND,    ip) = pd%v(PD_SW_GROUND,    ip) + sw_ground              * dt
       pd%v(PD_LW_GROUND,    ip) = pd%v(PD_LW_GROUND,    ip) + lw_ground              * dt
       pd%v(PD_SW_IN_VIS,    ip) = pd%v(PD_SW_IN_VIS,    ip) + sw_in_vis              * dt
@@ -1221,7 +1228,6 @@ contains
       !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
       !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
       pd%v(PD_TRANSP,       ip) = pd%v(PD_TRANSP,       ip) + (le_flux/latent_heat_vap) * dt
-      pd%v(PD_PRECIP,       ip) = pd%v(PD_PRECIP,       ip) + precip_total           * dt
       pd%v(PD_GROUND_TEMP,  ip) = pd%v(PD_GROUND_TEMP,  ip) + ground_temp            * dt
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
       !      this line can be believed, which is why they are captured on the same tick rather than    !
@@ -1231,22 +1237,31 @@ contains
       !      worst*dt -- a running max in J/m2 that the registry then labelled W/m2.) -----------------!
       pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + resid_energy
       pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + resid_water
-      !----- The forcing itself (MEDS_FORCING_DESIGN.md §6.7), as the model used it: after the      !
-      !      reader's shortwave partition, phase split and optional height/lapse corrections. -------!
-      pd%v(PD_MET_TAIR,        ip) = pd%v(PD_MET_TAIR,        ip) + met%tair_k      * dt
-      pd%v(PD_MET_QAIR,        ip) = pd%v(PD_MET_QAIR,        ip) + met%qair        * dt
-      pd%v(PD_MET_PSURF,       ip) = pd%v(PD_MET_PSURF,       ip) + met%psurf_pa    * dt
-      pd%v(PD_MET_WIND,        ip) = pd%v(PD_MET_WIND,        ip) + met%wind        * dt
-      pd%v(PD_MET_LWDOWN,      ip) = pd%v(PD_MET_LWDOWN,      ip) + met%lwdown      * dt
-      pd%v(PD_MET_PAR_BEAM,    ip) = pd%v(PD_MET_PAR_BEAM,    ip) + met%par_beam    * dt
-      pd%v(PD_MET_PAR_DIFFUSE, ip) = pd%v(PD_MET_PAR_DIFFUSE, ip) + met%par_diffuse * dt
-      pd%v(PD_MET_NIR_BEAM,    ip) = pd%v(PD_MET_NIR_BEAM,    ip) + met%nir_beam    * dt
-      pd%v(PD_MET_NIR_DIFFUSE, ip) = pd%v(PD_MET_NIR_DIFFUSE, ip) + met%nir_diffuse * dt
-      pd%v(PD_MET_SNOWFALL,    ip) = pd%v(PD_MET_SNOWFALL,    ip) + met%snowfall    * dt
-      pd%v(PD_MET_CO2,         ip) = pd%v(PD_MET_CO2,         ip) + met%co2         * dt
-      pd%v(PD_MET_COSZ,        ip) = pd%v(PD_MET_COSZ,        ip) + met%cosz        * dt
-      pd%v(PD_MET_RHO_AIR,     ip) = pd%v(PD_MET_RHO_AIR,     ip) + met%rho_air     * dt
       pd%w(ip)                  = pd%w(ip)                  + dt
    end subroutine accumulate_patch_diag
+
+   !----- The polygon's forcing for one sub-step (MEDS_FORCING_DESIGN.md §6.7), as the fast loop  !
+   !      used it: after the reader's shortwave partition, phase split and optional corrections. --!
+   subroutine accumulate_polygon_diag(d, dt, met)
+      type(polygon_diag_block), intent(inout) :: d
+      real(wp),                 intent(in)    :: dt     !< [s] sample weight
+      type(met_forcing_t),      intent(in)    :: met
+      d%v(PY_SW_IN)       = d%v(PY_SW_IN)       + met%swdown()          * dt
+      d%v(PY_PRECIP)      = d%v(PY_PRECIP)      + (met%rainf + met%snowfall) * dt
+      d%v(PY_TAIR)        = d%v(PY_TAIR)        + met%tair_k            * dt
+      d%v(PY_QAIR)        = d%v(PY_QAIR)        + met%qair              * dt
+      d%v(PY_PSURF)       = d%v(PY_PSURF)       + met%psurf_pa          * dt
+      d%v(PY_WIND)        = d%v(PY_WIND)        + met%wind              * dt
+      d%v(PY_LWDOWN)      = d%v(PY_LWDOWN)      + met%lwdown            * dt
+      d%v(PY_PAR_BEAM)    = d%v(PY_PAR_BEAM)    + met%par_beam          * dt
+      d%v(PY_PAR_DIFFUSE) = d%v(PY_PAR_DIFFUSE) + met%par_diffuse       * dt
+      d%v(PY_NIR_BEAM)    = d%v(PY_NIR_BEAM)    + met%nir_beam          * dt
+      d%v(PY_NIR_DIFFUSE) = d%v(PY_NIR_DIFFUSE) + met%nir_diffuse       * dt
+      d%v(PY_SNOWFALL)    = d%v(PY_SNOWFALL)    + met%snowfall          * dt
+      d%v(PY_CO2)         = d%v(PY_CO2)         + met%co2               * dt
+      d%v(PY_COSZ)        = d%v(PY_COSZ)        + met%cosz              * dt
+      d%v(PY_RHO_AIR)     = d%v(PY_RHO_AIR)     + met%rho_air           * dt
+      d%w                 = d%w                 + dt
+   end subroutine accumulate_polygon_diag
 
 end module meds_fast_dynamics
