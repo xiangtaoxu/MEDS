@@ -1257,7 +1257,7 @@ reads a box of cells from it.
 
 ## 8. Phasing
 
-> **Status, checked against the code on 2026-09-26** (✅ done, ⬜ open, ➡ moved):
+> **Status, checked against the code on 2026-09-26** (✅ done, ⬜ open, ➡ moved, ✖ out of scope):
 >
 > **P0**
 > - ✅ everything (PR #36).
@@ -1275,7 +1275,9 @@ reads a box of cells from it.
 > - ➡ the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`;
 > - ➡ other reanalysis products move to §16, with the archive design in §14;
 > - ✅ a prescribed CO₂ series (#184, 2026-09-27; `docs/science/forcing.md` §12);
-> - ⬜ climate-change perturbations.
+> - ✖ climate-change perturbations: **out of scope** (decided 2026-09-27). MEDS's interface is the
+>   forcing it is given; offsets, scalings and delta-change scenarios are built upstream, in the
+>   forcing file, not applied by the reader.
 >
 > The forcing-data phases F0–F6 are in §17.
 
@@ -1316,7 +1318,7 @@ reads a box of cells from it.
   `match_poly_grid`) — the file format already supports this from P0 (§7), so this is reader/driver work
   only. Elevation **lapse-rate** correction (`lapse.f90` analogue) between grid cell and site, a
   **10 m→reference-height wind log-profile** adjustment (§5.2/§10), climate-change intercept/slope
-  perturbations, other reanalysis products via the same format (CRUNCEP/GSWP3/WFDE5/full ERA5), and a
+  perturbations (*out of scope since 2026-09-27: done upstream, in the forcing file*), other reanalysis products via the same format (CRUNCEP/GSWP3/WFDE5/full ERA5), and a
   **transient/observed CO₂** stream (a CO₂-only, non-cycling variable on the same file).
 
 ---
