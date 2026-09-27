@@ -12,11 +12,12 @@ module meds_output_manager
    use meds_output_config,    only : N_FREQ
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_integrate, only : close_tier
-   use meds_output_stream,    only : stream_write_record, stream_close_file
+   use meds_output_stream,    only : stream_write_record, stream_close_file, region_write_record
    implicit none
    private
 
    public :: output_serialize_pending, output_manager_close
+   public :: output_serialize_region, output_region_close
 
 contains
 
@@ -57,5 +58,45 @@ contains
          call stream_close_file(files%stream(t))
       end do
    end subroutine output_manager_close
+
+   !----- A REGION's I/O phase: every polygon closed the same periods, so record i of tier t is one  !
+   !      period across all polygons; write it to the region file as one hyperslab per variable     !
+   !      (MEDS_POLYGON_RUNTIME_PLAN.md §6.1), in closing order, then empty every queue. ------------!
+   subroutine output_serialize_region(files, bufs)
+      type(output_files_t),  intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      integer(ik) :: t, i, p
+      if (.not. files%enabled) return
+      do t = 1_ik, N_FREQ
+         do p = 2_ik, size(bufs, kind=ik)
+            if (bufs(p)%queue(t)%n /= bufs(1)%queue(t)%n)                                       &
+               error stop 'output_serialize_region: the polygons closed different numbers of periods'
+         end do
+         do i = 1_ik, bufs(1)%queue(t)%n
+            call region_write_record(files, bufs, t, i)
+         end do
+         do p = 1_ik, size(bufs, kind=ik)
+            bufs(p)%queue(t)%n = 0_ik
+         end do
+      end do
+   end subroutine output_serialize_region
+
+   !----- End of a region run: close every polygon's final partial windows, write them, and close  !
+   !      the region files. --------------------------------------------------------------------!
+   subroutine output_region_close(files, bufs)
+      type(output_files_t),  intent(inout) :: files
+      type(output_buffers_t), intent(inout) :: bufs(:)
+      integer(ik) :: t, p
+      if (.not. files%enabled) return
+      do p = 1_ik, size(bufs, kind=ik)
+         do t = 1_ik, N_FREQ
+            if (bufs(p)%has_data(t)) call close_tier(files, bufs(p), t)
+         end do
+      end do
+      call output_serialize_region(files, bufs)
+      do t = 1_ik, N_FREQ
+         call stream_close_file(files%stream(t))
+      end do
+   end subroutine output_region_close
 
 end module meds_output_manager

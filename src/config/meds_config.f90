@@ -24,6 +24,7 @@ module meds_config
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
+   use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    implicit none
    private
 
@@ -33,6 +34,7 @@ module meds_config
    public :: validate_config, growth_window_steps
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
+   public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -202,6 +204,10 @@ module meds_config
       !      -DMEDS_OPENMP=ON to have                                                                  !
       !      any effect; without OpenMP flags the directives are comments and this is ignored.         !
       integer(ik) :: n_threads = 1_ik
+      !----- [run].mode: one site, or every selected cell of a box as its own polygon, with the box  !
+      !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !
+      integer(ik)         :: run_mode = RUN_MODE_SITE
+      type(region_opts_t) :: region
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -693,6 +699,33 @@ contains
                            &order-significant CSV; see plan sec 7 C3)'
       end if
       if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
+      !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
+      !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
+      !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
+      !      checkpoints; until polygon threads exist (R3) the patch threads and the one-file probe    !
+      !      stay off.  ---------------------------------------------------------------------------!
+      if (cfg%run_mode == RUN_MODE_REGION) then
+         if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
+            error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
+         if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                          &
+            error stop tag//'[run].mode = "region" needs forcing.format = "era5land"'
+         if (cfg%n_threads /= 1_ik)                                                                &
+            error stop tag//'[run].mode = "region" needs run.n_threads = 1 (polygon threads come in R3)'
+         if (cfg%fast_probe)                                                                       &
+            error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
+         if (cfg%init_mode /= INIT_BARE)                                                           &
+            error stop tag//'[run].mode = "region" starts from bare ground (init.init_mode = 0) until R4'
+         if (cfg%state_write_state)                                                                &
+            error stop tag//'[run].mode = "region" writes no checkpoints (state.write_state = false) until R4'
+         associate (b => cfg%region%box_nwse)
+            if (.not. (b(1) > b(3) .and. b(1) <= 90.0_wp .and. b(3) >= -90.0_wp))               &
+               error stop tag//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
+            if (any(abs(b([2, 4])) > 360.0_wp))                                                    &
+               error stop tag//'region.box_nwse longitudes must lie within [-360, 360]'
+         end associate
+         if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
+            error stop tag//'region.land_fraction_min must lie in [0, 1]'
+      end if
       !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
       !      and the wind-profile roughness must be positive.                                          !
       if (cfg%forcing%forcing_on) then
@@ -724,7 +757,8 @@ contains
          !      a config that says otherwise would mis-time or mis-partition every record. ---------!
          if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
-            if (cfg%forcing%max_distance_km <= 0.0_wp) error stop tag//'forcing.max_distance_km must be > 0'
+            if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
+               error stop tag//'forcing.max_distance_km must be > 0'
             if (abs(cfg%forcing%dt_forcing - 3600.0_wp) > 0.5_wp)                                  &
                error stop tag//'forcing.timestep must be 1 hour for format = "era5land"'
             if (cfg%forcing%avg_convention /= METAVG_END)                                          &

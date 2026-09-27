@@ -355,7 +355,9 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 #      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
 #      it is the one place that owns configuration, the calendar, the output manager and the       #
 #      closing conservation reports together.                                                      #
-add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90)
+add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
+                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
+                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
 target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
 
@@ -521,6 +523,15 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_run COMMAND test_c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
 
+   #      A region against its site runs (MEDS_POLYGON_RUNTIME_PLAN.md R2), on the synthetic archive.
+   #      Runs from examples/example_biophysics, whose July config it derives its configs from; it
+   #      writes everything under the work directory in the build tree.
+   add_executable(test_region test/test_region.f90)
+   target_link_libraries(test_region PRIVATE meds_driver meds_testassert meds_testarchive)
+   meds_fortran_flags(test_region)
+   add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
+
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
    #     allocation and trait dynamics are daily -- so it links both kernel libraries. Since
@@ -576,8 +587,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_driver)
    add_test(NAME met_driver COMMAND test_met_driver)
+   #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
+   add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
+   target_link_libraries(meds_testarchive PUBLIC meds_forcing)
+   meds_fortran_flags(meds_testarchive)
    add_executable(test_met_era5land test/test_met_era5land.f90)
-   target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert)
+   target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
    add_test(NAME met_era5land COMMAND test_met_era5land)
 

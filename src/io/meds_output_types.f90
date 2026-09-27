@@ -261,6 +261,7 @@ module meds_output_types
       logical     :: has_size     = .false. !< this tier defines the dbh-class dim
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
       integer(ik) :: d_pft = -1_ik, d_size = -1_ik
+      integer(ik) :: d_polygon = -1_ik       !< a region file's polygon dimension
       integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
       integer(ik) :: v_soil_z = -1_ik                                        !< soil layer node depths [m]
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
@@ -295,6 +296,12 @@ module meds_output_types
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
+      !----- A REGION's polygon axis (MEDS_POLYGON_RUNTIME_PLAN.md §6): its files carry a `polygon`  !
+      !      dimension, one entry per polygon's buffers, with these coordinates (0 for site files). --!
+      integer(ik)              :: n_polygon = 0_ik
+      integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
+      integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices
+      real(wp),    allocatable :: polygon_lat(:), polygon_lon(:)   !< [deg] cell centre
    end type output_files_t
 
    type :: output_buffers_t
