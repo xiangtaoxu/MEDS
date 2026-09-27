@@ -52,6 +52,25 @@ before and after.
     GDEX build of the same month.
 - **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
   (default 3) keeps several requests in the CDS queue at once (#280).
+- **The forcing reader reads the ED_ERA5land archive** (`[forcing].format = "era5land"`,
+  `MEDS_FORCING_DESIGN.md` §15). A run names the archive folder in `data_path`, and the reader:
+  - binds the site to its cell, or to the nearest valid cell within `max_distance_km` when the site
+    falls on a no-data cell, and takes the cell's elevation from the archive's static file;
+  - reads one month at a time, one chunk column per variable, over the recycle window or the run
+    period, and checks at open that every file the run needs exists;
+  - converts dewpoint to specific humidity with the model's own saturation curve, and forms the
+    wind speed from the stored components.
+  - Keys that do not apply to the archive (`path`, `grid_index`, `grid_match`,
+    `[site].grid_elevation`) are rejected rather than ignored. Path keys hold up to 1024
+    characters.
+  - Box selection, including boxes across 180°, is in the library for the polygon runtime; the
+    config does not expose it yet.
+  - With the archive, every output file carries a `forcing_qair` global attribute naming the
+    humidity formula, because a run's humidity then depends on the model version.
+- **The forcing record carries the wind vector** (`wind_u`, `wind_v`, `has_wind_vector`) beside
+  the speed when the source supplies components: the archive always, a MEDS forcing file when it
+  carries `u10` and `v10`. The components interpolate linearly and take the same height correction
+  as the speed, so the direction is preserved.
 
 ### Changed
 

@@ -16,7 +16,8 @@ module meds_forcing_config
    private
 
    public :: forcing_config_t
-   public :: MET_BACKEND_CONST, MET_BACKEND_NETCDF
+   public :: MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND
+   public :: MET_PATH_LEN
    public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
    public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
@@ -24,9 +25,13 @@ module meds_forcing_config
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
 
-   !----- Reader backend: a MEDS forcing NetCDF, or a no-file reference-climate box. --------!
-   integer(ik), parameter :: MET_BACKEND_CONST  = 0_ik   !< no file: met_forcing_t defaults (reference climate)
-   integer(ik), parameter :: MET_BACKEND_NETCDF = 1_ik   !< the MEDS multi-grid forcing NetCDF (the file format)
+   !----- Reader backend ([forcing].format): a MEDS forcing NetCDF, the global ED_ERA5land       !
+   !      archive, or a no-file reference-climate box. ------------------------------------------!
+   integer(ik), parameter :: MET_BACKEND_CONST    = 0_ik   !< no file: met_forcing_t defaults (reference climate)
+   integer(ik), parameter :: MET_BACKEND_NETCDF   = 1_ik   !< the MEDS multi-grid forcing NetCDF ("legacy_file", §7.1)
+   integer(ik), parameter :: MET_BACKEND_ERA5LAND = 2_ik   !< the per-variable monthly ED_ERA5land archive (§14, §15)
+
+   integer, parameter :: MET_PATH_LEN = 1024                !< length of every forcing path field (§15.2)
 
    !----- Timestamp semantics of a forcing record (avg_convention). ------------------------!
    integer(ik), parameter :: METAVG_INSTANT = 0_ik   !< value is instantaneous AT the stamp
@@ -75,7 +80,16 @@ module meds_forcing_config
    type :: forcing_config_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
       integer(ik)        :: backend      = MET_BACKEND_NETCDF    !< "netcdf" | "const"
-      character(len=256) :: path         = ''                    !< forcing NetCDF path
+      character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "netcdf")
+      !----- The ED_ERA5land archive (format = "era5land", MEDS_FORCING_DESIGN.md §15.2). The file   !
+      !      template and static file are derived from data_path when left empty, which is what the  !
+      !      archive's own layout needs; override them only for an archive laid out differently.    !
+      !      Template tokens: {data_path}, {var}, {yyyy}, {mm}.                                        !
+      character(len=MET_PATH_LEN) :: data_path     = ''          !< archive folder
+      character(len=MET_PATH_LEN) :: file_template = ''          !< '' -> {data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc
+      character(len=MET_PATH_LEN) :: static_file   = ''          !< '' -> {data_path}/ED_ERA5land_static.nc
+      real(wp)           :: max_distance_km = 15.0_wp            !< [km] a site on a no-data cell takes the nearest
+                                                                 !<      valid cell within this, else it is an error
       integer(ik)        :: grid_index   = 1_ik                  !< which (time,grid) location this polygon reads
       real(wp)           :: dt_forcing   = 3600.0_wp             !< [s] native interval (hourly ERA5-Land)
       integer(ik)        :: avg_convention = METAVG_END          !< flux vars mean over the hour ENDING at the stamp

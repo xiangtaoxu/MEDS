@@ -576,6 +576,10 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_driver)
    add_test(NAME met_driver COMMAND test_met_driver)
+   add_executable(test_met_era5land test/test_met_era5land.f90)
+   target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert)
+   meds_fortran_flags(test_met_era5land)
+   add_test(NAME met_era5land COMMAND test_met_era5land)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)

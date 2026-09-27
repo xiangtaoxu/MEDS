@@ -381,10 +381,18 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
-# constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. The file
-# is a MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with the tools in scripts/prepare_era5/
-# (download_era5land_cds.py, then postprocess_era5land.py --split none) followed by
-# scripts/prep_era5land_forcing.py. When forcing_on=true, ALL keys below are required.
+# constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. Two sources:
+#   format = "era5land"  the global ED_ERA5land archive (per-variable monthly files, built with
+#                        scripts/prepare_era5/). The reader finds the site's cell itself, takes its
+#                        elevation from the archive's static file, converts dewpoint to specific
+#                        humidity with the model's own saturation curve, and carries the wind vector.
+#                        Keys: data_path and max_distance_km; NOT path, grid_index, grid_match or
+#                        [site].grid_elevation (rejected if present).
+#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with the tools
+#                        in scripts/prepare_era5/ (download_era5land_cds.py, then postprocess_era5land.py
+#                        --split none) followed by scripts/prep_era5land_forcing.py. Keys: path,
+#                        grid_index, grid_match and [site].grid_elevation.
+# When forcing_on=true, every other key below is required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
 # longitude             = -76.50         # [deg +E] drives local solar time
@@ -397,13 +405,24 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # apply_elevation_lapse = false          # lapse T/P from grid_elevation to elevation
 # wind_roughness_z0     = 0.1            # [m] roughness length for the wind log-profile
 # lapse_rate_tair       = 0.0065         # [K/m] environmental lapse (positive = cooling upward)
-# grid_elevation        = 320.0          # [m] elevation of the forcing source grid cell
+# grid_elevation        = 320.0          # [m] elevation of the forcing source grid cell (format = "netcdf" only)
 # [forcing]
 # forcing_on            = true
-# format                = "netcdf"       # "netcdf" | "const"
+# format                = "netcdf"       # "era5land" | "netcdf" | "const"
+#   ---- format = "era5land" --------------------------------------------------------------------
+# data_path             = "/path/to/ED_ERA5land"   # the archive folder (installation-specific)
+# max_distance_km       = 15.0           # a site on a no-data cell (coast, lake edge) takes the nearest
+#                                        # valid cell within this distance; farther is an error
+# file_template         = "{data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc"   # optional; the default shown
+# static_file           = "{data_path}/ED_ERA5land_static.nc"             # optional; the default shown
+#   The months read are the recycle window when recycle = true, else the run period; every file
+#   they need must exist when the run starts. A run starting at 00:00 on the 1st also reads the
+#   previous month's file, which holds that record (the archive stamps the END of each hour).
+#   ---- format = "netcdf" ----------------------------------------------------------------------
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")
 # grid_match            = "explicit"     # "explicit" (use grid_index) | "nearest" ([site] lat/lon -> nearest cell)
+#   --------------------------------------------------------------------------------------------
 # timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
 # avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"

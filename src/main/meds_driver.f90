@@ -42,6 +42,7 @@ module meds_driver
                                            build_litter_input
    use meds_forcing_types,          only : met_driver_t
    use meds_met_driver,             only : met_open, met_close
+   use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area, has_nan
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
@@ -209,9 +210,16 @@ contains
       if (run%cfg%fast_biophysics_on) then
          call build_fast_context(run%cfg, run%fast_ctx)
          if (run%cfg%forcing%forcing_on) then
-            call met_open(run%met_drv, run%cfg%forcing)
+            call met_open(run%met_drv, run%cfg%forcing, run_start=run%cfg%start_time,             &
+                          run_end=run%cfg%end_time)
             run%fast_ctx%zref = run%cfg%forcing%reference_height
-            if (run%verbose) write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
+            if (run%verbose) then
+               if (run%cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+                  write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(run%cfg%forcing%data_path), ')'
+               else
+                  write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
+               end if
+            end if
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/ !
          !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard !

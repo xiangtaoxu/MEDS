@@ -144,8 +144,17 @@ a mean.
 Without it the fast loop runs against a constant reference climate, which is useful for tests and
 useless for science.
 
-The forcing file format, the ERA5-Land preparation recipe, and the recycling rules are documented
-in [`science/forcing.md`](science/forcing.md). Two things to know before writing a config:
+`[forcing].format` picks the source:
+
+- **`"era5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
+  with the tools in `scripts/prepare_era5/`. Give it `data_path` (the archive folder) and
+  `max_distance_km`. The reader finds the site's cell itself and takes that cell's elevation from
+  the archive, so `path`, `grid_index`, `grid_match` and `[site].grid_elevation` do not apply and
+  are rejected if present. Every month file the run needs must exist when it starts.
+- **`"netcdf"`** reads one MEDS forcing file, named by `path`.
+
+The file formats, the ERA5-Land preparation recipe, and the recycling rules are documented in
+[`science/forcing.md`](science/forcing.md). Two things to know before writing a config:
 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A

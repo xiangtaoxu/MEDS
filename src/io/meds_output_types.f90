@@ -269,6 +269,10 @@ module meds_output_types
       type(pending_record_t) :: pending(N_FREQ)
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
+      !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !
+      !      archive the model computes qair itself, so a run's humidity depends on the model version and  !
+      !      the formula is recorded (MEDS_FORCING_DESIGN.md §15.4, FD8); empty -> no attribute.          !
+      character(len=512)     :: forcing_qair = ''
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps

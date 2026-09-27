@@ -33,13 +33,14 @@ contains
 
    !----- Write one closed-period record, opening / rolling the per-tier file as needed. ------!
    subroutine stream_write_record(stream, reg, dg, pr, dir, prefix, file_chunk, cohort_max,      &
-                                  patch_max, sync_every)
+                                  patch_max, sync_every, forcing_qair)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
       type(diag_params_t),     intent(in)    :: dg
       type(pending_record_t),  intent(in)    :: pr
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, cohort_max, patch_max, sync_every
+      character(len=*),        intent(in)    :: forcing_qair   !< provenance attribute ('' -> none)
       integer(ik) :: tier, bucket, fc
       tier = freq_tier_index(pr%freq)
       !----- Cohort/patch counts are invariant only WITHIN a month (§4.4); to trim the cohort/patch !
@@ -58,7 +59,7 @@ contains
       if (stream%ncid < 0_ik .or. bucket /= stream%chunk_bucket) then
          call stream_close_file(stream)
          call stream_open_file(stream, reg, dg, pr, dir, prefix, fc, bucket, cohort_max,          &
-                               patch_max, tier)
+                               patch_max, tier, forcing_qair)
       end if
       call write_one_record(stream, reg, pr, tier)
       !----- Skip the per-record nc_sync for the FAST tier: ~n_fast_per_slow records/day would else    !
@@ -130,13 +131,14 @@ contains
    !  Create the file + define dims / registry-driven variables / CF metadata (§5.3).        !
    !=======================================================================================!
    subroutine stream_open_file(stream, reg, dg, pr, dir, prefix, file_chunk, bucket, cohort_max,  &
-                               patch_max, tier)
+                               patch_max, tier, forcing_qair)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
       type(diag_params_t),     intent(in)    :: dg
       type(pending_record_t),  intent(in)    :: pr
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, bucket, cohort_max, patch_max, tier
+      character(len=*),        intent(in)    :: forcing_qair
       character(len=512) :: path
       character(len=16)  :: stamp
       character(len=1)   :: letter
@@ -244,6 +246,7 @@ contains
 
       call put_global(ncid, 'title', TITLE)
       call put_global(ncid, 'Conventions', 'CF-1.10')
+      if (len_trim(forcing_qair) > 0) call put_global(ncid, 'forcing_qair', trim(forcing_qair))
       call nc_check(nc_enddef(ncid), 'stream enddef')
 
       !----- Write the axis coordinates once, right after enddef (they do not vary by record). --!

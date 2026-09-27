@@ -24,7 +24,7 @@ module meds_config_io
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_forcing_config, only : forcing_config_t,                                            &
-                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
+                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
@@ -453,7 +453,7 @@ contains
    end subroutine req_colimitation
 
    !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "const"
+   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "era5land" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
       character(len=64) :: s
@@ -461,8 +461,9 @@ contains
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       s = toml_string(t, key, 'netcdf')
       select case (trim(s))
-      case ('netcdf') ; mode = MET_BACKEND_NETCDF
-      case ('const')  ; mode = MET_BACKEND_CONST
+      case ('netcdf')   ; mode = MET_BACKEND_NETCDF
+      case ('era5land') ; mode = MET_BACKEND_ERA5LAND
+      case ('const')    ; mode = MET_BACKEND_CONST
       case default    ; call note_missing(m, key)
       end select
    end subroutine req_met_backend
@@ -550,11 +551,27 @@ contains
       cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
-      call req_s            (t, 'forcing.path',           cfg%forcing%path,                  m)
-      call req_i            (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
-      call req_grid_match   (t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
-      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
+      !----- The source picks its own keys. The archive (format = "era5land", §15.2) finds the    !
+      !      site's cell itself and takes its orography from the static file, so the keys that     !
+      !      name a file, a grid slot or a grid elevation would parse and do nothing there: they    !
+      !      are rejected rather than ignored. ---------------------------------------------------!
+      if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+         call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
+         call req_r         (t, 'forcing.max_distance_km', cfg%forcing%max_distance_km,       m)
+         cfg%forcing%file_template = toml_string(t, 'forcing.file_template', '')
+         cfg%forcing%static_file   = toml_string(t, 'forcing.static_file',   '')
+         if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
+             toml_has(t, 'forcing.grid_match') .or. toml_has(t, 'site.grid_elevation'))            &
+            error stop 'load_meds_config: forcing.path, forcing.grid_index, forcing.grid_match and '// &
+                       'site.grid_elevation do not apply to forcing.format = "era5land" (the archive '// &
+                       'finds the site cell and its elevation itself); remove them'
+      else
+         call req_s         (t, 'forcing.path',           cfg%forcing%path,                  m)
+         call req_i         (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
+         call req_grid_match(t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
+      end if
+      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
       call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
       call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
       call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
@@ -589,7 +606,8 @@ contains
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
       call req_r            (t, 'site.wind_roughness_z0',     cfg%forcing%wind_roughness_z0,     m)
       call req_r            (t, 'site.lapse_rate_tair',       cfg%forcing%lapse_rate_tair,       m)
-      call req_r            (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
+      if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
+         call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
    !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
