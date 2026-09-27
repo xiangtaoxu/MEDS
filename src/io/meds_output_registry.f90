@@ -78,6 +78,7 @@ module meds_output_registry
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_part, manager_set_soil_params
+   public :: manager_restrict_region
    public :: activate_site_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
@@ -1027,6 +1028,25 @@ contains
       !      reason.                                                                                !
       sh%max_slab = live_max_slab(sh)
    end subroutine manager_setup
+
+   !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
+   !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
+   !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
+   !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
+   !      Called after manager_setup and the overrides, before manager_finalize: the slab size drops   !
+   !      with the cohort axis, and so does every polygon's part.  -----------------------------------!
+   subroutine manager_restrict_region(sh)
+      type(output_shared_t), intent(inout) :: sh
+      integer(ik) :: k
+      do k = 1_ik, sh%reg%nvar
+         select case (sh%reg%var(k)%dim)
+         case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH) ; sh%reg%var(k)%enabled = .false.
+         end select
+         sh%reg%var(k)%streams = iand(sh%reg%var(k)%streams, not(FREQ_FAST))
+      end do
+      call build_freq_index(sh%reg)
+      sh%max_slab = live_max_slab(sh)
+   end subroutine manager_restrict_region
 
    !----- Largest slab length any LIVE variable can produce (see the sizing note above). ------!
    pure integer(ik) function live_max_slab(sh) result(cap)

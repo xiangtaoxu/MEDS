@@ -19,6 +19,7 @@ module meds_config_io
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : soil_column_config_t
+   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -558,7 +559,9 @@ contains
       !      are rejected rather than ignored. ---------------------------------------------------!
       if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
          call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
-         call req_r         (t, 'forcing.max_distance_km', cfg%forcing%max_distance_km,       m)
+         !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
+         if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
+            call req_r      (t, 'forcing.max_distance_km', cfg%forcing%max_distance_km,       m)
          cfg%forcing%file_template = toml_string(t, 'forcing.file_template', '')
          cfg%forcing%static_file   = toml_string(t, 'forcing.static_file',   '')
          if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
@@ -594,13 +597,26 @@ contains
          call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
       end if
       call req_r            (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
-      call req_r            (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
-      call req_r            (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
-      call req_r            (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
+      !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
+      !      static orography, UTC), so the [site] location keys would parse and do nothing there:  !
+      !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
+      if (cfg%run_mode == RUN_MODE_REGION) then
+         if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
+             toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.elevation') .or.                &
+             toml_has(t, 'forcing.max_distance_km'))                                               &
+            error stop 'load_meds_config: site.latitude, site.longitude, site.utc_offset, '//       &
+                       'site.elevation and forcing.max_distance_km do not apply to [run].mode = '// &
+                       '"region" (each polygon sits at its cell centre, at the cell''s orography, '// &
+                       'in UTC); remove them'
+      else
+         call req_r         (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
+         call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
+         call req_r         (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
+         call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
+      end if
       call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
       call req_r            (t, 'site.reference_height',  cfg%forcing%reference_height,      m)
       call req_r            (t, 'site.wind_meas_height',  cfg%forcing%wind_meas_height,      m)
-      call req_r            (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
       !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2). -------------------------!
       call req_l            (t, 'site.apply_wind_profile',    cfg%forcing%apply_wind_profile,    m)
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
@@ -609,6 +625,46 @@ contains
       if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
+
+   !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
+   !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
+   !      required; the selection rule and the detail list default. In site mode a [region] key      !
+   !      would parse and do nothing, so it is rejected.  -------------------------------------------!
+   subroutine load_region_config(t, cfg, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      real(wp)    :: buf(MAX_DETAIL_POLYGONS + 1)
+      integer(ik) :: nout, i
+      select case (trim(toml_string(t, 'run.mode', 'site')))
+      case ('site')   ; cfg%run_mode = RUN_MODE_SITE
+      case ('region') ; cfg%run_mode = RUN_MODE_REGION
+      case default    ; error stop 'load_meds_config: [run].mode must be "site" or "region"'
+      end select
+      if (cfg%run_mode /= RUN_MODE_REGION) then
+         if (toml_has_section(t, 'region'))                                                        &
+            error stop 'load_meds_config: a [region] block needs [run].mode = "region"'
+         return
+      end if
+      call toml_real_array(t, 'region.box_nwse', buf, nout)
+      if (nout == 4_ik) then
+         cfg%region%box_nwse = buf(1:4)
+      else
+         call note_missing(m, 'region.box_nwse')
+      end if
+      cfg%region%land_fraction_min = toml_real(t, 'region.land_fraction_min', 0.5_wp)
+      if (toml_has(t, 'region.detail_polygons')) then
+         call toml_real_array(t, 'region.detail_polygons', buf, nout)
+         if (nout > MAX_DETAIL_POLYGONS)                                                           &
+            error stop 'load_meds_config: [region].detail_polygons lists more than 64 polygons'
+         do i = 1_ik, nout
+            if (buf(i) < 0.0_wp .or. abs(buf(i) - anint(buf(i))) > 0.0_wp)                          &
+               error stop 'load_meds_config: [region].detail_polygons must be polygon ids (integers >= 0)'
+            cfg%region%detail_polygons(i) = nint(buf(i), ik)
+         end do
+         cfg%region%n_detail = nout
+      end if
+   end subroutine load_region_config
 
    !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
    !      DEFAULTED read, so a config with no [output] block leaves the new path OFF and the legacy  !
@@ -872,6 +928,8 @@ contains
       !      no run.n_threads key is byte-identical). Exposed ONCE, here -- deliberately NOT also from !
       !      OMP_NUM_THREADS, so the run's thread count is recorded in the config that produced it. ---!
       cfg%n_threads = toml_int(tm, 'run.n_threads', 1_ik)
+      !----- [run].mode (DEFAULTED "site", today's behaviour) and, for a region, the [region] block. !
+      call load_region_config(tm, cfg, miss)
 
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)

@@ -163,13 +163,17 @@ contains
    !  antimeridian: its columns run from west to the grid's east edge, then on from the west    !
    !  edge to east. nwse = [north, west, south, east] in degrees.                                !
    !=======================================================================================!
-   subroutine era5land_select_box(static_path, nwse, dom, stat)
+   subroutine era5land_select_box(static_path, nwse, dom, stat, land_fraction_min)
       character(len=*),   intent(in)  :: static_path
       real(wp),           intent(in)  :: nwse(4)
       type(met_cells_t), intent(out) :: dom
       integer(ik),        intent(out) :: stat
+      !----- Keep only cells whose static land fraction is at least this (a region's selection      !
+      !      rule, MEDS_POLYGON_RUNTIME_PLAN.md §5); absent, every valid cell is kept. ------------!
+      real(wp), optional, intent(in)  :: land_fraction_min
       integer(c_int) :: ncid, st
-      real(wp), allocatable :: lat(:), lon(:), valid(:,:), elev(:,:)
+      real(wp), allocatable :: lat(:), lon(:), valid(:,:), elev(:,:), lfrac(:,:)
+      real(wp)    :: lf_min
       integer(ik), allocatable :: cols(:)
       real(wp)    :: west, east
       integer(ik) :: nlat, nlon, r0, r1, j, i, k, n
@@ -196,13 +200,16 @@ contains
       end if
       call read_2d(ncid, 'valid', r0, r1 - r0 + 1_ik, 0_ik, nlon, valid, stat)
       if (stat == ERA_OK) call read_2d(ncid, 'elevation', r0, r1 - r0 + 1_ik, 0_ik, nlon, elev, stat)
+      if (stat == ERA_OK) call read_2d(ncid, 'land_fraction', r0, r1 - r0 + 1_ik, 0_ik, nlon, lfrac, stat)
       st = nc_close(ncid)
       if (stat /= ERA_OK) return
 
+      lf_min = -1.0_wp ; if (present(land_fraction_min)) lf_min = land_fraction_min
+      where (lfrac < lf_min) valid = 0.0_wp
       n = int(count(valid(cols + 1_ik, :) > 0.5_wp), ik)
       if (n == 0_ik) then ; stat = ERA_ERR_NO_CELL ; return ; end if
       dom%nlat = nlat ; dom%nlon = nlon ; dom%ncell = n
-      allocate(dom%row(n), dom%col(n), dom%lat(n), dom%lon(n), dom%elevation(n))
+      allocate(dom%row(n), dom%col(n), dom%lat(n), dom%lon(n), dom%elevation(n), dom%land_fraction(n))
       k = 0_ik
       do j = r0, r1
          do i = 1_ik, size(cols, kind=ik)
@@ -211,6 +218,7 @@ contains
             dom%row(k) = j ; dom%col(k) = cols(i)
             dom%lat(k) = lat(j + 1_ik) ; dom%lon(k) = lon(cols(i) + 1_ik)
             dom%elevation(k) = elev(cols(i) + 1_ik, j - r0 + 1_ik)
+            dom%land_fraction(k) = lfrac(cols(i) + 1_ik, j - r0 + 1_ik)
          end do
       end do
       call group_by_chunk(dom)

@@ -75,6 +75,7 @@ module meds_forcing_types
       integer(ik), allocatable :: row(:), col(:)            !< 0-based (lat, lon) index of each cell
       real(wp),    allocatable :: lat(:), lon(:)            !< [deg] cell centre
       real(wp),    allocatable :: elevation(:)              !< [m] static-file orography
+      real(wp),    allocatable :: land_fraction(:)          !< [-] static-file land fraction (box selection only)
       integer(ik) :: nchunk = 0_ik
       integer(ik), allocatable :: chunk_row(:), chunk_col(:)!< 0-based first row/col of the box read in each chunk
       integer(ik), allocatable :: chunk_nrow(:), chunk_ncol(:) !< that box's extent (1 x 1 for a site)

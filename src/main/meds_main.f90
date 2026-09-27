@@ -26,6 +26,9 @@ program meds_main
    use meds_driver,           only : meds_run_t, driver_open, driver_step, driver_finalize,    &
                                      driver_free, driver_done, DRIVER_ERR_NAN, DRIVER_ERR_AREA,   &
                                      DRIVER_ERR_SOILC
+   use meds_region,           only : meds_region_t, region_open, region_step_month, region_done,  &
+                                     region_finalize, region_free
+   use meds_toml,             only : toml_table_t, toml_parse_file, toml_string
    implicit none
 
    type(meds_run_t)   :: run
@@ -54,6 +57,26 @@ program meds_main
       stop
    end if
 
+   !----- [run].mode picks the driver: one site (the default) or a region of polygons. The full     !
+   !      config is loaded, and validated, by whichever driver opens the run.  -------------------!
+   if (run_mode(trim(path)) == 'region') then
+      block
+         type(meds_region_t) :: reg
+         call region_open(trim(path), reg, ok)
+         if (.not. ok) error stop 'meds_main: could not open the region run'
+         do while (.not. region_done(reg))
+            call region_step_month(reg, status)
+            if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN detected in a polygon''s state'
+            if (status == DRIVER_ERR_SOILC) error stop 'meds_main: impossible soil-carbon pool in a polygon'
+         end do
+         call region_finalize(reg, status)
+         if (status == DRIVER_ERR_AREA) error stop 'meds_main: a polygon''s area was not conserved'
+         write(*,'(a)') ' OK: region simulation completed, area conserved, no NaNs.'
+         call region_free(reg)
+      end block
+      stop
+   end if
+
    call driver_open(trim(path), run, ok)
    if (.not. ok) error stop 'meds_main: could not open the run'
 
@@ -70,5 +93,18 @@ program meds_main
    write(*,'(a)') ' OK: simulation completed, area conserved, no NaNs.'
 
    call driver_free(run)
+
+contains
+
+   !----- The config's [run].mode ("site" when absent); load_meds_config validates it. ----------!
+   function run_mode(cfg_path) result(mode)
+      character(len=*), intent(in) :: cfg_path
+      character(len=16)  :: mode
+      type(toml_table_t) :: tt
+      logical            :: found
+      mode = 'site'
+      call toml_parse_file(cfg_path, tt, found)
+      if (found) mode = trim(toml_string(tt, 'run.mode', 'site'))
+   end function run_mode
 
 end program meds_main

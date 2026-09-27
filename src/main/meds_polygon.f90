@@ -38,6 +38,7 @@ module meds_polygon
 
    public :: meds_polygon_t, polygon_prepare, polygon_step, polygon_report
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
+   public :: N_PATCH_INIT
 
    !----- Step and run status codes. OK/DONE are normal; the ERR codes are the conditions the model  !
    !      used to `error stop` on, returned instead so a library caller survives them.             !
@@ -46,6 +47,8 @@ module meds_polygon
    integer(ik), parameter :: DRIVER_ERR_NAN = 2_ik   !< NaN in the state at a year roll-over
    integer(ik), parameter :: DRIVER_ERR_AREA= 3_ik   !< patch areas no longer sum to 1 (finalize only)
    integer(ik), parameter :: DRIVER_ERR_SOILC = 4_ik !< a CENTURY pool is physically impossible
+
+   integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
    type :: meds_polygon_t
       integer(ik)            :: id = 0_ik         !< global id: the cell's row-major index (0 for a site run)

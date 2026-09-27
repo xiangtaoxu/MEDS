@@ -38,7 +38,8 @@ module meds_driver
    use meds_diagnostic_reduce,      only : print_summary, total_area
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            polygon_report, DRIVER_OK, DRIVER_FINISHED,           &
-                                           DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
+                                           DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC,      &
+                                           N_PATCH_INIT
    use meds_io,                     only : state_write_state, io_read_state
    use meds_output_types,           only : output_shared_t, output_part_t
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_part, &
@@ -55,7 +56,6 @@ module meds_driver
    !----- The status codes live with the step (meds_polygon); re-exported for the driver's callers. !
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
 
-   integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
    !----- Everything the calendar loop needs between steps. These were meds_main's locals; making  !
    !      them components is the whole extraction -- no state hides in module scope, so two runs    !
