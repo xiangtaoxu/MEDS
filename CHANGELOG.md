@@ -122,6 +122,48 @@ before and after.
 
 ### Changed
 
+- **The stand's calendar restructuring runs between two slow steps, after the output has read the one
+  that ends on the boundary** (#297). Monthly recruitment, cohort fusion, culling and splitting, and
+  yearly patch disturbance and fusion, used to run inside the step that ends on the boundary, after
+  its fast loop and before its patch ageing, canopy-depth refresh, soil biogeochemistry and output
+  tick. Now `polygon_step` sets `restructure_pending` at the end of that step, and the next step
+  restructures (`advance_boundary`) before its fast loop. `restructure_stand` is split out of
+  `vegetation_dynamics` for this.
+  - **Every record now describes one stand, and a boundary's events belong to the period it opens.**
+    The #296 exception is gone: monthly cohort and patch records are exactly the mean of their daily
+    records, and the writer's queued-record axis sizing is reverted. On `est_year`:
+    - the year's disturbance moves from the December 2074 record (#296) to January 2075
+      (`disturb_area_site` 0.1638);
+    - the biomass it removes first shows in the 1 January daily state (10.0037 → 9.8645 kgC/m²);
+    - `gpp_site` no longer misses the killed canopy's last day. It read 1.39 % below the patch-sourced
+      `gpp_rate_site` on the disturbance day; the ratio is now constant to 1.3e-4 on every day.
+  - **The model moves slightly.** The fast loops see the same stands as before. What moves is the
+    boundary step's patch ageing, canopy-depth refresh and soil biogeochemistry, which now run on the
+    stand before its restructuring. On `est_year`, monthly values move by at most 4.5e-4 in `agb_site`,
+    2.2e-3 in `nplant_site` and 4.0e-4 in `soilc_total_site`, and fluxes by 1e-9. In a bare-ground
+    run the first recruits appear one period later in the records: `demography_30yr`'s year-2000 AGB
+    (1.3e-6) now belongs to 2001.
+  - **Restarts.** A checkpoint on a boundary holds the stand before the restructuring, and records
+    what is owed as the global attribute `restructure_pending` (`none` | `month` | `year`). A resumed
+    run performs it first. A state file without the attribute, which includes every file written
+    before this change, owes none. Resuming `ckpt_2yr` from its 1 January 2025 checkpoint reproduces
+    the continuous run's January disturbance exactly. The differences that remain are fast-tier
+    fluxes on the first resumed day (up to 0.03 W/m²) and the integrator's work counters. Both
+    predate this change and are a subset of #296's.
+  - **Diagnostic blocks.**
+    - They are zeroed after the output tick (`reset_step_diagnostics`) instead of at the start of
+      the fast loop, so a boundary's events reach the next record.
+    - They are zeroed at allocation.
+    - `cohort_diag_grow` and `patch_diag_grow` keep every existing slot, not just the first `n`. A
+      resumed run's restructuring writes before any fast loop has set `n`, and the grow used to drop
+      those rows.
+  - **Interfaces.**
+    - `advance_one_step`, `advance_slow_dynamics` and `vegetation_dynamics` no longer take
+      `is_new_month` / `is_new_year`; `advance_boundary`, `advance_boundary_dynamics` and
+      `restructure_stand` do.
+    - The C API's `meds_advance_slow` keeps its signature and restructures after the step.
+    - `output_integrate` takes the step's start only.
+
 - **The fast loop reads the forcing record directly** (§6.2 and Q6 of `MEDS_FORCING_DESIGN.md`).
   `fill_forcing` and `fill_aenv` take the sub-step's `met_forcing_t`: the reader's sample, or the
   context's reference climate without a forcing source. The `apply_met_to_ctx` shim, and the
@@ -289,17 +331,10 @@ here, and one output gap that hid it (#270, open).
   - **Monthly means move by up to** 0.64 K in `air_temp_site` (Nov 2074: 279.80 → 279.16 K), 1.8 W/m²
     in `le_site` (May 2075: 58.35 → 60.13) and 5.5 W/m² in `sw_in_site` (May 2075: 226.9 → 232.3), on
     the one-year established stand.
-  - **Cohort and patch values keep a one-step lag in the monthly tier.** The step on which a month
-    turns ends by restructuring the cohorts and patches, so its cohort and patch values (and
-    `n_cohort_site` / `n_patch_site`) are already in the next month's slot set. They open the next
-    month's record instead of joining one of a different slot set (the §4.4 rule of
-    `MEDS_IO_DESIGN.md`). Those monthly values are bitwise the old ones.
-  - **A daily file's last record may now hold a recruit or a new gap its earlier records don't**, so
-    the writer sizes a file's cohort and patch axes to the largest live count among its records. It
-    used to size them from the first record, and before this fix `est_year` stopped on "cohort count
-    grew within a file".
-  - `test_output_integrate` covers the boundary step, and `test_output_roundtrip` checks the daily
-    stamps. The convention is written up in `docs/science/diagnostics.md` §4.
+  - The restructuring at a boundary now runs after the output has read that boundary's step (#297,
+    under Changed), so every record holds one cohort/patch slot set and needs no exception.
+  - `test_output_roundtrip` checks the daily stamps, and `test_output_integrate` the boundary step.
+    The convention is written up in `docs/science/diagnostics.md` §4.
 
 - **Patch-sourced diagnostics read low by the disturbed fraction on the year-boundary step** (#295).
   `apply_patch_disturbance` carves one gap from every donor at a uniform `frac = 1 - exp(-rate dt)`

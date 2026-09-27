@@ -17,8 +17,8 @@ module meds_polygon
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
-   use meds_site_state_types,       only : site_t
-   use meds_stepper,                only : advance_one_step
+   use meds_site_state_types,       only : site_t, reset_step_diagnostics
+   use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_fast_config,            only : acclimate_leaf_photo_table
    use meds_biogeochem_types,       only : litter_input_t, n_soil_pool, soilc_seam_t
@@ -78,6 +78,14 @@ module meds_polygon
       integer(ik)            :: fast_step_total = 0_ik      !< fast sub-steps replayed into the output
       real(wp)               :: area_start = 0.0_wp
       integer(ik)            :: status = DRIVER_OK          !< the last step's status
+      !----- The calendar restructuring the last step's end owes: set when a step ends on a month    !
+      !      (and, with restructure_new_year, a year) boundary, run at the start of the next step,   !
+      !      before its fast loop. Between the two sit the output tick, the I/O phase and any        !
+      !      checkpoint, so a checkpoint holds the stand before the restructuring together with      !
+      !      this flag, and a run resumed from it restructures first, exactly as the continuous run  !
+      !      does. ----------------------------------------------------------------------------------!
+      logical                :: restructure_pending  = .false.
+      logical                :: restructure_new_year = .false.
    end type meds_polygon_t
 
 contains
@@ -128,10 +136,11 @@ contains
    end subroutine polygon_prepare
 
    !---------------------------------------------------------------------------------------!
-   ! polygon_step -- ONE slow step of one polygon, from `prev` to `now`: the growth-temperature     !
-   ! mean, the coupled stepper (which sub-steps the fast loop inside it), the fast output tier's    !
-   ! replay, the slower tiers' tick, and the NaN and soil-carbon guards. The step's forcing must    !
-   ! already be loaded into `met_src`; closed output records are queued in the polygon's buffers.   !
+   ! polygon_step -- ONE slow step of one polygon, from `prev` to `now`: the restructuring the last !
+   ! step's boundary owes (if any), the growth-temperature mean, the coupled stepper (which         !
+   ! sub-steps the fast loop inside it), the fast output tier's replay, the slower tiers' tick, and !
+   ! the NaN and soil-carbon guards. The step's forcing must already be loaded into `met_src`;      !
+   ! closed output records are queued in the polygon's buffers.                                     !
    !---------------------------------------------------------------------------------------!
    subroutine polygon_step(cfg, met_src, out_files, poly, prev, now, step_days, is_new_month,        &
                            is_new_year, status)
@@ -148,6 +157,14 @@ contains
 
       status = DRIVER_OK
       seam_prev = poly%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
+
+      !----- The boundary the last step ended on (restructure_pending): the stand's monthly and       !
+      !      yearly restructuring, before this step's fast loop sees the stand. ----------------------!
+      if (poly%restructure_pending) then
+         call advance_boundary(poly%site, cfg, .true., poly%restructure_new_year,                  &
+                               slow_ledger=poly%slow_ledger)
+         poly%restructure_pending = .false. ; poly%restructure_new_year = .false.
+      end if
 
       !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
       !      daily mean the PREVIOUS step's fast loop accumulated, then refresh the leaf table.     !
@@ -179,6 +196,15 @@ contains
       is_new_day = is_new_month .or. (now%day /= prev%day)
       if (out_files%enabled) call tick_output(out_files, poly%out_bufs)
       if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
+
+      !----- The step's diagnostics are read: zero them for the next window. If the step ended on a  !
+      !      month boundary, the stand's restructuring is owed: it runs at the start of the next     !
+      !      step, after the output has read this one, so the ending period's records describe one   !
+      !      stand, and what the restructuring does -- its events, and the stand it leaves --        !
+      !      belongs to the period that begins (docs/science/diagnostics.md §4). --------------------!
+      call reset_step_diagnostics(poly%site)
+      poly%restructure_pending  = is_new_month
+      poly%restructure_new_year = is_new_year
 
       !----- A NaN is a STATUS here, not an `error stop`: a library caller survives it. -----------!
       if (is_new_year) then
@@ -224,7 +250,7 @@ contains
       subroutine stepper(fast_bufs)
          type(output_buffers_t), intent(inout) :: fast_bufs
          if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
-            call advance_one_step(poly%site, cfg, is_new_month, is_new_year, poly%fast_ctx,        &
+            call advance_one_step(poly%site, cfg, poly%fast_ctx,                                   &
                                   met_src=met_src, met_cur=poly%met_cur, step_start=prev,       &
                                   out_bufs=fast_bufs,                                           &
                                   run_energy_budget=poly%energy_budget,                         &
@@ -233,7 +259,7 @@ contains
                                   slow_ledger=poly%slow_ledger, seam=poly%seam,                 &
                                   latitude_deg=poly%met_cur%latitude_deg)
          else
-            call advance_one_step(poly%site, cfg, is_new_month, is_new_year, poly%fast_ctx,        &
+            call advance_one_step(poly%site, cfg, poly%fast_ctx,                                   &
                                   step_start=prev, run_energy_budget=poly%energy_budget,        &
                                   run_water_budget=poly%water_budget,                           &
                                   run_face_budget=poly%face_budget,                             &
@@ -257,8 +283,8 @@ contains
             end do
             bufs%fast_ready = .false.
          end if
-         call output_integrate(files, bufs, poly%site, prev, now, cfg%dt_slow, is_new_day,          &
-                               is_new_month, is_new_year)
+         call output_integrate(files, bufs, poly%site, prev, cfg%dt_slow, is_new_day, is_new_month, &
+                               is_new_year)
       end subroutine tick_output
 
    end subroutine polygon_step

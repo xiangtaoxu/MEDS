@@ -48,7 +48,7 @@ module meds_slow_ledger
 
    public :: slow_store_t, slow_ledger_t, slow_site_store, slow_fast_carbon_handover
    public :: slow_tissue_heat
-   public :: slow_ledger_open, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
+   public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
              SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC
@@ -156,6 +156,25 @@ contains
          ledger%has_first   = .true.
       end if
    end subroutine slow_ledger_open
+
+   !----- Take the site's store as the reference for the next mark without opening a step: for       !
+   !      operators that run between two slow steps before any step has opened the ledger -- the     !
+   !      restructuring a resumed run owes its checkpoint's boundary. It declares nothing and        !
+   !      counts no step; the canopy air keeps whatever density the ledger already holds. -----------!
+   subroutine slow_ledger_rebase(ledger, site, cfg)
+      type(slow_ledger_t), intent(inout) :: ledger
+      type(site_t),        intent(in)    :: site
+      type(meds_config_t), intent(in)    :: cfg
+      if (.not. ledger%active) return
+      call ensure_soil_geometry(ledger, cfg)
+      ledger%at_mark  = slow_site_store(site, cfg, ledger%soil, ledger%rho_air)
+      ledger%decl_in  = slow_store_t()
+      ledger%decl_out = slow_store_t()
+      if (.not. ledger%has_first) then
+         ledger%store_first = ledger%at_mark
+         ledger%has_first   = .true.
+      end if
+   end subroutine slow_ledger_rebase
 
    !---------------------------------------------------------------------------------------!
    ! Declare a boundary term for the phase now open. A term belongs here ONLY if the quantity   !

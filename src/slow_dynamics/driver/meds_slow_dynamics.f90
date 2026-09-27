@@ -11,17 +11,18 @@ module meds_slow_dynamics
    use meds_config,                only : meds_config_t
    use meds_site_state_types, only : site_t
    use meds_demography_update, only : update_patch_states
-   use meds_vegetation_dynamics,   only : vegetation_dynamics
+   use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_column_state_types, only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
+                                          slow_ledger_rebase,                                     &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
                                           KGC_PER_UMOL_C
    implicit none
    private
 
-   public :: advance_slow_dynamics
+   public :: advance_slow_dynamics, advance_boundary_dynamics
 
 contains
 
@@ -31,11 +32,9 @@ contains
    ! on -- the daily soil-carbon matrix step consuming that litter + the fast loop's day-          !
    ! integrated environmental scalar. Same signature as vegetation_dynamics (doy optional).        !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy, seam,               &
-                                    ledger, rho_air, latitude_deg)
+   subroutine advance_slow_dynamics(site, cfg, doy, seam, ledger, rho_air, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy
       type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
       !----- The site conservation ledger (plan §10.2). Optional so a test, a probe or the C-API   !
@@ -48,17 +47,17 @@ contains
       if (present(ledger)) call slow_ledger_open(ledger, site, cfg, rho_air)
 
       if (present(doy)) then
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger, latitude_deg)
+         call vegetation_dynamics(site, cfg, doy, ledger, latitude_deg)
       else
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, ledger=ledger,            &
-                                  latitude_deg=latitude_deg)
+         call vegetation_dynamics(site, cfg, ledger=ledger, latitude_deg=latitude_deg)
       end if
 
       call update_patch_states(site%patch, cfg%dt_years)
 
       !----- Resize each patch's canopy-air control volume to the stand that now exists. Done HERE, !
-      !      after growth / mortality / recruitment / fusion / disturbance have all settled, so the !
-      !      fast loop sees a can_depth that is constant across every sub-step of the coming day.   !
+      !      after growth and mortality have settled, so the fast loop sees a can_depth that is     !
+      !      constant across every sub-step of the coming day (advance_boundary_dynamics resizes    !
+      !      again after a restructuring).                                                          !
       call refresh_canopy_depth(site, cfg, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
 
@@ -67,6 +66,31 @@ contains
       if (cfg%soil_carbon_on) call advance_biogeochem_dynamics(site, cfg, seam, ledger)
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_SOILC)
    end subroutine advance_slow_dynamics
+
+   !---------------------------------------------------------------------------------------!
+   ! advance_boundary_dynamics -- the calendar boundary between two slow steps: restructure the !
+   ! stand (restructure_stand), then resize each canopy-air volume to the stand it left, so the !
+   ! next fast loop sees a constant can_depth. Called after the output has read the step that   !
+   ! ended on the boundary, and before the next one's fast loop; a no-op off a month boundary.  !
+   !                                                                                            !
+   ! The ledger is NOT reopened: nothing moves the site between the last step's final mark and  !
+   ! this call, so the marks below continue that step's window and each operator's residual is  !
+   ! still attributed to its own phase. A resumed run's first call precedes any step, so there  !
+   ! it only takes the reference store (slow_ledger_rebase).                                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_boundary_dynamics(site, cfg, is_new_month, is_new_year, ledger)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      logical,             intent(in)    :: is_new_month, is_new_year
+      type(slow_ledger_t), intent(inout), optional :: ledger
+      if (.not. is_new_month) return
+      if (present(ledger)) then
+         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, site, cfg)
+      end if
+      call restructure_stand(site, cfg, is_new_month, is_new_year, ledger)
+      call refresh_canopy_depth(site, cfg, ledger)
+      if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
+   end subroutine advance_boundary_dynamics
 
 
    !---------------------------------------------------------------------------------------!

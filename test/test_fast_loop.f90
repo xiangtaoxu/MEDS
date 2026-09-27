@@ -103,14 +103,14 @@ program test_fast_loop
       cfg%fast_biophysics_on = .false.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
-      call advance_one_step(site, cfg, .false., .false., ctx)     ! gate off -> fast loop skipped
+      call advance_one_step(site, cfg, ctx)     ! gate off -> fast loop skipped
       call check_close(site%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true. + context): the hook fires, reservoirs change. -!
       cfg%fast_biophysics_on = .true.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
-      call advance_one_step(site, cfg, .false., .false., ctx)
+      call advance_one_step(site, cfg, ctx)
       call check(abs(site%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
 
@@ -144,7 +144,7 @@ program test_fast_loop
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(site)
-   call advance_one_step(site, cfg, .false., .false., ctx)
+   call advance_one_step(site, cfg, ctx)
    cbal0 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 
@@ -153,7 +153,7 @@ program test_fast_loop
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(site)
    call init_fast_reservoirs(site, ctx)
-   call advance_one_step(site, cfg, .false., .false., ctx)
+   call advance_one_step(site, cfg, ctx)
    cbal1 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 

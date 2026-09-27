@@ -51,7 +51,8 @@ module meds_vegetation_dynamics
    implicit none
    private
 
-   public :: vegetation_dynamics, advance_leaf_phenology, advance_plant_traits, update_biomass_turnover
+   public :: vegetation_dynamics, restructure_stand, advance_leaf_phenology, advance_plant_traits
+   public :: update_biomass_turnover
    public :: shed_turnover_water, accumulate_recruit_pool
 
    !----- Wood is the residual carbon sink (the elemental allocation kernel takes all leftover   !
@@ -70,27 +71,25 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
-   ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
+   ! vital rates via the plant kernels, and apply growth and mortality. The calendar's         !
+   ! restructuring is not part of the step: restructure_stand runs it at the boundary.         !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger, latitude_deg)
+   subroutine vegetation_dynamics(site, cfg, doy, ledger, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      logical,             intent(in)    :: is_new_month, is_new_year
       integer(ik),         intent(in), optional :: doy   !< day-of-year at the step start (drives phenology)
-      !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array. It WAS a
-      !      local one, sized to the patch count on entry -- and apply_patch_disturbance, below,
-      !      CREATES a patch partway through this very routine. The consumer then indexed it by the
-      !      new patch count and read past the end. See the field's comment in meds_site_state_types.
+      !----- The per-patch litter accumulator is site%patch%litter_in, NOT a local array, so that it
+      !      follows its patches when restructure_stand reorders, blends or creates them. See the
+      !      field's comment in meds_site_state_types.
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
-      real(wp)                 :: mort_water, cull_water
-      real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1, handover
+      real(wp)                 :: mort_water
+      real(wp)                 :: tissue_heat0, tissue_heat1, handover
       real(wp), allocatable    :: nplant_before(:)
-      real(wp)                 :: rec_carbon, rec_heat, dist_water, seed_rain_carbon
+      real(wp)                 :: seed_rain_carbon
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
-      logical                  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
       integer(ik)              :: n_window
 
       !----- 0. Leaf phenology (UNCONDITIONAL): advance the per-cohort governor drives ONE daily    !
@@ -150,28 +149,23 @@ contains
       call accumulate_recruit_pool(site, cfg, recruitment, cfg%dt_years, seed_rain_carbon)
       if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = seed_rain_carbon)
 
-      !----- 2b. Mortality litter and mortality water are computed AFTER the commit below, on the  !
-      !          density it actually removed -- see accumulate_mortality_litter. The original text  !
-      !          for this step follows, kept because it still explains why `lit` is returned to the !
-      !          caller rather than applied here.                                                   !
-      !                                                                                             !
-      !          Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.      !
-      !          keeps this bit-identical to pre-Part-II behavior, matching every other feature      !
-      !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried   !
-      !          by the fraction of each cohort's individuals that dies this step (the SAME hazard     !
-      !          update_cohort_states will apply as nplant *= exp(-mortality*dt) below) -- computed    !
-      !          from the PRE-update cohort pools (this step's growth has not yet been applied), the    !
-      !          standard operator-split approximation. Accumulated into the SAME `lit` array the        !
+      !----- 2b. Mortality litter and mortality water are computed AFTER the commit below, on the         !
+      !          density it actually removed -- see accumulate_mortality_litter. The original text        !
+      !          for this step follows, kept because it still explains why `lit` is returned to the       !
+      !          caller rather than applied here.                                                         !
+      !                                                                                                   !
+      !          Soil-carbon litter (B1; OPT-IN [soil_carbon].soil_carbon_on -- default .false.           !
+      !          keeps this bit-identical to pre-Part-II behavior, matching every other feature           !
+      !          gate in this codebase). Continuous background-mortality LITTER: the carbon carried       !
+      !          by the fraction of each cohort's individuals that dies this step (the SAME hazard        !
+      !          update_cohort_states will apply as nplant *= exp(-mortality*dt) below) -- computed       !
+      !          from the PRE-update cohort pools (this step's growth has not yet been applied), the      !
+      !          standard operator-split approximation. Accumulated into the SAME `lit` array the         !
       !          turnover litter above uses. `lit` is returned to the caller (meds_slow_dynamics) --      !
-      !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)         !
-      !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-     !
-      !          count it. ------------------------------------------------------------------------------!
-      !----- 3. Fold the calendar cadence + demography on/off + fiss/fuse switches. ---------!
-      do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
-      do_patch_disturbance = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_disturbance
-      do_patch_fissfuse    = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_fissfuse
-
-      !----- 4. Sequence the apply-primitives (was update_demography). ----------------------!
+      !          it is NOT applied here: the daily soil_carbon_step (B2, meds_biogeochem_dynamics)        !
+      !          consumes it as the matrix ODE's litter input, so a direct pool add here would double-    !
+      !          count it. ------------------------------------------------------------------------------ !
+      !----- 3. Sequence the apply-primitives (was update_demography). -----------------------------------!
       n_window = growth_window_steps(cfg)
       site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
 
@@ -291,6 +285,33 @@ contains
          end do
       end if
 
+      !----- 4. Refresh the overtopping-LAI competition diagnostic (the per-step sort above left   !
+      !         the stand sorted). ----------------------------------------------------------------!
+      call update_overtopping_lai(site)
+   end subroutine vegetation_dynamics
+
+   !---------------------------------------------------------------------------------------!
+   ! restructure_stand -- the calendar's restructuring of the cohorts and patches: monthly    !
+   ! recruitment, cohort fusion, culling, splitting and sort; yearly patch disturbance and    !
+   ! patch fusion. It runs AT the boundary, between the last step of the period that ends and !
+   ! the first step of the one that begins, after the output has read that last step: the     !
+   ! period's records then describe one stand throughout, and what the restructuring does --  !
+   ! its events and the stand it leaves -- belongs to the new period (docs/science/           !
+   ! diagnostics.md §4). `is_new_month` / `is_new_year` say which boundary this is.           !
+   !---------------------------------------------------------------------------------------!
+   subroutine restructure_stand(site, cfg, is_new_month, is_new_year, ledger)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      logical,             intent(in)    :: is_new_month, is_new_year
+      type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
+      real(wp) :: cull_water, th0, th1, rec_carbon, rec_heat, dist_water
+      logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
+
+      !----- The calendar cadence + demography on/off + fiss/fuse switches. -----------------!
+      do_cohort_fissfuse   = is_new_month .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
+      do_patch_disturbance = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_disturbance
+      do_patch_fissfuse    = is_new_year  .and. cfg%demography_on .and. cfg%do_patch_fissfuse
+
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
             call apply_recruitment(site, cfg, rec_carbon, rec_heat)
@@ -348,10 +369,9 @@ contains
          end if
       end if
 
-      !----- 5. Refresh the overtopping-LAI competition diagnostic (the stand is sorted -- either  !
-      !         by the per-step sort above or by the cadence fuse/fiss). ------------------------!
+      !----- Refresh the overtopping-LAI competition diagnostic for the restructured stand. -----!
       call update_overtopping_lai(site)
-   end subroutine vegetation_dynamics
+   end subroutine restructure_stand
 
    !----- Site-total carbon in this step's litter accumulator [kgC/m2 site]. The ledger declares  !
    !       this leaving the live pools at SLOW_PHASE_GROW and arriving in the CENTURY pools at      !

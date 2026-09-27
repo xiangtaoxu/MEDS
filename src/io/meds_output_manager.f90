@@ -33,7 +33,7 @@ contains
             call stream_write_record(files%stream(t), files%reg, files%diag, bufs%queue(t)%rec(i), files%dir,  &
                                      files%prefix,                                                  &
                                      files%file_chunk(t), files%cohort_max, files%patch_max, files%sync_every, &
-                                     files%forcing_qair, later=bufs%queue(t)%rec(i + 1_ik:bufs%queue(t)%n))
+                                     files%forcing_qair)
          end do
          bufs%queue(t)%n = 0_ik
       end do
@@ -49,12 +49,8 @@ contains
       if (.not. files%enabled) return
       fp = .true. ; if (present(flush_partial)) fp = flush_partial
       if (fp) then
-         !----- Close every tier's final partial window (incl. FAST), except one that holds only   !
-         !      the cohort/patch values a last restructuring step deferred to the NEXT period:     !
-         !      that period is not in the run, and writing it would add a record past the run's    !
-         !      end. ------------------------------------------------------------------------------!
-         do t = 1_ik, N_FREQ
-            if (bufs%has_data(t) .and. .not. bufs%deferred_only(t)) call close_tier(files, bufs, t)
+         do t = 1_ik, N_FREQ                 ! close every tier's final partial window (incl. FAST)
+            if (bufs%has_data(t)) call close_tier(files, bufs, t)
          end do
          call output_serialize_pending(files, bufs)
       end if
@@ -93,9 +89,8 @@ contains
       integer(ik) :: t, p
       if (.not. files%enabled) return
       do p = 1_ik, size(bufs, kind=ik)
-         do t = 1_ik, N_FREQ                ! as output_manager_close: not a deferred-only window
-            if (bufs(p)%has_data(t) .and. .not. bufs(p)%deferred_only(t))                        &
-               call close_tier(files, bufs(p), t)
+         do t = 1_ik, N_FREQ
+            if (bufs(p)%has_data(t)) call close_tier(files, bufs(p), t)
          end do
       end do
       call output_serialize_region(files, bufs)

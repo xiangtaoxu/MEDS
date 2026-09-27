@@ -173,7 +173,7 @@ contains
       call arm_patch_diag(site, cfg)
 
       n0 = site%cohort%nplant(1)
-      call advance_slow_dynamics(site, cfg, .false., .false.)    ! no month/year boundary
+      call advance_slow_dynamics(site, cfg)                      ! no month/year boundary
       call check(site%cohort%n == 1_ik, 'background fixture: the cohort survived the step')
       call check(n0 - site%cohort%nplant(1) > 0.0_wp, 'the step actually killed some density')
 

@@ -102,7 +102,7 @@ program test_output_roundtrip
    do iday = 1_ik, 3_ik
       prev = now ; now = time_advance_days(prev, 1_ik)
       call set_site_agb(site, 10.0_wp * real(iday, wp))
-      call output_integrate(files, bufs, site, prev, now, dt, .true., .false., .false.)
+      call output_integrate(files, bufs, site, prev, dt, .true., .false., .false.)
       call output_serialize_pending(files, bufs)
    end do
 

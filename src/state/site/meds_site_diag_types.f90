@@ -280,6 +280,7 @@ contains
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
       allocate(d%v(nf, max(cap,1_ik)), d%w(max(cap,1_ik)))
+      d%v = 0.0_wp ; d%w = 0.0_wp          ! the first window starts empty: nothing zeroes it later
       d%cap = max(cap, 1_ik) ; d%n = 0_ik
       call cohort_diag_reset(d)
    end subroutine cohort_diag_alloc
@@ -299,7 +300,9 @@ contains
       integer(ik) :: m
       if (.not. d%active) return
       if (need <= d%cap) return
-      m = d%n
+      !----- Keep every existing slot, not just the first n: a slow operator may have written rows    !
+      !      ahead of the count (a boundary's restructuring before any fast loop has set n). ---------!
+      m = d%cap
       allocate(v2(int(size(d%v,1),ik), need), w2(need))
       v2 = 0.0_wp ; w2 = 0.0_wp
       if (m > 0_ik) then
@@ -423,6 +426,7 @@ contains
       if (allocated(d%v)) deallocate(d%v)
       if (allocated(d%w)) deallocate(d%w)
       allocate(d%v(N_PDIAG, max(cap,1_ik)), d%w(max(cap,1_ik)))
+      d%v = 0.0_wp ; d%w = 0.0_wp          ! as cohort_diag_alloc
       d%cap = max(cap, 1_ik) ; d%n = 0_ik
       call patch_diag_reset(d)
    end subroutine patch_diag_alloc
@@ -441,7 +445,7 @@ contains
       integer(ik) :: m
       if (.not. d%active) return
       if (need <= d%cap) return
-      m = d%n
+      m = d%cap                              ! every existing slot (see cohort_diag_grow)
       allocate(v2(N_PDIAG, need), w2(need))
       v2 = 0.0_wp ; w2 = 0.0_wp
       if (m > 0_ik) then
