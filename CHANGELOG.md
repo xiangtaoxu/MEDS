@@ -82,6 +82,16 @@ before and after.
   container). R0 is measured: an established Ithaca stand costs about 1.1 s and 0.7 MB per
   polygon-month and polygon, 18.6% of CPU goes to allocation, and a site run spends 24% of its time
   in archive reads.
+- **No netCDF inside a time step** (R1 of `MEDS_POLYGON_RUNTIME_PLAN.md`). A step now computes only;
+  file work happens in an I/O phase when a calendar month closes and at the end of the run:
+  - closed output records wait in per-tier queues (stored compactly) and are written then;
+  - the yearly checkpoint moved into that phase;
+  - forcing is in memory before each step: the ED_ERA5land reader loads the month a step reads plus
+    the record before it, reading each month once per pass, and a MEDS forcing file's records for
+    the run are read at open.
+  Outputs are identical. Two visible changes: `[output].sync_every` now takes effect at month
+  boundaries, so a crash loses at most the current month's output; and `format = "era5land"` needs
+  daily steps from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00).
 - **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
   the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
   site year from a spun-up stand runs about 10% faster; outputs are identical.

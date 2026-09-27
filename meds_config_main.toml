@@ -280,7 +280,9 @@ io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable
 cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
 patch_max     = 256             # fixed patch netCDF dim
 strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
-sync_every    = "flush"         # nc_sync durability: "flush" | "never"
+sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed records are written at
+                                #   month boundaries (the I/O phase), so a crash loses at most the
+                                #   current month's output; the checkpoint bounds the rerun
 
   # --- VARIABLE GROUPS. The six that make a run judgeable are on; the two heavy evaluation
   #     groups are off. `numerics` carries the budget residuals -- a closure nobody records is
@@ -418,6 +420,8 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #   The months read are the recycle window when recycle = true, else the run period; every file
 #   they need must exist when the run starts. A run starting at 00:00 on the 1st also reads the
 #   previous month's file, which holds that record (the archive stamps the END of each hour).
+#   The reader loads one month (plus that record) before each step, so format = "era5land" needs
+#   [run].dt_slow = "1d" and a start_time at 00:00:00.
 #   ---- format = "netcdf" ----------------------------------------------------------------------
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")

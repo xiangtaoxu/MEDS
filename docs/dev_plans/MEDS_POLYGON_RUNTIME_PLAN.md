@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1–R2 planned in detail (§10.2–§10.3).
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 planned in detail (§10.3).
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -332,7 +332,7 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 | Phase | Content | Acceptance |
 |---|---|---|
 | **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
-| **R1** compute/I-O split | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | The CTest suite green; single-site outputs **byte-identical** to before. |
+| **R1** compute/I-O split ✅ | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | ✅ 2026-09-27: suite green; six reference cases byte-identical to `beta` (§10.2 status). |
 | **R2** region and polygon container, serial | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into shared and per-polygon parts; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). |
 | **R3** OpenMP polygon loop | `!$omp parallel do schedule(dynamic)` over polygons; the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling measured to the core count; nvfortran build green where available. |
 | **R4** ragged restart | Region checkpoint and restart with CF contiguous ragged arrays | A restart round trip is bit-identical to an uninterrupted run. |
@@ -380,6 +380,25 @@ What the numbers change:
 - **The write share** stays small for the daily and monthly tiers (§6.1).
 
 ### 10.2 R1 — compute/I-O split (single site; outputs unchanged)
+
+> **Status ✅ 2026-09-27, in two PRs.** PR A (#284): float reads of only the cells needed (step 3's
+> last item), 10% faster site runs. PR B: steps 1–4 as below, with these specifics:
+> - **Queued records are compact:** a queued record keeps only its tier's slab variables, through a
+>   column map the writer reads (`slab_col`), so a month of fast-tier records costs about 2 MB, not
+>   the scratch record's `cohort_max` × all-variables arrays.
+> - **The single-file backend reads only the records the run can use** at `met_open` (the recycle
+>   window, or the run period): the prep script writes 1 × 1 chunks, and a whole-file read at open
+>   cost about 57 MB of HDF5 bookkeeping.
+> - **`format = "era5land"` requires daily steps from midnight** (`validate_config`), the shape in
+>   which a step reads one month plus the carried record.
+> - **Output is still written before an error return** (the NaN and soil-carbon checks), as it was
+>   when every step flushed.
+> - **Verification:** six reference cases (established July and year from the R0 spun-up stand,
+>   bare July from the archive and from a single file, a 2-year checkpoint run with 730 fast-tier
+>   files, a 30-year demography run) are identical to `beta` in every variable, attribute, text
+>   file and log summary line; peak memory within 4 MB of `beta`; `test_met_era5land` asserts each
+>   archive month is read once, the recycle wrap reads January once, and no step loads a month;
+>   the Debug build runs the reference cases with no runtime check tripped.
 
 **Goal:** a step makes no netCDF call, and all file work happens in an I/O phase at month boundaries
 and at the end of the run. Single-site outputs are byte-identical to before.

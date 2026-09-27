@@ -133,6 +133,15 @@ module meds_forcing_types
       integer(ik) :: cell = 1_ik                            !< this polygon's cell within the domain
       integer(ik), allocatable :: month_year(:), month_month(:), month_rec0(:)
       type(met_month_t) :: buffer                           !< the loaded month (year = 0 before the first)
+      !----- Everything a step reads is in memory before the step (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): !
+      !      the archive's loaded month plus the one record read before it (00:00 on the 1st, from the   !
+      !      previous month's file, or the window's last record at the recycle wrap), loaded by         !
+      !      met_prefetch; a MEDS forcing file's whole series for the cell, read at open. -------------!
+      real(sp),    allocatable :: carry(:,:)                !< (cell, variable) the record before the loaded month
+      integer(ik) :: carry_rec = 0_ik                       !< its record index on the axis (0 = none)
+      integer(ik) :: n_loads   = 0_ik                       !< archive month loads so far (tests: none inside a step)
+      real(wp),    allocatable :: series(:,:)               !< (record, field) MEDS forcing file at grid_index
+      character(len=24), allocatable :: series_name(:)      !< the fields present in that file
    end type met_driver_t
 
 contains

@@ -20,7 +20,7 @@ module meds_output_types
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
-   public :: pending_record_t, stream_file_t, output_manager_t, fast_sample_t
+   public :: pending_record_t, record_queue_t, stream_file_t, output_manager_t, fast_sample_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -213,9 +213,10 @@ module meds_output_types
 
    !==========================================================================================!
    ! A closed period staged for the serializer (netCDF-FREE plain data). Filled at a roll-over    !
-   ! by the stepper-side tick (output_integrate); drained by main (output_serialize_pending). One  !
-   ! per tier can be pending at a time (main drains every step). Payload is indexed by REGISTRY     !
-   ! var index; only variables live in the tier are filled (§4.5, §2).                              !
+   ! by the stepper-side tick (output_integrate) into the tier's scratch record, then copied into   !
+   ! the tier's queue; drained by main (output_serialize_pending) in the I/O phase at month         !
+   ! boundaries (MEDS_POLYGON_RUNTIME_PLAN.md §4, B11). Payload is indexed by REGISTRY var index;   !
+   ! only variables live in the tier are filled (§4.5, §2).                                         !
    !==========================================================================================!
    type :: pending_record_t
       logical           :: used     = .false.
@@ -227,7 +228,21 @@ module meds_output_types
       real(wp),    allocatable :: slab(:,:)     !< (max_slab, nvar) normalized slab values
       logical,     allocatable :: slabvalid(:,:)!< (max_slab, nvar)
       integer(ik), allocatable :: nslab(:)      !< (nvar) slab length (0 for scalar vars)
+      !----- A queued record stores only its tier's slab variables: slab(:, col(k)) is registry     !
+      !      variable k's slab. The scratch record leaves col unallocated and indexes slab(:, k). ---!
+      integer(ik), allocatable :: col(:)        !< (nvar) slab column of each variable (0 = none)
    end type pending_record_t
+
+   public :: slab_col
+
+   !----- The closed records of one tier waiting for the I/O phase, in closing order. A queued     !
+   !      record keeps only the slab rows the writer reads, not the scratch's max_slab rows, so a   !
+   !      month of fast-tier records costs the live cohort count, not cohort_max. Elements are       !
+   !      reused across months; `n` counts the live ones. --------------------------------------------!
+   type :: record_queue_t
+      integer(ik) :: n = 0_ik
+      type(pending_record_t), allocatable :: rec(:)
+   end type record_queue_t
 
    !==========================================================================================!
    ! One open netCDF stream file (the serializer's per-tier handle). ncids/varids kept as plain    !
@@ -266,7 +281,8 @@ module meds_output_types
       logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
-      type(pending_record_t) :: pending(N_FREQ)
+      type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
+      type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
       !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !
@@ -294,6 +310,13 @@ module meds_output_types
    end type output_manager_t
 
 contains
+
+   !----- The slab column of registry variable k in a record (identity for the scratch record). --!
+   pure integer(ik) function slab_col(pr, k) result(c)
+      type(pending_record_t), intent(in) :: pr
+      integer(ik),            intent(in) :: k
+      if (allocated(pr%col)) then ; c = pr%col(k) ; else ; c = k ; end if
+   end function slab_col
 
    !----- .true. if the operator averages/weights (needs seed/wsum handling), used by callers. --!
    pure logical function agg_is_slabwise(dim) result(yes)

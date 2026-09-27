@@ -20,7 +20,7 @@ module meds_output_integrate
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t,   &
-                                   diag_params_t,                                                  &
+                                   diag_params_t, pending_record_t, record_queue_t, slab_col,      &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
@@ -798,7 +798,9 @@ contains
    subroutine close_tier(mgr, t)
       type(output_manager_t), intent(inout) :: mgr
       integer(ik),            intent(in)    :: t
-      integer(ik) :: j, k, ns
+      integer(ik) :: j, k, ns, nsl
+      integer(ik) :: slab_k(mgr%reg%nidx(t))
+      logical     :: soil_patch(mgr%reg%nidx(t))
       mgr%pending(t)%used   = .true.
       mgr%pending(t)%freq   = ishft(1_ik, t - 1_ik)
       mgr%pending(t)%t_open = mgr%t_open(t)
@@ -822,7 +824,59 @@ contains
          call reset_buffer(mgr%buf(k,t))
       end do
       mgr%has_data(t) = .false.
+      nsl = 0_ik                                          ! this tier's slab variables, for the queue
+      do j = 1_ik, mgr%reg%nidx(t)
+         k = mgr%reg%idx_freq(j, t)
+         if (mgr%reg%var(k)%dim == DIM_SCALAR) cycle
+         nsl = nsl + 1_ik
+         slab_k(nsl) = k ; soil_patch(nsl) = mgr%reg%var(k)%dim == DIM_SOIL_PATCH
+      end do
+      call enqueue_record(mgr%queue(t), mgr%pending(t), slab_k(1:nsl), soil_patch(1:nsl))
+      mgr%pending(t)%used = .false.
    end subroutine close_tier
+
+   !----- Append a copy of the scratch record to the tier's queue. Only what the writer reads is   !
+   !      copied: the tier's slab variables (`slab_k`), each to its nslab rows, or the whole patch x !
+   !      layer block (n_patch * n_soil_layer_max) for a soil-patch variable. The copy is exact, so  !
+   !      a queued record writes exactly what an immediate write from the scratch would have. -----!
+   subroutine enqueue_record(q, src, slab_k, soil_patch)
+      type(record_queue_t),   intent(inout) :: q
+      type(pending_record_t), intent(in)    :: src
+      integer(ik),            intent(in)    :: slab_k(:)
+      logical,                intent(in)    :: soil_patch(:)
+      type(pending_record_t), allocatable :: grown(:)
+      integer(ik) :: rows, nv, ncol, c
+      if (.not. allocated(q%rec)) allocate(q%rec(8))
+      if (q%n == size(q%rec, kind=ik)) then                   ! double the capacity (rare: once per run)
+         allocate(grown(2 * size(q%rec)))
+         grown(1:q%n) = q%rec(1:q%n)
+         call move_alloc(grown, q%rec)
+      end if
+      q%n = q%n + 1_ik
+      nv = size(src%sval, kind=ik) ; ncol = size(slab_k, kind=ik)
+      rows = 1_ik
+      do c = 1_ik, ncol
+         rows = max(rows, src%nslab(slab_k(c)))
+         if (soil_patch(c)) rows = max(rows, src%n_patch * n_soil_layer_max)
+      end do
+      rows = min(rows, size(src%slab, 1, kind=ik))
+      associate (r => q%rec(q%n))
+         r%used = .true. ; r%freq = src%freq ; r%t_open = src%t_open
+         r%n_cohort = src%n_cohort ; r%n_patch = src%n_patch
+         if (allocated(r%sval)) then
+            if (size(r%sval) /= nv .or. size(r%slab, 1) < rows .or. size(r%slab, 2) < max(ncol, 1_ik)) &
+               deallocate(r%sval, r%svalid, r%nslab, r%col, r%slab, r%slabvalid)
+         end if
+         if (.not. allocated(r%sval))                                                             &
+            allocate(r%sval(nv), r%svalid(nv), r%nslab(nv), r%col(nv),                            &
+                     r%slab(rows, max(ncol, 1_ik)), r%slabvalid(rows, max(ncol, 1_ik)))
+         r%sval = src%sval ; r%svalid = src%svalid ; r%nslab = src%nslab ; r%col = 0_ik
+         do c = 1_ik, ncol
+            r%col(slab_k(c)) = c
+            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c)) ; r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
+         end do
+      end associate
+   end subroutine enqueue_record
 
    !=======================================================================================!
    !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of a  !

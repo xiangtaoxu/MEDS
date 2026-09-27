@@ -115,6 +115,13 @@ the last record clamps to the final interval. The no-file **`const`** backend re
 defaults — a reference climate whose four shortwave streams sum to 400 W m⁻², $`\cos z`$ and
 $`\rho_{air}`$ still derived — so the fast loop can run with no forcing file at all.
 
+**No step reads a file.** Everything a step's sub-samples need is in memory before the step starts
+(`MEDS_POLYGON_RUNTIME_PLAN.md` §4): a MEDS forcing file's records for the recycle window or the run
+period are read at `met_open`, and for the archive `met_prefetch` loads, before each step, the month
+the step reads plus the one record before it — 00:00 on the 1st, which lives in the previous month's
+file, or the window's last record at the recycle wrap. Moving into a new month that record comes from
+the outgoing buffer, so each archive month is read once per pass through it.
+
 ## 3. Temporal interpolation, and why wind is different
 
 Within the bracket the weight is $`w_{next}=(t-t_{prev})/(t_{next}-t_{prev})`$, clipped to $[0,1]$. Each

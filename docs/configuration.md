@@ -150,7 +150,9 @@ useless for science.
   with the tools in `scripts/prepare_era5/`. Give it `data_path` (the archive folder) and
   `max_distance_km`. The reader finds the site's cell itself and takes that cell's elevation from
   the archive, so `path`, `grid_index`, `grid_match` and `[site].grid_elevation` do not apply and
-  are rejected if present. Every month file the run needs must exist when it starts.
+  are rejected if present. Every month file the run needs must exist when it starts, and the run
+  must step daily from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00): the reader loads a
+  month at a time before each step.
 - **`"netcdf"`** reads one MEDS forcing file, named by `path`.
 
 The file formats, the ERA5-Land preparation recipe, and the recycling rules are documented in
