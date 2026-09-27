@@ -37,13 +37,13 @@ module meds_met_driver
                                    CO2_SOURCE_FILE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
    use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
+   use meds_lapse_rate,     only : wind_log_profile, lapse_air_temperature, lapse_pressure
    use meds_co2_series,     only : co2_series_read, co2_series_at, co2_series_covers,          &
                                    co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
-                                   great_circle_distance, wind_log_profile,                    &
-                                   lapse_air_temperature, lapse_pressure,                          &
+                                   great_circle_distance,                                      &
                                    clearness_index, synthesize_lwdown, dewpoint_to_specific_humidity
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_default_static, &
                                    era5land_select_site, era5land_load_month, era5land_month_hours, &

@@ -25,6 +25,7 @@ module meds_canopy_aerodynamics
    private
 
    public :: canopy_aerodynamics             !< master per-patch seam
+   public :: canopy_roughness                !< roughness length + displacement height of a patch
    public :: mo_surface_layer               !< CLM Monin-Obukhov solve (exposed for unit tests)
    public :: reduced_wind                    !< log-profile wind at a height (exposed for tests)
    public :: boundary_gbh_mos                !< Nusselt boundary-layer conductance (exposed for tests)
@@ -52,6 +53,20 @@ contains
       g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
 
+   !----- Roughness length and zero-plane displacement of a patch, from its canopy height with the  !
+   !      snow blend. The ONE definition: the aerodynamics uses it, and so does the move of the      !
+   !      forcing to the patch's canopy-air top, which has to follow the same log profile. ----------!
+   pure subroutine canopy_roughness(cfg, geom, rough, displace)
+      type(aero_cfg_t),  intent(in)  :: cfg
+      type(aero_geom_t), intent(in)  :: geom
+      real(wp),          intent(out) :: rough      !< [m] roughness length (z0m)
+      real(wp),          intent(out) :: displace   !< [m] zero-plane displacement height
+      rough    = (1.0_wp - geom%snowfac) * cfg%z0m_ratio * geom%veg_height                     &
+                 + geom%snowfac * cfg%snow_rough
+      rough    = max(rough, cfg%snow_rough)
+      displace = cfg%d_ratio * geom%veg_height * (1.0_wp - geom%snowfac)
+   end subroutine canopy_roughness
+
    !=======================================================================================!
    !  Master seam: fill an aero_out_t for one patch. Cohort arrays are ordered BOTTOM(1) ->    !
    !  TOP(n) (the canopy-radiation convention); the wind cascade walks top -> bottom.          !
@@ -70,10 +85,7 @@ contains
       integer(ik) :: ico
 
       !----- 1. Roughness + displacement from canopy height (snow blend). ------------------!
-      rough    = (1.0_wp - geom%snowfac) * cfg%z0m_ratio * geom%veg_height                     &
-                 + geom%snowfac * cfg%snow_rough
-      rough    = max(rough, cfg%snow_rough)
-      displace = cfg%d_ratio * geom%veg_height * (1.0_wp - geom%snowfac)
+      call canopy_roughness(cfg, geom, rough, displace)
       zldis    = max(env%zref - displace, 2.0_wp * rough)
       out%rough = rough
       out%displace = displace

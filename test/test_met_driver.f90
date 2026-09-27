@@ -23,9 +23,9 @@ program test_met_driver
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                    great_circle_distance, nearest_grid_index, wind_log_profile, &
-                                    lapse_air_temperature, lapse_pressure,                         &
+                                    great_circle_distance, nearest_grid_index,                   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
+   use meds_lapse_rate,      only : wind_log_profile, lapse_air_temperature, lapse_pressure
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                    MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &

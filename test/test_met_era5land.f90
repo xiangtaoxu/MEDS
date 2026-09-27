@@ -14,7 +14,8 @@ program test_met_era5land
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
-   use meds_forcing_kernels, only : dewpoint_to_specific_humidity, wind_log_profile
+   use meds_forcing_kernels, only : dewpoint_to_specific_humidity
+   use meds_lapse_rate,      only : wind_log_profile
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    met_prefetch, &
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
