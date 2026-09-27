@@ -16,7 +16,7 @@ program test_met_era5land
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_driver_t, met_forcing_t, met_domain_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, wind_log_profile
-   use meds_met_driver,      only : met_open, met_advance, met_instant, met_close,             &
+   use meds_met_driver,      only : met_open, met_advance, met_instant, met_close, met_prefetch, &
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &
                                     era5land_select_box, era5land_load_month, era5land_month_hours, &
@@ -83,6 +83,19 @@ contains
       type(meds_time_t), intent(in) :: t
       g = nint(seconds_between(T0, t) / 3600.0_wp, ik)
    end function hour_index
+
+   !----- What the driver does around a step: prefetch the day's forcing (the step's I/O), then   !
+   !      advance and sample inside it with no file access. Returns the instantaneous forcing.  ----!
+   function step_sample(drv, t) result(met)
+      type(met_driver_t), intent(inout) :: drv
+      type(meds_time_t),  intent(in)    :: t
+      type(met_forcing_t) :: met
+      integer(ik) :: loads
+      call met_prefetch(drv, meds_time_t(t%year, t%month, t%day))
+      loads = drv%n_loads
+      call met_advance(drv, t) ; met = met_instant(drv, t)
+      if (drv%n_loads /= loads) error stop 'test_met_era5land: the reader loaded a month inside a step'
+   end function step_sample
 
    !=======================================================================================!
    !  1. Templates.                                                                              !
@@ -210,7 +223,7 @@ contains
 
       !----- At a stamp every weight is 0, so the record comes through untouched. ---------------!
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       call check('Tair at a stamp', met%tair_k, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
       call check('Qair = the kernel of the stored Tdew and PSurf', met%qair,                      &
                  dewpoint_to_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g),                    &
@@ -223,13 +236,13 @@ contains
 
       !----- Inside January's file: 31 Jan 23:30 sits between 23:00 and 00:00 (both January). --!
       t = meds_time_t(2021_ik, 1_ik, 31_ik, 23_ik, 30_ik) ; g = hour_index(meds_time_t(2021_ik, 1_ik, 31_ik, 23_ik))
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       call check('31 Jan 23:30 interpolates inside the January file', met%tair_k,                 &
                  0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, g) + field(ERA_TAIR, 1_ik, 3_ik, g + 1_ik)), 1.0e-9_wp)
 
       !----- The seam: 1 Feb 00:00 is January's last record, 01:00 February's first. -----------!
       t = meds_time_t(2021_ik, 2_ik, 1_ik, 0_ik, 30_ik) ; g = hour_index(meds_time_t(2021_ik, 2_ik, 1_ik))
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       call check('1 Feb 00:30 brackets January''s last and February''s first record', met%tair_k, &
                  0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, g) + field(ERA_TAIR, 1_ik, 3_ik, g + 1_ik)), 1.0e-9_wp)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; u2 = field(ERA_U10, 1_ik, 3_ik, g + 1_ik)
@@ -238,6 +251,10 @@ contains
       call check('the vector interpolates linearly (v)', met%wind_v, 0.5_wp * (v1 + v2), 1.0e-12_wp)
       call check_true('the energy-form speed is at least the vector''s length',                    &
                       met%wind >= sqrt(met%wind_u**2 + met%wind_v**2) - 1.0e-12_wp)
+      !----- R1: January loaded at open, February at its first day's prefetch; the seam's 00:00      !
+      !      record came from January's buffer, not from a second read. -----------------------------!
+      call check_true('each month read once: January, then February', drv%n_loads == 2_ik,          &
+                      real(drv%n_loads, wp))
       call met_close(drv)
 
       !----- The height correction scales both components by the speed's factor. ---------------!
@@ -247,7 +264,7 @@ contains
       call met_open(drv, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),               &
                     run_end=meds_time_t(2021_ik, 3_ik, 1_ik))
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; v1 = field(ERA_V10, 1_ik, 3_ik, g)
       call check('height correction on u', met%wind_u, u1 * factor, 1.0e-12_wp)
       call check('height correction on v', met%wind_v, v1 * factor, 1.0e-12_wp)
@@ -273,13 +290,26 @@ contains
       call check_true('a whole-year window opens without a run period', st == MET_OK)
       call check_true('the window is 8760 records', drv%nrec == 8760_ik)
       t = meds_time_t(2035_ik, 6_ik, 15_ik, 12_ik) ; g = hour_index(meds_time_t(2021_ik, 6_ik, 15_ik, 12_ik))
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       call check('2035-06-15 12:00 reads 2021-06-15 12:00', met%tair_k, field(ERA_TAIR, 1_ik, 3_ik, g), 1.0e-9_wp)
       t = meds_time_t(2036_ik, 1_ik, 1_ik, 0_ik, 30_ik)
-      call met_advance(drv, t) ; met = met_instant(drv, t)
+      met = step_sample(drv, t)
       call check('the year-end seam brackets December''s last and January''s first record',       &
                  met%tair_k, 0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, 8759_ik) + field(ERA_TAIR, 1_ik, 3_ik, 0_ik)), &
                  1.0e-9_wp)
+      !----- Walk the model from 2036-12-30 across the wrap day by day: the wrap step needs December's  !
+      !      last record and January, and the reader reads January once more, not December again. ---!
+      block
+         integer(ik) :: loads
+         t = meds_time_t(2036_ik, 12_ik, 30_ik, 12_ik) ; met = step_sample(drv, t)
+         t = meds_time_t(2036_ik, 12_ik, 31_ik, 23_ik, 30_ik) ; met = step_sample(drv, t)
+         loads = drv%n_loads
+         t = meds_time_t(2037_ik, 1_ik, 1_ik, 0_ik, 30_ik) ; met = step_sample(drv, t)
+         call check('across the wrap: December''s last and January''s first record', met%tair_k,   &
+                    0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, 8759_ik) + field(ERA_TAIR, 1_ik, 3_ik, 0_ik)), 1.0e-9_wp)
+         call check_true('the wrap reads January once, December''s record comes from the buffer',  &
+                         drv%n_loads == loads + 1_ik, real(drv%n_loads - loads, wp))
+      end block
       call met_close(drv)
    end subroutine test_driver_recycle
 

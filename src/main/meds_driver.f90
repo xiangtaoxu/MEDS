@@ -41,7 +41,7 @@ module meds_driver
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input
    use meds_forcing_types,          only : met_driver_t
-   use meds_met_driver,             only : met_open, met_close
+   use meds_met_driver,             only : met_open, met_close, met_prefetch
    use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area, has_nan
    use meds_budget_check,           only : budget_t, budget_report
@@ -324,6 +324,10 @@ contains
 
       seam_prev = run%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
 
+      !----- I/O before the compute phase: the step's forcing is loaded here, so nothing below reads  !
+      !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_drv, run%prev)
+
       !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
       !      daily mean the PREVIOUS step's fast loop accumulated, then refresh the leaf table.     !
       !      Taking last step's mean is not a lag to apologise for: the quantity being tracked IS   !
@@ -362,21 +366,18 @@ contains
          do isub = 1_ik, run%mgr%n_fast_sub
             call output_integrate_fast(run%mgr, isub, run%cfg%dt_fast)
             run%fast_step_total = run%fast_step_total + 1_ik
-            if (mod(run%fast_step_total, max(run%mgr%fast_interval_steps, 1_ik)) == 0_ik) then
-               call close_tier(run%mgr, 1_ik)
-               call output_serialize_pending(run%mgr)
-            end if
+            if (mod(run%fast_step_total, max(run%mgr%fast_interval_steps, 1_ik)) == 0_ik)          &
+               call close_tier(run%mgr, 1_ik)                ! queued; written in the I/O phase
          end do
          run%mgr%fast_ready = .false.
       end if
 
       !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and     !
-      !      stage any closed period, then flush.  -------------------------------------------------!
+      !      queue any closed period for the I/O phase.  -------------------------------------------!
       if (run%cfg%output%enabled) then
          is_new_day = is_new_month .or. (run%now%day /= run%prev%day)
          call output_integrate(run%mgr, run%site, run%now, run%cfg%dt_slow, is_new_day,          &
                                is_new_month, is_new_year)
-         call output_serialize_pending(run%mgr)
       end if
 
       if (is_new_year) then
@@ -385,8 +386,13 @@ contains
             datestr = time_to_string(run%now)
             call print_summary(run%site, datestr(1:10))
          end if
-         !----- A NaN is a STATUS here, not an `error stop`: see the module header. ---------------!
-         if (has_nan(run%site)) then ; status = DRIVER_ERR_NAN ; return ; end if
+         !----- A NaN is a STATUS here, not an `error stop`: see the module header. The output up to  !
+         !      this step is still written, as it always was. ------------------------------------------!
+         if (has_nan(run%site)) then
+            status = DRIVER_ERR_NAN
+            if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
+            return
+         end if
       end if
 
       !----- SOIL-CARBON PLAUSIBILITY, checked every step and NOT gated on the ledger. -----------!
@@ -411,18 +417,32 @@ contains
                   write(*,'(a)') '        ceiling is ~500x the richest real soil. Conservation can'
                   write(*,'(a)') '        hold perfectly while this is true -- see the slow ledger.'
                   status = DRIVER_ERR_SOILC
+                  if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
                   return
                end if
             end do
          end block
       end if
 
+      if (is_new_month) call driver_io_phase(run, is_new_year)
+   end subroutine driver_step
+
+   !---------------------------------------------------------------------------------------!
+   ! driver_io_phase -- the file work of a closed month, done outside the compute phase so a step !
+   ! makes no netCDF call (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): write the queued output records, !
+   ! then the yearly checkpoint. The next month's forcing is loaded by met_prefetch before the     !
+   ! next step.                                                                                     !
+   !---------------------------------------------------------------------------------------!
+   subroutine driver_io_phase(run, is_new_year)
+      type(meds_run_t), intent(inout) :: run
+      logical,          intent(in)    :: is_new_year
+      if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                  &
                                 trim(run%cfg%state_output_prefix), run%now)
       end if
-   end subroutine driver_step
+   end subroutine driver_io_phase
 
    !---------------------------------------------------------------------------------------!
    ! driver_finalize -- terminal checkpoint, summary, the two whole-column budget reports, the    !

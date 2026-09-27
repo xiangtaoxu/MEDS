@@ -30,6 +30,10 @@ accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
   [5] SERIALIZE   meds_output_stream          per-tier, per-time-chunk netCDF
 ```
 
+Stages [1]–[4] run inside the time step; a closed period's record is queued, and stage [5] writes the
+queues when a calendar month closes and at the end of the run, so a step makes no netCDF call
+(`MEDS_POLYGON_RUNTIME_PLAN.md` §4).
+
 Stage [2] is why per-cohort ecophysiology is available at all. Sub-daily resolution exists only
 inside the fast loop's sub-step; before it existed, `A_net`, `g_sw`, `C_i`, ψ_leaf, ψ_wood, PLC,
 sapflow, root uptake, absorbed radiation and the turbulent fluxes were recomputed roughly 48 times

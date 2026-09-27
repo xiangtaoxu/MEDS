@@ -732,6 +732,14 @@ contains
             if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                    &
                error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "era5land" '// &
                                '(the archive stores total shortwave)'
+            !----- The reader loads an archive month, plus the record before it, before each step     !
+            !      (R1, MEDS_POLYGON_RUNTIME_PLAN.md §4). A daily step from midnight reads exactly that; !
+            !      a longer step, or one starting mid-day, can straddle two months.  --------------------!
+            if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                             &
+               error stop tag//'format = "era5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
+            if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                 &
+                cfg%start_time%second /= 0_ik)                                                     &
+               error stop tag//'format = "era5land" needs [run].start_time at 00:00:00'
          end if
          !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
          !      number of calendar years. A window of any other length cannot be wrapped without     !

@@ -20,18 +20,20 @@ module meds_output_manager
 
 contains
 
-   !----- Drain every staged record to its per-tier file (the flush wall; main-only). --------!
+   !----- Drain every queued record to its per-tier file, in closing order (the flush wall;     !
+   !      main-only). Called from the I/O phase at month boundaries and at the end of the run. ----!
    subroutine output_serialize_pending(mgr)
       type(output_manager_t), intent(inout) :: mgr
-      integer(ik) :: t
+      integer(ik) :: t, i
       if (.not. mgr%enabled) return
       do t = 1_ik, N_FREQ
-         if (.not. mgr%pending(t)%used) cycle
-         call stream_write_record(mgr%stream(t), mgr%reg, mgr%diag, mgr%pending(t), mgr%dir,       &
-                                  mgr%prefix,                                                    &
-                                  mgr%file_chunk(t), mgr%cohort_max, mgr%patch_max, mgr%sync_every, &
-                                  mgr%forcing_qair)
-         mgr%pending(t)%used = .false.
+         do i = 1_ik, mgr%queue(t)%n
+            call stream_write_record(mgr%stream(t), mgr%reg, mgr%diag, mgr%queue(t)%rec(i), mgr%dir, &
+                                     mgr%prefix,                                                 &
+                                     mgr%file_chunk(t), mgr%cohort_max, mgr%patch_max, mgr%sync_every, &
+                                     mgr%forcing_qair)
+         end do
+         mgr%queue(t)%n = 0_ik
       end do
    end subroutine output_serialize_pending
 

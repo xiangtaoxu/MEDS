@@ -48,7 +48,7 @@ module meds_met_driver
    implicit none
    private
 
-   public :: met_open, met_advance, met_instant, met_close
+   public :: met_open, met_advance, met_instant, met_close, met_prefetch
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
              MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE
@@ -117,6 +117,7 @@ contains
             if (present(stat)) then ; stat = vstat ; return ; end if
             error stop 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
          end if
+         call load_axis_month(drv, 1_ik)
          call load_bracket(drv, 1_ik)
          return
       end if
@@ -188,8 +189,61 @@ contains
          error stop 'met_open: forcing file does not match the declared [forcing] recycle window'
       end if
 
-      call load_bracket(drv, 1_ik)      ! records #1-2
+      !----- The records the run can read, into memory, so no step reads the file (R1): the recycle !
+      !      window, or the run period (the whole file when neither is known, as in unit tests). Only  !
+      !      those: a file written in 1 x 1 chunks makes a whole-file read cost HDF5 metadata for      !
+      !      every chunk. ----------------------------------------------------------------------------!
+      block
+         integer(ik) :: r0, r1
+         r0 = 1_ik ; r1 = drv%nrec
+         if (drv%fcfg%recycle .and. drv%n_cycle_years >= 1_ik) then
+            r0 = max(1_ik, drv%irec_cycle_first - 1_ik) ; r1 = min(drv%nrec, drv%irec_cycle_last + 1_ik)
+         else if (present(run_start) .and. present(run_end)) then
+            r0 = max(1_ik, first_record_after(drv, seconds_between(drv%base_time, run_start)) - 2_ik)
+            r1 = min(drv%nrec, first_record_after(drv, seconds_between(drv%base_time, run_end)) + 1_ik)
+         end if
+         if (r1 <= r0) r1 = min(drv%nrec, r0 + 1_ik)
+         call read_series(drv, ncid, r0, r1)
+         st = nc_close(ncid) ; drv%ncid = -1_ik
+         call load_bracket(drv, r0)                  ! the first two records in range
+      end block
    end subroutine met_open
+
+   !=======================================================================================!
+   !  PREFETCH (R1): load what the step starting at `step_start` reads, before its compute      !
+   !  phase, so met_advance never touches a file. A daily step from midnight reads one archive  !
+   !  month plus the record before it: 00:00 on the 1st, which lives in the previous month's    !
+   !  file, or the window's last record at the recycle wrap. Moving into the next month, that   !
+   !  record comes from the outgoing buffer, so a run loads each month once. validate_config    !
+   !  restricts format = "era5land" to daily steps from midnight, the shape this assumes.       !
+   !=======================================================================================!
+   subroutine met_prefetch(drv, step_start)
+      type(met_driver_t), intent(inout) :: drv
+      type(meds_time_t),  intent(in)    :: step_start
+      real(wp)    :: s0
+      integer(ik) :: r, k, kp, p
+      logical     :: wrap
+      if (drv%backend /= MET_BACKEND_ERA5LAND) return
+      s0 = file_lookup_sec(drv, step_start)
+      wrap = .false.
+      if (drv%n_cycle_years >= 1_ik .and. drv%irec_cycle_last > drv%irec_cycle_first) then
+         wrap = s0 >= drv%time_sec(drv%irec_cycle_last) - REC_MATCH_TOL
+      end if
+      if (wrap) then                                    ! the window's first month, after its last record
+         k = axis_month_of(drv, drv%irec_cycle_first) ; p = drv%irec_cycle_last
+      else
+         r = first_record_after(drv, s0)                ! clamped to the axis
+         k = axis_month_of(drv, r) ; p = drv%month_rec0(k)
+      end if
+      if (p > 0_ik .and. drv%carry_rec /= p) then       ! the record before the month
+         kp = axis_month_of(drv, p)
+         if (.not. month_loaded(drv, kp)) call load_axis_month(drv, kp)
+         if (.not. allocated(drv%carry)) allocate(drv%carry(drv%domain%ncell, ERA_NVAR))
+         drv%carry = drv%buffer%values(p - drv%month_rec0(kp), :, :)
+         drv%carry_rec = p
+      end if
+      if (.not. month_loaded(drv, k)) call load_axis_month(drv, k)
+   end subroutine met_prefetch
 
    !=======================================================================================!
    !  Validate the DECLARED recycle window ([forcing].recycle_start/recycle_end) against the    !
@@ -479,7 +533,9 @@ contains
       if (allocated(drv%time_sec)) deallocate(drv%time_sec)
       if (allocated(drv%month_year))  deallocate(drv%month_year, drv%month_month, drv%month_rec0)
       if (allocated(drv%buffer%values)) deallocate(drv%buffer%values)
-      drv%buffer%year = 0_ik
+      if (allocated(drv%carry))  deallocate(drv%carry)
+      if (allocated(drv%series)) deallocate(drv%series, drv%series_name)
+      drv%buffer%year = 0_ik ; drv%carry_rec = 0_ik ; drv%n_loads = 0_ik
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
@@ -684,7 +740,7 @@ contains
       end if
       call validate_file_against_config(drv, ncid, stat)
       st = nc_close(ncid)
-      drv%buffer%year = 0_ik
+      drv%buffer%year = 0_ik ; drv%carry_rec = 0_ik ; drv%n_loads = 0_ik
       end associate
    end subroutine open_archive
 
@@ -703,31 +759,80 @@ contains
       year = before%year ; month = before%month
    end subroutine archive_month_of
 
-   !----- Make the month holding record irec the loaded one; h is the record's hour in it. -------!
-   subroutine ensure_month(drv, irec, h)
-      type(met_driver_t), intent(inout) :: drv
-      integer(ik),        intent(in)    :: irec
-      integer(ik),        intent(out)   :: h
-      character(len=MET_PATH_LEN + 128) :: message
-      integer(ik) :: k, est
-      k = size(drv%month_rec0, kind=ik)
-      do while (drv%month_rec0(k) >= irec)
-         k = k - 1_ik
+   !----- The axis month holding record irec (binary search: an axis can span decades). ----------!
+   pure integer(ik) function axis_month_of(drv, irec) result(k)
+      type(met_driver_t), intent(in) :: drv
+      integer(ik),        intent(in) :: irec
+      integer(ik) :: lo, hi, mid
+      lo = 1_ik ; hi = size(drv%month_rec0, kind=ik)          ! month_rec0(lo) < irec always holds
+      do while (lo < hi)
+         mid = (lo + hi + 1_ik) / 2_ik
+         if (drv%month_rec0(mid) < irec) then ; lo = mid ; else ; hi = mid - 1_ik ; end if
       end do
-      h = irec - drv%month_rec0(k)
-      if (drv%buffer%year == drv%month_year(k) .and. drv%buffer%month == drv%month_month(k)) return
+      k = lo
+   end function axis_month_of
+
+   !----- The first record strictly after file time s (the last record if none). ------------------!
+   pure integer(ik) function first_record_after(drv, s) result(r)
+      type(met_driver_t), intent(in) :: drv
+      real(wp),           intent(in) :: s
+      integer(ik) :: lo, hi, mid
+      lo = 1_ik ; hi = drv%nrec
+      do while (lo < hi)
+         mid = (lo + hi) / 2_ik
+         if (drv%time_sec(mid) > s + REC_MATCH_TOL) then ; hi = mid ; else ; lo = mid + 1_ik ; end if
+      end do
+      r = lo
+   end function first_record_after
+
+   pure logical function month_loaded(drv, k) result(yes)
+      type(met_driver_t), intent(in) :: drv
+      integer(ik),        intent(in) :: k
+      yes = drv%buffer%year == drv%month_year(k) .and. drv%buffer%month == drv%month_month(k)
+   end function month_loaded
+
+   !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
+   subroutine load_axis_month(drv, k)
+      type(met_driver_t), intent(inout) :: drv
+      integer(ik),        intent(in)    :: k
+      character(len=MET_PATH_LEN + 128) :: message
+      integer(ik) :: est
       call era5land_load_month(drv%file_template, drv%fcfg%data_path, drv%domain, drv%month_year(k), &
                                drv%month_month(k), drv%buffer, est, message)
       if (est /= ERA_OK) then
          write(*,'(2a)') ' met_driver: ED_ERA5land month failed its checks: ', trim(message)
          error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
       end if
-   end subroutine ensure_month
+      drv%n_loads = drv%n_loads + 1_ik
+   end subroutine load_axis_month
+
+   !----- Where record irec's values are: its hour h in the loaded month, or h = 0 for the carried !
+   !      record. Anything else was not prefetched, which is a programming error, not a data gap. !
+   subroutine locate_record(drv, irec, h)
+      type(met_driver_t), intent(in)  :: drv
+      integer(ik),        intent(in)  :: irec
+      integer(ik),        intent(out) :: h
+      integer(ik) :: k
+      k = axis_month_of(drv, irec)
+      if (month_loaded(drv, k)) then
+         h = irec - drv%month_rec0(k)
+      else if (irec == drv%carry_rec) then
+         h = 0_ik
+      else
+         write(*,'(a,i0,2a)') ' met_driver: forcing record ', irec, ' at ',                            &
+               time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(irec)))
+         error stop 'met_driver: a forcing record was not prefetched before the step (internal error)'
+      end if
+   end subroutine locate_record
 
    pure real(wp) function archive_value(drv, h, var) result(val)
       type(met_driver_t), intent(in) :: drv
       integer(ik),        intent(in) :: h, var
-      val = real(drv%buffer%values(h, drv%cell, var), wp)
+      if (h == 0_ik) then
+         val = real(drv%carry(drv%cell, var), wp)
+      else
+         val = real(drv%buffer%values(h, drv%cell, var), wp)
+      end if
    end function archive_value
 
    !----- Resolve drv%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
@@ -762,7 +867,7 @@ contains
       if (drv%backend == MET_BACKEND_ERA5LAND) then
          !----- The archive stores dewpoint and the wind components (§15.4): humidity comes from the !
          !      model's own saturation curve, the speed from the vector at each stamp. -------------!
-         call ensure_month(drv, irec, h)
+         call locate_record(drv, irec, h)
          rec%tair_k   = archive_value(drv, h, ERA_TAIR)
          rec%psurf_pa = archive_value(drv, h, ERA_PSURF)
          rec%qair     = dewpoint_to_specific_humidity(archive_value(drv, h, ERA_TDEW), rec%psurf_pa)
@@ -856,37 +961,84 @@ contains
       end if
    end subroutine read_record
 
-   !----- Read a single value of `name` at (time=irec-1, grid=grid_index-1) (0-based C index). !
+   !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. ---------------!
+   subroutine read_series(drv, ncid, r0, r1)
+      type(met_driver_t), intent(inout) :: drv
+      integer(c_int),     intent(in)    :: ncid
+      integer(ik),        intent(in)    :: r0, r1
+      character(len=24), parameter :: FIELDS(14) = [character(len=24) ::                            &
+         'Tair', 'Qair', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'CO2air', 'SWdown',       &
+         'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
+      integer(c_int)    :: st, vid
+      integer(c_size_t) :: start2(2), count2(2)
+      logical     :: present_(size(FIELDS))
+      integer(ik) :: j, n
+      do j = 1, size(FIELDS)
+         present_(j) = nc_inq_varid_f(ncid, trim(FIELDS(j)), vid) == NC_NOERR
+      end do
+      n = int(count(present_), ik)
+      if (allocated(drv%series)) deallocate(drv%series, drv%series_name)
+      allocate(drv%series(r0:r1, n), drv%series_name(n))              ! indexed by record number
+      drv%series_name = pack(FIELDS, present_)
+      start2 = [int(r0 - 1_ik, c_size_t), int(drv%grid_index - 1_ik, c_size_t)]    ! [time, grid]
+      count2 = [int(r1 - r0 + 1_ik, c_size_t), 1_c_size_t]
+      do j = 1_ik, n
+         st = nc_inq_varid_f(ncid, trim(drv%series_name(j)), vid)
+         st = nc_get_vara_double(ncid, vid, start2, count2, drv%series(:, j))
+         call nc_check(st, 'read_series: get '//trim(drv%series_name(j)))
+      end do
+   end subroutine read_series
+
+   !----- The value of field `name` at record irec (0 when the file does not carry it). ---------!
+   pure integer(ik) function series_field(drv, name) result(j)
+      type(met_driver_t), intent(in) :: drv
+      character(len=*),   intent(in) :: name
+      do j = 1_ik, size(drv%series_name, kind=ik)
+         if (trim(drv%series_name(j)) == trim(name)) return
+      end do
+      j = 0_ik
+   end function series_field
+
    function read_scalar(drv, name, irec) result(val)
       type(met_driver_t), intent(in) :: drv
       character(len=*),   intent(in) :: name
       integer(ik),        intent(in) :: irec
-      real(wp) :: val
-      integer(c_int)    :: st, vid
-      integer(c_size_t) :: start2(2), count2(2)
-      real(c_double)    :: buf(1)
-      st = nc_inq_varid_f(int(drv%ncid, c_int), name, vid)
-      call nc_check(st, 'read_scalar: varid '//trim(name))
-      start2 = [int(irec - 1_ik, c_size_t), int(drv%grid_index - 1_ik, c_size_t)]   ! [time, grid]
-      count2 = [1_c_size_t, 1_c_size_t]
-      st = nc_get_vara_double(int(drv%ncid, c_int), vid, start2, count2, buf)
-      call nc_check(st, 'read_scalar: get '//trim(name))
-      val = buf(1)
+      real(wp)    :: val
+      integer(ik) :: j
+      j = series_field(drv, name)
+      if (j == 0_ik) then
+         write(*,'(2a)') ' met_driver: the forcing file has no variable ', trim(name)
+         error stop 'met_driver: a required forcing variable is missing'
+      end if
+      call check_in_series(drv, irec)
+      val = drv%series(irec, j)
    end function read_scalar
 
-   !----- Read `name` if present, else return the supplied default (e.g. CO2air absent). -------!
+   !----- A record outside the range read at open was not prefetched: a programming error. ------!
+   subroutine check_in_series(drv, irec)
+      type(met_driver_t), intent(in) :: drv
+      integer(ik),        intent(in) :: irec
+      if (irec < lbound(drv%series, 1) .or. irec > ubound(drv%series, 1)) then
+         write(*,'(a,i0,a,i0,a,i0)') ' met_driver: forcing record ', irec, ' outside the range read, ',  &
+               lbound(drv%series, 1), '..', ubound(drv%series, 1)
+         error stop 'met_driver: a forcing record was not read before the step (internal error)'
+      end if
+   end subroutine check_in_series
+
+   !----- `name` if the file carries it, else the supplied default (e.g. CO2air absent). --------!
    function read_scalar_default(drv, name, irec, default) result(val)
       type(met_driver_t), intent(in) :: drv
       character(len=*),   intent(in) :: name
       integer(ik),        intent(in) :: irec
       real(wp),           intent(in) :: default
-      real(wp) :: val
-      integer(c_int) :: st, vid
-      st = nc_inq_varid_f(int(drv%ncid, c_int), name, vid)
-      if (st /= NC_NOERR) then
+      real(wp)    :: val
+      integer(ik) :: j
+      j = series_field(drv, name)
+      if (j == 0_ik) then
          val = default
       else
-         val = read_scalar(drv, name, irec)
+         call check_in_series(drv, irec)
+         val = drv%series(irec, j)
       end if
    end function read_scalar_default
 

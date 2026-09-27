@@ -16,7 +16,7 @@ module meds_output_stream
    use meds_netcdf_c
    use meds_output_config, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter,     &
                                   freq_tier_index
-   use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, &
+   use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
                                   DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
@@ -438,15 +438,16 @@ contains
                c3 = [1_c_size_t, int(pr%n_patch, c_size_t), int(n_soil_layer_max, c_size_t)]
                nsp = pr%n_patch * n_soil_layer_max
                call nc_check(nc_put_vara_double(ncid, int(stream%vid(k), c_int), s3, c3,          &
-                             pr%slab(1:nsp, k)), 'put '//trim(reg%var(k)%name))
+                             pr%slab(1:nsp, slab_col(pr, k))), 'put '//trim(reg%var(k)%name))
             end if
          else if (ns > 0_ik) then
             s2 = [t0, 0_c_size_t] ; c2 = [1_c_size_t, int(ns, c_size_t)]
             if (reg%var(k)%xtype == XTYPE_INT) then
-               call put_int_slab(ncid, stream%vid(k), s2, c2, pr%slab(1:ns, k), pr%slabvalid(1:ns, k), ns)
+               call put_int_slab(ncid, stream%vid(k), s2, c2, pr%slab(1:ns, slab_col(pr, k)),              &
+                                 pr%slabvalid(1:ns, slab_col(pr, k)), ns)
             else
                call nc_check(nc_put_vara_double(ncid, int(stream%vid(k), c_int), s2, c2,          &
-                             pr%slab(1:ns, k)), 'put '//trim(reg%var(k)%name))
+                             pr%slab(1:ns, slab_col(pr, k))), 'put '//trim(reg%var(k)%name))
             end if
          end if
       end do
