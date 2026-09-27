@@ -31,7 +31,10 @@ the no-data pattern equals the static file's `valid` mask at every hour; every v
 variable's plausibility bounds. Soft check (warning, recorded in the manifest): Tdew above Tair by more
 than 0.5 K, on a sample of chunk columns.
 
-Each output is written via a .part file and recorded in <data_path>/manifest.json with its sha256. Raw
+Each output is written via a .part file and recorded in <data_path>/manifest.json with its sha256.
+--work-dir writes the .part on another disk (node-local, say) and then copies the finished file into
+data_path in one sequential stream: HDF5 writes thousands of small chunks and index updates, which
+are slow over a network filesystem, while one large sequential copy is not. Raw
 files are then deleted (decision OD2) unless --keep-raw: a GDEX file serves one variable-month and goes at
 once; a CDS GRIB file goes once every archive month it supplies is in the manifest, counting only months
 the raw pool holds more of than their closing stamp (see cds_index). A rerun skips outputs that the
@@ -48,6 +51,7 @@ import collections
 import concurrent.futures as cf
 import datetime as dt
 import glob
+import hashlib
 import os
 import sys
 import time
@@ -212,9 +216,28 @@ def cds_index(raw_dir, raw_var):
     return where, {p: {m for m in months if in_pool[m] > 1} for p, months in supplies.items()}
 
 
-def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None, cds=None):
+def publish(part, final):
+    """Move a finished .part file to `final`; returns (bytes, sha256). From a work directory on another
+    filesystem the file is copied to final + ".part" first and renamed, so data_path only ever holds
+    complete files, and the checksum is taken in the same pass as the copy."""
+    if os.path.dirname(os.path.abspath(part)) == os.path.dirname(os.path.abspath(final)):
+        os.replace(part, final)
+        return os.path.getsize(final), common.sha256_file(final)
+    digest, nbytes, staged = hashlib.sha256(), 0, final + ".part"
+    with open(part, "rb") as src, open(staged, "wb") as dst:
+        while block := src.read(16 << 20):
+            digest.update(block)
+            dst.write(block)
+            nbytes += len(block)
+    os.replace(staged, final)
+    os.remove(part)
+    return nbytes, digest.hexdigest()
+
+
+def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None, cds=None, work_dir=None):
     """Build one archive variable-month. Runs in its own process. Returns a status string.
-    cds: None for GDEX raw files, else (messages, own) for this month, from cds_index()."""
+    cds: None for GDEX raw files, else (messages, own) for this month, from cds_index().
+    work_dir: where the .part file is written before it is copied into data_path (None: data_path)."""
     from netCDF4 import Dataset
     spec = common.ARCHIVE_VARIABLES[var]
     t_start = time.monotonic()
@@ -234,7 +257,7 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None, cds=Non
 
     out = common.archive_file(data_path, var, year, month)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    part = out + ".part"
+    part = os.path.join(work_dir, os.path.basename(out) + ".part") if work_dir else out + ".part"
     ny, nx = valid.shape
     dst = Dataset(part, "w", format="NETCDF4")
     dst.createDimension("time", nt)
@@ -303,11 +326,11 @@ def build_one(var, year, month, raw_dir, data_path, keep_raw, rows=None, cds=Non
     dst.history = f"{dt.datetime.now(dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ} build_era5land_archive.py"
     dst.close()
     if rows is not None:                                    # a debug subset is never a finished product
-        os.replace(part, out + ".subset.nc")
+        publish(part, out + ".subset.nc")
         return f"  subset {var} {year}-{month:02d}: rows {rows}, {written} chunk columns, {vmin:.6g}..{vmax:.6g}"
-    os.replace(part, out)
+    nbytes, sha256 = publish(part, out)
     common.update_manifest(data_path, f"{var}/{year:04d}{month:02d}", dict(
-        file=os.path.relpath(out, data_path), bytes=os.path.getsize(out), sha256=common.sha256_file(out),
+        file=os.path.relpath(out, data_path), bytes=nbytes, sha256=sha256,
         source="gdex" if cds is None else "cds", raw_files=[os.path.relpath(p, raw_dir) for p in paths], stamps=nt,
         min=vmin, max=vmax, chunk_columns_written=written, processing_version=PROCESSING_VERSION,
         seconds=round(time.monotonic() - t_start, 1),
@@ -369,6 +392,8 @@ def main(argv=None):
     ap.add_argument("--keep-raw", action="store_true", help="keep raw files after a verified build (default: delete, OD2)")
     ap.add_argument("--force", action="store_true", help="rebuild variable-months the manifest already records")
     ap.add_argument("--rows", default=None, help="debug: build only rows R0:R1 into a .subset.nc file (no manifest, no deletion)")
+    ap.add_argument("--work-dir", default=None,
+                    help="write each output here first (e.g. node-local disk), then copy it into --data-path")
     args = ap.parse_args(argv)
 
     common.use_group_umask()
@@ -380,6 +405,8 @@ def main(argv=None):
     months = common.parse_months(args.start, args.end)
     rows = tuple(int(x) for x in args.rows.split(":")) if args.rows else None
     load_static(args.data_path)                             # fail early if the static file is missing
+    if args.work_dir:
+        os.makedirs(args.work_dir, exist_ok=True)
 
     done = common.read_manifest(args.data_path)
     jobs = [(v, y, m) for (y, m) in months for v in names
@@ -406,7 +433,7 @@ def main(argv=None):
     failures = 0
     with cf.ProcessPoolExecutor(max_workers=max(1, args.workers)) as pool:
         futs = {pool.submit(build_one, v, y, m, args.raw_dir, args.data_path, args.keep_raw, rows,
-                            cds.get((v, y, m))): (v, y, m)
+                            cds.get((v, y, m)), args.work_dir): (v, y, m)
                 for v, y, m in jobs}
         for fut in cf.as_completed(futs):
             v, y, m = futs[fut]
