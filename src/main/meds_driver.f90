@@ -125,7 +125,9 @@ contains
       select case (run%cfg%init_mode)
       case (INIT_RESTART)
          call io_read_state(run%poly%site, run%cfg, trim(run%cfg%init_restart_file), restart_time,   &
-                            init_ok, fast_found=fast_state_found)
+                            init_ok, fast_found=fast_state_found,                                &
+                            restructure_pending=run%poly%restructure_pending,                    &
+                            restructure_new_year=run%poly%restructure_new_year)
          if (init_ok) then
             run%now = restart_time
             if (run%verbose) then
@@ -136,6 +138,8 @@ contains
                else
                   write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
                end if
+               if (run%poly%restructure_pending)                                                  &
+                  write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
             end if
          else if (run%verbose) then
             write(*,'(3a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
@@ -287,7 +291,8 @@ contains
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                  &
-                                trim(run%cfg%state_output_prefix), run%now)
+                                trim(run%cfg%state_output_prefix), run%now,                         &
+                                run%poly%restructure_pending, run%poly%restructure_new_year)
       end if
    end subroutine driver_io_phase
 
@@ -305,7 +310,8 @@ contains
       !----- Always checkpoint the true terminal state so a restart resumes exactly here. --------!
       if (run%cfg%state_write_state)                                                                &
          call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                     &
-                             trim(run%cfg%state_output_prefix), run%now)
+                             trim(run%cfg%state_output_prefix), run%now,                            &
+                             run%poly%restructure_pending, run%poly%restructure_new_year)
 
       if (run%verbose) call print_summary(run%poly%site, 'final')
       a1 = total_area(run%poly%site)

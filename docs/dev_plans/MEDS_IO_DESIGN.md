@@ -678,18 +678,14 @@ of the cohort/patch buffers precedes `vegetation_dynamics`' monthly block — so
 slot-set change. `meds_main` calls `output_serialize_pending` after `advance_one_step` returns — the
 clean split of §2 that keeps `aux` netCDF-free and the flush at `main`.
 
-> **As built (#294).** The slow tiers tick once per slow step, after `advance_one_step` returns, so
-> the monthly flush cannot run before that step's restructuring. `output_integrate` splits the
-> boundary step instead:
->
-> - its site, soil and PFT values fold into the closing window, because a step belongs to the period
->   it starts in;
-> - its cohort and patch values, and the two counts, are already in the new slot set, so they open
->   the next window.
->
-> The window/boundary alignment above holds exactly. The cost is that a monthly cohort/patch record
-> lags the site record beside it by one slow step. See `docs/science/diagnostics.md` §4, "Which steps
-> a record holds".
+> **As built (#294).** The slow tiers tick once per slow step, after `advance_one_step` returns. The
+> stand's monthly and yearly restructuring is not part of that step. It runs between two steps:
+> `polygon_step` sets `restructure_pending` at the end of the step that ends on a boundary, and the
+> next step performs it (`advance_boundary`) before its fast loop. So the flush does precede the
+> restructuring, as specified above, and the window/boundary alignment holds exactly: fiss/fuse
+> starts the new window. A checkpoint written at the boundary holds the stand before the
+> restructuring, and records `restructure_pending` so the resumed run performs it first. See
+> `docs/science/diagnostics.md` §4, "Which steps a record holds".
 
 ---
 

@@ -302,16 +302,16 @@ contains
       call check_close(a%queue(1)%rec(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a''s queued record is untouched')
    end subroutine test_two_buffers
 
-   !----- The slow tick on a restructuring step (#294). The step from 31 January to 1 February is   !
-   !      January's, so the site variables fold into January before the month closes. But it ends  !
-   !      by restructuring the cohorts, so its cohort slab and cohort count -- already the new set  !
-   !      -- open February instead. A one-step daily window takes the whole step. ------------------!
+   !----- The slow tick across a month boundary (#294). The step from 31 January to 1 February     !
+   !      is January's: it folds into January, which then closes. The stand is restructured only   !
+   !      after that tick (advance_boundary), so January's cohort slab holds one slot set, and     !
+   !      February opens on 1 February with the new one. ------------------------------------------!
    subroutine test_boundary_step()
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
       type(site_t)           :: site
-      type(meds_time_t)      :: jan30, jan31, feb1, feb2
+      type(meds_time_t)      :: jan30, jan31, feb1
       integer(ik) :: k_s, k_c, k_n
       real(wp), parameter :: DT = 86400.0_wp
       cfg = build_test_config(DT)
@@ -331,43 +331,36 @@ contains
       jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
       jan31 = time_advance_days(jan30, 1_ik)
       feb1  = time_advance_days(jan31, 1_ik)
-      feb2  = time_advance_days(feb1, 1_ik)
 
-      !----- 30 January: one cohort, agb 10. --------------------------------------------------!
+      !----- 30 and 31 January: one cohort, agb 10 then 12 at the ends of the two steps. The      !
+      !      second step ends on the month boundary. ---------------------------------------------!
       call set_cohorts(site, [10.0_wp])
-      call output_integrate(files, bufs, site, jan30, jan31, DT, .true., .false., .false.)
-      !----- 31 January, ending in a restructuring: a recruit joins, agb 20 and 5. ---------------!
-      call set_cohorts(site, [20.0_wp, 5.0_wp])
-      call output_integrate(files, bufs, site, jan31, feb1, DT, .true., .true., .false.)
+      call output_integrate(files, bufs, site, jan30, DT, .true., .false., .false.)
+      call set_cohorts(site, [12.0_wp])
+      call output_integrate(files, bufs, site, jan31, DT, .true., .true., .false.)
 
       call check(bufs%pending(2)%t_open%month == 1_ik .and. bufs%pending(2)%t_open%day == 31_ik,     &
                  'the step from 31 January to 1 February is the 31 January daily record')
-      call check(bufs%pending(2)%nslab(k_c) == 2_ik, 'the one-step daily window takes the new cohort set')
-      call check_close(bufs%pending(2)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'daily: the recruit''s agb')
-      call check_close(bufs%pending(2)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'daily: its cohort count')
-
       call check(bufs%queue(3)%n == 1_ik, 'the month turning closes January')
       call check(bufs%pending(3)%t_open%month == 1_ik .and. bufs%pending(3)%t_open%day == 30_ik,     &
                  'January opens at the start of its first step')
-      call check_close(bufs%pending(3)%sval(k_s), 17.5_wp, 1.0e-12_wp,                             &
-                       'January''s site mean includes its last step: (10 + 25) / 2')
-      call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab keeps the old slot set')
-      call check_close(bufs%pending(3)%slab(1,k_c), 10.0_wp, 1.0e-12_wp,                           &
-                       'January''s cohort slab excludes the restructured step')
-      call check_close(bufs%pending(3)%sval(k_n), 1.0_wp, 1.0e-12_wp,                              &
-                       'January''s cohort count describes its own slab')
-      call check(bufs%has_data(3) .and. bufs%deferred_only(3), 'the deferred values open February')
-      call check(bufs%t_open(3)%month == 2_ik .and. bufs%t_open(3)%day == 1_ik, 'February opens on 1 February')
+      call check_close(bufs%pending(3)%sval(k_s), 11.0_wp, 1.0e-12_wp,                             &
+                       'January''s site mean includes its last step: (10 + 12) / 2')
+      call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab: its one slot set')
+      call check_close(bufs%pending(3)%slab(1,k_c), 11.0_wp, 1.0e-12_wp,                           &
+                       'January''s cohort slab includes its last step too')
+      call check(.not. bufs%has_data(3), 'nothing of the boundary step is left for February')
 
-      !----- 1 February: February's first step of its own; then close the month by hand. --------!
-      call set_cohorts(site, [22.0_wp, 6.0_wp])
-      call output_integrate(files, bufs, site, feb1, feb2, DT, .true., .false., .false.)
-      call check(.not. bufs%deferred_only(3), 'a step of its own makes February a real window')
+      !----- The boundary: a recruit joins (restructure_stand runs here in the driver). Then 1    !
+      !      February's own step; close the month by hand. ---------------------------------------!
+      call set_cohorts(site, [20.0_wp, 5.0_wp])
+      call output_integrate(files, bufs, site, feb1, DT, .true., .false., .false.)
+      call check(bufs%t_open(3)%month == 2_ik .and. bufs%t_open(3)%day == 1_ik, 'February opens on 1 February')
       call close_tier(files, bufs, 3_ik)
-      call check_close(bufs%pending(3)%sval(k_s), 28.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
-      call check_close(bufs%pending(3)%slab(1,k_c), 21.0_wp, 1.0e-12_wp,                           &
-                       'February''s cohort slab: the deferred and its own sample, (20 + 22) / 2')
-      call check_close(bufs%pending(3)%slab(2,k_c), 5.5_wp, 1.0e-12_wp, 'February''s recruit: (5 + 6) / 2')
+      call check_close(bufs%pending(3)%sval(k_s), 25.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
+      call check(bufs%pending(3)%nslab(k_c) == 2_ik, 'February''s cohort slab: the new slot set')
+      call check_close(bufs%pending(3)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
+      call check_close(bufs%pending(3)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'February''s cohort count')
       call site_free(site)
    end subroutine test_boundary_step
 

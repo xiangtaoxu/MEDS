@@ -17,7 +17,8 @@ module meds_site_state_types
                                       cohort_diag_reorder, cohort_diag_copy_slot,                &
                                       cohort_diag_clear_slot, patch_diag_reorder,                &
                                       patch_diag_copy_slot, patch_diag_clear_slot,               &
-                                      patch_diag_grow, patch_diag_alloc, patch_diag_free
+                                      patch_diag_grow, patch_diag_alloc, patch_diag_free,        &
+                                      cohort_diag_reset, patch_diag_reset, polygon_diag_reset
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : pio4, tiny_num, cp_liq
    use meds_pft_params, only : pft_table_t
@@ -36,7 +37,7 @@ module meds_site_state_types
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
    public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
-   public :: assign_cohort_id, assign_patch_id
+   public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
    public :: cohort_tissue_heat_capacity, cohort_tissue_water
 
    !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity), plus  !
@@ -1312,5 +1313,17 @@ contains
       site%patch%global_id(slot) = site%next_patch_id
       site%next_patch_id = site%next_patch_id + 1_ik
    end subroutine assign_patch_id
+
+   !----- Zero the step diagnostic blocks -- per cohort, per patch, per polygon -- after the       !
+   !      output has read them. They accumulate from one output tick to the next: the fast loop    !
+   !      adds each sub-step, the slow step its rows, and a calendar boundary between two steps    !
+   !      its events (disturbance, culls), which therefore reach the record of the step that       !
+   !      follows. The slow cohort block is SET each step instead and needs no reset here. --------!
+   subroutine reset_step_diagnostics(site)
+      type(site_t), intent(inout) :: site
+      call cohort_diag_reset(site%cohort%diag)
+      call patch_diag_reset(site%patch%diag)
+      call polygon_diag_reset(site%diag)
+   end subroutine reset_step_diagnostics
 
 end module meds_site_state_types

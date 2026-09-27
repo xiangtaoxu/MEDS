@@ -82,7 +82,7 @@ program test_biogeochem_dynamics
       rh_fast_accum_ref = site%patch%xi_accum(1)%rh_fast_accum
       call check(rh_fast_accum_ref > 0.0_wp, 'fast loop accumulated positive matrix Rh over the day')
 
-      call advance_slow_dynamics(site, cfg, .false., .false., seam=seam)
+      call advance_slow_dynamics(site, cfg, seam=seam)
 
       call check_true('rh_seam_gap ~ 0 (the double-count gate)',                                   &
                       seam%worst_rh_gap < 1.0e-9_wp * max(rh_fast_accum_ref, 1.0_wp), seam%worst_rh_gap)
@@ -125,7 +125,7 @@ program test_biogeochem_dynamics
       site2%patch%soil_carbon(1)%slow_carbon = 500.0_wp
       totalA = site2%patch%soil_carbon(1)%slow_carbon
       call fast_dynamics(site2, ctx, cfg)
-      call advance_slow_dynamics(site2, cfg, .false., .false.)
+      call advance_slow_dynamics(site2, cfg)
       totalB = site2%patch%soil_carbon(1)%fast_grnd_carbon + site2%patch%soil_carbon(1)%fast_soil_carbon &
              + site2%patch%soil_carbon(1)%struct_grnd_carbon + site2%patch%soil_carbon(1)%struct_soil_carbon &
              + site2%patch%soil_carbon(1)%microbial_carbon + site2%patch%soil_carbon(1)%slow_carbon  &

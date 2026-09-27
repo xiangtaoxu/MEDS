@@ -48,11 +48,16 @@ contains
    ! Cached geometry (height/basal_area/agb/leaf_area) is omitted: it is re-derived from dbh  !
    ! on restart. Scalars travel in a small meta_int/meta_real vector.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine state_write_state(site, cfg, dir, prefix, now)
+   subroutine state_write_state(site, cfg, dir, prefix, now, restructure_pending, restructure_new_year)
       type(site_t),        intent(in) :: site
       type(meds_config_t), intent(in) :: cfg
       character(len=*),    intent(in) :: dir, prefix
       type(meds_time_t),   intent(in) :: now
+      !----- The calendar restructuring the stand still owes at `now` (meds_polygon_t): a state   !
+      !      written on a boundary holds the stand BEFORE it, and the run resumed from it runs it !
+      !      first. Recorded as the global attribute `restructure_pending` = none | month | year. !
+      logical, optional,   intent(in) :: restructure_pending, restructure_new_year
+      character(len=5) :: pending
       integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr, d_soill, d_snowl
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
@@ -203,6 +208,15 @@ contains
       call dv(vp_lig2,'soilc_lignin_soil', NC_DOUBLE, [d_patch], 'structural litter lignin, below-ground [kgC/m2]')
       call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'title',                            &
                     int(len_trim(STATE_TITLE), c_size_t), STATE_TITLE), 'state title')
+      pending = 'none'
+      if (present(restructure_pending)) then
+         if (restructure_pending) pending = 'month'
+         if (restructure_pending .and. present(restructure_new_year)) then
+            if (restructure_new_year) pending = 'year'
+         end if
+      end if
+      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'restructure_pending',              &
+                    int(len_trim(pending), c_size_t), trim(pending)), 'state restructure_pending')
       call nc_check(nc_enddef(ncid), 'state enddef')
 
       meta_i = [ncoh, npat, npft, site%next_cohort_id, site%next_patch_id,                     &
@@ -374,7 +388,8 @@ contains
    ! sort order are rebuilt. found=.false. (no error stop) if the file cannot be opened, so    !
    ! the caller can fall back. Errors out only on a genuine inconsistency (PFT-count mismatch).!
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found)
+   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found, restructure_pending, &
+                            restructure_new_year)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -385,6 +400,11 @@ contains
       !      absent/.false. means an older-format file -- the caller (meds_main) must then fall back    !
       !      to init_fast_reservoirs's generic seed, exactly the pre-P5 behavior. --------------------!
       logical, optional,   intent(out) :: fast_found
+      !----- The restructuring the stand owes at restart_time (state_write_state). A file without   !
+      !      the attribute predates it and was written AFTER its boundary's restructuring, so it    !
+      !      owes nothing. -------------------------------------------------------------------------!
+      logical, optional,   intent(out) :: restructure_pending, restructure_new_year
+      character(len=16) :: pending
       integer(c_int) :: ncid, vid, vrec, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, meta_i(11)
       real(wp)       :: meta_r(2)
@@ -392,8 +412,14 @@ contains
 
       found = .false. ; restart_time = meds_time_t()
       if (present(fast_found)) fast_found = .false.
+      if (present(restructure_pending))  restructure_pending  = .false.
+      if (present(restructure_new_year)) restructure_new_year = .false.
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
+      pending = 'none'
+      if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
+      if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
+      if (present(restructure_new_year)) restructure_new_year = trim(pending) == 'year'
 
       call nc_check(nc_inq_varid_f(ncid, 'meta_int',  vid), 'inq meta_int')
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [11_c_size_t], meta_i), 'get meta_int')

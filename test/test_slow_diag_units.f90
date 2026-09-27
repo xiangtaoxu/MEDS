@@ -36,7 +36,7 @@ program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t
+   use meds_site_state_types,    only : site_t, reset_step_diagnostics
    use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value,                       &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,     &
                                         PD_RECRUIT_NPLANT, PD_DISTURB_AREA
@@ -46,7 +46,7 @@ program test_slow_diag_units
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
    use meds_fast_types,          only : apply_hydraulics_config
    use meds_fast_config,         only : build_leaf_photo_table, build_integrator_opts
-   use meds_slow_dynamics,       only : advance_slow_dynamics
+   use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
    implicit none
@@ -95,7 +95,7 @@ program test_slow_diag_units
 
    !=== 2. LITTER: reported rate x elapsed == the amount biogeochemistry consumed. ===============!
    pool0 = sum(site%patch%recruit_pool(:, 1))
-   call advance_slow_dynamics(site, cfg, .false., .false.)
+   call advance_slow_dynamics(site, cfg)
    pool1 = sum(site%patch%recruit_pool(:, 1))
 
    call check(site%patch%litter_in(1)%labile_grnd > 0.0_wp, 'the step actually shed leaf litter')
@@ -122,15 +122,18 @@ program test_slow_diag_units
    call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                                  &
                     'PD_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
 
-   !=== 4. DISTURBANCE: fires on a year boundary, in a different file with its own expression, so  !
-   !    it gets its own check. The amount is the area fraction its hazard removes over the one-    !
-   !    year PATCH_DYNAMICS_INTERVAL it is called with. -------------------------------------------!
+   !=== 4. DISTURBANCE: fires on a year boundary, in a different file with its own expression, so   !
+   !    it gets its own check. The amount is the area fraction its hazard removes over the one-     !
+   !    year PATCH_DYNAMICS_INTERVAL it is called with. As in the driver, the boundary comes after  !
+   !    the output has read the step and zeroed the block, so its event lands in the NEXT window,   !
+   !    which the next fast loop then weighs. ------------------------------------------------------!
    block
-      call fast_dynamics(site, ctx, cfg)                         ! a fresh window (the block resets)
+      call reset_step_diagnostics(site)                          ! the output has read step 1
+      call advance_boundary_dynamics(site, cfg, .true., .true.)  ! new month AND new year
+      call fast_dynamics(site, ctx, cfg)                         ! the next step's window
       elapsed_yr = site%patch%diag%w(1) / yr_sec
       call check_close(site%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
-                       'the second window also weighs exactly one slow step')
-      call advance_slow_dynamics(site, cfg, .true., .true.)      ! new month AND new year
+                       'the window after the boundary weighs exactly one slow step')
       frac_expected = 1.0_wp - exp(-cfg%patch_disturbance_rate * 1.0_wp)   ! PATCH_DYNAMICS_INTERVAL
       call check(frac_expected > 0.0_wp, 'the test config actually disturbs')
       call patch_diag_value(site%patch%diag, PD_DISTURB_AREA, x, np)

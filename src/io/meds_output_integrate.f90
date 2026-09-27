@@ -76,9 +76,6 @@ module meds_output_integrate
    public :: SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE
    public :: SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
 
-   !----- Which of a tier's variables fold_tier folds (output_integrate). -------------------------!
-   integer(ik), parameter :: FOLD_ALL = 0_ik, FOLD_UNBOUND = 1_ik, FOLD_BOUND = 2_ik
-
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
    !  the field lives on. The dispatcher reads the range to decide which reduction applies, so a   !
@@ -790,95 +787,44 @@ contains
    !  the value at the end of each of the period's steps. Closed records are staged in     !
    !  bufs%queue for main to serialize.                                                    !
    !                                                                                       !
-   !  THE ONE EXCEPTION is the fixed slot set of §4.4. A step on which the month turns     !
-   !  ends by restructuring the cohorts and patches (recruit, fuse, split; disturbance and !
-   !  patch fusion at the year), so its slot-bound values -- the cohort and patch slabs,   !
-   !  and the two counts that size them -- are already in the NEW slot set. They cannot    !
-   !  join a window that holds samples of the old one, so they open the next window        !
-   !  instead. A monthly cohort or patch record therefore runs from the restructuring that !
-   !  opens it to the step before the next, one slow step later than the site variables    !
-   !  beside it. A daily window holds one step and never meets the case.                   !
+   !  The stand's calendar restructuring runs after this tick (advance_boundary), so every !
+   !  window holds one cohort/patch slot set (§4.4) and the restructuring's events reach   !
+   !  the period that begins.                                                              !
    !=======================================================================================!
-   subroutine output_integrate(files, bufs, site, prev, now, dt, is_new_day, is_new_month, is_new_year)
+   subroutine output_integrate(files, bufs, site, prev, dt, is_new_day, is_new_month, is_new_year)
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs
       type(site_t),           intent(in)    :: site
-      type(meds_time_t),      intent(in)    :: prev, now     !< the step just taken, [prev, now)
+      type(meds_time_t),      intent(in)    :: prev          !< the start of the step just taken
       real(wp),               intent(in)    :: dt
-      logical,                intent(in)    :: is_new_day, is_new_month, is_new_year  !< `now` left prev's period
-      integer(ik) :: t, nfold
-      logical     :: ends, defer
-      if (.not. files%enabled) return
-      !----- DAILY/MONTHLY/ANNUAL, each on its own. The FAST tier is fed separately from the       !
-      !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists  !
-      !      only inside the fast loop. -----------------------------------------------------------!
-      do t = 2_ik, N_FREQ
-         if (files%reg%nidx(t) == 0_ik) cycle
-         select case (t)
-         case (2_ik)  ; ends = is_new_day
-         case (3_ik)  ; ends = is_new_month
-         case default ; ends = is_new_year
-         end select
-         defer = ends .and. is_new_month .and. bufs%has_data(t)
-         if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
-         if (defer) then
-            call fold_tier(files, bufs, site, t, dt, FOLD_UNBOUND, nfold)
-         else
-            call fold_tier(files, bufs, site, t, dt, FOLD_ALL, nfold)
-         end if
-         bufs%has_data(t) = .true. ; bufs%deferred_only(t) = .false.
-         if (ends) call close_tier(files, bufs, t)
-         if (defer) then
-            bufs%t_open(t) = now
-            call fold_tier(files, bufs, site, t, dt, FOLD_BOUND, nfold)
-            bufs%has_data(t) = nfold > 0_ik ; bufs%deferred_only(t) = nfold > 0_ik
-         end if
-      end do
-   end subroutine output_integrate
-
-   !----- Fold this step's values into tier t's running reductions: every variable, or, when a     !
-   !      restructuring step is split between two windows (above), only the slot-bound ones or     !
-   !      only the rest. `nfold` counts the variables folded. -------------------------------------!
-   subroutine fold_tier(files, bufs, site, t, dt, which, nfold)
-      type(output_files_t),   intent(in)    :: files
-      type(output_buffers_t), intent(inout) :: bufs
-      type(site_t),           intent(in)    :: site
-      integer(ik),            intent(in)    :: t, which
-      real(wp),               intent(in)    :: dt
-      integer(ik),            intent(out)   :: nfold
-      integer(ik) :: j, k, n_out
+      logical,                intent(in)    :: is_new_day, is_new_month, is_new_year  !< its end left prev's period
+      integer(ik) :: t, j, k, n_out
       real(wp)    :: scal
       real(wp)    :: slab(max(files%max_slab, 1_ik))
       logical     :: vslab(max(files%max_slab, 1_ik))
-      nfold = 0_ik
-      do j = 1_ik, files%reg%nidx(t)
-         k = files%reg%idx_freq(j, t)
-         if (which /= FOLD_ALL) then
-            if (slot_bound(files%reg%var(k)) .neqv. (which == FOLD_BOUND)) cycle
-         end if
-         call extract_variable(site, files%diag, files%reg%var(k), scal, slab, vslab, n_out)
-         if (files%reg%var(k)%dim == DIM_SCALAR) then
-            call integrate_scalar(bufs%buf(k,t), scal, dt)
-         else
-            call integrate_slab(bufs%buf(k,t), slab, n_out, dt, vslab)
-         end if
-         nfold = nfold + 1_ik
+      if (.not. files%enabled) return
+      !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
+      !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
+      !      only inside the fast loop.                                                           !
+      do t = 2_ik, N_FREQ
+         if (files%reg%nidx(t) == 0_ik) cycle
+         if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
+         do j = 1_ik, files%reg%nidx(t)
+            k = files%reg%idx_freq(j, t)
+            call extract_variable(site, files%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            if (files%reg%var(k)%dim == DIM_SCALAR) then
+               call integrate_scalar(bufs%buf(k,t), scal, dt)
+            else
+               call integrate_slab(bufs%buf(k,t), slab, n_out, dt, vslab)
+            end if
+         end do
+         bufs%has_data(t) = .true.
       end do
-   end subroutine fold_tier
-
-   !----- A value that belongs to one cohort/patch slot set: a cohort or patch slab, or one of the !
-   !      two counts that size those axes, so that a record's counts describe its own slabs. ------!
-   pure logical function slot_bound(v)
-      type(var_desc_t), intent(in) :: v
-      select case (v%dim)
-      case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH)
-         slot_bound = .true.
-      case (DIM_SCALAR)
-         slot_bound = v%source_id == SRC_S_N_COHORT .or. v%source_id == SRC_S_N_PATCH
-      case default
-         slot_bound = .false.
-      end select
-   end function slot_bound
+      !----- then close the periods the step's end has left (tiers independent). ----------------!
+      if (is_new_year  .and. bufs%has_data(4_ik)) call close_tier(files, bufs, 4_ik)
+      if (is_new_month .and. bufs%has_data(3_ik)) call close_tier(files, bufs, 3_ik)
+      if (is_new_day   .and. bufs%has_data(2_ik)) call close_tier(files, bufs, 2_ik)
+   end subroutine output_integrate
 
    !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
    subroutine close_tier(files, bufs, t)
@@ -910,7 +856,7 @@ contains
          end if
          call reset_buffer(bufs%buf(k,t))
       end do
-      bufs%has_data(t) = .false. ; bufs%deferred_only(t) = .false.
+      bufs%has_data(t) = .false.
       nsl = 0_ik                                          ! this tier's slab variables, for the queue
       do j = 1_ik, files%reg%nidx(t)
          k = files%reg%idx_freq(j, t)

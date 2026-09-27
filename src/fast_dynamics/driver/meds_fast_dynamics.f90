@@ -37,8 +37,7 @@ module meds_fast_dynamics
                                      PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
-                                     cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
-                                     patch_diag_reset, polygon_diag_reset
+                                     cohort_diag_grow, patch_diag_grow
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
                                  root_available_water
    use meds_column_state_types, only : xi_accum_t, snow_column_t
@@ -405,20 +404,18 @@ contains
       !      code path exactly.  --------------------------------------------------------------!
       do_cdiag = site%cohort%diag%active
       do_pdiag = site%patch%diag%active
-      !----- RESET the diagnostic accumulators for this slow step, BEFORE the patch loop folds into  !
-      !      them. Same lifecycle as gpp_accum / et_accum / xi_accum: one window per slow step, read  !
-      !      once at the output tick.  ---------------------------------------------------------!
+      !----- Size the diagnostic accumulators to this step's stand before the patch loop folds into    !
+      !      them. They are NOT zeroed here: they run from one output tick to the next, and the tick's !
+      !      caller zeroes them after reading (reset_step_diagnostics), so a calendar boundary's       !
+      !      events, written between the two steps, reach the next record. ----------------------------!
       if (do_cdiag) then
          call cohort_diag_grow(site%cohort%diag, max(site%cohort%n, 1_ik))
-         call cohort_diag_reset(site%cohort%diag)
          site%cohort%diag%n = site%cohort%n
       end if
       if (do_pdiag) then
          call patch_diag_grow(site%patch%diag, max(npatch, 1_ik))
-         call patch_diag_reset(site%patch%diag)
          site%patch%diag%n = npatch
       end if
-      call polygon_diag_reset(site%diag)
       if (do_fast) then
          nl = n_soil_layer_max
          if (.not. allocated(out_bufs%fast)) then

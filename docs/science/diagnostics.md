@@ -96,8 +96,8 @@ purpose.
 | netCDF dim | length | notes |
 |---|---|---|
 | `time` | UNLIMITED | period **start** stamp; `cell_methods` says how the period was reduced |
-| `cohort` | largest live count among the file's records | slot order; the per-record `n_cohort` delimits each record's rows; `global_cohort_id` tracks a cohort across records and files |
-| `patch` | largest live count among the file's records | ditto `n_patch`, `global_patch_id` |
+| `cohort` | live count, trimmed per file | slot order; `global_cohort_id` tracks a cohort across files |
+| `patch` | live count, trimmed per file | ditto `global_patch_id` |
 | `soil` | `n_soil_layer_max` | area-weighted site column |
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
@@ -140,16 +140,23 @@ stamped *d* holds the steps that start in period *d*:
   the state at 1 August 00:00, and a monthly mean is the mean over the ends of the month's steps;
 - no record is stamped at or after the run's end.
 
-**One exception keeps a cohort or patch record to one slot set (§3).** The step on which a month turns
-ends by restructuring the cohorts and patches: recruitment, fusion and splitting monthly, disturbance
-and patch fusion yearly. Its cohort and patch values are therefore already in the next month's slot
-set. In a daily record that is harmless, since the record holds that one step. A monthly record holds
-the old slot set's steps, so that step's cohort and patch values, and `n_cohort_site` / `n_patch_site`,
-open the next month's record instead. **A monthly cohort or patch record therefore runs one slow step
-later than the site variables beside it**: from the restructuring at the start of its month to the
-last step before the next one. A daily file's last record, the step that ends on the month boundary,
-may likewise hold a recruit or a new gap the earlier records don't. That's why the cohort and patch
-axes are sized to the file's largest live count.
+**The calendar's restructuring belongs to the period it opens.** At the turn of a month the stand's
+cohorts are recruited, fused, split and culled; at the turn of a year its patches are disturbed and
+fused. This restructuring runs **between** two slow steps: after the output has read the step that
+ends on the boundary, and before the fast loop of the step that begins there. As a result:
+
+- **every record describes one stand.** A monthly cohort or patch record is the mean of its daily
+  records, slot by slot, and a file's cohort and patch axes are the same throughout;
+- **the restructuring's events and the stand it leaves are recorded in the new period.** The year's
+  disturbance area and disturbance mortality are in January's record, never December's, and the
+  biomass the disturbance removes first shows in the 1 January daily state. The 31 December state is
+  the stand before it.
+
+**A checkpoint on a boundary holds the stand before the restructuring.** The global attribute
+`restructure_pending` (`none`, `month` or `year`) records which restructuring is still owed. A run
+resumed from the checkpoint performs it first, so its first record holds the same events as the
+continuous run's. A state file without the attribute was written after its boundary's
+restructuring, and owes none.
 
 #### Variance companions
 
@@ -308,12 +315,13 @@ array, so every permutation is a single whole-array statement that cannot omit a
 
 ### The one trap
 
-The per-cohort blocks are reset per slow step, but restructuring (fuse / split / cull / recruit /
-disturb) happens **inside** the slow step, after the fast loop fills them and before the monthly
-window closes. Anything read at the output tick must therefore ride the cohort lockstep.
+The per-cohort blocks run from one output tick to the next, and the stand is reordered while they
+fill: `sort_cohorts` re-sorts it every slow step, after the fast loop has filled them. Restructuring
+(fuse / split / cull / recruit / disturb) also runs between two steps. Anything read at the output
+tick must therefore ride the cohort lockstep.
 
 `cohort_deriv_block` (`site%deriv`) does **not** — it is documented as transient and deliberately
 unreordered, which is correct for its own consumer, since `update_cohort_states` applies it
-immediately. Reading it from the output layer pairs tendency `i` with a different plant `i` on
-exactly the month-boundary steps. That mistake was made during this work and was caught only by the
+immediately. Reading it from the output layer pairs tendency `i` with a different plant `i` whenever
+the stand has been reordered since it was formed. That mistake was made during this work and was caught only by the
 thread-invariance test, because thread count perturbs which cohorts fuse. Use `cohort%sdiag`.

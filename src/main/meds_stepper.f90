@@ -1,18 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process        !
-! top-level loop). Lives in src/main/, beside the program that drives it.                      !
-!                                                                                          !
-! It owns only the CADENCE: each step it is told whether a month/year rolled over, and it       !
-! drives the process modules on the appropriate timescale. The slow tier is the thin              !
-! meds_slow_dynamics coordinator (advance_slow_dynamics), which sequences vegetation dynamics       !
-! and slow soil-carbon biogeochemistry as peer domains (MEDS_SLOW_DYNAMICS_DESIGN.md Part II).     !
+! meds_stepper -- the master stepper (the ED2 ed_model analogue; seed of an all-process         !
+! top-level loop). Lives in src/main/, beside the program that drives it.                       !
+!                                                                                               !
+! It owns only the CADENCE: one slow step (advance_one_step) drives the fast loop and then the  !
+! slow tier, the thin meds_slow_dynamics coordinator (advance_slow_dynamics), which sequences   !
+! vegetation dynamics and slow soil-carbon biogeochemistry as peer domains                      !
+! (MEDS_SLOW_DYNAMICS_DESIGN.md Part II). A calendar boundary between two steps is its own call !
+! (advance_boundary): the caller makes it after the output has read the step that ended there.  !
 !==========================================================================================!
 module meds_stepper
    use meds_kinds,                only : wp
    use meds_config,               only : meds_config_t
    use meds_site_state_types, only : site_t
-   use meds_slow_dynamics,        only : advance_slow_dynamics
+   use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year
@@ -23,22 +24,20 @@ module meds_stepper
    implicit none
    private
 
-   public :: advance_one_step
+   public :: advance_one_step, advance_boundary
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one step. The caller's calendar supplies the cadence flags; this routine passes  !
-   ! them to the process drivers. When fast biophysics is on and a fast context is supplied,   !
-   ! the sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop (so a     !
-   ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
+   ! Advance one step. When fast biophysics is on and a fast context is supplied,            !
+   ! the sub-daily fast loop runs over the per-patch reservoirs BEFORE the slow loop (so a   !
+   ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics). !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_src, met_cur,     &
-                               step_start, out_bufs, run_energy_budget, run_water_budget,      &
-                               run_face_budget, slow_ledger, seam, latitude_deg)
+   subroutine advance_one_step(site, cfg, fast_ctx, met_src, met_cur, step_start, out_bufs,         &
+                               run_energy_budget, run_water_budget, run_face_budget, slow_ledger, &
+                               seam, latitude_deg)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
-      logical,              intent(in)    :: is_new_month, is_new_year
       type(fast_context_t), intent(in),    optional :: fast_ctx
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
       type(met_cursor_t),   intent(inout), optional :: met_cur     !< this polygon's forcing cursor
@@ -90,24 +89,40 @@ contains
          !      a fast context there is no canopy air worth valuing and the term stays at zero.     !
          if (present(step_start)) then
             if (present(fast_ctx)) then
-               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
+               call advance_slow_dynamics(site, cfg, doy=day_of_year(step_start), &
                                           ledger=slow_ledger, rho_air=fast_ctx%rho_air,                  &
                                           seam=seam, latitude_deg=latitude_deg)
             else
-               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy=day_of_year(step_start), &
+               call advance_slow_dynamics(site, cfg, doy=day_of_year(step_start), &
                                           ledger=slow_ledger, seam=seam)
             end if
          else
             if (present(fast_ctx)) then
-               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
+               call advance_slow_dynamics(site, cfg, ledger=slow_ledger,                            &
                                           rho_air=fast_ctx%rho_air,                                  &
                                           seam=seam, latitude_deg=latitude_deg)
             else
-               call advance_slow_dynamics(site, cfg, is_new_month, is_new_year, ledger=slow_ledger,  &
+               call advance_slow_dynamics(site, cfg, ledger=slow_ledger,                            &
                                           seam=seam, latitude_deg=latitude_deg)
             end if
          end if
       end if
    end subroutine advance_one_step
+
+   !---------------------------------------------------------------------------------------!
+   ! The calendar boundary after a step whose end (`now`) left the month -- and, with           !
+   ! is_new_year, the year: the stand's monthly and yearly restructuring. The caller makes this !
+   ! call after the output has read that step, so the ending period's records describe one      !
+   ! stand, and what the restructuring does belongs to the period that begins. Gated on the     !
+   ! master slow_on freeze, like the slow step.                                                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine advance_boundary(site, cfg, is_new_month, is_new_year, slow_ledger)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      logical,             intent(in)    :: is_new_month, is_new_year
+      type(slow_ledger_t), intent(inout), optional :: slow_ledger
+      if (.not. cfg%slow_on) return
+      call advance_boundary_dynamics(site, cfg, is_new_month, is_new_year, slow_ledger)
+   end subroutine advance_boundary
 
 end module meds_stepper
