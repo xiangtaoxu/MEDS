@@ -31,7 +31,7 @@ module meds_config_io
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_config, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
-                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM,                     &
+                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &
                                  AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH,  &
                                  MAX_DBH_EDGE,                                                   &
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
@@ -700,6 +700,7 @@ contains
       cfg%output%grp_on(GRP_RADIATION)  = toml_logical(t, 'output.radiation',  .false.)
       cfg%output%grp_on(GRP_ECOPHYS)    = toml_logical(t, 'output.ecophys',    .false.)
       cfg%output%grp_on(GRP_BIOGEOCHEM) = toml_logical(t, 'output.biogeochem', .true.)
+      cfg%output%grp_on(GRP_FORCING)    = toml_logical(t, 'output.forcing',    .true.)
       !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The 2-D    !
       !      (soil layer x patch) axis is the highest-volume non-cohort axis and stays off. --------!
       cfg%output%axis_on(AXIS_COHORT)     = toml_logical(t, 'output.axes_cohort',     .true.)

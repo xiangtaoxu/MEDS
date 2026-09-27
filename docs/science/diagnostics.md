@@ -174,8 +174,13 @@ Resolution order — later wins:
 4. `[output.<tier>].enabled` — suppress a whole tier
 5. `meds_io_config.toml` — per-variable, the finest granularity
 
-**Groups** (8): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` on by default;
-`radiation` and `ecophys` off. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
+**Groups** (9): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` and `forcing` on
+by default; `radiation` and `ecophys` off. `forcing` is the atmospheric boundary the run used, after
+the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
+monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
+the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
+`cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins. With `sw_in_*` and `precip_site`, it
+is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
 `numerics` defaults **on** because it carries the energy and water budget residuals. A closure
@@ -242,18 +247,19 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 
 ## 7. Variable inventory
 
-203 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
+248 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
 groups, axes and default streams — it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 62 | | site | 98 |
-| energy | 38 | | cohort | 55 |
-| carbon | 28 | | patch | 23 |
-| ecophys | 24 | | pft | 9 |
-| water | 18 | | soil | 7 |
-| biogeochem | 15 | | dbh_class | 6 |
-| numerics | 13 | | (patch, soil) | 5 |
+| structure | 67 | | site | 142 |
+| energy | 47 | | cohort | 55 |
+| carbon | 34 | | patch | 24 |
+| forcing | 25 | | pft | 9 |
+| ecophys | 24 | | soil | 7 |
+| water | 18 | | dbh_class | 6 |
+| biogeochem | 15 | | (patch, soil) | 5 |
+| numerics | 13 | | | |
 | radiation | 5 | | | |
 
 ---

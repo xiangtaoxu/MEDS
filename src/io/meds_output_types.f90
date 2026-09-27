@@ -200,6 +200,21 @@ module meds_output_types
       !      hard-coded 400 ppm while the run used 420, turning a +1 ppm daytime canopy into an        !
       !      apparent +21 ppm ventilation problem.  ------------------------------------------------!
       real(wp) :: atm_co2       = 0.0_wp   !< [umol/mol]  free-atmosphere CO2 (the forcing)
+      !----- The rest of the FORCING the sub-step used (MEDS_FORCING_DESIGN.md §6.7), staged from   !
+      !      the site-uniform sample itself rather than area-summed. With the fluxes above, these    !
+      !      are what shows whether the reconstructed shortwave peaks at the right local time.      !
+      real(wp) :: qair          = 0.0_wp   !< [kg/kg]     specific humidity
+      real(wp) :: psurf         = 0.0_wp   !< [Pa]        surface pressure
+      real(wp) :: wind          = 0.0_wp   !< [m/s]       wind speed at the reference height
+      real(wp) :: lwdown        = 0.0_wp   !< [W/m2]      downward longwave
+      real(wp) :: par_beam      = 0.0_wp   !< [W/m2]      direct-beam PAR
+      real(wp) :: par_diffuse   = 0.0_wp   !< [W/m2]      diffuse PAR
+      real(wp) :: nir_beam      = 0.0_wp   !< [W/m2]      direct-beam NIR
+      real(wp) :: nir_diffuse   = 0.0_wp   !< [W/m2]      diffuse NIR
+      real(wp) :: rainf         = 0.0_wp   !< [kg/m2/s]   liquid precipitation
+      real(wp) :: snowfall      = 0.0_wp   !< [kg/m2/s]   frozen precipitation
+      real(wp) :: cosz          = 0.0_wp   !< [-]         cosine of the solar zenith angle
+      real(wp) :: rho_air       = 0.0_wp   !< [kg/m3]     air density
    end type fast_sample_t
 
    !==========================================================================================!

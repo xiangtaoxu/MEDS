@@ -12,6 +12,8 @@
 > - ✅ The optional elevation-lapse and 10 m wind log-profile corrections (off by default).
 > - ✅ The daily air-temperature accumulator feeding phenology.
 > - ✅ The fast loop reads the forcing record directly; the `apply_met_to_ctx` shim is retired (§6.2).
+> - ✅ The forcing echo (§6.7): the `forcing` output group, polygon means at the daily to yearly
+>   tiers and every sub-step sample at the fast tier.
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
 > - ✅ Download tools (F1, PR #279).
@@ -41,9 +43,6 @@
 > **Still open:**
 > - ⬜ F6, later products (§16–§17); archive years before June 2002 when needed;
 > - ⬜ a transient CO₂ stream (ROADMAP #184);
-> - ⬜ echoing the forcing to the diagnostic output (§6.7): partly there (incoming shortwave,
->   precipitation, and the fast tier's air temperature and CO₂); humidity, pressure, wind,
->   longwave, the four shortwave streams, `cosz` and air density are not;
 > - ⬜ adjusting 2 m temperature and humidity to the reference height (Q2); the 10 m wind
 >   log-profile exists.
 >
@@ -1070,6 +1069,18 @@ handles it — one code path, both conventions.
 ---
 
 ### 6.7 Forcing provenance — echo the assembled record to the diagnostic stream
+
+> *Update 2026-09-27: done, as the `forcing` output group* (`[output].forcing`, default on).
+> - **Daily, monthly and yearly tiers:** means of the sub-step forcing, accumulated once per
+>   polygon in a polygon diagnostic block (`site%diag`, fields `PY_*`), not per patch. `sw_in_site`
+>   and `precip_site` moved there too. The variables are
+>   `air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`, `par_beam_site`,
+>   `par_diffuse_site`, `nir_beam_site`, `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
+>   `cosz_site` and `rho_air_site`.
+> - **Fast tier:** the `*_fast` twins, staged from each sub-step's sample itself, beside the
+>   existing `air_temp_fast`, `sw_in_fast` and `atm_co2_fast`, plus `rainf_fast`.
+> - **Not written:** `swdown()` (it is `sw_in_*`) and `rshort_diffuse()` (the sum of the two diffuse
+>   streams). `cosz` is 0 while the sun is down.
 
 Debugging the diurnal reconstruction (the cosz disaggregation, the avg-convention phase, the solar-time
 offset) is nearly impossible from GPP alone. So the assembled instantaneous `met_forcing_t` is

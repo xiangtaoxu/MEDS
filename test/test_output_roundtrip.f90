@@ -133,7 +133,7 @@ contains
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
       !----- structure + carbon + ENERGY (soil); water/radiation/ecophys/biogeochem/numerics off. !
       !      Order: STRUCTURE CARBON WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM.  --------!
-      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false.]
+      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
    !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !

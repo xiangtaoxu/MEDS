@@ -12,7 +12,7 @@
 ! field is added, eliminating the ED2 "forgot to reallocate an array" class of bug.         !
 !==========================================================================================!
 module meds_site_state_types
-   use meds_site_diag_types,    only : cohort_diag_block, patch_diag_block,                     &
+   use meds_site_diag_types,    only : cohort_diag_block, patch_diag_block, polygon_diag_block,                     &
                                       cohort_diag_alloc, cohort_diag_free, cohort_diag_grow,     &
                                       cohort_diag_reorder, cohort_diag_copy_slot,                &
                                       cohort_diag_clear_slot, patch_diag_reorder,                &
@@ -342,6 +342,9 @@ module meds_site_state_types
    type :: site_t
       type(cohort_block) :: cohort
       type(patch_block)  :: patch
+      !----- TRANSIENT fast-loop diagnostics that are the same across the polygon -- its forcing   !
+      !      (PY_* in meds_site_diag_types): one slot, the cohort and patch blocks' polygon twin. ---!
+      type(polygon_diag_block) :: diag
       !----- TRANSIENT slow-loop scratch: the per-cohort tendency bundle the driver fills each     !
       !      step and update_cohort_states applies. Site-carried so it allocates once (resize-on-   !
       !      grow) instead of per step; refilled every step, so it is NOT lockstep-reordered and    !

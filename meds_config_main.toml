@@ -287,7 +287,7 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
                                 #   month boundaries (the I/O phase), so a crash loses at most the
                                 #   current month's output; the checkpoint bounds the rerun
 
-  # --- VARIABLE GROUPS. The six that make a run judgeable are on; the two heavy evaluation
+  # --- VARIABLE GROUPS. The seven that make a run judgeable are on; the two heavy evaluation
   #     groups are off. `numerics` carries the budget residuals -- a closure nobody records is
   #     worse than one nobody looks at, so it defaults ON.
   structure     = true          # demography / size / identity / patch geometry
@@ -296,6 +296,8 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
   energy        = true          # LE, H, Rnet, temperatures, canopy-air state
   biogeochem    = true          # CENTURY soil-carbon pools, Rh, litterfall
   numerics      = true          # integrator work counters + energy/water budget residuals
+  forcing       = true          # the forcing the run used: T, q, P, wind, LW, the 4 SW streams, snow,
+                                #   CO2, cos(zenith), air density (daily/monthly/yearly means + *_fast)
   radiation     = false         # albedo, absorbed SW/PAR/LW, ground radiation
   ecophys       = false         # PER-COHORT leaf gas exchange + hydraulics (highest volume)
 

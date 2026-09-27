@@ -21,7 +21,7 @@ module meds_output_config
    public :: output_config_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
    public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
-             GRP_BIOGEOCHEM, GRP_NUMERICS, N_GRP
+             GRP_BIOGEOCHEM, GRP_NUMERICS, GRP_FORCING, N_GRP
    public :: AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH, N_AXIS
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
@@ -56,7 +56,12 @@ module meds_output_config
    integer(ik), parameter :: GRP_RADIATION  = 6_ik
    integer(ik), parameter :: GRP_ECOPHYS    = 7_ik
    integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik
-   integer(ik), parameter :: N_GRP          = 8_ik
+   !----- FORCING: the atmospheric boundary the run actually used, after the reader's corrections  !
+   !      and partitions (MEDS_FORCING_DESIGN.md §6.7). Write-only provenance, and the one way to   !
+   !      check the sub-daily reconstruction (the shortwave's diurnal shape, the solar-time offset) !
+   !      against observations. A dozen site scalars per record; default ON.                       !
+   integer(ik), parameter :: GRP_FORCING    = 9_ik
+   integer(ik), parameter :: N_GRP          = 9_ik
 
    !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The        !
    !      biggest single lever on output volume ("site level only, nothing per-cohort").          !
@@ -104,7 +109,7 @@ module meds_output_config
       !      nobody records is worse than one nobody looks at. RADIATION and ECOPHYS are the two   !
       !      heavy evaluation groups and stay OFF; each is one boolean away.  ----------------!
       logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
-                                             .false., .false., .true.]
+                                             .false., .false., .true., .true.]
       !----- Per-AXIS toggles: COHORT / PATCH / PFT / SIZE / SOIL_PATCH. The 2-D soil axis is    !
       !      off by default (highest-volume non-cohort axis); the rest are on.  ----------------!
       logical            :: axis_on(N_AXIS) = [.true., .true., .true., .true., .false.]
