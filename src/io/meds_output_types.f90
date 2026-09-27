@@ -21,7 +21,7 @@ module meds_output_types
 
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
    public :: pending_record_t, record_queue_t, stream_file_t, fast_sample_t
-   public :: output_shared_t, output_part_t
+   public :: output_files_t, output_buffers_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -271,16 +271,17 @@ module meds_output_types
    end type stream_file_t
 
    !==========================================================================================!
-   ! The output manager comes in two parts (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
+   ! The output manager comes in two types (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
    ! netCDF-FREE plain data; only output_serialize_pending touches C.                                !
-   !   output_shared_t -- one per set of files: what every polygon writing into those files shares   !
-   !                      (registry, diagnostic parameters, file settings, stream handles). Read-only !
-   !                      while a step runs.                                                          !
-   !   output_part_t   -- one per polygon: its running reductions, open windows, closed records and   !
-   !                      fast-tier staging. The only output state a step writes.                     !
-   ! A site run is one of each. main owns them; the stepper ticks the part.                          !
+   !   output_files_t   -- one set of output files (a site's, a region's, a detail polygon's) and    !
+   !                       what writing them needs: registry, diagnostic parameters, file settings,  !
+   !                       stream handles. Read-only while a step runs.                              !
+   !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !
+   !                       windows, closed records and fast-tier staging. The only output state a    !
+   !                       step writes. Not a cache: the reductions exist nowhere else.              !
+   ! A site run has one of each. main owns them; the stepper ticks the buffers.                      !
    !==========================================================================================!
-   type :: output_shared_t
+   type :: output_files_t
       logical                 :: enabled = .false.
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
@@ -294,9 +295,9 @@ module meds_output_types
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
-   end type output_shared_t
+   end type output_files_t
 
-   type :: output_part_t
+   type :: output_buffers_t
       type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
       logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
@@ -305,7 +306,7 @@ module meds_output_types
       !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch,sub-step) by the fast     !
       !      loop, replayed into buf(:,1) by main via output_integrate_fast. Site scalars in fast(:);  !
       !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays. The     !
-      !      fast loop sees only the part, so the part says whether to stage (fast_on) and how many   !
+      !      fast loop sees only the buffers, so they say whether to stage (fast_on) and how many     !
       !      cohort slots to size (fast_cohort_cap).  -------------------------------------------------!
       logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
       integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
@@ -321,7 +322,7 @@ module meds_output_types
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       logical              :: fast_ready   = .false.           !< fast(:) filled + awaiting replay
-   end type output_part_t
+   end type output_buffers_t
 
 contains
 

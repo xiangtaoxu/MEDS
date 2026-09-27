@@ -19,7 +19,7 @@ module meds_output_integrate
    use meds_constants,      only : p_std
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
-   use meds_output_types,   only : var_desc_t, integ_buffer_t, output_shared_t, output_part_t,   &
+   use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
                                    fast_sample_t, diag_params_t, pending_record_t, record_queue_t, &
                                    slab_col,                                                     &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
@@ -757,85 +757,85 @@ contains
    !=======================================================================================!
    !  The per-step tick (netCDF-FREE): close any period that ended, then fold the current    !
    !  step into every active tier. Called by the stepper (aux); stages closed records into    !
-   !  part%pending for main to serialize. FAST tier (index 1) is DEFERRED to P1 (§9); P0 ticks   !
+   !  bufs%pending for main to serialize. FAST tier (index 1) is DEFERRED to P1 (§9); P0 ticks   !
    !  DAILY/MONTHLY/ANNUAL at the slow step. The MONTHLY cohort/patch flush must run BEFORE that  !
    !  month boundary's fiss/fuse (§4.4/§4.5) -- the caller orders this by where it calls the tick. !
    !=======================================================================================!
-   subroutine output_integrate(sh, part, site, now, dt, is_new_day, is_new_month, is_new_year)
-      type(output_shared_t),  intent(in)    :: sh
-      type(output_part_t),    intent(inout) :: part
+   subroutine output_integrate(files, bufs, site, now, dt, is_new_day, is_new_month, is_new_year)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       type(site_t),           intent(in)    :: site
       type(meds_time_t),      intent(in)    :: now
       real(wp),               intent(in)    :: dt
       logical,                intent(in)    :: is_new_day, is_new_month, is_new_year
       integer(ik) :: t, j, k, n_out
       real(wp)    :: scal
-      real(wp)    :: slab(max(sh%max_slab, 1_ik))
-      logical     :: vslab(max(sh%max_slab, 1_ik))
-      if (.not. sh%enabled) return
+      real(wp)    :: slab(max(files%max_slab, 1_ik))
+      logical     :: vslab(max(files%max_slab, 1_ik))
+      if (.not. files%enabled) return
       !----- close periods that just ended (before folding the new step; tiers independent). ---!
-      if (is_new_year  .and. part%has_data(4_ik)) call close_tier(sh, part, 4_ik)
-      if (is_new_month .and. part%has_data(3_ik)) call close_tier(sh, part, 3_ik)
-      if (is_new_day   .and. part%has_data(2_ik)) call close_tier(sh, part, 2_ik)
+      if (is_new_year  .and. bufs%has_data(4_ik)) call close_tier(files, bufs, 4_ik)
+      if (is_new_month .and. bufs%has_data(3_ik)) call close_tier(files, bufs, 3_ik)
+      if (is_new_day   .and. bufs%has_data(2_ik)) call close_tier(files, bufs, 2_ik)
       !----- fold the current step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately    !
       !      from the staged sub-step samples (output_integrate_fast), because sub-daily          !
       !      resolution exists only inside the fast loop.                                         !
       do t = 2_ik, N_FREQ
-         if (sh%reg%nidx(t) == 0_ik) cycle
-         if (.not. part%has_data(t)) part%t_open(t) = now
-         do j = 1_ik, sh%reg%nidx(t)
-            k = sh%reg%idx_freq(j, t)
-            call extract_variable(site, sh%diag, sh%reg%var(k), scal, slab, vslab, n_out)
-            if (sh%reg%var(k)%dim == DIM_SCALAR) then
-               call integrate_scalar(part%buf(k,t), scal, dt)
+         if (files%reg%nidx(t) == 0_ik) cycle
+         if (.not. bufs%has_data(t)) bufs%t_open(t) = now
+         do j = 1_ik, files%reg%nidx(t)
+            k = files%reg%idx_freq(j, t)
+            call extract_variable(site, files%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            if (files%reg%var(k)%dim == DIM_SCALAR) then
+               call integrate_scalar(bufs%buf(k,t), scal, dt)
             else
-               call integrate_slab(part%buf(k,t), slab, n_out, dt, vslab)
+               call integrate_slab(bufs%buf(k,t), slab, n_out, dt, vslab)
             end if
          end do
-         part%has_data(t) = .true.
+         bufs%has_data(t) = .true.
       end do
    end subroutine output_integrate
 
    !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
-   subroutine close_tier(sh, part, t)
-      type(output_shared_t),  intent(in)    :: sh
-      type(output_part_t),    intent(inout) :: part
+   subroutine close_tier(files, bufs, t)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: t
       integer(ik) :: j, k, ns, nsl
-      integer(ik) :: slab_k(sh%reg%nidx(t))
-      logical     :: soil_patch(sh%reg%nidx(t))
-      part%pending(t)%used   = .true.
-      part%pending(t)%freq   = ishft(1_ik, t - 1_ik)
-      part%pending(t)%t_open = part%t_open(t)
-      part%pending(t)%n_cohort = 0_ik ; part%pending(t)%n_patch = 0_ik
-      part%pending(t)%sval(:)   = MISSING_VALUE
-      part%pending(t)%svalid(:) = .false.
-      part%pending(t)%nslab(:)  = 0_ik
-      do j = 1_ik, sh%reg%nidx(t)
-         k = sh%reg%idx_freq(j, t)
-         if (sh%reg%var(k)%dim == DIM_SCALAR) then
-            call normalize_scalar(part%buf(k,t), part%pending(t)%sval(k), part%pending(t)%svalid(k))
+      integer(ik) :: slab_k(files%reg%nidx(t))
+      logical     :: soil_patch(files%reg%nidx(t))
+      bufs%pending(t)%used   = .true.
+      bufs%pending(t)%freq   = ishft(1_ik, t - 1_ik)
+      bufs%pending(t)%t_open = bufs%t_open(t)
+      bufs%pending(t)%n_cohort = 0_ik ; bufs%pending(t)%n_patch = 0_ik
+      bufs%pending(t)%sval(:)   = MISSING_VALUE
+      bufs%pending(t)%svalid(:) = .false.
+      bufs%pending(t)%nslab(:)  = 0_ik
+      do j = 1_ik, files%reg%nidx(t)
+         k = files%reg%idx_freq(j, t)
+         if (files%reg%var(k)%dim == DIM_SCALAR) then
+            call normalize_scalar(bufs%buf(k,t), bufs%pending(t)%sval(k), bufs%pending(t)%svalid(k))
          else
-            call normalize_slab(part%buf(k,t), part%pending(t)%slab(:,k),                          &
-                                part%pending(t)%slabvalid(:,k), ns)
-            part%pending(t)%nslab(k) = ns
-            if (sh%reg%var(k)%dim == DIM_COHORT)                                                &
-               part%pending(t)%n_cohort = max(part%pending(t)%n_cohort, ns)
-            if (sh%reg%var(k)%dim == DIM_PATCH)                                                 &
-               part%pending(t)%n_patch  = max(part%pending(t)%n_patch,  ns)
+            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,k),                          &
+                                bufs%pending(t)%slabvalid(:,k), ns)
+            bufs%pending(t)%nslab(k) = ns
+            if (files%reg%var(k)%dim == DIM_COHORT)                                                &
+               bufs%pending(t)%n_cohort = max(bufs%pending(t)%n_cohort, ns)
+            if (files%reg%var(k)%dim == DIM_PATCH)                                                 &
+               bufs%pending(t)%n_patch  = max(bufs%pending(t)%n_patch,  ns)
          end if
-         call reset_buffer(part%buf(k,t))
+         call reset_buffer(bufs%buf(k,t))
       end do
-      part%has_data(t) = .false.
+      bufs%has_data(t) = .false.
       nsl = 0_ik                                          ! this tier's slab variables, for the queue
-      do j = 1_ik, sh%reg%nidx(t)
-         k = sh%reg%idx_freq(j, t)
-         if (sh%reg%var(k)%dim == DIM_SCALAR) cycle
+      do j = 1_ik, files%reg%nidx(t)
+         k = files%reg%idx_freq(j, t)
+         if (files%reg%var(k)%dim == DIM_SCALAR) cycle
          nsl = nsl + 1_ik
-         slab_k(nsl) = k ; soil_patch(nsl) = sh%reg%var(k)%dim == DIM_SOIL_PATCH
+         slab_k(nsl) = k ; soil_patch(nsl) = files%reg%var(k)%dim == DIM_SOIL_PATCH
       end do
-      call enqueue_record(part%queue(t), part%pending(t), slab_k(1:nsl), soil_patch(1:nsl))
-      part%pending(t)%used = .false.
+      call enqueue_record(bufs%queue(t), bufs%pending(t), slab_k(1:nsl), soil_patch(1:nsl))
+      bufs%pending(t)%used = .false.
    end subroutine close_tier
 
    !----- Append a copy of the scratch record to the tier's queue. Only what the writer reads is   !
@@ -927,39 +927,39 @@ contains
    !  netCDF-FREE. Reads only the manager's own fast(:) sample + soil/cohort slabs -- never live !
    !  site state (which by then is the post-fast-loop, end-of-slow-step snapshot).               !
    !=======================================================================================!
-   subroutine output_integrate_fast(sh, part, isub, dt)
-      type(output_shared_t),  intent(in)    :: sh
-      type(output_part_t),    intent(inout) :: part
+   subroutine output_integrate_fast(files, bufs, isub, dt)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: isub
       real(wp),               intent(in)    :: dt
       integer(ik) :: j, k, src
-      if (.not. sh%enabled) return
-      if (sh%reg%nidx(1) == 0_ik) return
-      if (.not. part%has_data(1)) part%t_open(1) = part%fast_time(isub)
-      do j = 1_ik, sh%reg%nidx(1)
-         k   = sh%reg%idx_freq(j, 1_ik)
-         src = sh%reg%var(k)%source_id
-         select case (sh%reg%var(k)%dim)
+      if (.not. files%enabled) return
+      if (files%reg%nidx(1) == 0_ik) return
+      if (.not. bufs%has_data(1)) bufs%t_open(1) = bufs%fast_time(isub)
+      do j = 1_ik, files%reg%nidx(1)
+         k   = files%reg%idx_freq(j, 1_ik)
+         src = files%reg%var(k)%source_id
+         select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
-            call integrate_scalar(part%buf(k,1), extract_fast_scalar(src, part%fast(isub)), dt)
+            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast(isub)), dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(part%buf(k,1), part%fast_soil_water(:,isub), part%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)
             else
-               call integrate_slab(part%buf(k,1), part%fast_soil_temp(:,isub), part%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(:,isub), bufs%fast_n_soil, dt)
             end if
          case (DIM_COHORT)
             select case (src)
             case (SRC_F_COH_GPP)
-               call integrate_slab(part%buf(k,1), part%fast_coh_gpp(:,isub), part%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_gpp(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_HEIGHT)
-               call integrate_slab(part%buf(k,1), part%fast_coh_height(:,isub), part%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_height(:,isub), bufs%fast_n_cohort, dt)
             case default   ! SRC_F_COH_LEAF_TEMP
-               call integrate_slab(part%buf(k,1), part%fast_coh_ltemp(:,isub), part%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_ltemp(:,isub), bufs%fast_n_cohort, dt)
             end select
          end select
       end do
-      part%has_data(1) = .true.
+      bufs%has_data(1) = .true.
    end subroutine output_integrate_fast
 
 end module meds_output_integrate

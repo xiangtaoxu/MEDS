@@ -120,14 +120,14 @@ From the 2026-09-26 survey, refreshed at `b65c4b8`:
 
 ```
 serial:   load config once (B2) → build the region: polygons from the box + selection rules (§5)
-          allocate poly(1:N): site_t, fast_ctx, budgets, ledger, output part, forcing cursor, location
+          allocate poly(1:N): site_t, fast_ctx, budgets, ledger, output buffers, forcing cursor, location
           initialise every polygon (bare ground in R2; restart in R4), no I/O inside
 loop over months:
   serial:   forcing reader loads the month block for ALL polygons, plus the one record before it
   parallel: !$omp parallel do schedule(dynamic, chunk)                       (R3; a plain loop in R2)
               do p = 1, N:  advance poly(p) through the whole month (fast + slow steps),
                             forcing from the shared read-only month buffer at poly(p)%cell,
-                            output records queued in poly(p)'s output part
+                            output records queued in poly(p)'s output buffers
   serial:   pack and write every polygon's queued records to the region files (§6)
             yearly: write the checkpoint (ragged restart, R4); flush logs and status
 ```
@@ -257,7 +257,7 @@ PnetCDF, `MEDS_IO_DESIGN.md` §5.5), or several threads writing netCDF at once.
 
 ## 8. Memory, batching and very large regions
 
-- **Memory per polygon** is `site_t` plus the fast context, the output part and the forcing cursor.
+- **Memory per polygon** is `site_t` plus the fast context, the output buffers and the forcing cursor.
   Cohort counts drive it. R0 measured about **0.7 MB** for the 50-year Ithaca stand (14 cohorts,
   2 patches) without output (§10.1): about 14 GB for 20,000 polygons, and about 210 GB for all
   305,000 North American land cells, beyond one 128 GB node without batches or tiles.
@@ -333,7 +333,7 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 |---|---|---|
 | **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
 | **R1** compute/I-O split ✅ | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | ✅ 2026-09-27: suite green; six reference cases byte-identical to `beta` (§10.2 status). |
-| **R2** region and polygon container, serial | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into shared and per-polygon parts; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). |
+| **R2** region and polygon container, serial | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into file sets and per-polygon buffers; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). |
 | **R3** OpenMP polygon loop | `!$omp parallel do schedule(dynamic)` over polygons; the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling measured to the core count; nvfortran build green where available. |
 | **R4** ragged restart | Region checkpoint and restart with CF contiguous ragged arrays | A restart round trip is bit-identical to an uninterrupted run. |
 | **R5** robustness and scale | Status-based failure isolation (B6), batching by tiles, the tile job-array recipe, allocator work (B8), per-polygon logs | A failure-injection test: one polygon fails and the rest match the reference. Throughput and memory recorded for a 20,000-polygon box. |
@@ -371,7 +371,7 @@ What the numbers change:
   decompression itself remains, and a recycled run still rereads each month once per simulated year:
   a recycle-window cache was considered and left out to keep the reader simple. In a region the
   decompression is shared by up to 256 cells.
-- **R2's per-polygon output part** holds only fixed-shape accumulators; buffers sized by `cohort_max`
+- **R2's per-polygon output buffers** hold only fixed-shape accumulators; buffers sized by `cohort_max`
   exist only for `detail_polygons` (§10.3 step 4).
 - **Throughput expectation for R3:** at about 1 s per polygon-month, 20,000 polygons take about
   8 minutes per simulated month on 40 cores (about 85 hours for 50 years on one node), and all North
@@ -492,26 +492,27 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
 **PR 2 — the output manager split.**
 
 > **Status ✅ 2026-09-27.** Steps 4–5 as below, except the region-mode sizing:
-> - **`output_shared_t` and `output_part_t` replace `output_manager_t`.** Allocation is three calls:
->   `manager_setup(sh, cfg)`, then any per-variable overrides, then `manager_finalize(sh)` (the stream
->   handles) and `manager_alloc_part(sh, part)` once per polygon.
-> - **The compute phase sees only the part:** `fast_dynamics` and `advance_one_step` take `out_part`.
->   The part carries `fast_on` and `fast_cohort_cap`, the two facts the fast loop used to read from the
->   shared registry.
-> - **Region-mode sizing moves to PR 3:** a part's buffers follow the shared registry, so fixed-shape-only
->   parts arrive with the region registry. Detail polygons get their own site-style shared half.
-> - **Tests:** `test_two_parts`, where two parts on one shared half interleave folds and closes and each
->   reduces only its own samples. The six regression cases are identical to PR 1's.
+> - **`output_files_t` and `output_buffers_t` replace `output_manager_t`.** Allocation is three calls:
+>   `manager_setup(files, cfg)`, then any per-variable overrides, then `manager_finalize(files)` (the
+>   stream handles) and `manager_alloc_buffers(files, bufs)` once per polygon.
+> - **The compute phase sees only the buffers:** `fast_dynamics` and `advance_one_step` take
+>   `out_bufs`, which carry `fast_on` and `fast_cohort_cap`, the two facts the fast loop used to read
+>   from the shared registry.
+> - **Region-mode sizing moves to PR 3:** a polygon's buffers follow its file set's registry, so
+>   fixed-shape-only buffers arrive with the region registry. Detail polygons get a site-style file set
+>   of their own.
+> - **Tests:** `test_two_buffers`, where two polygons' buffers for one file set interleave folds and
+>   closes and each reduces only its own samples. The six regression cases are identical to PR 1's.
 
 4. **Split `output_manager_t`** (`meds_output_types.f90`, `meds_output_registry.f90`,
    `meds_output_integrate.f90`, `meds_output_manager.f90`, `meds_output_stream.f90`).
-   - Shared (`output_shared_t`): the registry, the diagnostic parameters, the file settings, the
+   - The file set (`output_files_t`): the registry, the diagnostic parameters, the file settings, the
      streams and the provenance attributes.
-   - Per polygon (`output_part_t`): the integration buffers, `t_open` and `has_data`, the record
+   - Per polygon (`output_buffers_t`): the integration buffers, `t_open` and `has_data`, the record
      queues and the fast-tier staging. In region mode a polygon's buffers hold only the fixed-shape variables
      it writes; cohort- and patch-level buffers (sized by `cohort_max`) exist only for
      `detail_polygons` (R0 measured them as most of a site run's output memory).
-   - A site run is one shared part and one polygon part, and writes today's files.
+   - A site run is one file set and one polygon's buffers, and writes today's files.
 5. **Tests:** the output unit tests on the new types; the R1 byte-identity script. This is the
    largest and riskiest PR of R2.
 
@@ -522,8 +523,8 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
    `land_fraction_min`, `detail_polygons`); the region-mode rules of §9.
 7. **Types and driver** (a new `src/main/meds_region.f90`).
    - `meds_polygon_t`: id, cell, location, `site_t`, fast context, budgets, slow ledger, seam
-     statistics, `met_cursor_t`, `output_part_t` and status.
-   - `meds_region_t`: the config, `met_source_t`, `output_shared_t` and `poly(1:N)`.
+     statistics, `met_cursor_t`, `output_buffers_t` and status.
+   - `meds_region_t`: the config, `met_source_t`, `output_files_t` and `poly(1:N)`.
    - `region_open`: select the box's valid cells (`era5land_select_box`, extended to return the
      static `land_fraction`), apply `land_fraction_min`, build the polygons, and initialise each from
      bare ground.
