@@ -11,6 +11,7 @@
 > - ✅ Longwave synthesis (#182).
 > - ✅ The optional elevation-lapse and 10 m wind log-profile corrections (off by default).
 > - ✅ The daily air-temperature accumulator feeding phenology.
+> - ✅ The fast loop reads the forcing record directly; the `apply_met_to_ctx` shim is retired (§6.2).
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
 > - ✅ Download tools (F1, PR #279).
@@ -40,7 +41,6 @@
 > **Still open:**
 > - ⬜ F6, later products (§16–§17); archive years before June 2002 when needed;
 > - ⬜ a transient CO₂ stream (ROADMAP #184);
-> - ⬜ retiring the `apply_met_to_ctx` shim (§6.2);
 > - ⬜ echoing the forcing to the diagnostic output (§6.7): partly there (incoming shortwave,
 >   precipitation, and the fast tier's air temperature and CO₂); humidity, pressure, wind,
 >   longwave, the four shortwave streams, `cosz` and air density are not;
@@ -836,6 +836,14 @@ inputs, and are the **exact seam** a real forcing source replaces:
 
 ### 6.2 Minimal-diff wiring: refresh `fast_context_t`'s met fields per sub-step
 
+> *Update 2026-09-27: the shim is retired.* `fill_forcing` and `fill_aenv` take the sub-step's
+> `met_forcing_t` directly. It comes from the reader, or it is the context's reference climate
+> (`reference_met`) when there is no forcing source. The per-thread copies of `fast_context_t` that
+> carried it are gone. `fast_context_t` keeps that reference climate, which also seeds the initial
+> canopy air and sets the ground-shortwave transmittance. The column kernels' own forcing types
+> (`column_forcing_t`, `aero_env_t`) keep their fields, since the kernels do not link the forcing
+> library. The text below is the original P0 design.
+
 The cleanest change that preserves `build_forcing`/`fill_aenv` verbatim: **make `fast_context_t`'s met
 scalars time-varying**, refreshed from `met_instant` at the top of *each fast sub-step*. Because the
 diurnal cycle lives across the `n_fast_per_slow` sub-steps (§1.1), the refresh must be **inside** the
@@ -901,6 +909,7 @@ baseline (canopy-top SW exact; budgets within round-off), **not** a byte-identic
 > `fast_context_t` entirely so `fast_context_t` carries only the *static* `column_config_t` +
 > initial soil state. This removes the `apply_met_to_ctx` shim and the co2/temp duplication. P0 keeps
 > the shim for minimal churn; P1 does the type-level cleanup once the RT-driven per-cohort SW lands.
+> *Done 2026-09-27 for the two builders; see the update at the top of §6.2.*
 
 ### 6.3 Per-cohort shortwave — RT replaces the LAI-share split
 
@@ -1238,7 +1247,7 @@ reads a box of cells from it.
 > - ✅ longwave synthesis (#182);
 > - ✅ multi-year cycling with the declared window (#69);
 > - ✅ the daily accumulator (phenology air temperature);
-> - ⬜ retiring the `apply_met_to_ctx` shim (the `met_forcing_t`-argument cleanup).
+> - ✅ retiring the `apply_met_to_ctx` shim: the builders take `met_forcing_t` (2026-09-27).
 >
 > **P2**
 > - ✅ the elevation-lapse and 10 m → reference-height wind corrections (optional, off by default);
@@ -1376,7 +1385,8 @@ production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS do
 > - **Q3 resolved:** clearness-index is the default, and Weiss–Norman is available.
 > - **Q4 open** (#184).
 > - **Q5 resolved:** the accumulator is live.
-> - **Q6 open:** the shim remains.
+> - **Q6 resolved (2026-09-27):** `fill_forcing` and `fill_aenv` take `met_forcing_t`; the shim is
+>   retired. The kernel-facing types keep their fields (§6.2 update).
 > - **Q7 answered:** by the reader's site selection (§15.5) and the polygon plan's selection rules.
 > - **Q8 resolved:** the folder is `forcing/`.
 
