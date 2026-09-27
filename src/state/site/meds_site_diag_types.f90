@@ -55,6 +55,7 @@ module meds_site_diag_types
    public :: cohort_diag_reorder, cohort_diag_copy_slot, cohort_diag_fuse, cohort_diag_clear_slot
    public :: patch_diag_alloc, patch_diag_free, patch_diag_grow, patch_diag_reset
    public :: patch_diag_reorder, patch_diag_copy_slot, patch_diag_blend, patch_diag_clear_slot
+   public :: patch_diag_inherit
    public :: cohort_diag_value, patch_diag_value
 
    !----- Fusion kinds (decision 6 above). ---------------------------------------------------!
@@ -497,6 +498,33 @@ contains
       if (wtot <= tiny_num) return
       d%v(:, recp) = (area_r * d%v(:, recp) + area_d * d%v(:, donp)) / wtot
    end subroutine patch_diag_blend
+
+   !----- A patch carved out of others inherits their area-weighted history for the step: a      !
+   !      disturbance gap's ground was donor ground for every sub-step (and every slow-loop row  !
+   !      written before the disturbance), so its sums and weight are the donors', blended by    !
+   !      the area each gave. Every donor loses the same fraction, so blending by the donors'    !
+   !      areas is exact and the site aggregate Sum(area * v/w) is unchanged by the carving; a   !
+   !      cleared slot would read as 0 on the carved area and bias every patch-sourced site mean !
+   !      low by that area. `n` is raised to cover the new slot, so a reader sees it before the  !
+   !      next reorder.                                                                          !
+   subroutine patch_diag_inherit(d, dst, donor_area)
+      type(patch_diag_block), intent(inout) :: d
+      integer(ik),            intent(in)    :: dst
+      real(wp),               intent(in)    :: donor_area(:)   !< donors are slots 1..size(donor_area)
+      real(wp)    :: atot, wd
+      integer(ik) :: i
+      if (.not. d%active) return
+      if (dst < 1_ik .or. dst > d%cap) return
+      d%v(:, dst) = 0.0_wp ; d%w(dst) = 0.0_wp
+      d%n = max(d%n, dst)
+      atot = sum(donor_area)
+      if (atot <= tiny_num) return
+      do i = 1_ik, size(donor_area, kind=ik)
+         wd = donor_area(i) / atot
+         d%v(:, dst) = d%v(:, dst) + wd * d%v(:, i)
+         d%w(dst)    = d%w(dst)    + wd * d%w(i)
+      end do
+   end subroutine patch_diag_inherit
 
    pure subroutine patch_diag_value(d, field, x, n)
       type(patch_diag_block), intent(in)  :: d
