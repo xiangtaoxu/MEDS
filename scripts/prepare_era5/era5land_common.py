@@ -14,6 +14,7 @@ import calendar
 import datetime as dt
 import fcntl
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -259,17 +260,49 @@ def read_manifest(data_path):
 
 
 # --- HTTP (anonymous GDEX downloads) ----------------------------------------------------------------
+# Transient network failures are retried with a growing wait: a reset or timed-out connection, a
+# transfer that stops short, or a server-side error (HTTP 5xx or 429). A month is about 100 files, and
+# a single refused connection used to abort all of them. When GDEX is busy it refuses new connections
+# for minutes at a time, and every task that failed then started the next one straight away, which
+# kept it refusing. So the waits run to several minutes. A missing file (HTTP 404) still fails at once.
+RETRY_WAITS = (15, 30, 60, 120, 240, 480)
+
+
+class ShortTransfer(IOError):
+    """A transfer that ended before Content-Length bytes arrived."""
+
+
+def _transient(err):
+    if isinstance(err, urllib.error.HTTPError):
+        return err.code >= 500 or err.code == 429
+    return isinstance(err, (urllib.error.URLError, TimeoutError, ConnectionError, http.client.HTTPException,
+                            ShortTransfer))
+
+
+def _with_retries(what, fn, *args):
+    for wait in RETRY_WAITS + (None,):
+        try:
+            return fn(*args)
+        except Exception as err:
+            if wait is None or not _transient(err):
+                raise
+            print(f"  retry {what} in {wait} s after: {err}", flush=True)
+            time.sleep(wait)
+
+
+def _head_status(url):
+    with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=60) as r:
+        return r.status
+
+
 def http_head_ok(url):
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=60) as r:
-            return r.status == 200
+        return _with_retries(url, _head_status, url) == 200
     except urllib.error.HTTPError:
         return False
 
 
-def http_download(url, dest, chunk=8 << 20):
-    """Stream url to dest (via dest.part); verify the byte count against Content-Length. Returns
-    (bytes, seconds)."""
+def _download_once(url, dest, chunk):
     t0 = time.monotonic()
     part = dest + ".part"
     with urllib.request.urlopen(url, timeout=120) as r, open(part, "wb") as fh:
@@ -280,9 +313,15 @@ def http_download(url, dest, chunk=8 << 20):
             got += len(buf)
     if expected >= 0 and got != expected:
         os.remove(part)
-        raise IOError(f"{url}: received {got} of {expected} bytes")
+        raise ShortTransfer(f"{url}: received {got} of {expected} bytes")
     os.replace(part, dest)
     return got, time.monotonic() - t0
+
+
+def http_download(url, dest, chunk=8 << 20):
+    """Stream url to dest (via dest.part); verify the byte count against Content-Length, retrying
+    transient failures. Returns (bytes, seconds) of the transfer that succeeded."""
+    return _with_retries(os.path.basename(dest), _download_once, url, dest, chunk)
 
 
 def use_group_umask():

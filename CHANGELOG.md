@@ -95,6 +95,11 @@ before and after.
 - **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
   the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
   site year from a spun-up stand runs about 10% faster; outputs are identical.
+- **The GDEX downloader retries transient network failures** (`era5land_common.http_download`,
+  `http_head_ok`): a reset or timed-out connection, a short transfer, or HTTP 5xx or 429, with waits
+  from 15 s to 8 min. A single refused connection used to abort a whole month. That happened to
+  every task in two rounds of the archive build, because each failed task started the next straight
+  away while GDEX was refusing connections. A missing file (HTTP 404) still fails at once.
 - **`build_era5land_archive.py --work-dir`** writes each output on another disk, such as a compute
   node's local drive, then copies the finished file into the archive in one sequential pass that
   also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds
