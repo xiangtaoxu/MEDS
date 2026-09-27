@@ -20,7 +20,8 @@ module meds_output_types
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
-   public :: pending_record_t, record_queue_t, stream_file_t, output_manager_t, fast_sample_t
+   public :: pending_record_t, record_queue_t, stream_file_t, fast_sample_t
+   public :: output_shared_t, output_part_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -270,19 +271,20 @@ module meds_output_types
    end type stream_file_t
 
    !==========================================================================================!
-   ! The output manager: netCDF-FREE plain-data glue (registry + integrators + pending stage +     !
-   ! stream handles). main owns it; the stepper ticks it; only output_serialize_pending touches C.  !
+   ! The output manager comes in two parts (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
+   ! netCDF-FREE plain data; only output_serialize_pending touches C.                                !
+   !   output_shared_t -- one per set of files: what every polygon writing into those files shares   !
+   !                      (registry, diagnostic parameters, file settings, stream handles). Read-only !
+   !                      while a step runs.                                                          !
+   !   output_part_t   -- one per polygon: its running reductions, open windows, closed records and   !
+   !                      fast-tier staging. The only output state a step writes.                     !
+   ! A site run is one of each. main owns them; the stepper ticks the part.                          !
    !==========================================================================================!
-   type :: output_manager_t
+   type :: output_shared_t
       logical                 :: enabled = .false.
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
-      type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
-      logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
-      type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
-      type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
-      type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
       !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !
@@ -292,22 +294,34 @@ module meds_output_types
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
+   end type output_shared_t
+
+   type :: output_part_t
+      type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
+      logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
+      type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
+      type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
+      type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
       !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch,sub-step) by the fast     !
       !      loop, replayed into buf(:,1) by main via output_integrate_fast. Site scalars in fast(:);  !
-      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays.  --------!
+      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays. The     !
+      !      fast loop sees only the part, so the part says whether to stage (fast_on) and how many   !
+      !      cohort slots to size (fast_cohort_cap).  -------------------------------------------------!
+      logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
+      integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
       type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) sub-step midpoint stamps
       real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
-      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort_max, n_fast_sub) per-cohort leaf temp [K]
-      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort_max, n_fast_sub) per-cohort GPP [umol/plant/s]
-      !< (cohort_max, n_fast_sub) per-cohort height [m] (tallest post-proc)
+      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort cap, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort cap, n_fast_sub) per-cohort GPP [umol/plant/s]
+      !< (cohort cap, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_coh_height(:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       logical              :: fast_ready   = .false.           !< fast(:) filled + awaiting replay
-   end type output_manager_t
+   end type output_part_t
 
 contains
 

@@ -491,6 +491,18 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
 
 **PR 2 — the output manager split.**
 
+> **Status ✅ 2026-09-27.** Steps 4–5 as below, except the region-mode sizing:
+> - **`output_shared_t` and `output_part_t` replace `output_manager_t`.** Allocation is three calls:
+>   `manager_setup(sh, cfg)`, then any per-variable overrides, then `manager_finalize(sh)` (the stream
+>   handles) and `manager_alloc_part(sh, part)` once per polygon.
+> - **The compute phase sees only the part:** `fast_dynamics` and `advance_one_step` take `out_part`.
+>   The part carries `fast_on` and `fast_cohort_cap`, the two facts the fast loop used to read from the
+>   shared registry.
+> - **Region-mode sizing moves to PR 3:** a part's buffers follow the shared registry, so fixed-shape-only
+>   parts arrive with the region registry. Detail polygons get their own site-style shared half.
+> - **Tests:** `test_two_parts`, where two parts on one shared half interleave folds and closes and each
+>   reduces only its own samples. The six regression cases are identical to PR 1's.
+
 4. **Split `output_manager_t`** (`meds_output_types.f90`, `meds_output_registry.f90`,
    `meds_output_integrate.f90`, `meds_output_manager.f90`, `meds_output_stream.f90`).
    - Shared (`output_shared_t`): the registry, the diagnostic parameters, the file settings, the

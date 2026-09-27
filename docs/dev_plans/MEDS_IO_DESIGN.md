@@ -165,6 +165,12 @@ all buffer arithmetic, zero disk). After `advance_one_step` returns, `meds_main`
 **netCDF-free plain-data type** (it holds `stream_file_t` handles whose `ncid`s are just integers; only
 the *operations* on them touch C, and those live in the serializer).
 
+*Update (R2 of `MEDS_POLYGON_RUNTIME_PLAN.md`):* `output_manager_t` is now two types. `output_shared_t`,
+one per set of files, holds the registry, the diagnostic parameters, the file settings and the stream
+handles. `output_part_t`, one per polygon, holds the integration buffers, the open windows, the scratch
+and queued records and the fast-tier staging. The routines take `(sh, part)`, and the fast loop and the
+stepper see only the part. A site run has one of each.
+
 ```
 shared ─┬─ allometry ─ state ─ demography ─┬─ aux (stepper: ticks the netCDF-FREE integrators each step;
         │                                  │       normalize+chain+reset+STAGE at period roll-over; NO disk)
