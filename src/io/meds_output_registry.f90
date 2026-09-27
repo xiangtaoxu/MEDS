@@ -23,7 +23,7 @@ module meds_output_registry
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
                                    GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS
    use meds_output_types,   only : AGG_VARIANCE
-   use meds_output_types,   only : var_desc_t, output_registry_t, output_shared_t, output_part_t,              &
+   use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
@@ -77,7 +77,7 @@ module meds_output_registry
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_part, manager_set_soil_params
+   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
    public :: manager_restrict_region
    public :: activate_site_diag, dump_io_config
 
@@ -974,26 +974,26 @@ contains
    end subroutine parse_stream_mask
 
    !=======================================================================================!
-   !  Build the shared half's REGISTRY + config (netCDF-free; NO buffers yet). Split from       !
+   !  Build a file set's REGISTRY + config (netCDF-free; NO buffers yet). Split from           !
    !  allocation so a caller can apply meds_io_config.toml per-variable overrides to sh%reg       !
    !  (which change which (var,tier) buffers are needed) BEFORE manager_finalize and             !
-   !  manager_alloc_part (§6.1).                                                               !
+   !  manager_alloc_buffers (§6.1).                                                               !
    !=======================================================================================!
-   subroutine manager_setup(sh, cfg)
-      type(output_shared_t),  intent(out) :: sh
+   subroutine manager_setup(files, cfg)
+      type(output_files_t),   intent(out) :: files
       type(meds_config_t),    intent(in)  :: cfg
       integer(ik) :: ne
-      sh%enabled = cfg%output%enabled
-      call build_output_registry(sh%reg, cfg)
-      sh%cohort_max = cfg%output%cohort_max
-      sh%patch_max  = cfg%output%patch_max
-      sh%dir        = cfg%output%dir
-      sh%prefix     = cfg%output%prefix
-      sh%file_chunk = cfg%output%file_chunk
-      sh%sync_every = cfg%output%sync_every
-      sh%fast_interval_steps = cfg%output%fast_interval_steps
+      files%enabled = cfg%output%enabled
+      call build_output_registry(files%reg, cfg)
+      files%cohort_max = cfg%output%cohort_max
+      files%patch_max  = cfg%output%patch_max
+      files%dir        = cfg%output%dir
+      files%prefix     = cfg%output%prefix
+      files%file_chunk = cfg%output%file_chunk
+      files%sync_every = cfg%output%sync_every
+      files%fast_interval_steps = cfg%output%fast_interval_steps
       if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ERA5LAND)                &
-         sh%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
+         files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
 
@@ -1001,24 +1001,24 @@ contains
       !      RUN-TIME PFT count, so the netCDF `pft` dimension is run-dependent -- which is why      !
       !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
       !      when compared across runs with different PFT tables.                                    !
-      sh%diag%n_pft  = cfg%pft%n
-      sh%diag%n_soil = n_soil_layer_max
+      files%diag%n_pft  = cfg%pft%n
+      files%diag%n_soil = n_soil_layer_max
       !----- DBH size classes: TOML edges if given, else the built-in inventory set. -----------!
       if (cfg%output%n_dbh_class > 0_ik) then
-         sh%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
-         ne = sh%diag%n_dbh_class + 1_ik
-         sh%diag%dbh_edges(1:ne) = cfg%output%dbh_edges(1:ne)
+         files%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
+         ne = files%diag%n_dbh_class + 1_ik
+         files%diag%dbh_edges(1:ne) = cfg%output%dbh_edges(1:ne)
       else
-         sh%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
-         sh%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
+         files%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
+         files%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
       end if
-      call check_dbh_edges(sh%diag%dbh_edges, sh%diag%n_dbh_class)
+      call check_dbh_edges(files%diag%dbh_edges, files%diag%n_dbh_class)
       !----- The soil retention parameters are NOT set here: meds_main copies them from the FAST  !
       !      CONTEXT the physics actually ran (manager_set_soil_params), so a reported psi and the  !
       !      psi the roots saw are the same curve by construction. Until that call, soil_ready is   !
       !      .false. and the psi/wetness diagnostics emit _FillValue rather than a plausible        !
       !      wrong number from an assumed texture.                                                  !
-      sh%diag%soil_ready = .false.
+      files%diag%soil_ready = .false.
 
       !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
       !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
@@ -1026,7 +1026,7 @@ contains
       !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
       !      axis it switched off. Computed AFTER the registry is finalized, for exactly that       !
       !      reason.                                                                                !
-      sh%max_slab = live_max_slab(sh)
+      files%max_slab = live_max_slab(files)
    end subroutine manager_setup
 
    !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
@@ -1034,66 +1034,66 @@ contains
    !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
    !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
    !      Called after manager_setup and the overrides, before manager_finalize: the slab size drops   !
-   !      with the cohort axis, and so does every polygon's part.  -----------------------------------!
-   subroutine manager_restrict_region(sh)
-      type(output_shared_t), intent(inout) :: sh
+   !      with the cohort axis, and so does every polygon's buffers.  --------------------------------!
+   subroutine manager_restrict_region(files)
+      type(output_files_t),  intent(inout) :: files
       integer(ik) :: k
-      do k = 1_ik, sh%reg%nvar
-         select case (sh%reg%var(k)%dim)
-         case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH) ; sh%reg%var(k)%enabled = .false.
+      do k = 1_ik, files%reg%nvar
+         select case (files%reg%var(k)%dim)
+         case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH) ; files%reg%var(k)%enabled = .false.
          end select
-         sh%reg%var(k)%streams = iand(sh%reg%var(k)%streams, not(FREQ_FAST))
+         files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
       end do
-      call build_freq_index(sh%reg)
-      sh%max_slab = live_max_slab(sh)
+      call build_freq_index(files%reg)
+      files%max_slab = live_max_slab(files)
    end subroutine manager_restrict_region
 
    !----- Largest slab length any LIVE variable can produce (see the sizing note above). ------!
-   pure integer(ik) function live_max_slab(sh) result(cap)
-      type(output_shared_t),  intent(in) :: sh
+   pure integer(ik) function live_max_slab(files) result(cap)
+      type(output_files_t),   intent(in) :: files
       integer(ik) :: k
       cap = 1_ik
-      do k = 1_ik, sh%reg%nvar
-         if (.not. sh%reg%var(k)%enabled)      cycle
-         if (sh%reg%var(k)%streams == FREQ_NONE) cycle
-         cap = max(cap, dim_capacity(sh, sh%reg%var(k)%dim))
+      do k = 1_ik, files%reg%nvar
+         if (.not. files%reg%var(k)%enabled)      cycle
+         if (files%reg%var(k)%streams == FREQ_NONE) cycle
+         cap = max(cap, dim_capacity(files, files%reg%var(k)%dim))
       end do
    end function live_max_slab
 
    !----- Slab capacity of one axis. ---------------------------------------------------------!
-   pure integer(ik) function dim_capacity(sh, dm) result(cap)
-      type(output_shared_t),  intent(in) :: sh
+   pure integer(ik) function dim_capacity(files, dm) result(cap)
+      type(output_files_t),   intent(in) :: files
       integer(ik),            intent(in) :: dm
       select case (dm)
-      case (DIM_COHORT)     ; cap = sh%cohort_max
-      case (DIM_PATCH)      ; cap = sh%patch_max
+      case (DIM_COHORT)     ; cap = files%cohort_max
+      case (DIM_PATCH)      ; cap = files%patch_max
       case (DIM_SOIL)       ; cap = n_soil_layer_max
-      case (DIM_PFT)        ; cap = max(sh%diag%n_pft, 1_ik)
-      case (DIM_SIZE)       ; cap = max(sh%diag%n_dbh_class, 1_ik)
-      case (DIM_SOIL_PATCH) ; cap = sh%patch_max * n_soil_layer_max
+      case (DIM_PFT)        ; cap = max(files%diag%n_pft, 1_ik)
+      case (DIM_SIZE)       ; cap = max(files%diag%n_dbh_class, 1_ik)
+      case (DIM_SOIL_PATCH) ; cap = files%patch_max * n_soil_layer_max
       case default          ; cap = 0_ik
       end select
    end function dim_capacity
 
    !----- Install the soil retention parameters the psi/wetness diagnostics need. Called by     !
    !      meds_main with the SAME soil_params_t the fast loop integrates on.                     !
-   subroutine manager_set_soil_params(sh, params)
-      type(output_shared_t),  intent(inout) :: sh
+   subroutine manager_set_soil_params(files, params)
+      type(output_files_t),   intent(inout) :: files
       type(soil_params_t),    intent(in)    :: params
       integer(ik) :: k
-      sh%diag%retention = params%retention
+      files%diag%retention = params%retention
       do k = 1_ik, n_soil_layer_max
-         sh%diag%theta_sat(k) = params%theta_sat(k)
-         sh%diag%theta_res(k) = params%theta_res(k)
+         files%diag%theta_sat(k) = params%theta_sat(k)
+         files%diag%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
          !      Campbell. Resolved through the SAME accessors the Richards solver uses, so the    !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         sh%diag%par_a(k)     = curve_a(params, k)
-         sh%diag%par_n(k)     = curve_n(params, k)
-         sh%diag%soil_z(k)    = params%z_node(k)
+         files%diag%par_a(k)     = curve_a(params, k)
+         files%diag%par_n(k)     = curve_n(params, k)
+         files%diag%soil_z(k)    = params%z_node(k)
       end do
-      sh%diag%n_soil     = params%n_active
-      sh%diag%soil_ready = .true.
+      files%diag%n_soil     = params%n_active
+      files%diag%soil_ready = .true.
    end subroutine manager_set_soil_params
 
    !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
@@ -1108,53 +1108,53 @@ contains
       end do
    end subroutine check_dbh_edges
 
-   !----- Finish the shared half once the registry is FINALIZED (after manager_setup and any       !
+   !----- Finish the file set once the registry is FINALIZED (after manager_setup and any          !
    !      per-variable overrides): the per-tier stream handles. -------------------------------------!
-   subroutine manager_finalize(sh)
-      type(output_shared_t), intent(inout) :: sh
+   subroutine manager_finalize(files)
+      type(output_files_t),  intent(inout) :: files
       integer(ik) :: t
       do t = 1_ik, N_FREQ
-         sh%stream(t)%freq  = freq_bit(t)
-         allocate(sh%stream(t)%vid(sh%reg%nvar)) ; sh%stream(t)%vid = -1_ik
+         files%stream(t)%freq  = freq_bit(t)
+         allocate(files%stream(t)%vid(files%reg%nvar)) ; files%stream(t)%vid = -1_ik
       end do
    end subroutine manager_finalize
 
-   !----- Allocate one polygon's part from the finalized shared half: the integrator buffers of    !
+   !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
    !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!
-   subroutine manager_alloc_part(sh, part)
-      type(output_shared_t), intent(in)  :: sh
-      type(output_part_t),   intent(out) :: part
+   subroutine manager_alloc_buffers(files, bufs)
+      type(output_files_t),  intent(in)  :: files
+      type(output_buffers_t), intent(out) :: bufs
       integer(ik) :: t, k, nv, cap, bit
-      nv = sh%reg%nvar
-      allocate(part%buf(nv, N_FREQ))
+      nv = files%reg%nvar
+      allocate(bufs%buf(nv, N_FREQ))
       do t = 1_ik, N_FREQ
          bit = freq_bit(t)
          do k = 1_ik, nv
-            if (sh%reg%var(k)%enabled .and. iand(sh%reg%var(k)%streams, bit) /= 0_ik) then
-               cap = dim_capacity(sh, sh%reg%var(k)%dim)
-               call alloc_integ_buffer(part%buf(k,t), sh%reg%var(k), bit, cap)
-               part%buf(k,t)%var_id = k
+            if (files%reg%var(k)%enabled .and. iand(files%reg%var(k)%streams, bit) /= 0_ik) then
+               cap = dim_capacity(files, files%reg%var(k)%dim)
+               call alloc_integ_buffer(bufs%buf(k,t), files%reg%var(k), bit, cap)
+               bufs%buf(k,t)%var_id = k
             end if
          end do
       end do
       do t = 1_ik, N_FREQ
-         allocate(part%pending(t)%sval(nv), part%pending(t)%svalid(nv), part%pending(t)%nslab(nv))
-         allocate(part%pending(t)%slab(sh%max_slab, nv), part%pending(t)%slabvalid(sh%max_slab, nv))
-         part%pending(t)%used = .false.
+         allocate(bufs%pending(t)%sval(nv), bufs%pending(t)%svalid(nv), bufs%pending(t)%nslab(nv))
+         allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
+         bufs%pending(t)%used = .false.
       end do
-      part%fast_on = sh%enabled .and. sh%reg%nidx(1) > 0_ik
-      part%fast_cohort_cap = max(sh%cohort_max, 1_ik)
-   end subroutine manager_alloc_part
+      bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
+      bufs%fast_cohort_cap = max(files%cohort_max, 1_ik)
+   end subroutine manager_alloc_buffers
 
-   !----- Convenience: registry, stream handles and one part in one call (no per-variable       !
+   !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
    !      overrides). ---------------------------------------------------------------------------!
-   subroutine manager_alloc(sh, part, cfg)
-      type(output_shared_t), intent(out) :: sh
-      type(output_part_t),   intent(out) :: part
+   subroutine manager_alloc(files, bufs, cfg)
+      type(output_files_t),  intent(out) :: files
+      type(output_buffers_t), intent(out) :: bufs
       type(meds_config_t),   intent(in)  :: cfg
-      call manager_setup(sh, cfg)
-      call manager_finalize(sh)
-      call manager_alloc_part(sh, part)
+      call manager_setup(files, cfg)
+      call manager_finalize(files)
+      call manager_alloc_buffers(files, bufs)
    end subroutine manager_alloc
 
    !----- Step 5: precompute, per tier, the list of live (enabled + in-tier) variable indices.-!
@@ -1180,17 +1180,17 @@ contains
    !  point in meds_site_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
-   subroutine activate_site_diag(sh, site)
-      type(output_shared_t),  intent(in)    :: sh
+   subroutine activate_site_diag(files, site)
+      type(output_files_t),   intent(in)    :: files
       type(site_t),           intent(inout) :: site
       logical     :: need_c, need_p, need_s
       integer(ik) :: t, j, k, src
       need_c = .false. ; need_p = .false. ; need_s = .false.
-      if (sh%enabled) then
+      if (files%enabled) then
          do t = 1_ik, N_FREQ
-            do j = 1_ik, sh%reg%nidx(t)
-               k   = sh%reg%idx_freq(j, t)
-               src = sh%reg%var(k)%source_id
+            do j = 1_ik, files%reg%nidx(t)
+               k   = files%reg%idx_freq(j, t)
+               src = files%reg%var(k)%source_id
                if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) need_c = .true.
                if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) need_p = .true.
                if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) need_s = .true.

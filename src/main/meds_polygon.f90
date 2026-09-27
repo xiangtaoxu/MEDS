@@ -3,7 +3,7 @@
 ! meds_polygon -- one polygon of a run: everything that evolves at one forcing cell, and the one  !
 ! step that advances it (MEDS_POLYGON_RUNTIME_PLAN.md §4, R2).                                     !
 !                                                                                          !
-! A polygon owns its site, fast context, forcing cursor, output part, conservation ledgers and    !
+! A polygon owns its site, fast context, forcing cursor, output buffers, conservation ledgers and !
 ! status. What every polygon of a run shares -- the config, the forcing source, the output files  !
 ! -- is passed in read-only. A site run (meds_driver) is one polygon; a region (meds_region) is    !
 ! many, stepped by the same polygon_step, so a polygon of a region computes exactly what a site    !
@@ -31,7 +31,7 @@ module meds_polygon
    use meds_diagnostic_reduce,      only : total_area, has_nan
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_output_types,           only : output_shared_t, output_part_t
+   use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    implicit none
    private
@@ -57,10 +57,10 @@ module meds_polygon
       type(site_t)           :: site
       type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
-      type(output_part_t)    :: out_part          !< its share of the run's output files
+      type(output_buffers_t) :: out_bufs          !< its share of the run's output files
       !----- A region's detail polygon also writes a full single-site file set of its own. ---------!
-      type(output_shared_t), allocatable :: detail_sh
-      type(output_part_t),   allocatable :: detail_part
+      type(output_files_t),  allocatable :: detail_files
+      type(output_buffers_t), allocatable :: detail_bufs
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
@@ -131,13 +131,13 @@ contains
    ! polygon_step -- ONE slow step of one polygon, from `prev` to `now`: the growth-temperature     !
    ! mean, the coupled stepper (which sub-steps the fast loop inside it), the fast output tier's    !
    ! replay, the slower tiers' tick, and the NaN and soil-carbon guards. The step's forcing must    !
-   ! already be loaded into `met_src`; closed output records are queued in the polygon's parts.     !
+   ! already be loaded into `met_src`; closed output records are queued in the polygon's buffers.   !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_step(cfg, met_src, out_sh, poly, prev, now, step_days, is_new_month,        &
+   subroutine polygon_step(cfg, met_src, out_files, poly, prev, now, step_days, is_new_month,        &
                            is_new_year, status)
       type(meds_config_t),   intent(in)    :: cfg
       type(met_source_t),    intent(in)    :: met_src
-      type(output_shared_t), intent(in)    :: out_sh
+      type(output_files_t),  intent(in)    :: out_files
       type(meds_polygon_t),  intent(inout) :: poly
       type(meds_time_t),     intent(in)    :: prev, now
       integer(ik),           intent(in)    :: step_days
@@ -156,12 +156,12 @@ contains
       !      A no-op when the flag is off, so the shipped path is untouched.  ------------------------!
       if (cfg%leaf_thermal_acclimation) call advance_growth_temperature(cfg, step_days, poly)
 
-      !----- The fast loop stages sub-daily samples into the part that writes the FAST tier: a      !
+      !----- The fast loop stages sub-daily samples into the buffers that write the FAST tier: a    !
       !      detail polygon's own files, else the polygon's share of the run's files.  ----------------!
-      if (allocated(poly%detail_part)) then
-         call stepper(poly%detail_part)
+      if (allocated(poly%detail_bufs)) then
+         call stepper(poly%detail_bufs)
       else
-         call stepper(poly%out_part)
+         call stepper(poly%out_bufs)
       end if
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
@@ -176,8 +176,8 @@ contains
       !----- Output: replay the staged FAST samples, then fold this step's (post-dynamics) state    !
       !      into the slower tiers, queueing any closed period for the I/O phase.  -------------------!
       is_new_day = is_new_month .or. (now%day /= prev%day)
-      if (out_sh%enabled) call tick_output(out_sh, poly%out_part)
-      if (allocated(poly%detail_part)) call tick_output(poly%detail_sh, poly%detail_part)
+      if (out_files%enabled) call tick_output(out_files, poly%out_bufs)
+      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
 
       !----- A NaN is a STATUS here, not an `error stop`: a library caller survives it. -----------!
       if (is_new_year) then
@@ -219,13 +219,13 @@ contains
    contains
 
       !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);  !
-      !      the met source/cursor, the output part and the polygon's latitude go with forcing_on.  !
-      subroutine stepper(fast_part)
-         type(output_part_t), intent(inout) :: fast_part
+      !      the met source/cursor, the output buffers and the polygon's latitude go with forcing_on. !
+      subroutine stepper(fast_bufs)
+         type(output_buffers_t), intent(inout) :: fast_bufs
          if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
             call advance_one_step(poly%site, cfg, is_new_month, is_new_year, poly%fast_ctx,        &
                                   met_src=met_src, met_cur=poly%met_cur, step_start=prev,       &
-                                  out_part=fast_part,                                           &
+                                  out_bufs=fast_bufs,                                           &
                                   run_energy_budget=poly%energy_budget,                         &
                                   run_water_budget=poly%water_budget,                           &
                                   run_face_budget=poly%face_budget,                             &
@@ -240,23 +240,23 @@ contains
          end if
       end subroutine stepper
 
-      !----- FAST tier: replay the sub-step samples the fast loop staged in part%fast(:), closing   !
+      !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !
       !      the tier every fast_interval_steps sub-steps. Then the diagnostic tick of the slower   !
       !      tiers. Closed records are queued; the I/O phase writes them.  -------------------------!
-      subroutine tick_output(sh, part)
-         type(output_shared_t), intent(in)    :: sh
-         type(output_part_t),   intent(inout) :: part
+      subroutine tick_output(files, bufs)
+         type(output_files_t),  intent(in)    :: files
+         type(output_buffers_t), intent(inout) :: bufs
          integer(ik) :: isub
-         if (part%fast_ready) then
-            do isub = 1_ik, part%n_fast_sub
-               call output_integrate_fast(sh, part, isub, cfg%dt_fast)
+         if (bufs%fast_ready) then
+            do isub = 1_ik, bufs%n_fast_sub
+               call output_integrate_fast(files, bufs, isub, cfg%dt_fast)
                poly%fast_step_total = poly%fast_step_total + 1_ik
-               if (mod(poly%fast_step_total, max(sh%fast_interval_steps, 1_ik)) == 0_ik)         &
-                  call close_tier(sh, part, 1_ik)
+               if (mod(poly%fast_step_total, max(files%fast_interval_steps, 1_ik)) == 0_ik)         &
+                  call close_tier(files, bufs, 1_ik)
             end do
-            part%fast_ready = .false.
+            bufs%fast_ready = .false.
          end if
-         call output_integrate(sh, part, poly%site, now, cfg%dt_slow, is_new_day, is_new_month,  &
+         call output_integrate(files, bufs, poly%site, now, cfg%dt_slow, is_new_day, is_new_month,  &
                                is_new_year)
       end subroutine tick_output
 

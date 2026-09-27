@@ -73,7 +73,7 @@ program test_region
    end do
    call region_finalize(reg, st)
    call check_true('every polygon conserves area', st == DRIVER_OK)
-   reg_region = reg%out_sh%reg
+   reg_region = reg%out_files%reg
    call region_free(reg)
 
    !----- The same cells as sites. ---------------------------------------------------------------!
@@ -87,7 +87,7 @@ program test_region
          if (st /= DRIVER_OK) error stop 'test_region: a site step failed'
       end do
       call driver_finalize(run, st)
-      if (p == 1_ik) reg_site = run%out_sh%reg
+      if (p == 1_ik) reg_site = run%out_files%reg
       call driver_free(run)
    end do
 

@@ -116,10 +116,11 @@ before and after.
   identical to before in six regression cases. With the default ifx flags, the compiler optimizes the
   day-length call differently, so runs with a growing stand differ at round-off from the first autumn
   on: at most 5e-12 kg C in cohort AGB after one year.
-- **The output manager is split into shared and per-polygon parts** (R2 of
-  `MEDS_POLYGON_RUNTIME_PLAN.md`). `output_shared_t` (registry, file settings, streams) serves every
-  polygon writing into one set of files. `output_part_t` holds one polygon's reductions, records and
-  fast-tier staging. The fast loop and the stepper now see only the part. Outputs are identical.
+- **The output manager is split into a file set and per-polygon buffers** (R2 of
+  `MEDS_POLYGON_RUNTIME_PLAN.md`). `output_files_t` (registry, file settings, streams) is one set of
+  output files, shared by every polygon writing into it. `output_buffers_t` holds one polygon's
+  reductions, records and fast-tier staging for one file set. The fast loop and the stepper now see
+  only the buffers. Outputs are identical.
 - **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
   the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
   site year from a spun-up stand runs about 10% faster; outputs are identical.

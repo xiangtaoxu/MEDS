@@ -17,7 +17,7 @@ module meds_output_stream
    use meds_output_config, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter,     &
                                   freq_tier_index
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
-                                  output_shared_t, output_part_t,                                  &
+                                  output_files_t, output_buffers_t,                                  &
                                   DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT,            &
                                   DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
@@ -458,31 +458,31 @@ contains
    !=======================================================================================!
    !  REGION files (MEDS_POLYGON_RUNTIME_PLAN.md §6): one file per tier per time chunk for all     !
    !  polygons, with a `polygon` dimension after `time`. Record i of tier t is the same closed      !
-   !  period in every part (all polygons step the same calendar); each variable is packed from     !
-   !  the parts into one region-wide array and written with ONE hyperslab. A polygon's slice holds  !
-   !  exactly what its single-site file would: the slab entries past its live length, which the   !
-   !  site writer leaves unwritten, carry the fill value here too.                                 !
+   !  period in every polygon's buffers (all polygons step the same calendar); each variable is    !
+   !  packed from them into one region-wide array and written with ONE hyperslab. A polygon's slice !
+   !  holds exactly what its single-site file would: the slab entries past its live length, which  !
+   !  the site writer leaves unwritten, carry the fill value here too.                             !
    !=======================================================================================!
-   subroutine region_write_record(sh, parts, t, i)
-      type(output_shared_t), intent(inout) :: sh
-      type(output_part_t),   intent(in)    :: parts(:)
+   subroutine region_write_record(files, bufs, t, i)
+      type(output_files_t),  intent(inout) :: files
+      type(output_buffers_t), intent(in)    :: bufs(:)
       integer(ik),           intent(in)    :: t, i
       integer(ik) :: bucket, np, p
-      np = size(parts, kind=ik)
-      if (np /= sh%n_polygon) error stop 'region_write_record: one part per polygon of the region'
-      associate (r1 => parts(1)%queue(t)%rec(i))
+      np = size(bufs, kind=ik)
+      if (np /= files%n_polygon) error stop 'region_write_record: one set of buffers per polygon of the region'
+      associate (r1 => bufs(1)%queue(t)%rec(i))
          do p = 2_ik, np
-            if (.not. same_time(parts(p)%queue(t)%rec(i)%t_open, r1%t_open))                     &
+            if (.not. same_time(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                     &
                error stop 'region_write_record: the polygons'' records are not the same period'
          end do
-         bucket = bucket_key(r1%t_open, sh%file_chunk(t))
-         if (sh%stream(t)%ncid < 0_ik .or. bucket /= sh%stream(t)%chunk_bucket) then
-            call stream_close_file(sh%stream(t))
-            call region_open_file(sh, t, r1, bucket)
+         bucket = bucket_key(r1%t_open, files%file_chunk(t))
+         if (files%stream(t)%ncid < 0_ik .or. bucket /= files%stream(t)%chunk_bucket) then
+            call stream_close_file(files%stream(t))
+            call region_open_file(files, t, r1, bucket)
          end if
       end associate
-      call region_write_one(sh, parts, t, i)
-      if (sh%sync_every == SYNC_FLUSH) call nc_check(nc_sync(int(sh%stream(t)%ncid, c_int)), 'nc_sync')
+      call region_write_one(files, bufs, t, i)
+      if (files%sync_every == SYNC_FLUSH) call nc_check(nc_sync(int(files%stream(t)%ncid, c_int)), 'nc_sync')
    end subroutine region_write_record
 
    pure logical function same_time(a, b)
@@ -492,8 +492,8 @@ contains
    end function same_time
 
    !----- Create a region file: dims, polygon coordinates, the tier's variables, CF metadata. ----!
-   subroutine region_open_file(sh, tier, pr, bucket)
-      type(output_shared_t),  intent(inout) :: sh
+   subroutine region_open_file(files, tier, pr, bucket)
+      type(output_files_t),   intent(inout) :: files
       integer(ik),            intent(in)    :: tier, bucket
       type(pending_record_t), intent(in)    :: pr
       character(len=512) :: path
@@ -504,8 +504,8 @@ contains
       integer(ik)        :: j, k, np
       logical            :: hass, haspf, hassz
       character(len=16)  :: cm
-      associate (stream => sh%stream(tier), reg => sh%reg, dg => sh%diag)
-      np = sh%n_polygon
+      associate (stream => files%stream(tier), reg => files%reg, dg => files%diag)
+      np = files%n_polygon
       hass = .false. ; haspf = .false. ; hassz = .false.
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
@@ -518,11 +518,11 @@ contains
          end select
       end do
 
-      stamp = chunk_stamp(pr%t_open, sh%file_chunk(tier))
+      stamp = chunk_stamp(pr%t_open, files%file_chunk(tier))
       if (len_trim(stamp) > 0) then
-         path = trim(sh%dir)//'/'//trim(sh%prefix)//'-'//freq_letter(pr%freq)//'-'//trim(stamp)//'.nc'
+         path = trim(files%dir)//'/'//trim(files%prefix)//'-'//freq_letter(pr%freq)//'-'//trim(stamp)//'.nc'
       else
-         path = trim(sh%dir)//'/'//trim(sh%prefix)//'-'//freq_letter(pr%freq)//'.nc'
+         path = trim(files%dir)//'/'//trim(files%prefix)//'-'//freq_letter(pr%freq)//'.nc'
       end if
       call nc_check(nc_create_f(trim(path), ior(NC_NETCDF4, NC_CLOBBER), ncid), 'region nc_create')
       call nc_check(nc_def_dim_f(ncid, 'time', NC_UNLIMITED, dt), 'dim time')
@@ -620,15 +620,15 @@ contains
 
       call put_global(ncid, 'title', TITLE)
       call put_global(ncid, 'Conventions', 'CF-1.10')
-      if (len_trim(sh%forcing_qair) > 0) call put_global(ncid, 'forcing_qair', trim(sh%forcing_qair))
+      if (len_trim(files%forcing_qair) > 0) call put_global(ncid, 'forcing_qair', trim(files%forcing_qair))
       call nc_check(nc_enddef(ncid), 'region enddef')
 
       st1 = [0_c_size_t] ; cn1 = [int(np, c_size_t)]
-      call nc_check(nc_put_vara_int(ncid, v_id, st1, cn1, int(sh%polygon_id, c_int)), 'put polygon_id')
-      call nc_check(nc_put_vara_double(ncid, v_lat, st1, cn1, real(sh%polygon_lat, c_double)), 'put lat')
-      call nc_check(nc_put_vara_double(ncid, v_lon, st1, cn1, real(sh%polygon_lon, c_double)), 'put lon')
-      call nc_check(nc_put_vara_int(ncid, v_row, st1, cn1, int(sh%polygon_row, c_int)), 'put row')
-      call nc_check(nc_put_vara_int(ncid, v_col, st1, cn1, int(sh%polygon_col, c_int)), 'put col')
+      call nc_check(nc_put_vara_int(ncid, v_id, st1, cn1, int(files%polygon_id, c_int)), 'put polygon_id')
+      call nc_check(nc_put_vara_double(ncid, v_lat, st1, cn1, real(files%polygon_lat, c_double)), 'put lat')
+      call nc_check(nc_put_vara_double(ncid, v_lon, st1, cn1, real(files%polygon_lon, c_double)), 'put lon')
+      call nc_check(nc_put_vara_int(ncid, v_row, st1, cn1, int(files%polygon_row, c_int)), 'put row')
+      call nc_check(nc_put_vara_int(ncid, v_col, st1, cn1, int(files%polygon_col, c_int)), 'put col')
       if (hass)  call write_soil_coord(ncid, stream%v_soil_z, dg)
       if (haspf) call write_pft_coord(ncid, stream%v_pft, dg%n_pft)
       if (hassz) call write_size_coord(ncid, stream%v_dbh_lower, stream%v_dbh_upper, dg)
@@ -643,19 +643,19 @@ contains
    end subroutine region_open_file
 
    !----- Append record i of tier t: the calendar, then each variable packed over the polygons. ---!
-   subroutine region_write_one(sh, parts, t, i)
-      type(output_shared_t), intent(inout) :: sh
-      type(output_part_t),   intent(in)    :: parts(:)
+   subroutine region_write_one(files, bufs, t, i)
+      type(output_files_t),  intent(inout) :: files
+      type(output_buffers_t), intent(in)    :: bufs(:)
       integer(ik),           intent(in)    :: t, i
       integer(c_int)    :: ncid
       integer(c_size_t) :: t0, i1(1), s2(2), c2(2), s3(3), c3(3)
       integer(ik)       :: j, k, np, p, n, ns, c, m
       real(c_double),  allocatable :: x1(:), x2(:,:)
       integer(c_int),  allocatable :: k1(:), k2(:,:)
-      associate (stream => sh%stream(t), reg => sh%reg, r1 => parts(1)%queue(t)%rec(i))
+      associate (stream => files%stream(t), reg => files%reg, r1 => bufs(1)%queue(t)%rec(i))
       ncid = int(stream%ncid, c_int)
       t0 = int(stream%nrec, c_size_t) ; i1 = [t0]
-      np = size(parts, kind=ik)
+      np = size(bufs, kind=ik)
       call nc_check(nc_put_var1_double(ncid, int(stream%v_time, c_int), i1, time_to_decimal_year(r1%t_open)), 'put time')
       call put_int_rec(ncid, stream%v_year,  t0, int(r1%t_open%year,  c_int))
       call put_int_rec(ncid, stream%v_month, t0, int(r1%t_open%month, c_int))
@@ -667,14 +667,14 @@ contains
             if (reg%var(k)%xtype == XTYPE_INT) then
                allocate(k1(np))
                do p = 1_ik, np
-                  k1(p) = real_to_int(parts(p)%queue(t)%rec(i)%sval(k), parts(p)%queue(t)%rec(i)%svalid(k))
+                  k1(p) = real_to_int(bufs(p)%queue(t)%rec(i)%sval(k), bufs(p)%queue(t)%rec(i)%svalid(k))
                end do
                call nc_check(nc_put_vara_int(ncid, int(stream%vid(k), c_int), s2, c2, k1), 'put '//trim(reg%var(k)%name))
                deallocate(k1)
             else
                allocate(x1(np))
                do p = 1_ik, np
-                  x1(p) = parts(p)%queue(t)%rec(i)%sval(k)
+                  x1(p) = bufs(p)%queue(t)%rec(i)%sval(k)
                end do
                call nc_check(nc_put_vara_double(ncid, int(stream%vid(k), c_int), s2, c2, x1), 'put '//trim(reg%var(k)%name))
                deallocate(x1)
@@ -682,14 +682,14 @@ contains
          else
             select case (reg%var(k)%dim)
             case (DIM_SOIL) ; n = n_soil_layer_max
-            case (DIM_PFT)  ; n = max(sh%diag%n_pft, 1_ik)
-            case default    ; n = max(sh%diag%n_dbh_class, 1_ik)
+            case (DIM_PFT)  ; n = max(files%diag%n_pft, 1_ik)
+            case default    ; n = max(files%diag%n_dbh_class, 1_ik)
             end select
             s3 = [t0, 0_c_size_t, 0_c_size_t] ; c3 = [1_c_size_t, int(np, c_size_t), int(n, c_size_t)]
             if (reg%var(k)%xtype == XTYPE_INT) then
                allocate(k2(n, np)) ; k2 = int(MISSING_INT, c_int)
                do p = 1_ik, np
-                  associate (r => parts(p)%queue(t)%rec(i))
+                  associate (r => bufs(p)%queue(t)%rec(i))
                      ns = min(r%nslab(k), n) ; c = slab_col(r, k)
                      do m = 1_ik, ns
                         k2(m, p) = real_to_int(r%slab(m, c), r%slabvalid(m, c))
@@ -701,7 +701,7 @@ contains
             else
                allocate(x2(n, np)) ; x2 = real(MISSING_VALUE, c_double)
                do p = 1_ik, np
-                  associate (r => parts(p)%queue(t)%rec(i))
+                  associate (r => bufs(p)%queue(t)%rec(i))
                      ns = min(r%nslab(k), n) ; c = slab_col(r, k)
                      if (ns > 0_ik) x2(1:ns, p) = r%slab(1:ns, c)
                   end associate

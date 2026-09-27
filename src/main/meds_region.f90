@@ -35,8 +35,8 @@ module meds_region
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_AREA, N_PATCH_INIT
-   use meds_output_types,           only : output_shared_t
-   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_part,  &
+   use meds_output_types,           only : output_files_t
+   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers,  &
                                            manager_set_soil_params, manager_restrict_region,      &
                                            activate_site_diag
    use meds_output_manager,         only : output_serialize_pending, output_manager_close,        &
@@ -50,7 +50,7 @@ module meds_region
    type :: meds_region_t
       type(meds_config_t)   :: cfg
       type(met_source_t)    :: met_src          !< one reader for every cell of the region
-      type(output_shared_t) :: out_sh           !< the region files (built only if output.enabled)
+      type(output_files_t)  :: out_files           !< the region files (built only if output.enabled)
       type(meds_polygon_t), allocatable :: poly(:)
       type(meds_time_t)     :: now, prev
       integer(ik)           :: istep = 0_ik, iyear = 0_ik
@@ -138,32 +138,32 @@ contains
       !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call manager_setup(reg%out_sh, cfg)
-         call manager_set_soil_params(reg%out_sh, reg%poly(1)%fast_ctx%col_config%soil)
+         call manager_setup(reg%out_files, cfg)
+         call manager_set_soil_params(reg%out_files, reg%poly(1)%fast_ctx%col_config%soil)
          if (len_trim(cfg%output%io_config) > 0)                                                   &
-            call apply_io_overrides(reg%out_sh, trim(cfg%output%io_config), reg%verbose)
-         call manager_restrict_region(reg%out_sh)
-         reg%out_sh%n_polygon = n
-         reg%out_sh%polygon_id  = reg%poly(:)%id
-         reg%out_sh%polygon_row = cells%row ; reg%out_sh%polygon_col = cells%col
-         reg%out_sh%polygon_lat = cells%lat ; reg%out_sh%polygon_lon = cells%lon
-         call manager_finalize(reg%out_sh)
+            call apply_io_overrides(reg%out_files, trim(cfg%output%io_config), reg%verbose)
+         call manager_restrict_region(reg%out_files)
+         reg%out_files%n_polygon = n
+         reg%out_files%polygon_id  = reg%poly(:)%id
+         reg%out_files%polygon_row = cells%row ; reg%out_files%polygon_col = cells%col
+         reg%out_files%polygon_lat = cells%lat ; reg%out_files%polygon_lon = cells%lon
+         call manager_finalize(reg%out_files)
          do p = 1_ik, n
             associate (poly => reg%poly(p))
-               call manager_alloc_part(reg%out_sh, poly%out_part)
+               call manager_alloc_buffers(reg%out_files, poly%out_bufs)
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
-                  allocate(poly%detail_sh, poly%detail_part)
-                  call manager_setup(poly%detail_sh, cfg)
+                  allocate(poly%detail_files, poly%detail_bufs)
+                  call manager_setup(poly%detail_files, cfg)
                   write(idstr,'(i0)') poly%id
-                  poly%detail_sh%prefix = trim(cfg%output%prefix)//'-p'//trim(idstr)
-                  call manager_set_soil_params(poly%detail_sh, poly%fast_ctx%col_config%soil)
+                  poly%detail_files%prefix = trim(cfg%output%prefix)//'-p'//trim(idstr)
+                  call manager_set_soil_params(poly%detail_files, poly%fast_ctx%col_config%soil)
                   if (len_trim(cfg%output%io_config) > 0)                                          &
-                     call apply_io_overrides(poly%detail_sh, trim(cfg%output%io_config), .false.)
-                  call manager_finalize(poly%detail_sh)
-                  call manager_alloc_part(poly%detail_sh, poly%detail_part)
-                  call activate_site_diag(poly%detail_sh, poly%site)
+                     call apply_io_overrides(poly%detail_files, trim(cfg%output%io_config), .false.)
+                  call manager_finalize(poly%detail_files)
+                  call manager_alloc_buffers(poly%detail_files, poly%detail_bufs)
+                  call activate_site_diag(poly%detail_files, poly%site)
                else
-                  call activate_site_diag(reg%out_sh, poly%site)
+                  call activate_site_diag(reg%out_files, poly%site)
                end if
             end associate
          end do
@@ -225,7 +225,7 @@ contains
             prev = clk ; clk = time_advance_days(prev, reg%step_days)
             new_year  = clk%year /= prev%year
             new_month = new_year .or. clk%month /= prev%month
-            call polygon_step(cfg, reg%met_src, reg%out_sh, reg%poly(p), prev, clk, reg%step_days,  &
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%poly(p), prev, clk, reg%step_days,  &
                               new_month, new_year, status)
             if (status /= DRIVER_OK) then
                write(*,'(4a)') ' region: ', trim(reg%poly(p)%label), ' failed on ', time_to_string(clk)
@@ -251,10 +251,10 @@ contains
       type(meds_region_t), intent(inout) :: reg
       integer(ik) :: p
       if (.not. reg%cfg%output%enabled) return
-      call output_serialize_region(reg%out_sh, reg%poly(:)%out_part)
+      call output_serialize_region(reg%out_files, reg%poly(:)%out_bufs)
       do p = 1_ik, size(reg%poly, kind=ik)
-         if (allocated(reg%poly(p)%detail_part))                                                  &
-            call output_serialize_pending(reg%poly(p)%detail_sh, reg%poly(p)%detail_part)
+         if (allocated(reg%poly(p)%detail_bufs))                                                  &
+            call output_serialize_pending(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
       end do
    end subroutine io_phase
 
@@ -304,10 +304,10 @@ contains
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
 
       if (reg%cfg%output%enabled) then
-         call output_region_close(reg%out_sh, reg%poly(:)%out_part)
+         call output_region_close(reg%out_files, reg%poly(:)%out_bufs)
          do p = 1_ik, size(reg%poly, kind=ik)
-            if (allocated(reg%poly(p)%detail_part))                                               &
-               call output_manager_close(reg%poly(p)%detail_sh, reg%poly(p)%detail_part, .true.)
+            if (allocated(reg%poly(p)%detail_bufs))                                               &
+               call output_manager_close(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs, .true.)
          end do
       end if
       call met_close(reg%met_src)
