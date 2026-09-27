@@ -240,8 +240,17 @@ is already present, so iterating on a figure costs seconds rather than the full 
   alternative: build with `-DMEDS_BUILD_PYLIB=ON`, then put `python/` on `PYTHONPATH` and point
   `MEDS_LIB` at the resulting `libmeds.so`.)
 - The forcing file `../../data/forcing/ithaca_forcing.nc`. NetCDF files are git-ignored, so it is
-  not in the repo. Build it from ERA5-Land for calendar year 2024, the configs' recycle window. It
-  needs a CDS API key and the `meds-era5` environment (`scripts/prepare_era5/environment.yml`):
+  not in the repo. Make it for calendar year 2024, the configs' recycle window, with
+  `scripts/prepare_era5/make_forcing_file.py` in the `meds-era5` environment
+  (`scripts/prepare_era5/environment.yml`). From an ED_ERA5land archive:
+
+  ```bash
+  cd ../../scripts/prepare_era5
+  python make_forcing_file.py --data-path <archive> --start 2024-01-01 --end 2024-12-31 \
+      --lat 42.44 --lon -76.50 --out ../../data/forcing/ithaca_forcing.nc
+  ```
+
+  Without an archive, download the year for a small box from the CDS (needs a CDS API key):
 
   ```bash
   cd ../../scripts/prepare_era5
@@ -249,7 +258,8 @@ is already present, so iterating on a figure costs seconds rather than the full 
       --variables all --out-dir raw_ithaca
   python postprocess_era5land.py --source cds --raw-dir raw_ithaca --bbox 42.5,-76.6,42.4,-76.4 \
       --start 2024-01-01 --end 2024-12-31 --variables all --split none --out-dir box_ithaca
-  python ../prep_era5land_forcing.py --in box_ithaca/*.nc --out ../../data/forcing/ithaca_forcing.nc
+  python make_forcing_file.py --box-dir box_ithaca --lat 42.44 --lon -76.50 \
+      --out ../../data/forcing/ithaca_forcing.nc
   ```
 - `matplotlib` for the figures (`numpy` and `netCDF4` come with the package).
 

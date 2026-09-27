@@ -393,10 +393,10 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #                        humidity with the model's own saturation curve, and carries the wind vector.
 #                        Keys: data_path and max_distance_km; NOT path, grid_index, grid_match or
 #                        [site].grid_elevation (rejected if present).
-#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with the tools
-#                        in scripts/prepare_era5/ (download_era5land_cds.py, then postprocess_era5land.py
-#                        --split none) followed by scripts/prep_era5land_forcing.py. Keys: path,
-#                        grid_index, grid_match and [site].grid_elevation.
+#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; make one with
+#                        scripts/prepare_era5/make_forcing_file.py, from an ED_ERA5land archive or from
+#                        a small download (download_era5land_cds.py, then postprocess_era5land.py
+#                        --split none). Keys: path, grid_index, grid_match and [site].grid_elevation.
 # When forcing_on=true, every other key below is required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY

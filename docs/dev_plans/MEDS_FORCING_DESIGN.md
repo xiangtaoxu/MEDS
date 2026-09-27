@@ -1,6 +1,6 @@
 # MEDS Meteorological Forcing — Source & Wiring Design
 
-> # ✅ LIVE — status reviewed 2026-09-26; revised the same day with the forcing-data plan (§11–§19).
+> # ✅ LIVE — status reviewed 2026-09-27; revised 2026-09-26 with the forcing-data plan (§11–§19).
 >
 > **Done (verified in the code, 2026-09-26):**
 > - ✅ The P0 reader, kernels and wiring (PR #36, 2026-07-08).
@@ -17,25 +17,35 @@
 > - ✅ The global per-variable monthly archive builder (F2), from GDEX or CDS raw files. July 2022
 >   (GDEX, the pilot) and June 2022 (CDS) are built and verified; the CDS build is bit-identical to
 >   GDEX (§13.2, §19).
+> - ✅ The archive (F3), 2026-09-27: every month from June 2002 to August 2026. GDEX supplied all
+>   of them except 2026-04 and 2026-06, whose GDEX surface-pressure files lack hours; those two
+>   come from the CDS. Earlier years (CDS only) are added when a study needs them.
 > - ✅ The reader upgrade (F4), 2026-09-26: `format = "era5land"` reads the archive for a site, one
->   month at a time, converting dewpoint and wind components inside the model (§15). Box selection
->   is in the library; the model exposes it with the polygon runtime.
+>   month at a time, converting dewpoint and wind components inside the model (§15). Region mode
+>   (`MEDS_POLYGON_RUNTIME_PLAN.md` R2, #289) exposes the box selection.
+> - ✅ Tools and docs (F5), 2026-09-27: `scripts/prepare_era5/make_forcing_file.py` writes the
+>   single forcing file (§7.1) from the archive or from box files; `prep_era5land_forcing.py` is
+>   retired.
 > - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
 >
 > **It overrides earlier text:**
-> - the two ERA5-Land scripts of §7.2–§7.3 retire: `download_era5land.py` was removed on
->   2026-09-26 (#280), and `prep_era5land_forcing.py` goes with the reader upgrade;
+> - the two ERA5-Land scripts of §7.2–§7.3 are retired: `download_era5land.py` (#280) and
+>   `prep_era5land_forcing.py` (F5), whose work `scripts/prepare_era5/make_forcing_file.py` does;
 > - `Qair` and wind speed are no longer computed in preprocessing (§4.3, §5.2);
-> - the single `(time, grid)` file of §7.1 continues only as `met_source = "legacy_file"`;
+> - the single `(time, grid)` file of §7.1 continues as `[forcing].format = "netcdf"`;
 > - the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`.
 >
 > The overridden subsections carry an **Update 2026-09-26** note, and none is renumbered.
 >
 > **Still open:**
-> - ⬜ the forcing-data phases F3 (further years) to F6 (§17);
+> - ⬜ F6, later products (§16–§17); archive years before June 2002 when needed;
 > - ⬜ a transient CO₂ stream (ROADMAP #184);
 > - ⬜ retiring the `apply_met_to_ctx` shim (§6.2);
-> - ⬜ echoing forcing to the diagnostic output (§6.7), not found in the output config.
+> - ⬜ echoing the forcing to the diagnostic output (§6.7): partly there (incoming shortwave,
+>   precipitation, and the fast tier's air temperature and CO₂); humidity, pressure, wind,
+>   longwave, the four shortwave streams, `cosz` and air density are not;
+> - ⬜ adjusting 2 m temperature and humidity to the reference height (Q2); the 10 m wind
+>   log-profile exists.
 >
 > **This document is also the reference for the de-accumulation recipe (§7.3), including the 00Z
 > trap,** now confirmed on real GDEX data (§19). It is restated in `docs/science/forcing.md`.
@@ -342,7 +352,7 @@ small, self-contained change to `CMakeLists.txt` (delete the `option`/`if`-`else
 | `src/driver/meds_fast_loop.f90` (edit) | per-sub-step met refresh in `run_fast_biophysics`; `build_forcing`/`fill_aenv` read a `met_forcing_t` | — |
 | `src/driver/meds_main.f90` (edit) | open the driver, seed reservoirs, thread `[site].reference_height` into `ctx%zref`, pass `fast_ctx` | — |
 | `scripts/download_era5land.py` (new; **removed 2026-09-26**, #280, for `scripts/prepare_era5/download_era5land_cds.py` + `postprocess_era5land.py`) | CDS-API download of ERA5-Land for a requested lat/lon (or box) → raw ERA5-Land NetCDF (§7) | — |
-| `scripts/prep_era5land_forcing.py` (new) | raw ERA5-Land NetCDF → **MEDS multi-grid forcing NetCDF** (de-accumulate, unit-convert, humidity from dewpoint) (§7) | — |
+| `scripts/prep_era5land_forcing.py` (new; **retired 2026-09-27**, F5, for `scripts/prepare_era5/make_forcing_file.py`) | raw ERA5-Land NetCDF → **MEDS multi-grid forcing NetCDF** (de-accumulate, unit-convert, humidity from dewpoint) (§7) | — |
 | `test/test_met_driver.f90` (new) | CTest: read multi-grid NetCDF, interpolate, disaggregate, diurnal cycle | `test_fast_loop` |
 
 CMake needs a **new `add_library(meds_forcing …)`** globbing `src/forcing/*.f90` (linking `meds_shared`
@@ -783,7 +793,7 @@ variables it does; those are deterministic conversions, not gap-fills. The de-ac
 (the single leading non-01Z sample, §7.3) is likewise not a data gap — the formatter drops it, so it is
 never written to the MEDS file.
 
-**The preprocessing tools do not gap-fill either** (§13; formerly `prep_era5land_forcing.py`, §7).
+**The preprocessing tools do not gap-fill either** (§13, and `make_forcing_file.py`, §7).
 A missing hour or an unexpected NaN at a valid cell stops the pipeline rather than inventing a value,
 so the archive it writes is either complete or not written. That matches the reader's contract.
 Cells where ERA5-Land has no data at all (ocean, some coastal cells) are NaN by definition and are
@@ -792,8 +802,7 @@ marked invalid in the static mask (§14.3); they are never filled.
 ### 5.6 SW partition seam (`partition_shortwave`) — **P0-required** for ERA5-Land (total SW)
 
 A pluggable dispatch (ED2 `imetrad` analogue) over total SWdown + `psurf` + `cosz` → 4 streams:
-`SWPART_PASSTHROUGH` (use the file's own split — for a *pre-split* file, e.g. a future 4-stream tower or
-`prep_era5land_forcing.py --presplit`), `SWPART_WEISS_NORMAN` (WN85, band-specific PAR/NIR diffuse
+`SWPART_PASSTHROUGH` (use the file's own split — for a *pre-split* file, e.g. a future 4-stream tower), `SWPART_WEISS_NORMAN` (WN85, band-specific PAR/NIR diffuse
 fractions, needs pressure), `SWPART_SIB` (Sellers-86), `SWPART_CLEARIDX` (Boland/Tsubo/Erbs clearness
 index). Ported as `pure` kernels from `radiate_utils.f90`. **Because ERA5-Land ships only total `ssrd`,
 the P0 default is `SWPART_CLEARIDX`** (the simplest defensible total→direct/diffuse split, then a fixed
@@ -1075,17 +1084,17 @@ safe to add at P0 and costs one row of scalars per output record.
 > - **§7.3**, the de-accumulation recipe, which the new post-processor implements unchanged except
 >   for the clip rule.
 >
-> **`scripts/download_era5land.py` was removed on 2026-09-26 (#280).** `prep_era5land_forcing.py`
-> now reads the box files of `download_era5land_cds.py` + `postprocess_era5land.py --split none`
-> (`--in` takes several files), and the references listed in §17 (F5) point there. The prep script
-> itself retires with the reader upgrade.
+> **Both scripts below are retired:** `scripts/download_era5land.py` (#280) and
+> `scripts/prep_era5land_forcing.py` (F5, 2026-09-27). `scripts/prepare_era5/make_forcing_file.py`
+> writes the §7.1 file, from an ED_ERA5land archive (`--data-path`) or from the box files of
+> `download_era5land_cds.py` + `postprocess_era5land.py --split none` (`--box-dir`).
 
 Two standalone scripts in `scripts/` (dependency-light: `cdsapi`, `xarray`/`netCDF4`, `numpy`), split by
 concern so the slow network download is separate from the fast, re-runnable formatting:
 
 1. **`scripts/download_era5land.py`** (removed 2026-09-26) — pulled raw ERA5-Land hourly NetCDF from the
    CDS for a requested lat/lon (or bounding box) and date range.
-2. **`scripts/prep_era5land_forcing.py`** — converts the raw ERA5-Land NetCDF into the **MEDS multi-grid
+2. **`scripts/prep_era5land_forcing.py`** (retired 2026-09-27) — converted the raw ERA5-Land NetCDF into the **MEDS multi-grid
    forcing NetCDF** the Fortran reader consumes (de-accumulate fluxes, unit-convert, humidity from
    dewpoint, wind magnitude, optional SW pre-split).
 
@@ -1158,7 +1167,7 @@ lon=-76.50` ⇒ `area=[42.55, -76.60, 42.35, -76.40]`. **Two verified gotchas th
 The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp`, `ssrd`, `strd`, on
 `(valid_time|time, latitude, longitude)`; the formatter reads those names (not the GRIB shortnames).
 
-### 7.3 `prep_era5land_forcing.py` — raw ERA5-Land → MEDS forcing NetCDF
+### 7.3 De-accumulation and conversion — raw ERA5-Land → MEDS forcing
 
 *Update 2026-09-26:*
 - **What survives here** is the **de-accumulation recipe**. It is now **confirmed on real GDEX
@@ -1168,8 +1177,11 @@ The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp
 - **Removed from preprocessing:** the humidity, wind and CO₂ lines of the old code. `Tdew` and
   `u10`/`v10` are stored as delivered, the reader converts them (§15.4), and `CO2air` is
   never written (the reader uses `co2_const`).
-- **Implementation:** the post-processor (§13) implements the recipe vectorised over cells and
-  months. The per-cell sketch below is kept only as the reference form.
+- **Implementation:** `build_era5land_archive.py` implements the recipe for the archive, vectorised
+  over cells and months, and `make_forcing_file.py --box-dir` for box files; the post-processor
+  (§13.1) leaves accumulations as delivered. A single file (§7.1) still carries `Qair`, `Wind` and
+  `CO2air`, which `make_forcing_file.py` computes by the reader's own formulas. The per-cell sketch
+  below is kept only as the reference form.
 
 The load-bearing conversions (§5.2). All operate per selected `grid` cell, then stack into `(time, grid)`:
 
@@ -1442,6 +1454,7 @@ resume, and a JSON-lines transfer log.
 |---|---|---|
 | `download_era5land_gdex.py` | GDEX's global 5-day files (6 per variable per month) into a raw pool that mirrors GDEX's directory tree | Needs no box. Checks byte count and hour count. Parallel streams: default 4, capped at GDEX's per-user limit of 10. Discovers coverage and stops with a clear message before it. |
 | `download_era5land_cds.py` | CDS `reanalysis-era5-land` for a box (`area`), or the globe (`--bbox global`: no `area` key, the native 1801 × 3600 grid) | GRIB by default. One variable per request, whole months grouped (12 per GRIB request, 6 per NetCDF), a partial month on its own, and one tiny request for the closing 00:00 stamp. `--parallel` (default 3) keeps several requests in the CDS queue at once. Checks the GRIB message count. Logs queue and transfer time separately. |
+| `make_forcing_file.py` | nothing: it writes the §7.1 single forcing file from the archive (`--data-path`, the nearest valid cell as the reader picks it) or from box files (`--box-dir`, de-accumulated here) | Both inputs give the same variables, conversions and clip rule (§7.3). A file cut from the archive reproduces a run on the archive itself to about 1e-7 (July 2024, Ithaca). |
 | `era5land_common.py` | shared helpers | Variable catalogue, box and date handling, GDEX file naming, box selection including across 0° and 180°, group-writable output. |
 | `environment.yml` | the tools' environment | numpy, netcdf4, cdsapi ≥ 0.7.7, eccodes, python-eccodes; conda-forge only. |
 
@@ -1791,23 +1804,10 @@ become `scripts/prepare_forcing/`.
 | **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
 | **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
-| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). The first build is July 2022 (OD1); more years are added by the same tools. | ✅ July 2022 (OD1, GDEX) and June 2022 (CDS test). ⬜ Further years when chosen; site spot checks against the CDS point series. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). | ✅ **2026-09-27:** every month from June 2002 to August 2026 (GDEX; 2026-04 and 2026-06 from the CDS, their GDEX surface-pressure files lacking 3 and 5 hours). Earlier years later, when chosen. |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ✅ **2026-09-26** (see the §15 status note): `format = "era5land"`, site domain, box selection in the library; the §15.6 tests pass (`test_met_era5land`, `test_met_driver`); output files record the humidity formula; July 2024 at Ithaca from the archive matches the `legacy_file` run to quantization (§15 status note). |
-| **F5** tools and docs | Extract tool (archive → `legacy_file`), READMEs, retire the old scripts and update their references | ✅ `scripts/download_era5land.py` removed and its references moved to the new tools (2026-09-26, #280); `prep_era5land_forcing.py` reads their box files. ⬜ Remove `scripts/prep_era5land_forcing.py` and update the references (list below). No shims. CHANGELOG. |
+| **F5** tools and docs | Extract tool (archive → single file), READMEs, retire the old scripts and update their references | ✅ **2026-09-27:** `scripts/prepare_era5/make_forcing_file.py` writes the single file from the archive or from box files; `scripts/download_era5land.py` (#280) and `scripts/prep_era5land_forcing.py` are removed and their references updated. |
 | **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
-
-**References F5 must update when it retires `prep_era5land_forcing.py`** (they name it next to the
-new tools since #280):
-
-| File | Lines |
-|---|---|
-| `meds_config_main.toml` | 385–387 |
-| `src/forcing/README.md` | 66–75 |
-| `docs/science/forcing.md` | 58–61, 397 |
-| `docs/ed2_comparison.md` | 319 |
-| `examples/example_biophysics/README.md` | 242–253 |
-| `examples/example_biophysics/run_example.py` | 180–182 |
-| this document's §2.1 table | (text) |
 
 **Order:**
 - **F2 and F4 can proceed in parallel:** F4 needs only synthetic files.

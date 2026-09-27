@@ -16,6 +16,20 @@ before and after.
 
 ### Added
 
+- **`scripts/prepare_era5/make_forcing_file.py`** writes the single forcing file
+  (`[forcing].format = "netcdf"`) from either input:
+  - **an ED_ERA5land archive** (`--data-path`, `--start`, `--end`): it picks each site's nearest
+    valid cell within `--max-distance-km`, as the model's reader does, and records the cell's
+    orography. A file cut this way reproduces a run on the archive itself to about 1e-7 (July 2024,
+    Ithaca), with identical precipitation;
+  - **box files** from `postprocess_era5land.py --split none` (`--box-dir`), for a small download
+    without an archive.
+
+  One behaviour change for box files: only negative packing noise is clipped, the rule the archive
+  already follows (`MEDS_FORCING_DESIGN.md` §7.3). The old threshold zeroed every hour with up to
+  0.01 mm of rain; at Ithaca in 2024 that was 0.38% of the year's precipitation. Otherwise the
+  output equals `prep_era5land_forcing.py`'s, variable for variable.
+
 - **Region runs** (R2 of `MEDS_POLYGON_RUNTIME_PLAN.md`). `[run].mode = "region"` simulates every
   selected ED_ERA5land cell of a `[region].box_nwse` as its own polygon, in one process:
   - one forcing reader serves all polygons, loading a month for every cell at once;
@@ -136,6 +150,10 @@ before and after.
 
 ### Removed
 
+- **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
+  (F5 of `MEDS_FORCING_DESIGN.md`). Its box-file code moved into the new tool. The config comment,
+  the forcing README, the science doc, the ED2 comparison and the `example_biophysics` instructions
+  show the new commands.
 - **`scripts/download_era5land.py`** (#280), replaced by `scripts/prepare_era5/download_era5land_cds.py`
   and `postprocess_era5land.py`. `scripts/prep_era5land_forcing.py` now reads their box files
   (`--in` takes several files), and the forcing README, science doc, config comment and the
