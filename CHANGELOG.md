@@ -16,6 +16,15 @@ before and after.
 
 ### Added
 
+- **`docs/science/order_of_processes.md`, the order of processes** (#300). It covers:
+  - a run, and a region's month loop;
+  - one slow step (`polygon_step`), and the fast loop's per-step setup and per-sub-step sequence;
+  - the slow dynamics;
+  - the calendar boundary's restructuring and what it means for records and checkpoints;
+  - output and I/O, with a code map.
+
+  No other page gave the sequence: each science page covers one process.
+
 - **The forcing the run used is written to the output** (§6.7 of `MEDS_FORCING_DESIGN.md`), as a new
   `forcing` group (`[output].forcing`, on by default). It is recorded after the reader's shortwave
   partition, rain/snow split and optional corrections:
