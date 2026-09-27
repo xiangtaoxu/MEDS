@@ -269,6 +269,21 @@ here, and one output gap that hid it (#270, open).
 
 ### Fixed
 
+- **Patch-sourced diagnostics read low by the disturbed fraction on the year-boundary step** (#295).
+  `apply_patch_disturbance` carves one gap from every donor at a uniform `frac = 1 - exp(-rate dt)`
+  and shrinks the donors to `(1 - frac)` of their area, but it *cleared* the gap's patch-diagnostic
+  slot, so the gap read 0 for the whole step. Every site mean built as Σ area·value from `PD_*`
+  fields — the fluxes, the canopy air, the ground and litter diagnostics — was therefore low by
+  exactly `frac` on that step. The gap now inherits the area-weighted donor slot
+  (`patch_diag_inherit`), as its canopy air, soil, snow and carbon reservoirs already do, and the
+  `/(1 - frac)` that `PD_MORT_C_DISTURB` carried to compensate is removed. On the six regression
+  cases only records stamped 1 January change, and no state variable does: the daily record rises by
+  1/(1 - frac) = 1.014098 (e.g. `cas_temp_site` 271.75 → 275.58 K on the est_year case), the
+  January monthly means by 1.0001–1.0015 (`le_site` 1.000138, `gpp_rate_site` 1.001485,
+  `cas_temp_site` 1.000457), `disturb_area_site` by 1.014098, and `mort_carbon_disturb_site` is
+  unchanged. `test_disturbance` checks that the gap and the site mean of a two-donor fixture read the
+  donors' area-weighted value.
+
 - **Ground evaporation used the wrong air-filled porosity, which inverted its moisture response**
   (#266). `ground_evaporation` referenced CLM5's air-filled pore space to the **bulk** top-layer
   moisture, `phi_air = phi - theta1`. CLM5 eq 5.80 references it to `theta_air`, the **air-dry**
