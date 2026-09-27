@@ -103,6 +103,12 @@ before and after.
 
 ### Changed
 
+- **The fast loop reads the forcing record directly** (§6.2 and Q6 of `MEDS_FORCING_DESIGN.md`).
+  `fill_forcing` and `fill_aenv` take the sub-step's `met_forcing_t`: the reader's sample, or the
+  context's reference climate without a forcing source. The `apply_met_to_ctx` shim, and the
+  per-thread copies of the whole fast context it wrote into, are gone. Outputs are identical in the
+  six regression cases and with 1 or 4 patch threads.
+
 - **`MEDS_POLYGON_RUNTIME_PLAN.md` revised.** A run's polygons form a *region*, always contiguous;
   scattered site networks run as separate processes (a job array, or one allocation filled with GNU
   parallel) rather than in one process. The plan adds the output-performance analysis, two blockers

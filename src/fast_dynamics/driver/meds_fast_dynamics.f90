@@ -309,7 +309,8 @@ contains
       type(fast_sample_t), allocatable :: red_fast(:,:)            !< (sub-step, patch) FAST-tier staging
       real(wp),    allocatable :: red_fast_soil_temp(:,:,:)        !< (layer, sub-step, patch)
       real(wp),    allocatable :: red_fast_soil_water(:,:,:)       !< (layer, sub-step, patch)
-      real(wp)    :: f_ground
+      real(wp)    :: f_ground, sw_ground
+      type(met_forcing_t) :: met_ref                  !< the context's reference climate (no forcing)
       integer(ik) :: ip, isub, npatch, ncoh_max, nsub, nl, n_thread
       logical     :: do_forcing, do_fast, do_cdiag, do_pdiag
       !----- Per-(cohort, sub-step) diagnostic scratch: filled by the pre-pass through cdiag, then   !
@@ -345,7 +346,6 @@ contains
       type(aero_out_t),       allocatable :: aero_pool(:)
       type(patch_biophys_t),  allocatable :: bio_pool(:)
       type(column_budget_t),  allocatable :: budg_pool(:)
-      type(fast_context_t),   allocatable :: ctx_pool(:)     !< per-sub-step met overlay on ctx
       type(met_forcing_t),    allocatable :: met_pool(:)
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
@@ -353,11 +353,13 @@ contains
       integer(ik) :: j, i, i0, ncoh, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
-      !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
-      !      bit-identically (the diurnal cycle lives INSIDE the sub-step loop, design §1.1/§6.2).  !
+      !      supplied; otherwise every sub-step reads the context's constant reference climate      !
+      !      (met_ref), the CONSTANT-forcing MVP. The diurnal cycle lives INSIDE the sub-step loop  !
+      !      (design §1.1/§6.2).                                                                    !
       do_forcing = cfg%forcing%forcing_on .and. present(met_src) .and. present(met_cur)          &
                    .and. present(step_start)
       f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
+      met_ref  = reference_met(ctx)
       npatch   = site%patch%n
       nsub     = cfg%n_fast_per_slow
       n_thread = max(1_ik, cfg%n_threads)
@@ -499,13 +501,13 @@ contains
       !  literally the serial code that preceded it.                                                    !
       !=========================================================================================!
       allocate(coh_pool(n_thread), forc_pool(n_thread), aenv_pool(n_thread), ageom_pool(n_thread),  &
-               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread), ctx_pool(n_thread),    &
+               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread),                        &
                met_pool(n_thread))
       allocate(gpp_pool(ncoh_max, n_thread), leaf_resp_pool(ncoh_max, n_thread),                    &
                stem_resp_pool(ncoh_max, n_thread), root_resp_pool(ncoh_max, n_thread),              &
                psi_leaf_pool(ncoh_max, n_thread))
       do ith = 1_ik, n_thread
-         ctx_pool(ith) = ctx
+         met_pool(ith) = met_ref                            ! overwritten per sub-step when forcing is on
          call ensure_column_cohort_capacity(coh_pool(ith), ncoh_max)
          call ensure_patch_biophys_capacity(bio_pool(ith), ncoh_max, ctx%air_temp, ctx%shv_atm,     &
                                             ctx%co2_atm, ctx%air_temp)
@@ -515,7 +517,8 @@ contains
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days)
+      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days,  &
+      !$omp            sw_ground)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -524,7 +527,7 @@ contains
          associate (col_cohort           => coh_pool(ith),        forc          => forc_pool(ith),         &
                     aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
                     aero          => aero_pool(ith),       biophys           => bio_pool(ith),          &
-                    budget          => budg_pool(ith),       ctx_now       => ctx_pool(ith),          &
+                    budget          => budg_pool(ith),                                              &
                     met           => met_pool(ith),        gpp_coh       => gpp_pool(:,ith),        &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
                     root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith), &
@@ -594,24 +597,26 @@ contains
          call ensure_aero_out_capacity(aero, ncoh)
 
          !----- n_fast_per_slow operator-split sweeps. Forcing is re-evaluated PER SUB-STEP (the   !
-         !      diurnal cycle lives here): refresh the met overlay ctx_now, then fill_forcing +     !
-         !      fill_aenv from it. CONSTANT path (do_forcing=.false.): ctx_now==ctx, so these        !
-         !      reproduce the old build_forcing-once + fill_aenv sequence bit-identically.           !
+         !      diurnal cycle lives here): take the sub-step's forcing record, then fill_forcing +  !
+         !      fill_aenv from it. CONSTANT path (do_forcing=.false.): the record is the context's   !
+         !      reference climate (met_ref) and the ground shortwave its own reference value.        !
          budget = column_budget_t()
          do isub = 1_ik, cfg%n_fast_per_slow
             !----- §8f: the met sample point within the sub-step (default 0.5 = midpoint) is applied   !
-            !      when met_sample is built above. Only the cheap per-patch overlay write stays here --  !
-            !      it targets ctx_now, which is per-patch (and will be per-THREAD) state. --------------!
+            !      when met_sample is built above. The ground shortwave scales with the canopy-top      !
+            !      shortwave at the reference transmittance f_ground (the constant path keeps the       !
+            !      reference value itself). `met` and `sw_ground` are per-THREAD. ---------------------!
             if (do_forcing) then
                met = met_sample(isub)
-               call apply_met_to_ctx(ctx_now, met, f_ground)
+               sw_ground = f_ground * met%swdown()
+            else
+               sw_ground = ctx%rad_sw_ground
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
-            red_site(RED_PHENO_TAIR, isub, ip) = ctx_now%air_temp
-            call fill_forcing(forc, col_cohort, ctx_now, sum_lai)
+            red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
+            call fill_forcing(forc, col_cohort, met, sw_ground, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
-            !      per-cohort absorbed SW/PAR from the two-stream canopy radiation (ctx%rad_opt read !
-            !      directly -- not the ctx_now overlay -- so the allocatable table is not deep-copied). !
+            !      per-cohort absorbed SW/PAR from the two-stream canopy radiation. ----------------!
             !----- LW emission base = the CAS temperature: the leaf energy balance linearizes leaf LW  !
             !      emission around tcas, so it needs abs_lw = NET LW AT tcas, and feeding the two-stream  !
             !      tcas as the canopy emission temperature makes abs_leaf(LW) exactly that. The           !
@@ -621,7 +626,7 @@ contains
                                  cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv),          &
                                  biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
                                  ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
-            call fill_aenv(aenv, biophys, ctx_now)
+            call fill_aenv(aenv, biophys, met, ctx%zref)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
             !      argument's extent must equal col_cohort%n exactly, independent of the backing array's       !
@@ -631,13 +636,13 @@ contains
             !      leaf_flux_t fields, so a production run pays nothing for a feature it is not using. !
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
-               call column_fast_step(cfg%dt_fast, cfg, ctx_now%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+               call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                      gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
-               call column_fast_step(cfg%dt_fast, cfg, ctx_now%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+               call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
                                      gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
@@ -655,8 +660,8 @@ contains
             !      and would need its own thresholds (ROADMAP).  -----------------------------------------!
             red_site(RED_PHENO_SOILT,  isub, ip) = site%patch%area(ip) * biophys%soil_e%soil_temp(1)
             red_site(RED_PHENO_SWATER, isub, ip) = site%patch%area(ip)                                        &
-                 * root_available_water(biophys%soil_w%theta, ctx_now%col_config%soil)
-            red_site(RED_PHENO_RAD,    isub, ip) = site%patch%area(ip) * ctx_now%rad_sw_top
+                 * root_available_water(biophys%soil_w%theta, ctx%col_config%soil)
+            red_site(RED_PHENO_RAD,    isub, ip) = site%patch%area(ip) * met%swdown()
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
             red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budget%integ_nsteps,   wp)
@@ -704,7 +709,7 @@ contains
             !      rejects fast_probe together with n_threads > 1, so no guard is needed here. -----------!
             if (cfg%fast_probe .and. do_forcing)                                                    &
                call write_fast_probe(cfg, t_sample(isub), ip, ncoh, biophys, col_cohort, gpp_coh(1:ncoh),      &
-                                     le_flux, ctx_now%rad_sw_top)
+                                     le_flux, met%swdown())
             !----- FAST (sub-daily) output staging: area-weight the LIVE per-sub-step site quantities   !
             !      onto the sub-step axis (patch areas sum to 1, so direct accumulation IS the site      !
             !      mean, mirroring et_accum). H and Rn are assembled here from the bulk conductances /    !
@@ -725,9 +730,9 @@ contains
                red_fast(isub,ip)%le_flux       = w_area * le_flux
                red_fast(isub,ip)%h_flux        = w_area * h_flux
                red_fast(isub,ip)%rnet          = w_area * rnet
-               red_fast(isub,ip)%sw_in         = w_area * ctx_now%rad_sw_top
+               red_fast(isub,ip)%sw_in         = w_area * met%swdown()
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
-               red_fast(isub,ip)%air_temp      = w_area * ctx_now%air_temp
+               red_fast(isub,ip)%air_temp      = w_area * met%tair_k
                !----- CARBON. budget%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
                !      the atmosphere -- the same number the CAS CO2 box is driven by, so the flux and  !
                !      the state it acts on cannot disagree. NPP is GPP net of the three MAINTENANCE    !
@@ -740,7 +745,7 @@ contains
                red_fast(isub,ip)%npp_rate      = w_area * npp_patch
                red_fast(isub,ip)%reco_rate     = w_area * (budget%nee_last + gpp_patch)
                red_fast(isub,ip)%cas_co2       = w_area * biophys%cas%can_co2
-               red_fast(isub,ip)%atm_co2       = w_area * ctx_now%co2_atm
+               red_fast(isub,ip)%atm_co2       = w_area * met%co2
                red_fast_soil_temp(1:nl,isub,ip)  = w_area * biophys%soil_e%soil_temp(1:nl)
                red_fast_soil_water(1:nl,isub,ip) = w_area * biophys%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
@@ -770,7 +775,7 @@ contains
             end if
             if (do_pdiag) then
                call accumulate_patch_diag(site%patch%diag, ip, cfg%dt_fast, le_flux, h_flux, rnet,          &
-                                          ctx_now%rad_sw_top, forc%abs_sw_ground, forc%abs_lw_ground,       &
+                                          met%swdown(), forc%abs_sw_ground, forc%abs_lw_ground,       &
                                           aero%ustar, aero%ggnet, aero%rough, aero%displace,               &
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
                                           gpp_patch, budget%nee_last, forc%rainfall + forc%snowfall,             &
@@ -956,27 +961,28 @@ contains
                                                  forc%abs_par(ncoh), forc%abs_sw_wood(ncoh), forc%abs_lw_wood(ncoh))
    end subroutine alloc_forcing
 
-   !----- Fill the per-patch prescribed forcing from the (possibly per-sub-step) reference met. !
-   subroutine fill_forcing(forc, col_cohort, ctx, sum_lai)
+   !----- Fill the per-patch prescribed forcing from the sub-step's forcing record and the ground  !
+   !      shortwave (the caller's: f_ground x canopy-top with forcing, the reference value without). !
+   subroutine fill_forcing(forc, col_cohort, met, sw_ground, sum_lai)
       type(column_forcing_t), intent(inout) :: forc
       type(column_cohort_t),  intent(in)    :: col_cohort
-      type(fast_context_t),   intent(in)    :: ctx
-      real(wp),               intent(in)    :: sum_lai
+      type(met_forcing_t),    intent(in)    :: met
+      real(wp),               intent(in)    :: sw_ground, sum_lai
       integer(ik) :: j
-      forc%enthalpy_atm  = cas_enthalpy_of_temp(ctx%air_temp, ctx%shv_atm)
-      forc%shv_atm       = ctx%shv_atm
-      forc%co2_atm       = ctx%co2_atm
-      forc%abs_sw_ground = ctx%rad_sw_ground
+      forc%enthalpy_atm  = cas_enthalpy_of_temp(met%tair_k, met%qair)
+      forc%shv_atm       = met%qair
+      forc%co2_atm       = met%co2
+      forc%abs_sw_ground = sw_ground
       forc%abs_lw_ground = 0.0_wp
-      forc%rainfall        = ctx%rainfall
-      forc%snowfall         = ctx%snowfall                 ! frozen rainfall -> snow accumulation
-      forc%air_temp          = ctx%air_temp              ! rainfall enthalpy reference (snow/rain-on-snow)
+      forc%rainfall        = met%rainf
+      forc%snowfall         = met%snowfall                 ! frozen rainfall -> snow accumulation
+      forc%air_temp          = met%tair_k                ! rainfall enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- NO-FORCING FALLBACK: split the canopy-top shortwave across cohorts by LAI share.   !
       !      When forcing is on, apply_rt_forcing overrides this with the real two-stream solve.  !
       do j = 1_ik, col_cohort%n
          if (sum_lai > tiny_num) then
-            forc%abs_sw(j) = ctx%rad_sw_top * col_cohort%lai(j) / sum_lai
+            forc%abs_sw(j) = met%swdown() * col_cohort%lai(j) / sum_lai
          else
             forc%abs_sw(j) = 0.0_wp
          end if
@@ -987,26 +993,18 @@ contains
       end do
    end subroutine fill_forcing
 
-   !----- The met-source shim (design §6.2/§6.5, retired at P1): copy the instantaneous          !
-   !      met_forcing_t's raw scalars into fast_context_t's met fields, so fill_forcing/fill_aenv  !
-   !      keep their present logic unchanged. cosz/leaf_temp/ustar/can_co2 are NOT overwritten     !
-   !      (they are prognostic or derived). Ground SW scales with canopy-top SW at the reference    !
-   !      transmittance f_ground (reproduces the ad-hoc rad_sw_ground=60 at swdown=400).            !
-   subroutine apply_met_to_ctx(ctx, met, f_ground)
-      type(fast_context_t), intent(inout) :: ctx
-      type(met_forcing_t),  intent(in)    :: met
-      real(wp),             intent(in)    :: f_ground
-      ctx%air_temp      = met%tair_k
-      ctx%shv_atm       = met%qair
-      ctx%press         = met%psurf_pa
-      ctx%rho_air       = met%rho_air
-      ctx%co2_atm       = met%co2
-      ctx%u_ref         = met%wind
-      ctx%rainfall        = met%rainf
-      ctx%snowfall         = met%snowfall
-      ctx%rad_sw_top    = met%swdown()
-      ctx%rad_sw_ground = f_ground * met%swdown()
-   end subroutine apply_met_to_ctx
+   !----- The context's constant reference climate as a forcing record, for a run without a forcing  !
+   !      source. Only the TOTAL shortwave matters there -- fill_forcing's LAI-share split; the       !
+   !      two-stream RT runs only with forcing -- so it sits in one stream and the total is exact.    !
+   pure function reference_met(ctx) result(met)
+      type(fast_context_t), intent(in) :: ctx
+      type(met_forcing_t) :: met
+      met%tair_k   = ctx%air_temp ; met%qair = ctx%shv_atm ; met%psurf_pa = ctx%press
+      met%rho_air  = ctx%rho_air  ; met%co2  = ctx%co2_atm ; met%wind     = ctx%u_ref
+      met%rainf    = ctx%rainfall ; met%snowfall = ctx%snowfall
+      met%par_beam = ctx%rad_sw_top
+      met%par_diffuse = 0.0_wp ; met%nir_beam = 0.0_wp ; met%nir_diffuse = 0.0_wp
+   end function reference_met
 
    !----- RT join (§6.3): run the two-stream canopy radiation for this patch and OVERWRITE the      !
    !      LAI-share SW split in `forc` with real per-cohort absorbed SW (leaf energy) + PAR           !
@@ -1130,18 +1128,19 @@ contains
       forc%lw_up     = flux%albedo(RAD_LW)  * (rf%incid_beam(RAD_LW) + rf%incid_diff(RAD_LW))
    end subroutine apply_rt_forcing
 
-   !----- Fill the aerodynamics env from the reference met + the patch's current CAS/ground. -!
-   subroutine fill_aenv(aenv, biophys, ctx)
-      type(aero_env_t),     intent(inout) :: aenv
-      type(patch_biophys_t), intent(in)   :: biophys
-      type(fast_context_t), intent(in)    :: ctx
-      aenv%u_ref = ctx%u_ref ; aenv%zref = ctx%zref ; aenv%press = ctx%press ; aenv%rho_air = ctx%rho_air
+   !----- Fill the aerodynamics env from the sub-step's forcing + the patch's current CAS/ground. -!
+   subroutine fill_aenv(aenv, biophys, met, zref)
+      type(aero_env_t),      intent(inout) :: aenv
+      type(patch_biophys_t), intent(in)    :: biophys
+      type(met_forcing_t),   intent(in)    :: met
+      real(wp),              intent(in)    :: zref     !< [m] the reference height the forcing is applied at
+      aenv%u_ref = met%wind ; aenv%zref = zref ; aenv%press = met%psurf_pa ; aenv%rho_air = met%rho_air
       !----- The potential-temperature conversion and the CAS/ground refresh now live in            !
       !      meds_canopy_types/meds_soil_types (issue #97), so tests and probes assemble `aenv` through the SAME !
       !      routine this driver does instead of by a parallel hand-written copy -- which is how     !
       !      every column test ended up leaving `theta_atm` at its 298.15 K default. `zref` must be  !
       !      assigned before set_aero_env_atm, which reads it. -------------------------------------!
-      call set_aero_env_atm(aenv, ctx%air_temp, ctx%shv_atm, ctx%co2_atm)
+      call set_aero_env_atm(aenv, met%tair_k, met%qair, met%co2)
       call set_aero_env_canopy(aenv, biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,           &
                                biophys%soil_e%soil_temp(1))
    end subroutine fill_aenv
