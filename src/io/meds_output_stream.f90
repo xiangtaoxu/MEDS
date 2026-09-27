@@ -32,9 +32,11 @@ module meds_output_stream
 
 contains
 
-   !----- Write one closed-period record, opening / rolling the per-tier file as needed. ------!
+   !----- Write one closed-period record, opening / rolling the per-tier file as needed. `later`   !
+   !      holds the records queued behind this one; a file that opens here sizes its cohort/patch  !
+   !      axes to the largest live count among the records it will hold. --------------------------!
    subroutine stream_write_record(stream, reg, dg, pr, dir, prefix, file_chunk, cohort_max,      &
-                                  patch_max, sync_every, forcing_qair)
+                                  patch_max, sync_every, forcing_qair, later)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
       type(diag_params_t),     intent(in)    :: dg
@@ -42,12 +44,14 @@ contains
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, cohort_max, patch_max, sync_every
       character(len=*),        intent(in)    :: forcing_qair   !< provenance attribute ('' -> none)
-      integer(ik) :: tier, bucket, fc
+      type(pending_record_t),  intent(in), optional :: later(:)
+      integer(ik) :: tier, bucket, fc, j, n_cohort_file, n_patch_file
       tier = freq_tier_index(pr%freq)
-      !----- Cohort/patch counts are invariant only WITHIN a month (§4.4); to trim the cohort/patch !
-      !      dimension to the live count the file must not span more than a month. Cap the effective  !
-      !      file_chunk to FC_MONTH for any tier that carries a cohort/patch variable (site-only tiers !
-      !      keep their configured chunk, e.g. the annual run-file).  ------------------------------!
+      !----- Cohort/patch counts change only at a month boundary (§4.4), and the I/O phase runs at !
+      !      each one, so a file that spans at most a month has all its records queued when it     !
+      !      opens and can trim its cohort/patch axes to their largest live count. Cap the         !
+      !      effective file_chunk to FC_MONTH for any tier that carries a cohort/patch variable    !
+      !      (site-only tiers keep their configured chunk, e.g. the annual run-file). -------------!
       fc = file_chunk
       if (tier_has_cohort_or_patch(reg, tier)) then
          fc = min(fc, FC_MONTH)
@@ -58,9 +62,17 @@ contains
       end if
       bucket = bucket_key(pr%t_open, fc)
       if (stream%ncid < 0_ik .or. bucket /= stream%chunk_bucket) then
+         n_cohort_file = pr%n_cohort ; n_patch_file = pr%n_patch
+         if (present(later)) then
+            do j = 1_ik, size(later, kind=ik)
+               if (bucket_key(later(j)%t_open, fc) /= bucket) cycle
+               n_cohort_file = max(n_cohort_file, later(j)%n_cohort)
+               n_patch_file  = max(n_patch_file,  later(j)%n_patch)
+            end do
+         end if
          call stream_close_file(stream)
          call stream_open_file(stream, reg, dg, pr, dir, prefix, fc, bucket, cohort_max,          &
-                               patch_max, tier, forcing_qair)
+                               patch_max, tier, forcing_qair, n_cohort_file, n_patch_file)
       end if
       call write_one_record(stream, reg, pr, tier)
       !----- Skip the per-record nc_sync for the FAST tier: ~n_fast_per_slow records/day would else    !
@@ -132,7 +144,7 @@ contains
    !  Create the file + define dims / registry-driven variables / CF metadata (§5.3).        !
    !=======================================================================================!
    subroutine stream_open_file(stream, reg, dg, pr, dir, prefix, file_chunk, bucket, cohort_max,  &
-                               patch_max, tier, forcing_qair)
+                               patch_max, tier, forcing_qair, n_cohort_file, n_patch_file)
       type(stream_file_t),     intent(inout) :: stream
       type(output_registry_t), intent(in)    :: reg
       type(diag_params_t),     intent(in)    :: dg
@@ -140,6 +152,7 @@ contains
       character(len=*),        intent(in)    :: dir, prefix
       integer(ik),             intent(in)    :: file_chunk, bucket, cohort_max, patch_max, tier
       character(len=*),        intent(in)    :: forcing_qair
+      integer(ik),             intent(in)    :: n_cohort_file, n_patch_file  !< largest live counts of its records
       character(len=512) :: path
       character(len=16)  :: stamp
       character(len=1)   :: letter
@@ -162,14 +175,16 @@ contains
          end select
       end do
 
-      !----- Trim the cohort/patch axes to the live count of the record that opens this file. The     !
-      !      count is invariant across a ≤1-month file (the caller capped file_chunk to FC_MONTH for   !
-      !      cohort/patch tiers), so this dim fits every record in the file; write_one_record asserts   !
-      !      it. max(.,1) avoids a zero-length dim on an empty (bare-ground) window.  ------------------!
-      if (pr%n_cohort > cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
-      if (pr%n_patch  > patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
-      cohort_dim = max(pr%n_cohort, 1_ik)
-      patch_dim  = max(pr%n_patch,  1_ik)
+      !----- Trim the cohort/patch axes to the largest live count among the records this file will !
+      !      hold, all queued when it opens (stream_write_record). A daily file's last record is   !
+      !      the step that ends at the month boundary, so it may already hold the next month's     !
+      !      slot set (a recruit, a disturbance gap); a record with fewer rows leaves the tail as  !
+      !      fill, which the per-record n_cohort / n_patch delimit. write_one_record asserts the   !
+      !      fit. max(.,1) avoids a zero-length dim on an empty (bare-ground) window. -------------!
+      if (n_cohort_file > cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
+      if (n_patch_file  > patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
+      cohort_dim = max(n_cohort_file, 1_ik)
+      patch_dim  = max(n_patch_file,  1_ik)
 
       letter = freq_letter(pr%freq)
       stamp  = chunk_stamp(pr%t_open, file_chunk)
@@ -404,12 +419,14 @@ contains
       ncid = int(stream%ncid, c_int)
       t0   = int(stream%nrec, c_size_t)
       i1   = [t0]
-      !----- The cohort/patch axes were trimmed to the opening record's live count; every record in a  !
-      !      ≤1-month file shares that count (§4.4). Assert it rather than silently overflow the slab.  !
+      !----- The cohort/patch axes were trimmed to the largest live count among the records queued !
+      !      when the file opened (stream_open_file). A record past that -- one written to the     !
+      !      file by a later I/O phase -- must still fit: assert it rather than silently overflow  !
+      !      the slab. ----------------------------------------------------------------------------!
       if (stream%has_cohort .and. pr%n_cohort > stream%cohort_dim)                                    &
-         error stop 'meds_output_stream: cohort count grew within a file (cohort output needs file_chunk <= month)'
+         error stop 'meds_output_stream: a record has more cohorts than its file''s cohort axis'
       if (stream%has_patch .and. pr%n_patch > stream%patch_dim)                                       &
-         error stop 'meds_output_stream: patch count grew within a file (patch output needs file_chunk <= month)'
+         error stop 'meds_output_stream: a record has more patches than its file''s patch axis'
       !----- calendar (period start) + live counts. ---!
       call nc_check(nc_put_var1_double(ncid, int(stream%v_time, c_int), i1, time_to_decimal_year(pr%t_open)), 'put time')
       call put_int_rec(ncid, stream%v_year,  t0, int(pr%t_open%year,  c_int))

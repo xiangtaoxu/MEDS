@@ -322,6 +322,9 @@ module meds_output_types
    type :: output_buffers_t
       type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
       logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
+      !----- The window holds only the cohort/patch samples a restructuring step deferred to it     !
+      !      (output_integrate), no step of its own yet; the end-of-run flush drops such a window.  --!
+      logical           :: deferred_only(N_FREQ) = .false.
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
       type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase

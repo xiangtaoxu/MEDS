@@ -678,6 +678,19 @@ of the cohort/patch buffers precedes `vegetation_dynamics`' monthly block — so
 slot-set change. `meds_main` calls `output_serialize_pending` after `advance_one_step` returns — the
 clean split of §2 that keeps `aux` netCDF-free and the flush at `main`.
 
+> **As built (#294).** The slow tiers tick once per slow step, after `advance_one_step` returns, so
+> the monthly flush cannot run before that step's restructuring. `output_integrate` splits the
+> boundary step instead:
+>
+> - its site, soil and PFT values fold into the closing window, because a step belongs to the period
+>   it starts in;
+> - its cohort and patch values, and the two counts, are already in the new slot set, so they open
+>   the next window.
+>
+> The window/boundary alignment above holds exactly. The cost is that a monthly cohort/patch record
+> lags the site record beside it by one slow step. See `docs/science/diagnostics.md` §4, "Which steps
+> a record holds".
+
 ---
 
 ## 5. File organization & performance
