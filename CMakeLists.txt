@@ -355,7 +355,8 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 #      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
 #      it is the one place that owns configuration, the calendar, the output manager and the       #
 #      closing conservation reports together.                                                      #
-add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90)
+add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
+                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90)
 target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
 
