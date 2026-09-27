@@ -92,6 +92,15 @@ before and after.
   Outputs are identical. Two visible changes: `[output].sync_every` now takes effect at month
   boundaries, so a crash loses at most the current month's output; and `format = "era5land"` needs
   daily steps from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00).
+- **The forcing reader is split into a shared source and per-polygon cursors** (R2 of
+  `MEDS_POLYGON_RUNTIME_PLAN.md`). `met_source_t` holds the file, the time axis, the cells and the
+  loaded month; `met_cursor_t` holds one polygon's cell, location and bracketing records, so one
+  archive read serves every polygon of a region. `met_open` takes an optional cell list, and the
+  new `met_cursor_init` places a cursor on a cell. Leaf phenology takes the polygon's latitude for
+  day length and hemisphere, defaulting to `[site]`. Built with `-fp-model consistent`, outputs are
+  identical to before in six regression cases. With the default ifx flags, the compiler optimizes the
+  day-length call differently, so runs with a growing stand differ at round-off from the first autumn
+  on: at most 5e-12 kg C in cohort AGB after one year.
 - **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
   the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
   site year from a spun-up stand runs about 10% faster; outputs are identical.

@@ -32,7 +32,7 @@ contains
    ! integrated environmental scalar. Same signature as vegetation_dynamics (doy optional).        !
    !---------------------------------------------------------------------------------------!
    subroutine advance_slow_dynamics(site, cfg, is_new_month, is_new_year, doy, seam,               &
-                                    ledger, rho_air)
+                                    ledger, rho_air, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
@@ -43,13 +43,15 @@ contains
       !      or inactive. `rho_air` values the canopy-air store and comes from the fast context.   !
       type(slow_ledger_t), intent(inout), optional :: ledger
       real(wp),            intent(in),    optional :: rho_air
+      real(wp),            intent(in),    optional :: latitude_deg   !< the polygon's (default [site])
 
       if (present(ledger)) call slow_ledger_open(ledger, site, cfg, rho_air)
 
       if (present(doy)) then
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger)
+         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger, latitude_deg)
       else
-         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, ledger=ledger)
+         call vegetation_dynamics(site, cfg, is_new_month, is_new_year, ledger=ledger,            &
+                                  latitude_deg=latitude_deg)
       end if
 
       call update_patch_states(site%patch, cfg%dt_years)

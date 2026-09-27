@@ -454,6 +454,25 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
 
 **PR 1 — the reader split and the polygon's location.**
 
+> **Status ✅ 2026-09-27.** As planned, with these specifics:
+> - **The first bracket moved from `met_open` to `met_cursor_init(src, cur, cell, lat, lon, utc,
+>   elevation)`:** the source only records the first record in range (`rec_first`). A cursor's grid
+>   elevation is its cell's orography for the archive, and `[site].grid_elevation` otherwise.
+> - **`met_open` takes an optional `met_cells_t`:** a region passes its cells, and a site run omits it
+>   and gets its nearest valid cell as before.
+> - **Latitude reaches leaf phenology as an optional argument** of `advance_one_step`,
+>   `advance_slow_dynamics`, `vegetation_dynamics` and `advance_leaf_phenology`; absent, it is
+>   `[site].latitude`, so the C API and the unit tests are unchanged.
+> - **Test 8 of `test_met_era5land`:** two cursors on one box source read their own cells, bit for bit
+>   what a site run at each cell reads, and one prefetch serves both.
+> - **Equivalence is exact under a strict floating-point model.** Built with `-fp-model consistent`,
+>   `beta` and this PR give identical outputs in the six regression cases. With the default flags
+>   (`-O2`, ifx's `-fp-model fast`), the day-length call in leaf phenology compiles differently once
+>   the latitude comes from a local variable, and the two runs with a growing stand differ at
+>   round-off from their first October on (at most 5e-12 kg C in cohort AGB after a year). Later R2
+>   equivalence checks against the site run therefore compare within one build. Different builds are
+>   compared under `-fp-model consistent`.
+
 1. **Split `met_driver_t`** (`meds_forcing_types.f90`, `meds_met_driver.f90`).
    - `met_source_t`, shared: the forcing config, the time axis and recycle window, the cell list
      (`met_domain_t` renamed `met_cells_t`), and the month buffer with its carried record.

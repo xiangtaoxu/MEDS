@@ -25,8 +25,8 @@ program test_fast_loop
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t
    use meds_forcing_config,      only : MET_BACKEND_NETCDF, SWPART_CLEARIDX, METAVG_END
-   use meds_forcing_types,       only : met_driver_t
-   use meds_met_driver,          only : met_open, met_close
+   use meds_forcing_types,       only : met_source_t, met_cursor_t
+   use meds_met_driver,          only : met_open, met_cursor_init, met_close
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -168,7 +168,8 @@ program test_fast_loop
    !    accumulate ~0 GPP; a 2 h DAY window (15-17 UTC, high SW) must accumulate clearly more -- i.e. !
    !    the forcing's diurnal shortwave really propagates through met_instant -> the fast loop.  =====!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       real(wp)           :: gpp_night, gpp_day, tcas_n
       real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the section 7 C5 check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
@@ -187,15 +188,18 @@ program test_fast_loop
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(site)
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = site%cohort%gpp_accum(1)
       tcas_n    = site%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = site%cohort%gpp_accum(1)
       call met_close(drv)
@@ -213,7 +217,8 @@ program test_fast_loop
       !    asserts they get identical GPP: the met stream is site-uniform, so any per-patch divergence       !
       !    means the reader's state leaked across the patch loop. -------------------------------------------!
       block
-         type(met_driver_t) :: drv3
+         type(met_source_t) :: drv3
+         type(met_cursor_t) :: cur3
          real(wp) :: g1, g2, g3
          call init_bare_ground(site, cfg, 3_ik)
          call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -221,8 +226,11 @@ program test_fast_loop
          call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(site)
          call met_open(drv3, cfg%forcing)
+         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude_deg,      &
+                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg, met_drv=drv3,                                    &
+         call fast_dynamics(site, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv3)
          g1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
@@ -256,7 +264,8 @@ program test_fast_loop
       !    derived type through a STATIC mold that every thread writes, and the kernel libraries' local     !
       !    arrays were in static storage until -auto was applied build-wide.) --------------------------!
       block
-         type(met_driver_t)  :: drv4
+         type(met_source_t)  :: drv4
+         type(met_cursor_t)  :: cur4
          type(meds_config_t) :: cfg_mt
          real(wp) :: h1, h2, h3
          cfg_mt = cfg ; cfg_mt%n_threads = 4_ik
@@ -266,8 +275,11 @@ program test_fast_loop
          call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(site)
          call met_open(drv4, cfg%forcing)
+         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude_deg,      &
+                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg_mt, met_drv=drv4,                                 &
+         call fast_dynamics(site, ctx, cfg_mt, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv4)
          h1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
@@ -308,7 +320,8 @@ program test_fast_loop
    !    (Left hydraulically limited, the taller cohort's more negative psi_leaf would legitimately     !
    !    close its stomata and INVERT the GPP ranking -- correct physics, but it masks the wiring.) ===!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       integer(ik)        :: itall, ishort, ii
       real(wp)           :: gpp_la_top, gpp_la_under
       real(wp), parameter :: LAI_EACH = 2.0_wp
@@ -326,9 +339,12 @@ program test_fast_loop
          site%cohort%nplant(ii) = LAI_EACH / max(site%cohort%leaf_area(ii), 1.0e-9_wp)
       end do
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
 
@@ -354,7 +370,8 @@ program test_fast_loop
    !    traps; here we assert every cohort gets a finite positive day GPP. The trailing BARE patch  !
    !    (patch3, 0 cohorts) also exercises apply_rt_forcing's empty-canopy path under forcing.  ====!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       integer(ik)        :: ii, ncoh_all
       real(wp)           :: gpp_min
       call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table
@@ -365,8 +382,11 @@ program test_fast_loop
       call add_cohort(site, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
       call finalize_init(site)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
       ncoh_all = site%cohort%n

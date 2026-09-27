@@ -12,17 +12,21 @@ demography or state layer — so a prescribed driver stays low in the library gr
 - **`meds_forcing_types`** — the runtime types. `met_forcing_t` is the instantaneous per-site
   atmospheric state the fast loop consumes: a read-only boundary-condition value, which carries the
   wind vector as well as the speed when the source supplies components. `met_record_t` is one raw
-  file record, and `met_driver_t` is the mutable per-polygon reader buffer holding the two records
-  that bracket the model time. `met_domain_t` lists the archive cells a run reads (one for a site,
-  the valid cells of a box), and `met_month_t` holds one month of them.
+  file record. The reader state comes in two parts: `met_source_t`, one per run, holds the file,
+  the time axis, the cell list and the loaded month, and is read-only while a step runs;
+  `met_cursor_t`, one per polygon, holds the polygon's cell and location and the two records that
+  bracket its model time. `met_cells_t` lists the archive cells a run reads (one for a site, the
+  valid cells of a box), and `met_month_t` holds one month of them.
 - **`meds_forcing_kernels`** — the `pure` and `elemental` math: per-variable temporal interpolation
   (linear or step) with an energy-conserving form for wind, the local apparent-solar-time transform
   (UTC plus longitude plus the equation of time), the **interval-mean-conserving** shortwave
   disaggregation, the total-to-four-stream shortwave partition (Erbs clearness index by default,
   Weiss-Norman available), humidity conversions over the shared saturation vapour pressure,
   precipitation phase, nearest-grid matching, and the wind-height and elevation lapse corrections.
-- **`meds_met_driver`** — the reader. `met_open` / `met_advance` / `met_instant` / `met_close` over
-  two file sources, chosen by `[forcing].format`: the MEDS multi-grid `(time, grid)` forcing NetCDF
+- **`meds_met_driver`** — the reader. `met_open` opens a source (for a site, or for a region's
+  cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
+  reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file
+  sources, chosen by `[forcing].format`: the MEDS multi-grid `(time, grid)` forcing NetCDF
   (`"netcdf"`), and the global ED_ERA5land archive (`"era5land"`), whose months it lays end to end
   as one hourly axis so bracketing and recycling are the same code for both. Dewpoint becomes
   specific humidity and the wind components become the speed at each stamp; shortwave is

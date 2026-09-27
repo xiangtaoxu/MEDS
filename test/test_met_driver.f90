@@ -18,14 +18,14 @@ program test_met_driver
                                     INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
                                     CLAMP_HOLD, CLAMP_ERROR,                                   &
                                     GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
-   use meds_forcing_types,   only : met_forcing_t, met_driver_t
+   use meds_forcing_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                     great_circle_distance, nearest_grid_index, wind_log_profile, &
                                     lapse_air_temperature, lapse_pressure,                         &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
-   use meds_met_driver,      only : met_open, met_advance, met_instant, met_close,             &
+   use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                    MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
                                    MET_ERR_DT_MISMATCH, MET_ERR_ATTR_MISMATCH
@@ -52,6 +52,16 @@ program test_met_driver
    call test_report('test_met_driver')
 
 contains
+
+   !----- The site's cursor into an opened source: record-by-record access goes through a cursor   !
+   !      (MEDS_POLYGON_RUNTIME_PLAN.md R2); a site run has one, at cell 1 and the [site] location. -!
+   subroutine site_cursor(src, cur, fc)
+      type(met_source_t),     intent(in)  :: src
+      type(met_cursor_t),     intent(out) :: cur
+      type(forcing_config_t), intent(in)  :: fc
+      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%utc_offset_h,  &
+                           fc%elevation_m)
+   end subroutine site_cursor
 
    !----- LONGWAVE SYNTHESIS (#182). The clear-sky emissivities are closed-form, so these are     !
    !      known-answer checks against Brutsaert (1975) and Idso & Jackson (1969) evaluated by      !
@@ -222,25 +232,27 @@ contains
 
    !----- 6. CONST backend returns the reference climate (SW = 400, held flat), cosz derived. -!
    subroutine test_const_backend()
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: now
       print '(a)', '-- test 6: CONST backend --'
       fc%backend = MET_BACKEND_CONST ; fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
-      call met_open(drv, fc)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = meds_time_t(year=2020_ik, month=7_ik, day=1_ik, hour=17_ik)   ! ~solar noon at Ithaca
-      call met_advance(drv, now)
-      met = met_instant(drv, now)
+      call met_advance(src, cur, now)
+      met = met_instant(src, cur, now)
       call check('CONST swdown = 400', met%swdown(), 400.0_wp, 1.0e-9_wp)
       call check_true('CONST cosz recomputed > 0 at noon', met%cosz > 0.5_wp, met%cosz)
       call check_true('CONST rho_air ~ 1.2', abs(met%rho_air - 1.2_wp) < 0.2_wp, met%rho_air)
-      call met_close(drv)
+      call met_close(src)
    end subroutine test_const_backend
 
    !----- 7. NetCDF round-trip: write a (time=25, grid=2) file, read it back. ----------------!
    subroutine test_netcdf_roundtrip()
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: met_noon, met_night, met_g2
       type(meds_time_t)      :: base, now
@@ -253,14 +265,14 @@ contains
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp ; fc%utc_offset_h = 0.0_wp
       fc%apply_solar_longitude = .true. ; fc%recycle = .false.
-      call met_open(drv, fc)
-      call check_true('opened file: nrec=25', drv%nrec == 25_ik, real(drv%nrec, wp))
-      call check_true('opened file: ngrid=2', drv%ngrid == 2_ik, real(drv%ngrid, wp))
-      call check_true('a file with Wind only supplies no wind vector', .not. drv%has_wind_vector)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      call check_true('opened file: nrec=25', src%nrec == 25_ik, real(src%nrec, wp))
+      call check_true('opened file: ngrid=2', src%ngrid == 2_ik, real(src%ngrid, wp))
+      call check_true('a file with Wind only supplies no wind vector', .not. src%has_wind_vector)
 
       ! noon (17 UTC): SW positive, Tair follows the diurnal input
       now = time_advance_seconds(base, 17.0_wp*3600.0_wp)
-      call met_advance(drv, now) ; met_noon = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met_noon = met_instant(src, cur, now)
       call check_true('noon SWdown > 0', met_noon%swdown() > 100.0_wp, met_noon%swdown())
       call check_true('noon cosz > 0.5', met_noon%cosz > 0.5_wp, met_noon%cosz)
       call check_true('Tair in [285,305]', met_noon%tair_k > 285.0_wp .and. met_noon%tair_k < 305.0_wp, met_noon%tair_k)
@@ -268,31 +280,31 @@ contains
 
       ! night (04 UTC): SW exactly 0
       now = time_advance_seconds(base, 4.0_wp*3600.0_wp)
-      call met_advance(drv, now) ; met_night = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met_night = met_instant(src, cur, now)
       call check('night SWdown = 0', met_night%swdown(), 0.0_wp, 1.0e-12_wp)
       call check_true('an instant from a Wind-only file has no vector', .not. met_night%has_wind_vector)
-      call met_close(drv)
+      call met_close(src)
 
       !----- A file carrying u10 and v10 supplies the vector, and the speed comes from it (§7.1). -!
       call write_synthetic_forcing(NCFILE, base, with_components=.true.)
       fc%grid_index = 1_ik
-      call met_open(drv, fc)
-      call check_true('a file with u10 and v10 supplies the wind vector', drv%has_wind_vector)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      call check_true('a file with u10 and v10 supplies the wind vector', src%has_wind_vector)
       now = time_advance_seconds(base, 6.0_wp*3600.0_wp)
-      call met_advance(drv, now) ; met_night = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met_night = met_instant(src, cur, now)
       call check('wind_u = u10', met_night%wind_u, 3.0_wp, 1.0e-12_wp)
       call check('wind_v = v10', met_night%wind_v, -4.0_wp, 1.0e-12_wp)
       call check('speed from the components, not Wind', met_night%wind, 5.0_wp, 1.0e-12_wp)
-      call met_close(drv)
+      call met_close(src)
       call write_synthetic_forcing(NCFILE, base)
 
       ! multi-grid: grid_index=2 carries a distinct (scaled) SW series
       fc%grid_index = 2_ik
-      call met_open(drv, fc)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = time_advance_seconds(base, 17.0_wp*3600.0_wp)
-      call met_advance(drv, now) ; met_g2 = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met_g2 = met_instant(src, cur, now)
       call check_true('grid 2 SW differs from grid 1', abs(met_g2%swdown() - sw_g1) > 1.0_wp, met_g2%swdown()-sw_g1)
-      call met_close(drv)
+      call met_close(src)
 
       call test_edge_paths(base)
    end subroutine test_netcdf_roundtrip
@@ -303,7 +315,7 @@ contains
    !      writes and nothing read. A file that disagreed with its config was silently mis-timed or   !
    !      mis-partitioned -- no later check can see either, because both produce a plausible run.    !
    subroutine test_file_config_agreement()
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
       type(forcing_config_t) :: fc
       type(meds_time_t)      :: base
       integer(ik)            :: st
@@ -317,28 +329,28 @@ contains
       fc%apply_solar_longitude = .true. ; fc%recycle = .false.
 
       !----- the honest config opens cleanly. A validator that rejects the good case is useless. --!
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('a matching config opens (MET_OK)', st == MET_OK, real(st, wp))
-      call met_close(drv)
+      call met_close(src)
 
       !----- dt_forcing lying about the cadence. THIS is the one nothing checked: dt_forcing places !
       !      interval midpoints, disaggregates shortwave and brackets the recycle seam. -------------!
       fc%dt_forcing = 1800.0_wp
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('a half-hourly config against an hourly file is rejected',                   &
                       st == MET_ERR_DT_MISMATCH, real(st, wp))
       fc%dt_forcing = 3600.0_wp
 
       !----- the file says its flux means end at the stamp; the config says they begin there. ------!
       fc%avg_convention = METAVG_BEGIN
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('avg_convention contradicting the file attribute is rejected',               &
                       st == MET_ERR_ATTR_MISMATCH, real(st, wp))
       fc%avg_convention = METAVG_END
 
       !----- the file carries TOTAL shortwave; passthrough would read component fields it lacks. ---!
       fc%sw_partition = SWPART_PASSTHROUGH
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('passthrough against a total-shortwave file is rejected',                    &
                       st == MET_ERR_ATTR_MISMATCH, real(st, wp))
       fc%sw_partition = SWPART_CLEARIDX
@@ -347,7 +359,8 @@ contains
    !----- 8. Edge paths the review flagged (regression tests for the CLAMP_HOLD + recycle fixes). !
    subroutine test_edge_paths(base)
       type(meds_time_t), intent(in) :: base
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: now
@@ -364,15 +377,15 @@ contains
       ! (a) CLAMP_HOLD: start before the first record holds rec1; then MARCHING into [t0,t1) must
       !     interpolate (the bug held rec1 for the whole first interval).
       fc%start_clamp = CLAMP_HOLD ; fc%recycle = .false.
-      call met_open(drv, fc)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
       now = time_advance_seconds(base, -12.0_wp*3600.0_wp)          ! 12 h before the first record
-      call met_advance(drv, now) ; met = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
       call check('hold before t0 -> record 1', met%tair_k, tair0, 1.0e-4_wp)
       now = time_advance_seconds(base, 0.5_wp*3600.0_wp)            ! 00:30 -> midpoint of [t0,t1)
-      call met_advance(drv, now) ; met = met_instant(drv, now)
+      call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
       expect_hold = 0.5_wp*(tair0 + tair1)
       call check('march into [t0,t1) interpolates (not stuck at rec1)', met%tair_k, expect_hold, 1.0e-4_wp)
-      call met_close(drv)
+      call met_close(src)
 
       ! (b) A 25-record (24 h span) file CANNOT be recycled: a sub-year window drifts both
       !     hour-of-day and day-of-year on every wrap. This used to fall through to an
@@ -381,7 +394,7 @@ contains
       fc%start_clamp = CLAMP_ERROR ; fc%recycle = .true.
       fc%recycle_start = base
       fc%recycle_end   = time_advance_seconds(base, 24.0_wp*3600.0_wp)   ! 1 day, not a whole year
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('sub-year recycle window rejected (not silently span-wrapped)',            &
                       st == MET_ERR_WINDOW_NOT_WHOLE_YEARS, real(st, wp))
 
@@ -390,17 +403,17 @@ contains
       !     end-of-interval ERA5-Land file whose records are stamped 01:00).
       fc%recycle_start = time_advance_seconds(base, 1800.0_wp)           ! 00:30, between records
       fc%recycle_end   = meds_time_t(2021_ik, 7_ik, 1_ik, 0_ik, 30_ik)
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('recycle_start off the record grid rejected',                              &
                       st == MET_ERR_START_NOT_A_RECORD, real(st, wp))
 
       ! (d) A whole-year window ON the record grid, but the file only holds 24 h of it.
       fc%recycle_start = base
       fc%recycle_end   = meds_time_t(2021_ik, 7_ik, 1_ik)
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('window not covered by the file rejected',                                 &
                       st == MET_ERR_WINDOW_NOT_COVERED, real(st, wp))
-      call met_close(drv)
+      call met_close(src)
    end subroutine test_edge_paths
 
    !----- The recycle mapping must preserve hour-of-day and day-of-year EXACTLY, for an anchor    !
@@ -409,7 +422,8 @@ contains
    !      everything else, which shifts hour-of-day whenever the span is not a whole number of days. !
    subroutine test_recycle_anchor_phase()
       character(len=*), parameter :: YF = 'test_met_anchorfile_tmp.nc'
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: m_ref, m_map
       integer(ik) :: st
@@ -425,7 +439,7 @@ contains
       !      rejected as not covered -- which is itself the check that the coverage test bites.
       fc%recycle_start = meds_time_t(2021_ik, 3_ik, 1_ik)
       fc%recycle_end   = meds_time_t(2022_ik, 3_ik, 1_ik)
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('mid-year window beyond the file is rejected',                             &
                       st == MET_ERR_WINDOW_NOT_COVERED, real(st, wp))
 
@@ -433,14 +447,15 @@ contains
       !      model years both before and after the window (the modulo must not go negative).
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
       fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik)
-      call met_open(drv, fc, stat=st)
+      call met_open(src, fc, stat=st)
       call check_true('whole-year window accepted', st == MET_OK, real(st, wp))
-      call met_advance(drv, meds_time_t(2021_ik,9_ik,17_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,9_ik,17_ik))
-      call met_advance(drv, meds_time_t(2049_ik,9_ik,17_ik)) ; m_map = met_instant(drv, meds_time_t(2049_ik,9_ik,17_ik))
+      call site_cursor(src, cur, fc)
+      call met_advance(src, cur, meds_time_t(2021_ik,9_ik,17_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,9_ik,17_ik))
+      call met_advance(src, cur, meds_time_t(2049_ik,9_ik,17_ik)) ; m_map = met_instant(src, cur, meds_time_t(2049_ik,9_ik,17_ik))
       call check('29 yr later reads the same calendar day', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
-      call met_advance(drv, meds_time_t(2013_ik,9_ik,17_ik)) ; m_map = met_instant(drv, meds_time_t(2013_ik,9_ik,17_ik))
+      call met_advance(src, cur, meds_time_t(2013_ik,9_ik,17_ik)) ; m_map = met_instant(src, cur, meds_time_t(2013_ik,9_ik,17_ik))
       call check('a model year BEFORE the window maps in too', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
-      call met_close(drv)
+      call met_close(src)
    end subroutine test_recycle_anchor_phase
 
    !----- Write a synthetic (time=25 hourly, grid=2) MEDS forcing NetCDF via meds_netcdf_c. ----!
@@ -536,7 +551,8 @@ contains
 
    !----- Nearest-grid match: pure kernel (argmin + great-circle) and the reader override. --------!
    subroutine test_nearest_grid()
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       real(wp)    :: lon(3), lat(3), d
       integer(ik) :: idx
@@ -551,13 +567,13 @@ contains
       fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%dt_forcing = 3600.0_wp
       fc%grid_match = GRIDMATCH_NEAREST ; fc%grid_index = 1_ik      ! grid_index deliberately WRONG for cell 2
       fc%latitude_deg = 42.41_wp ; fc%longitude_deg = -76.49_wp     ! nearest to cell 2
-      call met_open(drv, fc)
-      call check('reader resolves nearest -> grid_index 2', real(drv%grid_index,wp), 2.0_wp, 0.5_wp)
-      call met_close(drv)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      call check('reader resolves nearest -> grid_index 2', real(src%grid_index,wp), 2.0_wp, 0.5_wp)
+      call met_close(src)
       fc%latitude_deg = 42.51_wp ; fc%longitude_deg = -76.61_wp     ! nearest to cell 1
-      call met_open(drv, fc)
-      call check('reader resolves nearest -> grid_index 1', real(drv%grid_index,wp), 1.0_wp, 0.5_wp)
-      call met_close(drv)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      call check('reader resolves nearest -> grid_index 1', real(src%grid_index,wp), 1.0_wp, 0.5_wp)
+      call met_close(src)
    end subroutine test_nearest_grid
 
    !----- Wind log-profile + elevation lapse (pure kernels). --------------------------------------!
@@ -582,7 +598,8 @@ contains
    !----- Multi-year CALENDAR recycling + Feb-29 reconciliation (whole-year daily file). ----------!
    subroutine test_multiyear_cycling()
       character(len=*), parameter :: YF = 'test_met_yearfile_tmp.nc'
-      type(met_driver_t)     :: drv
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
       type(forcing_config_t) :: fc
       type(met_forcing_t)    :: m_ref, m_map
       print '(a)', '-- test: multi-year cycling + Feb-29 --'
@@ -593,19 +610,19 @@ contains
       !----- The cycle is DECLARED, never inferred from the file. --------------------------------!
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
       fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik)
-      call met_open(drv, fc)
-      call check('n_cycle_years = 1', real(drv%n_cycle_years,wp), 1.0_wp, 0.5_wp)
-      call check('cycle anchor year = 2021', real(drv%cycle_anchor%year,wp), 2021.0_wp, 0.5_wp)
-      call check('cycle first record = #1', real(drv%irec_cycle_first,wp), 1.0_wp, 0.5_wp)
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      call check('n_cycle_years = 1', real(src%n_cycle_years,wp), 1.0_wp, 0.5_wp)
+      call check('cycle anchor year = 2021', real(src%cycle_anchor%year,wp), 2021.0_wp, 0.5_wp)
+      call check('cycle first record = #1', real(src%irec_cycle_first,wp), 1.0_wp, 0.5_wp)
       !----- recycle identity: model 2023-07-01 reads the 2021-07-01 record (day-of-year exact). --!
-      call met_advance(drv, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,7_ik,1_ik))
-      call met_advance(drv, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(drv, meds_time_t(2023_ik,7_ik,1_ik))
+      call met_advance(src, cur, meds_time_t(2021_ik,7_ik,1_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,1_ik))
+      call met_advance(src, cur, meds_time_t(2023_ik,7_ik,1_ik)) ; m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,1_ik))
       call check('recycle: 2023-07-01 reads the 2021-07-01 record', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
       !----- Feb-29 reconciliation: model 2024-02-29 (leap) maps to file 2021-02-28. --------------!
-      call met_advance(drv, meds_time_t(2021_ik,2_ik,28_ik)) ; m_ref = met_instant(drv, meds_time_t(2021_ik,2_ik,28_ik))
-      call met_advance(drv, meds_time_t(2024_ik,2_ik,29_ik)) ; m_map = met_instant(drv, meds_time_t(2024_ik,2_ik,29_ik))
+      call met_advance(src, cur, meds_time_t(2021_ik,2_ik,28_ik)) ; m_ref = met_instant(src, cur, meds_time_t(2021_ik,2_ik,28_ik))
+      call met_advance(src, cur, meds_time_t(2024_ik,2_ik,29_ik)) ; m_map = met_instant(src, cur, meds_time_t(2024_ik,2_ik,29_ik))
       call check('Feb-29 (leap model) maps to file Feb-28', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
-      call met_close(drv)
+      call met_close(src)
    end subroutine test_multiyear_cycling
 
    !----- Write a whole-year DAILY (365 records, grid=1) forcing file; Tair encodes the day index. !

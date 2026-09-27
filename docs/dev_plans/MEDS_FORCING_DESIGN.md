@@ -408,7 +408,9 @@ file at this site's `grid_index` plus the read cursor; it is the ED2 `cgrid%meti
 the driver and threaded like `meds_io_t`. ~~For a multi-polygon run there is one `met_driver_t` per
 polygon, each bound to its own `grid_index`.~~ *Update 2026-09-26:* superseded.
 `MEDS_POLYGON_RUNTIME_PLAN.md` uses **one shared reader** that loads a month for all polygons, with
-each polygon reading its own view of that in-memory month buffer (§15.3).
+each polygon reading its own view of that in-memory month buffer (§15.3). Implemented in R2 as
+`met_source_t` (the shared file, axis, cells and month buffer) and `met_cursor_t` (a polygon's cell,
+location and bracketing records); the `met_driver_t` below is kept as the original design record.
 
 ```fortran
 type :: met_record_t                       ! one raw timestamped record as read (pre-interpolation)
