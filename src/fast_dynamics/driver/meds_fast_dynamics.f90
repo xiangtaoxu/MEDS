@@ -26,7 +26,7 @@ module meds_fast_dynamics
    use meds_column_view, only : copy_column_cohort
    use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
-   use meds_output_types,     only : output_manager_t, fast_sample_t
+   use meds_output_types,     only : output_buffers_t, fast_sample_t
    use meds_site_diag_types,  only : N_CDIAG, patch_diag_block,                                  &
                                      PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND, &
                                      PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, &
@@ -269,7 +269,7 @@ contains
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
    subroutine fast_dynamics(site, ctx, cfg, met_src, met_cur, step_start, worst_energy, worst_water, &
-                            n_budget_fail, mgr, run_energy_budget, run_water_budget,             &
+                            n_budget_fail, out_bufs, run_energy_budget, run_water_budget,             &
                             run_face_budget)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
@@ -279,7 +279,7 @@ contains
       type(meds_time_t),  optional, intent(in)    :: step_start    !< calendar time at the START of this slow step
       real(wp),    optional, intent(out)  :: worst_energy, worst_water
       integer(ik), optional, intent(out)  :: n_budget_fail
-      type(output_manager_t), optional, intent(inout) :: mgr       !< FAST-tier staging (filled when present + on)
+      type(output_buffers_t), optional, intent(inout) :: out_bufs  !< this polygon's FAST-tier staging (when on)
       !----- RUN-level whole-column ledgers: this slow step's per-patch accumulators are area-      !
       !      weighted into a site accumulator and folded in here, so a caller that keeps them across !
       !      the whole run can report the SIGNED cumulative residual (a one-signed bias below the     !
@@ -389,11 +389,11 @@ contains
       !      routine. Air temperature is site-uniform, so accumulating once per (patch, sub-step) and   !
       !      dividing by the count still yields the daily mean. ---------------------------------------!
 
-      !----- FAST (sub-daily) output staging: fill mgr%fast(:) only when the tier is active and a       !
+      !----- FAST (sub-daily) output staging: fill out_bufs%fast(:) only when the tier is active and a       !
       !      diurnal signal exists (forcing on). Lazily allocate the per-sub-step buffers ONCE (sizes    !
       !      are run-constant), then zero the accumulators for this slow step. Serialize stays in main.  !
-      do_fast = present(mgr) .and. do_forcing
-      if (do_fast) do_fast = mgr%enabled .and. mgr%reg%nidx(1) > 0_ik
+      do_fast = present(out_bufs) .and. do_forcing
+      if (do_fast) do_fast = out_bufs%fast_on
       !----- The per-cohort / per-patch diagnostic capture runs only when the registry actually      !
       !      asked for it (main sets `active` from the live variable list). Everything downstream is  !
       !      gated on these two flags, so a run that reports no ecophysiology takes the original      !
@@ -415,21 +415,21 @@ contains
       end if
       if (do_fast) then
          nl = n_soil_layer_max
-         if (.not. allocated(mgr%fast)) then
-            allocate(mgr%fast(nsub), mgr%fast_time(nsub))
-            allocate(mgr%fast_soil_temp(nl, nsub), mgr%fast_soil_water(nl, nsub))
-            allocate(mgr%fast_coh_ltemp(max(mgr%cohort_max,1_ik), nsub),                            &
-                     mgr%fast_coh_gpp(max(mgr%cohort_max,1_ik), nsub),                              &
-                     mgr%fast_coh_height(max(mgr%cohort_max,1_ik), nsub))
+         if (.not. allocated(out_bufs%fast)) then
+            allocate(out_bufs%fast(nsub), out_bufs%fast_time(nsub))
+            allocate(out_bufs%fast_soil_temp(nl, nsub), out_bufs%fast_soil_water(nl, nsub))
+            allocate(out_bufs%fast_coh_ltemp(out_bufs%fast_cohort_cap, nsub),                            &
+                     out_bufs%fast_coh_gpp(out_bufs%fast_cohort_cap, nsub),                              &
+                     out_bufs%fast_coh_height(out_bufs%fast_cohort_cap, nsub))
          end if
-         mgr%n_fast_sub    = nsub
-         mgr%fast_n_soil   = nl
-         mgr%fast_n_cohort = site%cohort%n
+         out_bufs%n_fast_sub    = nsub
+         out_bufs%fast_n_soil   = nl
+         out_bufs%fast_n_cohort = site%cohort%n
          do isub = 1_ik, nsub
-            mgr%fast(isub) = fast_sample_t()
+            out_bufs%fast(isub) = fast_sample_t()
          end do
-         mgr%fast_soil_temp = 0.0_wp ; mgr%fast_soil_water = 0.0_wp
-         mgr%fast_coh_ltemp = 0.0_wp ; mgr%fast_coh_gpp = 0.0_wp ; mgr%fast_coh_height = 0.0_wp
+         out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
+         out_bufs%fast_coh_ltemp = 0.0_wp ; out_bufs%fast_coh_gpp = 0.0_wp ; out_bufs%fast_coh_height = 0.0_wp
       end if
 
       !----- BB1 phase 1 (MEDS_NUMERICS_SCOPING.md sec 7/10.2): size the per-patch fast-loop        !
@@ -487,7 +487,7 @@ contains
       end if
       !----- Site-uniform, so it belongs OUT of the patch loop (where every patch used to rewrite it  !
       !      with the same value -- benign serially, a data race once threaded). ---------------------!
-      if (do_fast) mgr%fast_time(1:nsub) = t_sample(1:nsub)
+      if (do_fast) out_bufs%fast_time(1:nsub) = t_sample(1:nsub)
 
       !=========================================================================================!
       !  §7 C2 -- the parallel patch loop. Patch columns are independent within a dt_fast (they    !
@@ -744,12 +744,12 @@ contains
                red_fast_soil_temp(1:nl,isub,ip)  = w_area * biophys%soil_e%soil_temp(1:nl)
                red_fast_soil_water(1:nl,isub,ip) = w_area * biophys%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
-               !      patches (the CSR map partitions the flat SoA), so they go straight to mgr. -------!
+               !      patches (the CSR map partitions the flat SoA), so they go straight to out_bufs. -------!
                do j = 1_ik, ncoh
                   i = i0 + j - 1_ik
-                  mgr%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
-                  mgr%fast_coh_gpp(i,isub)    = gpp_coh(j)
-                  mgr%fast_coh_height(i,isub) = col_cohort%height(j)
+                  out_bufs%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
+                  out_bufs%fast_coh_gpp(i,isub)    = gpp_coh(j)
+                  out_bufs%fast_coh_height(i,isub) = col_cohort%height(j)
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
@@ -861,23 +861,23 @@ contains
       if (do_fast) then
          do isub = 1_ik, nsub
             do ip = 1_ik, npatch
-               mgr%fast(isub)%cas_temp      = mgr%fast(isub)%cas_temp      + red_fast(isub,ip)%cas_temp
-               mgr%fast(isub)%soil_temp_top = mgr%fast(isub)%soil_temp_top + red_fast(isub,ip)%soil_temp_top
-               mgr%fast(isub)%gpp_rate      = mgr%fast(isub)%gpp_rate      + red_fast(isub,ip)%gpp_rate
-               mgr%fast(isub)%le_flux       = mgr%fast(isub)%le_flux       + red_fast(isub,ip)%le_flux
-               mgr%fast(isub)%h_flux        = mgr%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
-               mgr%fast(isub)%rnet          = mgr%fast(isub)%rnet          + red_fast(isub,ip)%rnet
-               mgr%fast(isub)%sw_in         = mgr%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
-               mgr%fast(isub)%ustar         = mgr%fast(isub)%ustar         + red_fast(isub,ip)%ustar
-               mgr%fast(isub)%air_temp      = mgr%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
-               mgr%fast(isub)%nee_rate      = mgr%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate
-               mgr%fast(isub)%npp_rate      = mgr%fast(isub)%npp_rate      + red_fast(isub,ip)%npp_rate
-               mgr%fast(isub)%reco_rate     = mgr%fast(isub)%reco_rate     + red_fast(isub,ip)%reco_rate
-               mgr%fast(isub)%cas_co2       = mgr%fast(isub)%cas_co2       + red_fast(isub,ip)%cas_co2
-               mgr%fast(isub)%atm_co2       = mgr%fast(isub)%atm_co2       + red_fast(isub,ip)%atm_co2
-               mgr%fast_soil_temp(1:nl,isub)  = mgr%fast_soil_temp(1:nl,isub)                       &
+               out_bufs%fast(isub)%cas_temp      = out_bufs%fast(isub)%cas_temp      + red_fast(isub,ip)%cas_temp
+               out_bufs%fast(isub)%soil_temp_top = out_bufs%fast(isub)%soil_temp_top + red_fast(isub,ip)%soil_temp_top
+               out_bufs%fast(isub)%gpp_rate      = out_bufs%fast(isub)%gpp_rate      + red_fast(isub,ip)%gpp_rate
+               out_bufs%fast(isub)%le_flux       = out_bufs%fast(isub)%le_flux       + red_fast(isub,ip)%le_flux
+               out_bufs%fast(isub)%h_flux        = out_bufs%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
+               out_bufs%fast(isub)%rnet          = out_bufs%fast(isub)%rnet          + red_fast(isub,ip)%rnet
+               out_bufs%fast(isub)%sw_in         = out_bufs%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
+               out_bufs%fast(isub)%ustar         = out_bufs%fast(isub)%ustar         + red_fast(isub,ip)%ustar
+               out_bufs%fast(isub)%air_temp      = out_bufs%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
+               out_bufs%fast(isub)%nee_rate      = out_bufs%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate
+               out_bufs%fast(isub)%npp_rate      = out_bufs%fast(isub)%npp_rate      + red_fast(isub,ip)%npp_rate
+               out_bufs%fast(isub)%reco_rate     = out_bufs%fast(isub)%reco_rate     + red_fast(isub,ip)%reco_rate
+               out_bufs%fast(isub)%cas_co2       = out_bufs%fast(isub)%cas_co2       + red_fast(isub,ip)%cas_co2
+               out_bufs%fast(isub)%atm_co2       = out_bufs%fast(isub)%atm_co2       + red_fast(isub,ip)%atm_co2
+               out_bufs%fast_soil_temp(1:nl,isub)  = out_bufs%fast_soil_temp(1:nl,isub)                       &
                                               + red_fast_soil_temp(1:nl,isub,ip)
-               mgr%fast_soil_water(1:nl,isub) = mgr%fast_soil_water(1:nl,isub)                      &
+               out_bufs%fast_soil_water(1:nl,isub) = out_bufs%fast_soil_water(1:nl,isub)                      &
                                               + red_fast_soil_water(1:nl,isub,ip)
             end do
          end do
@@ -903,7 +903,7 @@ contains
          if (present(run_water_budget))  call budget_merge(run_water_budget,  site_water_budget,  1.0_wp)
          if (present(run_face_budget))   call budget_merge(run_face_budget,   site_face_budget,   1.0_wp)
       end if
-      if (do_fast) mgr%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
+      if (do_fast) out_bufs%fast_ready = .true.   ! signal main to replay + serialize the FAST tier
    end subroutine fast_dynamics
 
    !----- Sub-daily diagnostic PROBE. Opt-in ([fast].fast_probe): one CSV row per (patch, sub-step)  !

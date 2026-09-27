@@ -49,8 +49,8 @@ module meds_driver
    use meds_soil_biogeochem,        only : soil_carbon_bad_pool, soil_carbon_pool_name
    use meds_biogeochem_types,       only : soilc_seam_t
    use meds_io,                     only : state_write_state, io_read_state
-   use meds_output_types,           only : output_manager_t
-   use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                &
+   use meds_output_types,           only : output_files_t, output_buffers_t
+   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
                                            manager_set_soil_params, activate_site_diag,         &
                                            apply_variable_override, parse_stream_mask,          &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
@@ -79,7 +79,8 @@ module meds_driver
    type :: meds_run_t
       type(meds_config_t)    :: cfg
       type(site_t)           :: site
-      type(output_manager_t) :: mgr             !< built only if output.enabled
+      type(output_files_t)   :: out_files          !< the run's output files (built only if output.enabled)
+      type(output_buffers_t) :: out_bufs        !< the site's output state (the run's one polygon)
       type(fast_context_t)   :: fast_ctx        !< built only if fast_biophysics_on
       type(met_source_t)     :: met_src         !< opened only if forcing_on
       type(met_cursor_t)     :: met_cur         !< the site's cursor into met_src (the run's one polygon)
@@ -262,14 +263,15 @@ contains
       !          integrator buffers). The per-step tick stages closed periods; the step drains them.!
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
-         call manager_setup(run%mgr, run%cfg)
+         call manager_setup(run%out_files, run%cfg)
          !----- Give the DERIVED soil diagnostics the SAME retention curve the fast loop           !
          !      integrates on, rather than a second derivation from the TOML.  --------------------!
-         if (run%cfg%fast_biophysics_on) call manager_set_soil_params(run%mgr, run%fast_ctx%col_config%soil)
+         if (run%cfg%fast_biophysics_on) call manager_set_soil_params(run%out_files, run%fast_ctx%col_config%soil)
          if (len_trim(run%cfg%output%io_config) > 0)                                             &
-            call apply_io_overrides(run%mgr, trim(run%cfg%output%io_config), run%verbose)
-         call manager_alloc_buffers(run%mgr)
-         call activate_site_diag(run%mgr, run%site)
+            call apply_io_overrides(run%out_files, trim(run%cfg%output%io_config), run%verbose)
+         call manager_finalize(run%out_files)
+         call manager_alloc_buffers(run%out_files, run%out_bufs)
+         call activate_site_diag(run%out_files, run%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
@@ -340,11 +342,11 @@ contains
       if (run%cfg%leaf_thermal_acclimation) call advance_growth_temperature(run)
 
       !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);    !
-      !      the met source/cursor and mgr stay gated on forcing_on.  ------------------------------!
+      !      the met source/cursor and the output buffers stay gated on forcing_on.  ---------------!
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) then
          call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
                                met_src=run%met_src, met_cur=run%met_cur, step_start=run%prev,    &
-                               mgr=run%mgr,                                                      &
+                               out_bufs=run%out_bufs,                                            &
                                run_energy_budget=run%energy_budget,                              &
                                run_water_budget=run%water_budget,                                &
                                run_face_budget=run%face_budget,                                  &
@@ -365,24 +367,24 @@ contains
          run%worst_rh_seam_npatch = run%site%patch%n
       end if
 
-      !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),!
+      !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in out_bufs%fast(:)!
       !      closing + draining the tier every fast_interval_steps sub-steps.  ---------------------!
-      if (run%cfg%output%enabled .and. run%mgr%fast_ready) then
-         do isub = 1_ik, run%mgr%n_fast_sub
-            call output_integrate_fast(run%mgr, isub, run%cfg%dt_fast)
+      if (run%cfg%output%enabled .and. run%out_bufs%fast_ready) then
+         do isub = 1_ik, run%out_bufs%n_fast_sub
+            call output_integrate_fast(run%out_files, run%out_bufs, isub, run%cfg%dt_fast)
             run%fast_step_total = run%fast_step_total + 1_ik
-            if (mod(run%fast_step_total, max(run%mgr%fast_interval_steps, 1_ik)) == 0_ik)          &
-               call close_tier(run%mgr, 1_ik)                ! queued; written in the I/O phase
+            if (mod(run%fast_step_total, max(run%out_files%fast_interval_steps, 1_ik)) == 0_ik)          &
+               call close_tier(run%out_files, run%out_bufs, 1_ik)   ! queued; written in the I/O phase
          end do
-         run%mgr%fast_ready = .false.
+         run%out_bufs%fast_ready = .false.
       end if
 
       !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and     !
       !      queue any closed period for the I/O phase.  -------------------------------------------!
       if (run%cfg%output%enabled) then
          is_new_day = is_new_month .or. (run%now%day /= run%prev%day)
-         call output_integrate(run%mgr, run%site, run%now, run%cfg%dt_slow, is_new_day,          &
-                               is_new_month, is_new_year)
+         call output_integrate(run%out_files, run%out_bufs, run%site, run%now, run%cfg%dt_slow,     &
+                               is_new_day, is_new_month, is_new_year)
       end if
 
       if (is_new_year) then
@@ -395,7 +397,7 @@ contains
          !      this step is still written, as it always was. ------------------------------------------!
          if (has_nan(run%site)) then
             status = DRIVER_ERR_NAN
-            if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
+            if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
             return
          end if
       end if
@@ -422,7 +424,7 @@ contains
                   write(*,'(a)') '        ceiling is ~500x the richest real soil. Conservation can'
                   write(*,'(a)') '        hold perfectly while this is true -- see the slow ledger.'
                   status = DRIVER_ERR_SOILC
-                  if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
+                  if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
                   return
                end if
             end do
@@ -441,7 +443,7 @@ contains
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run
       logical,          intent(in)    :: is_new_year
-      if (run%cfg%output%enabled) call output_serialize_pending(run%mgr)
+      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                  &
@@ -518,7 +520,7 @@ contains
       !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!
       if (run%verbose) call slow_ledger_report(run%slow_ledger)
 
-      if (run%cfg%output%enabled) call output_manager_close(run%mgr, .true.)
+      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%out_bufs, .true.)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st
@@ -580,8 +582,8 @@ contains
    !      registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`      !
    !      entry: a bool force-enables / disables everywhere; a quoted "F D M Y" string replaces     !
    !      the stream mask. A name matching no registry variable is a hard error.                    !
-   subroutine apply_io_overrides(mgr, tomlpath, verbose)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine apply_io_overrides(files, tomlpath, verbose)
+      type(output_files_t),   intent(inout) :: files
       character(len=*),       intent(in)    :: tomlpath
       logical,                intent(in)    :: verbose
       type(toml_table_t) :: tt
@@ -599,9 +601,9 @@ contains
          raw  = adjustl(tt%val(i))
          select case (trim(raw))
          case ('true', '.true.', 'True', 'TRUE')
-            call apply_variable_override(mgr%reg, trim(name), OVR_TRUE, 0_ik, found)
+            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
          case ('false', '.false.', 'False', 'FALSE')
-            call apply_variable_override(mgr%reg, trim(name), OVR_FALSE, 0_ik, found)
+            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
          case default
             if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
                sval = raw(2:index(raw(2:), '"'))
@@ -609,7 +611,7 @@ contains
                if (status /= 0_ik)                                                               &
                   error stop 'meds_driver: io_config unknown stream token "'//trim(bad)//        &
                              '" for variable '//trim(name)
-               call apply_variable_override(mgr%reg, trim(name), OVR_MASK, mask, found)
+               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
             else
                error stop 'meds_driver: io_config bad value for '//trim(name)//                  &
                           ' (expected true|false or a quoted "F D M Y" string)'
@@ -619,7 +621,7 @@ contains
             error stop 'meds_driver: io_config variable "'//trim(name)//                         &
                        '" matches no registry variable (typo?)'
       end do
-      call build_freq_index(mgr%reg)
+      call build_freq_index(files%reg)
       if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
    end subroutine apply_io_overrides
 

@@ -17,7 +17,7 @@ module meds_stepper
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t, day_of_year
    use meds_forcing_types,        only : met_source_t, met_cursor_t
-   use meds_output_types,         only : output_manager_t
+   use meds_output_types,         only : output_buffers_t
    use meds_budget_check,         only : budget_t
    use meds_slow_ledger,          only : slow_ledger_t
    implicit none
@@ -34,7 +34,7 @@ contains
    ! later fast->slow carbon handoff can hand daily-accumulated GPP to vegetation dynamics).   !
    !---------------------------------------------------------------------------------------!
    subroutine advance_one_step(site, cfg, is_new_month, is_new_year, fast_ctx, met_src, met_cur,     &
-                               step_start, mgr, run_energy_budget, run_water_budget,           &
+                               step_start, out_bufs, run_energy_budget, run_water_budget,      &
                                run_face_budget, slow_ledger, seam, latitude_deg)
       type(site_t),         intent(inout) :: site
       type(meds_config_t),  intent(in)    :: cfg
@@ -43,7 +43,7 @@ contains
       type(met_source_t),   intent(in),    optional :: met_src     !< the run's forcing source (when forcing_on)
       type(met_cursor_t),   intent(inout), optional :: met_cur     !< this polygon's forcing cursor
       type(meds_time_t),    intent(in),    optional :: step_start  !< calendar time at the start of this slow step
-      type(output_manager_t), intent(inout), optional :: mgr       !< FAST-tier staging (forwarded to the fast loop)
+      type(output_buffers_t), intent(inout), optional :: out_bufs  !< this polygon's FAST-tier staging (to the fast loop)
       type(budget_t), intent(inout), optional :: run_energy_budget, run_water_budget !< run-level ledgers (forwarded)
       type(budget_t), intent(inout), optional :: run_face_budget   !< per-layer face closure (#189), forwarded
       !----- The SLOW tier's own ledger (plan §10.2). Its peers above accumulate per-fast-step   !
@@ -68,7 +68,7 @@ contains
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
          if (present(met_src) .and. present(met_cur) .and. present(step_start)) then
             call fast_dynamics(site, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,              &
-                               step_start=step_start, mgr=mgr,                                   &
+                               step_start=step_start, out_bufs=out_bufs,                         &
                                run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
                                run_face_budget=run_face_budget)
          else
