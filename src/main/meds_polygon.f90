@@ -173,8 +173,9 @@ contains
          poly%worst_rh_seam_npatch = poly%site%patch%n
       end if
 
-      !----- Output: replay the staged FAST samples, then fold this step's (post-dynamics) state    !
-      !      into the slower tiers, queueing any closed period for the I/O phase.  -------------------!
+      !----- Output: replay the staged FAST samples, then fold this step -- its fluxes from `prev`  !
+      !      to `now` and its post-dynamics state at `now` -- into the slower tiers' windows that   !
+      !      hold `prev`, closing each period `now` has left and queueing it for the I/O phase. ----!
       is_new_day = is_new_month .or. (now%day /= prev%day)
       if (out_files%enabled) call tick_output(out_files, poly%out_bufs)
       if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
@@ -256,8 +257,8 @@ contains
             end do
             bufs%fast_ready = .false.
          end if
-         call output_integrate(files, bufs, poly%site, now, cfg%dt_slow, is_new_day, is_new_month,  &
-                               is_new_year)
+         call output_integrate(files, bufs, poly%site, prev, now, cfg%dt_slow, is_new_day,          &
+                               is_new_month, is_new_year)
       end subroutine tick_output
 
    end subroutine polygon_step

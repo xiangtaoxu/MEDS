@@ -38,7 +38,8 @@ program test_output_integrate
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
-                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE
+                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, output_integrate
+   use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index
    use meds_diagnostic_reduce, only : W_NPLANT
    use meds_output_config,    only : FREQ_MONTHLY
@@ -51,6 +52,7 @@ program test_output_integrate
    call test_slab_and_extract()
    call test_fast_tier()
    call test_two_buffers()
+   call test_boundary_step()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
 
 contains
@@ -299,6 +301,86 @@ contains
       call check_close(b%pending(1)%sval(k_cas), 275.0_wp, 1.0e-10_wp, 'polygon b: its own mean')
       call check_close(a%queue(1)%rec(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a''s queued record is untouched')
    end subroutine test_two_buffers
+
+   !----- The slow tick on a restructuring step (#294). The step from 31 January to 1 February is   !
+   !      January's, so the site variables fold into January before the month closes. But it ends  !
+   !      by restructuring the cohorts, so its cohort slab and cohort count -- already the new set  !
+   !      -- open February instead. A one-step daily window takes the whole step. ------------------!
+   subroutine test_boundary_step()
+      type(meds_config_t)    :: cfg
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
+      type(site_t)           :: site
+      type(meds_time_t)      :: jan30, jan31, feb1, feb2
+      integer(ik) :: k_s, k_c, k_n
+      real(wp), parameter :: DT = 86400.0_wp
+      cfg = build_test_config(DT)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on    = [.false., .true., .true., .false.]    ! daily + monthly
+      cfg%output%grp_on     = .false.
+      cfg%output%grp_on(1)  = .true.                                 ! structure
+      cfg%output%cohort_max = 8_ik
+      call manager_alloc(files, bufs, cfg)
+      k_s = find_var_index(files%reg, 'agb_site')
+      k_c = find_var_index(files%reg, 'agb_cohort')
+      k_n = find_var_index(files%reg, 'n_cohort_site')
+      call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
+
+      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik)
+      site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
+      jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
+      jan31 = time_advance_days(jan30, 1_ik)
+      feb1  = time_advance_days(jan31, 1_ik)
+      feb2  = time_advance_days(feb1, 1_ik)
+
+      !----- 30 January: one cohort, agb 10. --------------------------------------------------!
+      call set_cohorts(site, [10.0_wp])
+      call output_integrate(files, bufs, site, jan30, jan31, DT, .true., .false., .false.)
+      !----- 31 January, ending in a restructuring: a recruit joins, agb 20 and 5. ---------------!
+      call set_cohorts(site, [20.0_wp, 5.0_wp])
+      call output_integrate(files, bufs, site, jan31, feb1, DT, .true., .true., .false.)
+
+      call check(bufs%pending(2)%t_open%month == 1_ik .and. bufs%pending(2)%t_open%day == 31_ik,     &
+                 'the step from 31 January to 1 February is the 31 January daily record')
+      call check(bufs%pending(2)%nslab(k_c) == 2_ik, 'the one-step daily window takes the new cohort set')
+      call check_close(bufs%pending(2)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'daily: the recruit''s agb')
+      call check_close(bufs%pending(2)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'daily: its cohort count')
+
+      call check(bufs%queue(3)%n == 1_ik, 'the month turning closes January')
+      call check(bufs%pending(3)%t_open%month == 1_ik .and. bufs%pending(3)%t_open%day == 30_ik,     &
+                 'January opens at the start of its first step')
+      call check_close(bufs%pending(3)%sval(k_s), 17.5_wp, 1.0e-12_wp,                             &
+                       'January''s site mean includes its last step: (10 + 25) / 2')
+      call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab keeps the old slot set')
+      call check_close(bufs%pending(3)%slab(1,k_c), 10.0_wp, 1.0e-12_wp,                           &
+                       'January''s cohort slab excludes the restructured step')
+      call check_close(bufs%pending(3)%sval(k_n), 1.0_wp, 1.0e-12_wp,                              &
+                       'January''s cohort count describes its own slab')
+      call check(bufs%has_data(3) .and. bufs%deferred_only(3), 'the deferred values open February')
+      call check(bufs%t_open(3)%month == 2_ik .and. bufs%t_open(3)%day == 1_ik, 'February opens on 1 February')
+
+      !----- 1 February: February's first step of its own; then close the month by hand. --------!
+      call set_cohorts(site, [22.0_wp, 6.0_wp])
+      call output_integrate(files, bufs, site, feb1, feb2, DT, .true., .false., .false.)
+      call check(.not. bufs%deferred_only(3), 'a step of its own makes February a real window')
+      call close_tier(files, bufs, 3_ik)
+      call check_close(bufs%pending(3)%sval(k_s), 28.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
+      call check_close(bufs%pending(3)%slab(1,k_c), 21.0_wp, 1.0e-12_wp,                           &
+                       'February''s cohort slab: the deferred and its own sample, (20 + 22) / 2')
+      call check_close(bufs%pending(3)%slab(2,k_c), 5.5_wp, 1.0e-12_wp, 'February''s recruit: (5 + 6) / 2')
+      call site_free(site)
+   end subroutine test_boundary_step
+
+   !----- One patch holding `agb`'s cohorts, one plant each. ------------------------------------!
+   subroutine set_cohorts(site, agb)
+      type(site_t), intent(inout) :: site
+      real(wp),     intent(in)    :: agb(:)
+      integer(ik) :: n
+      n = size(agb, kind=ik)
+      site%cohort%n = n ; site%patch%cohort_count(1) = n
+      site%cohort%nplant(1:n) = 1.0_wp ; site%cohort%pft(1:n) = 1_ik ; site%cohort%owner_patch(1:n) = 1_ik
+      call set_cohort_agb(site, agb, n)
+   end subroutine set_cohorts
 
    !----- Stage two FAST sub-steps with the given CAS temperatures and zero everything else. -----!
    subroutine stage_cas(bufs, cas)

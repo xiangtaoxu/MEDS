@@ -269,6 +269,38 @@ here, and one output gap that hid it (#270, open).
 
 ### Fixed
 
+- **Daily, monthly and annual records were dated one slow step late** (#294, #296). The tick ran after
+  a step from `prev` to `now`, closed the periods `now` had left, and opened the next window at
+  `now`. So a step's fluxes, accumulated over `[prev, now)`, landed in the period that starts at
+  `now`. Every daily record held the day before its stamp: a July run wrote records stamped 2 July to
+  1 August, and the record stamped *d* matched the hourly mean of day *d − 1* to 1e-13, while against
+  the hourly records of its own stamped date it was off by up to 4 K and 202 W/m². Each monthly
+  and annual record likewise covered its last day of the previous period, not its own last day.
+  - **The fix.** The tick now folds the step into the window that holds `prev`, then closes each
+    period `now` has left. A record stamped *d* holds the steps that start in *d*, and a state is the
+    value at the end of each of the period's steps. On the six regression cases:
+    - each daily record is the old one stamped a day earlier, bitwise;
+    - it equals the mean of the fast records of its own date to 1.4e-15;
+    - each monthly and annual site value is the aggregate of the new daily or monthly records of its
+      period to 1.8e-15;
+    - the fast tier is unchanged;
+    - no record is stamped at or after the run's end, so the stray file past the end is gone. For
+      example, a July run wrote a `D-…08` file before and now doesn't.
+  - **Monthly means move by up to** 0.64 K in `air_temp_site` (Nov 2074: 279.80 → 279.16 K), 1.8 W/m²
+    in `le_site` (May 2075: 58.35 → 60.13) and 5.5 W/m² in `sw_in_site` (May 2075: 226.9 → 232.3), on
+    the one-year established stand.
+  - **Cohort and patch values keep a one-step lag in the monthly tier.** The step on which a month
+    turns ends by restructuring the cohorts and patches, so its cohort and patch values (and
+    `n_cohort_site` / `n_patch_site`) are already in the next month's slot set. They open the next
+    month's record instead of joining one of a different slot set (the §4.4 rule of
+    `MEDS_IO_DESIGN.md`). Those monthly values are bitwise the old ones.
+  - **A daily file's last record may now hold a recruit or a new gap its earlier records don't**, so
+    the writer sizes a file's cohort and patch axes to the largest live count among its records. It
+    used to size them from the first record, and before this fix `est_year` stopped on "cohort count
+    grew within a file".
+  - `test_output_integrate` covers the boundary step, and `test_output_roundtrip` checks the daily
+    stamps. The convention is written up in `docs/science/diagnostics.md` §4.
+
 - **Patch-sourced diagnostics read low by the disturbed fraction on the year-boundary step** (#295).
   `apply_patch_disturbance` carves one gap from every donor at a uniform `frac = 1 - exp(-rate dt)`
   and shrinks the donors to `(1 - frac)` of their area, but it *cleared* the gap's patch-diagnostic

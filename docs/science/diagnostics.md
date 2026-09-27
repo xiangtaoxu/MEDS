@@ -96,8 +96,8 @@ purpose.
 | netCDF dim | length | notes |
 |---|---|---|
 | `time` | UNLIMITED | period **start** stamp; `cell_methods` says how the period was reduced |
-| `cohort` | live count, trimmed per file | slot order; `global_cohort_id` tracks a cohort across files |
-| `patch` | live count, trimmed per file | ditto `global_patch_id` |
+| `cohort` | largest live count among the file's records | slot order; the per-record `n_cohort` delimits each record's rows; `global_cohort_id` tracks a cohort across records and files |
+| `patch` | largest live count among the file's records | ditto `n_patch`, `global_patch_id` |
 | `soil` | `n_soil_layer_max` | area-weighted site column |
 | `pft` | **run-time** PFT count | carries a `pft` coordinate variable, so the file stays self-describing |
 | `dbh_class` | from `[output].dbh_class_edges` | carries `dbh_lower` / `dbh_upper` coordinates |
@@ -127,6 +127,29 @@ slot set present at flush. The registry rejects it at start-up.
 | `AGG_MIN` / `AGG_MAX` | `time: minimum` / `maximum` | period extremum |
 | `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
 | `AGG_VARIANCE` | `time: variance` | dt-weighted variance over the period |
+
+#### Which steps a record holds
+
+A slow step runs from `prev` to `now`. Its fluxes are accumulated over that interval, and its state is
+read at `now`, after the step's dynamics. **A step belongs to the period it starts in**, so a record
+stamped *d* holds the steps that start in period *d*:
+
+- a daily flux is that day's: the daily record stamped 1 July is the mean of the fast records stamped
+  1 July;
+- a state is the value at the end of each of the period's steps, so the daily state stamped 31 July is
+  the state at 1 August 00:00, and a monthly mean is the mean over the ends of the month's steps;
+- no record is stamped at or after the run's end.
+
+**One exception keeps a cohort or patch record to one slot set (§3).** The step on which a month turns
+ends by restructuring the cohorts and patches: recruitment, fusion and splitting monthly, disturbance
+and patch fusion yearly. Its cohort and patch values are therefore already in the next month's slot
+set. In a daily record that is harmless, since the record holds that one step. A monthly record holds
+the old slot set's steps, so that step's cohort and patch values, and `n_cohort_site` / `n_patch_site`,
+open the next month's record instead. **A monthly cohort or patch record therefore runs one slow step
+later than the site variables beside it**: from the restructuring at the start of its month to the
+last step before the next one. A daily file's last record, the step that ends on the month boundary,
+may likewise hold a recruit or a new gap the earlier records don't. That's why the cohort and patch
+axes are sized to the file's largest live count.
 
 #### Variance companions
 
