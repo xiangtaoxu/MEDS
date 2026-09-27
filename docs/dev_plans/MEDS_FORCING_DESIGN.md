@@ -14,6 +14,10 @@
 > - ✅ The fast loop reads the forcing record directly; the `apply_met_to_ctx` shim is retired (§6.2).
 > - ✅ The forcing echo (§6.7): the `forcing` output group, polygon means at the daily to yearly
 >   tiers and every sub-step sample at the fast tier.
+> - ✅ Prescribed CO₂ (#184), 2026-09-27: `[forcing].co2_source` is `"const"` (`co2_const`) or
+>   `"file"` (a MEDS CO₂ file, looked up on model time, so it does not repeat with recycled met). The
+>   met file no longer carries CO₂. The repository ships CMIP7 global annual means for 1000–2022 in
+>   `data/co2/`. Format and series: `docs/science/forcing.md` §12.
 >
 > **The 2026-09-26 revision (§11–§19)** plans forcing *data* end to end, starting with ERA5-Land:
 > - ✅ Download tools (F1, PR #279).
@@ -42,7 +46,6 @@
 >
 > **Still open:**
 > - ⬜ F6, later products (§16–§17); archive years before June 2002 when needed;
-> - ⬜ a transient CO₂ stream (ROADMAP #184);
 > - ⬜ adjusting 2 m temperature and humidity to the reference height (Q2); the 10 m wind
 >   log-profile exists.
 >
@@ -743,6 +746,11 @@ the CAS-CO₂ reference (the brief flags this value is duplicated across ~5 type
 writes it once). A transient/observed CO₂ stream (Mauna Loa / CAMS) is a P2 add-on (a CO₂-only variable on
 the same file, non-cycling).
 
+> *Update 2026-09-27 (#184):* built as a separate text file, not a variable on the met file:
+> `[forcing].co2_source = "const" | "file"`, the file read once at open and looked up on model time
+> for every backend. `CO2air` in a met file is rejected. Format 1 and the shipped CMIP7 series
+> (1000–2022, global mean, not Mauna Loa) are in `docs/science/forcing.md` §12.
+
 **Wind measurement height (§10).** ERA5-Land wind is diagnostic at **10 m**; a temperate forest at Ithaca is
 ~20–30 m tall, so 10 m can sit *below* canopy top. Like every reanalysis-forced DGVM (GSWP3/CRUNCEP/WFDE5),
 P0 applies the near-surface reanalysis values at the model reference height and accepts the height
@@ -1141,7 +1149,7 @@ optional `elevation(grid)` (`m`). **Forcing variables, all shaped `(time, grid)`
 | `Rainf` | kg/m²/s | `time: mean` | de-accumulated hourly-mean rate |
 | `LWdown` | W/m² | `time: mean` | de-accumulated hourly-mean flux |
 | `SWdown` | W/m² | `time: mean` | **total** (default); reader partitions (§5.6). *Or* the four `SWdown_{par,nir}_{beam,diffuse}` if pre-split |
-| `CO2air` | µmol/mol | `time: point` | optional; absent ⇒ reader uses `co2_const` |
+| `CO2air` | µmol/mol | `time: point` | *Update 2026-09-27 (#184):* not read, and a file carrying it is rejected; CO₂ comes from `[forcing].co2_source` |
 
 **Global attributes:** `Conventions = "MEDS-forcing-1.0"` (ALMA-compatible names), `title`,
 `source` (e.g. `"ERA5-Land hourly (reanalysis-era5-land)"`), `timestep_seconds` (3600),
@@ -1196,11 +1204,12 @@ The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp
   zeroed 0.95% of all rain and 55% of wet hours.
 - **Removed from preprocessing:** the humidity, wind and CO₂ lines of the old code. `Tdew` and
   `u10`/`v10` are stored as delivered, the reader converts them (§15.4), and `CO2air` is
-  never written (the reader uses `co2_const`).
+  never written (CO₂ comes from `[forcing].co2_source`, #184).
 - **Implementation:** `build_era5land_archive.py` implements the recipe for the archive, vectorised
   over cells and months, and `make_forcing_file.py --box-dir` for box files; the post-processor
-  (§13.1) leaves accumulations as delivered. A single file (§7.1) still carries `Qair`, `Wind` and
-  `CO2air`, which `make_forcing_file.py` computes by the reader's own formulas. The per-cell sketch
+  (§13.1) leaves accumulations as delivered. A single file (§7.1) still carries `Qair` and `Wind`,
+  which `make_forcing_file.py` computes by the reader's own formulas; since #184 it writes no
+  `CO2air`. The per-cell sketch
   below is kept only as the reference form.
 
 The load-bearing conversions (§5.2). All operate per selected `grid` cell, then stack into `(time, grid)`:
@@ -1264,7 +1273,7 @@ reads a box of cells from it.
 > - ✅ the elevation-lapse and 10 m → reference-height wind corrections (optional, off by default);
 > - ➡ the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`;
 > - ➡ other reanalysis products move to §16, with the archive design in §14;
-> - ⬜ a transient CO₂ stream (ROADMAP #184);
+> - ✅ a prescribed CO₂ series (#184, 2026-09-27; `docs/science/forcing.md` §12);
 > - ⬜ climate-change perturbations.
 >
 > The forcing-data phases F0–F6 are in §17.
@@ -1394,7 +1403,8 @@ production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS do
 > - **Q1 resolved:** the 00Z and 01Z behaviour was confirmed on real GDEX data (§19).
 > - **Q2 partly done:** the log-profile correction exists and is optional.
 > - **Q3 resolved:** clearness-index is the default, and Weiss–Norman is available.
-> - **Q4 open** (#184).
+> - **Q4 resolved (2026-09-27, #184):** a separate CO₂ file on model time, not a variable on the
+>   met file; the shipped default is CMIP7 global annual means (`docs/science/forcing.md` §12).
 > - **Q5 resolved:** the accumulator is live.
 > - **Q6 resolved (2026-09-27):** `fill_forcing` and `fill_aenv` take `met_forcing_t`; the shim is
 >   retired. The kernel-facing types keep their fields (§6.2 update).
@@ -1708,7 +1718,7 @@ data_path       = "<installation-specific path to the ED_ERA5land archive>"
 domain          = "site"              # "site" (one cell, from [site].latitude/longitude) | "box"
 box_nwse        = [45.1, -79.8, 40.4, -71.8]   # used when domain = "box" (the polygon runtime)
 max_distance_km = 15.0                # a site on a no-data cell uses the nearest valid cell within this, else error
-co2_const       = 420.0               # unchanged; a transient CO2 stream is ROADMAP #184
+co2_const       = 420.0               # or co2_source = "file" + co2_file for a series (#184)
 ```
 
 - **`validate_config`** rejects any `met_source` other than `"era5land"` or `"legacy_file"` as not

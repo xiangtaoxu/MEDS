@@ -436,7 +436,15 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
 # lwdown_source         = "file"         # ERA5-Land has strd
-# co2_const             = 420.0          # [umol/mol] ERA5-Land has no CO2
+#   ---- CO2: never from the met file (one that carries CO2air is rejected) ----------------------
+# co2_source            = "const"        # "const" (default) | "file": the CO2 on MODEL time, every backend
+# co2_const             = 420.0          # [umol/mol] co2_source = "const" only
+# co2_file              = "data/co2/co2_cmip7_global_annual_1000-2022.txt"
+#                                        # co2_source = "file" only: a MEDS CO2 file, relative to where MEDS
+#                                        # runs. The shipped one is CMIP7 global annual means, 1000-2022;
+#                                        # its header defines the format (docs/science/forcing.md sec. 12).
+#                                        # Linear between period middles; a run it does not cover is refused.
+#   --------------------------------------------------------------------------------------------
 # recycle               = true           # cycle the forcing when the run outruns the file
 #
 #   RECYCLING IS DECLARED, NEVER INFERRED. When recycle = true, both keys below are REQUIRED and

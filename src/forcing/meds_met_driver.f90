@@ -15,6 +15,10 @@
 !                                                                                          !
 ! MEDS NEVER gap-fills (design §5.5): a missing/NaN required value is a HARD ERROR. netCDF is a       !
 ! hard dependency, so the reader is always the real thing (no stub).                                   !
+!                                                                                          !
+! CO2 is not meteorology (#184). It never comes from the met file: [forcing].co2_source gives one      !
+! value (co2_const) or a MEDS CO2 file (meds_co2_series), read at open, looked up on MODEL time for     !
+! every backend alike -- so it does not repeat when the met is recycled.                               !
 !==========================================================================================!
 module meds_met_driver
    use iso_c_binding,       only : c_int, c_size_t, c_double
@@ -29,9 +33,12 @@ module meds_met_driver
                                    MET_BACKEND_ERA5LAND, MET_PATH_LEN,                          &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
-                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE
+                                   GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE,        &
+                                   CO2_SOURCE_FILE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
    use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
+   use meds_co2_series,     only : co2_series_read, co2_series_at, co2_series_covers,          &
+                                   co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
@@ -52,7 +59,8 @@ module meds_met_driver
    public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
-             MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE
+             MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,  &
+             MET_ERR_CO2_IN_MET_FILE
 
    real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
@@ -66,6 +74,9 @@ module meds_met_driver
    integer(ik), parameter :: MET_ERR_AXIS_NOT_UNIFORM        = 5_ik   !< the file's time axis is ragged
    integer(ik), parameter :: MET_ERR_ATTR_MISMATCH           = 6_ik   !< a file global attribute contradicts the config
    integer(ik), parameter :: MET_ERR_ARCHIVE                 = 7_ik   !< archive: static file, site cell or a month missing
+   integer(ik), parameter :: MET_ERR_CO2_FILE                = 8_ik   !< the CO2 file is unreadable or breaks format 1
+   integer(ik), parameter :: MET_ERR_CO2_NOT_COVERED         = 9_ik   !< the CO2 file does not cover the run
+   integer(ik), parameter :: MET_ERR_CO2_IN_MET_FILE         = 10_ik  !< the met file carries CO2air
 
    !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
    !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
@@ -103,6 +114,14 @@ contains
       src%grid_index = fcfg%grid_index
       src%dt_forcing = fcfg%dt_forcing
       src%has_wind_vector = .false.
+
+      !----- CO2 first, before the backends branch, so every backend takes it the same way. ------!
+      call open_co2(src, run_start, run_end, vstat)
+      if (vstat /= MET_OK) then
+         call met_close(src)
+         if (present(stat)) then ; stat = vstat ; return ; end if
+         error stop 'met_open: the CO2 file cannot drive this run (see the message above)'
+      end if
 
       if (fcfg%backend == MET_BACKEND_CONST) then
          src%ngrid = 1_ik ; src%nrec = 0_ik
@@ -208,6 +227,35 @@ contains
          src%rec_first = r0                          ! a cursor's first bracket: the first records in range
       end block
    end subroutine met_open
+
+   !----- CO2 (#184): with co2_source = "file", read the MEDS CO2 file and check it covers the  !
+   !      run. MEDS does not extrapolate CO2, so a run the file does not cover stops here rather  !
+   !      than decades in. The run span is absent only in unit tests. ------------------------------!
+   subroutine open_co2(src, run_start, run_end, stat)
+      type(met_source_t),          intent(inout) :: src
+      type(meds_time_t), optional, intent(in)    :: run_start, run_end
+      integer(ik),                 intent(out)   :: stat
+      character(len=512) :: msg
+      logical :: ok
+      stat = MET_OK
+      if (src%fcfg%co2_source /= CO2_SOURCE_FILE) return
+      call co2_series_read(src%fcfg%co2_file, src%co2, ok, msg)
+      if (.not. ok) then
+         write(*,'(2a)') ' met_open: [forcing].co2_file = ', trim(src%fcfg%co2_file)
+         write(*,'(2a)') '   ', trim(msg)
+         stat = MET_ERR_CO2_FILE ; return
+      end if
+      if (present(run_start) .and. present(run_end)) then
+         if (.not. co2_series_covers(src%co2, run_start, run_end)) then
+            write(*,'(2a)') ' met_open: the CO2 file does not cover the run: ', trim(src%fcfg%co2_file)
+            write(*,'(4a)') '   run  ', time_to_string(run_start), ' .. ', time_to_string(run_end)
+            write(*,'(4a)') '   file ', time_to_string(src%co2%first_start), ' .. ',               &
+                            time_to_string(co2_series_end(src%co2))
+            write(*,'(a)')  '   MEDS does not extrapolate CO2: extend the file, or shorten the run.'
+            stat = MET_ERR_CO2_NOT_COVERED ; return
+         end if
+      end if
+   end subroutine open_co2
 
    !=======================================================================================!
    !  CURSOR: bind one polygon to the open source -- its cell and location -- and load its first  !
@@ -451,6 +499,13 @@ contains
                                 cur%utc_offset_h, f%apply_solar_longitude)
       met%cosz = cosz_now
 
+      !----- CO2 on MODEL time, one way for every backend (#184). ------------------------------!
+      if (f%co2_source == CO2_SOURCE_FILE) then
+         met%co2 = co2_series_at(src%co2, now)
+      else
+         met%co2 = f%co2_const
+      end if
+
       if (src%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
          !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
       !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
@@ -492,7 +547,6 @@ contains
       met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
       met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
       met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-      met%co2      = interpolate_forcing(INTERP_LINEAR, p%co2,      n%co2,      w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
       !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
       if (src%has_wind_vector) then
@@ -561,6 +615,7 @@ contains
       if (allocated(src%buffer%values)) deallocate(src%buffer%values)
       if (allocated(src%carry))  deallocate(src%carry)
       if (allocated(src%series)) deallocate(src%series, src%series_name)
+      call co2_series_free(src%co2)
       src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
    end subroutine met_close
 
@@ -915,7 +970,6 @@ contains
          rec%wind     = sqrt(rec%wind_u**2 + rec%wind_v**2)
          rec%rainf    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
          rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
-         rec%co2      = src%fcfg%co2_const
       else
          rec%tair_k   = read_scalar(src, 'Tair',  irec)
          rec%qair     = read_scalar(src, 'Qair',  irec)
@@ -937,7 +991,6 @@ contains
          else
             rec%lwdown = read_scalar(src, 'LWdown', irec)
          end if
-         rec%co2      = read_scalar_default(src, 'CO2air', irec, src%fcfg%co2_const)
       end if
       call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
       call assert_finite(rec%qair, 'Qair', irec, src%grid_index)
@@ -1005,8 +1058,8 @@ contains
       type(met_source_t), intent(inout)  :: src
       integer(c_int),     intent(in)    :: ncid
       integer(ik),        intent(in)    :: r0, r1
-      character(len=24), parameter :: FIELDS(14) = [character(len=24) ::                            &
-         'Tair', 'Qair', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'CO2air', 'SWdown',       &
+      character(len=24), parameter :: FIELDS(13) = [character(len=24) ::                            &
+         'Tair', 'Qair', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown',                 &
          'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
       integer(c_int)    :: st, vid
       integer(c_size_t) :: start2(2), count2(2)
@@ -1064,7 +1117,7 @@ contains
       end if
    end subroutine check_in_series
 
-   !----- `name` if the file carries it, else the supplied default (e.g. CO2air absent). --------!
+   !----- `name` if the file carries it, else the supplied default (e.g. LWdown under synthesis). -!
    function read_scalar_default(src, name, irec, default) result(val)
       type(met_source_t), intent(in)  :: src
       character(len=*),   intent(in) :: name
@@ -1178,6 +1231,19 @@ contains
             vstat = MET_ERR_ATTR_MISMATCH ; return
          end if
       end if
+
+      !----- (d) CO2air (#184): CO2 comes from [forcing].co2_source, never the met file, so a file  !
+      !      carrying it would be read by nothing. Rejected rather than ignored. -------------------!
+      block
+         integer(c_int) :: vid
+         if (nc_inq_varid_f(ncid, 'CO2air', vid) == NC_NOERR) then
+            write(*,'(a)') ' met_open: the forcing file carries CO2air, but CO2 comes from'
+            write(*,'(a)') '   [forcing].co2_source ("const" or "file"), never from the met file.'
+            write(*,'(a)') '   Remove it (ncks -x -v CO2air in.nc out.nc) or rebuild the file with'
+            write(*,'(a)') '   make_forcing_file.py, which no longer writes it.'
+            vstat = MET_ERR_CO2_IN_MET_FILE ; return
+         end if
+      end block
    end subroutine validate_file_against_config
 
    !----- The config code's own spelling, so the mismatch message quotes both sides in one vocabulary. !

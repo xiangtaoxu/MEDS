@@ -17,8 +17,10 @@ Both inputs give the same file (MEDS_FORCING_DESIGN.md §7.1):
     elevation per grid point;
   * Tair [K], PSurf [Pa], Qair [kg/kg] from the dewpoint by the model's own Bolton (1980) saturation
     form, Wind [m/s] = max(sqrt(u10^2 + v10^2), 0.1) at 10 m, and the hour-mean fluxes Rainf
-    [kg m-2 s-1], SWdown (total; the model partitions it) and LWdown [W m-2], plus a constant CO2air;
+    [kg m-2 s-1], SWdown (total; the model partitions it) and LWdown [W m-2];
   * end-stamped hourly records (avg_convention = "end"), UTC.
+No CO2air: CO2 is not meteorology, and the model takes it from [forcing].co2_source (a constant, or
+a MEDS CO2 file such as data/co2/), never from this file -- it rejects a file that carries one.
 MEDS never gap-fills: a missing value is an error, here as in the model.
 
 De-accumulation of the box files (the 00Z trap, MEDS_FORCING_DESIGN.md §7.3): ERA5-Land accumulates
@@ -57,7 +59,6 @@ import era5land_common as common
 RHO_W = 1000.0          # [kg/m3] water density (1 m of water = 1000 kg/m2)
 SEC_PER_HOUR = 3600.0
 U_MIN = 0.1             # [m/s] wind floor (M-O similarity stability in the aero kernel)
-CO2_DEFAULT = 420.0     # [umol/mol] present-day free-atmosphere CO2 (ERA5-Land has none)
 EARTH_RADIUS_KM = 6371.0
 
 # ERA5-Land NetCDF variable names in the box files (NOT the GRIB shortnames).
@@ -338,7 +339,6 @@ def main(argv=None):
     ap.add_argument("--elevation", type=float, default=320.0,
                     help="box files only: the elevation [m] to record for each grid point (default 320, "
                          "Ithaca); from the archive it is the cell's orography")
-    ap.add_argument("--co2", type=float, default=CO2_DEFAULT, help="constant CO2 [umol/mol] (ERA5-Land has none)")
     args = ap.parse_args(argv)
     if args.box_dir and (args.start or args.end):
         ap.error("--start/--end apply to --data-path; box files carry their own period")
@@ -352,7 +352,6 @@ def main(argv=None):
     ng, nt = len(grid), len(times)
     names = ["Tair", "Qair", "PSurf", "Wind", "Rainf", "SWdown", "LWdown"]
     arrays = {n: np.column_stack([f[n] for f in per_cell]) for n in names}
-    arrays["CO2air"] = np.full((nt, ng), args.co2, dtype=float)
 
     # ---- MEDS never gap-fills (design comment 2). Two steps: -----------------------------------
     # (a) TRIM the leading de-accumulation boundary: the single leading non-01Z sample cannot be
@@ -388,7 +387,6 @@ def main(argv=None):
         "Rainf":  ("kg m-2 s-1","precipitation rate",           "time: mean"),
         "SWdown": ("W m-2",     "downward shortwave (total)",   "time: mean"),
         "LWdown": ("W m-2",     "downward longwave",            "time: mean"),
-        "CO2air": ("umol mol-1","free-atmosphere CO2 (synthetic constant)", "time: point"),
     }
     fields = {n: (arrays[n],) + meta[n] for n in meta}
     attrs = dict(
@@ -400,8 +398,6 @@ def main(argv=None):
         avg_convention="end",          # flux vars: mean over the hour ENDING at the stamp
         sw_input_kind="total",         # total SWdown; the Fortran reader partitions (design §5.6)
         time_zone="UTC",
-        co2_const=float(args.co2),
-        co2_note="ERA5-Land has no CO2; a single constant was applied",
         wind_meas_height_m=10.0,       # ERA5-Land wind is at 10 m (design §5.2/§10)
     )
     write_meds_forcing(args.out, time_seconds, base_iso, [g[0] for g in grid], [g[1] for g in grid],
