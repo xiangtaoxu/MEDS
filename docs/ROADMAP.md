@@ -197,8 +197,9 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   of readers, a polygon loop and MPI. Large and orthogonal to everything else.
   `nearest_grid_index` is the reusable atom, already built. The forcing side is ready too: the
   ED_ERA5land reader's box selection and multi-cell month loads (`meds_era5land_reader`,
-  `MEDS_FORCING_DESIGN.md` §15.5) are implemented and tested, and the `[forcing]` `domain` and
-  `box_nwse` keys arrive with the runtime that consumes them (`MEDS_POLYGON_RUNTIME_PLAN.md`).
+  `MEDS_FORCING_DESIGN.md` §15.5) are implemented and tested, and `[run].mode = "region"` with a
+  `[region]` block arrives with the runtime that consumes them (`MEDS_POLYGON_RUNTIME_PLAN.md`, whose
+  §10.1–§10.3 plan R0–R2 in detail).
 - **A transient or observed CO₂ stream.** *Planned.* [#184](https://github.com/xiangtaoxu/MEDS/issues/184)
 
 ---

@@ -74,6 +74,14 @@ before and after.
 
 ### Changed
 
+- **`MEDS_POLYGON_RUNTIME_PLAN.md` revised.** A run's polygons form a *region*, always contiguous;
+  scattered site networks run as separate processes (a job array, or one allocation filled with GNU
+  parallel) rather than in one process. The plan adds the output-performance analysis, two blockers
+  found in the code (one pending record per output frequency; site location in the shared config),
+  and a step-by-step plan for R0 (measurements), R1 (the compute/I-O split) and R2 (the serial region
+  container). R0 is measured: an established Ithaca stand costs about 1.1 s and 0.7 MB per
+  polygon-month and polygon, 18.6% of CPU goes to allocation, and a site run spends 24% of its time
+  rereading archive chunks, which R1 now removes.
 - **`build_era5land_archive.py --work-dir`** writes each output on another disk, such as a compute
   node's local drive, then copies the finished file into the archive in one sequential pass that
   also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds
