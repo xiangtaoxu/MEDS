@@ -16,6 +16,21 @@ before and after.
 
 ### Added
 
+- **Region runs** (R2 of `MEDS_POLYGON_RUNTIME_PLAN.md`). `[run].mode = "region"` simulates every
+  selected ED_ERA5land cell of a `[region].box_nwse` as its own polygon, in one process:
+  - one forcing reader serves all polygons, loading a month for every cell at once;
+  - each polygon runs the site run's own step, so it computes exactly what a site run at its cell
+    computes;
+  - the output is region files with a `polygon` dimension (site totals, per-PFT, per-size-class and
+    per-soil-layer variables), plus ordinary single-site files for `detail_polygons`;
+  - cells below `land_fraction_min` (default 0.5) are skipped.
+
+  A new CTest, `region`, checks a 3-polygon region on a synthetic archive against 3 site runs, bit
+  for bit, and checks the region-mode config rules. Regions start from bare ground and write no
+  checkpoints until region restarts exist (R4). A 1° box around Ithaca (100 polygons) runs 2016
+  in 16 minutes on one core, at 0.81 s per polygon-month: the same cost as the physics of a site run.
+  Memory is about 1.3 MB per polygon. See `docs/configuration.md`, "Regional runs".
+
 - **ERA5-Land forcing tools in `scripts/prepare_era5/`** (#279). Downloading and post-processing are
   separate tools:
   - `download_era5land_gdex.py` fetches NSF NCAR GDEX d633008's global 5-day files unchanged into a

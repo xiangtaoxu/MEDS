@@ -9,8 +9,8 @@
 !==========================================================================================!
 program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
-   use meds_kinds,           only : wp, sp, ik
-   use meds_time,            only : meds_time_t, seconds_between
+   use meds_kinds,           only : wp, ik
+   use meds_time,            only : meds_time_t
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
@@ -19,10 +19,8 @@ program test_met_era5land
                                    met_prefetch, &
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &
-                                    era5land_select_box, era5land_load_month, era5land_month_hours, &
-                                    ERA_NVAR, ERA_VAR_NAME, ERA_VAR_UNITS, ERA_OK, ERA_ERR_NAN,     &
+                                    era5land_select_box, era5land_load_month, ERA_OK, ERA_ERR_NAN,  &
                                     ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10
-   use meds_netcdf_c
    use meds_test_era5land_archive, only : T0, field, hour_index, write_archive
    implicit none
 

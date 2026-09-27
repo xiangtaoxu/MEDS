@@ -9,6 +9,9 @@
 dt_slow    = "1d"              # slow-process (demography) timestep: "1d" | "7d" | "12h" | seconds
 start_time = "2000-01-01"      # first simulated date ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS")
 end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
+# mode     = "site"            # "site" (default): one location, from [site]. "region": every selected
+                               # cell of [region].box_nwse as its own polygon (see [region] at the end
+                               # of this file, and docs/configuration.md "Regional runs").
 # n_threads = 1                # host threads over the fast loop's PATCH axis (plan section 7).
                                # Default 1 = serial. Requires a build configured with
                                # -DMEDS_OPENMP=ON; without it the directives are comments and this
@@ -458,3 +461,15 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # recycle_start         = "2024-01-01 01:00:00"
 # recycle_end           = "2025-01-01 01:00:00"
 # start_clamp           = "error"        # model start < first record: "error" | "hold"
+
+#-------------------------------------------------------------------------------------------------#
+# [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
+# Every valid cell of the box with enough land becomes a polygon at its cell centre, orography     #
+# and UTC; so [site].latitude/longitude/utc_offset/elevation and [forcing].max_distance_km are      #
+# refused in region mode. Needs format = "era5land", init_mode = 0 and write_state = false.         #
+#-------------------------------------------------------------------------------------------------#
+# [region]
+# box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180
+# land_fraction_min = 0.5            # default 0.5: skip lakes and fractional coastal cells
+# detail_polygons   = []             # polygon ids (row * 3600 + col) that also write full single-site
+#                                    # files: cohort, patch and sub-daily output, <prefix>-p<id>-...

@@ -42,7 +42,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 
 | Block | What it sets |
 |---|---|
-| `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. |
+| `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
 | `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control. |
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
@@ -52,6 +52,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
 | `[hydraulics]` | Plant water transport. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
+| `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(Renamed from `[io]`; the old name still loads with a warning.)* |
 | `[options]` | `override_derived` and other run switches. |
@@ -163,6 +164,43 @@ The file formats, the ERA5-Land preparation recipe, and the recycling rules are 
   window of any other length drifts both hour-of-day and day-of-year on every wrap while the daily
   mean stays correct, so nothing downstream complains.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
+
+## Regional runs
+
+`[run].mode = "region"` simulates every selected cell of a box of the ED_ERA5land archive as its own
+polygon, in one process. Each polygon is an independent stand at its cell's centre, at the cell's
+orography, in UTC, and it computes exactly what a site run at that point would: the region steps
+every polygon with the site run's own step. Scattered sites are not a region; run them as separate
+site runs (a job array, or one allocation filled with GNU parallel).
+
+```toml
+[run]
+mode = "region"
+
+[region]
+box_nwse          = [42.95, -76.95, 41.95, -75.95]   # [N, W, S, E]; may cross 0 or 180 degrees
+land_fraction_min = 0.5                              # skip lakes and fractional coastal cells
+detail_polygons   = [1714634]                        # optional: these also write single-site files
+```
+
+- **Selection.** Every cell of the box that the archive has data for and whose static land fraction
+  is at least `land_fraction_min` (default 0.5) becomes a polygon, in row-major order. A polygon's
+  id is its cell's index on the global grid, `row * 3600 + col` at 0.1 degrees, so ids agree across
+  regions.
+- **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
+  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold the variables that
+  have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort
+  and patch variables, and the sub-daily tier, are written only for `detail_polygons`, as ordinary
+  single-site files named `<prefix>-p<polygon id>-...`.
+- **Rules.** A region needs `[forcing].format = "era5land"` with forcing and the fast loop on. It
+  takes its locations from its cells, so `[site].latitude`, `longitude`, `utc_offset`, `elevation`
+  and `[forcing].max_distance_km` are refused; the rest of `[site]` (reference heights, profile and
+  lapse switches) still applies. Until restarts of regions exist, a region starts from bare ground
+  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
+  thread without the fast probe.
+- **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
+  crash loses at most the current month. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the
+  measured cost per polygon-month and the roadmap to threads, restarts and tiles.
 
 ## Worked examples
 

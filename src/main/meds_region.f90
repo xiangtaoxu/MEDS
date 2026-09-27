@@ -20,7 +20,7 @@
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : day_sec, yr_day
+   use meds_constants,              only : day_sec
    use meds_config,                 only : meds_config_t
    use meds_config_io,              only : load_meds_config
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &

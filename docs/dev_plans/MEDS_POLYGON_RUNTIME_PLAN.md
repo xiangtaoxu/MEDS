@@ -517,6 +517,32 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
 
 **PR 3 — the region driver, region files and the equivalence test.**
 
+> **Status ✅ 2026-09-27.** Steps 6–10 as below, with these specifics:
+> - **One step for both drivers.** A polygon's state and its step live in `src/main/meds_polygon.f90`
+>   (`meds_polygon_t`, `polygon_prepare`, `polygon_step`, `polygon_report`). The site driver is one
+>   polygon and `meds_region` steps many with the same call, so a polygon computes what a site run
+>   at its cell computes by construction. The polygon's location lives in its forcing cursor.
+> - **The month block** runs from the current date to the next month boundary or `end_time`. One
+>   `met_prefetch` loads it, and the later steps' prefetches are checked to load nothing before any
+>   polygon runs. A recycle window whose wrap falls inside a month stops the run with a message.
+> - **Region files** hold the fixed-shape variables (`manager_restrict_region` switches off cohort,
+>   patch and soil-patch variables and the fast tier). A polygon's part therefore sizes only
+>   fixed-shape buffers, so step 4's region-mode sizing comes from the registry rather than from a
+>   second code path. Packing happens in the serial I/O phase from the parts' queues
+>   (`output_serialize_region`); moving it into the parallel phase (§6.1 item 1) waits for R3's
+>   measured write share. A region file keeps the configured file chunk for a tier, while a site
+>   file caps a tier with cohort variables at a month, so the same records can sit in differently
+>   chunked files.
+> - **Detail polygons** get a site-style shared half and part of their own (prefix
+>   `<prefix>-p<id>`), and the fast loop stages into that part.
+> - **Not enforced:** `MEDS_GPU = none` is a build option, which `validate_config` cannot see.
+> - **Tests:** `test_region` runs 3 polygons (the box crosses 180° and holds a no-data cell and a
+>   mostly-water column) against 3 site runs. Every region variable's polygon slice and every
+>   detail file are equal bit for bit, the polygon axis is checked, and ten region-mode config
+>   rejections are checked by message. It takes 10 s. The synthetic archive moved into
+>   `test/meds_test_era5land_archive.f90`, and `test_met_era5land` checks `land_fraction_min`.
+> - **Demo (step 10):** see §10.3.1.
+
 6. **Config** (`meds_config.f90`, `meds_config_io.f90`, and a new `meds_region_opts` leaf in
    `src/config/`): `[run].mode = "site" | "region"`; the `[region]` block (`box_nwse`,
    `land_fraction_min`, `detail_polygons`); the region-mode rules of §9.
@@ -547,6 +573,37 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
 10. **Demo:** a 1° box around Ithaca (about 100 polygons) for one year from the archive, run
     serially, with wall time and memory recorded here as the baseline for R3.
 11. **Size:** 4–6 working sessions across the three PRs.
+
+#### 10.3.1 R2 demo: a 1° box around Ithaca
+
+`[region].box_nwse = [42.95, -76.95, 41.95, -75.95]` (100 polygons, none below the 0.5 land
+fraction) for 2016 from the archive, bare ground, serial, with polygon 1714634 (42.4 N, 76.5 W) as
+the detail polygon and the R0 output set. The node ran nothing else (`--exclusive`, cbsuxu03, ifx
+`-O2`):
+
+| Run, one year | Wall | Peak memory |
+|---|---|---|
+| Region, 100 polygons | 973 s | 217 MB |
+| Site at polygon 1714634, output off | 10.1 s | 35 MB |
+| Site at polygon 1714634, full output (cohort, patch, hourly tiers) | 27.8 s | 90 MB |
+
+- **A region polygon costs what the site run's physics costs:** 973 s for 100 polygons is 9.7 s
+  each (0.81 s per polygon-month, bare ground), against 10.1 s for the site without output. The
+  region's own overhead (the shared reader, the month loop, the region files) does not register.
+- **Full single-site output nearly triples a site year** (27.8 s against 10.1 s). This is the §6.1
+  case for keeping the fast and cohort tiers to `detail_polygons`.
+- **Memory: about 1.3 MB per polygon**, from (217 − 90 MB) over 99 polygons. That is twice R0's
+  0.7 MB estimate, and at this rate 300,000 polygons would need 390 GB. Before R3, measure the
+  split between the fast context (built once per polygon because thermal acclimation edits its
+  leaf table) and the site state's preallocated capacities.
+- **Output:** the region daily files are 1.4 MB per month and the monthly file 1.0 MB per year, or
+  about 14 KB and 0.9 KB per polygon-month (compressed).
+- **Equivalence on real forcing:** polygon 1714634's slice of every region variable (80 daily, 124
+  monthly) and all 392 of its detail files equal the site run's, bit for bit.
+- **Energy budget.** The whole-column energy check fails at nearly every step in both runs, with a
+  mean leak of −2.9 W/m² from bare ground (210,576 of 210,816 checks at the site). The site run on
+  `beta` does the same (the R1 `bare_july_archive` case fails 17,856 of 17,856). This is not an R2
+  change, but it needs its own issue.
 
 ## 11. Tests (CTest)
 
