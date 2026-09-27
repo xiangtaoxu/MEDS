@@ -193,6 +193,16 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   adequate for a fallback, but the residual is real: driving Ithaca from synthesis leaves the soil
   surface 1.37 K cooler than the file's `strd`. A cloud-fraction formulation (Crawford & Duchon
   1999) or a nocturnal index carried from a longer window would close more of it.
+- **Forcing adapters for NLDAS-3, Daymet and CHIRPS** (forcing phase F6). *Candidate.*
+  [#302](https://github.com/xiangtaoxu/MEDS/issues/302) Deferred 2026-09-27; ERA5-Land stays the
+  only product. Each would follow the ED_ERA5land pattern: a downloader, the same flat monthly
+  archive, and a `met_source` entry (`MEDS_FORCING_DESIGN.md` §16). NLDAS-3 (~1 km, hourly) could
+  drive MEDS alone but needs regional archives and its own chunk size (OD3); Daymet and CHIRPS are
+  daily corrections to an hourly base.
+- **ED_ERA5land archive years before June 2002.** *Planned.*
+  [#303](https://github.com/xiangtaoxu/MEDS/issues/303) Deferred until a study needs them. GDEX
+  starts in June 2002, so they come from the CDS, with the tools that already built 2026-04 and
+  2026-06.
 - **The multi-polygon runtime.** *Candidate.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) A grid → polygon → site state hierarchy, an array
   of readers, a polygon loop and MPI. Large and orthogonal to everything else.
   `nearest_grid_index` is the reusable atom, already built. The forcing side is ready too: the
