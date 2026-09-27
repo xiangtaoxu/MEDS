@@ -206,7 +206,12 @@ module meds_site_diag_types
    !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
    integer(ik), parameter, public :: PD_CAS_VPD       = 36_ik  !< [Pa]
    integer(ik), parameter, public :: PD_W_SURFACE     = 37_ik  !< [kg/m2] ponded surface water
-   integer(ik), parameter, public :: N_PDIAG            = 37_ik
+   !----- The patch's own forcing: the sample moved to its canopy-air top (docs/science/forcing.md  !
+   !      §8). Only the wind and the air temperature differ between patches.                       !
+   integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 38_ik  !< [m/s] wind speed at the canopy-air top
+   integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 39_ik  !< [K]   air temperature at the canopy-air top
+   integer(ik), parameter, public :: PD_Z_CAS_TOP     = 40_ik  !< [m]   that top: the canopy-air depth the fast loop used
+   integer(ik), parameter, public :: N_PDIAG            = 40_ik
 
    !==========================================================================================!
    !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !

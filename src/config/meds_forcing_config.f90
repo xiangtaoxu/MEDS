@@ -25,6 +25,7 @@ module meds_forcing_config
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    public :: CO2_SOURCE_CONST, CO2_SOURCE_FILE
+   public :: HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
 
    !----- Reader backend ([forcing].format): a MEDS forcing NetCDF, the global ED_ERA5land       !
    !      archive, or a no-file reference-climate box. ------------------------------------------!
@@ -78,6 +79,15 @@ module meds_forcing_config
    !      the met is recycled. ------------------------------------------------------------------!
    integer(ik), parameter :: CO2_SOURCE_CONST = 0_ik   !< co2_const, held for the whole run
    integer(ik), parameter :: CO2_SOURCE_FILE  = 1_ik   !< a MEDS CO2 file (format: docs/science/forcing.md, "CO2")
+
+   !----- The forcing's own vertical frame ([forcing].height_above, .wind_exposure). The forcing  !
+   !      is moved from its heights to the top of each patch's canopy air space (meds_lapse_rate). !
+   integer(ik), parameter :: HEIGHT_ABOVE_ZERO_PLANE = 0_ik  !< heights above the patch's displacement height
+                                                            !< (a reanalysis: its model has no d; CLM, JULES)
+   integer(ik), parameter :: HEIGHT_ABOVE_GROUND     = 1_ik  !< heights above the ground (a flux tower)
+   integer(ik), parameter :: WIND_EXPOSURE_OPEN_TERRAIN = 0_ik  !< the wind is an open-terrain diagnostic
+                                                               !< (ERA5: from a blending height with z0 = 0.03 m)
+   integer(ik), parameter :: WIND_EXPOSURE_LOCAL        = 1_ik  !< the wind was measured over this canopy
 
    !==========================================================================================!
    !  The [forcing]/[site] block. Plain scalars (no allocatables), so meds_config carries it     !
@@ -141,13 +151,18 @@ module meds_forcing_config
       real(wp)           :: utc_offset_h  = 0.0_wp               !< [h] ERA5-Land is UTC -> offset 0
       logical            :: apply_solar_longitude = .true.       !< UTC file -> longitude gives local solar time
       real(wp)           :: elevation_m   = 320.0_wp             !< [m] site elevation (Ithaca ~320 m; elevation lapse)
-      real(wp)           :: reference_height = 40.0_wp           !< [m] forcing reference height (> every PFT hgt_max)
-      real(wp)           :: wind_meas_height = 10.0_wp           !< [m] ERA5-Land wind is 10 m (§5.2/§10)
-      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2; both OFF by default). ----!
-      logical            :: apply_wind_profile    = .false.      !< lift wind from wind_meas_height to reference_height
-      logical            :: apply_elevation_lapse = .false.      !< lapse T/P from the grid-cell elevation to the site
-      real(wp)           :: wind_roughness_z0 = 0.1_wp           !< [m] roughness length for the neutral-log wind profile
-      real(wp)           :: lapse_rate_tair   = 0.0065_wp        !< [K/m] environmental lapse (positive = cooling upward)
+      !----- The forcing's own heights ([forcing]; defaults are ERA5-Land's). Every sample is moved  !
+      !      from them to the top of each patch's canopy air space, per patch (meds_lapse_rate).     !
+      real(wp)           :: tq_height            = 2.0_wp       !< [m] height of air temperature and humidity
+      real(wp)           :: wind_height          = 10.0_wp      !< [m] height of the wind
+      integer(ik)        :: height_above         = HEIGHT_ABOVE_ZERO_PLANE   !< what those heights are above
+      integer(ik)        :: wind_exposure        = WIND_EXPOSURE_OPEN_TERRAIN !< open-terrain diagnostic | local
+      real(wp)           :: wind_exposure_z0     = 0.03_wp      !< [m] roughness the open-terrain wind was made for
+      real(wp)           :: wind_blending_height = 40.0_wp      !< [m] height it was brought down from
+      !----- The terrain lapse, from the forcing cell's elevation to the site's ([site]). --------!
+      logical            :: apply_elevation_lapse = .false.      !< lapse T, P, q, LW from the grid-cell elevation to the site
+      real(wp)           :: lapse_rate_tair(12) = 0.0065_wp      !< [K/m] environmental lapse, January .. December
+                                                                 !<       (positive = cooling upward)
       real(wp)           :: grid_elevation_m  = 320.0_wp         !< [m] elevation of the forcing source grid cell
    end type forcing_config_t
 

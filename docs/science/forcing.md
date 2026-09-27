@@ -306,35 +306,94 @@ f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qqu
 \mathrm{rainf} = f_{liq}P, \qquad \mathrm{snowfall} = P-\mathrm{rainf} \qquad(11)
 ```
 
-## 8. Wind height and elevation lapse
+## 8. Vertical corrections: the terrain, then the canopy-air top
 
-Two optional ingest-time corrections, both **off by default**, both applied per record before interpolation.
-Reanalysis wind is diagnostic at 10 m, which at a temperate forest can sit below canopy top; a neutral-log
-profile lifts it to the model reference height. The factor is independent of $u$, so it commutes with the
-energy-form interpolation of §3, and when the source supplies the wind vector both components take
-the same factor, which keeps its direction; a degenerate roughness ($`z_0\le 0`$, or either height at or below
-$`z_0`$) leaves the wind untouched.
+Every vertical correction lives in one module, `meds_lapse_rate`, and runs in two steps: the **terrain**
+lapse per record as it is read, then the move to **each patch's canopy-air top** per patch and sub-step.
 
-```math
-u_{ref} = u_{meas}\,\frac{\ln(z_{ref}/z_0)}{\ln(z_{meas}/z_0)} \qquad(12)
-```
+**What the forcing's heights mean.** For ERA5-Land, which is what MEDS reads today:
+- heights are above the ground plus the roughness length; the ECMWF model has no displacement height
+  (IFS Cy41r2 documentation, Part IV, §3.2);
+- the **10 m wind is an open-terrain diagnostic**: the model's 40 m blending-height wind brought down to
+  10 m with a fixed roughness of 0.03 m, whatever the land cover (Part IV, §3.10.2). ERA5-Land takes it
+  from ERA5 by interpolation;
+- over a forested cell, **2 m temperature and dewpoint are a clearing's**: they come from the cell's
+  dominant low-vegetation tile, not from air above the canopy;
+- ERA5-Land has already lapsed ERA5 to its own orography, holding relative humidity (Muñoz-Sabater
+  et al. 2021, §2.3). What is left is the site's elevation, and the canopy's height.
 
-For elevation, with $`\Delta z = z_{site}-z_{grid}`$ and a positive environmental lapse rate $\Gamma$
-(cooling upward), temperature and pressure move **together** so they stay ideal-gas consistent — the
-pressure form is the hypsometric integral of $`dP/dz=-Pg/(R_dT)`$ under the *same* linear $T(z)$, not an
-independent barometric guess:
+### Step 1. Terrain: from the forcing cell's elevation to the site's
+
+`[site].apply_elevation_lapse`, per record at ingest. With $`\Delta z = z_{site}-z_{grid}`$ (the archive's
+static orography, or `[site].grid_elevation` for a single file) and the environmental lapse rate
+$\Gamma$ (`[site].lapse_rate_tair`: one value, or twelve picked by the record's calendar month, such as
+Kunkel's 1989 Northern Hemisphere rates tabulated by Liston & Elder 2006, from 4.4 K/km in January to
+8.2 in June), temperature and pressure move together so they stay ideal-gas consistent — the pressure
+form is the hypsometric integral of $`dP/dz=-Pg/(R_dT)`$ under the *same* linear $T(z)$:
 
 ```math
 T_{site} = T_{grid}-\Gamma\,\Delta z, \qquad
-P_{site} = P_{grid}\left(\frac{T_{site}}{T_{grid}}\right)^{g/(R_d\Gamma)} \qquad(13)
+P_{site} = P_{grid}\left(\frac{T_{site}}{T_{grid}}\right)^{g/(R_d\Gamma)} \qquad(12)
 ```
 
-with the isothermal limit $`P_{site}=P_{grid}\exp[-g\,\Delta z/(R_dT_{grid})]`$ when
-$`|\Gamma|\le 10^{-6}`$. Specific humidity is carried across unchanged; $`\rho_{air}`$ is re-derived.
+with the isothermal limit $`P_{site}=P_{grid}\exp[-g\,\Delta z/(R_dT_{grid})]`$ when $`|\Gamma|\le 10^{-6}`$.
+Humidity and file longwave follow, as in NLDAS (Cosgrove et al. 2003):
 
-**The reference height must clear the canopy.** `site.reference_height` is validated against every PFT's
-`hgt_max` at config load and the run stops unless it exceeds all of them (ED2 aborts on the same condition):
-a forcing height inside the canopy makes surface-layer similarity meaningless, silently.
+```math
+q_{site} = q\!\left(RH\,e_s(T_{site}),\,P_{site}\right),\quad RH=\frac{e(q_{grid},P_{grid})}{e_s(T_{grid})}, \qquad
+L^{\downarrow}_{site} = L^{\downarrow}_{grid}\,\frac{\varepsilon(T_{site},q_{site},P_{site})\,T_{site}^4}{\varepsilon(T_{grid},q_{grid},P_{grid})\,T_{grid}^4} \qquad(13)
+```
+
+**Relative humidity is held**, not specific humidity: holding $q$ would dry a site below its cell by
+about 6 % RH per K of warming, 20 % over 500 m. $\varepsilon$ is the clear-sky emissivity of §11
+(`lw_clear_form`); a synthesized longwave is built afterwards from the lapsed $T$ and $q$ instead.
+Wind, shortwave and rain are unchanged, and the rain/snow split (§7) follows the lapsed temperature.
+A region's polygons sit at their cells' own elevations, so there $\Delta z = 0$.
+
+### Step 2. To the top of each patch's canopy air space
+
+The air the canopy exchanges with is the air at the top of its canopy air space, $`z_c`$ =
+`can_depth` (the tallest cohort plus a freeboard, floored; the slow loop resizes it daily). **Each patch
+has its own $`z_c`$, so each patch has its own forcing.** The move is a neutral surface layer: potential
+temperature and specific humidity are conserved, and the wind follows the patch's own log profile —
+roughness $`z_0 = 0.13\,h`$ and displacement $d = 0.63\,h$ from `canopy_roughness`, the profile the
+aerodynamics itself starts from. The forcing's heights are declared in `[forcing]`: `tq_height` and
+`wind_height`, measured above the **zero plane** (`height_above = "zero_plane"`: a reanalysis, whose model
+has no displacement height, which is also how CLM and JULES read reanalysis heights) or above the
+**ground** (`"ground"`: a flux tower above this canopy). An open-terrain wind (`wind_exposure =
+"open_terrain"`, with `wind_exposure_z0` and `wind_blending_height`) is first returned to its blending
+height $`z_b`$:
+
+```math
+u(z_c) = u_m\,\frac{\ln(z_b/z_{0e})}{\ln(z_m/z_{0e})}\;\frac{\ln(h_c/z_0)}{\ln(h_b/z_0)}, \qquad
+T(z_c) = T_m-\frac{g}{c_p}\,(z_c-z_T) \qquad(16)
+```
+
+with $h$ a height above $d$ (a reanalysis's heights already are; a tower's minus $d$), floored at
+$`2z_0`$ like the aerodynamics' own reference height, and $`z_T = d + `$`tq_height` above the zero plane
+or `tq_height` above the ground. A local wind (`"local"`) skips the first factor. Because the
+aerodynamics' potential temperature is $\theta = T + (g/c_p)\,z$ with the same constants, $\theta$ at
+$`z_c`$ is exactly the forcing's. Humidity, pressure, radiation, rain and CO₂ are unchanged — pressure
+stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is re-derived.
+The aerodynamics then runs from $`z_c`$: there is no fixed reference height, and nothing has to clear the
+canopy.
+
+For a 25 m canopy ($`z_c`$ = 30 m, $d$ = 15.75 m, $`z_0`$ = 3.25 m) ERA5-Land's wind becomes 0.73·u10 and
+its temperature 0.12 K cooler; over a 1 m regrowth patch the wind is 0.80·u10.
+
+**Not corrected: stability.** The neutral move leaves the stability-dependent part of the 2 m → canopy-top
+difference, about ±1 K between day and night. Correcting it needs fluxes ERA5-Land does not carry, and its
+2 m value describes a clearing, so inverting similarity theory from it would add error.
+
+**In the output**, the polygon's forcing echo (`air_temp_site`, `wind_site`, …) is the forcing after the
+terrain lapse, at its own heights; each patch's forcing is `wind_cas_top_patch` and
+`air_temp_cas_top_patch`, with the inputs that produced it — `cas_depth_patch` ($`z_c`$), `rough_patch`
+and `displace_patch`.
+
+**What it changes** (Ithaca, the r1 cases): moving the forcing to the canopy-air top raises the friction
+velocity by 33 % over an established stand in the annual mean and by 21 % over regrowth in July; the
+established stand's sensible heat falls by 2.3 W/m² and its GPP rises 0.6 %. The terrain lapse (the site
+sits 47.5 m below its ERA5-Land cell) adds +0.31 K, +2.2 W/m² of longwave and +0.56 kPa.
 
 ## 9. Calendar recycling
 
@@ -527,7 +586,8 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | SW disaggregation | `meds_forcing_kernels`: `cosz_reconstruct_factor`, `disaggregate_sw` |
 | SW partition | `meds_forcing_kernels`: `partition_shortwave`, `erbs_diffuse_fraction`, `weiss_norman_partition` |
 | humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
-| grid match, wind, lapse | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index`, `wind_log_profile`, `lapse_air_temperature`, `lapse_pressure` |
+| grid match | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index` |
+| vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
 | the reader | `meds_met_driver`: `met_open`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `ensure_month` |
 | the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
 | recycling | `meds_met_driver`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`, `load_wrap_bracket` |
@@ -549,7 +609,12 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 - Spencer (1971), *Search* 2:172 — Fourier series for the equation of time.
 - Jin et al. (1999) — precipitation phase partitioning; ED2 `ed_met_driver.f90`.
 - Longo et al. (2019), *GMD* 12:4309 — ED-2.2 technical description (the meteorological driver).
-- Muñoz-Sabater et al. (2021), *ESSD* 13:4349 — ERA5-Land.
+- Muñoz-Sabater et al. (2021), *ESSD* 13:4349 — ERA5-Land; §2.3, its own lapse to the ERA5-Land orography.
+- ECMWF (2016), *IFS Documentation Cy41r2, Part IV: Physical Processes*, §3.2 and §3.10 — the surface-layer
+  heights and the open-terrain 10 m wind.
+- Cosgrove et al. (2003), *J. Geophys. Res.* 108(D22):8842 — NLDAS elevation adjustment of T, P, q and LW.
+- Kunkel (1989), *J. Climate* 2:656 — monthly temperature lapse rates; tabulated in Liston & Elder (2006),
+  *J. Hydrometeor.* 7:217, Table 1 (MicroMet).
 - Nicholls, Meinshausen, Lewis, Pflüger, Menking et al. (in prep., 2025) — CMIP7 greenhouse-gas
   concentrations, input4MIPs `CR-CMIP-1-0-0`, doi:10.5281/zenodo.14892947 (CC BY 4.0).
 - Meinshausen et al. (2017), *GMD* 10:2057 — the CMIP6 greenhouse-gas concentrations CMIP7 succeeds.

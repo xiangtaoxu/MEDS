@@ -19,7 +19,8 @@ module meds_config
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
-                                   METAVG_END, MET_BACKEND_ERA5LAND, SWPART_PASSTHROUGH
+                                   METAVG_END, MET_BACKEND_ERA5LAND, SWPART_PASSTHROUGH,        &
+                                   WIND_EXPOSURE_OPEN_TERRAIN
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
@@ -726,12 +727,22 @@ contains
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
             error stop tag//'region.land_fraction_min must lie in [0, 1]'
       end if
-      !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
-      !      and the wind-profile roughness must be positive.                                          !
+      !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
+      !      been made above its exposure roughness and below its blending height. No reference height  !
+      !      has to clear the canopy any more: the forcing is moved to each patch's canopy-air top.     !
       if (cfg%forcing%forcing_on) then
-         if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
-            error stop tag//'forcing reference_height must exceed every PFT hgt_max'
-         if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+         if (cfg%forcing%tq_height <= 0.0_wp)   error stop tag//'forcing.tq_height must be > 0'
+         if (cfg%forcing%wind_height <= 0.0_wp) error stop tag//'forcing.wind_height must be > 0'
+         if (cfg%forcing%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
+            if (cfg%forcing%wind_exposure_z0 <= 0.0_wp .or.                                       &
+                cfg%forcing%wind_exposure_z0 >= cfg%forcing%wind_height)                           &
+               error stop tag//'forcing.wind_exposure_z0 must lie in (0, wind_height)'
+            if (cfg%forcing%wind_blending_height < cfg%forcing%wind_height)                         &
+               error stop tag//'forcing.wind_blending_height must be >= wind_height'
+         end if
+         !----- The terrain lapse rate: between isothermal and about the dry adiabat. --------------!
+         if (any(cfg%forcing%lapse_rate_tair < 0.0_wp) .or. any(cfg%forcing%lapse_rate_tair > 0.01_wp)) &
+            error stop tag//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
          !----- lwdown_source = "synthesize" is DECLARED but NOT IMPLEMENTED: meds_met_driver      !
          !      always reads LWdown from the file. Accepting the value silently ran the file path    !
          !      under a name that promised Brutsaert/Idso clear-sky synthesis. Reject it until the    !

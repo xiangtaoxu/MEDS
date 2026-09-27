@@ -116,7 +116,6 @@ contains
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, poly%met_cur, poly%cell, latitude_deg, longitude_deg,     &
                                  utc_offset_h, elevation_m)
-            poly%fast_ctx%zref = cfg%forcing%reference_height
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/ !
          !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard !

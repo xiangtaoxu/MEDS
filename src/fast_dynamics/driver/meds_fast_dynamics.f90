@@ -34,6 +34,7 @@ module meds_fast_dynamics
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
                                      PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
                                      PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,             &
                                      PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
@@ -43,6 +44,8 @@ module meds_fast_dynamics
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
+   use meds_lapse_rate,       only : met_to_cas_top
+   use meds_canopy_aerodynamics, only : canopy_roughness
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
@@ -107,7 +110,7 @@ module meds_fast_dynamics
    !      production path; the MVP holds constant, horizontally-uniform boundary conditions).    !
    type :: fast_context_t
       type(column_config_t) :: col_config                 !< soil/thermal/hydro/aero/resp column config
-      real(wp) :: u_ref   = 2.0_wp, zref = 30.0_wp  !< [m/s],[m] reference wind + height
+      real(wp) :: u_ref   = 2.0_wp                  !< [m/s] reference wind (at the canopy-air top)
       real(wp) :: press   = 101325.0_wp             !< [Pa]
       real(wp) :: rho_air = 1.2_wp                  !< [kg/m3]
       real(wp) :: air_temp = 288.0_wp               !< [K]        reference-level air temperature
@@ -349,9 +352,11 @@ contains
       type(patch_biophys_t),  allocatable :: bio_pool(:)
       type(column_budget_t),  allocatable :: budg_pool(:)
       type(met_forcing_t),    allocatable :: met_pool(:)
+      type(met_forcing_t),    allocatable :: met_top_pool(:)   !< the sample at the patch's canopy-air top
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
       real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days
+      real(wp)    :: z_top, rough_p, displace_p   !< [m] this patch's canopy-air top, roughness, displacement
       integer(ik) :: j, i, i0, ncoh, ith
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
@@ -527,12 +532,13 @@ contains
       !=========================================================================================!
       allocate(coh_pool(n_thread), forc_pool(n_thread), aenv_pool(n_thread), ageom_pool(n_thread),  &
                aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread),                        &
-               met_pool(n_thread))
+               met_pool(n_thread), met_top_pool(n_thread))
       allocate(gpp_pool(ncoh_max, n_thread), leaf_resp_pool(ncoh_max, n_thread),                    &
                stem_resp_pool(ncoh_max, n_thread), root_resp_pool(ncoh_max, n_thread),              &
                psi_leaf_pool(ncoh_max, n_thread))
       do ith = 1_ik, n_thread
          met_pool(ith) = met_ref                            ! overwritten per sub-step when forcing is on
+         met_top_pool(ith) = met_ref
          call ensure_column_cohort_capacity(coh_pool(ith), ncoh_max)
          call ensure_patch_biophys_capacity(bio_pool(ith), ncoh_max, ctx%air_temp, ctx%shv_atm,     &
                                             ctx%co2_atm, ctx%air_temp)
@@ -543,7 +549,7 @@ contains
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
       !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, w_area, dt_fast_days,  &
-      !$omp            sw_ground)
+      !$omp            sw_ground, z_top, rough_p, displace_p)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
          !      on slot 1 with no dependence on omp_lib. ---------------------------------------------!
@@ -553,7 +559,8 @@ contains
                     aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
                     aero          => aero_pool(ith),       biophys           => bio_pool(ith),          &
                     budget          => budg_pool(ith),                                              &
-                    met           => met_pool(ith),        gpp_coh       => gpp_pool(:,ith),        &
+                    met           => met_pool(ith),        met_top       => met_top_pool(ith),      &
+                    gpp_coh       => gpp_pool(:,ith),                                               &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
                     root_resp_coh => root_resp_pool(:,ith), psi_leaf_coh => psi_leaf_pool(:,ith), &
                     cdiag_buf     => cdiag_pool(:,:,ith))
@@ -621,6 +628,13 @@ contains
 
          call ensure_aero_out_capacity(aero, ncoh)
 
+         !----- This patch's canopy-air top and roughness. Every forcing sample is moved to that top  !
+         !      along the patch's own log profile (meds_lapse_rate, docs/science/forcing.md §8), and    !
+         !      the aerodynamics runs from there. Both are fixed for the day: the canopy height and the !
+         !      canopy-air depth change only on a slow step. -------------------------------------------!
+         z_top = biophys%cas%can_depth
+         call canopy_roughness(ctx%col_config%aero, ageom, rough_p, displace_p)
+
          !----- n_fast_per_slow operator-split sweeps. Forcing is re-evaluated PER SUB-STEP (the   !
          !      diurnal cycle lives here): take the sub-step's forcing record, then fill_forcing +  !
          !      fill_aenv from it. CONSTANT path (do_forcing=.false.): the record is the context's   !
@@ -633,13 +647,15 @@ contains
             !      reference value itself). `met` and `sw_ground` are per-THREAD. ---------------------!
             if (do_forcing) then
                met = met_sample(isub)
+               met_top = met_to_cas_top(met, cfg%forcing, z_top, displace_p, rough_p)
                sw_ground = f_ground * met%swdown()
             else
+               met_top = met                   ! the reference climate IS the air at the canopy-air top
                sw_ground = ctx%rad_sw_ground
             end if
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
-            call fill_forcing(forc, col_cohort, met, sw_ground, sum_lai)
+            call fill_forcing(forc, col_cohort, met_top, sw_ground, sum_lai)
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation. ----------------!
             !----- LW emission base = the CAS temperature: the leaf energy balance linearizes leaf LW  !
@@ -651,7 +667,7 @@ contains
                                  cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv),          &
                                  biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
                                  ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
-            call fill_aenv(aenv, biophys, met, ctx%zref)
+            call fill_aenv(aenv, biophys, met_top, z_top)
             !----- Slice to 1:ncoh (not the whole, possibly capacity-oversized backing array): the    !
             !      four accumulators are assumed-shape dummies in column_fast_step, so the ACTUAL      !
             !      argument's extent must equal col_cohort%n exactly, independent of the backing array's       !
@@ -805,7 +821,7 @@ contains
                                           biophys%cas%can_temp, biophys%cas%can_shv, biophys%cas%can_co2,   &
                                           gpp_patch, budget%nee_last,                                       &
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
-                                          budget%whole_water%resid,                                         &
+                                          budget%whole_water%resid, met_top%wind, met_top%tair_k, z_top,     &
                                           forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
                                           forc%lw_up, biophys%soil_w%w_surface)
             end if
@@ -1180,7 +1196,7 @@ contains
    !=======================================================================================!
    subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_ground, lw_ground,              &
                                     ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
-                                    ground_temp, resid_energy, resid_water,                         &
+                                    ground_temp, resid_energy, resid_water, wind_top, tair_top, z_top, &
                                     sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip
@@ -1194,6 +1210,8 @@ contains
       real(wp),               intent(in)    :: gpp, nee                  !< [umol/m2/s] gross uptake, net exchange (+ to atm)
       real(wp),               intent(in)    :: ground_temp               !< [K]        top soil-node temperature
       real(wp),               intent(in)    :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
+      real(wp),               intent(in)    :: wind_top, tair_top         !< [m/s],[K] the forcing at the canopy-air top
+      real(wp),               intent(in)    :: z_top                      !< [m]   that top (the canopy-air depth)
       !----- Top-of-canopy radiative fluxes per band (#171). -----------------------------------!
       real(wp),               intent(in)    :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
       real(wp),               intent(in)    :: w_surface                 !< [kg/m2]   ponded surface water
@@ -1219,6 +1237,11 @@ contains
       pd%v(PD_CAS_VPD,      ip) = pd%v(PD_CAS_VPD,      ip)                                         &
                                   + specific_humidity_to_vpd(cas_temp, cas_shv, p_std) * dt
       pd%v(PD_W_SURFACE,    ip) = pd%v(PD_W_SURFACE,    ip) + w_surface              * dt
+      !----- The patch's own forcing: the sample moved to its canopy-air top (§8), the only forcing  !
+      !      values that differ between patches. -------------------------------------------------------!
+      pd%v(PD_WIND_CAS_TOP, ip) = pd%v(PD_WIND_CAS_TOP, ip) + wind_top               * dt
+      pd%v(PD_TAIR_CAS_TOP, ip) = pd%v(PD_TAIR_CAS_TOP, ip) + tair_top               * dt
+      pd%v(PD_Z_CAS_TOP,    ip) = pd%v(PD_Z_CAS_TOP,    ip) + z_top                  * dt
       pd%v(PD_GPP,          ip) = pd%v(PD_GPP,          ip) + gpp                    * dt
       pd%v(PD_NEE,          ip) = pd%v(PD_NEE,          ip) + nee                    * dt
       !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !

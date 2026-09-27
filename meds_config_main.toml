@@ -405,14 +405,18 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # longitude             = -76.50         # [deg +E] drives local solar time
 # utc_offset            = 0.0            # [h] ERA5-Land is UTC -> 0
 # elevation             = 320.0          # [m] site elevation (used by elevation lapse)
-# reference_height      = 40.0           # [m] MUST exceed every PFT hgt_max
-# wind_meas_height      = 10.0           # [m] ERA5-Land wind is 10 m
 # apply_solar_longitude = true           # UTC file -> longitude gives local solar time
-# apply_wind_profile    = false          # lift wind from wind_meas_height to reference_height (neutral log)
-# apply_elevation_lapse = false          # lapse T/P from grid_elevation to elevation
-# wind_roughness_z0     = 0.1            # [m] roughness length for the wind log-profile
-# lapse_rate_tair       = 0.0065         # [K/m] environmental lapse (positive = cooling upward)
-# grid_elevation        = 320.0          # [m] elevation of the forcing source grid cell (format = "netcdf" only)
+#   ---- TERRAIN lapse, from the forcing cell's elevation to the site's (docs/science/forcing.md §8):
+#   T by the lapse rate, P hydrostatically, q at constant relative humidity, file LWdown by the
+#   clear-sky eps*T^4 ratio. Region polygons sit at their cell's elevation, so it is a no-op there.
+# apply_elevation_lapse = true
+# lapse_rate_tair       = 0.0065         # [K/m] one rate, or twelve (January .. December), e.g. the
+#                                        # N. Hemisphere monthly rates of Kunkel (1989), as tabulated by
+#                                        # Liston & Elder (2006, MicroMet, Table 1):
+#                                        # [0.0044, 0.0059, 0.0071, 0.0078, 0.0081, 0.0082,
+#                                        #  0.0081, 0.0081, 0.0077, 0.0068, 0.0055, 0.0047]
+# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "netcdf" only; the
+#                                        # archive reads it from its static file)
 # [forcing]
 # forcing_on            = true
 # format                = "netcdf"       # "era5land" | "netcdf" | "const"
@@ -431,6 +435,19 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")
 # grid_match            = "explicit"     # "explicit" (use grid_index) | "nearest" ([site] lat/lon -> nearest cell)
+#   --------------------------------------------------------------------------------------------
+#   ---- The forcing's own heights (docs/science/forcing.md §8). Every sample is moved from them to
+#   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
+#   potential temperature and humidity are conserved, and the wind follows the patch's own log
+#   profile. There is no fixed reference height any more. Values below are ERA5-Land's.
+# tq_height             = 2.0            # [m] height of air temperature and humidity
+# wind_height           = 10.0           # [m] height of the wind
+# height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement
+#                                        # height) | "ground" (a flux tower above this canopy)
+# wind_exposure         = "open_terrain" # "open_terrain" (ERA5's 10 m wind, made for open terrain) |
+#                                        # "local" (measured over this canopy)
+# wind_exposure_z0      = 0.03           # [m] "open_terrain" only: the roughness it was made for
+# wind_blending_height  = 40.0           # [m] "open_terrain" only: the height it came down from
 #   --------------------------------------------------------------------------------------------
 # timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
 # avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp

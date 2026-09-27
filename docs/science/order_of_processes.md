@@ -93,12 +93,16 @@ next.
 **Then, for each patch:**
 
 The patches are independent here, so this loop is threaded ([numerical_scheme](numerical_scheme.md)
-§6a). Each patch first gathers its cohorts into the column buffer with their canopy geometry. It then
-freezes, for the day, its soil-carbon pools and the tissue water the slow step shed.
+§6a). Each patch first gathers its cohorts into the column buffer with their canopy geometry, and takes
+its canopy-air top, roughness and displacement for the day. It then freezes, for the day, its
+soil-carbon pools and the tissue water the slow step shed.
 
 **Each fast sub-step `k`, in order:**
 
-1. **Forcing.** The sub-step's meteorological sample. Its air temperature joins the phenology sum.
+1. **Forcing.** The sub-step's meteorological sample, which already carries the terrain lapse. Its air
+   temperature joins the phenology sum. The patch takes a copy moved to its own canopy-air top: the wind
+   along its log profile, the temperature conserving potential temperature ([forcing](forcing.md) §8).
+   The aerodynamics and the canopy air's exchange with the atmosphere use that copy.
 2. **Radiation.** With forcing on, the canopy radiation transfer splits absorbed shortwave and
    longwave among the cohorts and the ground ([canopy_radiation_transfer](canopy_radiation_transfer.md)).
    It runs in the driver (`apply_rt_forcing`), before the column step. With forcing off, the shortwave
@@ -218,6 +222,7 @@ Three consequences:
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
 | the fast loop | `fast_dynamics` | `meds_fast_dynamics` |
+| vertical corrections: the terrain lapse at ingest, the move to each patch's canopy-air top | `read_record`; `met_to_cas_top` | `meds_met_driver`, `meds_lapse_rate` |
 | one sub-step of one patch | `column_fast_step` | `meds_fast_step` |
 | the slow dynamics | `advance_slow_dynamics` | `meds_slow_dynamics` |
 | the cohorts' day | `vegetation_dynamics` | `meds_vegetation_dynamics` |

@@ -24,6 +24,8 @@ module meds_config_io
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
+   use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
+                                   WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
@@ -632,13 +634,62 @@ contains
          call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
       end if
       call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
-      call req_r            (t, 'site.reference_height',  cfg%forcing%reference_height,      m)
-      call req_r            (t, 'site.wind_meas_height',  cfg%forcing%wind_meas_height,      m)
-      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2). -------------------------!
-      call req_l            (t, 'site.apply_wind_profile',    cfg%forcing%apply_wind_profile,    m)
+      !----- The forcing is moved to the top of each patch's canopy air space (meds_lapse_rate), so  !
+      !      the old fixed reference height and its ingest-time wind profile are gone. They would     !
+      !      parse and do nothing, so they are rejected, naming what replaced them. ------------------!
+      if (toml_has(t, 'site.reference_height') .or. toml_has(t, 'site.wind_meas_height') .or.     &
+          toml_has(t, 'site.apply_wind_profile') .or. toml_has(t, 'site.wind_roughness_z0'))      &
+         error stop 'load_meds_config: [site].reference_height, wind_meas_height, '//              &
+                    'apply_wind_profile and wind_roughness_z0 are gone -- the forcing is now moved '// &
+                    'to each patch''s canopy-air top. Declare the forcing''s own heights in '//     &
+                    '[forcing]: tq_height, wind_height, height_above, wind_exposure '//              &
+                    '(see meds_config_main.toml)'
+      !----- The forcing's own vertical frame (docs/science/forcing.md §8). ---------------------!
+      call req_r            (t, 'forcing.tq_height',      cfg%forcing%tq_height,             m)
+      call req_r            (t, 'forcing.wind_height',    cfg%forcing%wind_height,           m)
+      if (toml_has(t, 'forcing.height_above')) then
+         select case (trim(toml_string(t, 'forcing.height_above', '')))
+         case ('zero_plane') ; cfg%forcing%height_above = HEIGHT_ABOVE_ZERO_PLANE
+         case ('ground')     ; cfg%forcing%height_above = HEIGHT_ABOVE_GROUND
+         case default ; error stop 'load_meds_config: forcing.height_above must be "zero_plane" or "ground"'
+         end select
+      else
+         call note_missing(m, 'forcing.height_above')
+      end if
+      if (toml_has(t, 'forcing.wind_exposure')) then
+         select case (trim(toml_string(t, 'forcing.wind_exposure', '')))
+         case ('open_terrain')
+            cfg%forcing%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN
+            call req_r      (t, 'forcing.wind_exposure_z0',     cfg%forcing%wind_exposure_z0,     m)
+            call req_r      (t, 'forcing.wind_blending_height', cfg%forcing%wind_blending_height, m)
+         case ('local')
+            cfg%forcing%wind_exposure = WIND_EXPOSURE_LOCAL
+            if (toml_has(t, 'forcing.wind_exposure_z0') .or. toml_has(t, 'forcing.wind_blending_height')) &
+               error stop 'load_meds_config: forcing.wind_exposure_z0 and wind_blending_height apply '// &
+                          'only to forcing.wind_exposure = "open_terrain"; remove them'
+         case default ; error stop 'load_meds_config: forcing.wind_exposure must be "open_terrain" or "local"'
+         end select
+      else
+         call note_missing(m, 'forcing.wind_exposure')
+      end if
+      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December). -!
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
-      call req_r            (t, 'site.wind_roughness_z0',     cfg%forcing%wind_roughness_z0,     m)
-      call req_r            (t, 'site.lapse_rate_tair',       cfg%forcing%lapse_rate_tair,       m)
+      if (toml_has(t, 'site.lapse_rate_tair')) then
+         if (index(toml_string(t, 'site.lapse_rate_tair', ''), '[') > 0) then
+            block
+               real(wp)    :: gamma_month(12)
+               integer(ik) :: nout
+               call toml_real_array(t, 'site.lapse_rate_tair', gamma_month, nout)
+               if (nout /= 12_ik) error stop 'load_meds_config: site.lapse_rate_tair takes one value, '// &
+                                             'or a list of twelve (January .. December)'
+               cfg%forcing%lapse_rate_tair = gamma_month
+            end block
+         else
+            cfg%forcing%lapse_rate_tair = toml_real(t, 'site.lapse_rate_tair', 0.0_wp)
+         end if
+      else
+         call note_missing(m, 'site.lapse_rate_tair')
+      end if
       if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config

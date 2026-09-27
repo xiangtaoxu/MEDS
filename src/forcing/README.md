@@ -23,7 +23,14 @@ demography or state layer — so a prescribed driver stays low in the library gr
   (UTC plus longitude plus the equation of time), the **interval-mean-conserving** shortwave
   disaggregation, the total-to-four-stream shortwave partition (Erbs clearness index by default,
   Weiss-Norman available), humidity conversions over the shared saturation vapour pressure,
-  precipitation phase, nearest-grid matching, and the wind-height and elevation lapse corrections.
+  precipitation phase, and nearest-grid matching.
+- **`meds_lapse_rate`** — every vertical correction, in two steps (`docs/science/forcing.md` §8).
+  The **terrain** lapse runs per record at ingest (`read_record`), from the forcing cell's elevation
+  to the site's: temperature by a monthly lapse rate, pressure hydrostatically, humidity at constant
+  relative humidity, and file longwave by the clear-sky ε·T⁴ ratio. The **move to each patch's
+  canopy-air top** runs per patch in the fast loop (`met_to_cas_top`), from the forcing's declared
+  heights: potential temperature and humidity are conserved, and the wind follows the patch's own
+  log profile after an open-terrain wind is returned to its blending height.
 - **`meds_met_driver`** — the reader. `met_open` opens a source (for a site, or for a region's
   cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
   reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file

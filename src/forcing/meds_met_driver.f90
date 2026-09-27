@@ -37,7 +37,8 @@ module meds_met_driver
                                    CO2_SOURCE_FILE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
    use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
-   use meds_lapse_rate,     only : wind_log_profile, lapse_air_temperature, lapse_pressure
+   use meds_lapse_rate,     only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,    &
+                                   lapse_specific_humidity, lapse_longwave
    use meds_co2_series,     only : co2_series_read, co2_series_at, co2_series_covers,          &
                                    co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
@@ -1000,28 +1001,24 @@ contains
       if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
          call assert_finite(rec%lwdown, 'LWdown', irec, src%grid_index)
 
-      !----- wind-height + elevation-lapse corrections at ingest (opt-in; both default OFF, so    !
-      !      CONST and un-flagged runs are untouched). Wind is a per-record height rescale (commutes !
-      !      with the downstream energy-form interpolation). Lapse moves T then P (hydrostatic,       !
-      !      consistent) from the grid-cell elevation to the site; qair is held (rho re-derived).     !
-      if (src%fcfg%apply_wind_profile) then
-         rec%wind = wind_log_profile(rec%wind, src%fcfg%wind_meas_height,                        &
-                                     src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
-         !----- The components take the same (linear) factor, so the direction is unchanged. -----!
-         if (src%has_wind_vector) then
-            rec%wind_u = wind_log_profile(rec%wind_u, src%fcfg%wind_meas_height,                  &
-                                          src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
-            rec%wind_v = wind_log_profile(rec%wind_v, src%fcfg%wind_meas_height,                  &
-                                          src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
-         end if
-      end if
+      !----- TERRAIN lapse at ingest (docs/science/forcing.md §8), from the cell's elevation to the  !
+      !      site's: T by the month's lapse rate, P hydrostatically with the same linear T(z), q at     !
+      !      constant relative humidity, file longwave by the clear-sky eps*T^4 ratio. The move to each !
+      !      patch's canopy-air top is the fast loop's (per patch), not the reader's.                  !
       if (src%fcfg%apply_elevation_lapse) then
          block
-            real(wp) :: dz, t_grid, p_grid
+            real(wp) :: dz, gamma, t_grid, p_grid, q_grid
             dz     = cur%elevation_m - cur%grid_elevation_m       ! + when site is higher
-            t_grid = rec%tair_k ; p_grid = rec%psurf_pa                     ! capture BEFORE overwrite
-            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, src%fcfg%lapse_rate_tair)
-            rec%tair_k   = lapse_air_temperature(t_grid, dz, src%fcfg%lapse_rate_tair)
+            gamma  = monthly_lapse_rate(src%fcfg%lapse_rate_tair, rec%when%month)
+            t_grid = rec%tair_k ; p_grid = rec%psurf_pa ; q_grid = rec%qair   ! capture BEFORE overwrite
+            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, gamma)
+            rec%tair_k   = lapse_air_temperature(t_grid, dz, gamma)
+            rec%qair     = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%tair_k, rec%psurf_pa)
+            !----- A synthesized longwave is built later from the lapsed T and q, so only a file's   !
+            !      longwave is scaled here. ------------------------------------------------------------!
+            if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                           &
+               rec%lwdown = lapse_longwave(rec%lwdown, src%fcfg%lw_clear_form, t_grid, q_grid, p_grid, &
+                                           rec%tair_k, rec%qair, rec%psurf_pa)
          end block
       end if
 
