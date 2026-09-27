@@ -73,6 +73,8 @@ module meds_output_integrate
    public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
+   public :: SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE
+   public :: SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -207,6 +209,19 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_RECO          = 5014_ik
    integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
    integer(ik), parameter :: SRC_F_ATM_CO2       = 5016_ik
+   !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7). ---------------------------------------!
+   integer(ik), parameter :: SRC_F_QAIR          = 5030_ik
+   integer(ik), parameter :: SRC_F_PSURF         = 5031_ik
+   integer(ik), parameter :: SRC_F_WIND          = 5032_ik
+   integer(ik), parameter :: SRC_F_LWDOWN        = 5033_ik
+   integer(ik), parameter :: SRC_F_PAR_BEAM      = 5034_ik
+   integer(ik), parameter :: SRC_F_PAR_DIFFUSE   = 5035_ik
+   integer(ik), parameter :: SRC_F_NIR_BEAM      = 5036_ik
+   integer(ik), parameter :: SRC_F_NIR_DIFFUSE   = 5037_ik
+   integer(ik), parameter :: SRC_F_RAINF         = 5038_ik
+   integer(ik), parameter :: SRC_F_SNOWFALL      = 5039_ik
+   integer(ik), parameter :: SRC_F_COSZ          = 5040_ik
+   integer(ik), parameter :: SRC_F_RHO_AIR       = 5041_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
@@ -917,6 +932,18 @@ contains
       case (SRC_F_RECO)         ; val = s%reco_rate
       case (SRC_F_CAS_CO2)      ; val = s%cas_co2
       case (SRC_F_ATM_CO2)      ; val = s%atm_co2
+      case (SRC_F_QAIR)         ; val = s%qair
+      case (SRC_F_PSURF)        ; val = s%psurf
+      case (SRC_F_WIND)         ; val = s%wind
+      case (SRC_F_LWDOWN)       ; val = s%lwdown
+      case (SRC_F_PAR_BEAM)     ; val = s%par_beam
+      case (SRC_F_PAR_DIFFUSE)  ; val = s%par_diffuse
+      case (SRC_F_NIR_BEAM)     ; val = s%nir_beam
+      case (SRC_F_NIR_DIFFUSE)  ; val = s%nir_diffuse
+      case (SRC_F_RAINF)        ; val = s%rainf
+      case (SRC_F_SNOWFALL)     ; val = s%snowfall
+      case (SRC_F_COSZ)         ; val = s%cosz
+      case (SRC_F_RHO_AIR)      ; val = s%rho_air
       case default              ; val = MISSING_VALUE
       end select
    end function extract_fast_scalar

@@ -21,7 +21,8 @@ module meds_output_registry
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
-                                   GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS
+                                   GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
+                                   GRP_FORCING
    use meds_output_types,   only : AGG_VARIANCE
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
@@ -53,7 +54,9 @@ module meds_output_registry
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
-        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
+        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2,                     &
+        SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE,    &
+        SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
    use meds_site_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
@@ -66,6 +69,10 @@ module meds_output_registry
                                     PD_TRANSP, PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY,       &
                                     PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
                                     PD_RESID_WATER,                                              &
+                                    PD_MET_TAIR, PD_MET_QAIR, PD_MET_PSURF, PD_MET_WIND,         &
+                                    PD_MET_LWDOWN, PD_MET_PAR_BEAM, PD_MET_PAR_DIFFUSE,          &
+                                    PD_MET_NIR_BEAM, PD_MET_NIR_DIFFUSE, PD_MET_SNOWFALL,        &
+                                    PD_MET_CO2, PD_MET_COSZ, PD_MET_RHO_AIR,                     &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
                                     CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
@@ -126,6 +133,7 @@ contains
       call register_allocation(reg)
       call register_patch_fluxes(reg)
       call register_fast(reg)
+      call register_forcing(reg)
 
       call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (§3.1)
       call enforce_fast_guard(reg)                ! FAST tier <-> FAST-staged source, both ways
@@ -782,6 +790,70 @@ contains
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_HEIGHT)
    end subroutine register_fast
 
+   !=======================================================================================!
+   !  The FORCING the run used (MEDS_FORCING_DESIGN.md §6.7): the atmospheric boundary after the   !
+   !  reader's shortwave partition, rain/snow split and optional height and lapse corrections --   !
+   !  write-only provenance. The coarse tiers are dt-weighted means over the fast sub-steps (the    !
+   !  patch-diagnostic block, like sw_in_site and precip_site, which carry the total shortwave and  !
+   !  precipitation); the FAST tier is each record's mean of the sub-step samples, which is what    !
+   !  checks the diurnal reconstruction against a tower. cosz is 0 while the sun is down, so a      !
+   !  daily mean counts the night as zero.                                                           !
+   !=======================================================================================!
+   subroutine register_forcing(reg)
+      type(output_registry_t), intent(inout) :: reg
+      call add_variable(reg, 'air_temp_site', 'air temperature at the reference height (forcing)', 'K', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_TAIR)
+      call add_variable(reg, 'qair_site', 'specific humidity at the reference height (forcing)', 'kg/kg', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_QAIR)
+      call add_variable(reg, 'psurf_site', 'surface pressure (forcing)', 'Pa',                    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_PSURF)
+      call add_variable(reg, 'wind_site', 'wind speed at the reference height (forcing)', 'm/s',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_WIND)
+      call add_variable(reg, 'lwdown_site', 'downward longwave at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_LWDOWN)
+      call add_variable(reg, 'par_beam_site', 'direct-beam PAR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_PAR_BEAM)
+      call add_variable(reg, 'par_diffuse_site', 'diffuse PAR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_PAR_DIFFUSE)
+      call add_variable(reg, 'nir_beam_site', 'direct-beam NIR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_NIR_BEAM)
+      call add_variable(reg, 'nir_diffuse_site', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_NIR_DIFFUSE)
+      call add_variable(reg, 'snowfall_site', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_SNOWFALL)
+      call add_variable(reg, 'atm_co2_site', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_CO2)
+      call add_variable(reg, 'cosz_site', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_COSZ)
+      call add_variable(reg, 'rho_air_site', 'air density at the reference height', 'kg/m3',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_P_DIAG0 + PD_MET_RHO_AIR)
+      !----- The FAST tier (air_temp_fast, sw_in_fast and atm_co2_fast are registered with it). ---!
+      call add_variable(reg, 'qair_fast', 'specific humidity at the reference height (forcing)', 'kg/kg', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_QAIR)
+      call add_variable(reg, 'psurf_fast', 'surface pressure (forcing)', 'Pa',                    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PSURF)
+      call add_variable(reg, 'wind_fast', 'wind speed at the reference height (forcing)', 'm/s',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_WIND)
+      call add_variable(reg, 'lwdown_fast', 'downward longwave at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_LWDOWN)
+      call add_variable(reg, 'par_beam_fast', 'direct-beam PAR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PAR_BEAM)
+      call add_variable(reg, 'par_diffuse_fast', 'diffuse PAR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PAR_DIFFUSE)
+      call add_variable(reg, 'nir_beam_fast', 'direct-beam NIR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_NIR_BEAM)
+      call add_variable(reg, 'nir_diffuse_fast', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_NIR_DIFFUSE)
+      call add_variable(reg, 'rainf_fast', 'liquid precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_RAINF)
+      call add_variable(reg, 'snowfall_fast', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_SNOWFALL)
+      call add_variable(reg, 'cosz_fast', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_COSZ)
+      call add_variable(reg, 'rho_air_fast', 'air density at the reference height', 'kg/m3',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_RHO_AIR)
+   end subroutine register_forcing
+
    !----- Append one descriptor (the single "add a variable" registry edit).                   !
    !                                                                                          !
    !      w / mn / sc are the AGGREGATION contract (see var_desc_t): the per-cohort weight kind, !
@@ -1267,6 +1339,7 @@ contains
       case (GRP_RADIATION)  ; s = 'radiation'
       case (GRP_ECOPHYS)    ; s = 'ecophys'
       case (GRP_BIOGEOCHEM) ; s = 'biogeochem'
+      case (GRP_FORCING)    ; s = 'forcing'
       case default          ; s = '?'
       end select
    end function group_name

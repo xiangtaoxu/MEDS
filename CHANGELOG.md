@@ -16,6 +16,18 @@ before and after.
 
 ### Added
 
+- **The forcing the run used is written to the output** (§6.7 of `MEDS_FORCING_DESIGN.md`), as a new
+  `forcing` group (`[output].forcing`, on by default). It is recorded after the reader's shortwave
+  partition, rain/snow split and optional corrections:
+  - site means at the daily, monthly and yearly tiers: air temperature, specific humidity, surface
+    pressure, wind speed, downward longwave, the four shortwave streams, snowfall, CO₂, the solar
+    zenith cosine and air density;
+  - the same fields plus liquid rain at the fast tier, one value per record from the sub-step
+    samples themselves.
+
+  Existing variables are unchanged (six regression cases, 1,267 files). `meds_io_config.toml` is
+  regenerated, and the variable inventory in `docs/science/diagnostics.md` is recounted to 248.
+
 - **`scripts/prepare_era5/make_forcing_file.py`** writes the single forcing file
   (`[forcing].format = "netcdf"`) from either input:
   - **an ED_ERA5land archive** (`--data-path`, `--start`, `--end`): it picks each site's nearest

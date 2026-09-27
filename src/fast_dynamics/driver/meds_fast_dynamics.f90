@@ -34,6 +34,10 @@ module meds_fast_dynamics
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
                                      PD_ROOT_UPTAKE, PD_INFILTRATION, PD_DRAINAGE, PD_RUNOFF,    &
                                      PD_PRECIP, PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     PD_MET_TAIR, PD_MET_QAIR, PD_MET_PSURF, PD_MET_WIND, PD_MET_LWDOWN, &
+                                     PD_MET_PAR_BEAM, PD_MET_PAR_DIFFUSE, PD_MET_NIR_BEAM,       &
+                                     PD_MET_NIR_DIFFUSE, PD_MET_SNOWFALL, PD_MET_CO2, PD_MET_COSZ, &
+                                     PD_MET_RHO_AIR,                                             &
                                      cohort_diag_grow, cohort_diag_reset, patch_diag_grow,        &
                                      patch_diag_reset
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
@@ -490,6 +494,19 @@ contains
       !----- Site-uniform, so it belongs OUT of the patch loop (where every patch used to rewrite it  !
       !      with the same value -- benign serially, a data race once threaded). ---------------------!
       if (do_fast) out_bufs%fast_time(1:nsub) = t_sample(1:nsub)
+      !----- The FAST tier's forcing echo (§6.7) is the sub-step's own sample: site-uniform, so it  !
+      !      is staged here, exactly, rather than area-summed over patches like the fluxes below. ----!
+      if (do_fast) then
+         do isub = 1_ik, nsub
+            associate (fs => out_bufs%fast(isub), m => met_sample(isub))
+               fs%qair = m%qair ; fs%psurf = m%psurf_pa ; fs%wind = m%wind ; fs%lwdown = m%lwdown
+               fs%par_beam = m%par_beam ; fs%par_diffuse = m%par_diffuse
+               fs%nir_beam = m%nir_beam ; fs%nir_diffuse = m%nir_diffuse
+               fs%rainf = m%rainf ; fs%snowfall = m%snowfall
+               fs%cosz = m%cosz ; fs%rho_air = m%rho_air
+            end associate
+         end do
+      end if
 
       !=========================================================================================!
       !  §7 C2 -- the parallel patch loop. Patch columns are independent within a dt_fast (they    !
@@ -782,7 +799,7 @@ contains
                                           biophys%soil_e%soil_temp(1), budget%whole_energy%resid,           &
                                           budget%whole_water%resid,                                         &
                                           forc%sw_in_vis, forc%sw_in_nir, forc%sw_up_vis, forc%sw_up_nir,   &
-                                          forc%lw_up, biophys%soil_w%w_surface)
+                                          forc%lw_up, biophys%soil_w%w_surface, met)
             end if
             !----- Integrate GROSS GPP + maintenance-resp losses [umol/plant/s] -> [kgC/plant].  !
             !      Keep gross and loss terms SEPARATE (compute_carbon_allocation nets them; mirrors ED2). !
@@ -1156,7 +1173,7 @@ contains
    subroutine accumulate_patch_diag(pd, ip, dt, le_flux, h_flux, rnet, sw_in, sw_ground, lw_ground,       &
                                     ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee,   &
                                     precip_total, ground_temp, resid_energy, resid_water,           &
-                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
+                                    sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface, met)
       type(patch_diag_block), intent(inout) :: pd
       integer(ik),            intent(in)    :: ip
       real(wp),               intent(in)    :: dt                        !< [s]        sample weight
@@ -1174,6 +1191,7 @@ contains
       !----- Top-of-canopy radiative fluxes per band (#171). -----------------------------------!
       real(wp),               intent(in)    :: sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up
       real(wp),               intent(in)    :: w_surface                 !< [kg/m2]   ponded surface water
+      type(met_forcing_t),    intent(in)    :: met                       !< the sub-step's forcing (§6.7 echo)
       pd%v(PD_LE,           ip) = pd%v(PD_LE,           ip) + le_flux                * dt
       pd%v(PD_H,            ip) = pd%v(PD_H,            ip) + h_flux                 * dt
       pd%v(PD_RNET,         ip) = pd%v(PD_RNET,         ip) + rnet                   * dt
@@ -1213,6 +1231,21 @@ contains
       !      worst*dt -- a running max in J/m2 that the registry then labelled W/m2.) -----------------!
       pd%v(PD_RESID_ENERGY, ip) = pd%v(PD_RESID_ENERGY, ip) + resid_energy
       pd%v(PD_RESID_WATER,  ip) = pd%v(PD_RESID_WATER,  ip) + resid_water
+      !----- The forcing itself (MEDS_FORCING_DESIGN.md §6.7), as the model used it: after the      !
+      !      reader's shortwave partition, phase split and optional height/lapse corrections. -------!
+      pd%v(PD_MET_TAIR,        ip) = pd%v(PD_MET_TAIR,        ip) + met%tair_k      * dt
+      pd%v(PD_MET_QAIR,        ip) = pd%v(PD_MET_QAIR,        ip) + met%qair        * dt
+      pd%v(PD_MET_PSURF,       ip) = pd%v(PD_MET_PSURF,       ip) + met%psurf_pa    * dt
+      pd%v(PD_MET_WIND,        ip) = pd%v(PD_MET_WIND,        ip) + met%wind        * dt
+      pd%v(PD_MET_LWDOWN,      ip) = pd%v(PD_MET_LWDOWN,      ip) + met%lwdown      * dt
+      pd%v(PD_MET_PAR_BEAM,    ip) = pd%v(PD_MET_PAR_BEAM,    ip) + met%par_beam    * dt
+      pd%v(PD_MET_PAR_DIFFUSE, ip) = pd%v(PD_MET_PAR_DIFFUSE, ip) + met%par_diffuse * dt
+      pd%v(PD_MET_NIR_BEAM,    ip) = pd%v(PD_MET_NIR_BEAM,    ip) + met%nir_beam    * dt
+      pd%v(PD_MET_NIR_DIFFUSE, ip) = pd%v(PD_MET_NIR_DIFFUSE, ip) + met%nir_diffuse * dt
+      pd%v(PD_MET_SNOWFALL,    ip) = pd%v(PD_MET_SNOWFALL,    ip) + met%snowfall    * dt
+      pd%v(PD_MET_CO2,         ip) = pd%v(PD_MET_CO2,         ip) + met%co2         * dt
+      pd%v(PD_MET_COSZ,        ip) = pd%v(PD_MET_COSZ,        ip) + met%cosz        * dt
+      pd%v(PD_MET_RHO_AIR,     ip) = pd%v(PD_MET_RHO_AIR,     ip) + met%rho_air     * dt
       pd%w(ip)                  = pd%w(ip)                  + dt
    end subroutine accumulate_patch_diag
 

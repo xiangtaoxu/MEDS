@@ -206,7 +206,23 @@ module meds_site_diag_types
    !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
    integer(ik), parameter, public :: PD_CAS_VPD       = 38_ik  !< [Pa]
    integer(ik), parameter, public :: PD_W_SURFACE     = 39_ik  !< [kg/m2] ponded surface water
-   integer(ik), parameter, public :: N_PDIAG            = 39_ik
+   !----- The FORCING the patch saw, dt-weighted over the sub-steps (MEDS_FORCING_DESIGN.md §6.7):  !
+   !      site-uniform, so every patch holds the same value and the site mean is that value. The    !
+   !      total shortwave and precipitation are PD_SW_IN and PD_PRECIP above.                        !
+   integer(ik), parameter, public :: PD_MET_TAIR        = 40_ik !< [K] reference-height air temperature
+   integer(ik), parameter, public :: PD_MET_QAIR        = 41_ik !< [kg/kg] specific humidity
+   integer(ik), parameter, public :: PD_MET_PSURF       = 42_ik !< [Pa] surface pressure
+   integer(ik), parameter, public :: PD_MET_WIND        = 43_ik !< [m/s] wind speed at the reference height
+   integer(ik), parameter, public :: PD_MET_LWDOWN      = 44_ik !< [W/m2] downward longwave
+   integer(ik), parameter, public :: PD_MET_PAR_BEAM    = 45_ik !< [W/m2] direct-beam PAR
+   integer(ik), parameter, public :: PD_MET_PAR_DIFFUSE = 46_ik !< [W/m2] diffuse PAR
+   integer(ik), parameter, public :: PD_MET_NIR_BEAM    = 47_ik !< [W/m2] direct-beam NIR
+   integer(ik), parameter, public :: PD_MET_NIR_DIFFUSE = 48_ik !< [W/m2] diffuse NIR
+   integer(ik), parameter, public :: PD_MET_SNOWFALL    = 49_ik !< [kg/m2/s] frozen precipitation
+   integer(ik), parameter, public :: PD_MET_CO2         = 50_ik !< [umol/mol] free-atmosphere CO2
+   integer(ik), parameter, public :: PD_MET_COSZ        = 51_ik !< [-] cosine of the solar zenith angle
+   integer(ik), parameter, public :: PD_MET_RHO_AIR     = 52_ik !< [kg/m3] air density
+   integer(ik), parameter, public :: N_PDIAG            = 52_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

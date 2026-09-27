@@ -23,10 +23,13 @@ program test_fast_loop
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
-   use meds_time,                only : meds_time_t
+   use meds_time,                only : meds_time_t, time_advance_seconds
    use meds_forcing_config,      only : MET_BACKEND_NETCDF, SWPART_CLEARIDX, METAVG_END
-   use meds_forcing_types,       only : met_source_t, met_cursor_t
-   use meds_met_driver,          only : met_open, met_cursor_init, met_close
+   use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
+   use meds_output_types,        only : output_buffers_t
+   use meds_site_diag_types,     only : patch_diag_alloc, PD_MET_TAIR, PD_MET_QAIR, PD_MET_PAR_BEAM, &
+                                        PD_MET_COSZ
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -202,6 +205,49 @@ program test_fast_loop
       call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = site%cohort%gpp_accum(1)
+
+      !=== The FORCING ECHO (MEDS_FORCING_DESIGN.md §6.7): with the patch diagnostics and the fast   !
+      !    tier on, a step must record exactly the forcing the reader hands the fast loop -- the     !
+      !    dt-weighted mean of the sub-step samples in the patch block, and each sample itself in    !
+      !    the fast staging. A second cursor on the same source replays the reader's samples. -----!
+      block
+         type(output_buffers_t) :: ob
+         type(met_cursor_t)     :: cur2
+         type(met_forcing_t)    :: m
+         type(meds_time_t)      :: t0, ts
+         real(wp)    :: sum_t, sum_q, sum_pb, sum_cz, w
+         integer(ik) :: isub
+         logical     :: exact
+         t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
+         call patch_diag_alloc(site%patch%diag, max(site%patch%cap, 1_ik), .true.)
+         ob%fast_on = .true. ; ob%fast_cohort_cap = 8_ik
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
+         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
+                              cfg%forcing%utc_offset_h, cfg%forcing%elevation_m)
+         sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; exact = .true.
+         do isub = 1_ik, cfg%n_fast_per_slow
+            ts = time_advance_seconds(t0, (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
+            call met_advance(drv, cur2, ts) ; m = met_instant(drv, cur2, ts)
+            sum_t = sum_t + m%tair_k * cfg%dt_fast ; sum_q = sum_q + m%qair * cfg%dt_fast
+            sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
+            exact = exact .and. ob%fast(isub)%qair == m%qair .and. ob%fast(isub)%lwdown == m%lwdown  &
+                    .and. ob%fast(isub)%par_diffuse == m%par_diffuse .and. ob%fast(isub)%cosz == m%cosz &
+                    .and. ob%fast(isub)%rho_air == m%rho_air .and. ob%fast(isub)%wind == m%wind
+         end do
+         w = site%patch%diag%w(1)
+         call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
+                    'the fast tier stages each sub-step''s forcing sample exactly (§6.7)')
+         call check_close(site%patch%diag%v(PD_MET_TAIR, 1) / w, sum_t / w, 1.0e-12_wp,           &
+                          'the patch block holds the step-mean air temperature the loop used')
+         call check_close(site%patch%diag%v(PD_MET_QAIR, 1) / w, sum_q / w, 1.0e-15_wp,           &
+                          'the patch block holds the step-mean humidity')
+         call check_close(site%patch%diag%v(PD_MET_PAR_BEAM, 1) / w, sum_pb / w, 1.0e-10_wp,      &
+                          'the patch block holds the step-mean direct-beam PAR')
+         call check(site%patch%diag%v(PD_MET_COSZ, 1) / w > 0.5_wp,                               &
+                    'a 15-17 UTC summer window at Ithaca has the sun high (mean cos zenith > 0.5)')
+         call patch_diag_alloc(site%patch%diag, 1_ik, .false.)
+      end block
       call met_close(drv)
 
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
