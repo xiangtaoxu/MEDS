@@ -14,7 +14,7 @@ module meds_era5land_reader
    use meds_kinds,           only : wp, sp, ik
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_from_string
    use meds_forcing_config,  only : MET_PATH_LEN
-   use meds_forcing_types,   only : met_domain_t, met_month_t
+   use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
                                     nc_get_vara_double, nc_get_vara_float, nc_close, NC_NOERR, NC_NOWRITE
@@ -115,7 +115,7 @@ contains
    subroutine era5land_select_site(static_path, site_lat, site_lon, max_km, dom, distance_km, stat)
       character(len=*),   intent(in)  :: static_path
       real(wp),           intent(in)  :: site_lat, site_lon, max_km
-      type(met_domain_t), intent(out) :: dom
+      type(met_cells_t), intent(out) :: dom
       real(wp),           intent(out) :: distance_km
       integer(ik),        intent(out) :: stat
       integer(c_int) :: ncid, st
@@ -166,7 +166,7 @@ contains
    subroutine era5land_select_box(static_path, nwse, dom, stat)
       character(len=*),   intent(in)  :: static_path
       real(wp),           intent(in)  :: nwse(4)
-      type(met_domain_t), intent(out) :: dom
+      type(met_cells_t), intent(out) :: dom
       integer(ik),        intent(out) :: stat
       integer(c_int) :: ncid, st
       real(wp), allocatable :: lat(:), lon(:), valid(:,:), elev(:,:)
@@ -227,7 +227,7 @@ contains
    !      chunk's read box is the rows and columns its cells occupy: HDF5 decompresses the whole    !
    !      chunk either way, but a site then copies one cell instead of 256. ------------------------!
    subroutine group_by_chunk(dom)
-      type(met_domain_t), intent(inout) :: dom
+      type(met_cells_t), intent(inout) :: dom
       integer(ik), allocatable :: id(:), cnt(:), next(:)
       integer(ik) :: ncx, ncy, c, k, m
       ncx = (dom%nlon + CHUNK - 1_ik) / CHUNK ; ncy = (dom%nlat + CHUNK - 1_ik) / CHUNK
@@ -270,7 +270,7 @@ contains
    !=======================================================================================!
    subroutine era5land_load_month(template, data_path, dom, year, month, buf, stat, message)
       character(len=*),   intent(in)    :: template, data_path
-      type(met_domain_t), intent(in)    :: dom
+      type(met_cells_t), intent(in)    :: dom
       integer(ik),        intent(in)    :: year, month
       type(met_month_t),  intent(inout) :: buf
       integer(ik),        intent(out)   :: stat
@@ -343,7 +343,7 @@ contains
    !----- A month file must have the static grid and exactly the month's end-stamped hours. -------!
    subroutine check_month_file(ncid, dom, year, month, nt, stat)
       integer(c_int),     intent(in)  :: ncid
-      type(met_domain_t), intent(in)  :: dom
+      type(met_cells_t), intent(in)  :: dom
       integer(ik),        intent(in)  :: year, month, nt
       integer(ik),        intent(out) :: stat
       integer(c_int)     :: st, vid

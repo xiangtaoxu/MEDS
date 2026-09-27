@@ -40,8 +40,8 @@ module meds_driver
    use meds_column_state_types,     only : soil_carbon_t
    use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
                                            build_litter_input
-   use meds_forcing_types,          only : met_driver_t
-   use meds_met_driver,             only : met_open, met_close, met_prefetch
+   use meds_forcing_types,          only : met_source_t, met_cursor_t
+   use meds_met_driver,             only : met_open, met_cursor_init, met_close, met_prefetch
    use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area, has_nan
    use meds_budget_check,           only : budget_t, budget_report
@@ -81,7 +81,8 @@ module meds_driver
       type(site_t)           :: site
       type(output_manager_t) :: mgr             !< built only if output.enabled
       type(fast_context_t)   :: fast_ctx        !< built only if fast_biophysics_on
-      type(met_driver_t)     :: met_drv         !< opened only if forcing_on
+      type(met_source_t)     :: met_src         !< opened only if forcing_on
+      type(met_cursor_t)     :: met_cur         !< the site's cursor into met_src (the run's one polygon)
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
@@ -210,8 +211,11 @@ contains
       if (run%cfg%fast_biophysics_on) then
          call build_fast_context(run%cfg, run%fast_ctx)
          if (run%cfg%forcing%forcing_on) then
-            call met_open(run%met_drv, run%cfg%forcing, run_start=run%cfg%start_time,             &
+            call met_open(run%met_src, run%cfg%forcing, run_start=run%cfg%start_time,             &
                           run_end=run%cfg%end_time)
+            call met_cursor_init(run%met_src, run%met_cur, 1_ik, run%cfg%forcing%latitude_deg,     &
+                                 run%cfg%forcing%longitude_deg, run%cfg%forcing%utc_offset_h,      &
+                                 run%cfg%forcing%elevation_m)
             run%fast_ctx%zref = run%cfg%forcing%reference_height
             if (run%verbose) then
                if (run%cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
@@ -326,7 +330,7 @@ contains
 
       !----- I/O before the compute phase: the step's forcing is loaded here, so nothing below reads  !
       !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
-      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_drv, run%prev)
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
       !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
       !      daily mean the PREVIOUS step's fast loop accumulated, then refresh the leaf table.     !
@@ -336,10 +340,11 @@ contains
       if (run%cfg%leaf_thermal_acclimation) call advance_growth_temperature(run)
 
       !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);    !
-      !      met_drv/mgr stay gated on forcing_on.  ------------------------------------------------!
+      !      the met source/cursor and mgr stay gated on forcing_on.  ------------------------------!
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) then
          call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
-                               met_drv=run%met_drv, step_start=run%prev, mgr=run%mgr,            &
+                               met_src=run%met_src, met_cur=run%met_cur, step_start=run%prev,    &
+                               mgr=run%mgr,                                                      &
                                run_energy_budget=run%energy_budget,                              &
                                run_water_budget=run%water_budget,                                &
                                run_face_budget=run%face_budget,                                  &
@@ -514,7 +519,7 @@ contains
       if (run%verbose) call slow_ledger_report(run%slow_ledger)
 
       if (run%cfg%output%enabled) call output_manager_close(run%mgr, .true.)
-      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_drv)
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st
    end subroutine driver_finalize

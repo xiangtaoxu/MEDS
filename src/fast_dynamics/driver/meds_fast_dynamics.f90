@@ -39,7 +39,7 @@ module meds_fast_dynamics
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
                                  root_available_water
    use meds_column_state_types, only : xi_accum_t, snow_column_t
-   use meds_forcing_types,    only : met_driver_t, met_forcing_t
+   use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,       only : met_advance, met_instant
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
@@ -268,13 +268,14 @@ contains
    !  Optional out-args report the worst whole-column budget residuals + the fail count so a    !
    !  caller/test can assert conservation.                                                     !
    !=======================================================================================!
-   subroutine fast_dynamics(site, ctx, cfg, met_drv, step_start, worst_energy, worst_water, &
+   subroutine fast_dynamics(site, ctx, cfg, met_src, met_cur, step_start, worst_energy, worst_water, &
                             n_budget_fail, mgr, run_energy_budget, run_water_budget,             &
                             run_face_budget)
       type(site_t),         intent(inout) :: site
       type(fast_context_t), intent(in)    :: ctx
       type(meds_config_t),  intent(in)    :: cfg
-      type(met_driver_t), optional, intent(inout) :: met_drv       !< live forcing reader (per-sub-step met)
+      type(met_source_t), optional, intent(in)    :: met_src       !< the run's forcing source (read-only here)
+      type(met_cursor_t), optional, intent(inout) :: met_cur       !< this polygon's cursor (per-sub-step met)
       type(meds_time_t),  optional, intent(in)    :: step_start    !< calendar time at the START of this slow step
       real(wp),    optional, intent(out)  :: worst_energy, worst_water
       integer(ik), optional, intent(out)  :: n_budget_fail
@@ -354,7 +355,8 @@ contains
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise ctx_now stays == ctx and the loop runs the CONSTANT-forcing MVP    !
       !      bit-identically (the diurnal cycle lives INSIDE the sub-step loop, design §1.1/§6.2).  !
-      do_forcing = cfg%forcing%forcing_on .and. present(met_drv) .and. present(step_start)
+      do_forcing = cfg%forcing%forcing_on .and. present(met_src) .and. present(met_cur)          &
+                   .and. present(step_start)
       f_ground = ctx%rad_sw_ground / max(ctx%rad_sw_top, tiny_num)   ! ground/canopy-top SW transmittance
       npatch   = site%patch%n
       nsub     = cfg%n_fast_per_slow
@@ -479,8 +481,8 @@ contains
          do isub = 1_ik, nsub
             t_sample(isub) = time_advance_seconds(step_start,                                          &
                        (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
-            call met_advance(met_drv, t_sample(isub))
-            met_sample(isub) = met_instant(met_drv, t_sample(isub))
+            call met_advance(met_src, met_cur, t_sample(isub))
+            met_sample(isub) = met_instant(met_src, met_cur, t_sample(isub))
          end do
       end if
       !----- Site-uniform, so it belongs OUT of the patch loop (where every patch used to rewrite it  !

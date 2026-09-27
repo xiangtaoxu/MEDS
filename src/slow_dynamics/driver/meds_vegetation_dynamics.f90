@@ -72,7 +72,7 @@ contains
    ! Advance the vegetation dynamics for one step: assemble the carbon NPP, compute the carbon !
    ! vital rates via the plant kernels, and sequence the demography apply-primitives + cadence. !
    !---------------------------------------------------------------------------------------!
-   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger)
+   subroutine vegetation_dynamics(site, cfg, is_new_month, is_new_year, doy, ledger, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
@@ -82,6 +82,7 @@ contains
       !      CREATES a patch partway through this very routine. The consumer then indexed it by the
       !      new patch count and read past the end. See the field's comment in meds_site_state_types.
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (plan §10.2)
+      real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water, cull_water
       real(wp)                 :: tissue_heat0, tissue_heat1, th0, th1, handover
@@ -99,7 +100,7 @@ contains
       !         path) simply omits doy, so the drives stay at their vanilla-evergreen fixed point.    !
       !         advance_leaf_phenology ALSO no-ops on its own when no fast sub-step has yet supplied   !
       !         a daily-mean temperature (site%pheno_tair_n < 1). --------------------------------------!
-      if (present(doy)) call advance_leaf_phenology(site, cfg, doy)
+      if (present(doy)) call advance_leaf_phenology(site, cfg, doy, latitude_deg)
 
       !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
       !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
@@ -1000,23 +1001,28 @@ contains
    ! storage carbon; compute_carbon_allocation derives the two rates from the stored drives. A no-temperature    !
    ! step (no fast sub-steps ran) is skipped so the memory is never advanced on a bogus 0/0 mean.    !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_leaf_phenology(site, cfg, doy)
+   subroutine advance_leaf_phenology(site, cfg, doy, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: doy
+      !----- The polygon's latitude (day length, hemisphere). A region passes each polygon's own;    !
+      !      absent, it is the run's [site] latitude (MEDS_POLYGON_RUNTIME_PLAN.md B12). ------------!
+      real(wp),            intent(in), optional :: latitude_deg
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf
-      real(wp)    :: dt_days, temp_day, dlen, soilt_day, swater_day, rad_day, nsub
+      real(wp)    :: dt_days, temp_day, dlen, soilt_day, swater_day, rad_day, nsub, lat
       logical     :: north
 
       if (site%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
       dt_days  = cfg%dt_slow / day_sec
       temp_day = site%pheno_tair_sum / real(site%pheno_tair_n, wp)
-      north    = cfg%forcing%latitude_deg >= 0.0_wp
-      dlen     = daylength(cfg%forcing%latitude_deg, doy)
+      lat = cfg%forcing%latitude_deg
+      if (present(latitude_deg)) lat = latitude_deg
+      north    = lat >= 0.0_wp
+      dlen     = daylength(lat, doy)
       !----- The three area-weighted cue drivers (#150). pheno_tair_n counts (sub-step, patch)      !
       !      pairs and the three sums carry the patch area, which sums to 1 -- so the daily mean     !
       !      divides by the SUB-STEP count, not by the pair count. With one patch the two agree,     !

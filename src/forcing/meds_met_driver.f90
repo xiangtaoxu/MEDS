@@ -2,11 +2,12 @@
 !==========================================================================================!
 ! meds_met_driver -- the meteorological-forcing READER (design MEDS_FORCING_DESIGN.md sections !
 ! 4 and 15). Opens the MEDS multi-grid forcing NetCDF, the global ED_ERA5land archive, or the     !
-! no-file CONST backend; holds the two records bracketing the model time at this polygon's cell   !
-! (met_driver_t, the ONLY mutable forcing state), slides that window as the model marches, and     !
-! produces an instantaneous met_forcing_t via the pure disaggregation kernels. Owns file I/O (via   !
-! meds_netcdf_c and meds_era5land_reader) -- the ED2 cgrid%metinput analogue, threaded by the       !
-! driver, never a global.                                                                              !
+! no-file CONST backend into a met_source_t shared by every polygon of a run; each polygon has a   !
+! met_cursor_t holding its cell, its location and the two records bracketing the model time,      !
+! slides that window as the model marches, and produces an instantaneous met_forcing_t via the     !
+! pure disaggregation kernels (MEDS_POLYGON_RUNTIME_PLAN.md §10.3). Owns file I/O (via meds_netcdf_c !
+! and meds_era5land_reader) -- the ED2 cgrid%metinput analogue, threaded by the driver, never a      !
+! global. Stepping (met_advance, met_instant) only reads the source.                                  !
 !                                                                                          !
 ! The archive's months form one continuous hourly axis over the months a run needs (the recycle   !
 ! window, or the run period), so bracketing, recycling and the seam are the same code for both      !
@@ -29,7 +30,7 @@ module meds_met_driver
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE
-   use meds_forcing_types,  only : met_forcing_t, met_record_t, met_driver_t
+   use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
    use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,              &
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
@@ -48,7 +49,7 @@ module meds_met_driver
    implicit none
    private
 
-   public :: met_open, met_advance, met_instant, met_close, met_prefetch
+   public :: met_open, met_cursor_init, met_advance, met_instant, met_close, met_prefetch
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
              MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE
@@ -83,11 +84,12 @@ contains
    !  run wants: a forcing file that does not match its declared window must never be guessed at.   !
    !  `run_start`/`run_end` bound the months a non-recycling ED_ERA5land run reads; a recycling    !
    !  run reads the declared window instead, and the other backends ignore them.                  !
-   subroutine met_open(drv, fcfg, stat, run_start, run_end)
-      type(met_driver_t),     intent(inout) :: drv
+   subroutine met_open(src, fcfg, stat, run_start, run_end, cells)
+      type(met_source_t),     intent(inout)  :: src
       type(forcing_config_t), intent(in)    :: fcfg
       integer(ik), optional,  intent(out)   :: stat
       type(meds_time_t), optional, intent(in) :: run_start, run_end
+      type(met_cells_t), optional, intent(in) :: cells   !< a region's cells (archive only); absent: the site's
       integer(c_int)    :: st, ncid
       integer(c_size_t) :: dlen
       character(len=256):: units
@@ -96,70 +98,68 @@ contains
 
       if (present(stat)) stat = MET_OK
 
-      drv%fcfg       = fcfg
-      drv%backend    = fcfg%backend
-      drv%grid_index = fcfg%grid_index
-      drv%dt_forcing = fcfg%dt_forcing
-      drv%irec_prev  = 0_ik
-      drv%has_wind_vector = .false.
+      src%fcfg       = fcfg
+      src%backend    = fcfg%backend
+      src%grid_index = fcfg%grid_index
+      src%dt_forcing = fcfg%dt_forcing
+      src%has_wind_vector = .false.
 
       if (fcfg%backend == MET_BACKEND_CONST) then
-         drv%ngrid = 1_ik ; drv%nrec = 0_ik
-         drv%rec_prev = met_record_t() ; drv%rec_next = met_record_t()
+         src%ngrid = 1_ik ; src%nrec = 0_ik
          return
       end if
 
       if (fcfg%backend == MET_BACKEND_ERA5LAND) then
-         call open_archive(drv, run_start, run_end, vstat)
-         if (vstat == MET_OK) call validate_recycle_window(drv, vstat)
+         call open_archive(src, run_start, run_end, vstat, cells)
+         if (vstat == MET_OK) call validate_recycle_window(src, vstat)
          if (vstat /= MET_OK) then
-            call met_close(drv)
+            call met_close(src)
             if (present(stat)) then ; stat = vstat ; return ; end if
             error stop 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
          end if
-         call load_axis_month(drv, 1_ik)
-         call load_bracket(drv, 1_ik)
+         call load_axis_month(src, 1_ik)
+         src%rec_first = 1_ik
          return
       end if
 
       !----- NetCDF backend. -----------------------------------------------------------------!
       st = nc_open_f(trim(fcfg%path), NC_NOWRITE, ncid)
       call nc_check(st, 'met_open: nc_open '//trim(fcfg%path))
-      drv%ncid = int(ncid, ik)
+      src%ncid = int(ncid, ik)
 
       st = nc_inq_dimlen_f(ncid, 'grid', dlen) ; call nc_check(st, 'met_open: grid dim')
-      drv%ngrid = int(dlen, ik)
+      src%ngrid = int(dlen, ik)
       !----- bind this polygon to a grid slice: explicit index, or nearest [site] lat/lon (§4.1). !
       if (fcfg%grid_match == GRIDMATCH_NEAREST) then
-         call resolve_grid_index(drv)                        ! sets drv%grid_index in 1..ngrid
+         call resolve_grid_index(src)                        ! sets src%grid_index in 1..ngrid
       else                                                   ! GRIDMATCH_EXPLICIT
-         if (fcfg%grid_index < 1_ik .or. fcfg%grid_index > drv%ngrid) then
-            write(*,'(a,i0,a,i0)') 'met_open: grid_index ', fcfg%grid_index, ' out of range 1..', drv%ngrid
+         if (fcfg%grid_index < 1_ik .or. fcfg%grid_index > src%ngrid) then
+            write(*,'(a,i0,a,i0)') 'met_open: grid_index ', fcfg%grid_index, ' out of range 1..', src%ngrid
             error stop 'met_open: grid_index out of range'
          end if
       end if
 
       st = nc_inq_dimlen_f(ncid, 'time', dlen) ; call nc_check(st, 'met_open: time dim')
-      drv%nrec = int(dlen, ik)
-      if (drv%nrec < 1_ik) error stop 'met_open: forcing file has no time records'
+      src%nrec = int(dlen, ik)
+      if (src%nrec < 1_ik) error stop 'met_open: forcing file has no time records'
 
       !----- base time from "seconds since <base>" units attribute. --------------------------!
       block
          integer(c_int) :: vid
          st = nc_inq_varid_f(ncid, 'time', vid) ; call nc_check(st, 'met_open: time varid')
          st = nc_get_att_text_f(ncid, vid, 'units', units) ; call nc_check(st, 'met_open: time:units')
-         call parse_time_units(units, drv%base_time, ok)
+         call parse_time_units(units, src%base_time, ok)
          if (.not. ok) error stop 'met_open: could not parse time:units "seconds since <base>"'
       end block
 
       !----- cache the whole time axis (seconds since base_time). ----------------------------!
-      call read_time_axis(drv)
+      call read_time_axis(src)
 
       !----- The wind VECTOR (§7.1, §15.4): a file carrying u10 and v10 supplies it, and the speed  !
       !      is then derived from the components; a file with Wind alone gives the speed only.     !
       block
          integer(c_int) :: vu, vv
-         drv%has_wind_vector = nc_inq_varid_f(ncid, 'u10', vu) == NC_NOERR .and.                  &
+         src%has_wind_vector = nc_inq_varid_f(ncid, 'u10', vu) == NC_NOERR .and.                  &
                                nc_inq_varid_f(ncid, 'v10', vv) == NC_NOERR
       end block
 
@@ -167,7 +167,7 @@ contains
       !      global attributes the prep script writes against the config that claims to describe    !
       !      the same file. All three used to be written and never read, so a file that disagreed   !
       !      with its config was silently mis-timed or mis-partitioned. ------------------------------!
-      call validate_file_against_config(drv, ncid, vstat)
+      call validate_file_against_config(src, ncid, vstat)
       if (vstat /= MET_OK) then
          if (present(stat)) then
             stat = vstat ; st = nc_close(ncid) ; return
@@ -178,13 +178,13 @@ contains
       !----- V2/V3: check the DECLARED recycle window against this file's actual record stamps.  !
       !      Cannot live in the config sanity check (V1, whole-year span) -- it needs the time      !
       !      axis, which is only known here. -------------------------------------------------------!
-      call validate_recycle_window(drv, vstat)
+      call validate_recycle_window(src, vstat)
       if (vstat /= MET_OK) then
          !----- Release the file before bailing out. A `stat` return is a normal (if unhappy) exit  !
          !      the caller may retry from, and an un-closed netCDF handle keeps an HDF5 lock on the  !
          !      path -- a later create/open of the same file then fails with a bare "permission      !
          !      denied" that points nowhere near the real cause. ------------------------------------!
-         call met_close(drv)
+         call met_close(src)
          if (present(stat)) then ; stat = vstat ; return ; end if
          error stop 'met_open: forcing file does not match the declared [forcing] recycle window'
       end if
@@ -195,19 +195,42 @@ contains
       !      every chunk. ----------------------------------------------------------------------------!
       block
          integer(ik) :: r0, r1
-         r0 = 1_ik ; r1 = drv%nrec
-         if (drv%fcfg%recycle .and. drv%n_cycle_years >= 1_ik) then
-            r0 = max(1_ik, drv%irec_cycle_first - 1_ik) ; r1 = min(drv%nrec, drv%irec_cycle_last + 1_ik)
+         r0 = 1_ik ; r1 = src%nrec
+         if (src%fcfg%recycle .and. src%n_cycle_years >= 1_ik) then
+            r0 = max(1_ik, src%irec_cycle_first - 1_ik) ; r1 = min(src%nrec, src%irec_cycle_last + 1_ik)
          else if (present(run_start) .and. present(run_end)) then
-            r0 = max(1_ik, first_record_after(drv, seconds_between(drv%base_time, run_start)) - 2_ik)
-            r1 = min(drv%nrec, first_record_after(drv, seconds_between(drv%base_time, run_end)) + 1_ik)
+            r0 = max(1_ik, first_record_after(src, seconds_between(src%base_time, run_start)) - 2_ik)
+            r1 = min(src%nrec, first_record_after(src, seconds_between(src%base_time, run_end)) + 1_ik)
          end if
-         if (r1 <= r0) r1 = min(drv%nrec, r0 + 1_ik)
-         call read_series(drv, ncid, r0, r1)
-         st = nc_close(ncid) ; drv%ncid = -1_ik
-         call load_bracket(drv, r0)                  ! the first two records in range
+         if (r1 <= r0) r1 = min(src%nrec, r0 + 1_ik)
+         call read_series(src, ncid, r0, r1)
+         st = nc_close(ncid) ; src%ncid = -1_ik
+         src%rec_first = r0                          ! a cursor's first bracket: the first records in range
       end block
    end subroutine met_open
+
+   !=======================================================================================!
+   !  CURSOR: bind one polygon to the open source -- its cell and location -- and load its first  !
+   !  bracket. A site run binds cell 1 at the [site] location; a region binds each polygon at its  !
+   !  cell centre. The grid elevation (the lapse origin) is the cell's orography for the archive,  !
+   !  the configured grid_elevation for a MEDS forcing file.                                       !
+   !=======================================================================================!
+   subroutine met_cursor_init(src, cur, cell, latitude_deg, longitude_deg, utc_offset_h, elevation_m)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(out) :: cur
+      integer(ik),        intent(in)  :: cell
+      real(wp),           intent(in)  :: latitude_deg, longitude_deg, utc_offset_h, elevation_m
+      cur%cell = cell
+      cur%latitude_deg = latitude_deg ; cur%longitude_deg = longitude_deg
+      cur%utc_offset_h = utc_offset_h ; cur%elevation_m   = elevation_m
+      cur%grid_elevation_m = src%fcfg%grid_elevation_m
+      if (src%backend == MET_BACKEND_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
+      if (src%backend == MET_BACKEND_CONST) then
+         cur%rec_prev = met_record_t() ; cur%rec_next = met_record_t()
+         return
+      end if
+      call load_bracket(src, cur, src%rec_first)
+   end subroutine met_cursor_init
 
    !=======================================================================================!
    !  PREFETCH (R1): load what the step starting at `step_start` reads, before its compute      !
@@ -217,32 +240,32 @@ contains
    !  record comes from the outgoing buffer, so a run loads each month once. validate_config    !
    !  restricts format = "era5land" to daily steps from midnight, the shape this assumes.       !
    !=======================================================================================!
-   subroutine met_prefetch(drv, step_start)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine met_prefetch(src, step_start)
+      type(met_source_t), intent(inout)  :: src
       type(meds_time_t),  intent(in)    :: step_start
       real(wp)    :: s0
       integer(ik) :: r, k, kp, p
       logical     :: wrap
-      if (drv%backend /= MET_BACKEND_ERA5LAND) return
-      s0 = file_lookup_sec(drv, step_start)
+      if (src%backend /= MET_BACKEND_ERA5LAND) return
+      s0 = file_lookup_sec(src, step_start)
       wrap = .false.
-      if (drv%n_cycle_years >= 1_ik .and. drv%irec_cycle_last > drv%irec_cycle_first) then
-         wrap = s0 >= drv%time_sec(drv%irec_cycle_last) - REC_MATCH_TOL
+      if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first) then
+         wrap = s0 >= src%time_sec(src%irec_cycle_last) - REC_MATCH_TOL
       end if
       if (wrap) then                                    ! the window's first month, after its last record
-         k = axis_month_of(drv, drv%irec_cycle_first) ; p = drv%irec_cycle_last
+         k = axis_month_of(src, src%irec_cycle_first) ; p = src%irec_cycle_last
       else
-         r = first_record_after(drv, s0)                ! clamped to the axis
-         k = axis_month_of(drv, r) ; p = drv%month_rec0(k)
+         r = first_record_after(src, s0)                ! clamped to the axis
+         k = axis_month_of(src, r) ; p = src%month_rec0(k)
       end if
-      if (p > 0_ik .and. drv%carry_rec /= p) then       ! the record before the month
-         kp = axis_month_of(drv, p)
-         if (.not. month_loaded(drv, kp)) call load_axis_month(drv, kp)
-         if (.not. allocated(drv%carry)) allocate(drv%carry(drv%domain%ncell, ERA_NVAR))
-         drv%carry = drv%buffer%values(p - drv%month_rec0(kp), :, :)
-         drv%carry_rec = p
+      if (p > 0_ik .and. src%carry_rec /= p) then       ! the record before the month
+         kp = axis_month_of(src, p)
+         if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
+         if (.not. allocated(src%carry)) allocate(src%carry(src%cells%ncell, ERA_NVAR))
+         src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
+         src%carry_rec = p
       end if
-      if (.not. month_loaded(drv, k)) call load_axis_month(drv, k)
+      if (.not. month_loaded(src, k)) call load_axis_month(src, k)
    end subroutine met_prefetch
 
    !=======================================================================================!
@@ -257,45 +280,45 @@ contains
    !  late May at a ~10 h offset while its daily-mean shortwave stayed correct, so the slow            !
    !  demography looked healthy and nothing surfaced the problem for 30 simulated years.                !
    !=======================================================================================!
-   subroutine validate_recycle_window(drv, stat)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine validate_recycle_window(src, stat)
+      type(met_source_t), intent(inout)  :: src
       integer(ik),        intent(out)   :: stat
       real(wp)    :: start_sec, end_sec
       integer(ik) :: i
       logical     :: covered
 
       stat = MET_OK
-      drv%cycle_anchor = drv%fcfg%recycle_start
-      drv%n_cycle_years = 0_ik ; drv%irec_cycle_first = 0_ik ; drv%irec_cycle_last = 0_ik
-      if (.not. drv%fcfg%recycle) return
+      src%cycle_anchor = src%fcfg%recycle_start
+      src%n_cycle_years = 0_ik ; src%irec_cycle_first = 0_ik ; src%irec_cycle_last = 0_ik
+      if (.not. src%fcfg%recycle) return
 
       !----- Whole-year span. Re-checked here (not only in validate_config) so a driver built     !
       !      directly from a forcing_config_t -- as the unit tests do -- cannot bypass it. --------!
-      drv%n_cycle_years = whole_years_between(drv%fcfg%recycle_start, drv%fcfg%recycle_end,     &
+      src%n_cycle_years = whole_years_between(src%fcfg%recycle_start, src%fcfg%recycle_end,     &
                                               MAX_RECYCLE_YEARS)
-      if (drv%n_cycle_years < 1_ik) then
-         write(*,'(4a)') ' met_open: recycle window ', time_to_string(drv%fcfg%recycle_start),   &
-                         ' .. ', time_to_string(drv%fcfg%recycle_end)
+      if (src%n_cycle_years < 1_ik) then
+         write(*,'(4a)') ' met_open: recycle window ', time_to_string(src%fcfg%recycle_start),   &
+                         ' .. ', time_to_string(src%fcfg%recycle_end)
          write(*,'(a)')  '   is not an exact whole number of calendar years.'
          stat = MET_ERR_WINDOW_NOT_WHOLE_YEARS ; return
       end if
 
-      start_sec = seconds_between(drv%base_time, drv%fcfg%recycle_start)
-      end_sec   = seconds_between(drv%base_time, drv%fcfg%recycle_end)
+      start_sec = seconds_between(src%base_time, src%fcfg%recycle_start)
+      end_sec   = seconds_between(src%base_time, src%fcfg%recycle_end)
 
       !----- V2: recycle_start must land EXACTLY on a record stamp. This is the check that stops  !
       !      MEDS guessing the start of the day: a config saying 00:00:00 against an ERA5-Land      !
       !      file stamped 01:00:00 is reported, with both values, rather than quietly re-derived.   !
-      do i = 1_ik, drv%nrec
-         if (abs(drv%time_sec(i) - start_sec) <= REC_MATCH_TOL) then
-            drv%irec_cycle_first = i ; exit
+      do i = 1_ik, src%nrec
+         if (abs(src%time_sec(i) - start_sec) <= REC_MATCH_TOL) then
+            src%irec_cycle_first = i ; exit
          end if
       end do
-      if (drv%irec_cycle_first == 0_ik) then
-         write(*,'(2a)') ' met_open: forcing.recycle_start = ', time_to_string(drv%fcfg%recycle_start)
+      if (src%irec_cycle_first == 0_ik) then
+         write(*,'(2a)') ' met_open: forcing.recycle_start = ', time_to_string(src%fcfg%recycle_start)
          write(*,'(a)')  '   does not match any record in the forcing file. The file record stamps run'
-         write(*,'(4a)') '   from ', time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(1))), &
-                         ' to ',    time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(drv%nrec)))
+         write(*,'(4a)') '   from ', time_to_string(time_advance_seconds(src%base_time, src%time_sec(1))), &
+                         ' to ',    time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
          write(*,'(a)')  '   Set recycle_start to an actual record stamp -- MEDS does not guess it. Note'
          write(*,'(a)')  '   avg_convention="end" files (ERA5-Land) stamp the END of each interval, so the'
          write(*,'(a)')  '   first record of a calendar year is 01:00:00 for hourly data, not 00:00:00.'
@@ -305,49 +328,50 @@ contains
       !----- V3: the file must cover the whole window, i.e. hold a record in the LAST interval    !
       !      below recycle_end. Without that the cycle has a hole at its far edge and the seam      !
       !      bracket below would interpolate across it. --------------------------------------------!
-      do i = drv%nrec, drv%irec_cycle_first, -1_ik
-         if (drv%time_sec(i) < end_sec - REC_MATCH_TOL) then ; drv%irec_cycle_last = i ; exit ; end if
+      do i = src%nrec, src%irec_cycle_first, -1_ik
+         if (src%time_sec(i) < end_sec - REC_MATCH_TOL) then ; src%irec_cycle_last = i ; exit ; end if
       end do
       !----- NESTED, not a single .or.: Fortran does not guarantee short-circuit evaluation, so a  !
       !      combined test would index time_sec(irec_cycle_last) even when the loop above left it 0. !
-      covered = drv%irec_cycle_last > drv%irec_cycle_first
-      if (covered) covered = drv%time_sec(drv%irec_cycle_last) >= end_sec - drv%dt_forcing - REC_MATCH_TOL
+      covered = src%irec_cycle_last > src%irec_cycle_first
+      if (covered) covered = src%time_sec(src%irec_cycle_last) >= end_sec - src%dt_forcing - REC_MATCH_TOL
       if (.not. covered) then
          write(*,'(4a)') ' met_open: the forcing file does not cover the declared recycle window ', &
-                         time_to_string(drv%fcfg%recycle_start), ' .. ',                         &
-                         time_to_string(drv%fcfg%recycle_end)
+                         time_to_string(src%fcfg%recycle_start), ' .. ',                         &
+                         time_to_string(src%fcfg%recycle_end)
          write(*,'(2a)') '   last record in the file: ',                                         &
-                         time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(drv%nrec)))
+                         time_to_string(time_advance_seconds(src%base_time, src%time_sec(src%nrec)))
          stat = MET_ERR_WINDOW_NOT_COVERED ; return
       end if
 
-      write(*,'(a,i0,4a)') ' force : recycling ', drv%n_cycle_years, ' calendar year(s), ',      &
-            time_to_string(drv%fcfg%recycle_start), ' .. ', time_to_string(drv%fcfg%recycle_end)
+      write(*,'(a,i0,4a)') ' force : recycling ', src%n_cycle_years, ' calendar year(s), ',      &
+            time_to_string(src%fcfg%recycle_start), ' .. ', time_to_string(src%fcfg%recycle_end)
    end subroutine validate_recycle_window
 
    !=======================================================================================!
    !  ADVANCE: slide the window so rec_prev%when <= now < rec_next%when (at this grid_index).    !
    !  Handles start-before-base_time (clamp/error) and EOF (recycle by whole file spans).        !
    !=======================================================================================!
-   subroutine met_advance(drv, now)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine met_advance(src, cur, now)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(inout) :: cur
       type(meds_time_t),  intent(in)    :: now
       real(wp)    :: now_sec
       integer(ik) :: i
 
-      if (drv%backend == MET_BACKEND_CONST) return
+      if (src%backend == MET_BACKEND_CONST) return
 
       !----- the SAME effective (recycle-mapped) seconds on the FILE axis met_instant uses. ---!
-      now_sec = file_lookup_sec(drv, now)
+      now_sec = file_lookup_sec(src, now)
 
       !----- start before the first record (never reached once recycle-wrapped into span). ---!
       !      Hold: load records 1-2 and let met_instant clamp w_next=0 for now < t1 -- do NOT     !
       !      overwrite rec_next (that stale-copy bug suppressed the reload once now reached t1).  !
-      if (now_sec < drv%time_sec(1)) then
-         if (drv%fcfg%start_clamp == CLAMP_ERROR) then
+      if (now_sec < src%time_sec(1)) then
+         if (src%fcfg%start_clamp == CLAMP_ERROR) then
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
          end if
-         if (drv%irec_prev /= 1_ik) call load_bracket(drv, 1_ik)
+         if (cur%irec_prev /= 1_ik) call load_bracket(src, cur, 1_ik)
          return
       end if
 
@@ -358,51 +382,52 @@ contains
       !      NESTED, not one .and.: Fortran does not guarantee short-circuit evaluation, so a
       !      combined test would index time_sec(irec_cycle_last) on a non-recycling driver, where
       !      it is still 0.
-      if (drv%n_cycle_years >= 1_ik .and. drv%irec_cycle_last > drv%irec_cycle_first) then
-         if (now_sec >= drv%time_sec(drv%irec_cycle_last)) then
-            if (.not. drv%at_wrap_seam) call load_wrap_bracket(drv)
+      if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first) then
+         if (now_sec >= src%time_sec(src%irec_cycle_last)) then
+            if (.not. cur%at_wrap_seam) call load_wrap_bracket(src, cur)
             return
          end if
       end if
 
       !----- non-recycle run past the end: clamp to the last interval (recycle wraps above). --!
-      if (.not. drv%fcfg%recycle .and. drv%nrec >= 2_ik .and. now_sec >= drv%time_sec(drv%nrec)) then
-         if (drv%irec_prev /= drv%nrec - 1_ik) call load_bracket(drv, drv%nrec - 1_ik)
+      if (.not. src%fcfg%recycle .and. src%nrec >= 2_ik .and. now_sec >= src%time_sec(src%nrec)) then
+         if (cur%irec_prev /= src%nrec - 1_ik) call load_bracket(src, cur, src%nrec - 1_ik)
          return
       end if
 
       !----- incremental cursor from the current bracket (cheap for a forward march). --------!
-      i = max(1_ik, drv%irec_prev)
-      do while (i < drv%nrec - 1_ik)
-         if (drv%time_sec(i + 1_ik) <= now_sec) then ; i = i + 1_ik ; else ; exit ; end if
+      i = max(1_ik, cur%irec_prev)
+      do while (i < src%nrec - 1_ik)
+         if (src%time_sec(i + 1_ik) <= now_sec) then ; i = i + 1_ik ; else ; exit ; end if
       end do
       do while (i > 1_ik)
-         if (drv%time_sec(i) > now_sec) then ; i = i - 1_ik ; else ; exit ; end if
+         if (src%time_sec(i) > now_sec) then ; i = i - 1_ik ; else ; exit ; end if
       end do
-      if (i /= drv%irec_prev) call load_bracket(drv, i)
+      if (i /= cur%irec_prev) call load_bracket(src, cur, i)
       !----- #182: refresh the DAYTIME clearness memory the longwave synthesis falls back on after   !
       !      dark. Done HERE, not in met_instant, for two reasons: met_instant is intent(in) and is   !
       !      called per sub-step, and this block sits outside the patch loop, so the one scalar of    !
       !      state cannot become a data race once the patch axis is threaded.  ------------------------!
-      if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) call remember_clearness(drv, now)
+      if (src%fcfg%lwdown_source == LW_SYNTHESIZE) call remember_clearness(src, cur, now)
    end subroutine met_advance
 
-   !----- Update drv%kt_last_day when the sun is up. The clearness index is formed from the        !
+   !----- Update cur%kt_last_day when the sun is up. The clearness index is formed from the        !
    !      bracketing record's TOTAL shortwave against the instantaneous TOA irradiance -- a mean    !
    !      over an interval against an instant at its sample point. That mismatch is deliberate and  !
    !      second-order here: the cloud term it feeds is a one-coefficient empirical correction on a !
    !      FALLBACK synthesis, and the alternative is to rebuild the interval-mean-cosz machinery    !
    !      for a factor that multiplies a 0.22 coefficient.  -----------------------------------------!
-   subroutine remember_clearness(drv, now)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine remember_clearness(src, cur, now)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(inout) :: cur
       type(meds_time_t),  intent(in)    :: now
       real(wp) :: cosz_now, sw_total, kt
-      associate (f => drv%fcfg, r => drv%rec_next)
-         cosz_now = met_solar_cosz(now, seconds_into_day(now), f%latitude_deg, f%longitude_deg, &
-                                   f%utc_offset_h, f%apply_solar_longitude)
+      associate (f => src%fcfg, r => cur%rec_next)
+         cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg, &
+                                   cur%utc_offset_h, f%apply_solar_longitude)
          sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
          kt = clearness_index(sw_total, cosz_now)
-         if (kt >= 0.0_wp) drv%kt_last_day = kt      ! negative = night: keep dusk's value
+         if (kt >= 0.0_wp) cur%kt_last_day = kt      ! negative = night: keep dusk's value
       end associate
    end subroutine remember_clearness
 
@@ -411,21 +436,22 @@ contains
    !  State vars linear; wind energy-form; rainfall step-constant then phase-split; shortwave via    !
    !  the reciprocal-mean-cosz reconstruction of the interval-mean streams; cosz + rho_air derived. !
    !=======================================================================================!
-   function met_instant(drv, now) result(met)
-      type(met_driver_t), intent(in) :: drv
+   function met_instant(src, cur, now) result(met)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(in) :: cur
       type(meds_time_t),  intent(in) :: now
       type(met_forcing_t) :: met
       type(met_record_t)  :: mean_rec
       type(meds_time_t)   :: mws
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec, precip_total
-      associate (f => drv%fcfg, p => drv%rec_prev, n => drv%rec_next)
+      associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
       !----- solar zenith at `now` (file clock -> apparent solar seconds inside met_solar_cosz). !
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), f%latitude_deg, f%longitude_deg,   &
-                                f%utc_offset_h, f%apply_solar_longitude)
+      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg,   &
+                                cur%utc_offset_h, f%apply_solar_longitude)
       met%cosz = cosz_now
 
-      if (drv%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
+      if (src%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
          !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
       !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
       !      this instant's clearness index, and after dark it falls back to the last daytime value  !
@@ -436,7 +462,7 @@ contains
             real(wp) :: sw_now, kt_now
             sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
             kt_now = clearness_index(sw_now, cosz_now)
-            if (kt_now < 0.0_wp) kt_now = drv%kt_last_day
+            if (kt_now < 0.0_wp) kt_now = cur%kt_last_day
             met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
                                            kt_now, f%lw_cloud_a)
          end block
@@ -448,12 +474,12 @@ contains
 
       !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
       !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
-      now_sec = file_lookup_sec(drv, now)
-      if (drv%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-         tprev = drv%time_sec(drv%irec_cycle_last) ; tnext = tprev + drv%dt_forcing
+      now_sec = file_lookup_sec(src, now)
+      if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+         tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
       else
-         tprev = drv%time_sec(drv%irec_prev)
-         tnext = drv%time_sec(min(drv%irec_prev + 1_ik, drv%nrec))
+         tprev = src%time_sec(cur%irec_prev)
+         tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
       end if
       if (tnext > tprev) then
          w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
@@ -469,7 +495,7 @@ contains
       met%co2      = interpolate_forcing(INTERP_LINEAR, p%co2,      n%co2,      w_next)
       met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
       !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
-      if (drv%has_wind_vector) then
+      if (src%has_wind_vector) then
          met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
          met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
          met%has_wind_vector = .true.
@@ -493,7 +519,7 @@ contains
       win_start_sec = seconds_into_day(mws)
       factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
                                        (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                       f%latitude_deg, f%longitude_deg, f%utc_offset_h,         &
+                                       cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
                                        f%apply_solar_longitude)
       met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
       met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
@@ -510,7 +536,7 @@ contains
             real(wp) :: sw_now, kt_now
             sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
             kt_now = clearness_index(sw_now, cosz_now)
-            if (kt_now < 0.0_wp) kt_now = drv%kt_last_day
+            if (kt_now < 0.0_wp) kt_now = cur%kt_last_day
             met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
                                            kt_now, f%lw_cloud_a)
          end block
@@ -523,19 +549,19 @@ contains
    !=======================================================================================!
    !  CLOSE.                                                                                     !
    !=======================================================================================!
-   subroutine met_close(drv)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine met_close(src)
+      type(met_source_t), intent(inout)  :: src
       integer(c_int) :: st
-      if (drv%backend == MET_BACKEND_NETCDF .and. drv%ncid >= 0_ik) then
-         st = nc_close(int(drv%ncid, c_int)) ; call nc_check(st, 'met_close: nc_close')
-         drv%ncid = -1_ik
+      if (src%backend == MET_BACKEND_NETCDF .and. src%ncid >= 0_ik) then
+         st = nc_close(int(src%ncid, c_int)) ; call nc_check(st, 'met_close: nc_close')
+         src%ncid = -1_ik
       end if
-      if (allocated(drv%time_sec)) deallocate(drv%time_sec)
-      if (allocated(drv%month_year))  deallocate(drv%month_year, drv%month_month, drv%month_rec0)
-      if (allocated(drv%buffer%values)) deallocate(drv%buffer%values)
-      if (allocated(drv%carry))  deallocate(drv%carry)
-      if (allocated(drv%series)) deallocate(drv%series, drv%series_name)
-      drv%buffer%year = 0_ik ; drv%carry_rec = 0_ik ; drv%n_loads = 0_ik
+      if (allocated(src%time_sec)) deallocate(src%time_sec)
+      if (allocated(src%month_year))  deallocate(src%month_year, src%month_month, src%month_rec0)
+      if (allocated(src%buffer%values)) deallocate(src%buffer%values)
+      if (allocated(src%carry))  deallocate(src%carry)
+      if (allocated(src%series)) deallocate(src%series, src%series_name)
+      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
@@ -544,14 +570,14 @@ contains
    !      calendar year, preserving month/day/hour so day-of-year is exact across leap boundaries;   !
    !      (b) LEGACY absolute-seconds span-wrap (non-calendar recyclable file, e.g. an idealized      !
    !      diurnal repeat) once past EOF; (c) identity while the model date is within the file range.  !
-   pure function file_lookup_sec(drv, now) result(s)
-      type(met_driver_t), intent(in) :: drv
+   pure function file_lookup_sec(src, now) result(s)
+      type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
       real(wp) :: s
-      if (drv%fcfg%recycle .and. drv%n_cycle_years >= 1_ik) then
-         s = seconds_between(drv%base_time, recycle_model_to_file(drv, now))
+      if (src%fcfg%recycle .and. src%n_cycle_years >= 1_ik) then
+         s = seconds_between(src%base_time, recycle_model_to_file(src, now))
       else
-         s = seconds_between(drv%base_time, now)
+         s = seconds_between(src%base_time, now)
       end if
    end function file_lookup_sec
 
@@ -572,14 +598,14 @@ contains
    !                                                                                                   !
    !      LEAP DAY: Feb-29 -> Feb-28 when the target file year is non-leap (ED2 read_ol_file repeats    !
    !      Feb 28). A non-leap model year never asks for Feb-29, so the substitution is one-directional. !
-   pure function recycle_model_to_file(drv, now) result(now_file)
-      type(met_driver_t), intent(in) :: drv
+   pure function recycle_model_to_file(src, now) result(now_file)
+      type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
       type(meds_time_t) :: now_file
       integer(ik) :: yf, off
-      off = merge(0_ik, 1_ik, mdhms_at_or_after(now, drv%cycle_anchor))
-      yf  = drv%cycle_anchor%year + off                                                          &
-          + modulo(now%year - drv%cycle_anchor%year - off, drv%n_cycle_years)
+      off = merge(0_ik, 1_ik, mdhms_at_or_after(now, src%cycle_anchor))
+      yf  = src%cycle_anchor%year + off                                                          &
+          + modulo(now%year - src%cycle_anchor%year - off, src%n_cycle_years)
       now_file = now
       now_file%year = yf
       if (now%month == 2_ik .and. now%day == 29_ik .and. .not. is_leap_year(yf)) now_file%day = 28_ik
@@ -599,37 +625,39 @@ contains
    !=======================================================================================!
    !  Helpers (NetCDF backend).                                                                 !
    !=======================================================================================!
-   !----- Read the whole time coordinate (seconds since base_time) into drv%time_sec. ---------!
-   subroutine read_time_axis(drv)
-      type(met_driver_t), intent(inout) :: drv
+   !----- Read the whole time coordinate (seconds since base_time) into src%time_sec. ---------!
+   subroutine read_time_axis(src)
+      type(met_source_t), intent(inout)  :: src
       integer(c_int)    :: st, vid
       integer(c_size_t) :: start1(1), count1(1)
-      if (allocated(drv%time_sec)) deallocate(drv%time_sec)
-      allocate(drv%time_sec(drv%nrec))
-      st = nc_inq_varid_f(int(drv%ncid, c_int), 'time', vid) ; call nc_check(st, 'read_time_axis: time varid')
-      start1(1) = 0_c_size_t ; count1(1) = int(drv%nrec, c_size_t)
-      st = nc_get_vara_double(int(drv%ncid, c_int), vid, start1, count1, drv%time_sec)
+      if (allocated(src%time_sec)) deallocate(src%time_sec)
+      allocate(src%time_sec(src%nrec))
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'time', vid) ; call nc_check(st, 'read_time_axis: time varid')
+      start1(1) = 0_c_size_t ; count1(1) = int(src%nrec, c_size_t)
+      st = nc_get_vara_double(int(src%ncid, c_int), vid, start1, count1, src%time_sec)
       call nc_check(st, 'read_time_axis: time values')
    end subroutine read_time_axis
 
    !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at EOF). -----------!
-   subroutine load_bracket(drv, irec)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine load_bracket(src, cur, irec)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(inout) :: cur
       integer(ik),        intent(in)    :: irec
-      call read_record(drv, irec, drv%rec_prev)
-      call read_record(drv, min(irec + 1_ik, drv%nrec), drv%rec_next)
-      drv%irec_prev    = irec
-      drv%at_wrap_seam = .false.
+      call read_record(src, cur, irec, cur%rec_prev)
+      call read_record(src, cur, min(irec + 1_ik, src%nrec), cur%rec_next)
+      cur%irec_prev    = irec
+      cur%at_wrap_seam = .false.
    end subroutine load_bracket
 
    !----- Cycle-boundary seam bracket: rec_prev = record nrec, rec_next = record 1, so the last  !
    !      dt interval interpolates across the wrap instead of clamping to the final record.        !
-   subroutine load_wrap_bracket(drv)
-      type(met_driver_t), intent(inout) :: drv
-      call read_record(drv, drv%irec_cycle_last,  drv%rec_prev)
-      call read_record(drv, drv%irec_cycle_first, drv%rec_next)
-      drv%irec_prev    = drv%irec_cycle_last
-      drv%at_wrap_seam = .true.
+   subroutine load_wrap_bracket(src, cur)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(inout) :: cur
+      call read_record(src, cur, src%irec_cycle_last,  cur%rec_prev)
+      call read_record(src, cur, src%irec_cycle_first, cur%rec_next)
+      cur%irec_prev    = src%irec_cycle_last
+      cur%at_wrap_seam = .true.
    end subroutine load_wrap_bracket
 
    !=======================================================================================!
@@ -638,10 +666,11 @@ contains
    !  hourly axis. Every month file is checked for existence here, so a gap in the archive stops  !
    !  the run before it starts rather than decades into it.                                       !
    !=======================================================================================!
-   subroutine open_archive(drv, run_start, run_end, stat)
-      type(met_driver_t),          intent(inout) :: drv
+   subroutine open_archive(src, run_start, run_end, stat, cells)
+      type(met_source_t),          intent(inout)  :: src
       type(meds_time_t), optional, intent(in)    :: run_start, run_end
       integer(ik),                 intent(out)   :: stat
+      type(met_cells_t), optional, intent(in)    :: cells
       character(len=MET_PATH_LEN) :: path
       real(wp)       :: distance_km, first
       integer(ik)    :: est, y0, m0, y1, m1, nmonth, k, v, h, y, m, nmiss
@@ -649,12 +678,12 @@ contains
       logical        :: exists
 
       stat = MET_OK
-      associate (f => drv%fcfg)
-      drv%file_template = f%file_template
-      if (len_trim(drv%file_template) == 0) drv%file_template = era5land_default_template()
+      associate (f => src%fcfg)
+      src%file_template = f%file_template
+      if (len_trim(src%file_template) == 0) src%file_template = era5land_default_template()
       path = f%static_file
       if (len_trim(path) == 0) path = era5land_default_static()
-      drv%static_file = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
+      src%static_file = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
 
       if (f%sw_partition == SWPART_PASSTHROUGH) then
          write(*,'(a)') ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but'
@@ -662,32 +691,40 @@ contains
          stat = MET_ERR_ATTR_MISMATCH ; return
       end if
 
-      !----- The site's cell (§15.5). ---------------------------------------------------------!
-      call era5land_select_site(drv%static_file, f%latitude_deg, f%longitude_deg, f%max_distance_km, &
-                                drv%domain, distance_km, est)
+      !----- The cells: a region's, selected by its caller, or the site's own (§15.5). ------------!
+      est = ERA_OK
+      if (present(cells)) then
+         src%cells = cells
+      else
+         call era5land_select_site(src%static_file, f%latitude_deg, f%longitude_deg, f%max_distance_km, &
+                                   src%cells, distance_km, est)
+      end if
       if (est /= ERA_OK) then
          select case (est)
          case (ERA_ERR_NO_CELL)
             write(*,'(a,f0.1,a,f0.4,a,f0.4,a)') ' met_open: no valid ERA5-Land cell within ',          &
                   f%max_distance_km, ' km of the site (', f%latitude_deg, ', ', f%longitude_deg, ')'
          case (ERA_ERR_OPEN)
-            write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(drv%static_file)
+            write(*,'(2a)') ' met_open: cannot open the ED_ERA5land static file ', trim(src%static_file)
          case default
-            write(*,'(3a)') ' met_open: the static file ', trim(drv%static_file),                      &
+            write(*,'(3a)') ' met_open: the static file ', trim(src%static_file),                      &
                             ' does not hold a regular lat/lon grid with valid and elevation'
          end select
          stat = MET_ERR_ARCHIVE ; return
       end if
-      drv%cell = 1_ik ; drv%grid_index = 1_ik ; drv%ngrid = drv%domain%ncell
-      f%grid_elevation_m = drv%domain%elevation(1)
-      drv%has_wind_vector = .true.
-      write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', drv%domain%lat(1), ', ',  &
-            drv%domain%lon(1), '), ', distance_km, ' km from the site; orography ', drv%domain%elevation(1), ' m'
+      src%grid_index = 1_ik ; src%ngrid = src%cells%ncell
+      src%has_wind_vector = .true.
+      if (present(cells)) then
+         write(*,'(a,i0,a)') ' force : ED_ERA5land region, ', src%cells%ncell, ' cells'
+      else
+         write(*,'(a,f0.3,a,f0.3,a,f7.2,a,f0.1,a)') ' force : ED_ERA5land cell (', src%cells%lat(1), ', ',  &
+               src%cells%lon(1), '), ', distance_km, ' km from the site; orography ', src%cells%elevation(1), ' m'
+      end if
 
       !----- The months: the declared recycle window, or the run period. ----------------------!
       if (f%recycle) then
          call archive_month_of(f%recycle_start, .false., y0, m0)
-         call archive_month_of(time_advance_seconds(f%recycle_end, -drv%dt_forcing), .false., y1, m1)
+         call archive_month_of(time_advance_seconds(f%recycle_end, -src%dt_forcing), .false., y1, m1)
       else
          if (.not. (present(run_start) .and. present(run_end)))                                     &
             error stop 'met_open: format = "era5land" without recycling needs the run period'
@@ -696,29 +733,29 @@ contains
       end if
       nmonth = (y1 - y0) * 12_ik + (m1 - m0) + 1_ik
       if (nmonth < 1_ik) error stop 'met_open: the ED_ERA5land month range is empty'
-      allocate(drv%month_year(nmonth), drv%month_month(nmonth), drv%month_rec0(nmonth))
-      y = y0 ; m = m0 ; drv%nrec = 0_ik
+      allocate(src%month_year(nmonth), src%month_month(nmonth), src%month_rec0(nmonth))
+      y = y0 ; m = m0 ; src%nrec = 0_ik
       do k = 1_ik, nmonth
-         drv%month_year(k) = y ; drv%month_month(k) = m ; drv%month_rec0(k) = drv%nrec
-         drv%nrec = drv%nrec + era5land_month_hours(y, m)
+         src%month_year(k) = y ; src%month_month(k) = m ; src%month_rec0(k) = src%nrec
+         src%nrec = src%nrec + era5land_month_hours(y, m)
          m = m + 1_ik
          if (m > 12_ik) then ; m = 1_ik ; y = y + 1_ik ; end if
       end do
-      drv%base_time = ERA_EPOCH
-      if (allocated(drv%time_sec)) deallocate(drv%time_sec)
-      allocate(drv%time_sec(drv%nrec))
+      src%base_time = ERA_EPOCH
+      if (allocated(src%time_sec)) deallocate(src%time_sec)
+      allocate(src%time_sec(src%nrec))
       do k = 1_ik, nmonth
-         first = seconds_between(ERA_EPOCH, meds_time_t(drv%month_year(k), drv%month_month(k), 1_ik, 1_ik))
-         do h = 1_ik, era5land_month_hours(drv%month_year(k), drv%month_month(k))
-            drv%time_sec(drv%month_rec0(k) + h) = first + 3600.0_wp * real(h - 1_ik, wp)
+         first = seconds_between(ERA_EPOCH, meds_time_t(src%month_year(k), src%month_month(k), 1_ik, 1_ik))
+         do h = 1_ik, era5land_month_hours(src%month_year(k), src%month_month(k))
+            src%time_sec(src%month_rec0(k) + h) = first + 3600.0_wp * real(h - 1_ik, wp)
          end do
       end do
 
       nmiss = 0_ik
       do k = 1_ik, nmonth
          do v = 1_ik, ERA_NVAR
-            path = era5land_path(drv%file_template, f%data_path, ERA_VAR_NAME(v),                  &
-                                 drv%month_year(k), drv%month_month(k))
+            path = era5land_path(src%file_template, f%data_path, ERA_VAR_NAME(v),                  &
+                                 src%month_year(k), src%month_month(k))
             inquire(file=trim(path), exist=exists)
             if (.not. exists) then
                nmiss = nmiss + 1_ik
@@ -732,15 +769,15 @@ contains
       end if
 
       !----- The first month file describes the archive; check it against the config (#185). ---!
-      path = era5land_path(drv%file_template, f%data_path, 'Tair', y0, m0)
+      path = era5land_path(src%file_template, f%data_path, 'Tair', y0, m0)
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) then
          write(*,'(2a)') ' met_open: cannot open ', trim(path)
          stat = MET_ERR_ARCHIVE ; return
       end if
-      call validate_file_against_config(drv, ncid, stat)
+      call validate_file_against_config(src, ncid, stat)
       st = nc_close(ncid)
-      drv%buffer%year = 0_ik ; drv%carry_rec = 0_ik ; drv%n_loads = 0_ik
+      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
       end associate
    end subroutine open_archive
 
@@ -760,210 +797,212 @@ contains
    end subroutine archive_month_of
 
    !----- The axis month holding record irec (binary search: an axis can span decades). ----------!
-   pure integer(ik) function axis_month_of(drv, irec) result(k)
-      type(met_driver_t), intent(in) :: drv
+   pure integer(ik) function axis_month_of(src, irec) result(k)
+      type(met_source_t), intent(in)  :: src
       integer(ik),        intent(in) :: irec
       integer(ik) :: lo, hi, mid
-      lo = 1_ik ; hi = size(drv%month_rec0, kind=ik)          ! month_rec0(lo) < irec always holds
+      lo = 1_ik ; hi = size(src%month_rec0, kind=ik)          ! month_rec0(lo) < irec always holds
       do while (lo < hi)
          mid = (lo + hi + 1_ik) / 2_ik
-         if (drv%month_rec0(mid) < irec) then ; lo = mid ; else ; hi = mid - 1_ik ; end if
+         if (src%month_rec0(mid) < irec) then ; lo = mid ; else ; hi = mid - 1_ik ; end if
       end do
       k = lo
    end function axis_month_of
 
    !----- The first record strictly after file time s (the last record if none). ------------------!
-   pure integer(ik) function first_record_after(drv, s) result(r)
-      type(met_driver_t), intent(in) :: drv
+   pure integer(ik) function first_record_after(src, s) result(r)
+      type(met_source_t), intent(in)  :: src
       real(wp),           intent(in) :: s
       integer(ik) :: lo, hi, mid
-      lo = 1_ik ; hi = drv%nrec
+      lo = 1_ik ; hi = src%nrec
       do while (lo < hi)
          mid = (lo + hi) / 2_ik
-         if (drv%time_sec(mid) > s + REC_MATCH_TOL) then ; hi = mid ; else ; lo = mid + 1_ik ; end if
+         if (src%time_sec(mid) > s + REC_MATCH_TOL) then ; hi = mid ; else ; lo = mid + 1_ik ; end if
       end do
       r = lo
    end function first_record_after
 
-   pure logical function month_loaded(drv, k) result(yes)
-      type(met_driver_t), intent(in) :: drv
+   pure logical function month_loaded(src, k) result(yes)
+      type(met_source_t), intent(in)  :: src
       integer(ik),        intent(in) :: k
-      yes = drv%buffer%year == drv%month_year(k) .and. drv%buffer%month == drv%month_month(k)
+      yes = src%buffer%year == src%month_year(k) .and. src%buffer%month == src%month_month(k)
    end function month_loaded
 
    !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
-   subroutine load_axis_month(drv, k)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine load_axis_month(src, k)
+      type(met_source_t), intent(inout)  :: src
       integer(ik),        intent(in)    :: k
       character(len=MET_PATH_LEN + 128) :: message
       integer(ik) :: est
-      call era5land_load_month(drv%file_template, drv%fcfg%data_path, drv%domain, drv%month_year(k), &
-                               drv%month_month(k), drv%buffer, est, message)
+      call era5land_load_month(src%file_template, src%fcfg%data_path, src%cells, src%month_year(k), &
+                               src%month_month(k), src%buffer, est, message)
       if (est /= ERA_OK) then
          write(*,'(2a)') ' met_driver: ED_ERA5land month failed its checks: ', trim(message)
          error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
       end if
-      drv%n_loads = drv%n_loads + 1_ik
+      src%n_loads = src%n_loads + 1_ik
    end subroutine load_axis_month
 
    !----- Where record irec's values are: its hour h in the loaded month, or h = 0 for the carried !
    !      record. Anything else was not prefetched, which is a programming error, not a data gap. !
-   subroutine locate_record(drv, irec, h)
-      type(met_driver_t), intent(in)  :: drv
+   subroutine locate_record(src, irec, h)
+      type(met_source_t), intent(in)   :: src
       integer(ik),        intent(in)  :: irec
       integer(ik),        intent(out) :: h
       integer(ik) :: k
-      k = axis_month_of(drv, irec)
-      if (month_loaded(drv, k)) then
-         h = irec - drv%month_rec0(k)
-      else if (irec == drv%carry_rec) then
+      k = axis_month_of(src, irec)
+      if (month_loaded(src, k)) then
+         h = irec - src%month_rec0(k)
+      else if (irec == src%carry_rec) then
          h = 0_ik
       else
          write(*,'(a,i0,2a)') ' met_driver: forcing record ', irec, ' at ',                            &
-               time_to_string(time_advance_seconds(drv%base_time, drv%time_sec(irec)))
+               time_to_string(time_advance_seconds(src%base_time, src%time_sec(irec)))
          error stop 'met_driver: a forcing record was not prefetched before the step (internal error)'
       end if
    end subroutine locate_record
 
-   pure real(wp) function archive_value(drv, h, var) result(val)
-      type(met_driver_t), intent(in) :: drv
+   pure real(wp) function archive_value(src, cur, h, var) result(val)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(in) :: cur
       integer(ik),        intent(in) :: h, var
       if (h == 0_ik) then
-         val = real(drv%carry(drv%cell, var), wp)
+         val = real(src%carry(cur%cell, var), wp)
       else
-         val = real(drv%buffer%values(h, drv%cell, var), wp)
+         val = real(src%buffer%values(h, cur%cell, var), wp)
       end if
    end function archive_value
 
-   !----- Resolve drv%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
+   !----- Resolve src%grid_index by nearest great-circle distance from [site] lat/lon to the file's !
    !      latitude(grid)/longitude(grid) coordinate vectors (multi-polygon P2 subset, §4.1).        !
-   subroutine resolve_grid_index(drv)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine resolve_grid_index(src)
+      type(met_source_t), intent(inout)  :: src
       integer(c_int)    :: st, vlat, vlon
       integer(c_size_t) :: start1(1), count1(1)
       real(wp), allocatable :: lat_grid(:), lon_grid(:)
-      allocate(lat_grid(drv%ngrid), lon_grid(drv%ngrid))
-      start1(1) = 0_c_size_t ; count1(1) = int(drv%ngrid, c_size_t)
-      st = nc_inq_varid_f(int(drv%ncid, c_int), 'latitude', vlat)  ; call nc_check(st, 'resolve_grid_index: latitude varid')
-      st = nc_get_vara_double(int(drv%ncid, c_int), vlat, start1, count1, lat_grid)
+      allocate(lat_grid(src%ngrid), lon_grid(src%ngrid))
+      start1(1) = 0_c_size_t ; count1(1) = int(src%ngrid, c_size_t)
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'latitude', vlat)  ; call nc_check(st, 'resolve_grid_index: latitude varid')
+      st = nc_get_vara_double(int(src%ncid, c_int), vlat, start1, count1, lat_grid)
       call nc_check(st, 'resolve_grid_index: latitude values')
-      st = nc_inq_varid_f(int(drv%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
-      st = nc_get_vara_double(int(drv%ncid, c_int), vlon, start1, count1, lon_grid)
+      st = nc_inq_varid_f(int(src%ncid, c_int), 'longitude', vlon) ; call nc_check(st, 'resolve_grid_index: longitude varid')
+      st = nc_get_vara_double(int(src%ncid, c_int), vlon, start1, count1, lon_grid)
       call nc_check(st, 'resolve_grid_index: longitude values')
-      drv%grid_index = nearest_grid_index(drv%fcfg%longitude_deg, drv%fcfg%latitude_deg, lon_grid, lat_grid)
-      write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', drv%grid_index, &
-            ' (site lon=', drv%fcfg%longitude_deg, ' lat=', drv%fcfg%latitude_deg, ')'
+      src%grid_index = nearest_grid_index(src%fcfg%longitude_deg, src%fcfg%latitude_deg, lon_grid, lat_grid)
+      write(*,'(a,i0,a,f8.3,a,f8.3,a)') 'met_open: grid_match=nearest resolved grid_index=', src%grid_index, &
+            ' (site lon=', src%fcfg%longitude_deg, ' lat=', src%fcfg%latitude_deg, ')'
       deallocate(lat_grid, lon_grid)
    end subroutine resolve_grid_index
 
    !----- Read one record at (time=irec, this polygon's cell); partition SW at ingest. --------!
-   subroutine read_record(drv, irec, rec)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine read_record(src, cur, irec, rec)
+      type(met_source_t), intent(in)  :: src
+      type(met_cursor_t), intent(in) :: cur
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(out)   :: rec
       real(wp)    :: sw_total, cosz_mid, mid_sec
       integer(ik) :: h
-      rec%when   = time_advance_seconds(drv%base_time, drv%time_sec(irec))
-      if (drv%backend == MET_BACKEND_ERA5LAND) then
+      rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
+      if (src%backend == MET_BACKEND_ERA5LAND) then
          !----- The archive stores dewpoint and the wind components (§15.4): humidity comes from the !
          !      model's own saturation curve, the speed from the vector at each stamp. -------------!
-         call locate_record(drv, irec, h)
-         rec%tair_k   = archive_value(drv, h, ERA_TAIR)
-         rec%psurf_pa = archive_value(drv, h, ERA_PSURF)
-         rec%qair     = dewpoint_to_specific_humidity(archive_value(drv, h, ERA_TDEW), rec%psurf_pa)
-         rec%wind_u   = archive_value(drv, h, ERA_U10)
-         rec%wind_v   = archive_value(drv, h, ERA_V10)
+         call locate_record(src, irec, h)
+         rec%tair_k   = archive_value(src, cur, h, ERA_TAIR)
+         rec%psurf_pa = archive_value(src, cur, h, ERA_PSURF)
+         rec%qair     = dewpoint_to_specific_humidity(archive_value(src, cur, h, ERA_TDEW), rec%psurf_pa)
+         rec%wind_u   = archive_value(src, cur, h, ERA_U10)
+         rec%wind_v   = archive_value(src, cur, h, ERA_V10)
          rec%wind     = sqrt(rec%wind_u**2 + rec%wind_v**2)
-         rec%rainf    = archive_value(drv, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
-         rec%lwdown   = archive_value(drv, h, ERA_LWDOWN)
-         rec%co2      = drv%fcfg%co2_const
+         rec%rainf    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
+         rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
+         rec%co2      = src%fcfg%co2_const
       else
-         rec%tair_k   = read_scalar(drv, 'Tair',  irec)
-         rec%qair     = read_scalar(drv, 'Qair',  irec)
-         rec%psurf_pa = read_scalar(drv, 'PSurf', irec)
-         if (drv%has_wind_vector) then
-            rec%wind_u = read_scalar(drv, 'u10', irec)
-            rec%wind_v = read_scalar(drv, 'v10', irec)
+         rec%tair_k   = read_scalar(src, 'Tair',  irec)
+         rec%qair     = read_scalar(src, 'Qair',  irec)
+         rec%psurf_pa = read_scalar(src, 'PSurf', irec)
+         if (src%has_wind_vector) then
+            rec%wind_u = read_scalar(src, 'u10', irec)
+            rec%wind_v = read_scalar(src, 'v10', irec)
             rec%wind   = sqrt(rec%wind_u**2 + rec%wind_v**2)
          else
-            rec%wind   = read_scalar(drv, 'Wind',  irec)
+            rec%wind   = read_scalar(src, 'Wind',  irec)
          end if
-         rec%rainf    = read_scalar(drv, 'Rainf', irec)              ! total rainfall rate [kg/m2/s]
+         rec%rainf    = read_scalar(src, 'Rainf', irec)              ! total rainfall rate [kg/m2/s]
          !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
          !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
          !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
          !      the record complete for diagnostics.  ---------------------------------------------------!
-         if (drv%fcfg%lwdown_source == LW_SYNTHESIZE) then
-            rec%lwdown = read_scalar_default(drv, 'LWdown', irec, 0.0_wp)
+         if (src%fcfg%lwdown_source == LW_SYNTHESIZE) then
+            rec%lwdown = read_scalar_default(src, 'LWdown', irec, 0.0_wp)
          else
-            rec%lwdown = read_scalar(drv, 'LWdown', irec)
+            rec%lwdown = read_scalar(src, 'LWdown', irec)
          end if
-         rec%co2      = read_scalar_default(drv, 'CO2air', irec, drv%fcfg%co2_const)
+         rec%co2      = read_scalar_default(src, 'CO2air', irec, src%fcfg%co2_const)
       end if
-      call assert_finite(rec%tair_k, 'Tair', irec, drv%grid_index)
-      call assert_finite(rec%qair, 'Qair', irec, drv%grid_index)
-      call assert_finite(rec%psurf_pa, 'PSurf', irec, drv%grid_index)
-      call assert_finite(rec%wind, 'Wind', irec, drv%grid_index)
-      call assert_finite(rec%rainf, 'Rainf', irec, drv%grid_index)
-      if (drv%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
-         call assert_finite(rec%lwdown, 'LWdown', irec, drv%grid_index)
+      call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
+      call assert_finite(rec%qair, 'Qair', irec, src%grid_index)
+      call assert_finite(rec%psurf_pa, 'PSurf', irec, src%grid_index)
+      call assert_finite(rec%wind, 'Wind', irec, src%grid_index)
+      call assert_finite(rec%rainf, 'Rainf', irec, src%grid_index)
+      if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
+         call assert_finite(rec%lwdown, 'LWdown', irec, src%grid_index)
 
       !----- wind-height + elevation-lapse corrections at ingest (opt-in; both default OFF, so    !
       !      CONST and un-flagged runs are untouched). Wind is a per-record height rescale (commutes !
       !      with the downstream energy-form interpolation). Lapse moves T then P (hydrostatic,       !
       !      consistent) from the grid-cell elevation to the site; qair is held (rho re-derived).     !
-      if (drv%fcfg%apply_wind_profile) then
-         rec%wind = wind_log_profile(rec%wind, drv%fcfg%wind_meas_height,                        &
-                                     drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+      if (src%fcfg%apply_wind_profile) then
+         rec%wind = wind_log_profile(rec%wind, src%fcfg%wind_meas_height,                        &
+                                     src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
          !----- The components take the same (linear) factor, so the direction is unchanged. -----!
-         if (drv%has_wind_vector) then
-            rec%wind_u = wind_log_profile(rec%wind_u, drv%fcfg%wind_meas_height,                  &
-                                          drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
-            rec%wind_v = wind_log_profile(rec%wind_v, drv%fcfg%wind_meas_height,                  &
-                                          drv%fcfg%reference_height, drv%fcfg%wind_roughness_z0)
+         if (src%has_wind_vector) then
+            rec%wind_u = wind_log_profile(rec%wind_u, src%fcfg%wind_meas_height,                  &
+                                          src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
+            rec%wind_v = wind_log_profile(rec%wind_v, src%fcfg%wind_meas_height,                  &
+                                          src%fcfg%reference_height, src%fcfg%wind_roughness_z0)
          end if
       end if
-      if (drv%fcfg%apply_elevation_lapse) then
+      if (src%fcfg%apply_elevation_lapse) then
          block
             real(wp) :: dz, t_grid, p_grid
-            dz     = drv%fcfg%elevation_m - drv%fcfg%grid_elevation_m       ! + when site is higher
+            dz     = cur%elevation_m - cur%grid_elevation_m       ! + when site is higher
             t_grid = rec%tair_k ; p_grid = rec%psurf_pa                     ! capture BEFORE overwrite
-            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, drv%fcfg%lapse_rate_tair)
-            rec%tair_k   = lapse_air_temperature(t_grid, dz, drv%fcfg%lapse_rate_tair)
+            rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, src%fcfg%lapse_rate_tair)
+            rec%tair_k   = lapse_air_temperature(t_grid, dz, src%fcfg%lapse_rate_tair)
          end block
       end if
 
-      if (drv%fcfg%sw_partition == SWPART_PASSTHROUGH) then
-         rec%par_beam    = read_scalar(drv, 'SWdown_par_beam',    irec)
-         rec%par_diffuse = read_scalar(drv, 'SWdown_par_diffuse', irec)
-         rec%nir_beam    = read_scalar(drv, 'SWdown_nir_beam',    irec)
-         rec%nir_diffuse = read_scalar(drv, 'SWdown_nir_diffuse', irec)
-         call assert_finite(rec%par_beam,    'SWdown_par_beam',    irec, drv%grid_index)   ! required source
-         call assert_finite(rec%par_diffuse, 'SWdown_par_diffuse', irec, drv%grid_index)   ! fields -> no gap-fill
-         call assert_finite(rec%nir_beam,    'SWdown_nir_beam',    irec, drv%grid_index)
-         call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, drv%grid_index)
+      if (src%fcfg%sw_partition == SWPART_PASSTHROUGH) then
+         rec%par_beam    = read_scalar(src, 'SWdown_par_beam',    irec)
+         rec%par_diffuse = read_scalar(src, 'SWdown_par_diffuse', irec)
+         rec%nir_beam    = read_scalar(src, 'SWdown_nir_beam',    irec)
+         rec%nir_diffuse = read_scalar(src, 'SWdown_nir_diffuse', irec)
+         call assert_finite(rec%par_beam,    'SWdown_par_beam',    irec, src%grid_index)   ! required source
+         call assert_finite(rec%par_diffuse, 'SWdown_par_diffuse', irec, src%grid_index)   ! fields -> no gap-fill
+         call assert_finite(rec%nir_beam,    'SWdown_nir_beam',    irec, src%grid_index)
+         call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, src%grid_index)
       else
-         if (drv%backend == MET_BACKEND_ERA5LAND) then
-            sw_total = archive_value(drv, h, ERA_SWDOWN)
+         if (src%backend == MET_BACKEND_ERA5LAND) then
+            sw_total = archive_value(src, cur, h, ERA_SWDOWN)
          else
-            sw_total = read_scalar(drv, 'SWdown', irec)
+            sw_total = read_scalar(src, 'SWdown', irec)
          end if
-         call assert_finite(sw_total, 'SWdown', irec, drv%grid_index)
+         call assert_finite(sw_total, 'SWdown', irec, src%grid_index)
          !----- interval-mean cosz for the partition (avg_convention=end -> midpoint = when - dt/2). !
          mid_sec  = seconds_into_day(rec%when)
-         if (drv%fcfg%avg_convention == METAVG_END)   mid_sec = mid_sec - 0.5_wp * drv%dt_forcing
-         if (drv%fcfg%avg_convention == METAVG_BEGIN)  mid_sec = mid_sec + 0.5_wp * drv%dt_forcing
-         cosz_mid = met_solar_cosz(rec%when, mid_sec, drv%fcfg%latitude_deg,                    &
-                                   drv%fcfg%longitude_deg, drv%fcfg%utc_offset_h,               &
-                                   drv%fcfg%apply_solar_longitude)
-         call partition_shortwave(sw_total, cosz_mid, rec%psurf_pa, drv%fcfg%sw_partition,       &
+         if (src%fcfg%avg_convention == METAVG_END)   mid_sec = mid_sec - 0.5_wp * src%dt_forcing
+         if (src%fcfg%avg_convention == METAVG_BEGIN)  mid_sec = mid_sec + 0.5_wp * src%dt_forcing
+         cosz_mid = met_solar_cosz(rec%when, mid_sec, cur%latitude_deg,                    &
+                                   cur%longitude_deg, cur%utc_offset_h,               &
+                                   src%fcfg%apply_solar_longitude)
+         call partition_shortwave(sw_total, cosz_mid, rec%psurf_pa, src%fcfg%sw_partition,       &
                                   rec%par_beam, rec%par_diffuse, rec%nir_beam, rec%nir_diffuse)
       end if
    end subroutine read_record
 
    !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. ---------------!
-   subroutine read_series(drv, ncid, r0, r1)
-      type(met_driver_t), intent(inout) :: drv
+   subroutine read_series(src, ncid, r0, r1)
+      type(met_source_t), intent(inout)  :: src
       integer(c_int),     intent(in)    :: ncid
       integer(ik),        intent(in)    :: r0, r1
       character(len=24), parameter :: FIELDS(14) = [character(len=24) ::                            &
@@ -977,68 +1016,68 @@ contains
          present_(j) = nc_inq_varid_f(ncid, trim(FIELDS(j)), vid) == NC_NOERR
       end do
       n = int(count(present_), ik)
-      if (allocated(drv%series)) deallocate(drv%series, drv%series_name)
-      allocate(drv%series(r0:r1, n), drv%series_name(n))              ! indexed by record number
-      drv%series_name = pack(FIELDS, present_)
-      start2 = [int(r0 - 1_ik, c_size_t), int(drv%grid_index - 1_ik, c_size_t)]    ! [time, grid]
+      if (allocated(src%series)) deallocate(src%series, src%series_name)
+      allocate(src%series(r0:r1, n), src%series_name(n))              ! indexed by record number
+      src%series_name = pack(FIELDS, present_)
+      start2 = [int(r0 - 1_ik, c_size_t), int(src%grid_index - 1_ik, c_size_t)]    ! [time, grid]
       count2 = [int(r1 - r0 + 1_ik, c_size_t), 1_c_size_t]
       do j = 1_ik, n
-         st = nc_inq_varid_f(ncid, trim(drv%series_name(j)), vid)
-         st = nc_get_vara_double(ncid, vid, start2, count2, drv%series(:, j))
-         call nc_check(st, 'read_series: get '//trim(drv%series_name(j)))
+         st = nc_inq_varid_f(ncid, trim(src%series_name(j)), vid)
+         st = nc_get_vara_double(ncid, vid, start2, count2, src%series(:, j))
+         call nc_check(st, 'read_series: get '//trim(src%series_name(j)))
       end do
    end subroutine read_series
 
    !----- The value of field `name` at record irec (0 when the file does not carry it). ---------!
-   pure integer(ik) function series_field(drv, name) result(j)
-      type(met_driver_t), intent(in) :: drv
+   pure integer(ik) function series_field(src, name) result(j)
+      type(met_source_t), intent(in)  :: src
       character(len=*),   intent(in) :: name
-      do j = 1_ik, size(drv%series_name, kind=ik)
-         if (trim(drv%series_name(j)) == trim(name)) return
+      do j = 1_ik, size(src%series_name, kind=ik)
+         if (trim(src%series_name(j)) == trim(name)) return
       end do
       j = 0_ik
    end function series_field
 
-   function read_scalar(drv, name, irec) result(val)
-      type(met_driver_t), intent(in) :: drv
+   function read_scalar(src, name, irec) result(val)
+      type(met_source_t), intent(in)  :: src
       character(len=*),   intent(in) :: name
       integer(ik),        intent(in) :: irec
       real(wp)    :: val
       integer(ik) :: j
-      j = series_field(drv, name)
+      j = series_field(src, name)
       if (j == 0_ik) then
          write(*,'(2a)') ' met_driver: the forcing file has no variable ', trim(name)
          error stop 'met_driver: a required forcing variable is missing'
       end if
-      call check_in_series(drv, irec)
-      val = drv%series(irec, j)
+      call check_in_series(src, irec)
+      val = src%series(irec, j)
    end function read_scalar
 
    !----- A record outside the range read at open was not prefetched: a programming error. ------!
-   subroutine check_in_series(drv, irec)
-      type(met_driver_t), intent(in) :: drv
+   subroutine check_in_series(src, irec)
+      type(met_source_t), intent(in)  :: src
       integer(ik),        intent(in) :: irec
-      if (irec < lbound(drv%series, 1) .or. irec > ubound(drv%series, 1)) then
+      if (irec < lbound(src%series, 1) .or. irec > ubound(src%series, 1)) then
          write(*,'(a,i0,a,i0,a,i0)') ' met_driver: forcing record ', irec, ' outside the range read, ',  &
-               lbound(drv%series, 1), '..', ubound(drv%series, 1)
+               lbound(src%series, 1), '..', ubound(src%series, 1)
          error stop 'met_driver: a forcing record was not read before the step (internal error)'
       end if
    end subroutine check_in_series
 
    !----- `name` if the file carries it, else the supplied default (e.g. CO2air absent). --------!
-   function read_scalar_default(drv, name, irec, default) result(val)
-      type(met_driver_t), intent(in) :: drv
+   function read_scalar_default(src, name, irec, default) result(val)
+      type(met_source_t), intent(in)  :: src
       character(len=*),   intent(in) :: name
       integer(ik),        intent(in) :: irec
       real(wp),           intent(in) :: default
       real(wp)    :: val
       integer(ik) :: j
-      j = series_field(drv, name)
+      j = series_field(src, name)
       if (j == 0_ik) then
          val = default
       else
-         call check_in_series(drv, irec)
-         val = drv%series(irec, j)
+         call check_in_series(src, irec)
+         val = src%series(irec, j)
       end if
    end function read_scalar_default
 
@@ -1081,8 +1120,8 @@ contains
    ! before the prep script emitted them still loads. `elevation(grid)` stays unread on purpose:     !
    ! site elevation is a [site] property, and the variable is provenance about the source grid.      !
    !---------------------------------------------------------------------------------------!
-   subroutine validate_file_against_config(drv, ncid, vstat)
-      type(met_driver_t), intent(in)  :: drv
+   subroutine validate_file_against_config(src, ncid, vstat)
+      type(met_source_t), intent(in)   :: src
       integer(c_int),     intent(in)  :: ncid
       integer(ik),        intent(out) :: vstat
       character(len=64) :: attr
@@ -1095,17 +1134,17 @@ contains
       !----- (a) record spacing. Uniform by construction for every source MEDS reads, so the first  !
       !      interval is the file's cadence; a ragged axis is a different (unsupported) thing and    !
       !      shows up as a mismatch on whichever interval differs. ------------------------------------!
-      if (drv%nrec >= 2_ik) then
-         dt_file = drv%time_sec(2) - drv%time_sec(1)
-         if (abs(dt_file - drv%dt_forcing) > REC_MATCH_TOL) then
-            write(*,'(a,f12.3,a)') ' met_open: [forcing].dt_forcing = ', drv%dt_forcing, ' s'
+      if (src%nrec >= 2_ik) then
+         dt_file = src%time_sec(2) - src%time_sec(1)
+         if (abs(dt_file - src%dt_forcing) > REC_MATCH_TOL) then
+            write(*,'(a,f12.3,a)') ' met_open: [forcing].dt_forcing = ', src%dt_forcing, ' s'
             write(*,'(a,f12.3,a)') '   but the file record spacing is ', dt_file, ' s.'
             write(*,'(a)')         '   dt_forcing places interval midpoints, disaggregates shortwave and'
             write(*,'(a)')         '   brackets the recycle seam. A wrong value mis-times all three.'
             vstat = MET_ERR_DT_MISMATCH ; return
          end if
-         do i = 3_ik, drv%nrec
-            if (abs((drv%time_sec(i) - drv%time_sec(i-1)) - dt_file) > REC_MATCH_TOL) then
+         do i = 3_ik, src%nrec
+            if (abs((src%time_sec(i) - src%time_sec(i-1)) - dt_file) > REC_MATCH_TOL) then
                write(*,'(a,i0,a)') ' met_open: forcing record spacing changes at record ', i, '.'
                write(*,'(a)')      '   MEDS assumes a uniform time axis.'
                vstat = MET_ERR_AXIS_NOT_UNIFORM ; return
@@ -1116,9 +1155,9 @@ contains
       !----- (b) avg_convention: the file says which end of the interval its flux means belong to.  !
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'avg_convention', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
-         if (trim(attr) /= trim(avg_convention_name(drv%fcfg%avg_convention))) then
+         if (trim(attr) /= trim(avg_convention_name(src%fcfg%avg_convention))) then
             write(*,'(4a)') ' met_open: file avg_convention = "', trim(attr),                     &
-                            '", config = "', trim(avg_convention_name(drv%fcfg%avg_convention))//'"'
+                            '", config = "', trim(avg_convention_name(src%fcfg%avg_convention))//'"'
             vstat = MET_ERR_ATTR_MISMATCH ; return
          end if
       end if
@@ -1126,13 +1165,13 @@ contains
       !----- (c) sw_input_kind: "total" needs a partition, "components" must not be partitioned.   !
       st = nc_get_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', attr)
       if (st == NC_NOERR .and. len_trim(attr) > 0) then
-         if (trim(attr) == 'total' .and. drv%fcfg%sw_partition == SWPART_PASSTHROUGH) then
+         if (trim(attr) == 'total' .and. src%fcfg%sw_partition == SWPART_PASSTHROUGH) then
             write(*,'(a)') ' met_open: the file carries TOTAL shortwave (sw_input_kind = "total")'
             write(*,'(a)') '   but [forcing].sw_partition = "passthrough", which expects the four'
             write(*,'(a)') '   component streams. The run would read fields the file does not have.'
             vstat = MET_ERR_ATTR_MISMATCH ; return
          end if
-         if (trim(attr) == 'components' .and. drv%fcfg%sw_partition /= SWPART_PASSTHROUGH) then
+         if (trim(attr) == 'components' .and. src%fcfg%sw_partition /= SWPART_PASSTHROUGH) then
             write(*,'(a)') ' met_open: the file already carries the four shortwave components'
             write(*,'(a)') '   (sw_input_kind = "components") but [forcing].sw_partition asks for a'
             write(*,'(a)') '   split. Partitioning an already-split stream double-counts the beam.'
