@@ -1629,8 +1629,9 @@ exclusion.
 >   is the `legacy_file` of the text below.
 > - **`domain` and `box_nwse` are not config keys yet.** Box selection (§15.5) and multi-cell month
 >   loads exist and are tested, but the model runs one site, so a `domain = "box"` key would parse
->   and do nothing, which the config rules forbid. The polygon runtime adds the keys when it
->   consumes the domain.
+>   and do nothing, which the config rules forbid. The polygon runtime adds them as
+>   `[run].mode = "region"` and `[region].box_nwse` (`MEDS_POLYGON_RUNTIME_PLAN.md` §9); a region is
+>   always contiguous, and scattered site networks run as separate processes.
 > - **The months read** are the recycle window when recycling, otherwise the run period
 >   (`met_open` takes the run start and end). They are laid end to end as one hourly axis, so the
 >   bracket, recycling and the seam are the legacy code unchanged. Every file must exist at open.
