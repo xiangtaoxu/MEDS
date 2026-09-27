@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. No code yet; R0–R2 are planned in detail (§10.1–§10.3).
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1–R2 planned in detail (§10.2–§10.3).
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -206,13 +206,13 @@ share of wall time spent in the serial write is about
 
 > (bytes written per polygon-month ÷ write speed) × cores ÷ compute time per polygon-month.
 
-With about 100 MB/s of compressed writing, 40 cores and about 1 s of compute per polygon-month (the
-real figure is an R0 measurement):
+With about 100 MB/s of compressed writing, 40 cores and about 1 s of compute per polygon-month (R0
+measured 1.1 s for an established stand, §10.1):
 
-| Output for all polygons | Bytes per polygon-month | Write share |
+| Output for all polygons | Bytes per polygon-month (R0) | Write share |
 |---|---|---|
-| Monthly, about 50 site variables | about 200 B | about 0.01% |
-| Daily, with PFT and soil variables | about 25 KB | about 1% |
+| Monthly tier, fixed-shape variables of the default set | 1.9 KB | about 0.08% |
+| Daily tier, fixed-shape variables of the default set | 38.5 KB | about 1.5% |
 | Fast tier (hourly), about 200 variables | about 600 KB | about 25% |
 
 The last row is why the fast tier is limited to `detail_polygons`. The yearly restart (roughly 10 GB
@@ -258,7 +258,9 @@ PnetCDF, `MEDS_IO_DESIGN.md` §5.5), or several threads writing netCDF at once.
 ## 8. Memory, batching and very large regions
 
 - **Memory per polygon** is `site_t` plus the fast context, the output part and the forcing cursor.
-  Cohort counts drive it; **R0 measures it** after spin-up on representative sites.
+  Cohort counts drive it. R0 measured about **0.7 MB** for the 50-year Ithaca stand (14 cohorts,
+  2 patches) without output (§10.1): about 14 GB for 20,000 polygons, and about 210 GB for all
+  305,000 North American land cells, beyond one 128 GB node without batches or tiles.
 - **Batching:** if N × memory per polygon exceeds `memory_limit_gb`, the region runs in **batches**
   of `batch_size` polygons. Each batch runs its full simulation period (every month, with I/O as in
   §4) before the next starts.
@@ -329,7 +331,7 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 
 | Phase | Content | Acceptance |
 |---|---|---|
-| **R0** measure and verify | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | Numbers recorded in §10.1. B9 answered where nvfortran exists. |
+| **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
 | **R1** compute/I-O split | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | The CTest suite green; single-site outputs **byte-identical** to before. |
 | **R2** region and polygon container, serial | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into shared and per-polygon parts; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). |
 | **R3** OpenMP polygon loop | `!$omp parallel do schedule(dynamic)` over polygons; the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling measured to the core count; nvfortran build green where available. |
@@ -340,24 +342,40 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 **Order:** R0 anytime (it opens the R1 work). R1 needs F4, which is done. R2 needs R1, and R3 needs
 R2. R4 and R5 follow R3.
 
-### 10.1 R0 — measure and verify (about half a day)
+### 10.1 R0 — measure and verify ✅ 2026-09-26
 
-1. **Cost of a simulated year and of a polygon-month.** Run the `example_biophysics` spin-up to its
-   restart state, then time the July stage and a full year from that state, from the archive
-   (`format = "era5land"`), in Release, on one thread. Record wall time per polygon-month for a
-   bare-ground start and for the established stand.
-2. **`site_t` memory after spin-up.** Patch and cohort counts, and bytes per polygon for `site_t`,
-   the fast context and the output accumulators. These set the R2 memory budget and the R5 batch
-   size.
-3. **Allocator profile (#195).** The share of time in `allocate` and `deallocate` per sub-step: the
-   baseline for B8.
-4. **B9 on nvfortran**, where it is installed: a routine containing `BLOCK`, called from inside a
-   `parallel do`. This is not possible on the development cluster, which has no nvfortran; it is
-   flagged, not skipped.
-5. **The inputs to §6.1:** bytes per polygon-month for the daily and monthly tiers of the default
-   output set.
+Method: the `example_biophysics` recipe on the development cluster (ifx Release, one core per job,
+Slurm `R128C40`), forced from the ED_ERA5land archive at the Ithaca cell (2024 recycled). Runs:
+the 50-year spin-up from bare ground; from its restart, the July stage (hourly output) and a full year
+with the default daily and monthly output; the same year with output off under VTune (user-mode
+sampling with call stacks); a one-day bare-ground run as the memory baseline; and, as a check on the
+forcing, the same spin-up from a single forcing file made with `prep_era5land_forcing.py`.
 
-Deliverable: the numbers written into this section; no code change.
+| Measurement | Result |
+|---|---|
+| 50-year spin-up from bare ground | **7 min 06 s** (0.71 s per polygon-month on average); about 6 s per simulated year while bare, about 11 s per year at the end |
+| Established stand (14 cohorts, 2 patches), one year with default daily + monthly output | **13.2 s: 1.1 s per polygon-month** |
+| July stage with hourly output and the probe | 4.5 s |
+| Peak memory | 33.9 MB for a one-day bare-ground run (program and libraries); 34.6 MB at the end of the spin-up without output; 75 MB with the default output on (HDF5 file caches, and output buffers sized by `cohort_max`) |
+| Memory per established polygon | about **0.7 MB** (the difference above; pages are coarse); the restart state itself is 45 KB |
+| Allocator (#195, B8) | **18.6% of CPU** in allocation machinery (Fortran RTL allocate/deallocate plus `malloc`/`free`), all from MEDS callers: `surface_derivs` 5.0%, `build_column_frozen` 2.1%, `column_fast_step_ark` 2.1%, `state_init` 2.0%, `column_be_stage` 1.7%, `kirchhoff_edge` 1.6% (compute-only year) |
+| Archive reads in a site run | **24% of CPU** in netCDF, HDF5 and zlib with output off: each month decompresses a whole 16 × 16 chunk per variable and converts it to double (`nc4_convert_type` 12%) to use one cell, and a recycled year rereads its 12 months every simulated year |
+| Output bytes per polygon-month (uncompressed) | daily tier 38.5 KB of fixed-shape variables (plus 26.9 KB of cohort/patch variables); monthly tier 1.9 KB (plus 2.5 KB) |
+| B9, `BLOCK` under nvfortran | **not tested**: nvfortran is not installed on the development cluster (no module, nothing on `PATH`); to be checked where it exists |
+| Forcing check | the archive and the single-file spin-ups end alike after 50 years: 14 cohorts, 2 patches, LAI 4.091 against 4.097, AGB 9.570 against 9.588 kgC m⁻², mean dbh 24.56 cm both |
+
+What the numbers change:
+- **R1 gains an archive-read item** (§10.2 step 3): read as float and only the cells a domain needs
+  within each chunk, and keep the recycle window in memory when it fits (about 0.3 MB for a site).
+  That removes most of the 24% for site runs; in a region the decompression is shared by up to 256
+  cells.
+- **R2's per-polygon output part** holds only fixed-shape accumulators; buffers sized by `cohort_max`
+  exist only for `detail_polygons` (§10.3 step 4).
+- **Throughput expectation for R3:** at about 1 s per polygon-month, 20,000 polygons take about
+  8 minutes per simulated month on 40 cores (about 85 hours for 50 years on one node), and all North
+  American land (305,000 cells) about 2 hours per month: continental runs need tiles across nodes (§8),
+  and the allocator work (B8) becomes worthwhile once threads contend.
+- **The write share** stays small for the daily and monthly tiers (§6.1).
 
 ### 10.2 R1 — compute/I-O split (single site; outputs unchanged)
 
@@ -390,6 +408,11 @@ and at the end of the run. Single-site outputs are byte-identical to before.
    - `ensure_month` loses its load path, and a record that is not in memory becomes a programming
      error (`error stop`). The reader counts its loads (`drv%n_loads`), so a test can assert that
      none happen inside the compute phase.
+   - **Cheaper reads (R0):** `era5land_load_month` reads as float (`nc_get_vara_float`, a new
+     binding) and only the rows and columns of the domain within each chunk, and the reader keeps
+     the whole recycle window in memory when it fits a small budget, so a recycled site run reads
+     each archive month once instead of once per simulated year. Values are unchanged, so outputs
+     stay byte-identical.
 4. **Nothing else touches netCDF in the step.** The checkpoint moves into the I/O phase; the census
    and restart reads stay in `driver_open`; `fast_probe` (formatted text, not netCDF) is unchanged.
 5. **Tests.**
@@ -434,7 +457,9 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
    - Shared (`output_shared_t`): the registry, the diagnostic parameters, the file settings, the
      streams and the provenance attributes.
    - Per polygon (`output_part_t`): the integration buffers, `t_open` and `has_data`, the record
-     queues and the fast-tier staging.
+     queues and the fast-tier staging. In region mode a polygon's buffers hold only the fixed-shape variables
+     it writes; cohort- and patch-level buffers (sized by `cohort_max`) exist only for
+     `detail_polygons` (R0 measured them as most of a site run's output memory).
    - A site run is one shared part and one polygon part, and writes today's files.
 5. **Tests:** the output unit tests on the new types; the R1 byte-identity script. This is the
    largest and riskiest PR of R2.
