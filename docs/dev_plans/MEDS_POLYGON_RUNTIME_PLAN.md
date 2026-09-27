@@ -365,10 +365,12 @@ forcing, the same spin-up from a single forcing file made with `prep_era5land_fo
 | Forcing check | the archive and the single-file spin-ups end alike after 50 years: 14 cohorts, 2 patches, LAI 4.091 against 4.097, AGB 9.570 against 9.588 kgC m⁻², mean dbh 24.56 cm both |
 
 What the numbers change:
-- **R1 gains an archive-read item** (§10.2 step 3): read as float and only the cells a domain needs
-  within each chunk, and keep the recycle window in memory when it fits (about 0.3 MB for a site).
-  That removes most of the 24% for site runs; in a region the decompression is shared by up to 256
-  cells.
+- **R1 gains an archive-read item** (§10.2 step 3), ✅ done first as its own PR: read as float and
+  only the cells a domain needs within each chunk. A compute-only year from the spun-up state became
+  **10% faster** (median of 5 warm runs, 7.66 s to 6.89 s), with outputs identical. The chunk
+  decompression itself remains, and a recycled run still rereads each month once per simulated year:
+  a recycle-window cache was considered and left out to keep the reader simple. In a region the
+  decompression is shared by up to 256 cells.
 - **R2's per-polygon output part** holds only fixed-shape accumulators; buffers sized by `cohort_max`
   exist only for `detail_polygons` (§10.3 step 4).
 - **Throughput expectation for R3:** at about 1 s per polygon-month, 20,000 polygons take about
@@ -408,11 +410,10 @@ and at the end of the run. Single-site outputs are byte-identical to before.
    - `ensure_month` loses its load path, and a record that is not in memory becomes a programming
      error (`error stop`). The reader counts its loads (`drv%n_loads`), so a test can assert that
      none happen inside the compute phase.
-   - **Cheaper reads (R0):** `era5land_load_month` reads as float (`nc_get_vara_float`, a new
-     binding) and only the rows and columns of the domain within each chunk, and the reader keeps
-     the whole recycle window in memory when it fits a small budget, so a recycled site run reads
-     each archive month once instead of once per simulated year. Values are unchanged, so outputs
-     stay byte-identical.
+   - **Cheaper reads (R0; ✅ done as a separate PR before the split):** `era5land_load_month` reads
+     as float (`nc_get_vara_float`, a new binding) and only the rows and columns the domain's cells
+     occupy within each chunk (1 × 1 for a site). Values are unchanged, so outputs stay
+     byte-identical; a compute-only site year runs 10% faster. There is no recycle-window cache.
 4. **Nothing else touches netCDF in the step.** The checkpoint moves into the I/O phase; the census
    and restart reads stay in `driver_open`; `fast_probe` (formatted text, not netCDF) is unchanged.
 5. **Tests.**

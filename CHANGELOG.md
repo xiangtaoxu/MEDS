@@ -81,7 +81,10 @@ before and after.
   and a step-by-step plan for R0 (measurements), R1 (the compute/I-O split) and R2 (the serial region
   container). R0 is measured: an established Ithaca stand costs about 1.1 s and 0.7 MB per
   polygon-month and polygon, 18.6% of CPU goes to allocation, and a site run spends 24% of its time
-  rereading archive chunks, which R1 now removes.
+  in archive reads.
+- **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
+  the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
+  site year from a spun-up stand runs about 10% faster; outputs are identical.
 - **`build_era5land_archive.py --work-dir`** writes each output on another disk, such as a compute
   node's local drive, then copies the finished file into the archive in one sequential pass that
   also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds

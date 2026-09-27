@@ -66,7 +66,7 @@ module meds_forcing_types
    !  a site, the valid cells of a box for the polygon runtime (§15.5). Grid indices are 0-based,  !
    !  as the netCDF C API counts. `by_chunk` lists the cells grouped by the archive's 16 x 16      !
    !  spatial chunk, `chunk_first` indexes into it (length nchunk+1), so a month load reads each    !
-   !  touched chunk column once (§15.3).                                                            !
+   !  touched chunk column once (§15.3), and only the box its cells occupy within that chunk.       !
    !==========================================================================================!
    type :: met_domain_t
       integer(ik) :: ncell = 0_ik
@@ -75,7 +75,8 @@ module meds_forcing_types
       real(wp),    allocatable :: lat(:), lon(:)            !< [deg] cell centre
       real(wp),    allocatable :: elevation(:)              !< [m] static-file orography
       integer(ik) :: nchunk = 0_ik
-      integer(ik), allocatable :: chunk_row(:), chunk_col(:)!< 0-based first grid row/col of each touched chunk
+      integer(ik), allocatable :: chunk_row(:), chunk_col(:)!< 0-based first row/col of the box read in each chunk
+      integer(ik), allocatable :: chunk_nrow(:), chunk_ncol(:) !< that box's extent (1 x 1 for a site)
       integer(ik), allocatable :: chunk_first(:)            !< by_chunk(chunk_first(k):chunk_first(k+1)-1)
       integer(ik), allocatable :: by_chunk(:)               !< cell numbers grouped by chunk
    end type met_domain_t

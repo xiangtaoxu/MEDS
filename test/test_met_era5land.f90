@@ -110,6 +110,8 @@ contains
                       .and. dom%row(1) == 1_ik .and. dom%col(1) == 3_ik)
       call check('its distance is 0', d, 0.0_wp, 1.0e-6_wp)
       call check('its elevation comes from the static file', dom%elevation(1), 103.0_wp, 1.0e-6_wp)
+      call check_true('a site reads a 1 x 1 box', dom%nchunk == 1_ik .and. dom%chunk_nrow(1) == 1_ik  &
+                      .and. dom%chunk_ncol(1) == 1_ik .and. dom%chunk_row(1) == 1_ik .and. dom%chunk_col(1) == 3_ik)
 
       !----- (0,5) has no data. Its nearest valid neighbour is (1,5), 10 deg of latitude south   !
       !      (1112 km), not (0,4) or (0,6), 20 deg of longitude away at 45 N (about 1570 km). ------!
@@ -141,6 +143,10 @@ contains
                       all(dom%row == [1_ik, 1_ik, 1_ik, 2_ik, 2_ik]) .and.                        &
                       all(dom%col == [17_ik, 0_ik, 1_ik, 17_ik, 1_ik]))
       call check_true('two chunk columns touched', dom%nchunk == 2_ik)
+      !----- Each chunk reads only its cells' box: rows 1-2 x cols 0-1 west of 180, rows 1-2 x col 17 east. !
+      call check_true('each chunk reads only the box of its cells',                                &
+                      all(dom%chunk_row == [1_ik, 1_ik]) .and. all(dom%chunk_col == [0_ik, 17_ik]) .and. &
+                      all(dom%chunk_nrow == [2_ik, 2_ik]) .and. all(dom%chunk_ncol == [2_ik, 1_ik]))
       call era5land_select_box(DIR//'/ED_ERA5land_static.nc', inside, dom, st)
       call check_true('box not across 180: 4 rows x 2 columns', st == ERA_OK .and. dom%ncell == 8_ik)
 

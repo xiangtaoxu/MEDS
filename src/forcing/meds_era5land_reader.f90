@@ -10,14 +10,14 @@
 !==========================================================================================!
 module meds_era5land_reader
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
-   use iso_c_binding,        only : c_int, c_size_t, c_double
+   use iso_c_binding,        only : c_int, c_size_t, c_double, c_float
    use meds_kinds,           only : wp, sp, ik
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_from_string
    use meds_forcing_config,  only : MET_PATH_LEN
    use meds_forcing_types,   only : met_domain_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
-                                    nc_get_vara_double, nc_close, NC_NOERR, NC_NOWRITE
+                                    nc_get_vara_double, nc_get_vara_float, nc_close, NC_NOERR, NC_NOWRITE
    implicit none
    private
 
@@ -223,7 +223,9 @@ contains
    end function wrap_longitude
 
    !----- Group the domain's cells by 16 x 16 chunk with a stable counting sort, so each touched  !
-   !      chunk column is read once per variable-month and the cells keep their domain order. -----!
+   !      chunk column is read once per variable-month and the cells keep their domain order. Each !
+   !      chunk's read box is the rows and columns its cells occupy: HDF5 decompresses the whole    !
+   !      chunk either way, but a site then copies one cell instead of 256. ------------------------!
    subroutine group_by_chunk(dom)
       type(met_domain_t), intent(inout) :: dom
       integer(ik), allocatable :: id(:), cnt(:), next(:)
@@ -237,12 +239,12 @@ contains
       end do
       dom%nchunk = int(count(cnt(0:ncx*ncy - 1_ik) > 0_ik), ik)
       allocate(dom%chunk_row(dom%nchunk), dom%chunk_col(dom%nchunk), dom%chunk_first(dom%nchunk + 1_ik))
+      allocate(dom%chunk_nrow(dom%nchunk), dom%chunk_ncol(dom%nchunk))
       allocate(dom%by_chunk(dom%ncell), next(0:ncx*ncy - 1_ik))
       k = 0_ik ; m = 1_ik
       do c = 0_ik, ncx*ncy - 1_ik
          if (cnt(c) == 0_ik) cycle
          k = k + 1_ik
-         dom%chunk_row(k) = (c / ncx) * CHUNK ; dom%chunk_col(k) = modulo(c, ncx) * CHUNK
          dom%chunk_first(k) = m ; next(c) = m
          m = m + cnt(c)
       end do
@@ -250,6 +252,13 @@ contains
       do c = 1_ik, dom%ncell
          dom%by_chunk(next(id(c))) = c
          next(id(c)) = next(id(c)) + 1_ik
+      end do
+      do k = 1_ik, dom%nchunk
+         associate (cells => dom%by_chunk(dom%chunk_first(k):dom%chunk_first(k + 1_ik) - 1_ik))
+            dom%chunk_row(k)  = minval(dom%row(cells)) ; dom%chunk_col(k) = minval(dom%col(cells))
+            dom%chunk_nrow(k) = maxval(dom%row(cells)) - dom%chunk_row(k) + 1_ik
+            dom%chunk_ncol(k) = maxval(dom%col(cells)) - dom%chunk_col(k) + 1_ik
+         end associate
       end do
    end subroutine group_by_chunk
 
@@ -270,7 +279,7 @@ contains
       character(len=64)  :: units
       integer(c_int)     :: ncid, vid, st
       integer(c_size_t)  :: start3(3), count3(3)
-      real(c_double), allocatable :: block(:,:,:)
+      real(c_float), allocatable :: block(:,:,:)
       integer(ik) :: nt, v, k, m, c, nr, nc
       integer(ik) :: bad(3)
 
@@ -300,19 +309,19 @@ contains
             return
          end if
          do k = 1_ik, dom%nchunk
-            nr = min(CHUNK, dom%nlat - dom%chunk_row(k)) ; nc = min(CHUNK, dom%nlon - dom%chunk_col(k))
+            nr = dom%chunk_nrow(k) ; nc = dom%chunk_ncol(k)
             allocate(block(nc, nr, nt))                      ! C order [time][lat][lon]
             start3 = [0_c_size_t, int(dom%chunk_row(k), c_size_t), int(dom%chunk_col(k), c_size_t)]
             count3 = [int(nt, c_size_t), int(nr, c_size_t), int(nc, c_size_t)]
-            st = nc_get_vara_double(ncid, vid, start3, count3, block)
+            st = nc_get_vara_float(ncid, vid, start3, count3, block)   ! the archive stores float32
             if (st /= NC_NOERR) then
                deallocate(block) ; st = nc_close(ncid) ; stat = ERA_ERR_OPEN
                message = trim(path)//': read failed' ; return
             end if
             do m = dom%chunk_first(k), dom%chunk_first(k + 1_ik) - 1_ik
                c = dom%by_chunk(m)
-               buf%values(:, c, v) = real(block(dom%col(c) - dom%chunk_col(k) + 1_ik,                &
-                                                dom%row(c) - dom%chunk_row(k) + 1_ik, :), sp)
+               buf%values(:, c, v) = block(dom%col(c) - dom%chunk_col(k) + 1_ik,                     &
+                                           dom%row(c) - dom%chunk_row(k) + 1_ik, :)
             end do
             deallocate(block)
          end do
