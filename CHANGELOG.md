@@ -16,6 +16,29 @@ before and after.
 
 ### Added
 
+- **Prescribed CO₂** (#184, #301). `[forcing].co2_source` sets the free-atmosphere CO₂, the same way
+  for every backend and every polygon:
+  - `"const"`, the default, holds `co2_const`, so existing configs run unchanged;
+  - `"file"` reads `co2_file`, a MEDS CO₂ file (new module `meds_co2_series`).
+
+  The file format (format 1, `docs/science/forcing.md` §12) is plain text:
+  - a `timestep <n> year|month|day|hour|minute` line and a `units umol/mol` line;
+  - then one `<period start> <value>` row per period, each value the period's mean.
+
+  Each value sits at its period's middle, and the CO₂ is linear between middles on **model** time,
+  so it keeps rising while recycled met repeats. Rows must be consecutive, and a run the file does
+  not cover stops at startup.
+
+  The repository now ships `data/co2/co2_cmip7_global_annual_1000-2022.txt`: CMIP7 input4MIPs
+  `CR-CMIP-1-0-0` global annual means for 1000–2022 (CC BY 4.0). Its header carries the format, so it
+  doubles as a template. `scripts/prepare_co2/make_co2_file.py` builds it from the ESGF files.
+
+  Checked on the r1 regression cases:
+  - every case at `co2_const = 420` is bitwise unchanged against `beta`;
+  - a two-year run from 1990, with recycled 2024 met and the shipped file, writes an `atm_co2_site`
+    equal to the series at the sub-step samples (to 2e-13 µmol/mol). The air temperature repeats
+    exactly from 1990 to 1991, while the CO₂ rises 1.1–1.3 µmol/mol.
+
 - **`docs/science/order_of_processes.md`, the order of processes** (#300). It covers:
   - a run, and a region's month loop;
   - one slow step (`polygon_step`), and the fast loop's per-step setup and per-sub-step sequence;
@@ -130,6 +153,21 @@ before and after.
   as the speed, so the direction is preserved.
 
 ### Changed
+
+- **CO₂ no longer comes from the met file** (#184, #301).
+  - A MEDS forcing file that carries `CO2air` is rejected at open. Before, its value overrode
+    `co2_const` without a message, and it repeated with recycled met. Drop it with
+    `ncks -x -v CO2air in.nc out.nc`, or rebuild the file.
+  - `make_forcing_file.py` writes no `CO2air`, which was a constant (`--co2`, default 420), and no
+    `co2_const` or `co2_note` attribute. The `--co2` option is gone.
+  - The `const` backend uses `co2_const`. It returned 420 whatever the config said.
+  - The test forcing files lose `CO2air`. `test_fast_loop` sets `co2_const = 415`, the value its file
+    carried, so its numbers are unchanged.
+  - In `docs/science/forcing.md` the longwave section is renumbered §11 (it was a second §8), ahead of
+    the new §12.
+
+  Before and after: the r1 `bare_july_single` case, whose file carried `CO2air = 420` with
+  `co2_const = 420`, is bitwise unchanged once the variable is dropped.
 
 - **The stand's calendar restructuring runs between two slow steps, after the output has read the one
   that ends on the boundary** (#297). Monthly recruitment, cohort fusion, culling and splitting, and

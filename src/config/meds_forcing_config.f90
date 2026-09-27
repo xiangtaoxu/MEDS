@@ -24,6 +24,7 @@ module meds_forcing_config
    public :: CLAMP_ERROR, CLAMP_HOLD
    public :: INTERP_LINEAR, INTERP_STEP, INTERP_COSZ
    public :: GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
+   public :: CO2_SOURCE_CONST, CO2_SOURCE_FILE
 
    !----- Reader backend ([forcing].format): a MEDS forcing NetCDF, the global ED_ERA5land       !
    !      archive, or a no-file reference-climate box. ------------------------------------------!
@@ -72,6 +73,12 @@ module meds_forcing_config
    integer(ik), parameter :: GRIDMATCH_EXPLICIT = 0_ik  !< use grid_index verbatim (default; current behaviour)
    integer(ik), parameter :: GRIDMATCH_NEAREST  = 1_ik  !< pick the grid cell nearest [site] lat/lon (great-circle)
 
+   !----- Where the free-atmosphere CO2 comes from ([forcing].co2_source, #184). One source for   !
+   !      every backend, looked up by MODEL time -- never the met file, so it does not repeat when  !
+   !      the met is recycled. ------------------------------------------------------------------!
+   integer(ik), parameter :: CO2_SOURCE_CONST = 0_ik   !< co2_const, held for the whole run
+   integer(ik), parameter :: CO2_SOURCE_FILE  = 1_ik   !< a MEDS CO2 file (format: docs/science/forcing.md, "CO2")
+
    !==========================================================================================!
    !  The [forcing]/[site] block. Plain scalars (no allocatables), so meds_config carries it     !
    !  trivially. NOTE: there is NO gap_policy -- MEDS never gap-fills; a missing required value    !
@@ -102,7 +109,9 @@ module meds_forcing_config
       !      (1 + a(1-kt)); 0 gives a pure clear-sky sky, which UNDERESTIMATES under cloud.           !
       integer(ik)        :: lw_clear_form = 0_ik                  !< LW_CLEAR_BRUTSAERT | LW_CLEAR_IDSO
       real(wp)           :: lw_cloud_a    = 0.22_wp               !< [-] cloud-correction coefficient
-      real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] ERA5-Land has no CO2 (single authority)
+      integer(ik)        :: co2_source   = CO2_SOURCE_CONST      !< "const" | "file"
+      real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] co2_source = "const"
+      character(len=MET_PATH_LEN) :: co2_file = ''               !< the MEDS CO2 file (co2_source = "file")
       real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
       !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it now REQUIRES a       !
       !      declared recycle_start/recycle_end below, and a default-constructed config has no       !

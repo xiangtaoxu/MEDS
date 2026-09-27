@@ -185,6 +185,7 @@ program test_fast_loop
       cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
       cfg%forcing%utc_offset_h = 0.0_wp ; cfg%forcing%apply_solar_longitude = .true.
       cfg%forcing%recycle = .false.
+      cfg%forcing%co2_const = 415.0_wp          ! the file's old CO2air: CO2 is config-only now (#184)
 
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -530,13 +531,13 @@ contains
    subroutine write_diurnal_forcing(path)
       character(len=*), intent(in) :: path
       integer, parameter :: NT = 25
-      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(8), dims2(2), dims1(1)
+      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(7), dims2(2), dims1(1)
       integer(c_size_t) :: s1(1), c1(1), s2(2), c2(2)
       real(c_double) :: tsec(NT), dat(1, NT)
       integer :: it, k
       real(wp) :: hh, sw
-      character(len=8), parameter :: nm(8) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
-                                              'Rainf   ','SWdown  ','LWdown  ','CO2air  ']
+      character(len=8), parameter :: nm(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
+                                              'Rainf   ','SWdown  ','LWdown  ']
       st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st,'c')
       st = nc_def_dim_f(ncid,'time',int(NT,c_size_t),td) ; call nc_check(st,'t')
       st = nc_def_dim_f(ncid,'grid',1_c_size_t,gd) ; call nc_check(st,'g')
@@ -546,7 +547,7 @@ contains
       dims1(1)=gd ; st = nc_def_var_f(ncid,'latitude',NC_DOUBLE,1,dims1,vla) ; call nc_check(st,'la')
       st = nc_def_var_f(ncid,'longitude',NC_DOUBLE,1,dims1,vlo) ; call nc_check(st,'lo')
       dims2(1)=td ; dims2(2)=gd
-      do k=1,8 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
+      do k=1,7 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
       st = nc_enddef(ncid) ; call nc_check(st,'e')
       do it=1,NT ; tsec(it)=real(it-1,c_double)*3600.0_c_double ; end do
       s1=0_c_size_t ; c1(1)=int(NT,c_size_t) ; st=nc_put_vara_double(ncid,vt,s1,c1,tsec) ; call nc_check(st,'tw')
@@ -555,7 +556,7 @@ contains
          st=nc_put_vara_double(ncid,vla,s1,c1,la) ; call nc_check(st,'law')
          st=nc_put_vara_double(ncid,vlo,s1,c1,lo) ; call nc_check(st,'low') ; end block
       s2=0_c_size_t ; c2=[int(NT,c_size_t),1_c_size_t]
-      do k=1,8
+      do k=1,7
          do it=1,NT
             hh=real(it-1,wp)
             sw = max(0.0_wp, 850.0_wp*sin(3.14159265_wp*(hh-11.0_wp)/12.0_wp))
@@ -568,7 +569,6 @@ contains
             case(5) ; dat(1,it)=0.0_wp
             case(6) ; dat(1,it)=sw
             case(7) ; dat(1,it)=340.0_wp
-            case(8) ; dat(1,it)=415.0_wp
             end select
          end do
          st=nc_put_vara_double(ncid,vv(k),s2,c2,dat) ; call nc_check(st,'vw')

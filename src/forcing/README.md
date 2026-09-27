@@ -1,7 +1,7 @@
 # `forcing/` — prescribed external drivers
 
 The home for **time-varying boundary conditions read from a file**, as opposed to state the model
-evolves. Meteorology today; disturbance and land-use schedules and prescribed CO₂ or nitrogen
+evolves. Meteorology and prescribed CO₂ today; disturbance and land-use schedules and nitrogen
 deposition later.
 
 `libmeds_forcing` links the shared foundation and the netCDF C bindings **only** — never the
@@ -16,7 +16,8 @@ demography or state layer — so a prescribed driver stays low in the library gr
   the time axis, the cell list and the loaded month, and is read-only while a step runs;
   `met_cursor_t`, one per polygon, holds the polygon's cell and location and the two records that
   bracket its model time. `met_cells_t` lists the archive cells a run reads (one for a site, the
-  valid cells of a box), and `met_month_t` holds one month of them.
+  valid cells of a box), and `met_month_t` holds one month of them. `co2_series_t` is a prescribed
+  CO₂ series, held on `met_source_t`.
 - **`meds_forcing_kernels`** — the `pure` and `elemental` math: per-variable temporal interpolation
   (linear or step) with an energy-conserving form for wind, the local apparent-solar-time transform
   (UTC plus longitude plus the equation of time), the **interval-mean-conserving** shortwave
@@ -31,6 +32,11 @@ demography or state layer — so a prescribed driver stays low in the library gr
   as one hourly axis so bracketing and recycling are the same code for both. Dewpoint becomes
   specific humidity and the wind components become the speed at each stamp; shortwave is
   partitioned at ingest. Also the no-file constant-climate backend, used by the tests.
+- **`meds_co2_series`** — the prescribed CO₂ (#184): reads a MEDS CO₂ file (format 1, a plain-text
+  list of period means at a declared `timestep`) and looks it up at a model instant, linear between
+  period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from
+  `co2_const`, for every backend alike; the met file never carries CO₂. The shipped series is
+  `data/co2/`, built by `scripts/prepare_co2/make_co2_file.py`.
 - **`meds_era5land_reader`** — the archive's files: path templates, the static file, site selection
   (nearest valid cell within `max_distance_km`) and box selection (across 180°), and a month of
   every domain cell read one chunk column at a time. It returns status codes, so each rejection is
@@ -97,12 +103,12 @@ The file format, the ERA5-Land de-accumulation recipe (including the hour-zero t
 disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).
 The design record is [`docs/dev_plans/MEDS_FORCING_DESIGN.md`](../../docs/dev_plans/MEDS_FORCING_DESIGN.md).
 
-**Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, and a NetCDF round trip
-that writes and reads a two-grid file, with and without the wind vector. `test/test_met_era5land.f90`
+**Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, a NetCDF round trip
+that writes and reads a two-grid file, with and without the wind vector, and the prescribed CO₂
+(every format rule, and CO₂ that keeps rising under recycled met). `test/test_met_era5land.f90`
 writes a small synthetic archive and covers the archive backend end to end.
 
 ## Not here yet
 
-LWdown synthesis (the `"synthesize"` option is rejected by the config validator until it exists),
-the full multi-polygon runtime, and a transient CO₂ stream. See
-[`docs/ROADMAP.md`](../../docs/ROADMAP.md) §8.
+The full multi-polygon runtime, and latitude-resolved CO₂ (one global series drives every polygon).
+See [`docs/ROADMAP.md`](../../docs/ROADMAP.md) §8.

@@ -5,8 +5,9 @@ Forcing is the **prescribed** half of the model's boundary: the atmospheric stat
 owns it; nothing in the model writes forcing. One polygon / one site runs today, bound to one column
 of a possibly multi-site file. The reader produces one **instantaneous per-site record**
 (`met_forcing_t`) per `dt_fast` sub-step: air temperature, specific humidity, surface pressure, wind,
-downwelling longwave, the four (beam/diffuse)×(PAR/NIR) shortwave streams, CO₂, plus the *derived*
-$`\cos z`$ and $`\rho_{air}`$ — never stored in a file, always recomputed.
+downwelling longwave, the four (beam/diffuse)×(PAR/NIR) shortwave streams, CO₂ (prescribed on its own,
+not read from the met file, §12), plus the *derived* $`\cos z`$ and $`\rho_{air}`$ — never stored in a
+file, always recomputed.
 
 `libmeds_forcing` links the config leaf and the netCDF C bindings (`meds_netcdf_c`) and **nothing
 else** — no state, no demography, no kernels. That placement is the point: a prescribed driver must sit
@@ -36,7 +37,6 @@ variables:
     float u10(time,grid), v10(time,grid) ["m s-1"] ;            // optional wind vector; see below
     float Rainf(time,grid) ["kg m-2 s-1"], LWdown(time,grid) ["W m-2"],  // cell_methods = "time: mean"
           SWdown(time,grid) ["W m-2"] ;                         // SWdown is the TOTAL; see sec. 6
-    float CO2air(time,grid) ["umol mol-1"] ;                    // optional -> forcing.co2_const
 // global attributes -- provenance only, never read by the model:
     :Conventions = "MEDS-forcing-1.0" ; :source = "ERA5-Land hourly" ; :time_zone = "UTC" ;
     :timestep_seconds = 3600 ; :avg_convention = "end" ; :sw_input_kind = "total" ;
@@ -45,6 +45,9 @@ variables:
 
 With `sw_partition = "passthrough"`, `SWdown` is replaced by four pre-split streams `SWdown_par_beam`,
 `SWdown_par_diffuse`, `SWdown_nir_beam`, `SWdown_nir_diffuse` [W m⁻²], all required.
+
+There is no CO₂ variable: CO₂ comes from `[forcing].co2_source` (§12), and a file that carries
+`CO2air` is rejected at open.
 
 **The time axis is the metadata the reader parses:** it takes everything after `since` in
 `time:units` as the base instant and the `time` values as seconds from it. Record interval, averaging
@@ -127,7 +130,7 @@ the outgoing buffer, so each archive month is read once per pass through it.
 ## 3. Temporal interpolation, and why wind is different
 
 Within the bracket the weight is $`w_{next}=(t-t_{prev})/(t_{next}-t_{prev})`$, clipped to $[0,1]$. Each
-variable carries its own policy: **linear** for `Tair`, `Qair`, `PSurf`, `LWdown`, `CO2air` (smooth
+variable carries its own policy: **linear** for `Tair`, `Qair`, `PSurf`, `LWdown` (smooth
 atmospheric states); **step-constant** for `Rainf`, holding the previous value, because interpolating
 precipitation smears intense events into physically wrong drizzle and breaks infiltration and runoff;
 **cosz reconstruction** for the four shortwave streams (§5), because those records are interval *means*,
@@ -380,7 +383,7 @@ silently degraded run into one that looks clean. What is *not* a gap: the determ
 total→four-stream partition, humidity from dewpoint, the de-accumulation boundary sample the prep script
 drops rather than writes — which compute a variable the source does not store from variables it does.
 
-## 8. Longwave synthesis, for a source without `LWdown`
+## 11. Longwave synthesis, for a source without `LWdown`
 
 `lwdown_source = "synthesize"` reconstructs downwelling longwave from temperature and humidity:
 
@@ -409,12 +412,105 @@ patch loop, so the state cannot become a data race when the patch axis is thread
 `strd` leaves the soil surface **1.37 K cooler** in the annual mean. Use the file's longwave when the
 file has it; this exists so a source that lacks the field can drive MEDS at all.
 
+## 12. CO₂
+
+Free-atmosphere CO₂ is prescribed like the met, but **not read from the met file**.
+`[forcing].co2_source` gives it, the same way for every backend and every polygon:
+
+- **`"const"`** (the default, so existing configs run unchanged): `co2_const` for the whole run.
+- **`"file"`**: a **MEDS CO₂ file**, named by `co2_file` and read once at `met_open`. The repository
+  ships one (below).
+
+The key of the other mode is rejected, not ignored. CO₂ is kept out of the met file for two reasons:
+
+- **It is looked up on model time**, not the met file's clock. A spin-up that recycles a few years
+  of met gets the CO₂ of the model year, not of the met year; §9 maps only the met into its window.
+- **A met file is not a CO₂ record.** ERA5-Land has no CO₂, so the `CO2air` column the prep script
+  used to write was a constant, and it silently overrode `co2_const`. A met file that carries `CO2air`
+  is therefore rejected at open. Drop it with `ncks -x -v CO2air in.nc out.nc`, or rebuild the file.
+
+**The file, format 1.** Plain text, so a user can write one by hand:
+
+```
+# '#' starts a comment that runs to the end of the line; blank lines are ignored.
+timestep  1 year
+units     umol/mol
+1850  284.297
+1851  284.420
+```
+
+- **Two keyword lines** come before the first data row, each exactly once:
+  - `timestep <n> <unit>`, with `n` a whole number ≥ 1 and `unit` one of `year`, `month`, `day`,
+    `hour` or `minute`;
+  - `units umol/mol` (dry-air mole fraction), the only unit accepted. The line makes a file state its
+    unit, which catches one written in mol/mol.
+- **Each data row** is `<period start> <value>`. The start is written to the precision of the unit,
+  in model time (UTC for ERA5-Land):
+
+  | Unit | Start | Rows |
+  |---|---|---|
+  | year | `YYYY` | `1850`, `1851`, … (`timestep 5 year`: `1000`, `1005`, …) |
+  | month | `YYYY-MM` | `1850-01`, `1850-02`, … |
+  | day | `YYYY-MM-DD` | `2024-02-28`, `2024-02-29`, … |
+  | hour | `YYYY-MM-DDThh` | `2024-07-01T13`, `2024-07-01T14`, … |
+  | minute | `YYYY-MM-DDThh:mm` | `2024-07-01T00:00`, `2024-07-01T00:30`, … (`timestep 30 minute`) |
+
+- **The value** is the mean CO₂ over the period, from its start $`s_i`$ to $`s_{i+1}`$, the start plus
+  `n` units.
+- **Each row starts exactly `n` units after the one before it.** A missing period is an error, not an
+  interpolation (§10). There are at least two rows, and every value is finite and positive.
+
+A file that breaks a rule stops the run at open, naming the line and the rule.
+
+**How it is read.** Each value sits at the middle of its period, $`m_i = (s_i + s_{i+1})/2`$ in
+calendar seconds; a leap February's middle is the 15th at 12:00. At a model instant $t$ the CO₂ is
+linear between middles:
+
+```math
+c(t) = c_i + \frac{t - m_i}{m_{i+1} - m_i}\,\bigl(c_{i+1} - c_i\bigr), \qquad m_i \le t < m_{i+1} \qquad(15)
+```
+
+Before the first middle and after the last, the end value is held. Those half-periods are still inside
+the period the value is the mean of, so nothing is extrapolated. The run must lie between the start of
+the first period and the end of the last; one the file does not cover stops at `met_open`, not
+decades in.
+
+Interpolating moves each period's mean slightly: over an interior period of equal length, the mean of
+(15) is $`(c_{i-1} + 6c_i + c_{i+1})/8`$.
+
+- On the shipped annual series, a year's mean moves by at most 0.016 µmol/mol before 1950 and
+  0.19 µmol/mol after (1997, where the growth rate jumps between years). The last year, 2022, is
+  lowered by 0.27, since its second half holds the end value. Over 1850–2022 the mean moves by 0.0015.
+- A monthly seasonal cycle is damped by a factor $`(6 + 2\cos 30°)/8 = 0.97`$.
+
+**The shipped series**, `data/co2/co2_cmip7_global_annual_1000-2022.txt`:
+- **Contents.** Global-mean annual CO₂ for 1000–2022, from the CMIP7 input4MIPs greenhouse-gas
+  concentrations (Nicholls et al., in prep.; source_id `CR-CMIP-1-0-0`, grid `gm`). It reads 282.437 in
+  1000, 277.537 in 1700, 284.297 in 1850, 313.079 in 1950 and 417.320 in 2022.
+- **How it was built.** `scripts/prepare_co2/make_co2_file.py` joins the two ESGF files, 1000–1749
+  and 1750–2022, which meet without a step (278.007 on both sides).
+- **It is its own template.** The file's header repeats the format above.
+- **Licence.** The data is CC BY 4.0, so keep the attribution lines in any copy.
+
+Why this series:
+- **It is a true global mean.** It is built from ice cores (Law Dome and others) before the
+  instrumental record, and from the NOAA networks after. Mauna Loa alone reads about 1.8 µmol/mol
+  above the global mean today, and a Southern Hemisphere ice core spliced onto NOAA leaves a step at
+  the join.
+- **One global series serves every polygon.** CMIP7's 15° latitude bands stay within 0.9 µmol/mol of
+  the global mean before 1950, and within −3.1 to +3.7 in 2022, highest at northern mid-latitudes.
+- **It ends in 2022.** A run past 2022 is refused until a file that reaches further is given.
+
+**A historical run** usually spins up at a fixed pre-industrial value: `co2_source = "const"`, with
+`co2_const = 277.54` for 1700 or `284.30` for 1850. The transient then runs with `co2_source =
+"file"` and the shipped series. With recycled met the CO₂ still rises; `test_met_driver` checks that.
+
 ## What is not here
 
 - **No multi-polygon runtime.** The `(time, grid)` format, `grid_index` and nearest-cell matching are in
   place — file and reader are ready for N locations — but the model runs one site.
-- **No transient CO₂ stream.** `CO2air` may be in the file; a run that omits it takes one constant
-  (`forcing.co2_const`, default 420 µmol/mol) as the single free-atmosphere authority.
+- **No latitude-resolved CO₂.** One global series drives every polygon (§12). CMIP7 also gives
+  monthly 15° latitude bands, which a region spanning several bands would want for recent decades.
 - **`avg_convention`** distinguishes `"end"` and `"begin"`. `"instant"` and `"center"` parse, but the
   disaggregation treats them as end-of-interval; only the partition's midpoint offset (§6) differs.
 
@@ -433,12 +529,13 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | the reader | `meds_met_driver`: `met_open`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `ensure_month` |
 | the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
 | recycling | `meds_met_driver`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`, `load_wrap_bracket` |
-| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_driver_t`, `met_domain_t`, `met_month_t` |
-| config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`; validated in `meds_config`, read by `meds_config_io` |
+| CO₂ | `meds_co2_series`: `co2_series_read`, `co2_series_at`, `co2_series_covers`; `meds_met_driver`: `open_co2`, and `met_instant` sets `met%co2`; the `CO2air` rejection in `validate_file_against_config` |
+| types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_source_t`, `met_cursor_t`, `met_month_t`, `co2_series_t` |
+| config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`, `CO2_SOURCE_*`; validated in `meds_config`, read by `meds_config_io` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
 | fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling; `fill_forcing` and `fill_aenv` take the sampled `met_forcing_t` (`reference_met` without a forcing source) |
-| file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files |
-| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years; `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open |
+| file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files; the shipped CO₂ series: `scripts/prepare_co2/make_co2_file.py` |
+| test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years, prescribed CO₂ (format 1 at five resolutions, every rejection, CO₂ not recycled with the met, the shipped series); `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open |
 
 ## References
 - Erbs, Klein & Duffie (1982), *Solar Energy* 28:293 — diffuse fraction vs the clearness index.
@@ -451,4 +548,7 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 - Jin et al. (1999) — precipitation phase partitioning; ED2 `ed_met_driver.f90`.
 - Longo et al. (2019), *GMD* 12:4309 — ED-2.2 technical description (the meteorological driver).
 - Muñoz-Sabater et al. (2021), *ESSD* 13:4349 — ERA5-Land.
+- Nicholls, Meinshausen, Lewis, Pflüger, Menking et al. (in prep., 2025) — CMIP7 greenhouse-gas
+  concentrations, input4MIPs `CR-CMIP-1-0-0`, doi:10.5281/zenodo.14892947 (CC BY 4.0).
+- Meinshausen et al. (2017), *GMD* 10:2057 — the CMIP6 greenhouse-gas concentrations CMIP7 succeeds.
 - Design doc: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.

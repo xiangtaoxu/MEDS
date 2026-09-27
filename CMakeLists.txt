@@ -586,7 +586,8 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_driver test/test_met_driver.f90)
    target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_driver)
-   add_test(NAME met_driver COMMAND test_met_driver)
+   add_test(NAME met_driver COMMAND test_met_driver
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt)
    #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
    add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
    target_link_libraries(meds_testarchive PUBLIC meds_forcing)

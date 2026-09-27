@@ -23,7 +23,7 @@ module meds_config_io
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
-   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
    use meds_forcing_config, only : forcing_config_t,                                            &
                                    MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
@@ -596,7 +596,24 @@ contains
          call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
          call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
       end if
-      call req_r            (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
+      !----- CO2 (#184): one source for every backend, never the met file. A DEFAULTED read      !
+      !      ("const"), so every existing config runs unchanged. The key of the other mode would  !
+      !      parse and do nothing, so it is rejected. ---------------------------------------------!
+      select case (trim(toml_string(t, 'forcing.co2_source', 'const')))
+      case ('const')
+         cfg%forcing%co2_source = CO2_SOURCE_CONST
+         call req_r         (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
+         if (toml_has(t, 'forcing.co2_file'))                                                     &
+            error stop 'load_meds_config: forcing.co2_file needs forcing.co2_source = "file"; remove it'
+      case ('file')
+         cfg%forcing%co2_source = CO2_SOURCE_FILE
+         call req_s         (t, 'forcing.co2_file',       cfg%forcing%co2_file,              m)
+         if (toml_has(t, 'forcing.co2_const'))                                                    &
+            error stop 'load_meds_config: forcing.co2_const does not apply to forcing.co2_source = '// &
+                       '"file" (the file gives the CO2); remove it'
+      case default
+         error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
+      end select
       !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
       !      static orography, UTC), so the [site] location keys would parse and do nothing there:  !
       !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!

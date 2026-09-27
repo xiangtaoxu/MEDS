@@ -87,7 +87,8 @@ next.
 2. **Size the diagnostic blocks** to today's stand. They are not zeroed here ([§6](#6-output-and-io)).
 3. **Reconcile each cohort's stored tissue water** with the capacity today's biomass allows.
 4. **Sample the forcing** for every sub-step, at `prev + (k − 1 + forcing_sample_frac)·dt_fast` for
-   `k = 1 … n_fast_per_slow` ([forcing](forcing.md)). Accumulate the polygon's forcing diagnostics.
+   `k = 1 … n_fast_per_slow` ([forcing](forcing.md)). The CO₂ is looked up at the same instants,
+   on model time ([forcing](forcing.md) §12). Accumulate the polygon's forcing diagnostics.
 
 **Then, for each patch:**
 

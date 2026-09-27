@@ -165,6 +165,20 @@ The file formats, the ERA5-Land preparation recipe, and the recycling rules are 
   mean stays correct, so nothing downstream complains.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
 
+**CO₂ is set in `[forcing]`, never by the met file.**
+- **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
+- **`co2_source = "file"`** reads `co2_file`, a MEDS CO₂ file looked up on model time, so the CO₂
+  keeps rising while recycled met repeats.
+  - The repository ships `data/co2/co2_cmip7_global_annual_1000-2022.txt`, CMIP7 global annual
+    means for 1000–2022.
+  - The path is relative to where MEDS runs, like `path`.
+  - A run the file does not cover is refused at startup.
+- **Rejected combinations.** The other mode's key is rejected, and so is a met file that carries
+  `CO2air`.
+
+The format (a `timestep` line, a `units` line, then one `<period start> <value>` row per period) and
+the shipped series are in [`science/forcing.md`](science/forcing.md) §12.
+
 ## Regional runs
 
 `[run].mode = "region"` simulates every selected cell of a box of the ED_ERA5land archive as its own

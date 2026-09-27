@@ -4,7 +4,8 @@
 ! sections 3.1-3.2; MEDS_POLYGON_RUNTIME_PLAN.md §10.3): the instantaneous per-site record         !
 ! met_forcing_t (a read-only boundary condition, the analogue of rad_forcing_t / chydro_forcing_t), !
 ! one raw file record met_record_t, the reader's shared state met_source_t (one per run) and each   !
-! polygon's met_cursor_t, and the archive's cell list met_cells_t and month buffer met_month_t.     !
+! polygon's met_cursor_t, the archive's cell list met_cells_t and month buffer met_month_t, and the  !
+! prescribed CO2 series co2_series_t.                                                               !
 !                                                                                          !
 ! Lives in src/forcing (libmeds_forcing); links meds_shared only (meds_kinds, meds_time for the     !
 ! meds_time_t timestamp, meds_forcing_config for the [forcing]/[site] config). No physics library    !
@@ -18,6 +19,7 @@ module meds_forcing_types
    private
 
    public :: met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, met_month_t
+   public :: co2_series_t
 
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous per-SITE atmospheric state the fast loop consumes.       !
@@ -44,7 +46,7 @@ module meds_forcing_types
       real(wp) :: par_diffuse  = 40.0_wp      !< [W/m2]     diffuse PAR
       real(wp) :: nir_beam     = 150.0_wp     !< [W/m2]     direct-beam NIR
       real(wp) :: nir_diffuse  = 30.0_wp      !< [W/m2]     diffuse NIR   (Sigma = 400 W/m2)
-      real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2
+      real(wp) :: co2          = 420.0_wp     !< [umol/mol] free-atmosphere CO2 ([forcing].co2_source)
       real(wp) :: cosz         = 0.0_wp       !< [-]        cos(solar zenith); DERIVED each substep
       real(wp) :: rho_air      = 1.2_wp       !< [kg/m3]    DERIVED from air_temp/psurf/qair
    contains
@@ -53,11 +55,12 @@ module meds_forcing_types
    end type met_forcing_t
 
    !----- One raw timestamped record as read (pre-interpolation). The four SW streams are      !
-   !      already split at INGEST (partition_shortwave) from the file's total SWdown.           !
+   !      already split at INGEST (partition_shortwave) from the file's total SWdown. No CO2: it is  !
+   !      not meteorology, and comes from co2_series_t or [forcing].co2_const on MODEL time (#184). !
    type :: met_record_t
       type(meds_time_t) :: when
       real(wp) :: tair_k = 288.0_wp, qair = 0.008_wp, psurf_pa = 101325.0_wp
-      real(wp) :: rainf = 0.0_wp, wind = 2.0_wp, lwdown = 380.0_wp, co2 = 420.0_wp
+      real(wp) :: rainf = 0.0_wp, wind = 2.0_wp, lwdown = 380.0_wp
       real(wp) :: wind_u = 2.0_wp, wind_v = 0.0_wp          !< wind vector (only when the source has it)
       real(wp) :: par_beam = 180.0_wp, par_diffuse = 40.0_wp, nir_beam = 150.0_wp, nir_diffuse = 30.0_wp
    end type met_record_t
@@ -90,6 +93,20 @@ module meds_forcing_types
       integer(ik) :: year = 0_ik, month = 0_ik, nt = 0_ik
       real(sp), allocatable :: values(:,:,:)
    end type met_month_t
+
+   !==========================================================================================!
+   !  co2_series_t -- a MEDS CO2 file, as read (co2_series_read). Each row is the mean over one    !
+   !  period; the value sits at the period's middle, and the lookup interpolates linearly between  !
+   !  middles on MODEL time, holding the end values over the first and last half-periods. Times   !
+   !  are seconds after the first period's start, the series' own origin.                           !
+   !==========================================================================================!
+   type :: co2_series_t
+      integer(ik)       :: n = 0_ik                         !< rows (periods)
+      type(meds_time_t) :: first_start                      !< start of the first period: the time origin
+      real(wp)          :: span_end_sec = 0.0_wp            !< [s] end of the last period, after first_start
+      real(wp), allocatable :: mid_sec(:)                   !< [s] each period's middle, after first_start
+      real(wp), allocatable :: co2(:)                       !< [umol/mol] each period's mean
+   end type co2_series_t
 
    !==========================================================================================!
    !  met_source_t -- the SHARED reader state: one per run, read by every polygon (MEDS_POLYGON_     !
@@ -136,6 +153,9 @@ module meds_forcing_types
       integer(ik) :: n_loads   = 0_ik                       !< archive month loads so far (tests: none inside a step)
       real(wp),    allocatable :: series(:,:)               !< (record, field) MEDS forcing file at grid_index
       character(len=24), allocatable :: series_name(:)      !< the fields present in that file
+      !----- The prescribed CO2 (co2_source = "file"), read at open. One global series for every   !
+      !      polygon, looked up on model time, so it is shared read-only like the rest. ------------!
+      type(co2_series_t) :: co2
    end type met_source_t
 
    !==========================================================================================!
