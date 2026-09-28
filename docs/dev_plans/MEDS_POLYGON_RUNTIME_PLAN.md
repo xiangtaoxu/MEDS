@@ -20,7 +20,9 @@
 > - a polygon's location lives in the polygon, not in the shared config or `site_t` (B12);
 > - each output frequency needs a record queue, not one slot (B11);
 > - output performance is analysed in §6.1;
-> - R0–R2 are planned step by step in §10.1–§10.3.
+> - R0–R2 are planned step by step in §10.1–§10.3;
+> - R3's parallel axis: the fast loop over all patches of all polygons, not a loop over polygons
+>   (§10.4, OR9; added 2026-09-27 after the pre-v0.3.0 review).
 >
 > Baseline: `beta` at `b65c4b8`. The `file:line` citations are to that commit.
 
@@ -106,7 +108,7 @@ From the 2026-09-26 survey, refreshed at `b65c4b8`:
 | B1 | **netCDF inside the time step.** `driver_step` flushes output twice per day (`output_serialize_pending`, `meds_driver.f90:367` for the fast tier and `:379` for the others) and writes yearly checkpoints (`:420-424`). Forcing is read inside `met_advance` (`meds_fast_dynamics.f90:482`): the archive backend loads a month on demand (`ensure_month`, `meds_met_driver.f90:707`), and the single-file backend reads every value with a 1 × 1 hyperslab (`read_scalar`, `:860`). HDF5 serialises every call under a global lock, and netCDF-C is not thread-safe (`MEDS_IO_DESIGN.md` §5.5). | Split each step into a **compute phase** (no netCDF at all) and an **I/O phase** that runs serially at month boundaries (§4, R1). Forcing is loaded in the I/O phase; the single-file backend holds its cell's whole series in memory. |
 | B2 | **Module-level allometry.** Nine `protected` reals (`src/shared/functions/meds_allometry.f90:50-58`) are written by `set_allometry` from every config load (`meds_config.f90:473`). | Load config **once, serially, before** the parallel loop. All polygons share one parameter set (non-goal: per-polygon parameters). A later refactor moves these into the config type (OR2). |
 | B3 | **Saved state in the fast-loop probe.** `write_fast_probe` keeps `save` variables (`meds_fast_dynamics.f90:919-920`). | Reject `fast_probe` in region mode, as `n_threads > 1` already does (`meds_config.f90:691`). |
-| B4 | **Nested OpenMP.** A polygon `parallel do` around the step nests the patch-loop region. | In region mode force `cfg%n_threads = 1` inside polygons (a `validate_config` rule), and set `omp_set_max_active_levels(1)`. The NVHPC `target` loop (`meds_demography_update.f90:128`) must also stay single-level; region mode requires `MEDS_GPU = none` for now. |
+| B4 | **Nested OpenMP.** A polygon `parallel do` around the step nests the patch-loop region. | One level either way: the polygon-outer loop forces `cfg%n_threads = 1` inside polygons (a `validate_config` rule) and sets `omp_set_max_active_levels(1)`; the flattened loop of §10.4 has no inner region at all. The NVHPC `target` loop (`meds_demography_update.f90:128`) must also stay single-level; region mode requires `MEDS_GPU = none` for now. |
 | B5 | **Shared file names.** Output streams `<dir>/<prefix>-<tier>…nc` (`meds_output_stream.f90:176-178`), restarts `<prefix>-S-…nc` and `_pft_parameters.csv` (`meds_driver.f90:254`) would collide between polygons. | Region mode writes **one file per tier with a `polygon` dimension**, and one ragged restart file per checkpoint (§6). There are no per-polygon files except for `detail_polygons`. `ensure_output_dir` (`meds_driver.f90:603`) runs once, serially. |
 | B6 | **`error stop` kills the process.** There are 12 sites in the fast kernels, plus `nc_check`, the reader and census parsing. One bad polygon ends the whole run. | R3 fails fast, with the polygon id in the message. R5 converts the common failures to a status return, marks the polygon failed, carries on, and reports the failed polygons at the end (§7). |
 | B7 | **Interleaved stdout.** `print_summary`, budget reports and reader or output lines would interleave between threads. | In region mode per-polygon printing is off (`verbose` forced low). A per-month progress line and an end-of-run per-polygon status table are written in the serial phase. |
@@ -149,6 +151,10 @@ loop over months:
     next month (§6.1).
 - **A site run is a region of one polygon** through the same code, with I/O between months instead
   of every step. Output content must be byte-identical to today's; R1 checks this.
+- **The parallel axis inside the month** (decided 2026-09-27, §10.4): the fast loop over all
+  patches of all polygons, with the per-polygon prologue and epilogue as polygon loops — three
+  single-level regions per day rather than the polygon-outer region the block above shows. The
+  I/O phase and every rule above are unchanged.
 - **Costs accepted.** Output records wait in memory until the month ends: about 100 MB at worst for
   one site's fast tier with per-cohort variables. A crash loses at most the current month's
   unwritten output, and the yearly checkpoint still bounds the rerun.
@@ -242,6 +248,9 @@ PnetCDF, `MEDS_IO_DESIGN.md` §5.5), or several threads writing netCDF at once.
   - Polygons are independent, so each polygon's trajectory depends only on its inputs, never on the
     thread count or the schedule.
   - Output order is the polygon order, fixed by the region, not by thread completion.
+  - The per-polygon sums are taken after the patch loop, in patch order, never with
+    `reduction(+:)` (`meds_fast_dynamics.f90:81`), so the flattened loop of §10.4 stays bitwise
+    identical to the serial run, as the patch loop already does.
   - A CTest asserts byte identity between 1 and 4 polygon threads (R3).
 - **Failures:**
   - **R3 fails fast:** the first failure stops the run, naming the polygon id and its lat/lon.
@@ -334,7 +343,7 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 | **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
 | **R1** compute/I-O split ✅ | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | ✅ 2026-09-27: suite green; six reference cases byte-identical to `beta` (§10.2 status). |
 | **R2** region and polygon container, serial ✅ | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into file sets and per-polygon buffers; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). ✅ 2026-09-27 (#289): the `region` CTest checks a 3-polygon region on a synthetic archive against 3 site runs, bit for bit. |
-| **R3** OpenMP polygon loop | `!$omp parallel do schedule(dynamic)` over polygons; the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling measured to the core count; nvfortran build green where available. |
+| **R3** OpenMP compute phase | The fast loop over all patches of all polygons, with polygon-loop prologue and epilogue (§10.4, OR9) — or, as the cheaper first step, `!$omp parallel do schedule(dynamic)` over polygons; persistent per-thread scratch pools (#195); the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling and the last-finisher tail measured at 1, 4, 10, 20 and 40 threads on the 100-polygon box (§10.3); nvfortran build green where available. |
 | **R4** ragged restart | Region checkpoint and restart with CF contiguous ragged arrays | A restart round trip is bit-identical to an uninterrupted run. |
 | **R5** robustness and scale | Status-based failure isolation (B6), batching by tiles, the tile job-array recipe, allocator work (B8), per-polygon logs | A failure-injection test: one polygon fails and the rest match the reference. Throughput and memory recorded for a 20,000-polygon box. |
 | **R6** interfaces and docs | Optional C API and Python entry point for region runs (the C API registry holds at most 4 runs and is unsynchronised, `meds_c_api_run.f90:46-47`); docs, including the site-network recipes (§8.1); an example | A documented example runs a small box end to end. |
@@ -606,6 +615,65 @@ the detail polygon and the R0 output set. The node ran nothing else (`--exclusiv
   `beta` does the same (the R1 `bare_july_archive` case fails 17,856 of 17,856). This is not an R2
   change, but it needs its own issue.
 
+### 10.4 R3 — the parallel axis (design note, 2026-09-27)
+
+R3 as tabled threads the polygon loop: one `parallel do` over `p` per month, patch threads off
+inside (B4). A second shape uses the parallel region MEDS already has — the fast loop's patch
+loop — over **all patches of all polygons**. This note records both and why the second is
+preferred. Line numbers are the `cleanup/pre-v0.3.0` tree.
+
+**What the patch region already is.** `fast_dynamics` runs `!$omp parallel do schedule(dynamic, 1)`
+over a site's patches (`meds_fast_dynamics.f90:549`). Its body reads the polygon's state and frozen
+context, works in a thread-private scratch slot (`coh_pool(ith)`, `forc_pool(ith)`, …,
+`cdiag_pool(:,:,ith)`, `:557-568`) and writes only per-`(sub-step, patch)` staging
+(`red_fast(isub, ip)`, `:768-773`); every site-level sum is taken after the loop, in patch order,
+deliberately not with `reduction(+:)` (`:81`), which is what keeps a threaded run bitwise identical
+to a serial one. Nothing in the body depends on which polygon the patch belongs to. The GPU
+evaluation (its §7) measured this region at 3.03× on 4 cores.
+
+**The flattened shape.** Per day, three single-level regions:
+
+```
+parallel over p:        prologue  -- advance poly(p)'s cursor, sample the day's nsub records (met_instant is pure)
+parallel over (p, ip):  patch body -- one patch-day per task, schedule(dynamic); thread-private scratch,
+                                      per-polygon staging
+parallel over p:        epilogue  -- sums in patch order, budgets, the slow step, the output tick, the guards
+serial, monthly:        the I/O phase, unchanged (§4)
+```
+
+What has to change: (1) `fast_dynamics` splits into the three parts, the patch body taking the
+polygon and the scratch slot as arguments; (2) the scratch pools become one persistent set per
+**thread**, sized to the largest `ncoh_max` over the region, instead of a set per call sized to one
+site (`:533-537`, `:466`) — this is #195's allocation traffic and the "N identical fast contexts"
+of §10.3.1 done once; (3) `red_fast` and the met samples become persistent per polygon; (4) the
+prologue and epilogue run as polygon loops too, or Amdahl caps the speed-up: the fast loop is
+~99 % of the work for an established stand, but not for the bare-ground and young stands a region
+starts from.
+
+**Comparison.**
+
+| | polygon-outer (R3 as tabled) | flattened `(p, ip)` |
+|---|---|---|
+| tasks, the 100-polygon Ithaca box | 100 polygon-months | 600–3,000 patch-days (6 patches bare, tens established) |
+| load balance | tail = one polygon-month; 100 uneven polygons on 40 cores idle 20–40 % at the tail | tail = one patch-day |
+| polygons < cores | idle cores (patch threads off inside) | fills the node |
+| site runs | a separate code path (patch threads) | the same loop with N = 1 — the §4 principle holds for the parallel loop too |
+| OpenMP levels | one (B4) | one; no inner region exists |
+| bitwise vs serial | yes | yes: post-loop sums per polygon, in patch order |
+| B8 allocator contention | the same | the same; persistent pools remove the per-call share |
+| code change | ~30 lines around `polygon_step`, plus B3/B4/B7 | the `fast_dynamics` split (M), which #195 wants anyway |
+| production tiles, polygons ≫ cores | the same throughput | the same throughput |
+
+**What does not change.** The month-synchronous loop, the serial I/O phase, the record queues, the
+polygon order of the outputs, and every B-rule. Failure semantics (R5): a NaN in one patch marks
+its polygon failed; other threads may still finish that polygon's remaining patches, which is
+wasted but harmless, and the epilogue skips the polygon.
+
+**Recommendation (OR9).** Build R3's compute phase in the flattened shape. If the polygon-outer
+loop is built first as the cheaper step, measure the last-finisher tail on the 100-polygon box at
+40 threads before deciding to stop there: polygons ≫ cores is the production case where the two
+shapes tie, and the small-region and single-site cases are what only the flattened one covers.
+
 ## 11. Tests (CTest)
 
 - **Queued writes:** drained at once or per record, identical files (R1).
@@ -630,6 +698,7 @@ the detail polygon and the R0 output set. The node ran nothing else (`--exclusiv
 | OR6 | Polygon id | The cell's global row-major index on the forcing grid (§5), stable across regions and tiles. |
 | OR7 | Region output layout | A 1-D `polygon` dimension with `row` and `col` indices (§6), rather than a gridded `(time, lat, lon)` layout; a gridded view is a one-line reindex. |
 | OR8 | Region mode before R4 | Bare-ground starts only, and no checkpoints until the ragged restart exists; census starts need spatial inputs (OR2). |
+| OR9 | R3's parallel axis: a loop over polygons, or the fast loop over all patches of all polygons | The flattened loop, as three single-level regions per day (§10.4). If the polygon loop is built first, the 40-thread tail measurement on the 100-polygon box decides whether to stop there. |
 
 **Decided 2026-09-27:** the vocabulary of §1.1 (region, always contiguous; polygon; site), and site
 networks as separate processes (§8.1) instead of a `polygons_csv` option.
@@ -643,7 +712,7 @@ networks as separate processes (§8.1) instead of a `polygons_csv` option.
   arrive here as `[run].mode = "region"` and `[region].box_nwse` (§9). Its §10 Q7 (a polygon with no
   covering land cell) is answered by its §15.5 and the selection rules here.
 - **`MEDS_GPU_EVALUATION.md`** §10 ("MEDS has no site or ensemble axis at all"): the polygon axis is
-  exactly that axis. Its §7 and §12.4 (allocator traffic, #195) become more pressing with polygon
-  threads (B8).
+  exactly that axis. Its §7 patch threading (3.03× on 4 cores) is the region §10.4 reuses; its
+  §12.4 (allocator traffic, #195) becomes more pressing with either thread shape (B8).
 - **`MEDS_IO_DESIGN.md`** §5.5 (the HDF5 global lock, the shelved asynchronous writer) and §10 Q5 (the
   leading-axis convention) are resolved by the serial I/O phase, §6.1 and the `polygon` dimension.
