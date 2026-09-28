@@ -509,6 +509,8 @@ Why this series:
 
 - **No multi-polygon runtime.** The `(time, grid)` format, `grid_index` and nearest-cell matching are in
   place — file and reader are ready for N locations — but the model runs one site.
+- **No forcing perturbations.** MEDS runs on the forcing it is given. Sensitivity offsets, scalings
+  and delta-change climate scenarios belong upstream, in the forcing file; they are out of scope.
 - **No latitude-resolved CO₂.** One global series drives every polygon (§12). CMIP7 also gives
   monthly 15° latitude bands, which a region spanning several bands would want for recent decades.
 - **`avg_convention`** distinguishes `"end"` and `"begin"`. `"instant"` and `"center"` parse, but the

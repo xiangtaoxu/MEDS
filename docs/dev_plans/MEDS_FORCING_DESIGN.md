@@ -33,7 +33,7 @@
 > - ✅ Tools and docs (F5), 2026-09-27: `scripts/prepare_era5/make_forcing_file.py` writes the
 >   single forcing file (§7.1) from the archive or from box files; `prep_era5land_forcing.py` is
 >   retired.
-> - ⬜ Later products (NLDAS-3, Daymet, CHIRPS).
+> - ➡ Later products (NLDAS-3, Daymet, CHIRPS): deferred 2026-09-27 (ROADMAP §8, #302).
 >
 > **It overrides earlier text:**
 > - the two ERA5-Land scripts of §7.2–§7.3 are retired: `download_era5land.py` (#280) and
@@ -45,7 +45,8 @@
 > The overridden subsections carry an **Update 2026-09-26** note, and none is renumbered.
 >
 > **Still open:**
-> - ⬜ F6, later products (§16–§17); archive years before June 2002 when needed;
+> - ➡ F6, later products (§16–§17), and archive years before June 2002: deferred 2026-09-27
+>   (ROADMAP §8, #302 and #303);
 > - ⬜ adjusting 2 m temperature and humidity to the reference height (Q2); the 10 m wind
 >   log-profile exists.
 >
@@ -1256,7 +1257,7 @@ reads a box of cells from it.
 
 ## 8. Phasing
 
-> **Status, checked against the code on 2026-09-26** (✅ done, ⬜ open, ➡ moved):
+> **Status, checked against the code on 2026-09-26** (✅ done, ⬜ open, ➡ moved, ✖ out of scope):
 >
 > **P0**
 > - ✅ everything (PR #36).
@@ -1274,7 +1275,9 @@ reads a box of cells from it.
 > - ➡ the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`;
 > - ➡ other reanalysis products move to §16, with the archive design in §14;
 > - ✅ a prescribed CO₂ series (#184, 2026-09-27; `docs/science/forcing.md` §12);
-> - ⬜ climate-change perturbations.
+> - ✖ climate-change perturbations: **out of scope** (decided 2026-09-27). MEDS's interface is the
+>   forcing it is given; offsets, scalings and delta-change scenarios are built upstream, in the
+>   forcing file, not applied by the reader.
 >
 > The forcing-data phases F0–F6 are in §17.
 
@@ -1315,7 +1318,7 @@ reads a box of cells from it.
   `match_poly_grid`) — the file format already supports this from P0 (§7), so this is reader/driver work
   only. Elevation **lapse-rate** correction (`lapse.f90` analogue) between grid cell and site, a
   **10 m→reference-height wind log-profile** adjustment (§5.2/§10), climate-change intercept/slope
-  perturbations, other reanalysis products via the same format (CRUNCEP/GSWP3/WFDE5/full ERA5), and a
+  perturbations (*out of scope since 2026-09-27: done upstream, in the forcing file*), other reanalysis products via the same format (CRUNCEP/GSWP3/WFDE5/full ERA5), and a
   **transient/observed CO₂** stream (a CO₂-only, non-cycling variable on the same file).
 
 ---
@@ -1835,10 +1838,10 @@ become `scripts/prepare_forcing/`.
 | **F0** evaluate | Sources, CDS limits, throughput, quantization, chunk layout, global file test (§19) | ✅ done 2026-09-26 |
 | **F1** download tools | The two downloaders, box post-processing, shared helpers, environment (§12, §13.1) | ✅ PR #279 |
 | **F2** archive builder | Global monthly archive (§13.2, §14): all variables per month, chunked and quantized, static file, manifest, gates, `.part` writes, resume, raw deletion after verification (OD2) | ✅ **Both sources, 2026-09-26.** GDEX: July 2022 built in 7.6 min on 8 cores, passed every gate, and deleted its raw files. The New York box matches §13.1 output to 0.0039 K (quantization). Rain daily sums match the raw accumulations to 0.0007 mm. CDS: June 2022 downloaded globally and built in 6.9 min on 8 cores; `Tair` and `Rainf` are bit-identical to a GDEX build of the same month, and the GRIB files were deleted. |
-| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). | ✅ **2026-09-27:** every month from June 2002 to August 2026 (GDEX; 2026-04 and 2026-06 from the CDS, their GDEX surface-pressure files lacking 3 and 5 hours). Earlier years later, when chosen. |
+| **F3** archive build | Download and process the years the user chooses: GDEX first, CDS for years before July 2002. Verify, then delete the raw files (OD2). | ✅ **2026-09-27:** every month from June 2002 to August 2026 (GDEX; 2026-04 and 2026-06 from the CDS, their GDEX surface-pressure files lacking 3 and 5 hours). Earlier years deferred until a study needs them (#303). |
 | **F4** reader upgrade | `met_source`, `data_path`, templates, monthly chunk-column reads, site and box domains, the `era5land` adapter (`Tdew` → `qair`, the wind vector `wind_u`/`wind_v` plus speed, static elevation), `legacy_file`, CTest (§15) | ✅ **2026-09-26** (see the §15 status note): `format = "era5land"`, site domain, box selection in the library; the §15.6 tests pass (`test_met_era5land`, `test_met_driver`); output files record the humidity formula; July 2024 at Ithaca from the archive matches the `legacy_file` run to quantization (§15 status note). |
 | **F5** tools and docs | Extract tool (archive → single file), READMEs, retire the old scripts and update their references | ✅ **2026-09-27:** `scripts/prepare_era5/make_forcing_file.py` writes the single file from the archive or from box files; `scripts/download_era5land.py` (#280) and `scripts/prep_era5land_forcing.py` are removed and their references updated. |
-| **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ⬜ Per product. |
+| **F6** later products | Adapters for NLDAS-3, Daymet and CHIRPS (§16) | ➡ Deferred 2026-09-27 (#302). |
 
 **Order:**
 - **F2 and F4 can proceed in parallel:** F4 needs only synthetic files.
@@ -1851,7 +1854,7 @@ become `scripts/prepare_forcing/`.
 |---|---|---|
 | OD1 | Period of the first archive build | **July 2022, from GDEX.** It is the pilot month for F2. Later years are added with the same tools, and the period stays user-defined (FD12). |
 | OD2 | Keep raw files after processing? | **No. Raw files from both GDEX and CDS are deleted** once every archive month that needs them is written and verified (§13.2). Reprocessing means downloading again; that cost is accepted. |
-| OD3 | Spatial chunk size for a 1 km product (NLDAS-3) | **Deferred** to the NLDAS-3 adapter work (F6). The 16 × 16 choice (§14.2) applies to ERA5-Land only. |
+| OD3 | Spatial chunk size for a 1 km product (NLDAS-3) | **Deferred** to the NLDAS-3 adapter work (F6, #302). The 16 × 16 choice (§14.2) applies to ERA5-Land only. |
 
 ## 19. Measurements (evaluation, 2026-09-25/26; single CPU core, warm filesystem cache)
 
