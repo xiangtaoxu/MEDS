@@ -300,7 +300,7 @@ before and after.
   3–4 times slower once several ran at once.
 
 - **`ground_temp_site` is removed, and the four variances say what they measure** (#275,
-  #PRNUM). `ground_temp_site` read the top soil layer under the name "ground (skin) temperature";
+  #314). `ground_temp_site` read the top soil layer under the name "ground (skin) temperature";
   `soil_temp_top_site` is the same series, so a config or script that used it should switch to that
   name. An `[output].io_config` that still lists it is refused at startup.
   - `cas_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site` and `leaf_temp_var_site`
@@ -310,27 +310,27 @@ before and after.
   - A skin temperature and within-step variances stay on #275.
   - The registry holds 252 variables; `meds_io_config.toml` is regenerated.
 
-- **The FAST tier stamps each record by its period's start** (review O2, #PRNUM), as the daily,
+- **The FAST tier stamps each record by its period's start** (review O2, #314), as the daily,
   monthly and annual tiers do since #294. It stamped the instant the period's first forcing sample
   was taken, `forcing_sample_frac · dt_fast` in (7 min 30 s at the defaults), under a `long_name`
   that said "period start". The `time`, `minute` and `second` of every `-F-` record move back by
   that much; no value changes.
 
-- **`met_instant` has one exit** (review F2, #PRNUM). The constant backend no longer repeats the
+- **`met_instant` has one exit** (review F2, #314). The constant backend no longer repeats the
   longwave synthesis and air density in an early return; only the file interpolation is skipped.
   Unchanged bit for bit (`test_fast_loop` block 8 runs the constant backend).
 
-- **`test_disturbance` covers a disturbance at a calendar boundary** (review O5, #PRNUM). There the
+- **`test_disturbance` covers a disturbance at a calendar boundary** (review O5, #314). There the
   step's diagnostics were already read and reset, so every weight is 0 and the patch slots hold only
   that boundary's events; the gap keeps its share of them. The comments on `patch_diag_inherit` and
   its caller describe both that case and a disturbance inside a step (the C API).
 
-- **`make_forcing_file.py` writes the wind vector** (review P4, #PRNUM). A file it cut from the
+- **`make_forcing_file.py` writes the wind vector** (review P4, #314). A file it cut from the
   archive carried only the speed, and floored it at 0.1 m/s as the reader already does for every
   source. It now writes `u10` and `v10` beside the unfloored `Wind`, so the reader takes the speed
   from the vector, as it does with the archive. Files written before still load as they did.
 
-- **The documentation describes v0.3.0** (review §5, §10, #PRNUM).
+- **The documentation describes v0.3.0** (review §5, §10, #314).
   - Six finished design plans move to `docs/dev_plans/archive/` with tombstones (biogeochemistry,
     snow, the GPU evaluation, the veg-energy plan, the 2026-09-13 docs review, the v0.2 release
     plan); the structure design becomes a Reference document, and the other headers say what is
@@ -396,7 +396,7 @@ before and after.
   donors' area-weighted value.
 
 - **ED_ERA5land recycling stopped at the first seam unless the window started at 01:00** (review
-  F1, #PRNUM). When the seam fell inside a daily step, the one-month buffer held the window's last
+  F1, #314). When the seam fell inside a daily step, the one-month buffer held the window's last
   month, so the window's first record had not been read, nor, for a window starting at 02:00–23:00,
   the rest of its first day: `met_driver: a forcing record was not prefetched before the step
   (internal error)`. A window starting at 00:00 on 1 January stopped at 23:00 on the last day of the
@@ -413,12 +413,12 @@ before and after.
     00:00 across their seams; the synthetic archive gains January 2022. The unfixed reader stops on
     the first of them.
 
-- **gfortran builds again** (review 6.1, #PRNUM). Six lines past column 132, a hard error in
+- **gfortran builds again** (review 6.1, #314). Six lines past column 132, a hard error in
   gfortran 11 and 15 (ifx only warns), had stopped every gfortran build since v0.2.2. They are
   wrapped.
 
 - **Under gfortran, a region run segfaulted at the first step after a month's output** (review 6.2,
-  #PRNUM). The region handed its polygons' output buffers to the serializer as the component
+  #314). The region handed its polygons' output buffers to the serializer as the component
   section `reg%poly(:)%out_bufs`. `output_buffers_t` has allocatable components, and gfortran passes
   such a section through a temporary whose copy-out leaves the buffers' allocations dangling.
   - The buffers now sit beside the polygons as a contiguous `meds_region_t%out_bufs(:)` (a site run:
@@ -427,7 +427,7 @@ before and after.
   - The construct joins the compiler traps in `CLAUDE.md` and `docs/building.md`.
 
 - **A region month in which one polygon failed stopped the I/O phase and lost the month for every
-  polygon** (review O1, #PRNUM). The serializer required every polygon to hold the same number of
+  polygon** (review O1, #314). The serializer required every polygon to hold the same number of
   closed records, but a polygon that fails has closed fewer, and the polygons after it none.
   - It now writes as many records as the longest queue holds, with the fill value where a polygon
     holds none, and takes each record's calendar from the first polygon that holds it.
@@ -435,23 +435,23 @@ before and after.
   - `test_region` makes one polygon's soil carbon impossible in mid-month and checks the daily file.
 
 - **A reused run inherited the previous run's owed restructuring and output files** (review R1,
-  #PRNUM). A run that ends on the 1st leaves its boundary's restructuring pending, and the C API
+  #314). A run that ends on the 1st leaves its boundary's restructuring pending, and the C API
   hands its freed slot to the next run, whose first step then restructured a stand that owed
   nothing. A next run with `[output].enabled = false` also still saw the previous run's files as
   enabled and ticked their buffers. `driver_open` now clears both; a restart still sets the
   restructuring flags from its state file. `test_region` reuses one run across both cases.
 
-- **`met_open` left a rejected MEDS forcing file's handle behind** (review F5, #PRNUM). When the
+- **`met_open` left a rejected MEDS forcing file's handle behind** (review F5, #314). When the
   file's record spacing or attributes contradicted `[forcing]`, the file was closed but its handle
   kept, so a caller's `met_close` closed it again and stopped. The rejection now goes through
   `met_close`, as the other three do.
 
 - **A region reported an unknown `detail_polygons` id only after building every polygon**, and left
-  the forcing source open (review R8, #PRNUM). The ids are now checked against the box's cells
+  the forcing source open (review R8, #314). The ids are now checked against the box's cells
   before anything is opened.
 
 - **The whole-column energy ledger failed at nearly every fast step, by −0.3 to −4 W/m²** (#290,
-  #PRNUM). Under `[energy].bottom_bc = "dirichlet"`, the shipped examples' choice since v0.2.1
+  #314). Under `[energy].bottom_bc = "dirichlet"`, the shipped examples' choice since v0.2.1
   (#267), the soil solve conducts heat to `deep_temp` across the column's bottom face, but every
   ledger booked that face as the Neumann flux, which is 0. The model was right; the books were not.
   - The BE stage now books the face its implicit solve committed, in the soil and whole-column
@@ -468,7 +468,7 @@ before and after.
   - `resid_energy_site` is the only output that moves, by up to 9.6 W/m², to about 1e−12. No state
     variable changes.
 
-- **A slow-only run reported 0 for every patch-sourced rate** (#299, #PRNUM). The patch block is
+- **A slow-only run reported 0 for every patch-sourced rate** (#299, #314). The patch block is
   normalised by the weight the fast loop accumulates, and with `fast_biophysics_on = false`
   nothing added one. The slow step now weights the block with its own `dt_slow` when the fast loop
   is off.
@@ -480,7 +480,7 @@ before and after.
   - The other half of #299, fast-only rows that read 0 instead of `_FillValue` in a slow-only run,
     stays open.
 
-- **Every run's first day ran its canopy air at the 20 m type default** (#306, #PRNUM). Only the slow
+- **Every run's first day ran its canopy air at the 20 m type default** (#306, #314). Only the slow
   step set the canopy-air depth, so a run from bare ground, a census or a restart used the default
   until its first slow step, and since #305 the forcing is moved to the top of that depth.
   `polygon_prepare` now sets it from the stand, as the slow step does: the tallest cohort plus the
@@ -493,7 +493,7 @@ before and after.
   - Slow-only runs do not change: their slow step set the depth before the first output.
   - `test_region` checks that a bare-ground stand opens at the floor.
 
-- **A restart was not exact** (#298, #PRNUM). The state file did not carry each patch's
+- **A restart was not exact** (#298, #314). The state file did not carry each patch's
   `adapt_dt_last`, the step the fast integrators' adaptive controller last accepted and starts the
   next step from, so a resumed run cold-started the controller and took different sub-steps. It is
   now written, and read when present; an older state file cold-starts the controller as before.
