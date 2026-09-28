@@ -20,6 +20,7 @@ module meds_polygon
    use meds_time,                   only : meds_time_t, time_to_string
    use meds_site_state_types,       only : site_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
+   use meds_slow_dynamics,          only : refresh_canopy_depth
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_fast_config,            only : acclimate_leaf_photo_table
    use meds_biogeochem_types,       only : litter_input_t, n_soil_pool, soilc_seam_t
@@ -124,6 +125,10 @@ contains
          if (cfg%snow_init_swe > 0.0_wp) call seed_snow(cfg, poly, verbose)
          if (verbose) write(*,'(a)') ' fast  : sub-daily biophysics ON'
       end if
+      !----- The canopy-air depth follows the stand from the first step, whatever the stand came    !
+      !      from (bare ground, census, restart); the slow step keeps it current after that (#306).  !
+      !      No ledger: a plain geometry update that keeps the canopy air's intensive state.  -------!
+      call refresh_canopy_depth(poly%site, cfg)
 
       !----- Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the real !
       !      persisted pools; otherwise the pools start at the allocation-time zero unless          !

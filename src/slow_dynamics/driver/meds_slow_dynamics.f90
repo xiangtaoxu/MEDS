@@ -22,7 +22,7 @@ module meds_slow_dynamics
    implicit none
    private
 
-   public :: advance_slow_dynamics, advance_boundary_dynamics
+   public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth
 
 contains
 
@@ -96,12 +96,11 @@ contains
    !---------------------------------------------------------------------------------------!
    ! refresh_canopy_depth -- per-patch CAS depth = tallest cohort height + freeboard, floored.  !
    !                                                                                          !
-   ! This is the ONLY writer of cas%can_depth. Before this existed the field was a hardcoded 20 m !
-   ! that nothing ever assigned: the aerodynamics computed max(floor, veg_height) and the value    !
-   ! was discarded, so every stand got cas_mass_capacity = 24 kg/m2 and cas_molar_capacity = 0.83 mol/m2 regardless of its    !
-   ! height -- 4x too much canopy air over a 1 m regenerating gap, ~1.8x too little over a 35 m    !
-   ! tropical canopy. Since cas_mass_capacity is the canopy air's heat capacity, that error goes straight into  !
-   ! how fast the canopy air responds, and into the freeze-cadence stability limit on dt_fast.     !
+   ! The ONLY writer of cas%can_depth, called by the slow step, at a calendar boundary and once   !
+   ! when a polygon is prepared (#306). The depth sets the canopy air's mass and heat capacity,    !
+   ! so it sets how fast the canopy air responds and the freeze-cadence stability limit on         !
+   ! dt_fast, and the forcing is moved to its top. A fixed depth would be 4x too much canopy air   !
+   ! over a 1 m regenerating gap and ~1.8x too little under a 35 m tropical canopy.                !
    !                                                                                          !
    ! An empty patch falls back to the floor alone (no cohorts, no canopy to sit under).            !
    !---------------------------------------------------------------------------------------!

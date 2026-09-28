@@ -140,6 +140,10 @@ program test_region
    call driver_finalize(run, st) ; call driver_free(run)
    call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
    call check_true('a reused run opens owing no restructuring', ok .and. .not. run%poly%restructure_pending)
+   !----- ...and its canopy air starts at the bare-ground floor, not the type's default depth (#306). -!
+   call check_true('a bare-ground stand opens at the canopy-air floor',                               &
+                   all(run%poly%site%patch%cas(1:run%poly%site%patch%n)%can_depth                     &
+                       == run%cfg%aero%min_canopy_depth))
    call driver_finalize(run, st) ; call driver_free(run)
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !

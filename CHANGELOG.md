@@ -421,6 +421,19 @@ before and after.
   - The other half of #299, fast-only rows that read 0 instead of `_FillValue` in a slow-only run,
     stays open.
 
+- **Every run's first day ran its canopy air at the 20 m type default** (#306, #PRNUM). Only the slow
+  step set the canopy-air depth, so a run from bare ground, a census or a restart used the default
+  until its first slow step, and since #305 the forcing is moved to the top of that depth.
+  `polygon_prepare` now sets it from the stand, as the slow step does: the tallest cohort plus the
+  freeboard, and at least the floor.
+  - `bare_july_single`, day 1: `cas_depth_patch` 20 → 5 m (the bare-ground floor),
+    `wind_cas_top_patch` 3.57 → 2.51 m/s, `h_site` 4.22 → 8.27 W/m², `le_site` 19.25 → 19.89 W/m².
+    Every later day moves a little; the July means by at most 1.1 % (`h_site`).
+  - `est_july`, restarted from a spun-up stand: day-1 depths 20 → 23.23 and 25.51 m; the July means
+    by at most 0.8 % (`h_site`), and the integrator's rejection count by 1.3 %.
+  - Slow-only runs do not change: their slow step set the depth before the first output.
+  - `test_region` checks that a bare-ground stand opens at the floor.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
