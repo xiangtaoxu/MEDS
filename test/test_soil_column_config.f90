@@ -63,11 +63,16 @@ program test_soil_column_config
    call check(p2%theta_fc(1) < p2%theta_sat(1),          'field capacity must be below saturation')
    sc%theta_sat = 0.43_wp ; sc%theta_res = 0.078_wp
 
-   !=== 5. The retention family selects which pair curve_par_a/n mean. ======================!
+   !=== 5. The retention family selects which pair curve_par_a/n mean: for Campbell, the air-entry !
+   !       suction psi_sat [m] (< 0) and the exponent b, as validate_config requires. ================!
    sc%retention = SOIL_RETENTION_CAMPBELL
+   sc%curve_par_a = -0.26_wp ; sc%curve_par_n = 5.65_wp
    call build_column(sc, p2)
    call check(p2%retention == SOIL_RETENTION_CAMPBELL,   'retention family did not reach the column')
+   call check(p2%theta_fc(1) > p2%theta_wp(1) .and. p2%theta_fc(1) < p2%theta_sat(1),            &
+              'Campbell field capacity lies between wilting point and saturation')
    sc%retention = SOIL_RETENTION_VG
+   sc%curve_par_a = 3.6_wp ; sc%curve_par_n = 1.56_wp                  ! the van Genuchten defaults
 
    !=== 6. The thermal keys reach the thermal column. =======================================!
    sc%solid_conductivity = 2.5_wp ; sc%dry_conductivity = 0.20_wp ; sc%dry_heat_capacity = 1.5e6_wp

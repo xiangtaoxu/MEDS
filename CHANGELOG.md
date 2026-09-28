@@ -454,6 +454,22 @@ before and after.
   the forcing source open (review R8, #314). The ids are now checked against the box's cells
   before anything is opened.
 
+- **The Debug suite passes: three tests failed under `-check all -fpe0` on every branch** (#308,
+  #314), and the first failure was a real configuration gap.
+  - **Campbell retention could not be configured.** `validate_config` required
+    `[soil_column].curve_par_a > 0` for both retention families, but Campbell's is the air-entry
+    suction ψ_sat, which is negative; a positive one made the retention curve raise a negative base
+    to a fractional power, so field capacity and wilting point came out NaN. Each family is now
+    validated on its own terms (van Genuchten α > 0 and n > 1; Campbell ψ_sat < 0 and b > 0), and
+    `test_soil_column_config` builds a Campbell column with ψ_sat = −0.26 m, b = 5.65.
+  - **The soil-carbon NaN guard raised an FPE on the NaN it exists to catch:** the NaN test shared
+    an `.or.` with ordered comparisons, and ifx at `-O0` signals even on `x /= x`. It now tests
+    `ieee_is_nan` first, alone. No result changes.
+  - **`test_column_ark` asserted on two variables it never set** (`tw_tiny`, `tw_diag`); the
+    diagnostic-wood reference that check was meant to compare against no longer exists, so it is
+    gone. The two real assertions stay.
+  - ifx and gfortran Debug now pass 53/53, as do both Release builds.
+
 - **The whole-column energy ledger failed at nearly every fast step, by −0.3 to −4 W/m²** (#290,
   #314). Under `[energy].bottom_bc = "dirichlet"`, the shipped examples' choice since v0.2.1
   (#267), the soil solve conducts heat to `deep_temp` across the column's bottom face, but every

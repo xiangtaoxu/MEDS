@@ -34,7 +34,7 @@ module meds_soil_biogeochem
                                      IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_column_state_types, only : soil_carbon_t
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM, DECOMP_SCHEME_CENTURY5
-   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
    implicit none
    private
 
@@ -593,9 +593,15 @@ contains
       call pack_pool_vector(pools, x)
       k = 0_ik
       do j = 1_ik, n_soil_pool
-         !----- The NaN test is `x /= x` rather than ieee_is_nan so this stays `pure` and needs no  !
-         !      module dependency; it is exact for IEEE arithmetic on both back ends. -------------!
-         if (x(j) /= x(j) .or. x(j) < -SOILC_NEG_TOL .or. x(j) > SOILC_MAX_PLAUSIBLE) then
+         !----- NaN first, and alone, by classification. A comparison with a NaN can raise IEEE      !
+         !      invalid -- ordered ones always, and ifx compiles even `x /= x` that way at -O0 --     !
+         !      which a trapping build (-fpe0, -ffpe-trap=invalid) stops on, and `.or.` does not    !
+         !      short-circuit. ieee_is_nan is elemental, so this stays `pure`. ----------------------!
+         if (ieee_is_nan(x(j))) then
+            k = j
+            return
+         end if
+         if (x(j) < -SOILC_NEG_TOL .or. x(j) > SOILC_MAX_PLAUSIBLE) then
             k = j
             return
          end if

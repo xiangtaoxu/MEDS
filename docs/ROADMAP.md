@@ -35,7 +35,6 @@ failure, not from a plan.
 | [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
 | [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
 | [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
-| [#308](https://github.com/xiangtaoxu/MEDS/issues/308) | The Debug suite is not green: `soil_column_config`, `soil_biogeochem` and `column_ark` fail under `-check all -fpe0` on every branch | The first is also a validation gap (Campbell retention with van Genuchten parameters) |
 
 ---
 
