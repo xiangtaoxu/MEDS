@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_manager -- the serializer-side glue: drain a polygon's queued records into its file   !
-! set's streams (output_serialize_pending, the ONLY flush -- called by main), and close them at     !
-! run end (flushing any final partial period). netCDF via meds_output_stream. The netCDF-free half  !
-! of the manager (allocation = manager_setup / manager_finalize / manager_alloc_buffers in              !
-! meds_output_registry; the per-step tick = output_integrate in meds_output_integrate) is            !
-! deliberately in the core library so the stepper stays off netCDF (§2, §4.5).                        !
+! meds_output_manager -- the serializer-side glue: drain queued records into the file set's       !
+! streams (output_serialize_pending for a site's buffers, output_serialize_region for a region's,   !
+! both called only from a driver's I/O phase), and close them at run end (flushing any final        !
+! partial period). netCDF via meds_output_stream. The netCDF-free half of the manager -- allocation, !
+! manager_setup / manager_finalize / manager_alloc_buffers in meds_output_registry, and the          !
+! per-step tick, output_integrate in meds_output_integrate -- is deliberately in the core library so !
+! the stepper stays off netCDF (§2, §4.5).                                                           !
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik

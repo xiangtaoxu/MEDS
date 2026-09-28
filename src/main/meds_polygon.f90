@@ -42,8 +42,8 @@ module meds_polygon
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
    public :: N_PATCH_INIT
 
-   !----- Step and run status codes. OK/DONE are normal; the ERR codes are the conditions the model  !
-   !      used to `error stop` on, returned instead so a library caller survives them.             !
+   !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
+   !      status rather than an `error stop` so a library caller survives them.                   !
    integer(ik), parameter :: DRIVER_OK      = 0_ik   !< a slow step was taken
    integer(ik), parameter :: DRIVER_FINISHED= 1_ik   !< the calendar already reached end_time; nothing done
    integer(ik), parameter :: DRIVER_ERR_NAN = 2_ik   !< NaN in the state at a year roll-over

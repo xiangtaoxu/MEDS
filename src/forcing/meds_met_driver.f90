@@ -36,7 +36,7 @@ module meds_met_driver
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE,        &
                                    CO2_SOURCE_FILE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
-   use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
+   use meds_config,         only : MAX_RECYCLE_YEARS   ! the config's bound: one definition
    use meds_lapse_rate,     only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,    &
                                    lapse_specific_humidity, lapse_longwave
    use meds_co2_series,     only : co2_series_read, co2_series_at, co2_series_covers,          &
@@ -186,8 +186,8 @@ contains
 
       !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
       !      global attributes the prep script writes against the config that claims to describe    !
-      !      the same file. All three used to be written and never read, so a file that disagreed   !
-      !      with its config was silently mis-timed or mis-partitioned. ------------------------------!
+      !      the same file. A file that disagreed with its config would otherwise be silently       !
+      !      mis-timed or mis-partitioned. ------------------------------------------------------------!
       call validate_file_against_config(src, ncid, vstat)
       if (vstat /= MET_OK) then
          call met_close(src)
@@ -327,12 +327,11 @@ contains
    !  file that was just opened. MEDS does NOT infer the window: it is told where the cycle       !
    !  starts and how long it is, and this routine's only job is to confirm the file agrees.       !
    !                                                                                              !
-   !  The predecessor of this routine did the opposite -- it classified the file and, when the      !
-   !  file did not look Jan-1-aligned, silently dropped to an absolute-seconds span-wrap. For the   !
-   !  real ERA5-Land record (first stamp 01:00 under the end-of-interval convention) that fallback   !
-   !  wrapped on a 366 d 22 h span, shifting hour-of-day on EVERY wrap: a 29-yr run ended up reading  !
-   !  late May at a ~10 h offset while its daily-mean shortwave stayed correct, so the slow            !
-   !  demography looked healthy and nothing surfaced the problem for 30 simulated years.                !
+   !  Inferring the window is what this refuses to do. Wrapping a file on its own span shifts        !
+   !  hour-of-day on EVERY wrap unless the span is whole years: the real ERA5-Land record (first     !
+   !  stamp 01:00 under the end-of-interval convention) spans 366 d 22 h, and a 29-yr run wrapped    !
+   !  on it reads late May at a ~10 h offset while its daily-mean shortwave stays correct, so the    !
+   !  slow demography looks healthy and nothing surfaces the problem.                                !
    !=======================================================================================!
    subroutine validate_recycle_window(src, stat)
       type(met_source_t), intent(inout)  :: src
@@ -404,7 +403,8 @@ contains
 
    !=======================================================================================!
    !  ADVANCE: slide the window so rec_prev%when <= now < rec_next%when (at this grid_index).    !
-   !  Handles start-before-base_time (clamp/error) and EOF (recycle by whole file spans).        !
+   !  Handles a start before the first record (hold or error), the recycle seam, and a run past  !
+   !  the file's last record (clamped to the last interval).                                     !
    !=======================================================================================!
    subroutine met_advance(src, cur, now)
       type(met_source_t), intent(in)  :: src
@@ -420,7 +420,7 @@ contains
 
       !----- start before the first record (never reached once recycle-wrapped into span). ---!
       !      Hold: load records 1-2 and let met_instant clamp w_next=0 for now < t1 -- do NOT     !
-      !      overwrite rec_next (that stale-copy bug suppressed the reload once now reached t1).  !
+      !      overwrite rec_next: a stale copy there suppresses the reload once now reaches t1.    !
       if (now_sec < src%time_sec(1)) then
          if (src%fcfg%start_clamp == CLAMP_ERROR) then
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
@@ -610,11 +610,10 @@ contains
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
-   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Three   !
-   !      regimes: (a) CALENDAR recycle (whole-year Jan-1 file) maps the model date to its file      !
-   !      calendar year, preserving month/day/hour so day-of-year is exact across leap boundaries;   !
-   !      (b) LEGACY absolute-seconds span-wrap (non-calendar recyclable file, e.g. an idealized      !
-   !      diurnal repeat) once past EOF; (c) identity while the model date is within the file range.  !
+   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Under   !
+   !      calendar recycling the model date maps into the declared window (recycle_model_to_file),   !
+   !      keeping month/day/hour so day-of-year is exact across leap boundaries; otherwise it is the !
+   !      model date itself.                                                                          !
    pure function file_lookup_sec(src, now) result(s)
       type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
@@ -637,9 +636,8 @@ contains
    !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)            !
    !                                                                                                   !
    !      For a Jan-1 00:00:00 anchor `off` is identically 0 and this reduces, term for term, to the    !
-   !      plain year substitution -- so a window that the old Jan-1-only classifier would have accepted !
-   !      maps bit-for-bit as before. Without `off`, a mid-year window (or an end-of-interval file      !
-   !      whose first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.    !
+   !      plain year substitution. Without `off`, a mid-year window (or an end-of-interval file whose   !
+   !      first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.         !
    !                                                                                                   !
    !      LEAP DAY: Feb-29 -> Feb-28 when the target file year is non-leap (ED2 read_ol_file repeats    !
    !      Feb 28). A non-leap model year never asks for Feb-29, so the substitution is one-directional. !

@@ -3,10 +3,10 @@
 ! meds_forcing_config -- the [forcing]/[site] configuration for meteorological forcing, plus  !
 ! the selector codes shared by the config, the reader, and the disaggregation kernels.         !
 !                                                                                          !
-! Placed in src/shared (NOT src/forcing) so meds_config -- the DAG ROOT -- can carry            !
-! forcing_config_t as a plain-scalar component with NO backward `shared -> forcing` edge (the    !
-! same rule the energy design used for soil_thermal_params_t). Pure DATA + parameters; links      !
-! meds_kinds only. Defaults are the Ithaca NY / ERA5-Land reference site (design                   !
+! Placed in src/config (NOT src/forcing) so meds_config -- the DAG ROOT -- can carry            !
+! forcing_config_t as a plain-scalar component with NO backward `config -> forcing` edge (the    !
+! same rule the energy design used for soil_thermal_params_t). Pure DATA + parameters; uses       !
+! meds_kinds and meds_time only. Defaults are the Ithaca NY / ERA5-Land reference site (design     !
 ! MEDS_FORCING_DESIGN.md sections 3.3, 6.6).                                                        !
 !==========================================================================================!
 module meds_forcing_config
@@ -30,7 +30,7 @@ module meds_forcing_config
    !----- Reader backend ([forcing].format): a MEDS forcing NetCDF, the global ED_ERA5land       !
    !      archive, or a no-file reference-climate box. ------------------------------------------!
    integer(ik), parameter :: MET_BACKEND_CONST    = 0_ik   !< no file: met_forcing_t defaults (reference climate)
-   integer(ik), parameter :: MET_BACKEND_NETCDF   = 1_ik   !< the MEDS multi-grid forcing NetCDF ("legacy_file", §7.1)
+   integer(ik), parameter :: MET_BACKEND_NETCDF   = 1_ik   !< the MEDS multi-grid forcing NetCDF (format = "netcdf", §7.1)
    integer(ik), parameter :: MET_BACKEND_ERA5LAND = 2_ik   !< the per-variable monthly ED_ERA5land archive (§14, §15)
 
    integer, parameter :: MET_PATH_LEN = 1024                !< length of every forcing path field (§15.2)
@@ -45,11 +45,6 @@ module meds_forcing_config
    integer(ik), parameter :: SWPART_PASSTHROUGH  = 0_ik   !< file already carries the four streams
    integer(ik), parameter :: SWPART_CLEARIDX     = 1_ik   !< clearness-index (Erbs) split -- the ERA5-Land P0 default
    integer(ik), parameter :: SWPART_WEISS_NORMAN = 2_ik   !< Weiss-Norman band-specific (P1)
-   !----- A SWPART_SIB = 3 code (SiB, Sellers 1986) was declared here and RESERVED. It had no
-   !      implementation and no TOML spelling, so it could never be selected -- and
-   !      partition_shortwave's default branch would have routed it to Erbs if it had been.
-   !      Deleted 2026-09-13 (#185): a reserved code with no implementation is a promise the
-   !      code cannot keep. Add it back WITH the kernel if SiB is ever wanted.
 
    !----- Downwelling longwave source. -----------------------------------------------------!
    integer(ik), parameter :: LW_FILE       = 0_ik   !< read from file (ERA5-Land has strd)
@@ -96,7 +91,7 @@ module meds_forcing_config
    !==========================================================================================!
    type :: forcing_config_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
-      integer(ik)        :: backend      = MET_BACKEND_NETCDF    !< "netcdf" | "const"
+      integer(ik)        :: backend      = MET_BACKEND_NETCDF    !< format: "era5land" | "netcdf" | "const"
       character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "netcdf")
       !----- The ED_ERA5land archive (format = "era5land", MEDS_FORCING_DESIGN.md §15.2). The file   !
       !      template and static file are derived from data_path when left empty, which is what the  !
@@ -123,24 +118,24 @@ module meds_forcing_config
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] co2_source = "const"
       character(len=MET_PATH_LEN) :: co2_file = ''               !< the MEDS CO2 file (co2_source = "file")
       real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
-      !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it now REQUIRES a       !
-      !      declared recycle_start/recycle_end below, and a default-constructed config has no       !
-      !      meaningful window to offer. The TOML reader requires the key explicitly in any case.    !
+      !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it REQUIRES a declared   !
+      !      recycle_start/recycle_end below, and a default-constructed config has no meaningful     !
+      !      window to offer. The TOML reader requires the key explicitly in any case.               !
       logical            :: recycle      = .false.               !< cycle the record when the run outruns the file
       !----- The RECYCLE WINDOW, DECLARED (never inferred). MEDS does not sniff the file to guess   !
       !      where a cycle starts or how long it is: recycle_start/recycle_end are required whenever  !
       !      recycle=.true., and are validated to (a) span an exact whole number of calendar years     !
       !      [config check] and (b) match the file's actual record timestamps [met_open]. A mismatch    !
       !      -- e.g. a config declaring 00:00:00 against an ERA5-Land file whose records are stamped     !
-      !      01:00:00 -- is a HARD ERROR, not a silent fallback. The old behaviour (classify the file    !
-      !      and quietly drop to an absolute-seconds span-wrap when it did not look Jan-1-aligned) is     !
-      !      what let a 30-yr run be driven by phase-scrambled sub-daily shortwave: the span was          !
-      !      366 d 22 h, so every wrap shifted hour-of-day, while the daily MEAN stayed right and the     !
-      !      slow demography still looked sane. See MEDS_FORCING_DESIGN.md.                               !
+      !      01:00:00 -- is a HARD ERROR, not a silent fallback. Inferring the window from the file      !
+      !      instead drives a 30-yr run with phase-scrambled sub-daily shortwave: the ERA5-Land span is    !
+      !      366 d 22 h, so every wrap on it shifts hour-of-day, while the daily MEAN stays right and the  !
+      !      slow demography still looks sane. See MEDS_FORCING_DESIGN.md.                                 !
       !      The window is HALF-OPEN [recycle_start, recycle_end): recycle_end is the exclusive upper      !
       !      bound, i.e. the same instant one cycle later, so N years of records are covered exactly once. !
-      !      The anchor may sit anywhere in the calendar (mid-year windows are fine) -- only the           !
-      !      whole-year SPAN is required, not a Jan-1 start.                                               !
+      !      The anchor may sit at any record stamp (mid-year windows are fine) -- only the whole-year     !
+      !      SPAN is required, not a Jan-1 start. A region's window starts at 00:00 or 01:00 on the 1st,   !
+      !      because a region loads a month's forcing once (validate_config).                             !
       type(meds_time_t)  :: recycle_start                        !< first instant of the cycle (inclusive)
       type(meds_time_t)  :: recycle_end                          !< first instant AFTER the cycle (exclusive)
       integer(ik)        :: start_clamp  = CLAMP_ERROR           !< model start < base_time: error | hold record #1

@@ -1,25 +1,20 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_driver -- the coupled model as an OPEN / STEP / FINALIZE object, so something other      !
-! than the `meds_main` program can drive it.                                                    !
-!                                                                                          !
-! This is `meds_main`'s body, lifted verbatim. That program was 400 lines of driver logic with   !
-! no seam in it: configuration, initial community, fast context, met reader, output manager,     !
-! the calendar loop and the closing conservation reports were all statements in one PROGRAM, so  !
-! the ONLY way to run MEDS was to exec the binary. `meds_main` is now a thin shell over this      !
-! module and the C-API shim `meds_c_api_run` is a second caller -- which is what lets             !
-! `examples/example_biophysics` drive the full coupled model from Python.                          !
+! meds_driver -- a site run as an OPEN / STEP / FINALIZE object, so a caller other than the       !
+! `meds_main` program can drive it. `meds_main` is a thin shell over it, and the C-API shim        !
+! `meds_c_api_run` is a second caller, which is what lets `examples/example_biophysics` drive the   !
+! full coupled model from Python. The site is one polygon (meds_polygon); a region of polygons is   !
+! meds_region.                                                                                      !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
 !   call driver_open('meds_config_main.toml', run, ok)                                            !
 !   do while (.not. driver_done(run)) ; call driver_step(run, status) ; end do                     !
 !   call driver_finalize(run) ; call driver_free(run)                                              !
 !                                                                                          !
-! ONE deliberate behaviour change: the run loop's `error stop` on a NaN state is now a STATUS      !
-! RETURN. In a program those are the same thing, but this module is compiled into a shared         !
-! library that a Python interpreter dlopens, and `error stop` there takes the interpreter down     !
-! with it -- no traceback, no chance to inspect the state that went bad. `meds_main` re-raises      !
-! it as the same `error stop`, so the executable's behaviour is unchanged.                          !
+! A NaN state or an impossible soil-carbon pool is a STATUS RETURN, not an `error stop`. This       !
+! module is compiled into a shared library that a Python interpreter dlopens, and `error stop`     !
+! there takes the interpreter down with it -- no traceback, no chance to inspect the state that    !
+! went bad. `meds_main` turns the status into an `error stop`.                                     !
 !==========================================================================================!
 module meds_driver
    use meds_kinds,                  only : wp, ik
@@ -88,7 +83,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! driver_open -- config -> initial community -> fast context -> met reader -> soil-carbon      !
-   ! spin-up -> output manager. Everything meds_main did before its `do while`.                   !
+   ! spin-up -> output files: everything before the first step.                                  !
    !---------------------------------------------------------------------------------------!
    subroutine driver_open(path, run, ok, verbose)
       character(len=*),  intent(in)    :: path
@@ -217,7 +212,8 @@ contains
       end if
 
       !----- 3b. DIAGNOSTIC output ([output].enabled): the netCDF-free manager (registry +        !
-      !          integrator buffers). The per-step tick stages closed periods; the step drains them.!
+      !          integrator buffers). The per-step tick queues closed periods; the I/O phase      !
+      !          writes them.                                                                      !
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
          call manager_setup(run%out_files, run%cfg)
@@ -242,9 +238,10 @@ contains
    end subroutine driver_open
 
    !---------------------------------------------------------------------------------------!
-   ! driver_step -- ONE slow step: advance the calendar, run the coupled stepper (which sub-steps  !
-   ! the fast loop inside it), drain the FAST diagnostic tier, tick the slower tiers, and handle    !
-   ! the year roll-over (summary, NaN guard, state checkpoint).                                     !
+   ! driver_step -- ONE slow step: advance the calendar, load the step's forcing (met_prefetch),   !
+   ! step the polygon (polygon_step: the coupled stepper, the fast loop inside it, and the output   !
+   ! tick), print the year summary, and after a month's last step run the I/O phase: the queued      !
+   ! records, and at a year's end the state checkpoint.                                             !
    !---------------------------------------------------------------------------------------!
    subroutine driver_step(run, status)
       type(meds_run_t), intent(inout) :: run

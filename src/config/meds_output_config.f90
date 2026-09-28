@@ -102,12 +102,12 @@ module meds_output_config
       logical            :: strict_caps = .false.               !< .false. warn+truncate on n>cap; .true. error stop
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH (§5.5)
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast (§4.1)
-      !----- High-level variable-GROUP toggles (main config, §6). Order:                       !
-      !      STRUCTURE / CARBON / WATER / ENERGY / NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM.  !
-      !      v0.1 default (MEDS_IO_V01_PLAN.md section 8 D6): the six that make a run judgeable   !
-      !      are ON -- including NUMERICS, because it carries the budget residuals, and a closure  !
-      !      nobody records is worse than one nobody looks at. RADIATION and ECOPHYS are the two   !
-      !      heavy evaluation groups and stay OFF; each is one boolean away.  ----------------!
+      !----- High-level variable-GROUP toggles (main config, §6). Order: STRUCTURE / CARBON /  !
+      !      WATER / ENERGY / NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM / FORCING. Default    !
+      !      (MEDS_IO_V01_PLAN.md section 8 D6): the seven that make a run judgeable are ON --    !
+      !      including NUMERICS, because it carries the budget residuals, and a closure nobody     !
+      !      records is worse than one nobody looks at. RADIATION and ECOPHYS are the two heavy    !
+      !      evaluation groups and stay OFF; each is one boolean away.  ------------------------!
       logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
                                              .false., .false., .true., .true.]
       !----- Per-AXIS toggles: COHORT / PATCH / PFT / SIZE / SOIL_PATCH. The 2-D soil axis is    !

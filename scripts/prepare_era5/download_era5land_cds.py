@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """download_era5land_cds.py -- download ERA5-Land hourly fields for a lat/lon box from the Copernicus
-Climate Data Store (CDS), dataset "reanalysis-era5-land". Adapted from scripts/download_era5land.py.
+Climate Data Store (CDS), dataset "reanalysis-era5-land".
 
 A single site is simply a small box. This script only downloads: the files are kept exactly as the
 CDS delivers them (GRIB by default), one per request, and checked by message or time-stamp count.

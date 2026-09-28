@@ -349,12 +349,12 @@ meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
-#----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
-#      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
-#      it has two callers: the executable below, and the C-API shim src/c_api/meds_c_api_run.f90   #
-#      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
-#      it is the one place that owns configuration, the calendar, the output manager and the       #
-#      closing conservation reports together.                                                      #
+#----- The coupled model as OPEN / STEP / FINALIZE objects: one polygon's state and step           #
+#      (meds_polygon), the site run (meds_driver) and the region run (meds_region). A LIBRARY       #
+#      rather than part of the program because it has two callers: the executable below, and the  #
+#      C-API shim src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It  #
+#      sits above meds_model + the IO layer -- the one place that owns configuration, the          #
+#      calendar, the output files and the closing conservation reports together.                   #
 add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
