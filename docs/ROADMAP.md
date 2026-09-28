@@ -183,7 +183,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 
 ## 8. Forcing
 
-Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
+Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
 [`science/forcing.md`](science/forcing.md).
 
 - **A better cloud term for the LWdown synthesis.** *Candidate.* [#257](https://github.com/xiangtaoxu/MEDS/issues/257)
@@ -203,13 +203,15 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   [#303](https://github.com/xiangtaoxu/MEDS/issues/303) Deferred until a study needs them. GDEX
   starts in June 2002, so they come from the CDS, with the tools that already built 2026-04 and
   2026-06.
-- **The multi-polygon runtime.** *Candidate.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) A grid → polygon → site state hierarchy, an array
-  of readers, a polygon loop and MPI. Large and orthogonal to everything else.
-  `nearest_grid_index` is the reusable atom, already built. The forcing side is ready too: the
-  ED_ERA5land reader's box selection and multi-cell month loads (`meds_era5land_reader`,
-  `MEDS_FORCING_DESIGN.md` §15.5) are implemented and tested, and `[run].mode = "region"` with a
-  `[region]` block arrives with the runtime that consumes them (`MEDS_POLYGON_RUNTIME_PLAN.md`, whose
-  §10.1–§10.3 plan R0–R2 in detail).
+- **The multi-polygon runtime.** *Planned.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) Region runs exist since R2 (#289):
+  `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon, in
+  one process, all sharing one forcing reader. What remains is in `MEDS_POLYGON_RUNTIME_PLAN.md` §10:
+  - R3, the OpenMP loop over polygons (today they are stepped one after another);
+  - R4, region checkpoints and restarts (a region writes none yet);
+  - R5, failure isolation and batching by tiles;
+  - R6, a C API and Python entry point, and an example.
+
+  MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).
 
 ---
 

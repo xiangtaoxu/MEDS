@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """build_era5land_archive.py -- build the global per-variable monthly ED_ERA5land archive from raw
-GDEX files or global CDS GRIB files (docs/dev_plans/MEDS_FORCING_DESIGN.md sections 13.2 and 14).
+GDEX files or global CDS GRIB files (docs/dev_plans/archive/MEDS_FORCING_DESIGN.md sections 13.2 and 14).
 
 Output, one file per variable per month, directly in data_path (no subfolders; the name carries the
 variable and month, so a prefix glob selects any subset):

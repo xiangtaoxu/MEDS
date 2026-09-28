@@ -1,6 +1,30 @@
 # MEDS Meteorological Forcing — Source & Wiring Design
 
-> # ✅ LIVE — status reviewed 2026-09-27; revised 2026-09-26 with the forcing-data plan (§11–§19).
+> # 🗃️ ARCHIVED — 2026-09-27. Complete: every item shipped, was deferred, or was ruled out of scope.
+>
+> **What shipped:**
+> - the P0 reader, kernels and wiring, with the P1 canopy-RT join and the P2 shortwave, multi-year,
+>   nearest-grid and wind/lapse options (PR #36), and the declared recycle window (#69);
+> - longwave synthesis (issue #182);
+> - the ERA5-Land download tools, global archive builder and archive reader (F1–F4: #279, #280,
+>   #282, #288), and `make_forcing_file.py` (F5, #291);
+> - the fast loop reading the forcing record directly (#292) and the forcing echo in the output (#293);
+> - prescribed CO₂ (#301);
+> - the vertical corrections: the terrain lapse and the move to each patch's canopy-air top (#305).
+>
+> The region runtime this fed moved to `MEDS_POLYGON_RUNTIME_PLAN.md`; region runs (R2) shipped in #289.
+>
+> **Not done:** the later products NLDAS-3, Daymet and CHIRPS (#302) and the archive years before
+> June 2002 (#303), both deferred to ROADMAP §8. Climate-change perturbations are out of scope: MEDS
+> runs on the forcing it is given.
+>
+> **The live description** is `docs/science/forcing.md`: the file format and the de-accumulation
+> recipe (§1), the vertical corrections (§8), recycling (§9) and CO₂ (§12). See also
+> `src/forcing/README.md` and the tool headers in `scripts/prepare_era5/` and `scripts/prepare_co2/`.
+> Section numbers here are unchanged, because source comments cite them by bare filename.
+>
+> The status record below is as it stood at archiving (reviewed 2026-09-27; revised 2026-09-26 with
+> the forcing-data plan, §11–§19).
 >
 > **Done (verified in the code, 2026-09-26):**
 > - ✅ The P0 reader, kernels and wiring (PR #36, 2026-07-08).

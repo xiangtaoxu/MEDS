@@ -34,9 +34,8 @@ a move is safe but a renumber is not.
 | [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions, the placement rules, and §15 — the phased remainder: `column_cohort_t` removal, the packed state vector, per-layer face budgets, test-support consolidation. |
 | [`MEDS_PRODUCTION_INTEGRATOR_PLAN.md`](MEDS_PRODUCTION_INTEGRATOR_PLAN.md) | The active numerics roadmap: adaptive freeze cadence, soil water in the tableau, the RK45 production warning, the `rwc_floor` clamp artefact. Also the record of what was refuted by measurement. |
 | [`MEDS_BIOGEOCHEMISTRY_DESIGN.md`](MEDS_BIOGEOCHEMISTRY_DESIGN.md) | P1 nitrogen, P1 DAMM (kernel exists, unreachable), P2 vertically resolved pools, fire, coarse woody debris. |
-| [`MEDS_FORCING_DESIGN.md`](MEDS_FORCING_DESIGN.md) | Part II (§11–§19, revised 2026-09-26): the ERA5-Land archive (download tools ✅ F1; global per-variable monthly `ED_ERA5land_` archive F2–F3; the reader upgrade F4: `met_source`, `data_path`, site/box monthly reads, internal conversion of dewpoint and wind components; later products). Prescribed CO₂ (#184), the `apply_met_to_ctx` retirement and the forcing echo are done. Reference for the `legacy_file` format (§7.1) and the de-accumulation recipe (§7.3). The multi-polygon runtime moved to `MEDS_POLYGON_RUNTIME_PLAN.md`. |
 | [`MEDS_SNOW_DESIGN.md`](MEDS_SNOW_DESIGN.md) | P1 multi-layer snow with compaction and an aging albedo; P2 canopy snow interception. |
-| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Design only (2026-09-26, revised 2026-09-27). Runs of a contiguous region as an OpenMP loop over independent polygons, without MPI: month-synchronous compute/IO split, shared forcing month buffer, polygon-dimension output and its performance, ragged restart, batching and job arrays for large regions; site networks run as separate processes. Phases R0–R6: R0 measured (§10.1: about 1 s and 0.7 MB per established polygon-month and polygon; 18.6% of CPU in allocation), R1–R2 planned step by step (§10.2–§10.3); the non-MPI part of ROADMAP #183. Its forcing dependency, F4, is done (#282). |
+| [`MEDS_POLYGON_RUNTIME_PLAN.md`](MEDS_POLYGON_RUNTIME_PLAN.md) | Written 2026-09-26, revised 2026-09-27. Runs of a contiguous region as an OpenMP loop over independent polygons, without MPI: month-synchronous compute/IO split, shared forcing month buffer, polygon-dimension output and its performance, ragged restart, batching and job arrays for large regions; site networks run as separate processes. Phases R0–R6: R0 measured (§10.1: about 1 s and 0.7 MB per established polygon-month and polygon; 18.6% of CPU in allocation), R1, the compute/I-O split, and R2, region runs (#289), implemented (§10.2–§10.3); R3–R6 open (the OpenMP polygon loop, region restarts, failure isolation and tiles, interfaces). The non-MPI part of ROADMAP #183. Its forcing dependency, F4, is done (#282). |
 | [`MEDS_GPU_EVALUATION.md`](MEDS_GPU_EVALUATION.md) | Five of seven recommendations, including cohort-axis threading and the allocator traffic. The measurement itself is closed: GPU offload is not viable as scoped. |
 
 ## Reference — no open items, but cited by section from the code
@@ -66,7 +65,7 @@ needs it.
 
 ## `archive/`
 
-Thirty-three documents whose work is done. Each opens with a tombstone: what shipped, in which pull
+Thirty-four documents whose work is done. Each opens with a tombstone: what shipped, in which pull
 request, what changed name on the way in, and where the live description is. Three grades appear:
 
 - **🗃️ ARCHIVED** — complete or superseded. Safe to read as history.
