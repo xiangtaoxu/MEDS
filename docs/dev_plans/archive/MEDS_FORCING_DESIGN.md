@@ -1241,8 +1241,9 @@ The downloaded NetCDF's variable names are `t2m`, `d2m`, `sp`, `u10`, `v10`, `tp
 - **Removed from preprocessing:** the humidity, wind and CO₂ lines of the old code. `Tdew` and
   `u10`/`v10` are stored as delivered, the reader converts them (§15.4), and `CO2air` is
   never written (CO₂ comes from `[forcing].co2_source`, #184).
-- **Implementation:** `build_era5land_archive.py` implements the recipe for the archive, vectorised
-  over cells and months, and `make_forcing_file.py --box-dir` for box files; the post-processor
+- **Implementation:** one function, `era5land_common.deaccumulate`, implements the recipe, vectorised
+  over cells and hours, with the factors and clip flags of `ARCHIVE_VARIABLES`; the archive builder
+  and `make_forcing_file.py --box-dir` both call it (#313). The post-processor
   (§13.1) leaves accumulations as delivered. A single file (§7.1) still carries `Qair` and `Wind`,
   which `make_forcing_file.py` computes by the reader's own formulas; since #184 it writes no
   `CO2air`. The per-cell sketch
@@ -1528,7 +1529,7 @@ resume, and a JSON-lines transfer log.
 | `download_era5land_gdex.py` | GDEX's global 5-day files (6 per variable per month) into a raw pool that mirrors GDEX's directory tree | Needs no box. Checks byte count and hour count. Parallel streams: default 4, capped at GDEX's per-user limit of 10. Discovers coverage and stops with a clear message before it. |
 | `download_era5land_cds.py` | CDS `reanalysis-era5-land` for a box (`area`), or the globe (`--bbox global`: no `area` key, the native 1801 × 3600 grid) | GRIB by default. One variable per request, whole months grouped (12 per GRIB request, 6 per NetCDF), a partial month on its own, and one tiny request for the closing 00:00 stamp. `--parallel` (default 3) keeps several requests in the CDS queue at once. Checks the GRIB message count. Logs queue and transfer time separately. |
 | `make_forcing_file.py` | nothing: it writes the §7.1 single forcing file from the archive (`--data-path`, the nearest valid cell as the reader picks it) or from box files (`--box-dir`, de-accumulated here) | Both inputs give the same variables, conversions and clip rule (§7.3). A file cut from the archive reproduces a run on the archive itself to about 1e-7 (July 2024, Ithaca). |
-| `era5land_common.py` | shared helpers | Variable catalogue, box and date handling, GDEX file naming, box selection including across 0° and 180°, group-writable output. |
+| `era5land_common.py` | shared helpers | Variable catalogues (raw and archive, with the archive's conversions and CF attributes), the de-accumulation, box and date handling, time conventions, GDEX and CDS file naming, GRIB grid decoding, box selection including across 0° and 180°, group-writable output (#313: everything more than one script needs is defined here once). |
 | `environment.yml` | the tools' environment | numpy, netcdf4, cdsapi ≥ 0.7.7, eccodes, python-eccodes; conda-forge only. |
 
 **Source facts** (checked or measured 2026-09-25/26; §19):

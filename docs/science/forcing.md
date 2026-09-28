@@ -32,7 +32,7 @@ variables:
     double time(time) ; time:calendar = "proleptic_gregorian" ;
         time:units = "seconds since 2024-01-01 01:00:00" ;      // the base-time anchor
     double latitude(grid) ["degrees_north"], longitude(grid) ["degrees_east"] ;
-    double elevation(grid) ["m"] ;                              // optional, not read
+    double elevation(grid) ["m"] ;              // optional, not read: the cell's orography (archive only)
     float Tair(time,grid) ["K"], Qair(time,grid) ["kg kg-1"],       // cell_methods = "time: point"
           PSurf(time,grid) ["Pa"], Wind(time,grid) ["m s-1"] ;
     float u10(time,grid), v10(time,grid) ["m s-1"] ;            // optional wind vector; see below
@@ -82,7 +82,11 @@ $`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, unfloored (the reader floors every s
 0.1 m s⁻¹ itself, for the Monin–Obukhov stability), and the three **accumulated** fluxes de-accumulated
 then unit-converted:
 $`\mathrm{Rainf}=\Delta tp\cdot 1000/3600`$ [kg m⁻² s⁻¹], $`\mathrm{SWdown}=\Delta ssrd/3600`$,
-$`\mathrm{LWdown}=\Delta strd/3600`$ [W m⁻²].
+$`\mathrm{LWdown}=\Delta strd/3600`$ [W m⁻²]. Both inputs go through one table and one rule,
+`ARCHIVE_VARIABLES` and `deaccumulate` in `scripts/prepare_era5/era5land_common.py`, the ones the archive
+is built with, so the file names and describes each variable as the archive does. The location is always
+named (`--lat` with `--lon`, `--cells`, or `--all-cells` for box files); only the archive knows the cell's
+orography, so only a file cut from it carries `elevation`.
 
 *The 00Z trap.* ERA5-Land accumulations run from 00 UTC and reset daily, so the **00:00 stamp carries the
 whole previous day's total** (step 24) — not zero, and not one hour. Ordered by valid time, the per-hour

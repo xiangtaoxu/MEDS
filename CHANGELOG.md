@@ -330,6 +330,44 @@ before and after.
   source. It now writes `u10` and `v10` beside the unfloored `Wind`, so the reader takes the speed
   from the vector, as it does with the archive. Files written before still load as they did.
 
+- **The ERA5-Land tools define what they share once** (#313, #314), in `era5land_common.py`:
+  - the de-accumulation (`deaccumulate`), which the archive builder and `make_forcing_file.py
+    --box-dir` both call;
+  - the archive's variable table, whose factors, clip flags, units and CF attributes
+    `make_forcing_file.py` now uses too;
+  - the epoch, the month of an end-stamped hour, the 0…360 → ±180 reorder, the GRIB grid decoding,
+    the CDS file names and `PROCESSING_VERSION`.
+
+  The long functions (`build_one`, the builders' and `make_forcing_file.py`'s `main`) are split into
+  single steps. No output value changes: the builder rebuilds the published July 2024 `Rainf` and
+  `LWdown` bit for bit (1.6 × 10⁹ cell-hours each, attributes and storage too) and a band of `Tair`,
+  and every other script writes the data it wrote before. What does change:
+  - a forcing file describes each variable as the archive does: `long_name`, `standard_name` and
+    `height` are the archive's (`Qair` and `Wind` have their own), and the units are unchanged;
+  - box files spell their time units as the archive does (`seconds since 1970-01-01 00:00:00`);
+  - the GRIB decoder refuses a scan order other than rows of west-to-east points, which its reshape
+    to (`Nj`, `Ni`) assumes, and the GDEX reader checks every raw file's latitudes and longitudes,
+    not only the last file's longitudes;
+  - `build_era5land_static.py` takes the mask from the file's one (`valid_time`, `latitude`,
+    `longitude`) field, not its first non-coordinate variable.
+
+- **`make_forcing_file.py` needs a location** (review P9, #313, #314). `--lat` and `--lon`
+  defaulted to Ithaca, so a command that named no site wrote an Ithaca file, and `--cells` or
+  `--all-cells` overrode them without a word. The location is now required, in exactly one form:
+  `--lat` with `--lon`, `--cells`, or `--all-cells` (box files). `--elevation` (default 320 m, box
+  files) is gone: `elevation(grid)` records the source cell's orography, which the archive supplies
+  and box files do not, so a file made from box files has none; the model reads
+  `[site].grid_elevation`, never this variable. Box files must have an hourly time axis without
+  gaps, which the de-accumulation assumes, and a box cell without data stops with an error naming
+  it (it used to trim every record away and crash).
+
+- **A failed download stops only itself** (review P7, #313, #314). A GDEX transfer that failed after
+  its retries, or any failed CDS request, ended the run with a traceback, and the transfers still
+  queued ran on unreported and unverified. Each failure is now reported and logged, the other
+  downloads finish, the exit status counts the failures, and a rerun fetches only what is missing.
+  The CDS downloader checks its files on the main thread, as the GDEX one does, since HDF5 is not
+  thread-safe; the CDS client retries transient HTTP failures itself.
+
 - **The documentation describes v0.3.0** (review §5, §10, #314).
   - Six finished design plans move to `docs/dev_plans/archive/` with tombstones (biogeochemistry,
     snow, the GPU evaluation, the veg-energy plan, the 2026-09-13 docs review, the v0.2 release

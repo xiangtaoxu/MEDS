@@ -33,47 +33,35 @@ import era5land_common as common
 G = 9.80665                        # [m s-2] standard gravity (geopotential -> height)
 INVARIANTS = {"lsm": "e5land.oper.invariant/202601/e5land.oper.invariant.lsm_000172.2026010101-2026010101.nc",
               "z":   "e5land.oper.invariant/202601/e5land.oper.invariant.z_000128.2026010101-2026010101.nc"}
-PROCESSING_VERSION = "1.0"
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="Build the ED_ERA5land archive's static file.",
-                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
-    ap.add_argument("--raw-dir", required=True, help="GDEX raw pool root (download_era5land_gdex.py --out-dir)")
-    ap.add_argument("--data-path", required=True, help="archive root (the reader's data_path)")
-    ap.add_argument("--mask-from", required=True, help="a raw GDEX data file, relative to --raw-dir, defining `valid`")
-    ap.add_argument("--keep-raw", action="store_true", help="keep the raw invariant files (default: delete, OD2)")
-    ap.add_argument("--force", action="store_true", help="rebuild even if the static file exists")
-    args = ap.parse_args(argv)
-
-    common.use_group_umask()
+def read_mask(mask_path):
+    """The raw data file's grid and the cells with data at every one of its hours: (lat, lon, finite).
+    The file's field is its one (valid_time, latitude, longitude) variable."""
     from netCDF4 import Dataset
-    out = common.static_file(args.data_path)
-    if os.path.exists(out) and not args.force:
-        sys.exit(f"{out} exists (use --force to rebuild)")
-
-    # the raw data file defines the grid and the valid mask
-    mask_path = os.path.join(args.raw_dir, args.mask_from)
     with Dataset(mask_path) as d:
         lat = np.asarray(d["latitude"][:], dtype=float)
         lon = np.asarray(d["longitude"][:], dtype=float)
-        var = [v for v in d.variables if v not in ("latitude", "longitude", "valid_time")][0]
+        fields = [name for name, v in d.variables.items() if v.dimensions == ("valid_time", "latitude", "longitude")]
+        if len(fields) != 1:
+            sys.exit(f"{mask_path}: expected one (valid_time, latitude, longitude) field, found {fields}")
         finite = None
         for k in range(d.dimensions["valid_time"].size):   # valid = finite at EVERY hour of this file
-            f = np.isfinite(np.ma.filled(d[var][k], np.nan))
+            f = np.isfinite(np.ma.filled(d[fields[0]][k], np.nan))
             finite = f if finite is None else (finite & f)
             if k == 0:
                 first = f
         if not np.array_equal(first, finite):
             sys.exit(f"{mask_path}: the no-data pattern changes between hours; cannot define a static mask")
-    order = np.argsort(np.where(lon > 180.0, lon - 360.0, lon), kind="stable")   # output lon -180..180
-    lon_out = np.round(np.where(lon > 180.0, lon - 360.0, lon)[order], 4)
-    lat_out = np.round(lat, 4)
+    return lat, lon, finite
 
-    # invariants: fetch if missing, check the grid, read
+
+def read_invariants(raw_dir, lat, lon, mask_path):
+    """The invariants on the data grid, fetched from GDEX into the pool if missing: {name: field}."""
+    from netCDF4 import Dataset
     fields = {}
     for name, rel in INVARIANTS.items():
-        path = os.path.join(args.raw_dir, rel)
+        path = os.path.join(raw_dir, rel)
         if not os.path.exists(path):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             nbytes, secs = common.http_download(f"{common.GDEX_BASE_URL}/{rel}", path)
@@ -84,22 +72,19 @@ def main(argv=None):
             if not (np.allclose(ilat, lat, atol=1e-3) and np.allclose(ilon, lon, atol=1e-3)):
                 sys.exit(f"{path}: grid differs from the data grid of {mask_path}")
             fields[name] = np.ma.filled(d[name][0], np.nan).astype(np.float64)
+    return fields
 
-    valid = finite[:, order].astype(np.int8)
-    elevation = (fields["z"] / G)[:, order].astype(np.float32)
-    land_fraction = fields["lsm"][:, order].astype(np.float32)
-    n_valid = int(valid.sum())
-    lsm_pos = land_fraction > 0
-    print(f"valid cells {n_valid:,} of {valid.size:,}; valid with lsm = 0: {int(((valid == 1) & ~lsm_pos).sum()):,}; "
-          f"lsm > 0 without data: {int(((valid == 0) & lsm_pos).sum()):,}")
 
+def write_static(out, lat, lon, valid, elevation, land_fraction, mask_from):
+    """Write the static file via a .part file, so an existing one is always complete."""
+    from netCDF4 import Dataset
     os.makedirs(os.path.dirname(out), exist_ok=True)
     part = out + ".part"
     with Dataset(part, "w", format="NETCDF4") as d:
-        d.createDimension("lat", len(lat_out))
-        d.createDimension("lon", len(lon_out))
-        v = d.createVariable("lat", "f8", ("lat",)); v.units, v.standard_name = "degrees_north", "latitude"; v[:] = lat_out
-        v = d.createVariable("lon", "f8", ("lon",)); v.units, v.standard_name = "degrees_east", "longitude"; v[:] = lon_out
+        d.createDimension("lat", len(lat))
+        d.createDimension("lon", len(lon))
+        v = d.createVariable("lat", "f8", ("lat",)); v.units, v.standard_name = "degrees_north", "latitude"; v[:] = lat
+        v = d.createVariable("lon", "f8", ("lon",)); v.units, v.standard_name = "degrees_east", "longitude"; v[:] = lon
         v = d.createVariable("valid", "i1", ("lat", "lon"), zlib=True, complevel=1)
         v.long_name = "1 where ERA5-Land supplies forcing data (defined from the data, not the land-sea mask)"
         v.flag_values, v.flag_meanings = np.array([0, 1], dtype=np.int8), "no_data valid"
@@ -112,14 +97,47 @@ def main(argv=None):
         v[:] = land_fraction
         d.Conventions = "CF-1.10"
         d.title = "ED_ERA5land static fields"
-        d.source = "NSF NCAR GDEX d633008 (ERA5-Land hourly), invariants lsm and z; valid mask from " + args.mask_from
-        d.processing_version = PROCESSING_VERSION
-        d.n_valid_cells = np.int64(n_valid)
+        d.source = "NSF NCAR GDEX d633008 (ERA5-Land hourly), invariants lsm and z; valid mask from " + mask_from
+        d.processing_version = common.PROCESSING_VERSION
+        d.n_valid_cells = np.int64(int(valid.sum()))
         d.history = f"{dt.datetime.now(dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ} build_era5land_static.py"
     os.replace(part, out)
+
+
+def parse_args(argv):
+    ap = argparse.ArgumentParser(description="Build the ED_ERA5land archive's static file.",
+                                 formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    ap.add_argument("--raw-dir", required=True, help="GDEX raw pool root (download_era5land_gdex.py --out-dir)")
+    ap.add_argument("--data-path", required=True, help="archive root (the reader's data_path)")
+    ap.add_argument("--mask-from", required=True, help="a raw GDEX data file, relative to --raw-dir, defining `valid`")
+    ap.add_argument("--keep-raw", action="store_true", help="keep the raw invariant files (default: delete, OD2)")
+    ap.add_argument("--force", action="store_true", help="rebuild even if the static file exists")
+    return ap.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    common.use_group_umask()
+    out = common.static_file(args.data_path)
+    if os.path.exists(out) and not args.force:
+        sys.exit(f"{out} exists (use --force to rebuild)")
+
+    mask_path = os.path.join(args.raw_dir, args.mask_from)
+    lat, lon, finite = read_mask(mask_path)                 # the raw data file defines the grid and the mask
+    fields = read_invariants(args.raw_dir, lat, lon, mask_path)
+    order, lon180 = common.lon180_order(lon)                # the output's -180..180 axis
+    valid = finite[:, order].astype(np.int8)
+    elevation = (fields["z"] / G)[:, order].astype(np.float32)
+    land_fraction = fields["lsm"][:, order].astype(np.float32)
+    n_valid = int(valid.sum())
+    lsm_pos = land_fraction > 0
+    print(f"valid cells {n_valid:,} of {valid.size:,}; valid with lsm = 0: {int(((valid == 1) & ~lsm_pos).sum()):,}; "
+          f"lsm > 0 without data: {int(((valid == 0) & lsm_pos).sum()):,}")
+
+    write_static(out, np.round(lat, 4), np.round(lon180, 4), valid, elevation, land_fraction, args.mask_from)
     common.update_manifest(args.data_path, "static", dict(
         file=os.path.relpath(out, args.data_path), bytes=os.path.getsize(out), sha256=common.sha256_file(out),
-        n_valid_cells=n_valid, mask_from=args.mask_from, processing_version=PROCESSING_VERSION,
+        n_valid_cells=n_valid, mask_from=args.mask_from, processing_version=common.PROCESSING_VERSION,
         created_utc=dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")))
     print(f"wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
     if not args.keep_raw:

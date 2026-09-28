@@ -8,11 +8,15 @@ Post-processing turns raw files into model-ready NetCDF:
   build_era5land_static.py   the archive's static file (valid-data mask, elevation, land fraction)
   build_era5land_archive.py  the global per-variable monthly ED_ERA5land_ archive (the forcing MEDS reads)
   postprocess_era5land.py    NetCDF box files with ERA5-Land's own names (a portable box extract)
+  make_forcing_file.py       a MEDS single forcing file, from the archive or from box files
 The archive layout is specified in docs/dev_plans/archive/MEDS_FORCING_DESIGN.md sections 13-14.
+What more than one script needs is defined here once: the variable tables with their units and
+conversions, the de-accumulation rule, the time conventions, source file naming and grid decoding.
 """
 import calendar
 import datetime as dt
 import fcntl
+import glob
 import hashlib
 import http.client
 import json
@@ -24,25 +28,30 @@ import urllib.request
 
 import numpy as np
 
-# The eight ERA5-Land variables MEDS forcing needs.
-#   short name -> (CDS request name, GDEX product, GDEX file code, GRIB step type)
-# 'accum' fields are accumulated since 00 UTC in both sources and are de-accumulated downstream.
+# The eight raw ERA5-Land variables MEDS forcing needs.
+#   short name -> (CDS request name, GDEX product, GDEX file code)
+# The GDEX product "accumu" holds the fields accumulated since 00 UTC; ARCHIVE_VARIABLES' kind says
+# which archive variables are de-accumulated from them.
 VARIABLES = {
-    "t2m":  ("2m_temperature",                      "instan", "t2m_167",  "instant"),
-    "d2m":  ("2m_dewpoint_temperature",             "instan", "d2m_168",  "instant"),
-    "sp":   ("surface_pressure",                    "instan", "sp_134",   "instant"),
-    "u10":  ("10m_u_component_of_wind",             "instan", "u10_165",  "instant"),
-    "v10":  ("10m_v_component_of_wind",             "instan", "v10_166",  "instant"),
-    "tp":   ("total_precipitation",                 "accumu", "tp_228",   "accum"),
-    "ssrd": ("surface_solar_radiation_downwards",   "accumu", "ssrd_169", "accum"),
-    "strd": ("surface_thermal_radiation_downwards", "accumu", "strd_175", "accum"),
+    "t2m":  ("2m_temperature",                      "instan", "t2m_167"),
+    "d2m":  ("2m_dewpoint_temperature",             "instan", "d2m_168"),
+    "sp":   ("surface_pressure",                    "instan", "sp_134"),
+    "u10":  ("10m_u_component_of_wind",             "instan", "u10_165"),
+    "v10":  ("10m_v_component_of_wind",             "instan", "v10_166"),
+    "tp":   ("total_precipitation",                 "accumu", "tp_228"),
+    "ssrd": ("surface_solar_radiation_downwards",   "accumu", "ssrd_169"),
+    "strd": ("surface_thermal_radiation_downwards", "accumu", "strd_175"),
 }
 
 GRID_STEP = 0.1   # [deg] ERA5-Land native grid spacing
+PROCESSING_VERSION = "1.0"   # recorded in the archive's files and manifest; raise it when their content changes
 
 # The archive's variables (MEDS_FORCING_DESIGN.md section 13.2). Each comes from exactly one raw
-# variable, so every archive variable-month can be built independently.
+# variable, so every archive variable-month can be built independently. make_forcing_file.py converts
+# box files by the same entries and writes their CF attributes, so both products agree.
 #   archive name -> dict(raw, kind, factor, clip_negative, digits, bounds, CF attributes)
+# kind "accum": de-accumulated from the accumulation since 00 UTC (deaccumulate), then multiplied by
+# factor, which takes the hour's amount [m, J m-2] to a mean rate [kg m-2 s-1, W m-2].
 ARCHIVE_VARIABLES = {
     "Tair":   dict(raw="t2m",  kind="instant", factor=1.0,           clip_negative=False, digits=5,
                    bounds=(170.0, 340.0), units="K", long_name="air temperature", height=2.0,
@@ -74,14 +83,15 @@ ARCHIVE_VARIABLES = {
 ARCHIVE_PREFIX = "ED_ERA5land"
 
 
-def parse_variables(text):
-    """'t2m,tp' -> ['t2m', 'tp']; 'all' -> every variable in catalogue order."""
+def parse_variables(text, table=VARIABLES):
+    """'t2m,tp' -> ['t2m', 'tp']; 'all' -> every variable of the table, in its order. The table is
+    VARIABLES (raw short names) or ARCHIVE_VARIABLES (archive names)."""
     if text.strip().lower() == "all":
-        return list(VARIABLES)
+        return list(table)
     names = [v.strip() for v in text.split(",") if v.strip()]
-    unknown = [v for v in names if v not in VARIABLES]
+    unknown = [v for v in names if v not in table]
     if unknown:
-        raise SystemExit(f"unknown variable(s) {unknown}; choose from {list(VARIABLES)} or 'all'")
+        raise SystemExit(f"unknown variable(s) {unknown}; choose from {list(table)} or 'all'")
     return names
 
 
@@ -129,12 +139,88 @@ def interval_stamps(d0, d1):
 
 
 def month_starts(first, last):
-    """First day of every month touched by the datetimes first..last."""
+    """First day of every month touched by the datetimes (or dates) first..last."""
     months, y, m = [], first.year, first.month
     while (y, m) <= (last.year, last.month):
         months.append(dt.date(y, m, 1))
         y, m = (y + 1, 1) if m == 12 else (y, m + 1)
     return months
+
+
+def stamp_month(stamp):
+    """(year, month) of the hour ending at an end-stamped time: 00:00 on the 1st closes the previous
+    month, so its record belongs to that month."""
+    s = stamp - dt.timedelta(hours=1)
+    return s.year, s.month
+
+
+# Every time axis the scripts write counts seconds from this epoch.
+EPOCH = dt.datetime(1970, 1, 1)
+EPOCH_UNITS = "seconds since 1970-01-01 00:00:00"
+
+
+def epoch_seconds(stamps):
+    return [(s - EPOCH).total_seconds() for s in stamps]
+
+
+# --- de-accumulation (MEDS_FORCING_DESIGN.md section 7.3) --------------------------------------------
+def deaccumulate(acc, hour_is_01, clip_negative):
+    """Hourly amounts from an ERA5-Land field accumulated since 00 UTC, along axis 0 (hourly valid
+    times, ascending, end-stamped); hour_is_01 flags the 01:00 stamps. The 01:00 value is the day's
+    first hour as it stands; every other hour is raw(H) - raw(H-1), which at 00:00 is the previous
+    day's last hour, because the 00:00 stamp holds the whole previous day. A first sample that is not
+    01:00 has nothing to difference and is NaN. GRIB packing noise can make a difference slightly
+    negative, and clip_negative sets those to 0: only negatives, since a positive threshold such as
+    1e-5 m zeroes 0.95 % of all rain and 55 % of wet hours (MEDS_FORCING_DESIGN.md section 7.3).
+    No-data (NaN) stays NaN, and acc's dtype is kept."""
+    acc = np.asarray(acc)
+    out = np.empty_like(acc)
+    out[0] = np.nan
+    out[1:] = acc[1:] - acc[:-1]
+    out[hour_is_01] = acc[hour_is_01]
+    if clip_negative:
+        np.maximum(out, 0.0, out=out, where=np.isfinite(out))
+    return out
+
+
+# --- source grids ------------------------------------------------------------------------------------
+def lon180_order(lon):
+    """The column order taking a 0..360 longitude axis to the archive's -180..180 one, and the
+    longitudes in that order. 180.0 stays 180.0, so the archive's axis runs -179.9 .. 180.0."""
+    lon180 = np.where(lon > 180.0, lon - 360.0, lon)
+    order = np.argsort(lon180, kind="stable")
+    return order, lon180[order]
+
+
+GRIB_GRID_KEYS = ("Ni", "Nj", "latitudeOfFirstGridPointInDegrees", "longitudeOfFirstGridPointInDegrees",
+                  "iDirectionIncrementInDegrees", "jDirectionIncrementInDegrees", "iScansNegatively",
+                  "jScansPositively", "jPointsAreConsecutive")
+
+
+def grib_grid(h):
+    """The regular lat/lon grid of an open GRIB message: (its GRIB_GRID_KEYS values, the latitudes,
+    the longitudes). Longitudes run east from the first point, monotonic and possibly past 360. The
+    CDS writes ERA5-Land as rows of west-to-east points, which is what a reshape to (Nj, Ni) assumes;
+    any other scan order is refused."""
+    import eccodes
+    grid = tuple(eccodes.codes_get(h, key) for key in GRIB_GRID_KEYS)
+    ni, nj, lat0, lon0, dlon, dlat, i_negative, j_positive, j_consecutive = grid
+    if i_negative or j_consecutive:
+        raise RuntimeError(f"GRIB scan mode iScansNegatively={i_negative}, jPointsAreConsecutive={j_consecutive}"
+                           f" is not rows of west-to-east points")
+    lat = lat0 + (dlat if j_positive else -dlat) * np.arange(nj)
+    lon = lon0 + dlon * np.arange(ni)
+    return grid, lat, lon
+
+
+def cds_raw_file(raw_dir, variable, tag, extension):
+    """A CDS download as download_era5land_cds.py names it: one file per request, tag its period."""
+    return os.path.join(raw_dir, f"era5land_cds_{variable}_{tag}.{extension}")
+
+
+def cds_raw_files(raw_dir, variable, extension):
+    """Every CDS download of one variable in raw_dir, in file-name order."""
+    return sorted(glob.glob(cds_raw_file(raw_dir, variable, "*", extension)))
 
 
 # --- NCAR GDEX d633008 file layout ----------------------------------------------------------------
@@ -160,7 +246,7 @@ def gdex_blocks(first, last):
 
 def gdex_relpath(variable, month, b0, b1):
     """Path of a GDEX file relative to the dataset root; the raw pool mirrors this layout."""
-    _, product, code, _ = VARIABLES[variable]
+    _, product, code = VARIABLES[variable]
     name = f"e5land.oper.fc.sfc.{product}.{code}.{b0:%Y%m%d%H}-{b1:%Y%m%d%H}.nc"
     return f"e5land.oper.fc.sfc.{product}/{month:%Y%m}/{name}"
 
@@ -245,7 +331,7 @@ def update_manifest(data_path, key, record):
     with open(os.path.join(data_path, ".manifest.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            manifest = json.load(open(path)) if os.path.exists(path) else {}
+            manifest = read_manifest(data_path)
             manifest[key] = record
             with open(path + ".part", "w") as fh:
                 json.dump(manifest, fh, indent=1, sort_keys=True)
@@ -256,7 +342,10 @@ def update_manifest(data_path, key, record):
 
 def read_manifest(data_path):
     path = os.path.join(data_path, "manifest.json")
-    return json.load(open(path)) if os.path.exists(path) else {}
+    if not os.path.exists(path):
+        return {}
+    with open(path) as fh:
+        return json.load(fh)
 
 
 # --- HTTP (anonymous GDEX downloads) ----------------------------------------------------------------

@@ -75,12 +75,21 @@ def main(argv=None):
         return
 
     os.makedirs(args.out_dir, exist_ok=True)
-    log = common.RunLog(args.out_dir, "download_log.jsonl")
-    # Only the HTTP transfers run in worker threads; every netCDF/HDF5 call (the completeness checks)
-    # stays in the main thread, since HDF5 is not guaranteed thread-safe.
+    failures = download(jobs, args.out_dir, args.streams)
+    if failures:
+        sys.exit(f"{failures} download(s) failed; a rerun fetches them again and skips the complete files")
+    print(f"done: {args.out_dir}")
+
+
+def download(jobs, out_dir, streams):
+    """Fetch every job not already complete in the pool. Only the HTTP transfers run in worker threads;
+    every netCDF/HDF5 call (the completeness checks) stays in the main thread, since HDF5 is not
+    guaranteed thread-safe. A transfer that fails after its retries, or a file that fails its check, is
+    reported and logged, and the others go on. Returns the number that failed."""
+    log = common.RunLog(out_dir, "download_log.jsonl")
     t_start = common.monotonic_seconds()
-    total = skipped = 0
-    with cf.ThreadPoolExecutor(max_workers=args.streams) as pool:
+    total = skipped = failures = 0
+    with cf.ThreadPoolExecutor(max_workers=streams) as pool:
         pending = {}
         for v, url, dest, stamps in jobs:
             if raw_complete(dest, stamps):
@@ -90,19 +99,28 @@ def main(argv=None):
             pending[pool.submit(common.http_download, url, dest)] = (v, url, dest, stamps)
         for fut in cf.as_completed(pending):
             v, url, dest, stamps = pending[fut]
-            nbytes, seconds = fut.result()
+            rel = os.path.relpath(dest, out_dir)
+            try:
+                nbytes, seconds = fut.result()
+            except Exception as err:                    # retries exhausted, or not transient (HTTP 404)
+                failures += 1
+                log.write(source="gdex", variable=v, url=url, file=rel, error=str(err))
+                print(f"  FAILED {rel}: {err}", flush=True)
+                continue
             ok = raw_complete(dest, stamps)
-            log.write(source="gdex", variable=v, url=url, file=os.path.relpath(dest, args.out_dir), bytes=nbytes,
+            log.write(source="gdex", variable=v, url=url, file=rel, bytes=nbytes,
                       seconds=round(seconds, 1), expected_stamps=stamps, verified=ok)
             if not ok:
-                sys.exit(f"{dest}: expected {stamps} hourly stamps")
-            print(f"  done  {os.path.relpath(dest, args.out_dir)}  {common.human_rate(nbytes, seconds)}", flush=True)
+                failures += 1
+                print(f"  FAILED {rel}: expected {stamps} hourly stamps", flush=True)
+                continue
+            print(f"  done  {rel}  {common.human_rate(nbytes, seconds)}", flush=True)
             total += nbytes
     if skipped:
         print(f"  skipped {skipped} file(s) already in the pool")
     if total:
         print(f"downloaded {common.human_rate(total, common.monotonic_seconds() - t_start)} aggregate")
-    print(f"done: {args.out_dir}")
+    return failures
 
 
 if __name__ == "__main__":

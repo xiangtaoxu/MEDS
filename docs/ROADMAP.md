@@ -224,8 +224,6 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).
 - **A source interface for the met reader.** *Candidate.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) `meds_met_driver` carries three
   sources behind ten backend branches; the hourly cadence and the time-units parsing are repeated.
-- **One table for the ERA5-Land variables, units and de-accumulation.** *Candidate.* [#313](https://github.com/xiangtaoxu/MEDS/issues/313) The
-  preparation tools repeat them, with the grid decoding and the source naming.
 
 ---
 
