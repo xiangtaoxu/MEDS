@@ -395,6 +395,10 @@ contains
       integer(ik) :: i
       real(wp)    :: mean_i
       n_out = buf%n_slab
+      !----- A record row per live slot. A shorter record means the slab was sized before the      !
+      !      registry was final, and the loop below would write past this column into the next. --!
+      if (n_out > size(out, kind=ik))                                                            &
+         error stop 'meds_output_integrate: a slab is longer than its record (max_slab sized too early)'
       out(:)   = MISSING_VALUE
       valid(:) = .false.
       do i = 1_ik, n_out

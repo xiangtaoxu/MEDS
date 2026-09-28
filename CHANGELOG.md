@@ -14,6 +14,47 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Slab output variables switched on by an `[output].io_config` were written from unwritten
+  memory, and they corrupted their neighbours.** `manager_setup` sized the shared pending-record
+  slab (`max_slab`) from the variables live at that point, and the `io_config` overrides ran after
+  it. A config that switches tiers, groups or axes off and picks its variables through
+  `io_config` (the file's stated purpose) therefore got a slab too short for them. On the
+  example spin-up config with output on, every tier is off, so `max_slab` was 1 while the soil
+  slabs need 20 rows and the patch slabs 6.
+  - At every period close, `normalize_slab` wrote each slab past its own column of the scratch
+    record, into the columns of the variables registered after it. A long enough slab near the
+    end of the registry, such as a per-cohort fast variable in a stand with many cohorts, would
+    write past the end of the array. The ifx Debug build stops at the first such write:
+    "Subscript #1 of the array OUT has value 2 which is greater than the upper bound of 1".
+  - The v0.3.0 output queue then kept one row per variable, and the writer read the full slab
+    length from it. So `soil_temp_site_fast` layer *i* held `soil_water_site_fast` layer *i* − 1
+    and then unwritten memory, up to 1e270 K. `area_patch` and `lai_patch` held denormals, and
+    `cohort_count` and `cohort_offset` held the fill value or another patch's value in place of
+    their own. The first four differed between two runs of the same binary on the same config.
+  - `max_slab` is now computed in `manager_finalize`, the one step every caller (site, region, and
+    a region's detail polygons) runs after the overrides and before any buffer is sized.
+    `normalize_slab` stops the run if a slab is longer than its record, instead of writing past
+    it.
+  - The fast tier's soil slabs also folded all `n_soil_layer_max` layers, so the inactive tail read
+    back as 0 K and 0 m³/m³. It now folds the active layers only, and the tail is the fill value,
+    as on the coarse tiers since #246.
+  - `test_output_integrate` runs the driver's order (setup, an override that switches a soil slab
+    on, finalize, allocate) and checks every layer in the queued record that the writer reads.
+    `test_fast_loop` checks that the fast tier folds only the active layers. Both tests fail with
+    their fix reverted, and with the `max_slab` fix reverted the new guard stops the run.
+  - **Checked** on a 13-month coupled run from bare ground: the example spin-up config with output
+    on and `output_variables.toml`, 411 netCDF files.
+    - Two runs are now byte-identical in every file. Before, 409 of 412 files differed.
+    - The soil output is physical, 268–325 K and 0.23–0.41 m³/m³, and patch areas sum to 1 in
+      every record.
+    - Only the six variables named above differ from v0.3.0.
+    - 53/53 on ifx Release and Debug.
+  - **Not affected:** the example's July stage. With the daily and fast tiers on, its setup
+    already sizes the slab to `cohort_max`, and it runs without error even with the fix reverted.
+    Its fast-tier soil tail was the 0 described above.
+
 ## [0.3.0] — 2026-09-28
 
 A **regional simulation** release. `[run].mode = "region"` runs every ED_ERA5land cell of a

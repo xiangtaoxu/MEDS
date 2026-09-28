@@ -15,7 +15,7 @@ program test_fast_loop
    use meds_config,              only : meds_config_t
    use meds_site_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
-   use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params
+   use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
@@ -241,6 +241,12 @@ program test_fast_loop
          w = site%diag%w
          call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
                     'the fast tier stages each sub-step''s forcing sample exactly (§6.7)')
+         !----- The soil slabs fold the ACTIVE layers only, so the inactive tail reads back as the   !
+         !      fill value, as on the coarse tiers (#246). The fixture needs such a tail. -----------!
+         call check(ctx%col_config%soil%n_active < n_soil_layer_max,                               &
+                    'fixture has an inactive soil tail to be worth anything')
+         call check(ob%fast_n_soil == ctx%col_config%soil%n_active,                                &
+                    'the fast tier folds only the active soil layers')
          call check_close(w, cfg%n_fast_per_slow * cfg%dt_fast, 1.0e-9_wp,                         &
                           'the polygon block weighs each sub-step once (not once per patch)')
          call check_close(site%diag%v(PY_TAIR) / w, sum_t / w, 1.0e-12_wp,                         &
