@@ -383,6 +383,18 @@ before and after.
   - `resid_energy_site` is the only output that moves, by up to 9.6 W/m², to about 1e−12. No state
     variable changes.
 
+- **A slow-only run reported 0 for every patch-sourced rate** (#299, #PRNUM). The patch block is
+  normalised by the weight the fast loop accumulates, and with `fast_biophysics_on = false`
+  nothing added one. The slow step now weights the block with its own `dt_slow` when the fast loop
+  is off.
+  - On `demography_30yr` the annual `disturb_area_site` is 0.0139 /yr (was 0),
+    `nplant_recruit_site` 0.030 plant/m²/yr (was 0), and `mort_carbon_background_site` averages
+    0.016 kgC/m²/yr (was 0). Its litter rows stay 0 because that case runs without soil carbon,
+    which forms no litter.
+  - `test_mortality_pathways` no longer stands in the fast loop's weight for its slow-only check.
+  - The other half of #299, fast-only rows that read 0 instead of `_FillValue` in a slow-only run,
+    stays open.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
