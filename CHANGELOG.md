@@ -183,8 +183,8 @@ before and after.
     - **Regrowth, July:** friction velocity +21%, sensible heat 4.5 → 11.8 W/m².
     - **With the terrain lapse on** (the site is 47.5 m below its ERA5-Land cell): +0.31 K air
       temperature, +2.2 W/m² longwave and +0.56 kPa pressure.
-    - **Unchanged:** water still closes to 10⁻¹¹ kg/m². The energy ledger leak of #290 is about the
-      same size (−0.31 → −0.38 W/m² in the year run).
+    - **Unchanged:** water still closes to 10⁻¹¹ kg/m². The energy ledger leak of #290, fixed later
+      in this release, was about the same size (−0.31 → −0.38 W/m² in the year run).
     - **Slow-only runs are bitwise unchanged.**
   - **Configs migrated:** the examples, `meds_config_main.toml` (with ERA5-Land's values and the
     Kunkel 1989 monthly rates) and `meds_io_config.toml`.

@@ -303,6 +303,36 @@ keeps its derived default of 3.12 m, the optimum for this column. See
 `docs/science/soil_biophysics.md`.
 
 
+**The forcing's heights and the terrain lapse (`[forcing]`, `[site]`).** MEDS moves every forcing
+sample from the heights it was measured at to the top of each patch's canopy air space, so both
+configs declare ERA5-Land's heights:
+
+```toml
+[forcing]
+tq_height            = 2.0             # [m] 2 m temperature and dewpoint
+wind_height          = 10.0            # [m] 10 m wind
+height_above         = "zero_plane"    # reanalysis heights: above the displacement height
+wind_exposure        = "open_terrain"  # an open-terrain diagnostic, taken back to its blending height
+wind_exposure_z0     = 0.03            # [m]
+wind_blending_height = 40.0            # [m]
+```
+
+and move temperature, pressure, humidity and longwave from the forcing cell to the site:
+
+```toml
+[site]
+elevation             = 320.0
+apply_elevation_lapse = true
+lapse_rate_tair       = 0.0065         # [K/m]
+grid_elevation        = 367.5          # [m] the orography of the cell the file was cut from
+```
+
+`grid_elevation` is the orography `make_forcing_file.py` prints for the cell it cuts (42.40 °N,
+76.50 °W). The site sits 47.5 m below it, which the lapse turns into +0.31 K of air temperature,
++2.2 W m⁻² of longwave and +0.56 kPa of pressure; the move to the canopy-air top raises the friction
+velocity over an established stand by about a third (`CHANGELOG.md`, #305). With the archive
+(`format = "era5land"`) the reader takes the grid elevation from the archive itself.
+
 **Forcing recycling.** One calendar year of ERA5-Land drives all 50 years. The recycle window is
 *declared*, never inferred:
 
