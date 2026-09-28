@@ -434,6 +434,16 @@ before and after.
   - Slow-only runs do not change: their slow step set the depth before the first output.
   - `test_region` checks that a bare-ground stand opens at the floor.
 
+- **A restart was not exact** (#298, #PRNUM). The state file did not carry each patch's
+  `adapt_dt_last`, the step the fast integrators' adaptive controller last accepted and starts the
+  next step from, so a resumed run cold-started the controller and took different sub-steps. It is
+  now written, and read when present; an older state file cold-starts the controller as before.
+  - `ckpt_2yr` resumed from its 2025-01-01 checkpoint now reproduces the continuous run bit for bit
+    in every tier: 546 fast, 18 daily and 18 monthly files.
+  - Before, every fast file differed from the first resumed day (`h_flux_fast` by up to 1.8e−5 W/m²,
+    `cas_temp_fast` by 3 µK), and so did every monthly file: the integrator's work counters, and
+    `global_cohort_id` by one cohort from January 2026.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
