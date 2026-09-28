@@ -184,7 +184,10 @@ contains
             bf%cas_enth_in  = surf_tend%src_enth + g_atm_heat*frozen%cas%enthalpy_atm    ; bf%cas_enth_out = g_atm_heat*enth1
             bf%cas_vap_in   = surf_tend%src_vap  + g_atm_vapour*frozen%cas%shv_atm     ; bf%cas_vap_out  = g_atm_vapour*shv1
             bf%cas_co2_in   = frozen%cas%nee_biotic + g_atm_co2*frozen%cas%co2_atm  ; bf%cas_co2_out  = g_atm_co2*y_out%cas_co2
-            bf%soil_enth_in = surf_tend%g_top + frozen%hydrology%geothermal + e_infil + e_floor
+            !----- The bottom face is the flux the soil solve committed (#290): zero on the adiabatic    !
+            !      base, the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary  !
+            !      of both books, the soil's and the whole column's. -------------------------------------!
+            bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil + e_floor
             bf%soil_enth_out= qloss_total * sum(frozen%params%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
@@ -197,7 +200,7 @@ contains
             !----- #78 item 4: e_infil (pond -> soil) and e_clip (soil -> pond) are now transfers    !
             !      between two TRACKED stores, so they telescope and must NOT be boundary terms.     !
             !      The boundary rainfall input and the runoff output are added once at the outer level. !
-            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad + e_floor
+            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat + e_floor
             !----- row 1b: surf_tend%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain

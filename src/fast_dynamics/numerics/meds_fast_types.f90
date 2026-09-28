@@ -686,6 +686,7 @@ module meds_fast_types
       real(wp), allocatable :: d_leaf_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_leaf - film_evap
       real(wp), allocatable :: d_wood_surf_water(:)   !< [kg/m2 ground/s] frozen_intercept_wood - film_evap
       real(wp) :: g_top = 0.0_wp, drainage_rate = 0.0_wp, uptake_rate = 0.0_wp
+      real(wp) :: g_bottom = 0.0_wp   !< [W/m2] heat across the soil column's bottom face, positive UP
       !----- The interior mass faces this stage's SOIL-ENERGY equation actually advected enthalpy on  !
       !      (#189). Recorded from the array handed to assemble_soil_energy_forcing, NOT from the      !
       !      water solve -- the whole point is that the two can differ, and every instance of this     !

@@ -173,7 +173,7 @@ contains
       type(column_state_t) :: y_stage, y_4th
       type(surface_tend_t) :: surf_tend
       real(wp) :: rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6)
-      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain, bw_atm_heat
+      real(wp) :: bw_rnet, bw_atm_enth, bw_atm_vap, bw_cond, bw_cond_enth, bw_drain, bw_atm_heat, bw_g_bottom
       !----- Per-stage tissue temperatures, kept so the store's energy can be set from their TIME    !
       !      INTEGRAL rather than from the last stage -- see column_bflux_t's note. RK45 is the       !
       !      accuracy baseline, so paying n x 6 here is the right trade. ------------------------------!
@@ -315,6 +315,10 @@ contains
       !      the column saturates. Same b-vector as the state commit, for the same reason. -------------!
       bw_drain     = B1*k1%drainage_rate + B3*k3%drainage_rate + B4*k4%drainage_rate                  &
                      + B6*k6%drainage_rate
+      !----- The heat the soil tendency moved across the column's bottom face, b-weighted like the   !
+      !      drainage: zero on the adiabatic base, the conduction to deep_temp under the Dirichlet    !
+      !      anchor, which the soil store carries and so the ledger must too (#290). -----------------!
+      bw_g_bottom  = B1*k1%g_bottom + B3*k3%g_bottom + B4*k4%g_bottom + B6*k6%g_bottom
       bw_rnet      = B1*rnet(1)      + B3*rnet(3)      + B4*rnet(4)      + B6*rnet(6)
       bw_atm_enth  = B1*atm_enth(1)  + B3*atm_enth(3)  + B4*atm_enth(4)  + B6*atm_enth(6)
       bw_atm_vap   = B1*atm_vap(1)   + B3*atm_vap(3)   + B4*atm_vap(4)   + B6*atm_vap(6)
@@ -341,7 +345,7 @@ contains
       !      stores now, so it is no longer a boundary input here -- the caller's pond store absorbs    !
       !      the other half. Leaving it produced exactly the infiltration enthalpy as a spurious        !
       !      surplus (7.4e4 J/m2 on the wet fixture, which is rainfall*dt*u_liq to three digits). --------!
-      e_in  = (bw_rnet + frozen%snow%ground_rad) * dt
+      e_in  = (bw_rnet + frozen%snow%ground_rad + bw_g_bottom) * dt
       e_out = bw_atm_enth * dt                                                                    &
               + bw_drain * dt * internal_energy_liquid(frozen%hydrology%t_bot)
       !----- cond is EXCLUDED from w_out (row 1b): it is deposited into soil layer 1 by the caller, !

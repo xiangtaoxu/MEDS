@@ -365,6 +365,24 @@ before and after.
   the forcing source open (review R8, #PRNUM). The ids are now checked against the box's cells
   before anything is opened.
 
+- **The whole-column energy ledger failed at nearly every fast step, by −0.3 to −4 W/m²** (#290,
+  #PRNUM). Under `[energy].bottom_bc = "dirichlet"`, the shipped examples' choice since v0.2.1
+  (#267), the soil solve conducts heat to `deep_temp` across the column's bottom face, but every
+  ledger booked that face as the Neumann flux, which is 0. The model was right; the books were not.
+  - The BE stage now books the face its implicit solve committed, in the soil and whole-column
+    ledgers alike, and RK45 b-weights the face its explicit tendency applied (`soil_energy_time_deriv`
+    returns it). Under the adiabatic base the face is 0 and nothing changes.
+  - The energy budget now closes at every check of the regression cases:
+    - `est_july`: cumulative residual −1.060e7 J/m² (mean −3.96 W/m², 5952 of 5952 checks failing)
+      → −6.0e−7 J/m² (none failing);
+    - `bare_july_archive` and `bare_july_single`: −1.065e7 J/m² (−3.98 W/m², 17856/17856) →
+      at most 1.2e−5 J/m² in size (none);
+    - `est_year`: −1.186e7 J/m² (−0.38 W/m², 69978/70080) → 1.7e−5 J/m² (none);
+    - `ckpt_2yr`: −1.418e8 J/m² (−2.25 W/m², 210638/210816) → −4.1e−5 J/m² (none);
+    - the regional smoke run: 17856 failing checks per polygon → 0.
+  - `resid_energy_site` is the only output that moves, by up to 9.6 W/m², to about 1e−12. No state
+    variable changes.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
