@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """build_era5land_static.py -- build the ED_ERA5land archive's static file,
-<data_path>/ED_ERA5land_static.nc (docs/dev_plans/MEDS_FORCING_DESIGN.md section 14.3).
+<data_path>/ED_ERA5land_static.nc (docs/dev_plans/archive/MEDS_FORCING_DESIGN.md section 14.3).
 
 Contents, on the regular 0.1 deg grid (lat 90 -> -90, lon -180 -> 179.9):
   valid          int8  1 where ERA5-Land supplies data. Taken from the DATA (non-NaN at every hour of

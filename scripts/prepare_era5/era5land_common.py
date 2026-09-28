@@ -8,7 +8,7 @@ Post-processing turns raw files into model-ready NetCDF:
   build_era5land_static.py   the archive's static file (valid-data mask, elevation, land fraction)
   build_era5land_archive.py  the global per-variable monthly ED_ERA5land_ archive (the forcing MEDS reads)
   postprocess_era5land.py    NetCDF box files with ERA5-Land's own names (a portable box extract)
-The archive layout is specified in docs/dev_plans/MEDS_FORCING_DESIGN.md sections 13-14.
+The archive layout is specified in docs/dev_plans/archive/MEDS_FORCING_DESIGN.md sections 13-14.
 """
 import calendar
 import datetime as dt

@@ -183,7 +183,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 
 ## 8. Forcing
 
-Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
+Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
 [`science/forcing.md`](science/forcing.md).
 
 - **A better cloud term for the LWdown synthesis.** *Candidate.* [#257](https://github.com/xiangtaoxu/MEDS/issues/257)

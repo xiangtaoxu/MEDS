@@ -317,7 +317,7 @@ is stamped at the *end* of the hour it averages — so the first record of calen
 The window must also span a whole number of calendar years, so that hour-of-day and day-of-year
 survive every wrap. (They do not survive a wrap on any other span, and the failure is quiet: the
 daily *mean* shortwave stays correct while the sub-daily phase drifts. See
-`docs/dev_plans/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
+`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
 reads the correct hour of the correct day.
 
 **`[soil_carbon].soil_carbon_on = true`** in *both* stages — the default since 2026-09-11, set

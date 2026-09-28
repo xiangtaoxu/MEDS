@@ -627,4 +627,4 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 - Nicholls, Meinshausen, Lewis, Pflüger, Menking et al. (in prep., 2025) — CMIP7 greenhouse-gas
   concentrations, input4MIPs `CR-CMIP-1-0-0`, doi:10.5281/zenodo.14892947 (CC BY 4.0).
 - Meinshausen et al. (2017), *GMD* 10:2057 — the CMIP6 greenhouse-gas concentrations CMIP7 succeeds.
-- Design doc: `docs/dev_plans/MEDS_FORCING_DESIGN.md`.
+- Design doc (archived): `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`.
