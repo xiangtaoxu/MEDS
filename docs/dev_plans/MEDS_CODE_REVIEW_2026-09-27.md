@@ -814,8 +814,8 @@ change that exposed #290 (B1); #260's successor is #299 (B4). None was closed pr
 
 ## 8. Release checklist for v0.3.0
 
-1. Land the pre-merge set (§0 rows 1–11; §7 B1–B5) as PRs into `beta`, each with its CHANGELOG entry
-   and before/after numbers; regenerate the r1 regression references after #306. Then run the gfortran
+1. Land the pre-merge set (§0 rows 1–11; §7 B1–B5) as PRs into `beta` — phased in §9 — each with its
+   CHANGELOG entry and before/after numbers; regenerate the r1 regression references after #306. Then run the gfortran
    suite (§6.1–6.2) as well as ifx — it is the only second compiler on this machine — and add the
    component-section trap to CLAUDE.md.
 2. `CHANGELOG.md`: move the misfiled `Fixed` entries; reword the `prep_era5land_forcing.py`
@@ -828,3 +828,432 @@ change that exposed #290 (B1); #260's successor is #299 (B4). None was closed pr
    §6.3 the three Debug-suite failures and the Campbell-with-vG validation gap; §6.4 `new_year`),
    grouped: "runtime consolidation for R3", "forcing source interface", "output serializer dedup",
    "prepare_era5 dedup", "Debug suite green".
+
+---
+
+## 9. Phased plan for the pre-merge fixes
+
+Written 2026-09-27, after the review was read. It sequences §0 rows 1–11 and §7 B1–B5 into five
+phases plus the release cut, ordered so that (i) every phase is independently green, (ii) the
+bitwise-safe changes land before anything that moves a number, so the regression references are
+regenerated exactly once, and (iii) the second compiler is in the loop from the first phase that
+touches the region code.
+
+### 9.0 Ground rules
+
+- **Branch and PRs.** Work on `cleanup/pre-v0.3.0` (from `beta` at `e33cb56`). One commit per item,
+  its message naming the review id (`fix(forcing): carry the window's first record across the year
+  wrap (review F1)`), so the r1 comparison can bisect. One pull request into `beta` per phase, opened
+  when the phase's gate is green; a phase is rebased onto `beta` once the previous phase has merged.
+- **Gates, in every phase.** (1) ifx Release: 53/53 plus the phase's new tests. (2) ifx Debug: 50/53
+  until §6.3's three pre-existing failures are fixed — record that number in the PR so a fourth
+  failure is visible. (3) gfortran Release and Debug, from Phase 0 on (CMake already gives gfortran
+  Debug `-fcheck=all -ffpe-trap=invalid,zero,overflow`, `CMakeLists.txt:102-107`). (4) The r1
+  harness: `run_cases.sh BIN TAG` then `compare_runs.py REF NEW`, which reports every variable,
+  attribute and budget line that differs — "no differences" for a bitwise-safe phase, an enumerated
+  list for the others, copied into the PR. (5) The 4-cell regional smoke (`r2region/smoke`). (6) A
+  CHANGELOG entry per item under `[Unreleased]` with the PR number and before/after numbers for
+  anything that moves one; rule-1 comments; ROADMAP for anything deferred out of the phase.
+- **Commands** (`CLAUDE.local.md` has the toolchain activation):
+
+  ```bash
+  cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+  cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug   -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+  cmake -S . -B build-gfortran -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+  cmake -S . -B build-gfortran-dbg -DCMAKE_Fortran_COMPILER=gfortran -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+  for b in build-ifx build-debug build-gfortran build-gfortran-dbg; do cmake --build $b && ctest --test-dir $b --output-on-failure; done
+  R1=~/claude_workspace/meds_runs/r1
+  $R1/run_cases.sh build-ifx/meds_main <TAG>                       # six cases: bare_july_archive, bare_july_single,
+  ~/miniconda3/envs/meds/bin/python $R1/compare_runs.py $R1/<REF> $R1/<TAG>   #   ckpt_2yr, demography_30yr, est_july, est_year
+  build-ifx/meds_main ~/claude_workspace/meds_runs/r2region/smoke/region_smoke.toml   # outputs go where its [output].dir says
+  ```
+
+| Phase | Content | Moves numbers? | Effort |
+|---|---|---|---|
+| 0 | Baseline references, gfortran back in the build, the counts | no | ½ day |
+| 1 | Crashes and correctness: year wrap (F1), gfortran `bufs(:)` (6.2), region I/O exit path (O1), F5, R1, R8, (R2) | no — bitwise gate | 1 day |
+| 2 | Ledger and diagnostics: #290, #299, #275, FAST stamp (O2), F2, O5 | diagnostics only | 1 day |
+| 3 | Model state and checkpoint: #306, #298 time-box | yes, once | ½–1 day |
+| 4 | Documentation, tools, examples: §5 `[B]`, R7, F3–F4, O3–O4, P1–P5 | no | 1 day |
+| 5 | Release cut | no | ½ day |
+
+### 9.1 Phase 0 — baseline and a second compiler
+
+1. **Wrap the six lines over column 132** (§6.1): `meds_fast_be_stage.f90:430`, `meds_fast_frozen.f90:426`,
+   `test_column_ark.f90:519, 549`, `test_column_dynamics.f90:525`, `test_column_rk45.f90:738`. Add
+   `find src test -name '*.f90' | xargs awk 'length > 132 {print FILENAME": "FNR}'` to the PR
+   description as the check (and to CI when there is one). ifx output is bitwise unaffected.
+2. **Baseline references.** Build `e33cb56` (plus item 1) with ifx Release and run
+   `run_cases.sh build-ifx/meds_main ref_e33cb56`. The existing `ref/` is `beta` at `2bb8bbd`, from
+   before #305 changed the forcing height, so it no longer serves; keep it, do not overwrite it.
+   Record for the CHANGELOG entries to come: `energy fails` and the `resid_energy_site` range in
+   `est_july`, `bare_july_*` and the smoke run (#290, expected ≈ −0.3…−4 W/m²); day-1
+   `cas_depth_patch` (20 m) and `wind_cas_top_patch` in `bare_july_single` (#306); the
+   `demography_30yr` disturbance/mortality/litter rows (all 0, #299).
+3. **gfortran state.** Configure and run all four builds above. Expected after item 1: gfortran
+   Release 52/53 and Debug with the `region` segfault (fixed in Phase 1), ifx Debug 50/53. Open the
+   issue for §6.3's three Debug failures now, so the gate numbers have a home.
+4. **Counts that are measured, not designed:** `CLAUDE.md:46` → 53 tests, ~22 s; the three Debug
+   failures noted beside the Debug recipe until the issue closes.
+
+Gate: ifx Release 53/53; gfortran Release builds; `ref_e33cb56` saved; the baseline numbers written down.
+
+### 9.2 Phase 1 — crashes and correctness that move no numbers
+
+Every item here must leave the six r1 cases and the smoke run **bitwise identical** to `ref_e33cb56`.
+
+1. **F1, the year wrap for anchors other than 01:00** (`meds_met_driver.f90:292-318, 404-450, 700-717, 888-918`).
+   Design: the window's first record always lies in axis month 1 (`:782`), so after `load_axis_month(src, 1)`
+   at open copy it into a second carry slot, `src%seam_first(cell, var)`, beside `carry`; let
+   `locate_record` return a second sentinel for `irec == irec_cycle_first` when its month is not
+   loaded, and `archive_value` read it. `met_prefetch`'s wrap branch stays (it carries
+   `irec_cycle_last` when month 1 is the loaded month); the mid-step `error stop` remains the
+   programming-error assertion it was meant to be. Delete the "01:00 only" assumption nowhere
+   stated — and state the real rule in `configuration.md` ("any record stamp; the seam falls inside
+   a step").
+   Test: `meds_test_era5land_archive.f90` writes every month of 2021 with the year hard-coded in
+   `write_month` (`:149-151`); parametrize the year and add **January 2022**. Then, in
+   `test_met_era5land.f90` test 6 (`:283-312`), repeat the wrap walk for `recycle_start =
+   2021-01-02 00:00` (window to 2022-01-02 00:00) and `2021-01-01 06:00` (to 2022-01-01 06:00): the
+   seam half-hour must read `0.5·(last + first)` as the 01:00 case does at `:294-297`, with one
+   month load, not an `error stop`. Region mode: `region_step_month`'s assertion that no month loads
+   inside a model month (`meds_region.f90:205-219`) must still hold — the seam record now comes from
+   the slot, not a load.
+   Alternative if time is short: reject non-01:00 anchors for `format = "era5land"` in
+   `validate_config` with a message, and say so in `configuration.md`. Do not ship the silent crash.
+2. **6.2, the gfortran `region` segfault.** Design (a) of §6.2: `type(output_buffers_t), allocatable :: bufs(:)`
+   owned by `meds_region_t`, `type(output_buffers_t) :: bufs` owned by `meds_run_t`, and `out_bufs`
+   removed from `meds_polygon_t`; `polygon_prepare`, `polygon_step` (its `stepper` and
+   `tick_output`, `meds_polygon.f90:177-197`) and `polygon_report` take `bufs` as an argument; the
+   detail set stays on the polygon (`detail_files`/`detail_bufs` are scalar allocatable
+   components, never a strided section). `io_phase` becomes
+   `output_serialize_region(reg%out_files, reg%bufs)` and `region_finalize`
+   `output_region_close(reg%out_files, reg%bufs)`: contiguous, no temporary. This is also the shape
+   R3's threaded loop indexes (`bufs(p)`). Fold in `new_year`'s initialization before the loops
+   (`meds_region.f90:239`, §6.4). Add to CLAUDE.md's trap list: "never pass a derived-type component
+   section `a(:)%c` whose type has allocatable components as an actual argument; gfortran builds a
+   temporary and its copy-out dangles the components (review 2026-09-27 §6.2)."
+   Test: the existing `region` test under gfortran Release and Debug (`-fcheck=all`) is the test;
+   ifx output bitwise unchanged.
+3. **O1, the region I/O exit path** (`meds_output_manager.f90:64-80`, `meds_output_stream.f90:466-482`).
+   Design: drop the equal-count assertion and the special case with it — write records
+   `i = 1 .. maxval(bufs(:)%queue(t)%n)`; a polygon without record `i` contributes the fill value
+   (`region_write_one` packs per polygon, so this is one branch per variable); the calendar of
+   record `i` comes from the first polygon that holds it; `same_time` still checks the polygons that
+   do. On the normal path every polygon holds every record and nothing changes; on the failure path
+   what closed is written and the failed polygon's slice is fill from its last record on — which is
+   exactly R5's steady state for an isolated failed polygon, so R5 inherits the writer unchanged.
+   Test: in `test_region`, after a healthy month, poison one polygon (set a cohort's `bleaf` to
+   `ieee_value(…, ieee_quiet_nan)` in `reg%poly(2)%site` before a mid-month step) so the NaN guard
+   trips; assert `region_step_month` returns the failing status, the daily file holds the days the
+   other polygons closed, and polygon 2's slice is fill after its last good day.
+4. **F5, `met_open` leaks `src%ncid` on the `validate_file_against_config` rejection** (`meds_met_driver.f90:190-196`):
+   use `met_close(src)` as the other three rejection paths do. Test: `test_met_driver.f90:351-368`
+   calls `met_close` after the rejection and checks it does not error-stop.
+5. **R1, `polygon_prepare` does not reset the restructure flags** (`meds_polygon.f90:107-112`,
+   `meds_driver.f90:114`): reset `restructure_pending`/`restructure_new_year` in the counter-reset
+   block before the `select case`, so the restart branch can still set them. Test: give the C-API
+   slot-reuse test (`test_c_api_run`) an `end_time` on the 1st, then a second bare-ground run in the
+   same slot; its first step must not call `advance_boundary` (assert on the ledger's phase counter
+   or on `restructure_pending` after `driver_open`).
+6. **R8, `detail_polygons` validated after building every polygon** (`meds_region.f90:115-135`):
+   move the membership check to right after the id loop, and `met_close` on that return.
+7. **R2, the output-file-set sequence written three times** (`meds_driver.f90:214-226`,
+   `meds_region.f90:139-164`) — optional in this phase, but item 2 rewrites `region_open` anyway:
+   one `open_output_files(files, cfg, prefix, soil, restrict_region, verbose)` beside
+   `polygon_prepare`, with `apply_io_overrides` and `ensure_output_dir` moved out of the site driver
+   so `meds_region` no longer `use`s `meds_driver`.
+
+Gate: `compare_runs.py ref_e33cb56 phase1` reports no differences; smoke output identical; ifx
+53/53 + the new tests; **gfortran Release and Debug 53/53**.
+
+### 9.3 Phase 2 — ledger and diagnostics
+
+Numbers move here only in diagnostics: the r1 comparison must list exactly the variables named
+below and nothing in the state or flux records.
+
+1. **#290, the bottom face in the ledgers** (§7 B1). Design: the soil solve already evaluates the
+   committed bottom face, `bottom_heat_face` at `meds_soil_energy.f90:182` (implicit) and `:256`
+   (explicit), positive up; `energy_flux_t%bottom_heat = −hf(n)` (`:204`) exists but is set only on
+   the split path. Return the committed face from both solves and book it in the three ledger sites
+   instead of `frozen%hydrology%geothermal` (`meds_fast_frozen.f90:346`, always 0):
+   `bf%soil_enth_in` (`meds_fast_be_stage.f90:187`), `bf%whole_enth_in` (`:200`; a signed term on
+   the "in" side is enough, the ledger sums in − out), and RK45's `e_in` (`meds_fast_rk45.f90:823`).
+   The ARK soil sub-ledger (`meds_fast_ark.f90:560`) reads the same `bf`, so it closes with it. No
+   physics moves. Measure first, per CLAUDE.md: on `est_july`, print one step's `resid` beside
+   `−g_deep·(T_bot − deep_temp)`; they should agree to the ledger tolerance. If after the fix
+   `n_fail` is not 0, a second leak exists — stop, measure the residual's dependence on the same
+   quantity, and file it rather than widening the tolerance.
+   Acceptance: `est_july`, `bare_july_*`, `est_year` and the smoke run report `energy fails = 0`;
+   `resid_energy_site` before/after in the CHANGELOG (§6.5's 17856/17856 → 0 for the smoke run);
+   everything else bitwise. Issue #290 closes with the release.
+2. **#299, slow-only runs weight patch rows with `w = 0`** (§7 B4): in the slow-row loop
+   (`meds_vegetation_dynamics.f90:275-291`), `if (.not. cfg%fast_biophysics_on) w(ip) = w(ip) + cfg%dt_slow`.
+   Acceptance: `demography_30yr`'s disturbance, litter, recruitment and mortality rows are non-zero
+   (before: 0; after: the values, in the CHANGELOG). The "fast-only rows read `_FillValue` in a
+   slow-only run" half stays open on #299 with its scope narrowed in a comment.
+3. **#275, the release-boundary renames** (§7 B5): drop `ground_temp_site` (it duplicates
+   `soil_temp_top_site`, `meds_output_registry.f90:411-412, 725-726`; the example README's `:344`
+   already points users at `soil_temp_top_site`, and no script reads the dropped name); relabel the
+   four variances (`:429-433, :441`) "variance of end-of-step samples". Regenerate
+   `meds_io_config.toml` with `meds_main --dump-io-config` (ctest `io_config_example` enforces the
+   match) and `diagnostics.md`'s counts (§5.2). Skin temperature and `PD_*_SQ` stay on #275.
+4. **O2, the FAST tier's stamp** (`meds_fast_dynamics.f90:490-498`, `meds_output_stream.f90:193-203`).
+   Decide once: the recommendation is the period start, consistent with #294 — stage
+   `fast_time(isub) = step_start + (isub−1)·dt_fast` and keep `t_sample` for the met lookup and the
+   probe; fix the "sub-step midpoint stamps" comment (`meds_output_types.f90:336`). The `time`
+   coordinate of every `-F-` file moves by `−forcing_sample_frac·dt_fast` (7.5 min at the defaults);
+   the three `examples/example_biophysics/plot_*.py` read `-F-` files, so re-run them in Phase 4. If
+   the output change is unwanted now, fix the `long_name` instead and file the stamp as an issue —
+   but do not ship a label that contradicts the value.
+5. **F2, the duplicated LW-synthesis + ρ block in `met_instant`'s CONST return** (`meds_met_driver.f90:510-529`
+   vs `:584-600`): wrap only the file-dependent interpolation in `if (backend /= CONST)`, one exit.
+   `test_fast_loop` block 8 (`test/test_fast_loop.f90:463`) exercises the CONST path: it, and any r1
+   case, must stay bitwise; if the dedup changes a CONST number, the duplicate was load-bearing —
+   find out why before deleting it.
+6. **O5, the disturbance test's seed** (`test/test_disturbance.f90`): seed `PD_MORT_C_CULL` with
+   `w = 0`, the case production produces since #297; reword the two comments (`meds_demography_patch_fusefiss.f90:603-607`,
+   `meds_site_diag_types.f90:511-518`).
+
+Gate: the r1 difference list is exactly {`resid_energy_site` (fast cases), `ground_temp_site`
+absent, four `long_name` attributes, `-F-` `time` coordinates (if O2's stamp was chosen),
+`demography_30yr`'s patch rows}; ifx and gfortran suites green; smoke `energy fails = 0`.
+
+### 9.4 Phase 3 — model state and checkpoint completeness
+
+The one phase that moves the model. Do it alone, so its difference list is its own.
+
+1. **#306, the canopy-air depth on day 1** (§7 B2). `refresh_canopy_depth(site, cfg, ledger)`
+   (`meds_slow_dynamics.f90:108`) takes the ledger as an optional argument and without it is a plain
+   geometry update through `cas_set_depth(cas, depth_new)` (`:139-142`), intensive state invariant.
+   Make it public and call `refresh_canopy_depth(poly%site, cfg)` at the end of `polygon_prepare`'s
+   fast block (`meds_polygon.f90:114-126`), after `init_fast_reservoirs`/`seed_snow` and for every
+   init mode: a bare-ground stand gets the 5 m floor instead of the 20 m type default, an
+   established one its `h_top + freeboard`. Test: after `polygon_prepare` on bare ground,
+   `patch%cas(1)%depth == cfg%aero%min_canopy_depth`; on a census stand, `h_top + freeboard`.
+   Acceptance: `bare_july_single` day 1 — `cas_depth_patch` 20 → 5 m, `wind_cas_top_patch` and the
+   day-1 fluxes in the CHANGELOG; the July monthly means and `est_july` (whose depth is refreshed by
+   the first slow step anyway) should move little — record the largest relative change.
+2. **#298, restart exactness, time-boxed to one day** (§7 B6). Two per-patch quantities are missing
+   from the state file: `adapt_dt_last` (the integrators' warm start, `meds_site_state_types.f90:324`)
+   and `can_depth` itself (item 1 shows the resumed run re-derives it, but only at the next boundary
+   unless `polygon_prepare` refreshes it — after item 1 it does, so persisting the depth is about
+   exactness under a non-boundary checkpoint). Persist both, optional on read with the
+   `cas_can_*` pattern (`meds_io.f90:521`, absent → 0 / re-derived), so old state files still load.
+   Run `ckpt_2yr`: compare the resumed run against the continuous one with `compare_runs.py`. If
+   they now match, #298 closes with the release; if a residual remains, list the differing
+   variables in ROADMAP §1 under #298 and stop — `growth_hist` (`meds_site_state_types.f90:155-157`)
+   is the next candidate, for R4.
+3. **Regenerate the references**: `run_cases.sh build-ifx/meds_main ref_phase3` becomes the
+   reference for Phase 4 and for the release; keep `ref_e33cb56` beside it.
+
+Gate: the difference list against `ref_e33cb56` is explained by day 1 (item 1) and the checkpoint
+variables (item 2), with the numbers in the CHANGELOG; `ckpt_2yr` resumed == continuous, or the
+residual is documented; both suites green; smoke completes.
+
+### 9.5 Phase 4 — documentation, tools and examples
+
+No Fortran behaviour changes. Grouped by file so each is one commit; the review's ids in brackets.
+
+1. **Source comments that narrate history (rule 1):** `meds_driver.f90:3-11, 88-90, 212-213, 238-240`;
+   `meds_polygon.f90:43-44`; `meds_c_api_run.f90:93` (status 4); `CMakeLists.txt:352-357` [R7];
+   `meds_met_driver.f90:39, 186-189, 325-330, 402, 416-418, 623-628, 650-653`,
+   `meds_forcing_config.f90:6, 33, 48-52, 99, 126-139` [F4, nits]; `meds_output_integrate.f90:134-136, 500-503`,
+   `meds_site_diag_types.f90:24-27, 119-125` [O3]; `meds_output_config.f90:105-112`,
+   `meds_output_manager.f90:3-4` [nits]; `download_era5land_cds.py:4` [P5].
+2. **Rules and orientation:** `.claude/rules/output.md:48, 58` and `state-demography.md:69, 76-77`
+   (the tick runs *before* the restructuring, which is between steps; the tendency-bundle rule's
+   reason is the daily `sort_cohorts`) [O3]; `src/README.md` (`main/`, `forcing/`, `io/`, `config/`
+   rows and the header counts — name the six new modules) [R7]; `src/forcing/README.md:7-8, 72-73, 103-105`
+   [F3, P10]; `CLAUDE.md` (the trap from Phase 1, if not already there; the Debug note from Phase 0).
+3. **Science and configuration docs:** `forcing.md:67-68, 114-116, 600` and the `era5land` rule
+   (`dt_slow = 1d`, midnight start) [F3, §5.3]; `configuration.md:121, 224-225` [§5.1];
+   `order_of_processes.md:20, 220` (`driver_open`) [§5.3]; `diagnostics.md:212, 280-288` (regenerate
+   from `--dump-io-config` after Phase 2) [O4]; `ed2_comparison.md:63, 101, 321, 367, 378` and its
+   version pin [§5.4]; `README.md:56, 61, 121` and a feature row for regional runs, the ED_ERA5land
+   archive and prescribed CO₂ [§5.4].
+4. **`docs/dev_plans/`:** the archive audit of §10 — six moves now (biogeochemistry, snow, GPU
+   evaluation, veg-energy plan, the 2026-09-13 docs review, the v0.2 release plan), the integrator
+   plan after its two issue actions, the structure design to the Reference table, four header
+   refreshes, the README tables and count, and the bare-path links §10.4 lists [§5.4.7, §10].
+5. **CHANGELOG hygiene** (the `[0.3.0]` heading waits for Phase 5): move the #294/#296 and #295
+   `### Fixed` entries from `[0.2.1]` (`:394-421`) into a new `### Fixed` under `[Unreleased]`;
+   reword `:115, :153, :307-308`; `:74` → 253; add the missing PR numbers to the #281–#293 entries [§5.5].
+6. **`docs/ROADMAP.md`:** entries for #265, #268, #269, #270, #275 (narrowed), #298 (if residual),
+   #299 (narrowed); retarget `:86, :109, :158, :239, :248`; decide the `[io]` shim (`:143`,
+   `meds_config_io.f90:1151-1154`): remove it in 0.3.0 (the shim was "post-v0.2.x") or file an
+   issue; record #197's decision in §11 [§5.5, §7 C].
+7. **Python tools:** `make_forcing_file.py` writes `u10`/`v10` beside `Wind` and drops `U_MIN` (the
+   Fortran floors) [P4]; the longitude docstrings (`build_era5land_archive.py:9`,
+   `build_era5land_static.py:6`, design §14.2 — the axis is −179.9 → 180.0; do **not** change the
+   `>`) [P1]; `forcing.md:30-42, 66, 76` CDL and the wind floor [P4, P10]. P3 (the de-accumulation
+   and unit tables in one place) only if the phase has time; otherwise it is the "prepare_era5
+   dedup" issue.
+8. **The example, last:** rerun `examples/example_biophysics/run_example.py` (both stages; the
+   50-year spin-up is ~10 min on a compute node) with the Phase 3 binary, refresh the README's
+   numbers (`:193-195`) and the four PNGs, add the lapse/height note to "Notes on the configuration"
+   (`:284-330`) [P2].
+
+Gate: the audit's checks come back clean — `grep -rn "ensure_month\|driver_init\|apply_met_to_ctx\|prep_era5land_forcing" docs src .claude CLAUDE.md README.md`
+(historical hits in CHANGELOG and `archive/` excepted); `meds_main --dump-io-config` equals
+`meds_io_config.toml` (ctest `io_config_example`); `diagnostics.md`'s counts equal the registry's;
+every `[Unreleased]` entry cites a PR; ROADMAP has an issue number on every deferred line it adds.
+
+### 9.6 Phase 5 — the release cut
+
+1. `CHANGELOG.md`: `## [0.3.0] — <date>` over the `[Unreleased]` block, the compare link `:1858`.
+2. Version strings: `CMakeLists.txt:17`, `python/pyproject.toml:16`, `python/meds/__init__.py:19`;
+   `README.md:61, 121`.
+3. Final gates on the release candidate: all four builds and suites; `compare_runs.py ref_phase3 rc`
+   with no differences; the smoke run; `python -m meds.plant` round trip.
+4. Pull request `beta` → `main`; tag `v0.3.0`; close #184, #197 (§7 A), #290, #306, #299 (narrowed)
+   and #275 (narrowed) with one-line comments naming the PR; comment on #183; #298 per Phase 3's
+   outcome.
+5. File the after-merge issues (§8 item 6) and update the untracked `CLAUDE.local.md` baseline.
+
+### 9.7 Deliberately outside the plan
+
+The `[AFTER-MERGE]` consolidations (§1 R3–R6, R9–R12; §2 F6–F12; §3 O6–O12; §4 P6–P10) — they
+are R3's shape and belong with it; the three Debug-suite failures (§6.3, an issue from Phase 0);
+#270; the fill-value half of #299; the skin-temperature half of #275. If a phase runs long, the
+items to drop first are, in order: R2 (Phase 1.7), P3 (Phase 4.7), the O2 stamp change (keep the
+label fix), and the #298 time-box.
+
+---
+
+## 10. `docs/dev_plans/`: what can move to `archive/`
+
+Written 2026-09-27. The directory's rule (`docs/dev_plans/README.md`): a document stays only while it
+has open items still intended, or is the as-built description that source comments cite by section
+("Reference"); everything else goes to `archive/` with a tombstone. Section numbers are never
+renumbered and most citations are by bare name, so a move breaks nothing but path links.
+
+Method: two readers over the thirteen documents in the live directory, every open item the document
+itself still presents traced to an open issue, a `ROADMAP.md` line, another file, or the PR that
+shipped it; citations counted from `src`, `test`, `CMakeLists.txt`, `.claude`, `python`, `scripts`;
+the load-bearing claims re-checked by hand (issue states with `gh`, the DAMM kernel, every
+bare-path link). Line numbers are the `cleanup/pre-v0.3.0` tree.
+
+### 10.1 Verdicts
+
+| Document | README table | Open items → where they live now | Cited from code | Verdict |
+|---|---|---|---|---|
+| `MEDS_BIOGEOCHEMISTRY_DESIGN.md` | Live | P1 nitrogen #154, P2 vertical pools #155, CWD #156, fire #157 (ROADMAP §3). **P1 DAMM: the kernel was deleted as unreachable (#153, closed 2026-09-14; branch `archive/damm-hr`) — the header still lists it.** | 1 by § (`test_soil_biogeochem.f90:4`, the §8 test plan), 2 bare | **ARCHIVE** — live description: `docs/science/soil_carbon.md`, `src/slow_dynamics/soil/README.md` |
+| `MEDS_SNOW_DESIGN.md` | Live | P1 multi-layer #186, P2 interception #187 (ROADMAP §9). Unfiled: §15 Q1–Q2 (`rho_snow`, `snowfac` calibration) — file or drop. | 3 bare "P0" (`meds_biophysics_opts.f90:119`, `meds_ground_biophysics.f90:11`, `meds_soil_types.f90:168`) | **ARCHIVE** — live: `docs/science/snow_biophysics.md`, `snow_params_t`; §13's keys differ from as-built |
+| `MEDS_GPU_EVALUATION.md` | Live | §12: three done (NUMERICS §7 refuted, #194, `building.md:101-106`), #195, #196, #104, #197 (decided 2026-09-13, still open — §7 A), #183. README's "five of seven" overstates: two done, two decided. | 2 bare paths (`CMakeLists.txt:14`, `src/README.md:88`) | **ARCHIVE** — the verdict is restated in `docs/building.md` and the CMake header |
+| `MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` | Reference | #165, #167 (ROADMAP §5). Header still lists "retire `veg_energy_step_implicit`" (#166 closed, PR #120) and "wood sizing" (#168 closed, PR #125). Unfiled: §3's three allocation/deep-copy refactors (fold into #195) and §6 sunlit/shaded (drop). | 1 (`meds_fast_types.f90:430`, rationale) | **ARCHIVE**, ⚰️ for §9–§11, §14 — live: `docs/science/vegetation_energy_dynamics.md`, `numerical_scheme.md` §5a′ |
+| `MEDS_DOCS_REVIEW_2026-09-13.md` | Reviews | Executed (29 moves, README/`src/README.md`/`CLAUDE.md` split, ROADMAP and CHANGELOG created) except its §5.3 comment sweep — 156 history-narrating comment lines remain in `src`+`test`, the same rule-1 residue §9.5 item 1 lists — and the §5.4 page items. | 0 | **ARCHIVE** — its outputs are the live files |
+| `MEDS_V02_RELEASE_PLAN.md` | *none* | v0.2.0 shipped 2026-09-14 (PRs #203–#259). Never decided: milestone/labels. Never filed: the RK45 frozen-record oracle (§2.2), a fast-loop golden (§5.1; the six r1 cases may cover it). | 0 | **ARCHIVE** — CHANGELOG `[0.2.0]`, ROADMAP |
+| `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` | Live | #158, #159, #104; RK45 production warning shipped (#160, `meds_config.f90:684-685`) — header stale. **ψ_leaf/N2b: #162 was closed 2026-09-14 without a comment while ROADMAP:90 ("open question"), CHANGELOG:520 ("#162, open") and `numerical_scheme.md:292, 464` ("tracked as N2b in this plan") say open.** E5 (RK45 rescue snapshot, `:1999`): tracked nowhere. | 3 (`meds_soil_water.f90:665`, `meds_fast_types.f90:369`, and a path inside an error string at `meds_fast_frozen.f90:442`), all history | **ARCHIVE once #162 and E5 are re-homed** (reopen #162 or record why it closed; file or drop E5) — live: `docs/science/numerical_scheme.md` |
+| `MEDS_CODE_STRUCTURE_DESIGN.md` | Live | §15 closed: Phase 1 #141, Phase 2 #145 → #254, Phase 3 #201, Phase 4 #147 → #146, Phase 5 → #188/#189/#190, Phase 6 #191 (`meds_test_assert.f90`, no local `check` left); decision #13 reversed (#193, `test/` is flat). | ~20 by decision/rule number: `CMakeLists.txt:132, 146, 171` (decisions #9, #2, #4), `python/pyproject.toml:7` and the FFI shims (#1), `meds_canopy_types.f90:12`, `meds_leaf_opts.f90:9`, `meds_allometry.f90:47` (#8, #10, #12), `meds_fast_config.f90:9`, `meds_demography_rates.f90:8` (rules 5, 8) | **→ REFERENCE** — placement rules 2, 5, 6, 7 and decisions #8–#12 exist only here (`src/README.md`/`CLAUDE.md` carry rules 1, 3, 4, 8 and the graph); §7.2 and #13 have drifted |
+| `MEDS_FROZEN_SEAM_CONTRACT.md` | Reference | The note *is* #201's deliverable (PR #208). §4's "make debit-before-credit an assertion" never filed. `CODE_STRUCTURE` §15.4 still says "write it down". | **0** — the README's "cited by section from the code" does not hold | **REFERENCE for now** — the only statement of the rate-seam and arbitration rules; fold §2–§5 into `soil_carbon.md` §7 / `order_of_processes.md`, then **ARCHIVE** |
+| `MEDS_NUMERICS_SCOPING.md` | Reference | Header lists MB2 (#163 closed, knobs deleted) and §11.3 bare arrays (#164 closed premise-false) as open; §8a/§8d–§8g, §9 #5, §12.2 all shipped or rejected. Unfiled: the §8b L2 "enforce conservation everywhere" sweep (nearest: #189, #290). | 20 files by § (§5.1, §5.3, §11, §8e, BB1, QW2/QW4) — as-built mechanisms | **REFERENCE (earned)** — refresh the header |
+| `MEDS_IO_DESIGN.md` | Reference | Header "variance deferred" — #174 shipped (residue #275); async writer / `NC_FLOAT` / `AGG_WMEAN` dropped by decision; flush-order lines `:607-608, 652, 676, 1122` amended only at `:681-688` (#294). | 10 by § (registry, integrators, serializer; `.claude/rules/output.md:12`) | **REFERENCE (earned)** — refresh the header, pointer at `:607` |
+| `MEDS_IO_V01_PLAN.md` | Reference | Its deferred list shipped whole in v0.2.0 (#169 #170 #171 #172 #173 #174 #175); the `[io]` shim removal (ROADMAP:143) has no issue; unfiled and low value: `_fast` suffix retirement, `add_variable_family`, the FvCB rate rows. | 13 by § (stages, reducer, diag blocks, 2-D axis, DBH binning) | **REFERENCE (earned)** — rewrite the header |
+| `MEDS_POLYGON_RUNTIME_PLAN.md` | Live | R3–R6 → #183 (+ #290, #195); in-plan only: B9 nvfortran check, the memory split "before R3" (§10.3.1), OR2. #183's body asks for MPI, which the plan dropped. | 24 by § from `src`/`test`/CMake | **LIVE** — the as-built description of region mode and the plan in execution |
+| `MEDS_CODE_REVIEW_2026-09-27.md` | Reviews | this document | 0 | LIVE until §9 is executed |
+
+Net: **six moves now** (biogeochemistry, snow, GPU evaluation, veg-energy plan, the 2026-09-13 docs
+review, the v0.2 release plan), **one more after two issue actions** (integrator plan), **one
+re-classification** (structure design → Reference), **one fold-then-move** (seam contract), **four
+header refreshes** (numerics scoping, IO design, IO v0.1 plan, structure design), and the
+archive count goes 34 → 40 (41, 42). The live table is then the polygon plan alone, which is what
+"live" should mean.
+
+### 10.2 Tombstone drafts
+
+House style: `> # 🗃️ ARCHIVED — <date>. <one line>` then *shipped* (PRs), *deferred* (issues),
+*live description*, *do not trust*. ⚰️ where a section is actively wrong.
+
+- **Biogeochemistry.** 🗃️ P0 and P3 shipped; the rest is issues. Shipped: pools, CENTURY matrix,
+  EXPM, SASU (#35); per-patch state, `[soil_carbon]`, restart, the litter → daily step → fast-Rh
+  seam (#64); `soil_carbon_on` default (#143); Λ/lignin audits (#141). Deleted: the DAMM kernel
+  (#153). Deferred: #154 nitrogen, #155 vertical pools, #156 CWD, #157 fire (ROADMAP §3). Live:
+  `docs/science/soil_carbon.md`, `src/slow_dynamics/soil/README.md`. Do not trust: §5.1/§10 paths,
+  §9 "Ra is still 0", §7 P1 "DAMM (already in `meds_column_co2`)".
+- **Snow.** 🗃️ P0 shipped; P1/P2 are issues. Shipped: the single-layer store, `snowfac`-ramped
+  optics/BC/latent split, paired melt transfer, closed ledgers (#42); the shared snow stage on ARK
+  and RK45, `[fast].snow_on` deleted (#77, #80); ice-curve sublimation (CHANGELOG:1211). Deferred:
+  #186, #187 (ROADMAP §9); §15 Q1–Q2 never filed. Live: `docs/science/snow_biophysics.md`,
+  `snow_params_t`. Do not trust: the 2026-07 status block, §6 "ARK stays snow-free", §2.2 module
+  names, §5's `file:line`, §13's keys.
+- **GPU evaluation.** 🗃️ The measurement stands; every recommendation is done, decided or an
+  issue. Measured (#110): offload 1.4× slower, one kernel at 0.4 % occupancy, GPU-as-20-cores 26×
+  slower. Done: BB2/BB3 refuted in NUMERICS §7; build/CLAUDE overselling fixed (#194);
+  `MEDS_GPU=gpu` demoted. Decided: `wp` stays `real64` (#197). Deferred: #195, #196, #104; the
+  regional axis is `MEDS_POLYGON_RUNTIME_PLAN.md` (#183). Do not trust: §2 counts, §13 paths.
+- **Veg-energy integration plan.** 🗃️ §1–§8, §12–§13 shipped (store on 2026-07-31; selectors
+  deleted, PR #88 era). ⚰️ §9–§11 and §14 were overturned the same day by PR #90 — one
+  coefficient, refreshed per stage; default 900 s. Open: #165 film store, #167 slope (ROADMAP §5);
+  #166, #168 closed. Live: `docs/science/vegetation_energy_dynamics.md`; stability by stand height
+  in `numerical_scheme.md` §5a′.
+- **Docs review 2026-09-13.** 🗃️ Executed 2026-09-13/14 (commit `bf85b45`; PRs #203–#208, #235,
+  #253): 29 plans archived, README / `src/README.md` / `CLAUDE.md` split, ROADMAP and CHANGELOG
+  created, three science pages written. Not executed: the §5.3 comment sweep and the §5.4 page
+  items — now §9.5 item 1 of the 2026-09-27 review. Line numbers are the `b9596c5` tree.
+- **v0.2 release plan.** 🗃️ v0.2.0 shipped 2026-09-14 (tag `v0.2.0`, PR #259; phases 0–6 in PRs
+  #203–#253; CHANGELOG `[0.2.0]`). Deferred to v0.3+ with issues (ROADMAP); #164 later closed
+  premise-false. Never decided: milestone/labels. Never filed: the RK45 frozen-record oracle
+  (§2.2), the fast-loop golden (§5.1).
+- **Production integrator plan** (after the #162/E5 actions). 🗃️ The stability question is
+  closed; the remainder is issues. Shipped: N2a per-stage conductance refresh + 900 s (#90), N2b
+  corrector (#91), E3/E1b thrash detector + E4 (#105), §7 C1–C5 patch threading (#107, #109),
+  RK45 > 300 s warning (#160), the stomatal feedback that dissolved N2d/N2f (#95, #98). Refuted by
+  measurement (read as findings): §1i.1, N1, N2e, N6, E1 as written, E2. Deferred: N5 → #158;
+  tableau → #159; ψ clamp → #104; ψ_leaf → #162 (re-homed); E5 → issue or dropped. Live:
+  `docs/science/numerical_scheme.md`; kernel convention NUMERICS §11. Do not trust: §9 paths, the
+  §5 soil-T row (`:895-900`), anything marked SUPERSEDED (§1h, §2a).
+- **Structure design** (header, not a tombstone). 📚 REFERENCE — §15 is closed (Phase 1 #141,
+  Phase 2 #143/#145 → #254, Phase 3 #201, Phase 4 #147 → #146, Phase 5 → #188/#189/#190, Phase 6
+  #191); decision #13 reversed (#193). What stays live: §1 decisions, §5 straddlers, §6 placement
+  rules, §7.6 #3–#4 — cited by number from ~20 files. Do not trust §7.2 (the package is
+  `meds.plant/.demography/.model`) or decision #13. Live tree: `src/README.md`.
+
+### 10.3 Headers to refresh (Reference documents that overstate what is open)
+
+- `MEDS_NUMERICS_SCOPING.md:20-21`: drop MB2 (#163 closed) and §11.3 (#164 closed); file or drop
+  the §8b L2 sweep.
+- `MEDS_IO_DESIGN.md:15`: variance shipped (#174; residue #275); add "see `:681-688`" at `:607`.
+- `MEDS_IO_V01_PLAN.md:8-17, 45-50`: nothing deferred remains; point at #255, #275 and the shim line.
+- `MEDS_FROZEN_SEAM_CONTRACT.md`: say it is #201's deliverable; mark `CODE_STRUCTURE` §15.4
+  "delivered (#201)".
+
+### 10.4 What the moves touch
+
+Bare-path links that break on a move (all verified; historical hits in `CHANGELOG.md` and
+`archive/` excepted, but the two CHANGELOG links are one word each to fix):
+
+| Link | Document |
+|---|---|
+| `CMakeLists.txt:14`, `src/README.md:88`, `docs/building.md:106`, `docs/ROADMAP.md:257` | GPU evaluation |
+| `src/slow_dynamics/soil/README.md:48`, `docs/ROADMAP.md:57` | biogeochemistry |
+| `docs/science/snow_biophysics.md:16`, `docs/ROADMAP.md:220` | snow |
+| `docs/ROADMAP.md:104`, `examples/example_biophysics/README.md:229` (cites the *overturned* §10 — add the note) | veg-energy plan |
+| `src/fast_dynamics/numerics/meds_fast_frozen.f90:442` (inside an error string), `docs/ROADMAP.md:74`, `docs/science/numerical_scheme.md:292, 464`, `docs/science/canopy_aerodynamics.md:124`, `MEDS_NUMERICS_SCOPING.md:42`, eight `archive/` banners | integrator plan |
+| `CHANGELOG.md:1479` | seam contract (later) |
+| `CHANGELOG.md:1501` | v0.2 release plan |
+
+`docs/dev_plans/README.md`: delete the Live rows for the four moved plans; move the structure
+design to the Reference table; delete the Reference row for the veg-energy plan and the Reviews row
+for the docs review; add a Reviews row for this document; set the `archive/` count (34 → 40) and add
+the new tombstone grades. Gate for the phase: every `.md` in `dev_plans/` appears in exactly one
+README table, `ls archive | wc -l` equals the count, and `grep -rn "dev_plans/MEDS_" --include=*.md --include=*.f90 --include=*.py --include=*.txt .`
+resolves for every non-historical hit.
+
+### 10.5 Stale cross-references found on the way (outside `dev_plans/`)
+
+- `docs/ROADMAP.md:90` calls #162 an open question and `:96` lists #164 as open — both closed
+  2026-09-14/15. `CHANGELOG.md:520` "(#162, open)"; `docs/science/numerical_scheme.md:292, 464`
+  "tracked as N2b". Decision needed: reopen #162 (the ψ_leaf non-convergence is still a fact) or
+  record why it was closed, then fix the four references.
+- `docs/science/soil_carbon.md:250-253` describes `heterotrophic_respiration_damm` and its
+  dispatcher as existing; the kernel was deleted (#153) — only an enum mention remains in
+  `meds_biogeochem_types.f90`.
+- `MEDS_CODE_STRUCTURE_DESIGN.md` §15.4 still says "write it down" for the seam contract that #201
+  delivered.
+- #197 is open with the decision made (§7 A); ROADMAP:263 still says *Candidate*.
+- The `[io]` shim removal (ROADMAP:143) remains the one deferred item without an issue (§5.5).
+
+All of this fits Phase 4 (§9.5 item 4): the moves and header refreshes are mechanical (½ day);
+folding the seam contract into a science page and the #162/E5 decisions are the only parts that
+need thought.
