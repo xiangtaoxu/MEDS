@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 planned in detail (§10.3).
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3–R6 open.
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -333,7 +333,7 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 |---|---|---|
 | **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
 | **R1** compute/I-O split ✅ | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | ✅ 2026-09-27: suite green; six reference cases byte-identical to `beta` (§10.2 status). |
-| **R2** region and polygon container, serial | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into file sets and per-polygon buffers; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). |
+| **R2** region and polygon container, serial ✅ | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into file sets and per-polygon buffers; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). ✅ 2026-09-27 (#289): the `region` CTest checks a 3-polygon region on a synthetic archive against 3 site runs, bit for bit. |
 | **R3** OpenMP polygon loop | `!$omp parallel do schedule(dynamic)` over polygons; the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling measured to the core count; nvfortran build green where available. |
 | **R4** ragged restart | Region checkpoint and restart with CF contiguous ragged arrays | A restart round trip is bit-identical to an uninterrupted run. |
 | **R5** robustness and scale | Status-based failure isolation (B6), batching by tiles, the tile job-array recipe, allocator work (B8), per-polygon logs | A failure-injection test: one polygon fails and the rest match the reference. Throughput and memory recorded for a 20,000-polygon box. |

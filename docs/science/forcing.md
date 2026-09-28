@@ -2,8 +2,9 @@
 
 Forcing is the **prescribed** half of the model's boundary: the atmospheric state above the canopy,
 *read from a file* rather than evolved. Everything else in MEDS is state, advanced by a kernel that
-owns it; nothing in the model writes forcing. One polygon / one site runs today, bound to one column
-of a possibly multi-site file. The reader produces one **instantaneous per-site record**
+owns it; nothing in the model writes forcing. A run is one site, or a region of polygons each at its
+own forcing cell (`[run].mode = "region"`); either way a polygon reads one column of the forcing. The
+reader produces one **instantaneous per-site record**
 (`met_forcing_t`) per `dt_fast` sub-step: air temperature, specific humidity, surface pressure, wind,
 downwelling longwave, the four (beam/diffuse)×(PAR/NIR) shortwave streams, CO₂ (prescribed on its own,
 not read from the met file, §12), plus the *derived* $`\cos z`$ and $`\rho_{air}`$ — never stored in a
@@ -320,7 +321,12 @@ lapse per record as it is read, then the move to **each patch's canopy-air top**
 - over a forested cell, **2 m temperature and dewpoint are a clearing's**: they come from the cell's
   dominant low-vegetation tile, not from air above the canopy;
 - ERA5-Land has already lapsed ERA5 to its own orography, holding relative humidity (Muñoz-Sabater
-  et al. 2021, §2.3). What is left is the site's elevation, and the canopy's height.
+  et al. 2021, §2.3). **Its archived surface pressure does sit at that orography**, although
+  ERA5-Land's documentation lists it as interpolated. Across 2,842 neighbouring-cell pairs over the
+  Colorado Rockies (1,353–3,682 m, 1 July 2024), ln p differs by 0.9 of the hypsometric rate for the
+  cells' elevation difference, with a correlation of 0.985. So the terrain lapse starts pressure, like
+  temperature, from the cell's own elevation. What is left is the site's elevation, and the canopy's
+  height.
 
 ### Step 1. Terrain: from the forcing cell's elevation to the site's
 
@@ -566,14 +572,17 @@ Why this series:
 
 ## What is not here
 
-- **No multi-polygon runtime.** The `(time, grid)` format, `grid_index` and nearest-cell matching are in
-  place — file and reader are ready for N locations — but the model runs one site.
+- **Regions run serially, and cannot restart.** `[run].mode = "region"` runs every selected cell of a box
+  as its own polygon, all sharing one reader. The polygons are stepped one after another, and a region
+  writes no checkpoints. The OpenMP polygon loop and region restarts are R3 and R4 of
+  `MEDS_POLYGON_RUNTIME_PLAN.md` (#183).
 - **No forcing perturbations.** MEDS runs on the forcing it is given. Sensitivity offsets, scalings
   and delta-change climate scenarios belong upstream, in the forcing file; they are out of scope.
 - **No latitude-resolved CO₂.** One global series drives every polygon (§12). CMIP7 also gives
   monthly 15° latitude bands, which a region spanning several bands would want for recent decades.
-- **`avg_convention`** distinguishes `"end"` and `"begin"`. `"instant"` and `"center"` parse, but the
-  disaggregation treats them as end-of-interval; only the partition's midpoint offset (§6) differs.
+- **`avg_convention`** takes `"end"` or `"begin"`. `"instant"` and `"center"` parse but are rejected at
+  config load: they have no disaggregation branch of their own, and running the end-of-interval one under
+  their name would be silently wrong (#185).
 
 See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 
