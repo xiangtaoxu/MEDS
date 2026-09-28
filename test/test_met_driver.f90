@@ -840,15 +840,17 @@ contains
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik,1_ik,1_ik),                      &
                     run_end=meds_time_t(2025_ik,1_ik,1_ik))
       call check_true('recycle: opens with a CO2 file', st == MET_OK, real(st, wp))
-      call site_cursor(src, cur, fc)
-      call met_advance(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
-      m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
-      call met_advance(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
-      m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
-      call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
-      call check('recycle: 2021 CO2', m_ref%co2, 400.0_wp, 1.0e-9_wp)
-      call check('recycle: the CO2 does not repeat (2023 CO2)', m_map%co2, 420.0_wp, 1.0e-9_wp)
-      call met_close(src)
+      if (st == MET_OK) then
+         call site_cursor(src, cur, fc)
+         call met_advance(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
+         m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
+         call met_advance(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
+         m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
+         call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+         call check('recycle: 2021 CO2', m_ref%co2, 400.0_wp, 1.0e-9_wp)
+         call check('recycle: the CO2 does not repeat (2023 CO2)', m_map%co2, 420.0_wp, 1.0e-9_wp)
+         call met_close(src)
+      end if
 
       !----- A met file that carries CO2air is rejected: nothing would read it. ---------------!
       call write_synthetic_forcing(NCFILE, meds_time_t(year=2020_ik, month=7_ik, day=1_ik), with_co2air=.true.)
@@ -899,6 +901,12 @@ contains
       type(met_cursor_t), intent(in) :: cur
       type(meds_time_t),  intent(in) :: t
       type(met_forcing_t) :: met
+      !----- A series that failed to open has no rows. -1 fails every check that follows, where    !
+      !      met_instant would read its unallocated arrays and the segfault would swallow the       !
+      !      buffered output that says why the open failed. ---------------------------------------!
+      if (src%co2%n < 2_ik) then
+         co2 = -1.0_wp ; return
+      end if
       met = met_instant(src, cur, t)
       co2 = met%co2
    end function co2_now

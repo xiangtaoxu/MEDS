@@ -14,6 +14,42 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Under nvfortran, v0.3.0 could not open a site run, and four tests failed.** v0.3.0 was verified
+  on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and `MEDS_GPU=gpu`
+  alike, 49 of 53 tests passed, and `meds_main` stopped in `driver_open` on any config, because
+  code new in v0.3.0 uses four constructs that nvfortran gets wrong. Each reproduces in a small
+  standalone program, and each is invisible to ifx. They are now in the portability traps of
+  `docs/building.md` and `CLAUDE.md`.
+  - `driver_open` reset the run's output buffers with `output_buffers_t()`. nvfortran compiles that
+    constructor to an ALLOCATE of a garbage size, for example 72,340,172,838,076,672 bytes, because
+    the type has fixed-size array components whose own type has allocatable components. Every
+    site run, through `meds_main` or the C API, stopped there. The reset now copies a
+    default-initialised local.
+  - The CO₂ file reader matched the `timestep` unit with `findloc(UNIT_NAME, trim(unit))`. nvfortran
+    returns 0 for a value shorter than the names, so every CO₂ file was refused on its `timestep`
+    line. The reader now passes the untrimmed token.
+  - `era5land_select_box` built the columns of a box that crosses 180° as
+    `[pack([(i, …)], m1), pack([(i, …)], m2)]`. nvfortran returns wrong elements, and the vector
+    subscript that follows segfaulted, so a region across 180° could not open. The column indices
+    are now a named array.
+  - The NaN scan of a loaded ERA5-Land month called `findloc` on a LOGICAL array. The nvfortran
+    runtime does not implement that and aborts, so a NaN in the archive stopped the run with
+    "FINDLOC: unimplemented for data type" instead of a message naming the variable, hour and
+    cell. The scan now searches an integer mask.
+  - `test_met_driver` no longer segfaults when a CO₂ file fails to open. It segfaulted because it
+    read the unloaded series, and the crash discarded the buffered output that said why the open
+    failed. The test now reports FAIL lines instead. With the `trim()` restored, the test reports
+    `15 FAILED` and exits instead of crashing.
+  - **Checked:** 53/53 on ifx Release and Debug, nvfortran multicore and nvfortran gpu. With
+    `OMP_TARGET_OFFLOAD=MANDATORY`, the gpu suite launches the offloaded cohort-update kernel 201
+    times. ifx output is unchanged, compared on a 13-month coupled run from bare ground: all
+    50,330 values of the variables whose output repeats between two runs of the unmodified
+    binary are identical, bit for bit. Four variables in that run do not repeat between two runs
+    of the unmodified binary (`soil_temp_site_fast`, `soil_water_site_fast`, `area_patch`,
+    `lai_patch`), so they cannot be compared this way. That is a separate defect.
+
 ## [0.3.0] — 2026-09-28
 
 A **regional simulation** release. `[run].mode = "region"` runs every ED_ERA5land cell of a
