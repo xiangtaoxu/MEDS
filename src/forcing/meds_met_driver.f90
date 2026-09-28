@@ -512,79 +512,62 @@ contains
          met%co2 = f%co2_const
       end if
 
-      if (src%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
-         !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
-      !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
-      !      this instant's clearness index, and after dark it falls back to the last daytime value  !
-      !      met_advance remembered. Overwrites whatever the file read, which is the point -- the    !
-      !      selector says the file's longwave is not to be trusted or is not there.  ----------------!
-      if (f%lwdown_source == LW_SYNTHESIZE) then
-         block
-            real(wp) :: sw_now, kt_now
-            sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
-            kt_now = clearness_index(sw_now, cosz_now)
-            if (kt_now < 0.0_wp) kt_now = cur%kt_last_day
-            met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
-                                           kt_now, f%lw_cloud_a)
-         end block
-      end if
+      !----- The reference climate (CONST) is the forcing type's defaults, held flat; a file backend  !
+      !      interpolates its bracket to `now`.                                                    !
+      if (src%backend /= MET_BACKEND_CONST) then
+         !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
+         !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
+         now_sec = file_lookup_sec(src, now)
+         if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+            tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
+         else
+            tprev = src%time_sec(cur%irec_prev)
+            tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
+         end if
+         if (tnext > tprev) then
+            w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
+         else
+            w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
+         end if
 
-      met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
-         return
-      end if
+         !----- state variables: linear; wind: energy-conserving. ------------------------------!
+         met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
+         met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
+         met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
+         met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
+         !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
+         if (src%has_wind_vector) then
+            met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
+            met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+            met%has_wind_vector = .true.
+         end if
 
-      !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
-      !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
-      now_sec = file_lookup_sec(src, now)
-      if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-         tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
-      else
-         tprev = src%time_sec(cur%irec_prev)
-         tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
-      end if
-      if (tnext > tprev) then
-         w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
-      else
-         w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
-      end if
+         !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
+         precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
+         call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
 
-      !----- state variables: linear; wind: energy-conserving. ------------------------------!
-      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-      met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
-      !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
-      if (src%has_wind_vector) then
-         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
-         met%has_wind_vector = .true.
+         !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
+         !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
+         !      rec_next's; begin -> rec_prev's.                                                        !
+         select case (f%avg_convention)
+         case (METAVG_BEGIN) ; mean_rec = p
+         case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
+         end select
+         !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
+         !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
+         !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
+         mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
+         win_start_sec = seconds_into_day(mws)
+         factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
+                                          (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
+                                          cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
+                                          f%apply_solar_longitude)
+         met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
+         met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
+         met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
+         met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
       end if
-
-      !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
-      precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
-      call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
-
-      !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
-      !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
-      !      rec_next's; begin -> rec_prev's.                                                        !
-      select case (f%avg_convention)
-      case (METAVG_BEGIN) ; mean_rec = p
-      case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
-      end select
-      !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
-      !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
-      !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
-      mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
-      win_start_sec = seconds_into_day(mws)
-      factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
-                                       (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                       cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
-                                       f%apply_solar_longitude)
-      met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
-      met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
-      met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
-      met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
 
       !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
       !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !

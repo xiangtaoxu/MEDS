@@ -314,6 +314,10 @@ before and after.
   that said "period start". The `time`, `minute` and `second` of every `-F-` record move back by
   that much; no value changes.
 
+- **`met_instant` has one exit** (review F2, #PRNUM). The constant backend no longer repeats the
+  longwave synthesis and air density in an early return; only the file interpolation is skipped.
+  Unchanged bit for bit (`test_fast_loop` block 8 runs the constant backend).
+
 ### Removed
 
 - **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
