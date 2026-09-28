@@ -151,17 +151,21 @@ latitude              = 42.44
 longitude             = -76.50
 utc_offset            = 0.0
 elevation             = 320.0
-reference_height      = 48.0
-wind_meas_height      = 10.0
 apply_solar_longitude = true
-apply_wind_profile    = false
-apply_elevation_lapse = false
-wind_roughness_z0     = 0.1
-lapse_rate_tair       = 0.0065
-grid_elevation        = 320.0
+apply_elevation_lapse = true             # from the forcing cell (grid_elevation) to the site (elevation)
+lapse_rate_tair       = 0.0065           # [K/m] one rate, or twelve (January .. December)
+grid_elevation        = 367.5            # [m] the ERA5-Land cell (42.40, -76.50) the file was cut from
 
 [forcing]
 forcing_on     = true
+# The forcing's own heights (ERA5-Land). Each sample is moved from them to the top of every patch's
+# canopy air space (docs/science/forcing.md §8).
+tq_height            = 2.0             # [m] 2 m temperature and dewpoint
+wind_height          = 10.0            # [m] 10 m wind
+height_above         = "zero_plane"    # reanalysis heights: above the displacement height
+wind_exposure        = "open_terrain"  # ERA5's 10 m wind is an open-terrain diagnostic ...
+wind_exposure_z0     = 0.03            # [m] ... made for this roughness ...
+wind_blending_height = 40.0            # [m] ... from this height
 format         = "netcdf"
 path           = "../../data/forcing/ithaca_forcing.nc"
 grid_index     = 1

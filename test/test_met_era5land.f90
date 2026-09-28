@@ -14,13 +14,16 @@ program test_met_era5land
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
-   use meds_forcing_kernels, only : dewpoint_to_specific_humidity, wind_log_profile
+   use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
+   use meds_lapse_rate,      only : lapse_pressure
+   use meds_therm_lib,       only : sat_vapor_pressure
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    met_prefetch, &
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &
                                     era5land_select_box, era5land_load_month, ERA_OK, ERA_ERR_NAN,  &
-                                    ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10
+                                    ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, &
+                                    ERA_LWDOWN
    use meds_test_era5land_archive, only : T0, field, hour_index, write_archive
    implicit none
 
@@ -186,7 +189,8 @@ contains
       type(met_forcing_t)    :: met
       type(meds_time_t)      :: t
       integer(ik) :: st, g
-      real(wp)    :: u1, u2, v1, v2, factor
+      real(wp)    :: u1, u2, v1, v2, t0, p0, q0, lw0, t1, p1, rh0, rh1
+      integer     :: k
       print '(a)', '-- era5land 5: driver across a month boundary --'
       fc = archive_config()
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),               &
@@ -233,19 +237,35 @@ contains
                       real(src%n_loads, wp))
       call met_close(src)
 
-      !----- The height correction scales both components by the speed's factor. ---------------!
-      fc%apply_wind_profile = .true. ; fc%wind_meas_height = 10.0_wp ; fc%reference_height = 40.0_wp
-      fc%wind_roughness_z0 = 0.1_wp
-      factor = log(400.0_wp) / log(100.0_wp)
+      !----- The TERRAIN lapse (docs/science/forcing.md §8): a site 500 m above its cell, in January, !
+      !      with twelve distinct monthly rates. T by January's rate, P hydrostatically, q at constant   !
+      !      relative humidity, file LW by eps*T^4. The reader no longer touches the wind: the move to   !
+      !      the canopy-air top is per patch, in the fast loop. ------------------------------------------!
+      fc%apply_elevation_lapse = .true.
+      fc%lapse_rate_tair = [(0.0040_wp + 0.0002_wp * real(k, wp), k = 1, 12)]   ! January: 0.0042 K/m
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),               &
                     run_end=meds_time_t(2021_ik, 3_ik, 1_ik))
+      fc%elevation_m = src%cells%elevation(1) + 500.0_wp
       call site_cursor(src, cur, fc)
       t = meds_time_t(2021_ik, 1_ik, 20_ik, 6_ik) ; g = hour_index(t)
       met = step_sample(src, cur, t)
+      t0  = field(ERA_TAIR, 1_ik, 3_ik, g) ; p0 = field(ERA_PSURF, 1_ik, 3_ik, g)
+      q0  = dewpoint_to_specific_humidity(field(ERA_TDEW, 1_ik, 3_ik, g), p0)
+      lw0 = field(ERA_LWDOWN, 1_ik, 3_ik, g)
+      t1  = t0 - 0.0042_wp * 500.0_wp ; p1 = lapse_pressure(p0, t0, 500.0_wp, 0.0042_wp)
+      call check('lapse: T by January''s rate', met%tair_k, t1, 1.0e-9_wp)
+      call check('lapse: P hydrostatic', met%psurf_pa, p1, 1.0e-6_wp)
+      rh0 = q0 * p0 / (0.622_wp + 0.378_wp * q0) / sat_vapor_pressure(t0)
+      rh1 = met%qair * met%psurf_pa / (0.622_wp + 0.378_wp * met%qair) / sat_vapor_pressure(met%tair_k)
+      call check('lapse: relative humidity held', rh1, rh0, 1.0e-12_wp)
+      call check_true('lapse: the colder site holds less vapour', met%qair < q0, met%qair - q0)
+      call check('lapse: file longwave scaled by eps*T^4', met%lwdown,                              &
+                 lw0 * clear_sky_emissivity(fc%lw_clear_form, met%tair_k, met%qair, met%psurf_pa)      &
+                     * met%tair_k**4 / (clear_sky_emissivity(fc%lw_clear_form, t0, q0, p0) * t0**4), 1.0e-9_wp)
+      call check_true('lapse: the colder, drier site gets less longwave', met%lwdown < lw0, met%lwdown - lw0)
       u1 = field(ERA_U10, 1_ik, 3_ik, g) ; v1 = field(ERA_V10, 1_ik, 3_ik, g)
-      call check('height correction on u', met%wind_u, u1 * factor, 1.0e-12_wp)
-      call check('height correction on v', met%wind_v, v1 * factor, 1.0e-12_wp)
-      call check('direction preserved', atan2(met%wind_v, met%wind_u), atan2(v1, u1), 1.0e-12_wp)
+      call check('the reader leaves the wind as delivered (u)', met%wind_u, u1, 1.0e-12_wp)
+      call check('the reader leaves the wind as delivered (v)', met%wind_v, v1, 1.0e-12_wp)
       call met_close(src)
    end subroutine test_driver_months
 

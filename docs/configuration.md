@@ -165,6 +165,19 @@ The file formats, the ERA5-Land preparation recipe, and the recycling rules are 
   mean stays correct, so nothing downstream complains.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
 
+**The forcing is moved to each patch's canopy-air top.** There is no fixed reference height:
+every sample is taken from the forcing's own heights to the top of each patch's canopy air space, which
+grows with the stand, and the aerodynamics runs from there ([`science/forcing.md`](science/forcing.md) §8).
+- **Declare the forcing's own heights in `[forcing]`:** `tq_height` and `wind_height`; `height_above`
+  (`"zero_plane"` for a reanalysis, `"ground"` for a flux tower); and `wind_exposure` (`"open_terrain"`
+  for ERA5's 10 m wind, with `wind_exposure_z0 = 0.03` and `wind_blending_height = 40`, or `"local"`).
+  `meds_config_main.toml` shows ERA5-Land's values.
+- **The terrain lapse** (`[site].apply_elevation_lapse`) moves temperature, pressure, humidity (at constant
+  relative humidity) and file longwave from the forcing cell's elevation to the site's.
+  `[site].lapse_rate_tair` takes one rate or twelve monthly rates.
+- The old `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0`
+  are rejected, with a message naming these keys.
+
 **CO₂ is set in `[forcing]`, never by the met file.**
 - **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
 - **`co2_source = "file"`** reads `co2_file`, a MEDS CO₂ file looked up on model time, so the CO₂

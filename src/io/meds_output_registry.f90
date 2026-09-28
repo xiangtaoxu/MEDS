@@ -69,6 +69,7 @@ module meds_output_registry
                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
                                     PD_TRANSP, PD_GROUND_TEMP, PD_RESID_ENERGY,                  &
                                     PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
+                                    PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,               &
                                     PD_RESID_WATER,                                              &
                                     PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                     PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
@@ -715,6 +716,12 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_ROUGH)
       call add_variable(reg, 'displace_site', 'zero-plane displacement height', 'm',             &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_DISPLACE)
+      !----- Per patch too: with its canopy-air depth these are what move the forcing to the patch's  !
+      !      canopy-air top (docs/science/forcing.md §8), so each patch's forcing can be rebuilt. ----!
+      call add_variable(reg, 'rough_patch', 'patch aerodynamic roughness length', 'm',           &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_ROUGH)
+      call add_variable(reg, 'displace_patch', 'patch zero-plane displacement height', 'm',      &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_DISPLACE)
       call add_variable(reg, 'ground_temp_site', 'ground (skin) temperature', 'K',               &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
       !--- carbon ---!
@@ -802,13 +809,13 @@ contains
    !=======================================================================================!
    subroutine register_forcing(reg)
       type(output_registry_t), intent(inout) :: reg
-      call add_variable(reg, 'air_temp_site', 'air temperature at the reference height (forcing)', 'K', &
+      call add_variable(reg, 'air_temp_site', 'air temperature at the forcing''s own height (forcing)', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_TAIR)
-      call add_variable(reg, 'qair_site', 'specific humidity at the reference height (forcing)', 'kg/kg', &
+      call add_variable(reg, 'qair_site', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_QAIR)
       call add_variable(reg, 'psurf_site', 'surface pressure (forcing)', 'Pa',                    &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_PSURF)
-      call add_variable(reg, 'wind_site', 'wind speed at the reference height (forcing)', 'm/s',  &
+      call add_variable(reg, 'wind_site', 'wind speed at the forcing''s own height (forcing)', 'm/s',  &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_WIND)
       call add_variable(reg, 'lwdown_site', 'downward longwave at canopy top (forcing)', 'W/m2',  &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_LWDOWN)
@@ -826,14 +833,22 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_CO2)
       call add_variable(reg, 'cosz_site', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_COSZ)
-      call add_variable(reg, 'rho_air_site', 'air density at the reference height', 'kg/m3',     &
+      call add_variable(reg, 'rho_air_site', 'air density at the forcing''s own height', 'kg/m3',     &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_RHO_AIR)
+      !----- The patch's own forcing: the sample moved to its canopy-air top (§8). Only the wind and  !
+      !      the air temperature differ between patches; the rest is the polygon's, above. ------------!
+      call add_variable(reg, 'wind_cas_top_patch', 'wind speed at the patch canopy-air top', 'm/s', &
+                        DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_WIND_CAS_TOP)
+      call add_variable(reg, 'air_temp_cas_top_patch', 'air temperature at the patch canopy-air top', 'K', &
+                        DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_TAIR_CAS_TOP)
+      call add_variable(reg, 'cas_depth_patch', 'patch canopy-air depth (the top its forcing is moved to)', &
+                        'm', DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_Z_CAS_TOP)
       !----- The FAST tier (air_temp_fast, sw_in_fast and atm_co2_fast are registered with it). ---!
-      call add_variable(reg, 'qair_fast', 'specific humidity at the reference height (forcing)', 'kg/kg', &
+      call add_variable(reg, 'qair_fast', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_QAIR)
       call add_variable(reg, 'psurf_fast', 'surface pressure (forcing)', 'Pa',                    &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PSURF)
-      call add_variable(reg, 'wind_fast', 'wind speed at the reference height (forcing)', 'm/s',  &
+      call add_variable(reg, 'wind_fast', 'wind speed at the forcing''s own height (forcing)', 'm/s',  &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_WIND)
       call add_variable(reg, 'lwdown_fast', 'downward longwave at canopy top (forcing)', 'W/m2',  &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_LWDOWN)
@@ -851,7 +866,7 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_SNOWFALL)
       call add_variable(reg, 'cosz_fast', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_COSZ)
-      call add_variable(reg, 'rho_air_fast', 'air density at the reference height', 'kg/m3',     &
+      call add_variable(reg, 'rho_air_fast', 'air density at the forcing''s own height', 'kg/m3',     &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_RHO_AIR)
    end subroutine register_forcing
 

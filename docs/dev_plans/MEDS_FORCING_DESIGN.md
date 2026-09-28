@@ -14,6 +14,14 @@
 > - ✅ The fast loop reads the forcing record directly; the `apply_met_to_ctx` shim is retired (§6.2).
 > - ✅ The forcing echo (§6.7): the `forcing` output group, polygon means at the daily to yearly
 >   tiers and every sub-step sample at the fast tier.
+> - ✅ Vertical corrections (Q2), 2026-09-27, in `src/forcing/meds_lapse_rate.f90`: every forcing
+>   sample is moved from the forcing's own heights (`[forcing].tq_height`, `wind_height`,
+>   `height_above`, `wind_exposure`) to the top of **each patch's canopy air space**, which grows with
+>   the stand. The move holds potential temperature and humidity, and the wind follows the patch's own
+>   log profile after ERA5's open-terrain 10 m wind is returned to its 40 m blending height. The
+>   fixed `reference_height` is gone. The terrain lapse now holds relative humidity, scales file
+>   longwave by the clear-sky ε·T⁴ ratio and takes twelve monthly lapse rates. Per-patch forcing is
+>   written (`wind_cas_top_patch`, `air_temp_cas_top_patch`). See `docs/science/forcing.md` §8.
 > - ✅ Prescribed CO₂ (#184), 2026-09-27: `[forcing].co2_source` is `"const"` (`co2_const`) or
 >   `"file"` (a MEDS CO₂ file, looked up on model time, so it does not repeat with recycled met). The
 >   met file no longer carries CO₂. The repository ships CMIP7 global annual means for 1000–2022 in
@@ -47,8 +55,6 @@
 > **Still open:**
 > - ➡ F6, later products (§16–§17), and archive years before June 2002: deferred 2026-09-27
 >   (ROADMAP §8, #302 and #303);
-> - ⬜ adjusting 2 m temperature and humidity to the reference height (Q2); the 10 m wind
->   log-profile exists.
 >
 > **This document is also the reference for the de-accumulation recipe (§7.3), including the 00Z
 > trap,** now confirmed on real GDEX data (§19). It is restated in `docs/science/forcing.md`.
@@ -757,6 +763,11 @@ the same file, non-cycling).
 P0 applies the near-surface reanalysis values at the model reference height and accepts the height
 mismatch; `wind_meas_height` records the source height for a future log-profile adjustment (§10).
 
+> *Update 2026-09-27:* superseded. There is no fixed reference height any more: each sample is moved to
+> each patch's canopy-air top from the forcing's declared heights. ERA5's 10 m wind turned out to be
+> an open-terrain diagnostic (a 40 m blending-height wind brought down with z0 = 0.03 m), and its 2 m
+> temperature over a forest a clearing's. Both are handled in `docs/science/forcing.md` §8.
+
 ### 5.3 Wind — energy-conserving interpolation
 
 Wind (and `ustar` if ever ingested) interpolate as **squared** quantities then square-rooted (ED2's
@@ -1272,6 +1283,8 @@ reads a box of cells from it.
 >
 > **P2**
 > - ✅ the elevation-lapse and 10 m → reference-height wind corrections (optional, off by default);
+>   replaced 2026-09-27 by the move to each patch's canopy-air top and the broadened terrain lapse
+>   (`meds_lapse_rate`, `docs/science/forcing.md` §8);
 > - ➡ the multi-polygon runtime moves to `MEDS_POLYGON_RUNTIME_PLAN.md`;
 > - ➡ other reanalysis products move to §16, with the archive design in §14;
 > - ✅ a prescribed CO₂ series (#184, 2026-09-27; `docs/science/forcing.md` §12);
@@ -1404,7 +1417,9 @@ production. Reader-unit tests use small **synthetic NetCDF** fixtures (no CDS do
 
 > **Status 2026-09-26:**
 > - **Q1 resolved:** the 00Z and 01Z behaviour was confirmed on real GDEX data (§19).
-> - **Q2 partly done:** the log-profile correction exists and is optional.
+> - **Q2 resolved (2026-09-27):** the forcing is moved to each patch's canopy-air top (neutral surface
+>   layer, the patch's own log profile). The stability-dependent part is left uncorrected: ERA5-Land
+>   carries no fluxes, and its 2 m value describes a clearing (`docs/science/forcing.md` §8).
 > - **Q3 resolved:** clearness-index is the default, and Weiss–Norman is available.
 > - **Q4 resolved (2026-09-27, #184):** a separate CO₂ file on model time, not a variable on the
 >   met file; the shipped default is CMIP7 global annual means (`docs/science/forcing.md` §12).

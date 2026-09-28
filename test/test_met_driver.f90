@@ -12,20 +12,25 @@ program test_met_driver
    use meds_constants,       only : t_3ple
    use meds_time,            only : meds_time_t, seconds_between, seconds_into_day,             &
                                     time_advance_seconds
-   use meds_therm_lib,          only : sat_vapor_pressure
+   use meds_therm_lib,          only : sat_vapor_pressure, air_density
    use meds_forcing_config,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
                                     INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
                                     CLAMP_HOLD, CLAMP_ERROR,                                   &
-                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, CO2_SOURCE_FILE
+                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, CO2_SOURCE_FILE,      &
+                                    HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,               &
+                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_types,   only : met_forcing_t, met_source_t, met_cursor_t
    use meds_forcing_kernels, only : interpolate_forcing, dewpoint_to_specific_humidity,         &
                                     rh_to_specific_humidity, precip_phase, partition_shortwave, &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
-                                    great_circle_distance, nearest_grid_index, wind_log_profile, &
-                                    lapse_air_temperature, lapse_pressure,                         &
+                                    great_circle_distance, nearest_grid_index,                   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
+   use meds_lapse_rate,      only : wind_log_profile, lapse_air_temperature, lapse_pressure,        &
+                                    monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
+                                    cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
+   use meds_constants,       only : grav, cp_air
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                    MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS,                     &
                                    MET_ERR_START_NOT_A_RECORD, MET_ERR_WINDOW_NOT_COVERED,       &
@@ -47,6 +52,8 @@ program test_met_driver
    call test_netcdf_roundtrip()
    call test_nearest_grid()
    call test_wind_lapse()
+   call test_terrain_lapse()
+   call test_cas_top()
    call test_multiyear_cycling()
    call test_lwdown_synthesis()
    call test_recycle_anchor_phase()
@@ -609,6 +616,76 @@ contains
       call check('isothermal (gamma=0) = barometric', lapse_pressure(101325.0_wp,290.0_wp,DZ,0.0_wp), &
                  101325.0_wp*exp(-9.80665_wp*DZ/(287.04_wp*290.0_wp)), 1.0e-2_wp)
    end subroutine test_wind_lapse
+
+   !----- The terrain lapse's humidity, longwave and monthly rate (docs/science/forcing.md §8). ---!
+   subroutine test_terrain_lapse()
+      real(wp), parameter :: T0 = 285.0_wp, P0 = 95000.0_wp, Q0 = 0.007_wp, DZ = -500.0_wp, G = 0.0065_wp
+      real(wp) :: t1, p1, q1, e0, e1, lw1, gm(12)
+      integer  :: k
+      print '(a)', '-- test: terrain lapse (RH-held humidity, longwave, monthly rate) --'
+      t1 = lapse_air_temperature(T0, DZ, G) ; p1 = lapse_pressure(P0, T0, DZ, G)
+      q1 = lapse_specific_humidity(Q0, T0, P0, t1, p1)
+      e0 = Q0 * P0 / (0.622_wp + 0.378_wp * Q0) ; e1 = q1 * p1 / (0.622_wp + 0.378_wp * q1)
+      call check('relative humidity is held', e1 / sat_vapor_pressure(t1), e0 / sat_vapor_pressure(T0), 1.0e-12_wp)
+      call check_true('a site 500 m below its cell is warmer and holds more vapour', q1 > Q0, q1 - Q0)
+      call check('dz = 0 leaves q unchanged', lapse_specific_humidity(Q0, T0, P0, T0, P0), Q0, 1.0e-15_wp)
+      lw1 = lapse_longwave(300.0_wp, LW_CLEAR_BRUTSAERT, T0, Q0, P0, t1, q1, p1)
+      call check('file longwave scales by eps*T^4', lw1,                                           &
+                 300.0_wp * clear_sky_emissivity(LW_CLEAR_BRUTSAERT, t1, q1, p1) * t1**4           &
+                          / (clear_sky_emissivity(LW_CLEAR_BRUTSAERT, T0, Q0, P0) * T0**4), 1.0e-9_wp)
+      call check_true('the warmer, moister site gets more longwave', lw1 > 300.0_wp, lw1 - 300.0_wp)
+      call check('dz = 0 leaves longwave unchanged',                                               &
+                 lapse_longwave(300.0_wp, LW_CLEAR_IDSO, T0, Q0, P0, T0, Q0, P0), 300.0_wp, 1.0e-9_wp)
+      gm = [(0.001_wp * real(k, wp), k = 1, 12)]
+      call check('monthly rate: July', monthly_lapse_rate(gm, 7_ik), 0.007_wp, 1.0e-15_wp)
+      call check('monthly rate: December', monthly_lapse_rate(gm, 12_ik), 0.012_wp, 1.0e-15_wp)
+   end subroutine test_terrain_lapse
+
+   !----- The move to a patch's canopy-air top (docs/science/forcing.md §8). A 25 m canopy:         !
+   !      d = 15.75 m, z0 = 3.25 m, top z_c = 30 m.                                                !
+   subroutine test_cas_top()
+      real(wp), parameter :: ZC = 30.0_wp, D = 15.75_wp, Z0 = 3.25_wp, GC = grav / cp_air
+      type(forcing_config_t) :: f
+      type(met_forcing_t)    :: m, top
+      real(wp) :: fac
+      print '(a)', '-- test: forcing to the canopy-air top --'
+      !----- ERA5-Land: open-terrain 10 m wind, heights above the zero plane. -------------------!
+      f%tq_height = 2.0_wp ; f%wind_height = 10.0_wp ; f%height_above = HEIGHT_ABOVE_ZERO_PLANE
+      f%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN ; f%wind_exposure_z0 = 0.03_wp ; f%wind_blending_height = 40.0_wp
+      fac = cas_top_wind_factor(f, ZC, D, Z0)
+      call check('ERA5 wind: open-terrain step, then the patch profile', fac,                     &
+                 log(40.0_wp/0.03_wp) / log(10.0_wp/0.03_wp) * log((ZC - D)/Z0) / log(40.0_wp/Z0), 1.0e-12_wp)
+      call check('ERA5 wind: ~0.73 u10 at the top of a 25 m canopy', fac, 0.729_wp, 1.0e-3_wp)
+      call check('temperature conserves theta from d + 2 m', cas_top_air_temperature(f, 290.0_wp, ZC, D), &
+                 290.0_wp - GC * (ZC - (D + 2.0_wp)), 1.0e-12_wp)
+      call check('theta at the top equals theta at the forcing height',                            &
+                 cas_top_air_temperature(f, 290.0_wp, ZC, D) + GC * ZC, 290.0_wp + GC * (D + 2.0_wp), 1.0e-9_wp)
+      !----- A flux tower: local wind at 40 m above the ground; the 2 z0 floor on a tall stand. --!
+      f%height_above = HEIGHT_ABOVE_GROUND ; f%wind_exposure = WIND_EXPOSURE_LOCAL
+      f%tq_height = 40.0_wp ; f%wind_height = 40.0_wp
+      call check('tower wind: the patch profile from 40 m above the ground', cas_top_wind_factor(f, ZC, D, Z0), &
+                 log((ZC - D)/Z0) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
+      call check('tower temperature: along the dry adiabat from 40 m', cas_top_air_temperature(f, 290.0_wp, ZC, D), &
+                 290.0_wp + GC * 10.0_wp, 1.0e-12_wp)
+      call check('tower at the top: no change', cas_top_wind_factor(f, 40.0_wp, D, Z0), 1.0_wp, 1.0e-15_wp)
+      call check('heights floored at 2 z0 above d', cas_top_wind_factor(f, D + 1.0_wp, D, Z0),       &
+                 log(2.0_wp) / log((40.0_wp - D)/Z0), 1.0e-12_wp)
+      !----- The whole record: wind and vector scaled, temperature moved, rho re-derived, the rest kept. -!
+      f%height_above = HEIGHT_ABOVE_ZERO_PLANE ; f%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN
+      f%tq_height = 2.0_wp ; f%wind_height = 10.0_wp
+      m%wind = 5.0_wp ; m%wind_u = 3.0_wp ; m%wind_v = -4.0_wp ; m%has_wind_vector = .true.
+      m%tair_k = 290.0_wp ; m%qair = 0.009_wp ; m%psurf_pa = 98000.0_wp
+      top = met_to_cas_top(m, f, ZC, D, Z0)
+      fac = cas_top_wind_factor(f, ZC, D, Z0)
+      call check('record: wind speed scaled', top%wind, 5.0_wp * fac, 1.0e-12_wp)
+      call check('record: vector scaled (u)', top%wind_u, 3.0_wp * fac, 1.0e-12_wp)
+      call check('record: vector scaled (v)', top%wind_v, -4.0_wp * fac, 1.0e-12_wp)
+      call check('record: temperature moved', top%tair_k, cas_top_air_temperature(f, 290.0_wp, ZC, D), 1.0e-12_wp)
+      call check('record: humidity conserved', top%qair, 0.009_wp, 1.0e-15_wp)
+      call check('record: pressure stays at the ground', top%psurf_pa, 98000.0_wp, 1.0e-12_wp)
+      call check('record: shortwave unchanged', top%swdown(), m%swdown(), 1.0e-12_wp)
+      call check('record: air density re-derived', top%rho_air, air_density(top%tair_k, 98000.0_wp, 0.009_wp), 1.0e-12_wp)
+   end subroutine test_cas_top
 
    !----- Multi-year CALENDAR recycling + Feb-29 reconciliation (whole-year daily file). ----------!
    subroutine test_multiyear_cycling()

@@ -16,6 +16,12 @@ before and after.
 
 ### Added
 
+- **Per-patch forcing output** (#305). Each patch now has its own forcing (see Changed), so the patch
+  tier writes it: `wind_cas_top_patch` and `air_temp_cas_top_patch`, with the inputs that produced
+  them — `cas_depth_patch` (the canopy-air depth the fast loop used), `rough_patch` and
+  `displace_patch`. They go to the daily and monthly tiers, in the `forcing` group, beside the
+  polygon echo.
+
 - **Prescribed CO₂** (#184, #301). `[forcing].co2_source` sets the free-atmosphere CO₂, the same way
   for every backend and every polygon:
   - `"const"`, the default, holds `co2_const`, so existing configs run unchanged;
@@ -153,6 +159,35 @@ before and after.
   as the speed, so the direction is preserved.
 
 ### Changed
+
+- **The forcing is moved to each patch's canopy-air top** (#305; `docs/science/forcing.md` §8). All
+  vertical corrections now live in `src/forcing/meds_lapse_rate.f90`.
+  - **Each sample goes to the top of each patch's canopy air space,** per patch and sub-step, instead
+    of being applied at one fixed reference height. That top grows with the stand.
+    - Potential temperature and specific humidity are conserved.
+    - The wind follows the patch's own log profile, the one its aerodynamics starts from.
+    - ERA5's 10 m wind, an open-terrain diagnostic, is first returned to its 40 m blending height.
+    - Pressure stays at the ground.
+  - **The forcing's own heights are declared,** in new required `[forcing]` keys: `tq_height`,
+    `wind_height`, `height_above` (`"zero_plane"` or `"ground"`) and `wind_exposure`
+    (`"open_terrain"` with `wind_exposure_z0` and `wind_blending_height`, or `"local"`).
+    `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0` are
+    removed and rejected. Nothing has to clear the canopy any more.
+  - **The terrain lapse is broadened:**
+    - specific humidity at constant relative humidity (it was held fixed);
+    - file longwave by the clear-sky ε·T⁴ ratio;
+    - `[site].lapse_rate_tair` accepts twelve monthly rates.
+  - **Before and after**, on the r1 cases at Ithaca:
+    - **Established stand, annual mean:** friction velocity 0.281 → 0.375 m/s (+33%), sensible heat
+      2.93 → 0.62 W/m², latent heat +0.36 W/m², GPP +0.6%.
+    - **Regrowth, July:** friction velocity +21%, sensible heat 4.5 → 11.8 W/m².
+    - **With the terrain lapse on** (the site is 47.5 m below its ERA5-Land cell): +0.31 K air
+      temperature, +2.2 W/m² longwave and +0.56 kPa pressure.
+    - **Unchanged:** water still closes to 10⁻¹¹ kg/m². The energy ledger leak of #290 is about the
+      same size (−0.31 → −0.38 W/m² in the year run).
+    - **Slow-only runs are bitwise unchanged.**
+  - **Configs migrated:** the examples, `meds_config_main.toml` (with ERA5-Land's values and the
+    Kunkel 1989 monthly rates) and `meds_io_config.toml`.
 
 - **CO₂ no longer comes from the met file** (#184, #301).
   - A MEDS forcing file that carries `CO2air` is rejected at open. Before, its value overrode
