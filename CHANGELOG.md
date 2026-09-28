@@ -16,6 +16,27 @@ before and after.
 
 ## [0.3.0] — 2026-09-28
 
+A **regional simulation** release. `[run].mode = "region"` runs every ED_ERA5land cell of a
+latitude–longitude box as its own polygon, in one process (#289): one forcing reader loads each
+month for every cell at once, each polygon takes exactly the step a site run at its cell takes, and
+the output is region files with a `polygon` dimension, plus full single-site files for the cells
+named in `detail_polygons`. A 1° box around Ithaca, 100 polygons, runs a year in 16 minutes on one
+core. The regions are fed by the new global **ED_ERA5land archive**, hourly ERA5-Land at 0.1° in one
+file per variable per month, which `scripts/prepare_era5/` downloads and builds (#279–#281, #288)
+and which the reader also serves to single sites (`[forcing].format = "era5land"`, #282).
+
+Around it, the forcing now reaches each patch at the top of its own canopy air space (#305), CO₂ is
+prescribed as a constant or a time series (#184, #301), the forcing a run used is written to its
+output (#293), and every record is dated by the period it covers (#294, #296, #297). The
+pre-release review (#314) closed the whole-column energy ledger (#290), made restarts exact (#298),
+made the Debug suite and the gfortran builds pass, and removed the `[io]` block (#309).
+
+**Upgrading.** Configs need the new `[forcing]` height keys, and `[site].reference_height` and its
+three siblings are refused (#305). A forcing file that carries `CO2air` (#301), a config with an
+`[io]` block (#309) and an `[output].io_config` that lists `ground_temp_site` (#275) are refused
+too, and `make_forcing_file.py` needs a location (#313). Every entry below that moves a number
+states its before and after.
+
 ### Added
 
 - **Per-patch forcing output** (#305). Each patch now has its own forcing (see Changed), so the patch
