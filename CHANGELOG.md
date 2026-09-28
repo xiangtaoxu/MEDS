@@ -54,7 +54,7 @@ before and after.
 
   No other page gave the sequence: each science page covers one process.
 
-- **The forcing the run used is written to the output** (§6.7 of `MEDS_FORCING_DESIGN.md`), as a new
+- **The forcing the run used is written to the output** (#293; §6.7 of `MEDS_FORCING_DESIGN.md`), as a new
   `forcing` group (`[output].forcing`, on by default). It is recorded after the reader's shortwave
   partition, rain/snow split and optional corrections:
   - polygon means at the daily, monthly and yearly tiers: air temperature, specific humidity,
@@ -71,9 +71,9 @@ before and after.
   31 December read 272.31 K instead of 276.15 K, and the January means were low by a 1/31 share of
   that. Every other existing variable is unchanged (six regression cases, 1,267 files).
   `meds_io_config.toml` is regenerated, and the variable inventory in `docs/science/diagnostics.md`
-  is recounted to 248.
+  is recounted (252 variables in this release).
 
-- **`scripts/prepare_era5/make_forcing_file.py`** writes the single forcing file
+- **`scripts/prepare_era5/make_forcing_file.py`** (#291) writes the single forcing file
   (`[forcing].format = "netcdf"`) from either input:
   - **an ED_ERA5land archive** (`--data-path`, `--start`, `--end`): it picks each site's nearest
     valid cell within `--max-distance-km`, as the model's reader does, and records the cell's
@@ -87,7 +87,7 @@ before and after.
   0.01 mm of rain; at Ithaca in 2024 that was 0.38% of the year's precipitation. Otherwise the
   output equals `prep_era5land_forcing.py`'s, variable for variable.
 
-- **Region runs** (R2 of `MEDS_POLYGON_RUNTIME_PLAN.md`). `[run].mode = "region"` simulates every
+- **Region runs** (#289; R2 of `MEDS_POLYGON_RUNTIME_PLAN.md`). `[run].mode = "region"` simulates every
   selected ED_ERA5land cell of a `[region].box_nwse` as its own polygon, in one process:
   - one forcing reader serves all polygons, loading a month for every cell at once;
   - each polygon runs the site run's own step, so it computes exactly what a site run at its cell
@@ -111,8 +111,8 @@ before and after.
   - `postprocess_era5land.py` turns either source's raw files into NetCDF box files.
 
   They run in their own `meds-era5` environment (`scripts/prepare_era5/environment.yml`). On a New
-  York State box, the CDS and GDEX outputs agree to within 0.00024 K. The old
-  `scripts/prep_era5land_forcing.py` stays until the forcing reader upgrade lands.
+  York State box, the CDS and GDEX outputs agree to within 0.00024 K. They replace
+  `scripts/download_era5land.py` (see Removed).
 - **Forcing-data design and a polygon runtime plan** (#279).
   - `MEDS_FORCING_DESIGN.md` gains Part II (§11–§19): a global per-variable monthly `ED_ERA5land_`
     archive, and a reader upgrade that reads a site or a box from it one month at a time and
@@ -136,9 +136,9 @@ before and after.
     independent box output to 0.0039 K, the quantization.
   - June 2022 was built from CDS in 411 s on 8 cores; its `Tair` and `Rainf` are bit-identical to a
     GDEX build of the same month.
-- **`download_era5land_cds.py --bbox global`** requests the native global grid, and `--parallel`
+- **`download_era5land_cds.py --bbox global`** (#280) requests the native global grid, and `--parallel`
   (default 3) keeps several requests in the CDS queue at once (#280).
-- **The forcing reader reads the ED_ERA5land archive** (`[forcing].format = "era5land"`,
+- **The forcing reader reads the ED_ERA5land archive** (#282; `[forcing].format = "era5land"`,
   `MEDS_FORCING_DESIGN.md` §15). A run names the archive folder in `data_path`, and the reader:
   - binds the site to its cell, or to the nearest valid cell within `max_distance_km` when the site
     falls on a no-data cell, and takes the cell's elevation from the archive's static file;
@@ -149,11 +149,11 @@ before and after.
   - Keys that do not apply to the archive (`path`, `grid_index`, `grid_match`,
     `[site].grid_elevation`) are rejected rather than ignored. Path keys hold up to 1024
     characters.
-  - Box selection, including boxes across 180°, is in the library for the polygon runtime; the
-    config does not expose it yet.
+  - Box selection, including boxes across 180°, is what `[region].box_nwse` selects (see Region
+    runs).
   - With the archive, every output file carries a `forcing_qair` global attribute naming the
     humidity formula, because a run's humidity then depends on the model version.
-- **The forcing record carries the wind vector** (`wind_u`, `wind_v`, `has_wind_vector`) beside
+- **The forcing record carries the wind vector** (#282; `wind_u`, `wind_v`, `has_wind_vector`) beside
   the speed when the source supplies components: the archive always, a MEDS forcing file when it
   carries `u10` and `v10`. The components interpolate linearly and take the same height correction
   as the speed, so the direction is preserved.
@@ -246,13 +246,13 @@ before and after.
     - The C API's `meds_advance_slow` keeps its signature and restructures after the step.
     - `output_integrate` takes the step's start only.
 
-- **The fast loop reads the forcing record directly** (§6.2 and Q6 of `MEDS_FORCING_DESIGN.md`).
+- **The fast loop reads the forcing record directly** (#292; §6.2 and Q6 of `MEDS_FORCING_DESIGN.md`).
   `fill_forcing` and `fill_aenv` take the sub-step's `met_forcing_t`: the reader's sample, or the
   context's reference climate without a forcing source. The `apply_met_to_ctx` shim, and the
   per-thread copies of the whole fast context it wrote into, are gone. Outputs are identical in the
   six regression cases and with 1 or 4 patch threads.
 
-- **`MEDS_POLYGON_RUNTIME_PLAN.md` revised.** A run's polygons form a *region*, always contiguous;
+- **`MEDS_POLYGON_RUNTIME_PLAN.md` revised** (#283). A run's polygons form a *region*, always contiguous;
   scattered site networks run as separate processes (a job array, or one allocation filled with GNU
   parallel) rather than in one process. The plan adds the output-performance analysis, two blockers
   found in the code (one pending record per output frequency; site location in the shared config),
@@ -260,7 +260,7 @@ before and after.
   container). R0 is measured: an established Ithaca stand costs about 1.1 s and 0.7 MB per
   polygon-month and polygon, 18.6% of CPU goes to allocation, and a site run spends 24% of its time
   in archive reads.
-- **No netCDF inside a time step** (R1 of `MEDS_POLYGON_RUNTIME_PLAN.md`). A step now computes only;
+- **No netCDF inside a time step** (#285; R1 of `MEDS_POLYGON_RUNTIME_PLAN.md`). A step now computes only;
   file work happens in an I/O phase when a calendar month closes and at the end of the run:
   - closed output records wait in per-tier queues (stored compactly) and are written then;
   - the yearly checkpoint moved into that phase;
@@ -270,7 +270,7 @@ before and after.
   Outputs are identical. Two visible changes: `[output].sync_every` now takes effect at month
   boundaries, so a crash loses at most the current month's output; and `format = "era5land"` needs
   daily steps from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00).
-- **The forcing reader is split into a shared source and per-polygon cursors** (R2 of
+- **The forcing reader is split into a shared source and per-polygon cursors** (#286; R2 of
   `MEDS_POLYGON_RUNTIME_PLAN.md`). `met_source_t` holds the file, the time axis, the cells and the
   loaded month; `met_cursor_t` holds one polygon's cell, location and bracketing records, so one
   archive read serves every polygon of a region. `met_open` takes an optional cell list, and the
@@ -279,20 +279,20 @@ before and after.
   identical to before in six regression cases. With the default ifx flags, the compiler optimizes the
   day-length call differently, so runs with a growing stand differ at round-off from the first autumn
   on: at most 5e-12 kg C in cohort AGB after one year.
-- **The output manager is split into a file set and per-polygon buffers** (R2 of
+- **The output manager is split into a file set and per-polygon buffers** (#287; R2 of
   `MEDS_POLYGON_RUNTIME_PLAN.md`). `output_files_t` (registry, file settings, streams) is one set of
   output files, shared by every polygon writing into it. `output_buffers_t` holds one polygon's
   reductions, records and fast-tier staging for one file set. The fast loop and the stepper now see
   only the buffers. Outputs are identical.
-- **Faster ED_ERA5land reads.** The reader reads the archive as float32, as it is stored, and only
+- **Faster ED_ERA5land reads** (#284). The reader reads the archive as float32, as it is stored, and only
   the cells a run needs within each 16 × 16 chunk, instead of whole chunks converted to double. A
   site year from a spun-up stand runs about 10% faster; outputs are identical.
-- **The GDEX downloader retries transient network failures** (`era5land_common.http_download`,
+- **The GDEX downloader retries transient network failures** (#288; `era5land_common.http_download`,
   `http_head_ok`): a reset or timed-out connection, a short transfer, or HTTP 5xx or 429, with waits
   from 15 s to 8 min. A single refused connection used to abort a whole month. That happened to
   every task in two rounds of the archive build, because each failed task started the next straight
   away while GDEX was refusing connections. A missing file (HTTP 404) still fails at once.
-- **`build_era5land_archive.py --work-dir`** writes each output on another disk, such as a compute
+- **`build_era5land_archive.py --work-dir`** (#281) writes each output on another disk, such as a compute
   node's local drive, then copies the finished file into the archive in one sequential pass that
   also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds
   3–4 times slower once several ran at once.
@@ -323,18 +323,75 @@ before and after.
   that boundary's events; the gap keeps its share of them. The comments on `patch_diag_inherit` and
   its caller describe both that case and a disturbance inside a step (the C API).
 
+- **`make_forcing_file.py` writes the wind vector** (review P4, #PRNUM). A file it cut from the
+  archive carried only the speed, and floored it at 0.1 m/s as the reader already does for every
+  source. It now writes `u10` and `v10` beside the unfloored `Wind`, so the reader takes the speed
+  from the vector, as it does with the archive. Files written before still load as they did.
+
+- **The documentation describes v0.3.0** (review §5, §10, #PRNUM).
+  - Six finished design plans move to `docs/dev_plans/archive/` with tombstones (biogeochemistry,
+    snow, the GPU evaluation, the veg-energy plan, the 2026-09-13 docs review, the v0.2 release
+    plan); the structure design becomes a Reference document, and the other headers say what is
+    open.
+  - `src/README.md` counts the tree as built (35.5 k lines, 91 modules, 21 libraries) and names the
+    new modules; the rules files and source comments state the current order of the output tick and
+    the restructuring, in the present tense.
+  - `docs/science/forcing.md` describes the source/cursor reader, `docs/science/order_of_processes.md`
+    names `driver_open`, `docs/ed2_comparison.md` is pinned to v0.3.0, and `README.md` lists regional
+    runs, the archive and prescribed CO₂.
+
 ### Removed
 
-- **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
+- **`scripts/prep_era5land_forcing.py`** (#291), replaced by `scripts/prepare_era5/make_forcing_file.py`
   (F5 of `MEDS_FORCING_DESIGN.md`). Its box-file code moved into the new tool. The config comment,
   the forcing README, the science doc, the ED2 comparison and the `example_biophysics` instructions
   show the new commands.
 - **`scripts/download_era5land.py`** (#280), replaced by `scripts/prepare_era5/download_era5land_cds.py`
-  and `postprocess_era5land.py`. `scripts/prep_era5land_forcing.py` now reads their box files
-  (`--in` takes several files), and the forcing README, science doc, config comment and the
-  `example_biophysics` instructions show the new commands.
+  and `postprocess_era5land.py`, whose box files `make_forcing_file.py --box-dir` reads. The forcing
+  README, science doc, config comment and the `example_biophysics` instructions show the new
+  commands.
 
 ### Fixed
+
+- **Daily, monthly and annual records were dated one slow step late** (#294, #296). The tick ran after
+  a step from `prev` to `now`, closed the periods `now` had left, and opened the next window at
+  `now`. So a step's fluxes, accumulated over `[prev, now)`, landed in the period that starts at
+  `now`. Every daily record held the day before its stamp: a July run wrote records stamped 2 July to
+  1 August, and the record stamped *d* matched the hourly mean of day *d − 1* to 1e-13, while against
+  the hourly records of its own stamped date it was off by up to 4 K and 202 W/m². Each monthly
+  and annual record likewise covered its last day of the previous period, not its own last day.
+  - **The fix.** The tick now folds the step into the window that holds `prev`, then closes each
+    period `now` has left. A record stamped *d* holds the steps that start in *d*, and a state is the
+    value at the end of each of the period's steps. On the six regression cases:
+    - each daily record is the old one stamped a day earlier, bitwise;
+    - it equals the mean of the fast records of its own date to 1.4e-15;
+    - each monthly and annual site value is the aggregate of the new daily or monthly records of its
+      period to 1.8e-15;
+    - the fast tier is unchanged;
+    - no record is stamped at or after the run's end, so the stray file past the end is gone. For
+      example, a July run wrote a `D-…08` file before and now doesn't.
+  - **Monthly means move by up to** 0.64 K in `air_temp_site` (Nov 2074: 279.80 → 279.16 K), 1.8 W/m²
+    in `le_site` (May 2075: 58.35 → 60.13) and 5.5 W/m² in `sw_in_site` (May 2075: 226.9 → 232.3), on
+    the one-year established stand.
+  - The restructuring at a boundary now runs after the output has read that boundary's step (#297,
+    under Changed), so every record holds one cohort/patch slot set and needs no exception.
+  - `test_output_roundtrip` checks the daily stamps, and `test_output_integrate` the boundary step.
+    The convention is written up in `docs/science/diagnostics.md` §4.
+
+- **Patch-sourced diagnostics read low by the disturbed fraction on the year-boundary step** (#295).
+  `apply_patch_disturbance` carves one gap from every donor at a uniform `frac = 1 - exp(-rate dt)`
+  and shrinks the donors to `(1 - frac)` of their area, but it *cleared* the gap's patch-diagnostic
+  slot, so the gap read 0 for the whole step. Every site mean built as Σ area·value from `PD_*`
+  fields — the fluxes, the canopy air, the ground and litter diagnostics — was therefore low by
+  exactly `frac` on that step. The gap now inherits the area-weighted donor slot
+  (`patch_diag_inherit`), as its canopy air, soil, snow and carbon reservoirs already do, and the
+  `/(1 - frac)` that `PD_MORT_C_DISTURB` carried to compensate is removed. On the six regression
+  cases only records stamped 1 January change, and no state variable does: the daily record rises by
+  1/(1 - frac) = 1.014098 (e.g. `cas_temp_site` 271.75 → 275.58 K on the est_year case), the
+  January monthly means by 1.0001–1.0015 (`le_site` 1.000138, `gpp_rate_site` 1.001485,
+  `cas_temp_site` 1.000457), `disturb_area_site` by 1.014098, and `mort_carbon_disturb_site` is
+  unchanged. `test_disturbance` checks that the gap and the site mean of a two-donor fixture read the
+  donors' area-weighted value.
 
 - **ED_ERA5land recycling stopped at the first seam unless the window started at 01:00** (review
   F1, #PRNUM). When the seam fell inside a daily step, the one-month buffer held the window's last
@@ -528,46 +585,6 @@ here, and one output gap that hid it (#270, open).
   sentence said the energy balance is solved every 30 minutes; `dt_fast` is 900 s, so it is 15.
 
 ### Fixed
-
-- **Daily, monthly and annual records were dated one slow step late** (#294, #296). The tick ran after
-  a step from `prev` to `now`, closed the periods `now` had left, and opened the next window at
-  `now`. So a step's fluxes, accumulated over `[prev, now)`, landed in the period that starts at
-  `now`. Every daily record held the day before its stamp: a July run wrote records stamped 2 July to
-  1 August, and the record stamped *d* matched the hourly mean of day *d − 1* to 1e-13, while against
-  the hourly records of its own stamped date it was off by up to 4 K and 202 W/m². Each monthly
-  and annual record likewise covered its last day of the previous period, not its own last day.
-  - **The fix.** The tick now folds the step into the window that holds `prev`, then closes each
-    period `now` has left. A record stamped *d* holds the steps that start in *d*, and a state is the
-    value at the end of each of the period's steps. On the six regression cases:
-    - each daily record is the old one stamped a day earlier, bitwise;
-    - it equals the mean of the fast records of its own date to 1.4e-15;
-    - each monthly and annual site value is the aggregate of the new daily or monthly records of its
-      period to 1.8e-15;
-    - the fast tier is unchanged;
-    - no record is stamped at or after the run's end, so the stray file past the end is gone. For
-      example, a July run wrote a `D-…08` file before and now doesn't.
-  - **Monthly means move by up to** 0.64 K in `air_temp_site` (Nov 2074: 279.80 → 279.16 K), 1.8 W/m²
-    in `le_site` (May 2075: 58.35 → 60.13) and 5.5 W/m² in `sw_in_site` (May 2075: 226.9 → 232.3), on
-    the one-year established stand.
-  - The restructuring at a boundary now runs after the output has read that boundary's step (#297,
-    under Changed), so every record holds one cohort/patch slot set and needs no exception.
-  - `test_output_roundtrip` checks the daily stamps, and `test_output_integrate` the boundary step.
-    The convention is written up in `docs/science/diagnostics.md` §4.
-
-- **Patch-sourced diagnostics read low by the disturbed fraction on the year-boundary step** (#295).
-  `apply_patch_disturbance` carves one gap from every donor at a uniform `frac = 1 - exp(-rate dt)`
-  and shrinks the donors to `(1 - frac)` of their area, but it *cleared* the gap's patch-diagnostic
-  slot, so the gap read 0 for the whole step. Every site mean built as Σ area·value from `PD_*`
-  fields — the fluxes, the canopy air, the ground and litter diagnostics — was therefore low by
-  exactly `frac` on that step. The gap now inherits the area-weighted donor slot
-  (`patch_diag_inherit`), as its canopy air, soil, snow and carbon reservoirs already do, and the
-  `/(1 - frac)` that `PD_MORT_C_DISTURB` carried to compensate is removed. On the six regression
-  cases only records stamped 1 January change, and no state variable does: the daily record rises by
-  1/(1 - frac) = 1.014098 (e.g. `cas_temp_site` 271.75 → 275.58 K on the est_year case), the
-  January monthly means by 1.0001–1.0015 (`le_site` 1.000138, `gpp_rate_site` 1.001485,
-  `cas_temp_site` 1.000457), `disturb_area_site` by 1.014098, and `mort_carbon_disturb_site` is
-  unchanged. `test_disturbance` checks that the gap and the site mean of a two-donor fixture read the
-  donors' area-weighted value.
 
 - **Ground evaporation used the wrong air-filled porosity, which inverted its moisture response**
   (#266). `ground_evaporation` referenced CLM5's air-filled pore space to the **bulk** top-layer
