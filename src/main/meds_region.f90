@@ -133,7 +133,7 @@ contains
             write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
                                                      cells%lon(p), ')'
             call init_bare_ground(poly%site, cfg, N_PATCH_INIT)
-            call polygon_prepare(cfg, reg%met_src, poly, cells%lat(p), cells%lon(p), 0.0_wp,       &
+            call polygon_prepare(cfg, reg%met_src, poly, cells%lat(p), cells%lon(p),               &
                                  cells%elevation(p), keep_fast_state=.false.,                     &
                                  keep_soil_carbon=.false., verbose=.false.)
          end associate

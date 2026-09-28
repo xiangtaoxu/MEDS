@@ -97,12 +97,12 @@ contains
    ! pack, and the soil-carbon spin-up. `keep_fast_state` / `keep_soil_carbon` are set when a       !
    ! restart already restored those states, which re-seeding would silently discard.                !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_prepare(cfg, met_src, poly, latitude_deg, longitude_deg, utc_offset_h,     &
-                              elevation_m, keep_fast_state, keep_soil_carbon, verbose)
+   subroutine polygon_prepare(cfg, met_src, poly, latitude_deg, longitude_deg, elevation_m,       &
+                              keep_fast_state, keep_soil_carbon, verbose)
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t),   intent(in)    :: met_src
       type(meds_polygon_t), intent(inout) :: poly
-      real(wp),             intent(in)    :: latitude_deg, longitude_deg, utc_offset_h, elevation_m
+      real(wp),             intent(in)    :: latitude_deg, longitude_deg, elevation_m
       logical,              intent(in)    :: keep_fast_state, keep_soil_carbon, verbose
 
       poly%energy_budget = budget_t() ; poly%water_budget = budget_t() ; poly%face_budget = budget_t()
@@ -116,7 +116,7 @@ contains
          call build_fast_context(cfg, poly%fast_ctx)
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, poly%met_cur, poly%cell, latitude_deg, longitude_deg,     &
-                                 utc_offset_h, elevation_m)
+                                 elevation_m)
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/ !
          !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard !

@@ -35,10 +35,13 @@ demography or state layer — so a prescribed driver stays low in the library gr
   cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
   reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file
   sources, chosen by `[forcing].format`: the MEDS multi-grid `(time, grid)` forcing NetCDF
-  (`"netcdf"`), and the global ED_ERA5land archive (`"era5land"`), whose months it lays end to end
-  as one hourly axis so bracketing and recycling are the same code for both. Dewpoint becomes
-  specific humidity and the wind components become the speed at each stamp; shortwave is
-  partitioned at ingest. Also the no-file constant-climate backend, used by the tests.
+  (`"ED_default"`), and the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it lays end
+  to end as one hourly axis so bracketing and recycling are the same code for both. Every clock is
+  UTC. The humidity a file carries (dewpoint, relative humidity or specific humidity, exactly one)
+  becomes specific humidity through the model's own saturation curve, and the wind components
+  become the speed, at each stamp; shortwave is partitioned at ingest. Rain and shortwave come from
+  the record whose interval contains the instant. Also the no-file constant-climate backend, used
+  by the tests.
 - **`meds_co2_series`** — the prescribed CO₂ (#184): reads a MEDS CO₂ file (format 1, a plain-text
   list of period means at a declared `timestep`) and looks it up at a model instant, linear between
   period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from
@@ -92,13 +95,13 @@ the right direction for multi-cohort patches.
 
 ## Preparing forcing
 
-**The ED_ERA5land archive** (`format = "era5land"`) is built once per installation with the tools in
+**The ED_ERA5land archive** (`format = "ED_ERA5land"`) is built once per installation with the tools in
 `scripts/prepare_era5/` (`download_era5land_gdex.py` or `download_era5land_cds.py`, then
 `build_era5land_static.py` and `build_era5land_archive.py`); a run then only names its folder in
 `data_path`. The static file's `valid` mask comes from one raw GDEX file, so an archive built from
 the CDS still needs one GDEX download. See `MEDS_FORCING_DESIGN.md` §12–§14.
 
-**A single forcing file** (`format = "netcdf"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
+**A single forcing file** (`format = "ED_default"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
 run in the `meds-era5` environment, with either input:
 
 ```bash
@@ -111,6 +114,12 @@ python scripts/prepare_era5/make_forcing_file.py --box-dir <box files> ...   # d
 
 The full commands are in the header of `make_forcing_file.py`.
 
+**From flux-tower data**, `scripts/prepare_flux_tower/make_tower_forcing.py` builds the same kind of
+file from AmeriFlux BASE, FLUXNET or a plain CSV, described by a site TOML that declares the source
+clock, stamp convention, heights and units; the tool checks each declaration against the sun and the
+data. `examples/example_flux_tower_bci/` is the worked example.
+
+
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
 disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).
 The design record, now archived, is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
@@ -118,7 +127,9 @@ The design record, now archived, is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN
 **Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, a NetCDF round trip
 that writes and reads a two-grid file, with and without the wind vector, and the prescribed CO₂
 (every format rule, and CO₂ that keeps rising under recycled met). `test/test_met_era5land.f90`
-writes a small synthetic archive and covers the archive backend end to end.
+writes a small synthetic archive and covers the archive backend end to end. `test/test_met_tower.f90`
+covers what a flux-tower file relies on: the humidity forms, the UTC and height checks, the interval
+each flux is read from, and the round trip of the tower's relative humidity.
 
 ## Not here yet
 

@@ -14,7 +14,67 @@ before and after.
 
 ## [Unreleased]
 
+**Upgrading.** Forcing configs change in four ways (`MEDS_FLUX_TOWER_FORCING_PLAN.md` §5):
+- rename `[forcing].format = "netcdf"` to `"ED_default"` and `"era5land"` to `"ED_ERA5land"`;
+- delete `[site].utc_offset` and `[site].apply_solar_longitude`, and build every forcing file on a
+  UTC clock with `time_zone = "UTC"` (`make_forcing_file.py` always has);
+- with `[site].apply_elevation_lapse = false`, delete `lapse_rate_tair` and `grid_elevation`;
+- a file that states `wind_meas_height_m` (every `make_forcing_file.py` file does, as 10 m) must agree
+  with `[forcing].wind_height`.
+
+Each old form stops at startup with a message naming the fix.
+
+### Changed
+
+- **Forcing files carry the humidity their source measured, and MEDS converts it**
+  (`MEDS_FLUX_TOWER_FORCING_PLAN.md` D2). An `ED_default` file carries exactly one of `RHair`
+  (a fraction; a flux tower), `Tdew` (a reanalysis) or `Qair`, and the reader turns it into specific
+  humidity at each stamp with the model's own Bolton curve, as it always did for the ED_ERA5land
+  archive's dewpoint. A file with none, with two, or with `RHair` above 1.5 (a percentage) is
+  refused. The point is the saturation curve: a tower's `vpd` column, or a `q` made from it
+  offline, carries the provider's curve, and Barro Colorado Island's is Alduchov–Eskridge, whose
+  saturation pressure is 5.7 Pa below Bolton's at 25 °C. With `RHair` in the file, the model's
+  relative humidity at the forcing temperature is the tower's to 4e-15, and a saturated record reads
+  back as VPD = 0. Qair files still load unchanged; `make_forcing_file.py` now writes `Tdew`.
+- **Every forcing clock is UTC** (D1). `[site].utc_offset` and `apply_solar_longitude` are refused,
+  and an `ED_default` file whose `time_zone` attribute is missing or not `"UTC"` stops at open,
+  because a local-time file read as UTC keeps its daily totals and moves its sun. Solar time is the
+  UTC clock plus the longitude and the equation of time.
+- **The two file formats are named `"ED_default"` and `"ED_ERA5land"`** (D3). The old names stop
+  with the name that replaced them.
+- **A file's stated heights are checked against `[forcing]`.** `tq_height_m`, `wind_height_m`,
+  `wind_meas_height_m` (within 0.01 m) and `height_above`, when present, must match
+  `tq_height`, `wind_height` and `height_above`, because a disagreement moves every sample to the
+  canopy-air top from the wrong height.
+- **The terrain-lapse keys are read only with the lapse on.** `[site].lapse_rate_tair` and
+  `grid_elevation` are required with `apply_elevation_lapse = true` and refused with it off; they
+  used to be required either way and did nothing.
+- **`specific_humidity_to_vpd` is the exact inverse of the forcing conversions.** It used the
+  molar-mass ratio 0.621987 where every forward conversion and `sat_specific_humidity` use 0.622,
+  so a humidity round trip was off by 2e-5 in relative humidity (0.06 Pa of vapour pressure at
+  3 kPa). It is used only by output diagnostics (`cas_vpd_site` and `cas_vpd_var_site`), which move by
+  that much; nothing in the model state changes.
+
+### Added
+
+- **`test_met_tower`**, the flux-tower contract of an `ED_default` file: the three humidity forms
+  and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval
+  containing the instant on end- and begin-stamped files, and the tower round trip (relative
+  humidity, VPD = 0 at saturation, the move from a 41 m tower to a canopy-air top). Each fix above
+  was mutation-checked: restoring the old rain read fails the three end-stamped rain checks, and
+  restoring the old ratio fails the humidity round trip by 1.9e-5.
+- **`test_region` refusals** for the old format names, `utc_offset`, `apply_solar_longitude` and the
+  lapse keys with the lapse off, each run through `meds_main`.
+
 ### Fixed
+
+- **Rain arrived one forcing record late on end-stamped files, including every ED_ERA5land run.**
+  `met_instant` held `rec_prev%rainf` over each interval whatever the stamp convention, while it
+  took shortwave from the record whose interval contains the instant (`rec_next` on an `"end"`
+  file). On ERA5-Land, whose records are means over the hour ending at the stamp, each hour's rain
+  fell in the following hour; totals were unchanged, and a begin-stamped file was read correctly.
+  Rain now comes from the same record as shortwave. No test caught it because every fixture's rain
+  was zero.
 
 - **Under nvfortran, v0.3.0 could not open a site run, and four tests failed** (#317). v0.3.0
   was verified on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and

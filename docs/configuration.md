@@ -146,17 +146,25 @@ useless for science.
 
 `[forcing].format` picks the source:
 
-- **`"era5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
+- **`"ED_ERA5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
   with the tools in `scripts/prepare_era5/`. Give it `data_path` (the archive folder) and
   `max_distance_km`. The reader finds the site's cell itself and takes that cell's elevation from
   the archive, so `path`, `grid_index`, `grid_match` and `[site].grid_elevation` do not apply and
   are rejected if present. Every month file the run needs must exist when it starts, and the run
   must step daily from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00): the reader loads a
   month at a time before each step.
-- **`"netcdf"`** reads one MEDS forcing file, named by `path`.
+- **`"ED_default"`** reads one forcing file, named by `path`: cut from ERA5-Land by
+  `scripts/prepare_era5/make_forcing_file.py`, or built from flux-tower data by
+  `scripts/prepare_flux_tower/make_tower_forcing.py`.
 
-The file formats, the ERA5-Land preparation recipe, and the recycling rules are documented in
-[`science/forcing.md`](science/forcing.md). Two things to know before writing a config:
+The earlier names, `"netcdf"` and `"era5land"`, are refused with a message naming the new one.
+The file formats, the ERA5-Land and flux-tower preparation, and the recycling rules are documented in
+[`science/forcing.md`](science/forcing.md). Three things to know before writing a config:
+
+- **Every forcing clock is UTC.** A file must carry `time_zone = "UTC"`; the solar geometry takes
+  local solar time from `[site].longitude`. Convert a local-time source when you build the file,
+  and shift the output to local time afterwards. There is no `[site].utc_offset` or
+  `apply_solar_longitude`, and both are refused.
 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A
@@ -175,7 +183,11 @@ grows with the stand, and the aerodynamics runs from there ([`science/forcing.md
   `meds_config_main.toml` shows ERA5-Land's values.
 - **The terrain lapse** (`[site].apply_elevation_lapse`) moves temperature, pressure, humidity (at constant
   relative humidity) and file longwave from the forcing cell's elevation to the site's.
-  `[site].lapse_rate_tair` takes one rate or twelve monthly rates.
+  `[site].lapse_rate_tair` takes one rate or twelve monthly rates, and `[site].grid_elevation` gives
+  the cell's elevation for an `"ED_default"` file. Both are required with the lapse on and refused
+  with it off; a flux tower measures at the site and runs with it off.
+- **A file may state its heights.** When it carries `tq_height_m`, `wind_height_m` or
+  `height_above`, they must agree with `[forcing]`, or the run stops at open.
 - The old `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0`
   are rejected, with a message naming these keys.
 
@@ -220,8 +232,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort
   and patch variables, and the sub-daily tier, are written only for `detail_polygons`, as ordinary
   single-site files named `<prefix>-p<polygon id>-...`.
-- **Rules.** A region needs `[forcing].format = "era5land"` with forcing and the fast loop on. It
-  takes its locations from its cells, so `[site].latitude`, `longitude`, `utc_offset`, `elevation`
+- **Rules.** A region needs `[forcing].format = "ED_ERA5land"` with forcing and the fast loop on. It
+  takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
   rates, still applies. Until restarts of regions exist, a region starts from bare ground
   (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch

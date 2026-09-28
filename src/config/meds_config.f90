@@ -19,7 +19,7 @@ module meds_config
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
-                                   METAVG_END, MET_BACKEND_ERA5LAND, SWPART_PASSTHROUGH,        &
+                                   METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
                                    WIND_EXPOSURE_OPEN_TERRAIN
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
@@ -719,8 +719,8 @@ contains
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
-         if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                          &
-            error stop tag//'[run].mode = "region" needs forcing.format = "era5land"'
+         if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                       &
+            error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
          if (cfg%n_threads /= 1_ik)                                                                &
             error stop tag//'[run].mode = "region" needs run.n_threads = 1 (polygon threads come in R3)'
          if (cfg%fast_probe)                                                                       &
@@ -787,25 +787,25 @@ contains
                             'silently run the "end" path); use "end" or "begin"'
          !----- The ED_ERA5land archive (§14-15) is hourly, end-stamped and stores TOTAL shortwave;  !
          !      a config that says otherwise would mis-time or mis-partition every record. ---------!
-         if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+         if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
                error stop tag//'forcing.max_distance_km must be > 0'
             if (abs(cfg%forcing%dt_forcing - 3600.0_wp) > 0.5_wp)                                  &
-               error stop tag//'forcing.timestep must be 1 hour for format = "era5land"'
+               error stop tag//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
             if (cfg%forcing%avg_convention /= METAVG_END)                                          &
-               error stop tag//'forcing.avg_convention must be "end" for format = "era5land"'
+               error stop tag//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
             if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                    &
-               error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "era5land" '// &
+               error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "ED_ERA5land" '// &
                                '(the archive stores total shortwave)'
             !----- The reader loads an archive month, plus the record before it, before each step     !
             !      (R1, MEDS_POLYGON_RUNTIME_PLAN.md §4). A daily step from midnight reads exactly that; !
             !      a longer step, or one starting mid-day, can straddle two months.  --------------------!
             if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                             &
-               error stop tag//'format = "era5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
+               error stop tag//'format = "ED_ERA5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
             if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                 &
                 cfg%start_time%second /= 0_ik)                                                     &
-               error stop tag//'format = "era5land" needs [run].start_time at 00:00:00'
+               error stop tag//'format = "ED_ERA5land" needs [run].start_time at 00:00:00'
          end if
          !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
          !      number of calendar years. A window of any other length cannot be wrapped without     !

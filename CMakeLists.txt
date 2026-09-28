@@ -596,6 +596,11 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
    add_test(NAME met_era5land COMMAND test_met_era5land)
+   #      The flux-tower contract of an ED_default file (MEDS_FLUX_TOWER_FORCING_PLAN.md §9 V6).
+   add_executable(test_met_tower test/test_met_tower.f90)
+   target_link_libraries(test_met_tower PRIVATE meds_forcing meds_testassert)
+   meds_fortran_flags(test_met_tower)
+   add_test(NAME met_tower COMMAND test_met_tower)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)

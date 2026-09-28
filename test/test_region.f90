@@ -170,8 +170,8 @@ program test_region
    call refused('forcing.max_distance_km is refused in a region',                                  &
                 '[forcing]'//nl()//'max_distance_km = 50.0'//nl()//region_block(), .true., .false.,   &
                 'do not apply to [run].mode = "region"')
-   call refused('a region needs the archive', '[forcing]'//nl()//'format = "netcdf"'//nl()//region_block(), &
-                .true., .true., 'needs forcing.format = "era5land"')
+   call refused('a region needs the archive', '[forcing]'//nl()//'format = "ED_default"'//nl()//region_block(), &
+                .true., .true., 'needs forcing.format = "ED_ERA5land"')
    call refused('a region starts from bare ground', '[init]'//nl()//'init_mode = 2'//nl()//region_block(), &
                 .true., .false., 'starts from bare ground')
    call refused('a region writes no checkpoints', '[state]'//nl()//'write_state = true'//nl()//region_block(), &
@@ -190,6 +190,23 @@ program test_region
                 .true., .false., '[run].mode must be "site" or "region"')
    call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
                 site_block(1_ik), .false., .false., 'the [io] block is now [state]')
+   !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
+   !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
+   call refused('format = "netcdf" is refused, naming ED_default',                                  &
+                '[forcing]'//nl()//'format = "netcdf"'//nl()//site_block(1_ik), .false., .false.,     &
+                'is now "ED_default"')
+   call refused('format = "era5land" is refused, naming ED_ERA5land',                               &
+                '[forcing]'//nl()//'format = "era5land"'//nl()//site_block(1_ik), .false., .false.,   &
+                'is now "ED_ERA5land"')
+   call refused('site.utc_offset is refused: every clock is UTC',                                   &
+                '[site]'//nl()//'utc_offset = -5.0'//nl()//site_block(1_ik), .false., .false.,         &
+                'utc_offset and apply_solar_longitude are gone')
+   call refused('site.apply_solar_longitude is refused',                                            &
+                '[site]'//nl()//'apply_solar_longitude = true'//nl()//site_block(1_ik), .false., .false., &
+                'utc_offset and apply_solar_longitude are gone')
+   call refused('the lapse keys are refused with the lapse off',                                    &
+                '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
+                'apply only with site.apply_elevation_lapse = true')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &
@@ -206,7 +223,7 @@ contains
           '[fast]'//nl()//'fast_probe = false'//nl()//                                              &
           '[init]'//nl()//'init_mode = 0'//nl()//                                                   &
           '[state]'//nl()//'write_state = false'//nl()//                                            &
-          '[forcing]'//nl()//'format = "era5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()// &
+          '[forcing]'//nl()//'format = "ED_ERA5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()// &
           'recycle = false'//nl()//                                                                 &
           '[output]'//nl()//'dir = "'//trim(work)//'/out"'//nl()//                                  &
           '[output.monthly]'//nl()//'enabled = true'//nl()//'file_chunk = "month"'//nl()
@@ -225,7 +242,7 @@ contains
       character(len=24)  :: id
       write(id,'(i0)') IDS(p)
       b = '[site]'//nl()//'latitude = '//fmt(LAT(p))//nl()//'longitude = '//fmt(LON(p))//nl()//     &
-          'utc_offset = 0.0'//nl()//'elevation = '//fmt(ELEV(p))//nl()//                           &
+          'elevation = '//fmt(ELEV(p))//nl()//                                                     &
           '[forcing]'//nl()//'max_distance_km = 50.0'//nl()//                                      &
           '[output]'//nl()//'prefix = "site'//trim(id)//'"'//nl()//common_block()
    end function site_block
@@ -305,7 +322,7 @@ contains
          if (keep_file_keys) drop = .false.
       end if
       if (region) drop = drop .or. (sec == 'site' .and. (key == 'latitude' .or. key == 'longitude' .or. &
-                                                          key == 'utc_offset' .or. key == 'elevation'))
+                                                          key == 'elevation'))
    end function drop
 
    !----- The files in a directory, sorted. -------------------------------------------------------!

@@ -32,10 +32,6 @@ module meds_diagnostic_kernels
    public :: bowen_ratio, safe_ratio
    public :: dbh_class_index
 
-   !----- Dry-air / water-vapour gas-constant ratio eps = R_d/R_v (~0.622), the mixing-ratio    !
-   !      constant in q <-> e. Derived from the shared constants rather than re-stated, so it     !
-   !      can never drift from the thermodynamics the model actually integrates.                  !
-
 contains
 
    !=======================================================================================!

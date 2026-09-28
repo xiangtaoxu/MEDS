@@ -82,8 +82,9 @@ One config-breaking series on this branch, with a CHANGELOG "Upgrading" paragrap
 5. **The file's heights are checked against the config** when present: `tq_height_m`,
    `wind_height_m` (within 0.01 m) and `height_above`. The existing provenance attribute
    `wind_meas_height_m` is checked the same way.
-6. **One molar-mass ratio** (§4 item 3): the humidity conversions use `EPS_MOL` from
-   `meds_therm_lib`, the same constant as the inverse.
+6. **One molar-mass ratio** (§4 item 3): `specific_humidity_to_vpd` uses 0.622/0.378, like every
+   forward conversion and `sat_specific_humidity`, and `EPS_MOL`, whose only user it was, is gone.
+   Unifying on the forward form keeps the model state bit-identical; only the VPD diagnostics move.
 7. **`Conventions = "MEDS-forcing-1.1"`** in the files the scripts write. The reader does not
    require it.
 8. **The terrain-lapse keys only when the lapse is on.** `[site].lapse_rate_tair` and
