@@ -6,6 +6,11 @@ issue triage, build + test); every finding ranked here was re-verified by hand a
 `e33cb56` (`beta`, 62 commits and 82 files ahead of `main` = `v0.2.2`, `92cad44`). Line numbers
 refer to `e33cb56`.
 
+**Executed 2026-09-28 in #314:** phases 0–5 of §9, and the archive audit of §10. R2 (Phase 1.7) and
+P3 (Phase 4.7) are deferred to #310 and #313; the integrator plan stays live until #162 and E5 are
+re-homed; the `[io]` shim stays for 0.3.0 (#309). The after-merge items of §8 item 6 are #308 and
+#310–#313.
+
 The three questions asked: (1) can changes be consolidated under a generic principle and special
 cases removed; (2) is the documentation consistent with the code; (3) are the new modules
 modularized and readable. In parallel: which open issues does `beta` close, and which should be
