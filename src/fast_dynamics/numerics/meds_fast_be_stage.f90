@@ -427,8 +427,8 @@ contains
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
                  frozen%plant%leaf_area(1:n),                &
               frozen%roots%psi_soil_pre(1:nsl), frozen%params%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
-              frozen%plant%pft(1:n), frozen%params%hydraulics_table, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), sapflow_c(1:n), uptake_c(1:n), &
-              uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n),              &
+              frozen%plant%pft(1:n), frozen%params%hydraulics_table, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), &
+              sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &
               nsub_c(1:n), conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
          !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !

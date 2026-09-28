@@ -423,8 +423,8 @@ contains
                                          col_cohort%height(1:n),   &
                                    col_cohort%leaf_area(1:n),                                                  &
                                    psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
-                                   col_cohort%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt_fast, psi_scratch(:, 1:n), &
-                                   sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n),  &
+                                   col_cohort%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt_fast, &
+                                   psi_scratch(:, 1:n), sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n), &
                                    psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
       budget%hydro_nsub    = sum(nsub_b(1:n))            ! section 5.3 work counter (same seam as split)
       budget%hydro_nonconv = count(.not. converged_b(1:n))

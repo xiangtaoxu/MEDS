@@ -516,7 +516,7 @@ contains
          t = t + dt
       end do
       psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,             &
-           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac,                        &
+           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
            col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1))
       w_tot_out = sum(biophys%leaf_water_mass(1:n) + biophys%wood_water_mass(1:n))
    end subroutine run_window
@@ -546,7 +546,8 @@ contains
       !      empty pool. -------------------------------------------------------------------------!
       biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_pi0, &
                               col_config%hydraulics_table%pft(1)%leaf_elastic_mod, &
-           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1:n))
+           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, &
+           col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_pi0, &
                               col_config%hydraulics_table%pft(1)%wood_elastic_mod, &
            col_config%hydraulics_table%pft(1)%wood_apoplast_frac, col_config%hydraulics_table%pft(1)%wood_water_sat, &
