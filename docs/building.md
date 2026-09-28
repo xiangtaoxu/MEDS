@@ -42,8 +42,8 @@ identically under all three compilers.
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
-and gfortran, which on most machines is the second compiler at hand. Four portability traps have
-each bitten once, and each was invisible to ifx:
+and gfortran, which on most machines is the second compiler at hand. Seven portability traps have
+each bitten at least once, and each was invisible to ifx:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
@@ -58,6 +58,19 @@ each bitten once, and each was invisible to ifx:
   copy-out leaves the originals' allocatable components dangling: a segfault a step later, with
   nothing reported by `-fcheck=all`. Keep such objects in a contiguous array of their own, as the
   region keeps its polygons' output buffers.
+- **Never nest an implied-do inside a `pack` inside an array constructor**, as in
+  `[pack([(i, i = 0, n - 1)], m1), pack([(i, i = 0, n - 1)], m2)]`. nvfortran 25.11 returns wrong
+  elements at `-O2` and segfaults at `-O0`. Bind the implied-do to a named array and pack that.
+- **Keep `findloc` off LOGICAL arrays, and never search a character array for a shorter value.**
+  nvfortran 25.11's runtime aborts with "FINDLOC: unimplemented for data type" on a LOGICAL
+  array; search an integer mask instead, `findloc(merge(1, 0, mask), 1)`. On a character array it
+  returns 0 for a value shorter than the elements, such as `findloc(names, trim(s))`, where the
+  standard compares blank-padded; pass the untrimmed value.
+- **Never reset with an empty structure constructor, `x = t()`, when `t` has a fixed-size array
+  component whose own type has allocatable components.** nvfortran 25.11 compiles it to an
+  ALLOCATE of a garbage size, and a small program using the same pattern is an internal compiler
+  error. Assign a default-initialised local that is never written, or reset through an
+  `intent(out)` dummy.
 
 ## Build types
 
