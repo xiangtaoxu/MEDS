@@ -43,9 +43,10 @@ this machine is in `CLAUDE.local.md`.
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 45 tests
+ctest --test-dir build-ifx --output-on-failure          # 53 tests, about 25 s
 
-# Debug (-stand f18 -check all -fpe0) for engine work:
+# Debug (-stand f18 -check all -fpe0) for engine work. Three tests fail here on every branch until
+# #308 is fixed (soil_column_config, soil_biogeochem, column_ark), so count the failures:
 cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \
       -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test by regex
