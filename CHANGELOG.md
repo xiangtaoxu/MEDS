@@ -341,6 +341,14 @@ before and after.
   - ifx output is unchanged, bit for bit. gfortran Release and Debug pass `region`.
   - The construct joins the compiler traps in `CLAUDE.md` and `docs/building.md`.
 
+- **A region month in which one polygon failed stopped the I/O phase and lost the month for every
+  polygon** (review O1, #PRNUM). The serializer required every polygon to hold the same number of
+  closed records, but a polygon that fails has closed fewer, and the polygons after it none.
+  - It now writes as many records as the longest queue holds, with the fill value where a polygon
+    holds none, and takes each record's calendar from the first polygon that holds it.
+  - Nothing changes when every polygon completes the month.
+  - `test_region` makes one polygon's soil carbon impossible in mid-month and checks the daily file.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the

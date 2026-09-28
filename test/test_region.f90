@@ -24,9 +24,10 @@ program test_region
    use meds_test_era5land_archive, only : write_archive
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
-                                          DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
+                                          DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
+                                          MISSING_INT
    use meds_driver,                only : meds_run_t, driver_open, driver_step, driver_finalize,  &
-                                          driver_free, driver_done, DRIVER_OK
+                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_SOILC
    use meds_region,                only : meds_region_t, region_open, region_step_month,          &
                                           region_done, region_finalize, region_free
    implicit none
@@ -123,6 +124,23 @@ program test_region
                    count_prefix('region-p'//trim(idstr)//'-') == count_prefix('site'//trim(idstr)//'-') &
                    .and. count_prefix('region-p'//trim(idstr)//'-F-') == 12_ik)
    call check_true('the detail polygon''s files equal its site run''s, every variable', nbad == 0_ik)
+
+   !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
+   !      first month, so its first February step fails: by then polygon 1 has closed February's     !
+   !      five days, polygon 2 its first, and polygon 3 none. The month's I/O phase writes what        !
+   !      closed, with the fill value where a polygon closed nothing, instead of stopping. ------------!
+   call derive(trim(work)//'/fail.toml', '[output]'//nl()//'prefix = "fail"'//nl()//                  &
+               '[region]'//nl()//'detail_polygons = [35]'//nl()//region_block(), region=.true.)
+   call region_open(trim(work)//'/fail.toml', reg, ok, verbose=.false.)
+   if (.not. ok) error stop 'test_region: the failing region did not open'
+   call region_step_month(reg, st)
+   call check_true('the month before the failure steps', st == DRIVER_OK)
+   reg%poly(2)%site%patch%soil_carbon(1)%slow_carbon = -1.0_wp
+   call region_step_month(reg, st)
+   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_SOILC)
+   call region_finalize(reg, st)
+   call region_free(reg)
+   call check_failed_month(trim(work)//'/out/fail-D-202102.nc')
 
    !----- Region-mode rules (MEDS_POLYGON_RUNTIME_PLAN.md §9): each bad config is refused with its  !
    !      own message. The bad keys come first, so they win over the good region block. -------------!
@@ -426,6 +444,38 @@ contains
       end do
       call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
    end function compare_site_file
+
+   !----- The daily file of the month polygon 2 failed in: five records, polygon 1's days, polygon  !
+   !      2's first, and the fill value everywhere else, in every site variable of the tier. --------!
+   subroutine check_failed_month(path)
+      character(len=*), intent(in) :: path
+      integer(c_int) :: ncid
+      real(c_double), allocatable :: x(:)
+      real(c_double) :: fill
+      integer(ik) :: nt, j, k, nbad
+      logical :: found
+      ncid = open_nc(path)
+      nt = dim_len(ncid, 'time')
+      call check_true('a failed month writes every day the other polygons closed', nt == 5_ik)
+      call read_var(ncid, 'cas_temp_site', [nt, NP], x, found)
+      call check_true('polygon 1 holds its five days, polygon 2 its first',                          &
+                      found .and. all(x(1:5*NP:NP) < 1.0e30_c_double) .and. x(2) < 1.0e30_c_double)
+      nbad = 0_ik
+      do j = 1_ik, reg_region%nidx(2)
+         k = reg_region%idx_freq(j, 2)
+         if (reg_region%var(k)%dim /= DIM_SCALAR) cycle
+         call read_var(ncid, trim(reg_region%var(k)%name), [nt, NP], x, found)
+         if (.not. found) cycle
+         if (reg_region%var(k)%xtype == XTYPE_INT) then
+            fill = real(MISSING_INT, c_double)
+            if (any(x(3:nt*NP:NP) /= fill) .or. any(x(NP + 2:nt*NP:NP) /= fill)) nbad = nbad + 1_ik
+         else if (any(x(3:nt*NP:NP) < 1.0e30_c_double) .or. any(x(NP + 2:nt*NP:NP) < 1.0e30_c_double)) then
+            nbad = nbad + 1_ik
+         end if
+      end do
+      call check_true('the fill value where polygon 2 had failed and polygon 3 had not begun', nbad == 0_ik)
+      call nc_check(nc_close(ncid), 'close')
+   end subroutine check_failed_month
 
    !----- The polygon axis: ids, centres and grid indices of the selected cells. -------------------!
    subroutine check_polygon_axis(path)
