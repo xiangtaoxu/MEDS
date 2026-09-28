@@ -14,6 +14,8 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-28
+
 ### Added
 
 - **Per-patch forcing output** (#305). Each patch now has its own forcing (see Changed), so the patch
@@ -2008,7 +2010,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...beta
+[0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.1.0...v0.2.0
