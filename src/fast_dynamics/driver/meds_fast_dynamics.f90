@@ -482,8 +482,8 @@ contains
       !      increasing t exactly once per sub-step, instead of being rewound through the same t       !
       !      sequence once per patch; met_instant is a pure function of (reader state, t), so the      !
       !      per-sub-step values are unchanged and the loop below is byte-identical. The sample TIMES  !
-      !      are kept too: they are what the FAST-tier output stamps and what the probe writes, and     !
-      !      after the hoist a single scalar `t_sub` would leave both reading the LAST sub-step's time. !
+      !      are kept too: the probe writes them, and after the hoist a single scalar `t_sub` would     !
+      !      leave it reading the LAST sub-step's time.                                                !
       if (do_forcing) then
          allocate(met_sample(nsub), t_sample(nsub))
          do isub = 1_ik, nsub
@@ -493,9 +493,14 @@ contains
             met_sample(isub) = met_instant(met_src, met_cur, t_sample(isub))
          end do
       end if
-      !----- Site-uniform, so it belongs OUT of the patch loop (where every patch used to rewrite it  !
-      !      with the same value -- benign serially, a data race once threaded). ---------------------!
-      if (do_fast) out_bufs%fast_time(1:nsub) = t_sample(1:nsub)
+      !----- The FAST tier stamps a record by its window's start, as the slower tiers do (#294): each  !
+      !      sub-step's start, not the instant its forcing is sampled at. Site-uniform, so out of the   !
+      !      patch loop. -------------------------------------------------------------------------------!
+      if (do_fast) then
+         do isub = 1_ik, nsub
+            out_bufs%fast_time(isub) = time_advance_seconds(step_start, real(isub - 1_ik, wp) * cfg%dt_fast)
+         end do
+      end if
       !----- The FAST tier's forcing echo (§6.7) is the sub-step's own sample: site-uniform, so it  !
       !      is staged here, exactly, rather than area-summed over patches like the fluxes below. ----!
       if (do_fast) then

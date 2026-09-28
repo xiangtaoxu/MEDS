@@ -308,6 +308,12 @@ before and after.
   - A skin temperature and within-step variances stay on #275.
   - The registry holds 252 variables; `meds_io_config.toml` is regenerated.
 
+- **The FAST tier stamps each record by its period's start** (review O2, #PRNUM), as the daily,
+  monthly and annual tiers do since #294. It stamped the instant the period's first forcing sample
+  was taken, `forcing_sample_frac · dt_fast` in (7 min 30 s at the defaults), under a `long_name`
+  that said "period start". The `time`, `minute` and `second` of every `-F-` record move back by
+  that much; no value changes.
+
 ### Removed
 
 - **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
