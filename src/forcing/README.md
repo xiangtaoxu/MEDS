@@ -4,7 +4,7 @@ The home for **time-varying boundary conditions read from a file**, as opposed t
 evolves. Meteorology and prescribed CO₂ today; disturbance and land-use schedules and nitrogen
 deposition later.
 
-`libmeds_forcing` links the shared foundation and the netCDF C bindings **only** — never the
+`libmeds_forcing` links the configuration library and the netCDF C bindings **only** — never the
 demography or state layer — so a prescribed driver stays low in the library graph.
 
 ## Modules
@@ -61,17 +61,21 @@ produces a run that looks healthy and is not, and there is no way for a downstre
 **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
 `recycle_end` are required, and three things are checked rather than guessed: the span must be an
 exact whole number of calendar years, the start must land exactly on a record stamp, and the file
-must cover the window. The mapping is anchor-relative, so a cycle may begin anywhere in the
-calendar, not only on 1 January, and hour-of-day is preserved exactly. A window that is not a whole
+must cover the window. The mapping is anchor-relative, so a cycle may begin at any record stamp,
+not only on 1 January (a region's at 00:00 or 01:00 on the 1st), and hour-of-day is preserved
+exactly. A window that is not a whole
 number of years drifts both hour-of-day and day-of-year on every wrap **while the daily mean stays
 correct** — so nothing downstream complains, and a multi-decade run can end up reading the wrong
 season at the wrong hour with a perfectly healthy-looking energy budget.
 
 ## How it reaches the model
 
-Gated on `[forcing].forcing_on`. When on, `meds_main` opens the reader and threads it plus the
-step-start time down to the fast loop, which refreshes a local context overlay **per sub-step** — so
-the diurnal cycle lives inside the sub-step loop.
+Gated on `[forcing].forcing_on`. When on, the run's driver (`meds_driver` for a site, `meds_region`
+for a region) opens one `met_source_t` and gives each polygon a `met_cursor_t`, and each step's
+forcing is loaded before the step (`met_prefetch`), so no step reads a file. The fast loop samples
+the forcing **once per sub-step** (`met_advance`, `met_instant`), outside the patch loop, and moves
+it to each patch's canopy-air top (`meds_lapse_rate`) — so the diurnal cycle lives inside the
+sub-step loop.
 
 Forcing also drives the **canopy radiative transfer**: the met shortwave streams map onto the
 two-stream's radiation record, the height-descending cohort gather order is reversed into the
@@ -91,7 +95,8 @@ the right direction for multi-cohort patches.
 **The ED_ERA5land archive** (`format = "era5land"`) is built once per installation with the tools in
 `scripts/prepare_era5/` (`download_era5land_gdex.py` or `download_era5land_cds.py`, then
 `build_era5land_static.py` and `build_era5land_archive.py`); a run then only names its folder in
-`data_path`. See `MEDS_FORCING_DESIGN.md` §12–§14.
+`data_path`. The static file's `valid` mask comes from one raw GDEX file, so an archive built from
+the CDS still needs one GDEX download. See `MEDS_FORCING_DESIGN.md` §12–§14.
 
 **A single forcing file** (`format = "netcdf"`) comes from `scripts/prepare_era5/make_forcing_file.py`,
 run in the `meds-era5` environment, with either input:

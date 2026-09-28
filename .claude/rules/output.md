@@ -44,8 +44,9 @@ a PFT goes locally extinct.
 - **The diagnostic blocks ride the cohort and patch lockstep**, and the obligation is discharged by
   **layout**: the fields are rows of one 2-D array, so each reorder or clear is a single whole-array
   statement that cannot omit a field. Adding a diagnostic costs zero edits to the reorder machinery.
-- **Never read the transient tendency bundle from here.** Use the diagnostic block. The output tick
-  runs after the monthly fuse-fission, so the two are different plants on boundary steps.
+- **Never read the transient tendency bundle from here.** Use the diagnostic block. The bundle is
+  not lockstep-reordered, and the step re-sorts the cohorts after filling it, so at the output tick
+  its index `i` need not be the cohort array's `i`.
 - **Source ids are range-partitioned by entity**, with a class dispatcher. This is load-bearing: the
   previous flat numbering had six literal collisions, invisible only because two switchboards
   consumed them separately — moving a variable between tiers would have silently written a
@@ -55,9 +56,8 @@ a PFT goes locally extinct.
 - **The netCDF-free half is a separate CMake target from the serializer**, and it is an **explicit
   file list, not a glob**. Adding a diagnostic module there is a deliberate edit. That split is what
   keeps the stepper's edge free of a C dependency.
-- **`[io]` is the restart stream only.** The legacy diagnostic writer under that block was retired
-  at v0.1; it collided with the registry on the output filename prefix. A checkpoint is raw
-  prognostic state at an instant, never a time average.
+- **`[state]` is the restart stream only** (`[io]` is its deprecated spelling). A checkpoint is raw
+  prognostic state at an instant, never a time average; diagnostics are `[output]`.
 
 ## Adding a variable
 

@@ -66,14 +66,17 @@ was never exhaled. **A closed budget proves bookkeeping, not plausibility.**
 
 ## Order of operations
 
-Every step: growth, then mortality, then patch ageing. Monthly: recruit, then cohort
-fuse/terminate/split, then sort. Annually: disturbance, then patch restructuring. Disturbance and
-patch restructuring are **independent triggers**. Disturbance integrates its yearly rate over the
-one-year patch-dynamics interval, not over the per-step interval.
+Every step: growth, then mortality, then patch ageing, and the cohorts are re-sorted by height. The
+calendar restructuring runs once per boundary, at the start of the next step, after the output has
+read the step that ended (`restructure_stand`; `docs/science/order_of_processes.md`). At a month
+boundary: recruit, then cohort fuse/terminate/split, then sort. At a year boundary, also:
+disturbance, then patch restructuring. Disturbance and patch restructuring are **independent
+triggers**. Disturbance integrates its yearly rate over the one-year patch-dynamics interval, not
+over the per-step interval.
 
 ## Output must not read the tendency bundle
 
-The output tick runs after the monthly fuse-fission, so the bundle's index `i` and the cohort array's
-index `i` are different plants on exactly the boundary steps. Read the diagnostic block instead.
-This mistake was made once and caught only by the thread-invariance test, because thread count
-perturbs which cohorts fuse.
+The bundle is not lockstep-reordered, and the step re-sorts the cohorts after filling it, so at the
+output tick the bundle's index `i` and the cohort array's index `i` need not be the same plant. Read
+the diagnostic block instead. This mistake was made once and caught only by the thread-invariance
+test, because thread count perturbs the cohort order.
