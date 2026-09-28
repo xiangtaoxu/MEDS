@@ -125,6 +125,23 @@ program test_region
                    .and. count_prefix('region-p'//trim(idstr)//'-F-') == 12_ik)
    call check_true('the detail polygon''s files equal its site run''s, every variable', nbad == 0_ik)
 
+   !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
+   !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
+   !      restructured at its first step. -------------------------------------------------------------!
+   call derive(trim(work)//'/reuse.toml', '[run]'//nl()//'end_time = "2021-02-01"'//nl()//            &
+               '[output]'//nl()//'enabled = false'//nl()//site_block(1_ik), region=.false.)
+   call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
+   if (.not. ok) error stop 'test_region: the reuse run did not open'
+   do while (.not. driver_done(run))
+      call driver_step(run, st)
+   end do
+   call check_true('a run ending on the 1st leaves its boundary''s restructuring owed',              &
+                   run%poly%restructure_pending)
+   call driver_finalize(run, st) ; call driver_free(run)
+   call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
+   call check_true('a reused run opens owing no restructuring', ok .and. .not. run%poly%restructure_pending)
+   call driver_finalize(run, st) ; call driver_free(run)
+
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails: by then polygon 1 has closed February's     !
    !      five days, polygon 2 its first, and polygon 3 none. The month's I/O phase writes what        !

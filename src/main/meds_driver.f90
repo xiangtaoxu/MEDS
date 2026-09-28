@@ -114,6 +114,12 @@ contains
       !      carried its step counters and both conservation ledgers too.  ------------------------!
       run%istep = 0_ik
       run%iyear = 0_ik
+      !----- The run before's output: its files are closed, but a run with [output] off would still  !
+      !      see them enabled and tick their buffers (manager_setup rebuilds both when output is on). !
+      run%out_files%enabled = .false. ; run%out_bufs = output_buffers_t()
+      !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
+      !      none unless the restart below says so. ---------------------------------------------!
+      run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
 
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing

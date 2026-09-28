@@ -349,6 +349,13 @@ before and after.
   - Nothing changes when every polygon completes the month.
   - `test_region` makes one polygon's soil carbon impossible in mid-month and checks the daily file.
 
+- **A reused run inherited the previous run's owed restructuring and output files** (review R1,
+  #PRNUM). A run that ends on the 1st leaves its boundary's restructuring pending, and the C API
+  hands its freed slot to the next run, whose first step then restructured a stand that owed
+  nothing. A next run with `[output].enabled = false` also still saw the previous run's files as
+  enabled and ticked their buffers. `driver_open` now clears both; a restart still sets the
+  restructuring flags from its state file. `test_region` reuses one run across both cases.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
