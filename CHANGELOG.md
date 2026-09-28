@@ -70,8 +70,9 @@ Each old form stops at startup with a message naming the fix.
     long ones from ERA5-Land or the mean diurnal variation. Longwave is filled from ERA5-Land or from
     the model's synthesis, regressed onto the tower in its clear-sky and cloud parts.
   - **`compare_longwave_fill.py`** scores the fills on held-out observations. `tests/` has 24
-    pytest cases on synthetic towers; two mutations of the tool (the UTC sign, the re-centring)
-    fail 15 and 2 of them.
+    pytest cases on synthetic towers, run by CTest as `prepare_flux_tower` when the Python it finds
+    has the dependencies; two mutations of the tool (the UTC sign, the re-centring) fail 15 and 2
+    of them.
 - **`scripts/forcing_common/meds_forcing_file.py`**, the one writer of an `ED_default` file and the
   Python copy of the model's conversions (humidity, hypsometric pressure, solar geometry, window-mean
   cos z, clearness index, longwave synthesis). `make_forcing_file.py` now writes through it and
@@ -105,6 +106,12 @@ Each old form stops at startup with a message naming the fix.
   fell in the following hour; totals were unchanged, and a begin-stamped file was read correctly.
   Rain now comes from the same record as shortwave. No test caught it because every fixture's rain
   was zero.
+- **The longwave synthesis held the wrong interval's clearness on begin-stamped files.** With
+  `lwdown_source = "synthesize"`, `met_advance` remembered the clearness of `rec_next` whatever the
+  stamp convention. On a `"begin"` file that is the next interval, dark after the last daylight
+  one, so `kt_last_day` was 0 every night and every night took the full cloud term, about +40 W m⁻²
+  of longwave at a humid tropical site. Rain, shortwave and the remembered clearness now take their
+  record from one function, `interval_mean_record`.
 
 - **Under nvfortran, v0.3.0 could not open a site run, and four tests failed** (#317). v0.3.0
   was verified on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and

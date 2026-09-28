@@ -9,6 +9,7 @@ either observed or filled here, and the file says which with a <Var>_qc flag:
   2  ERA5-Land, regressed onto the tower over their overlap
   3  the model's own longwave synthesis regressed onto the tower, or the mean diurnal variation
   4  filled by the data provider (FLUXNET *_QC > 0)
+  5  relative humidity recovered from the provider's VPD through its own saturation curve
 
 Every function works on the tower's own records: numpy arrays aligned with the tower's UTC stamps,
 each record the mean over its interval.
@@ -20,7 +21,7 @@ from netCDF4 import Dataset, num2date
 import tower_inputs as ti
 
 mff = ti.mff
-QC_OBSERVED, QC_SHORT, QC_ERA5, QC_SYNTH_OR_MDV, QC_PROVIDER = 0, 1, 2, 3, 4
+QC_OBSERVED, QC_SHORT, QC_ERA5, QC_SYNTH_OR_MDV, QC_PROVIDER, QC_FROM_VPD = 0, 1, 2, 3, 4, 5
 MIN_FIT_POINTS = 48            # a regression group smaller than this falls back to the pooled fit
 
 
@@ -98,10 +99,11 @@ def _design(x):
     return np.column_stack([np.ones(len(x)), x])
 
 
-def fit_linear(y, x, fit, groups):
+def fit_linear(y, x, fit, groups, fallback=None):
     """Least-squares coefficients per group for y = c0 + c1 x1 + ..., fitted where `fit`; a group
-    with fewer than MIN_FIT_POINTS takes the pooled fit, and with fewer than that pooled, the
-    identity on the first predictor."""
+    with fewer than MIN_FIT_POINTS takes the pooled fit, and with fewer than that pooled, `fallback`
+    (default: the identity on the first predictor). Returns the coefficients, the pooled fit, and
+    whether the fallback was used."""
     design = _design(x)
 
     def ols(m):
@@ -109,15 +111,17 @@ def fit_linear(y, x, fit, groups):
             return None
         c, *_ = np.linalg.lstsq(design[m], y[m], rcond=None)
         return c
-    identity = np.zeros(design.shape[1])
-    identity[1] = 1.0
+    if fallback is None:
+        fallback = np.zeros(design.shape[1])
+        fallback[1] = 1.0
     pooled = ols(fit)
-    pooled = identity if pooled is None else pooled
+    fell_back = pooled is None
+    pooled = np.asarray(fallback, dtype=float) if fell_back else pooled
     coefficients = {}
     for g in np.unique(groups):
         c = ols(fit & (groups == g))
         coefficients[int(g)] = pooled if c is None else c
-    return coefficients, pooled
+    return coefficients, pooled, fell_back
 
 
 def apply_linear(x, groups, coefficients):
@@ -126,15 +130,16 @@ def apply_linear(x, groups, coefficients):
     return np.sum(design * c, axis=1)
 
 
-def fill_by_regression(y, qc, x, groups, code, lower=None, upper=None):
+def fill_by_regression(y, qc, x, groups, code, lower=None, upper=None, fallback=None):
     """Fill the missing values of y from predictors x (ERA5-Land, or the parts of the model's
-    synthesis) by a linear regression fitted on the observed overlap within each group. Returns
-    the filled series, its qc, and the fit (for the report)."""
+    synthesis) by a linear regression fitted on the observed overlap within each group; with too
+    little overlap to fit, the coefficients `fallback`. Returns the filled series, its qc, and the
+    fit (for the report)."""
     y = y.copy()
     qc = qc.copy()
     usable = np.all(np.isfinite(_design(x)), axis=1)
     fit = np.isfinite(y) & usable & (qc == QC_OBSERVED)
-    coefficients, pooled = fit_linear(y, x, fit, groups)
+    coefficients, pooled, fell_back = fit_linear(y, x, fit, groups, fallback)
     predicted = np.where(usable, apply_linear(np.nan_to_num(x), groups, coefficients), np.nan)
     if lower is not None or upper is not None:
         predicted = np.clip(predicted, lower, upper)
@@ -142,7 +147,7 @@ def fill_by_regression(y, qc, x, groups, code, lower=None, upper=None):
     y[fill] = predicted[fill]
     qc[fill] = code
     residual = y[fit] - predicted[fit]
-    report = dict(fit_points=int(fit.sum()), filled=int(fill.sum()),
+    report = dict(fit_points=int(fit.sum()), filled=int(fill.sum()), fell_back_unfitted=bool(fell_back),
                   pooled_coefficients=[round(float(c), 6) for c in pooled],
                   overlap_bias=float(np.mean(residual)) if fit.any() else None,
                   overlap_rmse=float(np.sqrt(np.mean(residual ** 2))) if fit.any() else None)
@@ -182,6 +187,11 @@ def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
     kt = clearness_held_through_night(sw, mean_cosz)
     clear = mff.synthesize_lwdown(tair_k, q, psurf_ground_pa, np.ones_like(q), 0.0)
     return np.column_stack([clear, clear * (1.0 - kt)])
+
+
+# With too few observations to fit, the synthesis predictors fall back to the model's own
+# synthesis: clear + 0.22 clear (1 - kt), which is what lwdown_source = "synthesize" would give.
+SYNTHESIS_FALLBACK = (0.0, 1.0, mff.LW_CLOUD_A)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -240,7 +250,11 @@ def era5_on_intervals(era5, starts, ends, site):
         inside = k >= 0
         k = np.clip(k, 0, n - 1)
         hour_start = t_era[k]
-    inside &= (mid > hour_start) & (mid < hour_start + step)
+    # an interval middle exactly on an ERA5 stamp belongs to that stamp's own interval
+    if era5["convention"] == "end":
+        inside &= (mid > hour_start) & (mid <= hour_start + step)
+    else:
+        inside &= (mid >= hour_start) & (mid < hour_start + step)
     for name in ("Rainf", "LWdown"):
         out[name] = np.where(inside, era5["values"][name][k], np.nan)
     cz_hour = mff.window_mean_cosz(hour_start.astype("datetime64[s]"), step, site.latitude, site.longitude)

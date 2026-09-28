@@ -16,7 +16,8 @@ python compare_longwave_fill.py --site my_site.toml --out lw.json --figure lw.pn
 
 Needs numpy, pandas and netCDF4, plus tomli on Python < 3.11: the `meds-era5` environment of
 [`../prepare_era5/environment.yml`](../prepare_era5/environment.yml) has them. The tests use pytest:
-`python -m pytest scripts/prepare_flux_tower/tests`.
+`python -m pytest scripts/prepare_flux_tower/tests`, which CTest also runs as `prepare_flux_tower`
+when the Python it finds has the dependencies.
 
 ## The site TOML
 
@@ -88,7 +89,7 @@ The checks stop the build; V5 only reports.
   state. Each is the mean of the two half-hour means that meet there; wind uses the root mean square.
 - **Fluxes** (`Rainf`, `SWdown`): means over each interval.
 - **`<Var>_qc`**, one per variable: 0 observed, 1 short gap, 2 ERA5-Land, 3 synthesis regression or
-  mean diurnal variation, 4 filled by the provider.
+  mean diurnal variation, 4 filled by the provider, 5 RH recovered from the provider's VPD.
 - **Global attributes:** `tq_height_m`, `wind_height_m` and `height_above = "ground"`, which MEDS
   checks against `[forcing]`, plus the fill methods and the source clock.
 
@@ -106,7 +107,8 @@ interpolated: a rain gap takes ERA5-Land's rain, or stops the build.
     εσT⁴(1 − kt), regressed the same way. At Barro Colorado Island the observed longwave falls
     with daytime cloudiness, so the model's fixed cloud coefficient (0.22) left the synthesis
     uncorrelated with the tower. Fitted there, the synthesis scores RMSE 9.1 W m⁻² on held-out
-    records.
+    records. With fewer than 48 observed longwave records there is nothing to fit, and the fill is
+    the model's synthesis as MEDS computes it, with a warning.
   - [`compare_longwave_fill.py`](compare_longwave_fill.py) scores the fills against observations
     they never saw.
 

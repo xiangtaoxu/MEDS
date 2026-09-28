@@ -202,6 +202,37 @@ def test_a_long_longwave_gap_is_filled_by_the_synthesis_regression(tmp_path):
     assert report["fills"]["LWdown"]["method"] == "synth"
 
 
+def test_a_tower_without_longwave_gets_the_model_synthesis(tmp_path, capsys):
+    frame = synthetic_tower().drop(columns=["Rl_dn"])
+    site = write_site(tmp_path, frame)
+    del site.variables["LWdown"]
+    ds, report = build(tmp_path, site)
+    assert report["fills"]["LWdown"]["fell_back_unfitted"]
+    assert "WARNING" in capsys.readouterr().out
+    t = ds["Tair"][:, 0].astype(float)
+    # the file's LWdown is re-centred; compare an interior stamp against the synthesis of its two intervals
+    p = mt.prepare(site, "synth", "mdv")
+    y = p["values"]
+    lw = tg.synthesized_longwave(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], p["mean_cosz"])
+    assert np.allclose(ds["LWdown"][1:, 0], 0.5 * (lw[:-1] + lw[1:]), atol=1e-3)
+    assert (ds["LWdown_qc"][:, 0] == tg.QC_SYNTH_OR_MDV).all()
+    assert np.isfinite(t).all()
+
+
+def test_an_interval_middle_on_an_era5_stamp_belongs_to_that_stamp(tmp_path):
+    era5 = dict(stamps=np.array(["2014-01-01T01:00", "2014-01-01T02:00", "2014-01-01T03:00"], dtype="datetime64[s]"),
+                step=3600.0, convention="end",
+                values={name: np.array([1.0, 2.0, 3.0]) for name in ("Tair", "RH", "PSurf", "Wind", "Rainf",
+                                                                     "SWdown", "LWdown")})
+    starts = np.array(["2014-01-01T01:30"], dtype="datetime64[s]")     # an hourly tower stamped at :30
+    ends = starts + np.timedelta64(3600, "s")                           # its middle is exactly 02:00
+
+    class S:
+        latitude, longitude, timestep = 0.0, 0.0, 3600.0
+    out = tg.era5_on_intervals(era5, starts, ends, S)
+    assert out["Rainf"][0] == 2.0 and out["LWdown"][0] == 2.0           # the hour (01:00, 02:00]
+
+
 def test_missing_rain_without_era5_is_an_error(tmp_path):
     frame = synthetic_tower()
     frame.loc[50, "PPT"] = np.nan
@@ -365,6 +396,7 @@ Wind = {{ column = "WS_F", units = "m s-1" }}
     rh_true = frame["RH"].to_numpy() / 100.0
     assert np.allclose(rh[1:], 0.5 * (rh_true[:-1] + rh_true[1:]), atol=1e-5)
     assert report["V3_humidity"]["rh_from_vpd_records"] == len(frame)
+    assert (ds["RHair_qc"][1:, 0] == tg.QC_FROM_VPD).all()             # flagged, not "observed"
 
 
 # ---------------------------------------------------------------------------------------------

@@ -7,8 +7,8 @@
 !      carry none, two, or a percentage refused;                                                  !
 !   2. the UTC requirement;                                                                       !
 !   3. the heights a file states, checked against [forcing];                                      !
-!   4. rain and shortwave read from the interval that CONTAINS the instant, on an end-stamped and   !
-!      a begin-stamped file alike;                                                                !
+!   4. rain, shortwave and the clearness the longwave synthesis remembers, read from the interval   !
+!      that CONTAINS the instant, on an end-stamped and a begin-stamped file alike;                !
 !   5. the round trip of a tower file: the model's relative humidity at the forcing temperature is   !
 !      the file's RHair, a saturated record reads back as VPD = 0, and the move from the tower      !
 !      height to a canopy-air top follows the dry adiabat and the patch's log wind profile.        !
@@ -21,9 +21,10 @@ program test_met_tower
    use meds_therm_lib,       only : sat_vapor_pressure, specific_humidity_to_vpd
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX,  &
                                     METAVG_END, METAVG_BEGIN, HEIGHT_ABOVE_GROUND,              &
-                                    HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL
+                                    HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_LOCAL, LW_SYNTHESIZE
    use meds_forcing_types,   only : met_forcing_t, met_source_t, met_cursor_t
-   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity
+   use meds_forcing_kernels, only : rh_to_specific_humidity, dewpoint_to_specific_humidity,        &
+                                    clearness_index, met_solar_cosz
    use meds_lapse_rate,      only : met_to_cas_top
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
                                     MET_OK, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY, MET_ERR_ATTR_MISMATCH
@@ -336,6 +337,17 @@ contains
          sw_mean = sw_mean + (met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse) / 10.0_wp
       end do
       call check('the shortwave of the interval is its own record''s mean', sw_mean, sw_at(k_sw), 1.0e-9_wp)
+      call met_close(src)
+
+      !----- The clearness index the longwave synthesis holds through the night is the containing   !
+      !      interval's too: on a begin file, the next record's would be the dark one after sunset.  !
+      fc%lwdown_source = LW_SYNTHESIZE
+      call met_open(src, fc, stat=st)
+      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
+      met = sample(src, cur, t0 + 0.4_wp * DT)
+      call check('the remembered clearness is the containing interval''s', cur%kt_last_day,              &
+                 clearness_index(sw_at(k_sw), met_solar_cosz(time_advance_seconds(base, t0 + 0.4_wp * DT),  &
+                                 t0 + 0.4_wp * DT, fc%latitude_deg, fc%longitude_deg)), 1.0e-12_wp)
       call met_close(src)
    end subroutine test_flux_interval
 

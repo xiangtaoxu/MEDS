@@ -149,7 +149,10 @@ record mean is kept.
 ## 8. P3 — gap filling
 
 qc codes: 0 observed · 1 short-gap interpolation · 2 ERA5-Land regression · 3 synthesis
-regression or mean diurnal variation · 4 filled by the data provider (FLUXNET `_QC` > 0). After
+regression or mean diurnal variation · 4 filled by the data provider (FLUXNET `_QC` > 0) · 5
+relative humidity recovered from the provider's VPD through its declared curve. With too few
+observed longwave records to fit (fewer than 48), the synthesis fill is the model's own synthesis,
+cloud coefficient 0.22, with a warning. After
 filling, any missing value stops the tool (MEDS never gap-fills, `forcing.md` §10).
 
 1. **Short gaps** (≤ 2 h by default): linear for Tair, RH, PSurf and LWdown; energy form for wind;
@@ -238,7 +241,8 @@ recycle_end   = "2017-08-01 00:00:00"
 - The reader (Fortran, CTest): each new rejection — old format names, `utc_offset`, a non-UTC
   file, no or two humidity variables, `RHair` in percent, a height mismatch, lapse keys with the
   lapse off — and V6.
-- The tool (Python, run by CTest when the interpreter has numpy and netCDF4): synthetic AmeriFlux
+- The tool (Python, run by CTest as `prepare_flux_tower` when the interpreter has numpy, pandas,
+  netCDF4 and pytest): synthetic AmeriFlux
   BASE, FLUXNET and CSV inputs made inside the test from a known sun and known humidity; V2 and V3
   rejections (wrong clock, wrong stamp, wrong curve); re-centring and gap-fill flags.
 

@@ -22,7 +22,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 INK, MUTED, OBSERVED = "#0b0b0b", "#52514e", "#dad9d4"
 CODES = [(0, "observed", OBSERVED), (1, "short gap, interpolated", "#2a78d6"),
          (2, "ERA5-Land, regressed", "#eb6834"), (3, "synthesis regressed / mean diurnal", "#1baf7a"),
-         (4, "filled by the provider", "#eda100")]
+         (4, "filled by the provider", "#eda100"), (5, "RH from the provider's VPD", "#e87ba4")]
 ROWS = ["Tair", "RHair", "PSurf", "Wind", "Rainf", "SWdown", "LWdown"]
 
 

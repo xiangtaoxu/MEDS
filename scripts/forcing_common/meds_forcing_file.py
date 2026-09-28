@@ -184,8 +184,9 @@ def synthesize_lwdown(t_k, q, p_pa, kt, cloud_a=LW_CLOUD_A, form="brutsaert"):
 # ---------------------------------------------------------------------------------------------
 # The file.
 # ---------------------------------------------------------------------------------------------
-QC_FLAG_VALUES = np.array([0, 1, 2, 3, 4], dtype=np.int8)
-QC_FLAG_MEANINGS = "observed short_gap_interpolation era5land_regression synthesis_or_mean_diurnal_variation filled_by_provider"
+QC_FLAG_VALUES = np.array([0, 1, 2, 3, 4, 5], dtype=np.int8)
+QC_FLAG_MEANINGS = ("observed short_gap_interpolation era5land_regression synthesis_or_mean_diurnal_variation "
+                    "filled_by_provider from_provider_vpd")
 
 
 def check_complete(times, arrays):

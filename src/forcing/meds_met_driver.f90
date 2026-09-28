@@ -509,13 +509,27 @@ contains
       type(met_cursor_t), intent(inout) :: cur
       type(meds_time_t),  intent(in)    :: now
       real(wp) :: cosz_now, sw_total, kt
-      associate (f => src%fcfg, r => cur%rec_next)
-         cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
-         sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
-         kt = clearness_index(sw_total, cosz_now)
-         if (kt >= 0.0_wp) cur%kt_last_day = kt      ! negative = night: keep dusk's value
-      end associate
+      type(met_record_t) :: r
+      r = interval_mean_record(src, cur)
+      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
+      kt = clearness_index(sw_total, cosz_now)
+      if (kt >= 0.0_wp) cur%kt_last_day = kt         ! negative = night: keep dusk's value
    end subroutine remember_clearness
+
+   !----- The record carrying the means over the interval that contains the model instant: the  !
+   !      later of the bracket on an avg_convention = "end" file, the earlier on a "begin" one.     !
+   !      Every consumer of an interval mean -- rain, shortwave, the clearness the longwave         !
+   !      synthesis remembers -- takes it from here, so none of them reads a neighbouring interval.  !
+   pure function interval_mean_record(src, cur) result(r)
+      type(met_source_t), intent(in) :: src
+      type(met_cursor_t), intent(in) :: cur
+      type(met_record_t) :: r
+      select case (src%fcfg%avg_convention)
+      case (METAVG_BEGIN) ; r = cur%rec_prev
+      case default        ; r = cur%rec_next            ! METAVG_END (ERA5-Land) + fallback
+      end select
+   end function interval_mean_record
 
    !=======================================================================================!
    !  INSTANT: interpolate/disaggregate the loaded window to the model instant `now`.           !
@@ -577,10 +591,7 @@ contains
          !----- The fluxes are interval means: the interval CONTAINING now is [prev, next], whose     !
          !      mean is rec_next's on an avg_convention = "end" file and rec_prev's on a "begin" one.    !
          !      Rain and shortwave both come from that record, so neither lags the other.              !
-         select case (f%avg_convention)
-         case (METAVG_BEGIN) ; mean_rec = p
-         case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
-         end select
+         mean_rec = interval_mean_record(src, cur)
 
          !----- rainfall: the interval's total rate, held across it (never smeared), then split by  !
          !      phase on the interpolated temperature. ------------------------------------------------!

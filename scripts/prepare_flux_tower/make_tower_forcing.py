@@ -81,7 +81,7 @@ def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_hold
             report["V3_humidity"] = tc.check_vpd(y["Tair"], y["RH"], vpd, curve)
         from_vpd = ~np.isfinite(y["RH"]) & np.isfinite(vpd) & np.isfinite(y["Tair"])
         y["RH"][from_vpd] = tc.rh_from_vpd(y["Tair"][from_vpd], vpd[from_vpd], curve)
-        qc["RH"][from_vpd] = np.where(data.provider["VPD"].to_numpy()[from_vpd], tg.QC_PROVIDER, tg.QC_OBSERVED)
+        qc["RH"][from_vpd] = tg.QC_FROM_VPD
         report["V3_humidity"]["rh_from_vpd_records"] = int(from_vpd.sum())
 
     era5 = None
@@ -134,13 +134,17 @@ def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_hold
     y["LWdown"], qc["LWdown"] = tg.fill_short(y["LWdown"], qc["LWdown"], short_gap_max)
     groups_lw = tg.regression_groups(stamps, mean_cosz, by_day_night=True)
     if lw_fill == "era5":
-        predictor, code = era5["LWdown"], tg.QC_ERA5
+        predictor, code, fallback = era5["LWdown"], tg.QC_ERA5, None
     else:
         predictor = tg.synthesis_predictors(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], mean_cosz)
-        code = tg.QC_SYNTH_OR_MDV
+        code, fallback = tg.QC_SYNTH_OR_MDV, tg.SYNTHESIS_FALLBACK
     y["LWdown"], qc["LWdown"], fills["LWdown"] = tg.fill_by_regression(y["LWdown"], qc["LWdown"], predictor,
-                                                                        groups_lw, code, 30.0, 650.0)
+                                                                        groups_lw, code, 30.0, 650.0, fallback)
     fills["LWdown"]["method"] = lw_fill
+    if fills["LWdown"]["fell_back_unfitted"]:
+        print(f"WARNING: fewer than {tg.MIN_FIT_POINTS} observed longwave records to fit the {lw_fill} fill to; "
+              f"the longwave is {'the model synthesis as MEDS computes it' if lw_fill == 'synth' else 'ERA5-Land as it is'}, "
+              f"not regressed onto the tower")
     report["fills"] = fills
     return dict(stamps=stamps, starts=starts, mean_cosz=mean_cosz, values=y, qc=qc, report=report,
                 source=values)

@@ -601,6 +601,23 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_tower PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_tower)
    add_test(NAME met_tower COMMAND test_met_tower)
+   #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
+   #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
+   find_package(Python3 COMPONENTS Interpreter QUIET)
+   if (Python3_Interpreter_FOUND)
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, pandas, netCDF4, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_tower_tool_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_tower_tool_deps EQUAL 0)
+         add_test(NAME prepare_flux_tower
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_flux_tower/tests)
+         set_tests_properties(prepare_flux_tower PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+      else()
+         message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
+                        "netCDF4, pytest or tomli)")
+      endif()
+   endif()
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
