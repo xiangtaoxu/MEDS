@@ -16,12 +16,12 @@ before and after.
 
 ### Fixed
 
-- **Under nvfortran, v0.3.0 could not open a site run, and four tests failed.** v0.3.0 was verified
-  on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and `MEDS_GPU=gpu`
-  alike, 49 of 53 tests passed, and `meds_main` stopped in `driver_open` on any config, because
-  code new in v0.3.0 uses four constructs that nvfortran gets wrong. Each reproduces in a small
-  standalone program, and each is invisible to ifx. They are now in the portability traps of
-  `docs/building.md` and `CLAUDE.md`.
+- **Under nvfortran, v0.3.0 could not open a site run, and four tests failed** (#317). v0.3.0
+  was verified on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and
+  `MEDS_GPU=gpu` alike, 49 of 53 tests passed, and `meds_main` stopped in `driver_open` on any
+  config, because code new in v0.3.0 uses four constructs that nvfortran gets wrong. Each
+  reproduces in a small standalone program, and each is invisible to ifx. They are now in the
+  portability traps of `docs/building.md` and `CLAUDE.md`.
   - `driver_open` reset the run's output buffers with `output_buffers_t()`. nvfortran compiles that
     constructor to an ALLOCATE of a garbage size, for example 72,340,172,838,076,672 bytes, because
     the type has fixed-size array components whose own type has allocatable components. Every
