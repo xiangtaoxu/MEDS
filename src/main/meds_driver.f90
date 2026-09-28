@@ -92,6 +92,7 @@ contains
       logical, optional, intent(in)    :: verbose
       type(meds_time_t) :: restart_time
       logical           :: init_ok, fast_state_found
+      type(output_buffers_t) :: fresh_bufs      !< default-initialised, never written: the reset value
 
       ok = .false.
       if (present(verbose)) run%verbose = verbose
@@ -111,7 +112,10 @@ contains
       run%iyear = 0_ik
       !----- The run before's output: its files are closed, but a run with [output] off would still  !
       !      see them enabled and tick their buffers (manager_setup rebuilds both when output is on). !
-      run%out_files%enabled = .false. ; run%out_bufs = output_buffers_t()
+      !      The reset copies a default-initialised local rather than `output_buffers_t()`: nvfortran  !
+      !      25.11 miscompiles that constructor (a garbage-sized ALLOCATE) because the type has fixed- !
+      !      size array components whose own type has allocatable components.                        !
+      run%out_files%enabled = .false. ; run%out_bufs = fresh_bufs
       !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
       !      none unless the restart below says so. ---------------------------------------------!
       run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
