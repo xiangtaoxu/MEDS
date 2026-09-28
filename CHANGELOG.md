@@ -17,10 +17,10 @@ before and after.
 ### Fixed
 
 - **Slab output variables switched on by an `[output].io_config` were written from unwritten
-  memory, and they corrupted their neighbours.** `manager_setup` sized the shared pending-record
-  slab (`max_slab`) from the variables live at that point, and the `io_config` overrides ran after
-  it. A config that switches tiers, groups or axes off and picks its variables through
-  `io_config` (the file's stated purpose) therefore got a slab too short for them. On the
+  memory, and they corrupted their neighbours** (#318). `manager_setup` sized the shared
+  pending-record slab (`max_slab`) from the variables live at that point, and the `io_config`
+  overrides ran after it. A config that switches tiers, groups or axes off and picks its variables
+  through `io_config` (the file's stated purpose) therefore got a slab too short for them. On the
   example spin-up config with output on, every tier is off, so `max_slab` was 1 while the soil
   slabs need 20 rows and the patch slabs 6.
   - At every period close, `normalize_slab` wrote each slab past its own column of the scratch
