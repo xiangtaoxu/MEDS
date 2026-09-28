@@ -356,6 +356,11 @@ before and after.
   enabled and ticked their buffers. `driver_open` now clears both; a restart still sets the
   restructuring flags from its state file. `test_region` reuses one run across both cases.
 
+- **`met_open` left a rejected MEDS forcing file's handle behind** (review F5, #PRNUM). When the
+  file's record spacing or attributes contradicted `[forcing]`, the file was closed but its handle
+  kept, so a caller's `met_close` closed it again and stopped. The rejection now goes through
+  `met_close`, as the other three do.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the

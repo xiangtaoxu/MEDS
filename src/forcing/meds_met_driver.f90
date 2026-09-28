@@ -190,9 +190,8 @@ contains
       !      with its config was silently mis-timed or mis-partitioned. ------------------------------!
       call validate_file_against_config(src, ncid, vstat)
       if (vstat /= MET_OK) then
-         if (present(stat)) then
-            stat = vstat ; st = nc_close(ncid) ; return
-         end if
+         call met_close(src)
+         if (present(stat)) then ; stat = vstat ; return ; end if
          error stop 'met_open: the forcing file contradicts [forcing] (see the message above)'
       end if
 
