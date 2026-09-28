@@ -561,7 +561,8 @@ Verified on `main` at `0f95e67`:
   was deliberately hoisted *out* of the loop (BB1 phase 1) — exactly the structure that blocks
   threading. §7.
 - `t_sub` depends only on `isub`, yet `met_advance` / `met_instant` / `apply_met_to_ctx` run **inside**
-  the patch loop, repeating site-uniform work `n_patch` times per sub-step. §7 C1.
+  the patch loop, repeating site-uniform work `n_patch` times per sub-step. §7 C1. (Since done: the
+  samples are hoisted out of the patch loop, and `apply_met_to_ctx` is gone, #292.)
 - CMake gives OpenMP flags to NVHPC only, and only on `meds_core`. The fast loop is in `meds_aux`.
 - **Dead split residue:** `picard_max_iter` / `picard_tol_temp` / `picard_tol_shv` / `picard_relax` /
   `picard_fixed_iter` are plumbed to no reader; `budg%picard_iters` / `picard_nonconv` are read and
