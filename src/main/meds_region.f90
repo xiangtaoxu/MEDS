@@ -81,6 +81,7 @@ contains
       type(met_cells_t)          :: cells
       character(len=MET_PATH_LEN) :: static
       integer(ik)                :: st, p, n, j
+      integer(ik), allocatable   :: ids(:)
       character(len=24)          :: idstr
 
       ok = .false.
@@ -105,18 +106,30 @@ contains
          return
       end if
 
+      !----- The polygon ids, each cell's row-major index on the global grid. Every detail polygon   !
+      !      must be one of them, checked before anything is opened or built. -----------------------!
+      n = cells%ncell
+      allocate(ids(n))
+      ids = cells%row * cells%nlon + cells%col
+      do j = 1_ik, cfg%region%n_detail
+         if (.not. any(ids == cfg%region%detail_polygons(j))) then
+            write(*,'(a,i0,a)') ' region: detail polygon ', cfg%region%detail_polygons(j),            &
+                                ' is not a polygon of this region'
+            return
+         end if
+      end do
+
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &
                     run_end=cfg%end_time, cells=cells)
       if (st /= MET_OK) return
       if (reg%verbose) write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
 
       !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground. !
-      n = cells%ncell
       allocate(reg%poly(n), reg%out_bufs(n))
       do p = 1_ik, n
          associate (poly => reg%poly(p))
             poly%cell = p
-            poly%id   = cells%row(p) * cells%nlon + cells%col(p)
+            poly%id   = ids(p)
             write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
                                                      cells%lon(p), ')'
             call init_bare_ground(poly%site, cfg, N_PATCH_INIT)
@@ -128,15 +141,6 @@ contains
 
       reg%now = cfg%start_time
       reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
-
-      !----- Every detail polygon must be one of the region's. ------------------------------------!
-      do j = 1_ik, cfg%region%n_detail
-         if (.not. any(reg%poly(:)%id == cfg%region%detail_polygons(j))) then
-            write(*,'(a,i0,a)') ' region: detail polygon ', cfg%region%detail_polygons(j),            &
-                                ' is not a polygon of this region'
-            return
-         end if
-      end do
 
       !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
       !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!

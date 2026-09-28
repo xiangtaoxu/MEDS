@@ -361,6 +361,10 @@ before and after.
   kept, so a caller's `met_close` closed it again and stopped. The rejection now goes through
   `met_close`, as the other three do.
 
+- **A region reported an unknown `detail_polygons` id only after building every polygon**, and left
+  the forcing source open (review R8, #PRNUM). The ids are now checked against the box's cells
+  before anything is opened.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
