@@ -726,6 +726,16 @@ contains
          end associate
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
             error stop tag//'region.land_fraction_min must lie in [0, 1]'
+         !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
+         !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
+         !      1st. A site run takes a window starting at any record stamp. ------------------------!
+         if (cfg%forcing%recycle .and. time_valid(cfg%forcing%recycle_start)) then
+            associate (a => cfg%forcing%recycle_start)
+               if (a%day /= 1_ik .or. a%hour > 1_ik .or. a%minute /= 0_ik .or. a%second /= 0_ik)    &
+                  error stop tag//'[run].mode = "region" needs forcing.recycle_start at 00:00 or '//  &
+                                  '01:00 on the 1st of a month'
+            end associate
+         end if
       end if
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !

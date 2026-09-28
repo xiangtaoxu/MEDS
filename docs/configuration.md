@@ -162,7 +162,9 @@ The file formats, the ERA5-Land preparation recipe, and the recycling rules are 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A
   window of any other length drifts both hour-of-day and day-of-year on every wrap while the daily
-  mean stays correct, so nothing downstream complains.
+  mean stays correct, so nothing downstream complains. The window may start at any record stamp,
+  and the seam between its last record and its first may fall anywhere in a day. On an end-stamped
+  file such as ERA5-Land, a calendar year's first record is at 01:00.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
 
 **The forcing is moved to each patch's canopy-air top.** There is no fixed reference height:
@@ -224,7 +226,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   and `[forcing].max_distance_km` are refused; the rest of `[site]` (reference heights, profile and
   lapse switches) still applies. Until restarts of regions exist, a region starts from bare ground
   (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
-  thread without the fast probe.
+  thread without the fast probe. A region loads each month's forcing once, before the month, so a
+  recycle window must start at 00:00 or 01:00 on the 1st of a month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the
   measured cost per polygon-month and the roadmap to threads, restarts and tiles.

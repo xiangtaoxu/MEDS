@@ -3,9 +3,9 @@
 ! test_met_era5land -- the ED_ERA5land archive backend of the met reader (MEDS_FORCING_DESIGN  !
 ! .md §15.6). A tiny synthetic archive is written through the netCDF C API: a 4 x 18 grid      !
 ! (10 deg x 20 deg) spanning the antimeridian and two 16-cell chunk columns wide, every month   !
-! of 2021, two no-data cells, and values that are analytic functions of cell and hour, so every  !
-! check below has a known answer. It is read back through met_open / met_advance / met_instant   !
-! and through the reader's own selection and month-load routines.                                !
+! of 2021 and January 2022, two no-data cells, and values that are analytic functions of cell   !
+! and hour, so every check below has a known answer. It is read back through met_open /         !
+! met_advance / met_instant and through the reader's own selection and month-load routines.      !
 !==========================================================================================!
 program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
@@ -39,6 +39,7 @@ program test_met_era5land
    call test_driver_recycle()
    call test_driver_rejections()
    call test_region_cursors()
+   call test_driver_recycle_anchors()
 
    call test_report('test_met_era5land')
 
@@ -323,7 +324,7 @@ contains
       print '(a)', '-- era5land 7: rejections at open --'
       fc = archive_config()
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 11_ik, 1_ik),               &
-                    run_end=meds_time_t(2022_ik, 2_ik, 1_ik))
+                    run_end=meds_time_t(2022_ik, 3_ik, 1_ik))
       call check_true('a run past the archive''s last month is rejected', st == MET_ERR_ARCHIVE)
       fc%sw_partition = SWPART_PASSTHROUGH
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik, 3_ik, 1_ik),                &
@@ -416,5 +417,105 @@ contains
                  + field(ERA_TAIR, PR(2), PC(2), hour_index(meds_time_t(2021_ik, 2_ik, 1_ik)) + 1_ik)), 1.0e-9_wp)
       call met_close(site(1)) ; call met_close(site(2))
    end subroutine test_region_cursors
+
+   !=======================================================================================!
+   !  9. Recycle windows starting at other record stamps. Only a window starting at 01:00 puts  !
+   !     the seam at the start of a daily step. A midnight anchor puts it at the end of one, and  !
+   !     any other hour inside one, whose remaining hours read the window's first day while the  !
+   !     buffer holds the window's last month. Neither may load inside the step. The third        !
+   !     window starts at 00:00 on the 1st, as a region's may: its first record is carried into   !
+   !     the next month without reading the month before it again.                               !
+   !=======================================================================================!
+   subroutine test_driver_recycle_anchors()
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_config_t) :: fc
+      type(met_forcing_t)    :: met
+      type(meds_time_t)      :: t
+      integer(ik) :: st, loads, d
+      print '(a)', '-- era5land 9: recycle windows from other record stamps --'
+      fc = archive_config()
+      fc%recycle = .true.
+
+      !----- 2021-01-02 00:00 .. 2022-01-02 00:00: the seam, 2022-01-01 23:00 + 1 h, ends a step. ---!
+      fc%recycle_start = meds_time_t(2021_ik, 1_ik, 2_ik) ; fc%recycle_end = meds_time_t(2022_ik, 1_ik, 2_ik)
+      call met_open(src, fc, stat=st)
+      call check_true('a midnight anchor opens (MET_OK)', st == MET_OK)
+      call site_cursor(src, cur, fc)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 12_ik))
+      call check('the day before a midnight anchor reads the window''s last day', met%tair_k,          &
+                 field(ERA_TAIR, 1_ik, 3_ik, hour_index(meds_time_t(2022_ik, 1_ik, 1_ik, 12_ik))), 1.0e-9_wp)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 23_ik, 30_ik))
+      call check('a midnight anchor''s seam: the window''s last and first records', met%tair_k,         &
+                 seam_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 23_ik), fc%recycle_start), 1.0e-9_wp)
+      loads = src%n_loads
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 2_ik, 0_ik, 30_ik))
+      call check('after it, the window''s first hour', met%tair_k, pair_mean(fc%recycle_start), 1.0e-9_wp)
+      call check_true('the next day loads the window''s first month, once', src%n_loads == loads + 1_ik,  &
+                      real(src%n_loads - loads, wp))
+      call met_close(src)
+
+      !----- 2021-01-01 06:00 .. 2022-01-01 06:00: the seam, 2022-01-01 05:00 + 1 h, falls inside a day  !
+      !      whose last 18 hours are the window's first day. -------------------------------------------!
+      fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik, 6_ik)
+      fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik, 6_ik)
+      call met_open(src, fc, stat=st)
+      call check_true('a 06:00 anchor opens (MET_OK)', st == MET_OK)
+      call site_cursor(src, cur, fc)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 2_ik, 30_ik))
+      call check('before a 06:00 anchor''s seam: the window''s last month', met%tair_k,                &
+                 pair_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 2_ik)), 1.0e-9_wp)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 5_ik, 30_ik))
+      call check('a 06:00 anchor''s seam, inside the step', met%tair_k,                                 &
+                 seam_mean(meds_time_t(2022_ik, 1_ik, 1_ik, 5_ik), fc%recycle_start), 1.0e-9_wp)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 12_ik, 30_ik))
+      call check('the same step after the seam reads the window''s first day', met%tair_k,           &
+                 pair_mean(meds_time_t(2021_ik, 1_ik, 1_ik, 12_ik)), 1.0e-9_wp)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 1_ik, 23_ik, 30_ik))
+      call check('... through its last hour', met%tair_k, pair_mean(meds_time_t(2021_ik, 1_ik, 1_ik, 23_ik)), &
+                 1.0e-9_wp)
+      loads = src%n_loads
+      met = step_sample(src, cur, meds_time_t(2036_ik, 1_ik, 2_ik, 0_ik, 30_ik))
+      call check('the next day reads the window''s first month', met%tair_k,                           &
+                 pair_mean(meds_time_t(2021_ik, 1_ik, 2_ik)), 1.0e-9_wp)
+      call check_true('... loaded once', src%n_loads == loads + 1_ik, real(src%n_loads - loads, wp))
+      call met_close(src)
+
+      !----- 2021-02-01 00:00 .. 2022-02-01 00:00, walked as a region walks a month: one prefetch at  !
+      !      the month's start, and no later day of the month may load. The seam ends the month's last  !
+      !      day; the next month takes the window's first record from the kept day. -------------------!
+      fc%recycle_start = meds_time_t(2021_ik, 2_ik, 1_ik) ; fc%recycle_end = meds_time_t(2022_ik, 2_ik, 1_ik)
+      call met_open(src, fc, stat=st)
+      call check_true('an anchor at 00:00 on the 1st opens (MET_OK)', st == MET_OK)
+      call site_cursor(src, cur, fc)
+      call met_prefetch(src, meds_time_t(2036_ik, 1_ik, 1_ik))
+      loads = src%n_loads
+      do d = 1_ik, 31_ik
+         call met_prefetch(src, meds_time_t(2036_ik, 1_ik, d))
+      end do
+      t = meds_time_t(2036_ik, 1_ik, 31_ik, 23_ik, 30_ik)
+      call met_advance(src, cur, t) ; met = met_instant(src, cur, t)
+      call check('the seam of a window from the 1st ends the month', met%tair_k,                         &
+                 seam_mean(meds_time_t(2022_ik, 1_ik, 31_ik, 23_ik), fc%recycle_start), 1.0e-9_wp)
+      call check_true('the month loaded nothing after its first day', src%n_loads == loads)
+      met = step_sample(src, cur, meds_time_t(2036_ik, 2_ik, 1_ik, 0_ik, 30_ik))
+      call check('the next month opens on the window''s first hour', met%tair_k,                        &
+                 pair_mean(fc%recycle_start), 1.0e-9_wp)
+      call check_true('... loading its own month only', src%n_loads == loads + 1_ik,                     &
+                      real(src%n_loads - loads, wp))
+      call met_close(src)
+   end subroutine test_driver_recycle_anchors
+
+   !----- The site cell's Tair half an hour after stamp t: the mean of its record and the next. ----!
+   real(wp) function pair_mean(t) result(x)
+      type(meds_time_t), intent(in) :: t
+      x = 0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, hour_index(t)) + field(ERA_TAIR, 1_ik, 3_ik, hour_index(t) + 1_ik))
+   end function pair_mean
+
+   !----- Its Tair half an hour into the seam: the mean of the window's last record and its first. --!
+   real(wp) function seam_mean(t_last, t_first) result(x)
+      type(meds_time_t), intent(in) :: t_last, t_first
+      x = 0.5_wp * (field(ERA_TAIR, 1_ik, 3_ik, hour_index(t_last)) + field(ERA_TAIR, 1_ik, 3_ik, hour_index(t_first)))
+   end function seam_mean
 
 end program test_met_era5land

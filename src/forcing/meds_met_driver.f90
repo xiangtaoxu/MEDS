@@ -138,6 +138,7 @@ contains
             error stop 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
          end if
          call load_axis_month(src, 1_ik)
+         call keep_window_head(src)
          src%rec_first = 1_ik
          return
       end if
@@ -286,7 +287,8 @@ contains
    !  phase, so met_advance never touches a file. A daily step from midnight reads one archive  !
    !  month plus the record before it: 00:00 on the 1st, which lives in the previous month's    !
    !  file, or the window's last record at the recycle wrap. Moving into the next month, that   !
-   !  record comes from the outgoing buffer, so a run loads each month once. validate_config    !
+   !  record comes from the outgoing buffer, so a run loads each month once. A step the recycle  !
+   !  seam falls inside also reads the window's first day, which met_open keeps. validate_config !
    !  restricts format = "era5land" to daily steps from midnight, the shape this assumes.       !
    !=======================================================================================!
    subroutine met_prefetch(src, step_start)
@@ -308,10 +310,14 @@ contains
          k = axis_month_of(src, r) ; p = src%month_rec0(k)
       end if
       if (p > 0_ik .and. src%carry_rec /= p) then       ! the record before the month
-         kp = axis_month_of(src, p)
-         if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
          if (.not. allocated(src%carry)) allocate(src%carry(src%cells%ncell, ERA_NVAR))
-         src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
+         kp = axis_month_of(src, p)
+         if (.not. month_loaded(src, kp) .and. in_window_head(src, p)) then
+            src%carry = src%head(p - src%irec_cycle_first + 1_ik, :, :)   ! a midnight anchor's record
+         else
+            if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
+            src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
+         end if
          src%carry_rec = p
       end if
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
@@ -615,9 +621,10 @@ contains
       if (allocated(src%month_year))  deallocate(src%month_year, src%month_month, src%month_rec0)
       if (allocated(src%buffer%values)) deallocate(src%buffer%values)
       if (allocated(src%carry))  deallocate(src%carry)
+      if (allocated(src%head))   deallocate(src%head)
       if (allocated(src%series)) deallocate(src%series, src%series_name)
       call co2_series_free(src%co2)
-      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
+      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_head = 0_ik ; src%n_loads = 0_ik
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
@@ -884,6 +891,32 @@ contains
       yes = src%buffer%year == src%month_year(k) .and. src%buffer%month == src%month_month(k)
    end function month_loaded
 
+   pure logical function in_window_head(src, irec) result(yes)
+      type(met_source_t), intent(in)  :: src
+      integer(ik),        intent(in) :: irec
+      yes = irec >= src%irec_cycle_first .and. irec < src%irec_cycle_first + src%n_head
+   end function in_window_head
+
+   !----- Keep the recycle window's first day, from axis month 1 just loaded: its first record    !
+   !      through the next midnight, all in that month's file. The seam falls inside a daily step  !
+   !      unless the window starts at 01:00, and that step reads the window's last record, in the  !
+   !      axis's last month, and then these. A midnight anchor needs its one record.               !
+   subroutine keep_window_head(src)
+      type(met_source_t), intent(inout) :: src
+      real(wp)    :: time_of_day
+      integer(ik) :: h1
+      src%n_head = 0_ik
+      if (allocated(src%head)) deallocate(src%head)
+      if (src%n_cycle_years < 1_ik) return
+      time_of_day = seconds_into_day(src%cycle_anchor)
+      src%n_head = 1_ik
+      if (time_of_day > REC_MATCH_TOL)                                                            &
+         src%n_head = 1_ik + nint((86400.0_wp - time_of_day) / src%dt_forcing, ik)
+      h1 = src%irec_cycle_first - src%month_rec0(1)
+      allocate(src%head(src%n_head, src%cells%ncell, ERA_NVAR))
+      src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
+   end subroutine keep_window_head
+
    !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
    subroutine load_axis_month(src, k)
       type(met_source_t), intent(inout)  :: src
@@ -899,8 +932,9 @@ contains
       src%n_loads = src%n_loads + 1_ik
    end subroutine load_axis_month
 
-   !----- Where record irec's values are: its hour h in the loaded month, or h = 0 for the carried !
-   !      record. Anything else was not prefetched, which is a programming error, not a data gap. !
+   !----- Where record irec's values are: its hour h > 0 in the loaded month, h = 0 for the carried !
+   !      record, h < 0 for the -h-th record of the window's first day. Anything else was not       !
+   !      prefetched, which is a programming error, not a data gap. -------------------------------!
    subroutine locate_record(src, irec, h)
       type(met_source_t), intent(in)   :: src
       integer(ik),        intent(in)  :: irec
@@ -911,6 +945,8 @@ contains
          h = irec - src%month_rec0(k)
       else if (irec == src%carry_rec) then
          h = 0_ik
+      else if (in_window_head(src, irec)) then
+         h = src%irec_cycle_first - 1_ik - irec
       else
          write(*,'(a,i0,2a)') ' met_driver: forcing record ', irec, ' at ',                            &
                time_to_string(time_advance_seconds(src%base_time, src%time_sec(irec)))
@@ -924,6 +960,8 @@ contains
       integer(ik),        intent(in) :: h, var
       if (h == 0_ik) then
          val = real(src%carry(cur%cell, var), wp)
+      else if (h < 0_ik) then
+         val = real(src%head(-h, cur%cell, var), wp)
       else
          val = real(src%buffer%values(h, cur%cell, var), wp)
       end if

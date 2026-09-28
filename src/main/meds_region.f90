@@ -211,8 +211,8 @@ contains
          if (nstep > 1_ik) then
             call met_prefetch(reg%met_src, prev)
             if (reg%met_src%n_loads /= loads .or. reg%met_src%carry_rec /= carry)                  &
-               error stop 'region_step_month: the forcing changed inside a month (a recycle window '// &
-                          'must start at the beginning of a month in region mode)'
+               error stop 'region_step_month: the forcing changed inside a month (internal error: '// &
+                          'validate_config puts the recycle seam on a month boundary)'
          end if
          new_month = clk%year /= prev%year .or. clk%month /= prev%month
          if (new_month .or. .not. time_lt(clk, cfg%end_time)) exit

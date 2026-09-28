@@ -308,6 +308,26 @@ before and after.
   (`--in` takes several files), and the forcing README, science doc, config comment and the
   `example_biophysics` instructions show the new commands.
 
+### Fixed
+
+- **ED_ERA5land recycling stopped at the first seam unless the window started at 01:00** (review
+  F1, #PRNUM). When the seam fell inside a daily step, the one-month buffer held the window's last
+  month, so the window's first record had not been read, nor, for a window starting at 02:00–23:00,
+  the rest of its first day: `met_driver: a forcing record was not prefetched before the step
+  (internal error)`. A window starting at 00:00 on 1 January stopped at 23:00 on the last day of the
+  first cycle.
+  - The source now keeps the window's first day (its first record through the next midnight, at
+    most 24 records per cell) from open. A month whose previous record is the window's first takes
+    it from there instead of reading the month before again.
+  - Every config in the tree starts its window at 01:00, where the seam opens a step; the six
+    regression cases and the regional smoke run are unchanged, bit for bit.
+  - A region loads each month's forcing once, before the month, so `validate_config` now requires a
+    region's window to start at 00:00 or 01:00 on the 1st of a month. Other anchors used to stop
+    inside the first month they affected.
+  - `test_met_era5land` walks windows starting at 2021-01-02 00:00, 2021-01-01 06:00 and 2021-02-01
+    00:00 across their seams; the synthetic archive gains January 2022. The unfixed reader stops on
+    the first of them.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the
