@@ -53,6 +53,7 @@ a move is safe but a renumber is not.
 | Document | |
 |---|---|
 | [`MEDS_DOCS_REVIEW_2026-09-13.md`](MEDS_DOCS_REVIEW_2026-09-13.md) | The documentation audit this reorganization executed: per-file verdicts on all 41 plans, and the plans for the README, `src/README.md`, `CLAUDE.md` and the changelog. |
+| [`MEDS_CODE_REVIEW_2026-09-27.md`](MEDS_CODE_REVIEW_2026-09-27.md) | The review of `beta` before the v0.3.0 merge: the ranked pre-merge set (three verified must-fix items), the open-issue triage, the documentation drift, the build and test results, and the consolidation items deferred to R3. |
 
 ## Untracked
 
