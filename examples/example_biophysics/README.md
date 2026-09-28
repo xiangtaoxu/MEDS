@@ -183,15 +183,15 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
-   **Roughly 9 minutes** on 4 threads (`-DMEDS_OPENMP=ON`, `[run].n_threads = 4`, ifx Release),
-   or ~25 minutes single-core. This stage runs the **900 s production default**: `dt_fast` is no
+   **About 4½ minutes** for both stages on one core of a 2026 compute node (ifx Release);
+   `-DMEDS_OPENMP=ON` with `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
    longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
    spin-up takes the long step. Because `dt_fast` perturbs growth it changes *which* cohorts fuse or
    are culled, which is a discrete difference rather than a shrinking truncation error — so runs at
    different `dt_fast` compare through site aggregates, not cohort by cohort
    (`docs/science/numerical_scheme.md` §6a).
-   It ends at 14 cohorts / 2 patches, peak LAI 4.16, AGB 9.6 kgC m⁻², mean dbh 24.7 cm, and
-   16.2 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
+   It ends at 14 cohorts / 2 patches, LAI 4.11 on 1 July, AGB 9.6 kgC m⁻², mean dbh 24.6 cm, and
+   16.4 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
    canopy the figure depends on is settled well before the run ends; the remaining years are still
    developing biomass, size structure and soil carbon (see the trajectory figure above).
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
@@ -362,12 +362,10 @@ restarting from a spin-up that never built them respires nothing whatever its ow
 **The `seam[soil_carbon_rh]` line** in the run output is the soil analogue of the whole-column
 budget residuals: `|the daily pool debit − the fast loop's own accumulated Rh|`, worst over patches
 and over the run. Both ends read the same frozen daily pool and the same per-pool ξ integral, so it
-is ~0 by construction and a nonzero value means that contract broke. It is machine-zero (1×10⁻¹⁴)
-over the July stage. Over the 50-year spin-up the worst is 8.4×10⁻⁴ kgC m⁻², on 2073-01-01 — a
-*year rollover*, when the annual patch cadence fires, so the exactness holds except on days when
-patch structure changes between the fast window and the slow step. That is a known caveat rather
-than a mystery, and it only became visible because the check is now reported: it had been computed
-and discarded on every step of every run since it was written.
+is ~0 by construction and a nonzero value means that contract broke. It is machine-zero in both
+stages: 4×10⁻¹⁵ kgC m⁻² over the July stage and 6×10⁻¹⁵ over the 50-year spin-up. (It used to reach
+8×10⁻⁴ on a year rollover, when the annual patch restructuring ran inside the step, between the fast
+window and the slow step; the restructuring now runs between steps, #297.)
 
 **`energy_fluxes = true`** in `[output]` is required — every temperature plotted here belongs to
 the `GRP_ENERGY` output group and is silently absent without it.
