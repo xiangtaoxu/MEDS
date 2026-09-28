@@ -5,8 +5,8 @@ program test_disturbance
    use meds_config,           only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance
-   use meds_site_diag_types,           only : PD_DISTURB_AREA, PD_LE, patch_diag_alloc,      &
-                                              patch_diag_value
+   use meds_site_diag_types,           only : PD_DISTURB_AREA, PD_LE, PD_MORT_C_CULL,        &
+                                              patch_diag_alloc, patch_diag_value
    use meds_constants,                 only : yr_sec
    use meds_init,             only : init_bare_ground, add_cohort, finalize_init
    use meds_diagnostic_reduce, only : total_area, total_nplant
@@ -18,7 +18,7 @@ program test_disturbance
    integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts, n_slot
    real(wp)            :: disturb_rate(8)
    real(wp)            :: n_before, h_tall, h_short, film_before, film_after, frac_expect
-   real(wp)            :: le(8), le_site
+   real(wp)            :: le(8), le_site, cull_before, cull_after
 
    call banner('treefall patch disturbance')
    cfg = build_test_config()
@@ -118,11 +118,11 @@ program test_disturbance
          end if
       end do
    end do
-   !----- The step's patch diagnostics must survive the carving: the gap's ground was donor ground  !
-   !      for the whole step, so the site mean Sum(area * value) is unchanged by the disturbance    !
-   !      and the gap reads the donors' area-weighted value; a cleared gap slot would read 0 there  !
-   !      and pull the site mean low by the disturbed fraction. Donor latent heat 100 and 300 W/m2  !
-   !      on areas 0.6 and 0.4: 180 W/m2 before and after. -----------------------------------------!
+   !----- Inside a step (the C API's patch operators), the step's patch diagnostics must survive the !
+   !      carving: the gap's ground was donor ground for the step so far, so the site mean          !
+   !      Sum(area * value) is unchanged and the gap reads the donors' area-weighted value; a        !
+   !      cleared gap slot would read 0 there and pull the site mean low by the disturbed fraction.  !
+   !      Donor latent heat 100 and 300 W/m2 on areas 0.6 and 0.4: 180 W/m2 before and after. -------!
    call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
    site%patch%diag%n = site%patch%n
    site%patch%diag%w(1:2) = cfg%dt_slow
@@ -149,6 +149,21 @@ program test_disturbance
    call check_close(total_area(site), 1.0_wp, 1.0e-9_wp, 'two-donor disturbance broke area conservation')
    call check_close(film_after, film_before, 1.0e-12_wp,                                            &
                     'two-donor disturbance: survivor films dilute into the gap like their densities')
+
+   !----- At a calendar boundary, as a run does it: the step's diagnostics were read and reset, so  !
+   !      every weight is 0 and the slots hold only this boundary's events, here a cull. The gap     !
+   !      takes its area-weighted share, so the stand total Sum(area * v) is unchanged. -------------!
+   site%patch%diag%w(1:site%patch%n) = 0.0_wp
+   site%patch%diag%v(:, 1:site%patch%n) = 0.0_wp
+   do ip = 1_ik, site%patch%n
+      site%patch%diag%v(PD_MORT_C_CULL, ip) = 1.0e-3_wp * real(ip, wp)
+   end do
+   cull_before = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PD_MORT_C_CULL, 1:site%patch%n))
+   call apply_patch_disturbance(site, cfg, 0.5_wp)
+   cull_after = sum(site%patch%area(1:site%patch%n) * site%patch%diag%v(PD_MORT_C_CULL, 1:site%patch%n))
+   call check_close(cull_after, cull_before, 1.0e-15_wp,                                            &
+                    'a boundary disturbance keeps the stand total of the events it carves')
+   call check(all(site%patch%diag%w(1:site%patch%n) == 0.0_wp), 'and leaves every weight at 0')
 
    write(*,'(a)') '   PASS'
 end program test_disturbance

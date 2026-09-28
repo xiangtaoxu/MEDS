@@ -414,22 +414,25 @@ contains
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_FLIQ)
-      !----- VARIANCE COMPANIONS (#174). A monthly mean hides the diurnal cycle entirely, and    !
-      !      for these four that cycle IS the signal -- a canopy-air temperature whose mean is 288 K !
-      !      is a very different place depending on whether the day swings 2 K or 20 K. Registered   !
-      !      as ordinary variables sharing their partner's source id, so each is switchable on its   !
-      !      own through the [variables] override and costs nothing when off. OFF by default (MON_YR !
-      !      only, and the group toggles still gate them) -- this is a diagnostic for someone asking !
-      !      a specific question, not a doubling of every energy file.                                !
+      !----- VARIANCE COMPANIONS (#174). Each squares its partner's end-of-step state, read once per !
+      !      slow step, so it is the variance of those samples across the window: with a daily step,  !
+      !      the day-to-day spread of the state at one fixed hour. That is not the diurnal cycle,      !
+      !      which needs a within-step sum of squares (#275), and the long names say so. Registered as !
+      !      ordinary variables sharing their partner's source id, so each is switchable on its own    !
+      !      through the [variables] override and costs nothing when off. OFF by default (MON_YR only, !
+      !      and the group toggles still gate them).                                                   !
       !                                                                                          !
       !      The units are the partner's SQUARED, which is what a variance is; a reader wanting a    !
       !      standard deviation takes the square root. Emitting sd instead would have lost the        !
       !      additivity that makes a variance combinable across periods.                              !
-      call add_variable(reg, 'cas_temp_var_site', 'variance of canopy-air-space temperature', 'K2', &
+      call add_variable(reg, 'cas_temp_var_site',                                                &
+                        'variance of end-of-step samples of canopy-air-space temperature', 'K2',   &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_TEMP)
-      call add_variable(reg, 'soil_temp_top_var_site', 'variance of soil-top temperature', 'K2',    &
+      call add_variable(reg, 'soil_temp_top_var_site',                                           &
+                        'variance of end-of-step samples of soil-top temperature', 'K2',           &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_SOIL_TEMP_TOP)
-      call add_variable(reg, 'cas_vpd_var_site', 'variance of canopy-air vapour-pressure deficit',  &
+      call add_variable(reg, 'cas_vpd_var_site',                                                 &
+                        'variance of end-of-step samples of canopy-air vapour-pressure deficit',   &
                         'Pa2', DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_VPD)
 
       !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
@@ -437,7 +440,8 @@ contains
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_LEAF_TEMP,         &
                         w=W_LEAF_AREA, mn=.true.)
-      call add_variable(reg, 'leaf_temp_var_site', 'variance of canopy leaf temperature', 'K2',   &
+      call add_variable(reg, 'leaf_temp_var_site',                                               &
+                        'variance of end-of-step samples of canopy leaf temperature', 'K2',        &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_C_LEAF_TEMP,          &
                         w=W_LEAF_AREA, mn=.true.)
       call add_variable(reg, 'wood_temp_site', 'leaf-area-weighted wood temperature', 'K',       &
@@ -722,8 +726,6 @@ contains
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_ROUGH)
       call add_variable(reg, 'displace_patch', 'patch zero-plane displacement height', 'm',      &
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_DISPLACE)
-      call add_variable(reg, 'ground_temp_site', 'ground (skin) temperature', 'K',               &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
       !--- carbon ---!
       call add_variable(reg, 'gpp_rate_site', 'gross primary productivity (mean rate)', 'umol/m2/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, DAY_MON_YR, FLD_P_DIAG0 + PD_GPP)

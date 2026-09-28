@@ -35,7 +35,7 @@ module meds_region
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_AREA, N_PATCH_INIT
-   use meds_output_types,           only : output_files_t
+   use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers,  &
                                            manager_set_soil_params, manager_restrict_region,      &
                                            activate_site_diag
@@ -52,6 +52,10 @@ module meds_region
       type(met_source_t)    :: met_src          !< one reader for every cell of the region
       type(output_files_t)  :: out_files           !< the region files (built only if output.enabled)
       type(meds_polygon_t), allocatable :: poly(:)
+      !----- Each polygon's share of the region files, one per polygon. A contiguous array of its own,  !
+      !      so the I/O phase passes it whole: a section poly(:)%bufs of a type with allocatable        !
+      !      components makes gfortran copy it through a temporary whose copy-out dangles them. -------!
+      type(output_buffers_t), allocatable :: out_bufs(:)
       type(meds_time_t)     :: now, prev
       integer(ik)           :: istep = 0_ik, iyear = 0_ik
       integer(ik)           :: step_days = 1_ik
@@ -77,6 +81,7 @@ contains
       type(met_cells_t)          :: cells
       character(len=MET_PATH_LEN) :: static
       integer(ik)                :: st, p, n, j
+      integer(ik), allocatable   :: ids(:)
       character(len=24)          :: idstr
 
       ok = .false.
@@ -101,18 +106,30 @@ contains
          return
       end if
 
+      !----- The polygon ids, each cell's row-major index on the global grid. Every detail polygon   !
+      !      must be one of them, checked before anything is opened or built. -----------------------!
+      n = cells%ncell
+      allocate(ids(n))
+      ids = cells%row * cells%nlon + cells%col
+      do j = 1_ik, cfg%region%n_detail
+         if (.not. any(ids == cfg%region%detail_polygons(j))) then
+            write(*,'(a,i0,a)') ' region: detail polygon ', cfg%region%detail_polygons(j),            &
+                                ' is not a polygon of this region'
+            return
+         end if
+      end do
+
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &
                     run_end=cfg%end_time, cells=cells)
       if (st /= MET_OK) return
       if (reg%verbose) write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
 
       !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground. !
-      n = cells%ncell
-      allocate(reg%poly(n))
+      allocate(reg%poly(n), reg%out_bufs(n))
       do p = 1_ik, n
          associate (poly => reg%poly(p))
             poly%cell = p
-            poly%id   = cells%row(p) * cells%nlon + cells%col(p)
+            poly%id   = ids(p)
             write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
                                                      cells%lon(p), ')'
             call init_bare_ground(poly%site, cfg, N_PATCH_INIT)
@@ -124,15 +141,6 @@ contains
 
       reg%now = cfg%start_time
       reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
-
-      !----- Every detail polygon must be one of the region's. ------------------------------------!
-      do j = 1_ik, cfg%region%n_detail
-         if (.not. any(reg%poly(:)%id == cfg%region%detail_polygons(j))) then
-            write(*,'(a,i0,a)') ' region: detail polygon ', cfg%region%detail_polygons(j),            &
-                                ' is not a polygon of this region'
-            return
-         end if
-      end do
 
       !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
       !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!
@@ -150,7 +158,7 @@ contains
          call manager_finalize(reg%out_files)
          do p = 1_ik, n
             associate (poly => reg%poly(p))
-               call manager_alloc_buffers(reg%out_files, poly%out_bufs)
+               call manager_alloc_buffers(reg%out_files, reg%out_bufs(p))
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
                   allocate(poly%detail_files, poly%detail_bufs)
                   call manager_setup(poly%detail_files, cfg)
@@ -211,22 +219,23 @@ contains
          if (nstep > 1_ik) then
             call met_prefetch(reg%met_src, prev)
             if (reg%met_src%n_loads /= loads .or. reg%met_src%carry_rec /= carry)                  &
-               error stop 'region_step_month: the forcing changed inside a month (a recycle window '// &
-                          'must start at the beginning of a month in region mode)'
+               error stop 'region_step_month: the forcing changed inside a month (internal error: '// &
+                          'validate_config puts the recycle seam on a month boundary)'
          end if
          new_month = clk%year /= prev%year .or. clk%month /= prev%month
          if (new_month .or. .not. time_lt(clk, cfg%end_time)) exit
       end do
 
       !----- The compute phase: each polygon through the month. No file is touched here. ----------!
+      new_year = .false.
       do p = 1_ik, size(reg%poly, kind=ik)
          clk = t0
          do s = 1_ik, nstep
             prev = clk ; clk = time_advance_days(prev, reg%step_days)
             new_year  = clk%year /= prev%year
             new_month = new_year .or. clk%month /= prev%month
-            call polygon_step(cfg, reg%met_src, reg%out_files, reg%poly(p), prev, clk, reg%step_days,  &
-                              new_month, new_year, status)
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), prev, clk, &
+                              reg%step_days, new_month, new_year, status)
             if (status /= DRIVER_OK) then
                write(*,'(4a)') ' region: ', trim(reg%poly(p)%label), ' failed on ', time_to_string(clk)
                call io_phase(reg)                       ! what closed before the failure is written
@@ -251,7 +260,7 @@ contains
       type(meds_region_t), intent(inout) :: reg
       integer(ik) :: p
       if (.not. reg%cfg%output%enabled) return
-      call output_serialize_region(reg%out_files, reg%poly(:)%out_bufs)
+      call output_serialize_region(reg%out_files, reg%out_bufs)
       do p = 1_ik, size(reg%poly, kind=ik)
          if (allocated(reg%poly(p)%detail_bufs))                                                  &
             call output_serialize_pending(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
@@ -304,7 +313,7 @@ contains
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
 
       if (reg%cfg%output%enabled) then
-         call output_region_close(reg%out_files, reg%poly(:)%out_bufs)
+         call output_region_close(reg%out_files, reg%out_bufs)
          do p = 1_ik, size(reg%poly, kind=ik)
             if (allocated(reg%poly(p)%detail_bufs))                                               &
                call output_manager_close(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs, .true.)
@@ -322,6 +331,7 @@ contains
          call site_free(reg%poly(p)%site)
       end do
       deallocate(reg%poly)
+      if (allocated(reg%out_bufs)) deallocate(reg%out_bufs)
    end subroutine region_free
 
 end module meds_region

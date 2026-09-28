@@ -282,6 +282,9 @@ contains
                                                          / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) = site%patch%diag%v(PD_RECRUIT_NPLANT,  ip) &
                                                       + sum(recruitment(:, ip)) * cfg%dt_slow
+            !----- The block's weight: the fast loop adds dt_fast each sub-step; without one, the step  !
+            !      adds its own dt_slow, or a slow-only run reads every patch row back as 0 (#299). ----!
+            if (.not. cfg%fast_biophysics_on) site%patch%diag%w(ip) = site%patch%diag%w(ip) + cfg%dt_slow
          end do
       end if
 

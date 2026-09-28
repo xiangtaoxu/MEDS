@@ -1,6 +1,6 @@
 # `src/` — the MEDS source tree
 
-**30 k lines, 86 modules, 19 CMake libraries.** This page is the map: the layout, the four rules
+**35.5 k lines, 91 modules, 21 CMake libraries.** This page is the map: the layout, the four rules
 that decide where a new file goes, and the library graph the build enforces. It is the page to
 read before adding code, and the one to hand someone who asks how MEDS is organized.
 
@@ -13,62 +13,68 @@ MEDS is an **operator-split fast/slow model**, so the tree splits **by timescale
 **domain** second, over a **state layer** that both halves share.
 
 ```
-src/                                    30.3 k lines · 86 modules · 19 CMake libraries
+src/                                    35.5 k lines · 91 modules · 21 CMake libraries
 │
 │  ── FOUNDATION ─────────────────────── no model state, no process: libmeds_shared
 ├── shared/        uses nothing outside itself; every layer may use it
-│   ├── base/      kinds, physical and calendar constants                      109
+│   ├── base/      kinds, physical and calendar constants                      107
 │   ├── functions/ stateless constitutive laws: allometry, thermodynamics,
 │   │              retention and pressure-volume curves, canopy optics,
-│   │              temperature response                                      1 085
+│   │              temperature response                                      1 207
 │   └── util/      calendar time, numerics (matrix exponential, Thomas sweep,
-│                  root finders), budget checks                                882
+│                  root finders), budget checks                                904
 │
 │  ── CONFIGURATION ──────────────────── the run's inputs: libmeds_config
 ├── config/        TOML reader and loader, PFT trait table, meds_config_t,
-│                  and the per-domain *_opts leaves                          2 920
+│                  and the per-domain *_opts leaves (meds_region_opts for
+│                  the [region] block)                                       3 707
 │
 │  ── STATE, a layer in two halves ───────────────────────────────────────────
 ├── state/
 │   ├── column/    ONE patch, seen vertically: the soil-water, soil-energy,
 │   │              snow, canopy-air and soil-carbon reservoirs, their fusion
-│   │              blends, and the parameter bundles that describe them         558
+│   │              blends, and the parameter bundles that describe them         587
 │   └── site/      ALL the patches: the flat cohort structure-of-arrays, the
 │                  patch CSR map, the lockstep reorder machinery, site_t,
-│                  and the diagnostic accumulators                           1 674
+│                  and the diagnostic accumulators                           1 896
 │
 │  ── PROCESSES, timescale first ──────────────────────────────────────────────
-├── fast_dynamics/       sub-daily, one dt_fast per step                     10 977
+├── fast_dynamics/       sub-daily, one dt_fast per step                     11 632
 │   ├── canopy/    the medium: two-stream radiation, aerodynamics, the
-│   │              canopy-air box                                              983
+│   │              canopy-air box                                            1 092
 │   ├── plant/     the organisms: leaf gas exchange, hydraulics, maintenance
-│   │              respiration, tissue energy                                1 606
+│   │              respiration, tissue energy                                1 686
 │   ├── soil/      the ground: soil water, soil energy, the ground skin,
-│   │              the snow store                                            1 472
+│   │              the snow store                                            1 573
 │   ├── numerics/  the integrator machinery: the state vector, the frozen
 │   │              work record, ARK and RK45, error control, the pre-pass,
-│   │              and a test-only RK4 oracle                                5 378
-│   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 538
+│   │              and a test-only RK4 oracle                                5 567
+│   └── driver/    walks one slow step in dt_fast sub-steps over the patches 1 714
 │
-├── slow_dynamics/       daily to annual                                      4 623
-│   ├── plant/     phenology, carbon allocation, trait plasticity               587
-│   ├── soil/      the CENTURY soil-carbon matrix, the litter partition         912
+├── slow_dynamics/       daily to annual                                      4 826
+│   ├── plant/     phenology, carbon allocation, trait plasticity               601
+│   ├── soil/      the CENTURY soil-carbon matrix, the litter partition         826
 │   ├── demography/ the vital-rate LAWS, and the operators that apply them:
 │   │              state update, cohort and patch fuse-fission, recruitment,
-│   │              treefall disturbance                                      1 308
+│   │              treefall disturbance                                      1 382
 │   └── driver/    the slow coordinator, the vegetation and biogeochemistry
-│                  drivers, and the slow conservation ledger                 1 816
+│                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── forcing/       prescribed drivers: the met reader and its disaggregation
-│                  kernels                                                   1 067
+├── forcing/       prescribed drivers: the met reader (a MEDS forcing file,
+│                  or the ED_ERA5land archive through meds_era5land_reader),
+│                  its disaggregation kernels, the terrain lapse
+│                  (meds_lapse_rate) and the CO2 series (meds_co2_series)    2 771
 ├── io/            netCDF C bindings, the restart stream, and the diagnostic
-│                  wall: derive → capture → reduce → integrate → serialize   4 563
-├── init/          the initial community: bare ground, or a cohort census       181
+│                  wall: derive → capture → reduce → integrate → serialize   5 393
+├── init/          the initial community: bare ground, or a cohort census       182
 ├── c_api/         bind(c) shims → one libmeds.so: leaf, phenology,
-│                  demography, and the full coupled run                        887
-└── main/          meds_stepper (the cadence owner), meds_driver
-                   (open / step / finalize), meds_main (the PROGRAM)           740
+│                  demography, and the full coupled run                        938
+└── main/          meds_stepper (one coupled slow step, and the boundary
+                   restructuring), meds_polygon (one polygon's state and
+                   step), meds_driver (a site run: open / step / finalize),
+                   meds_region (a region run, month by month), meds_main
+                   (the PROGRAM)                                             1 392
 ```
 
 **`shared/` is one library, and it admits only what depends on nothing outside it.** Every module
@@ -85,7 +91,7 @@ what keeps `shared/` from becoming the place a file goes when no other place fit
 `slow_dynamics/{plant,soil}` and `state/column` link only `state_column` and `config`. That is what
 keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
 offload (a portability property worth holding, though offload is not currently a speedup — see
-[`dev_plans/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/MEDS_GPU_EVALUATION.md)), and lets twelve of
+[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets twelve of
 the tests link one kernel library alone. It is checked, not assumed:
 there is no occurrence of `site_t` in any of those folders. **If a new routine needs `site_t`, it
 is driver code**, and it belongs in a `driver/` folder.
@@ -118,7 +124,7 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
      │            ├──→ fast_kernels ─────────┤              │             │
      │            └──→ slow_kernels ─────────┘              │             │
      │                                                      │             │
-  netcdf_c ──→ forcing ───────────────────────────────→  fast  ←──────────┤
+  netcdf_c, config ──→ forcing ───────────────────────→  fast  ←──────────┤
                                                           slow  ←─────────┘
                                                           init
                                                             └──→ stepper ──→ model
@@ -182,7 +188,7 @@ These are the things that break quietly if you do not know them.
   biomass assertion passes and both ledgers close.
 - **Do not read `site%deriv` from the output layer.** The tendency bundle is transient and
   deliberately not lockstep-reordered, which is correct for its own consumer but wrong for the
-  output tick, which runs after the monthly fuse-fission. Use the diagnostic block.
+  output tick: the step re-sorts the cohorts after filling it. Use the diagnostic block.
 
 ## Building one piece
 

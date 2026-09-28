@@ -1,5 +1,15 @@
 # MEDS v0.2.0 release plan
 
+> # 🗃️ ARCHIVED — 2026-09-28. v0.2.0 shipped 2026-09-14.
+>
+> **What shipped:** tag `v0.2.0` (PR #259), phases 0–6 in PRs #203–#253; `CHANGELOG.md` `[0.2.0]`
+> has the list. What it deferred to v0.3+ is in `docs/ROADMAP.md` with issue numbers; #164 later
+> closed with its premise measured false.
+>
+> **Never decided:** the milestone and labels. **Never filed:** the RK45 frozen-record oracle (§2.2)
+> and the fast-loop golden (§5.1), which the six regression cases of the 2026-09 runtime work cover
+> in part.
+
 **Status: Phases 0-4 COMPLETE (2026-09-14). Phases 5-6 remain.** Planned 2026-09-13; all decisions
 taken — see §10. This document
 groups every open issue into phased pull requests for the v0.2.0 release, and records the decisions

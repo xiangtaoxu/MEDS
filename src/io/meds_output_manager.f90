@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_output_manager -- the serializer-side glue: drain a polygon's queued records into its file   !
-! set's streams (output_serialize_pending, the ONLY flush -- called by main), and close them at     !
-! run end (flushing any final partial period). netCDF via meds_output_stream. The netCDF-free half  !
-! of the manager (allocation = manager_setup / manager_finalize / manager_alloc_buffers in              !
-! meds_output_registry; the per-step tick = output_integrate in meds_output_integrate) is            !
-! deliberately in the core library so the stepper stays off netCDF (§2, §4.5).                        !
+! meds_output_manager -- the serializer-side glue: drain queued records into the file set's       !
+! streams (output_serialize_pending for a site's buffers, output_serialize_region for a region's,   !
+! both called only from a driver's I/O phase), and close them at run end (flushing any final        !
+! partial period). netCDF via meds_output_stream. The netCDF-free half of the manager -- allocation, !
+! manager_setup / manager_finalize / manager_alloc_buffers in meds_output_registry, and the          !
+! per-step tick, output_integrate in meds_output_integrate -- is deliberately in the core library so !
+! the stepper stays off netCDF (§2, §4.5).                                                           !
 !==========================================================================================!
 module meds_output_manager
    use meds_kinds,            only : ik
@@ -59,20 +60,23 @@ contains
       end do
    end subroutine output_manager_close
 
-   !----- A REGION's I/O phase: every polygon closed the same periods, so record i of tier t is one  !
-   !      period across all polygons; write it to the region file as one hyperslab per variable     !
-   !      (MEDS_POLYGON_RUNTIME_PLAN.md §6.1), in closing order, then empty every queue. ------------!
+   !----- A REGION's I/O phase: record i of tier t is one period across the polygons; write it to the !
+   !      region file as one hyperslab per variable (MEDS_POLYGON_RUNTIME_PLAN.md §6.1), in closing   !
+   !      order, then empty every queue. The polygons close the same periods, except in a month one   !
+   !      of them failed: it closed fewer, and the polygons after it none. The phase writes what       !
+   !      closed -- as many records as the longest queue holds, the fill value where a polygon has    !
+   !      none -- so a failure loses no polygon's month. ----------------------------------------------!
    subroutine output_serialize_region(files, bufs)
       type(output_files_t),  intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs(:)
-      integer(ik) :: t, i, p
+      integer(ik) :: t, i, p, nrec
       if (.not. files%enabled) return
       do t = 1_ik, N_FREQ
-         do p = 2_ik, size(bufs, kind=ik)
-            if (bufs(p)%queue(t)%n /= bufs(1)%queue(t)%n)                                       &
-               error stop 'output_serialize_region: the polygons closed different numbers of periods'
+         nrec = 0_ik
+         do p = 1_ik, size(bufs, kind=ik)
+            nrec = max(nrec, bufs(p)%queue(t)%n)
          end do
-         do i = 1_ik, bufs(1)%queue(t)%n
+         do i = 1_ik, nrec
             call region_write_record(files, bufs, t, i)
          end do
          do p = 1_ik, size(bufs, kind=ik)

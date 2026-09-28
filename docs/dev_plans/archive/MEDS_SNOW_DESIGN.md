@@ -1,5 +1,18 @@
 # MEDS Surface-Water & Snow — Module Family Design
 
+> # 🗃️ ARCHIVED — 2026-09-28. P0 shipped; P1 and P2 are issues.
+>
+> **What shipped:** the single-layer store, the `snowfac`-ramped optics, boundary condition and
+> latent split, the paired melt transfer and closed ledgers (PR #42); the shared snow stage on ARK
+> and RK45, with `[fast].snow_on` deleted (#77, #80); sublimation on the ice curve.
+>
+> **Deferred, with issues:** the multi-layer pack (#186) and canopy interception (#187) — ROADMAP §9.
+> §15's two calibration questions (`rho_snow`, `snowfac`) were never filed; they belong with #186.
+>
+> **The live description** is `docs/science/snow_biophysics.md` and `snow_params_t`. **Do not trust**
+> the 2026-07 status block, §6's "ARK stays snow-free", the §2.2 module names, §5's file:line
+> references, or §13's config keys. The status header below is the 2026-09-13 one.
+
 > # ✅ LIVE — status reviewed 2026-09-13.
 >
 > **P0 shipped** (PR #42, 2026-07-13/14) and closes whole-column mass and energy budgets to machine

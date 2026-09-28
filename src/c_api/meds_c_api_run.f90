@@ -90,7 +90,8 @@ contains
       run_used(h) = .true.
    end function meds_run_open
 
-   !----- Advance ONE slow step. Returns the driver status: 0 stepped, 1 already finished, 2 NaN. -!
+   !----- Advance ONE slow step. Returns the driver status (DRIVER_* in meds_polygon): 0 stepped,  !
+   !      1 already finished, 2 NaN in the state, 4 an impossible soil-carbon pool. --------------!
    function meds_run_step(h) result(status) bind(c, name="meds_run_step")
       integer(c_int), value, intent(in) :: h
       integer(c_int)                    :: status

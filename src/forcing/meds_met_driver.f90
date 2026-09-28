@@ -36,7 +36,7 @@ module meds_met_driver
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE,        &
                                    CO2_SOURCE_FILE
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
-   use meds_config,         only : MAX_RECYCLE_YEARS   ! one definition (was also declared here)
+   use meds_config,         only : MAX_RECYCLE_YEARS   ! the config's bound: one definition
    use meds_lapse_rate,     only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,    &
                                    lapse_specific_humidity, lapse_longwave
    use meds_co2_series,     only : co2_series_read, co2_series_at, co2_series_covers,          &
@@ -138,6 +138,7 @@ contains
             error stop 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)'
          end if
          call load_axis_month(src, 1_ik)
+         call keep_window_head(src)
          src%rec_first = 1_ik
          return
       end if
@@ -185,13 +186,12 @@ contains
 
       !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
       !      global attributes the prep script writes against the config that claims to describe    !
-      !      the same file. All three used to be written and never read, so a file that disagreed   !
-      !      with its config was silently mis-timed or mis-partitioned. ------------------------------!
+      !      the same file. A file that disagreed with its config would otherwise be silently       !
+      !      mis-timed or mis-partitioned. ------------------------------------------------------------!
       call validate_file_against_config(src, ncid, vstat)
       if (vstat /= MET_OK) then
-         if (present(stat)) then
-            stat = vstat ; st = nc_close(ncid) ; return
-         end if
+         call met_close(src)
+         if (present(stat)) then ; stat = vstat ; return ; end if
          error stop 'met_open: the forcing file contradicts [forcing] (see the message above)'
       end if
 
@@ -286,7 +286,8 @@ contains
    !  phase, so met_advance never touches a file. A daily step from midnight reads one archive  !
    !  month plus the record before it: 00:00 on the 1st, which lives in the previous month's    !
    !  file, or the window's last record at the recycle wrap. Moving into the next month, that   !
-   !  record comes from the outgoing buffer, so a run loads each month once. validate_config    !
+   !  record comes from the outgoing buffer, so a run loads each month once. A step the recycle  !
+   !  seam falls inside also reads the window's first day, which met_open keeps. validate_config !
    !  restricts format = "era5land" to daily steps from midnight, the shape this assumes.       !
    !=======================================================================================!
    subroutine met_prefetch(src, step_start)
@@ -308,10 +309,14 @@ contains
          k = axis_month_of(src, r) ; p = src%month_rec0(k)
       end if
       if (p > 0_ik .and. src%carry_rec /= p) then       ! the record before the month
-         kp = axis_month_of(src, p)
-         if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
          if (.not. allocated(src%carry)) allocate(src%carry(src%cells%ncell, ERA_NVAR))
-         src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
+         kp = axis_month_of(src, p)
+         if (.not. month_loaded(src, kp) .and. in_window_head(src, p)) then
+            src%carry = src%head(p - src%irec_cycle_first + 1_ik, :, :)   ! a midnight anchor's record
+         else
+            if (.not. month_loaded(src, kp)) call load_axis_month(src, kp)
+            src%carry = src%buffer%values(p - src%month_rec0(kp), :, :)
+         end if
          src%carry_rec = p
       end if
       if (.not. month_loaded(src, k)) call load_axis_month(src, k)
@@ -322,12 +327,11 @@ contains
    !  file that was just opened. MEDS does NOT infer the window: it is told where the cycle       !
    !  starts and how long it is, and this routine's only job is to confirm the file agrees.       !
    !                                                                                              !
-   !  The predecessor of this routine did the opposite -- it classified the file and, when the      !
-   !  file did not look Jan-1-aligned, silently dropped to an absolute-seconds span-wrap. For the   !
-   !  real ERA5-Land record (first stamp 01:00 under the end-of-interval convention) that fallback   !
-   !  wrapped on a 366 d 22 h span, shifting hour-of-day on EVERY wrap: a 29-yr run ended up reading  !
-   !  late May at a ~10 h offset while its daily-mean shortwave stayed correct, so the slow            !
-   !  demography looked healthy and nothing surfaced the problem for 30 simulated years.                !
+   !  Inferring the window is what this refuses to do. Wrapping a file on its own span shifts        !
+   !  hour-of-day on EVERY wrap unless the span is whole years: the real ERA5-Land record (first     !
+   !  stamp 01:00 under the end-of-interval convention) spans 366 d 22 h, and a 29-yr run wrapped    !
+   !  on it reads late May at a ~10 h offset while its daily-mean shortwave stays correct, so the    !
+   !  slow demography looks healthy and nothing surfaces the problem.                                !
    !=======================================================================================!
    subroutine validate_recycle_window(src, stat)
       type(met_source_t), intent(inout)  :: src
@@ -399,7 +403,8 @@ contains
 
    !=======================================================================================!
    !  ADVANCE: slide the window so rec_prev%when <= now < rec_next%when (at this grid_index).    !
-   !  Handles start-before-base_time (clamp/error) and EOF (recycle by whole file spans).        !
+   !  Handles a start before the first record (hold or error), the recycle seam, and a run past  !
+   !  the file's last record (clamped to the last interval).                                     !
    !=======================================================================================!
    subroutine met_advance(src, cur, now)
       type(met_source_t), intent(in)  :: src
@@ -415,7 +420,7 @@ contains
 
       !----- start before the first record (never reached once recycle-wrapped into span). ---!
       !      Hold: load records 1-2 and let met_instant clamp w_next=0 for now < t1 -- do NOT     !
-      !      overwrite rec_next (that stale-copy bug suppressed the reload once now reached t1).  !
+      !      overwrite rec_next: a stale copy there suppresses the reload once now reaches t1.    !
       if (now_sec < src%time_sec(1)) then
          if (src%fcfg%start_clamp == CLAMP_ERROR) then
             error stop 'met_advance: model start precedes the first forcing record (start_clamp=error)'
@@ -507,79 +512,62 @@ contains
          met%co2 = f%co2_const
       end if
 
-      if (src%backend == MET_BACKEND_CONST) then                  ! reference climate held flat
-         !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
-      !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
-      !      this instant's clearness index, and after dark it falls back to the last daytime value  !
-      !      met_advance remembered. Overwrites whatever the file read, which is the point -- the    !
-      !      selector says the file's longwave is not to be trusted or is not there.  ----------------!
-      if (f%lwdown_source == LW_SYNTHESIZE) then
-         block
-            real(wp) :: sw_now, kt_now
-            sw_now = met%par_beam + met%par_diffuse + met%nir_beam + met%nir_diffuse
-            kt_now = clearness_index(sw_now, cosz_now)
-            if (kt_now < 0.0_wp) kt_now = cur%kt_last_day
-            met%lwdown = synthesize_lwdown(f%lw_clear_form, met%tair_k, met%qair, met%psurf_pa,   &
-                                           kt_now, f%lw_cloud_a)
-         end block
-      end if
+      !----- The reference climate (CONST) is the forcing type's defaults, held flat; a file backend  !
+      !      interpolates its bracket to `now`.                                                    !
+      if (src%backend /= MET_BACKEND_CONST) then
+         !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
+         !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
+         now_sec = file_lookup_sec(src, now)
+         if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
+            tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
+         else
+            tprev = src%time_sec(cur%irec_prev)
+            tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
+         end if
+         if (tnext > tprev) then
+            w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
+         else
+            w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
+         end if
 
-      met%rho_air = air_density(met%tair_k, met%psurf_pa, met%qair)
-         return
-      end if
+         !----- state variables: linear; wind: energy-conserving. ------------------------------!
+         met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
+         met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
+         met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
+         met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
+         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
+         !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
+         if (src%has_wind_vector) then
+            met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
+            met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
+            met%has_wind_vector = .true.
+         end if
 
-      !----- interpolation weight within the loaded window (SAME effective seconds as advance, !
-      !      so a recycle-mapped now interpolates within the recycled interval, not clamps to 1). !
-      now_sec = file_lookup_sec(src, now)
-      if (cur%at_wrap_seam) then                    ! cycle-boundary: window's last rec -> its first
-         tprev = src%time_sec(src%irec_cycle_last) ; tnext = tprev + src%dt_forcing
-      else
-         tprev = src%time_sec(cur%irec_prev)
-         tnext = src%time_sec(min(cur%irec_prev + 1_ik, src%nrec))
-      end if
-      if (tnext > tprev) then
-         w_next = min(1.0_wp, max(0.0_wp, (now_sec - tprev) / (tnext - tprev)))
-      else
-         w_next = 0.0_wp                                          ! degenerate (start-clamp hold)
-      end if
+         !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
+         precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
+         call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
 
-      !----- state variables: linear; wind: energy-conserving. ------------------------------!
-      met%tair_k   = interpolate_forcing(INTERP_LINEAR, p%tair_k,   n%tair_k,   w_next)
-      met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
-      met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
-      met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-      met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
-      !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
-      if (src%has_wind_vector) then
-         met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)
-         met%wind_v = interpolate_forcing(INTERP_LINEAR, p%wind_v, n%wind_v, w_next)
-         met%has_wind_vector = .true.
+         !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
+         !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
+         !      rec_next's; begin -> rec_prev's.                                                        !
+         select case (f%avg_convention)
+         case (METAVG_BEGIN) ; mean_rec = p
+         case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
+         end select
+         !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
+         !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
+         !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
+         mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
+         win_start_sec = seconds_into_day(mws)
+         factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
+                                          (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
+                                          cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
+                                          f%apply_solar_longitude)
+         met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
+         met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
+         met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
+         met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
       end if
-
-      !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
-      precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
-      call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
-
-      !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
-      !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
-      !      rec_next's; begin -> rec_prev's.                                                        !
-      select case (f%avg_convention)
-      case (METAVG_BEGIN) ; mean_rec = p
-      case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
-      end select
-      !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
-      !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
-      !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
-      mws           = time_advance_seconds(now, tprev - now_sec)   ! model instant at the window start
-      win_start_sec = seconds_into_day(mws)
-      factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
-                                       (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                       cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
-                                       f%apply_solar_longitude)
-      met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
-      met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
-      met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
-      met%nir_diffuse = disaggregate_sw(mean_rec%nir_diffuse, cosz_now, factor)
 
       !----- LONGWAVE SYNTHESIS (#182), for a source that carries no LWdown. Placed AFTER the      !
       !      shortwave block so the instantaneous streams are available: by day the cloud term uses  !
@@ -615,17 +603,17 @@ contains
       if (allocated(src%month_year))  deallocate(src%month_year, src%month_month, src%month_rec0)
       if (allocated(src%buffer%values)) deallocate(src%buffer%values)
       if (allocated(src%carry))  deallocate(src%carry)
+      if (allocated(src%head))   deallocate(src%head)
       if (allocated(src%series)) deallocate(src%series, src%series_name)
       call co2_series_free(src%co2)
-      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_loads = 0_ik
+      src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_head = 0_ik ; src%n_loads = 0_ik
    end subroutine met_close
 
    !----- The effective seconds-since-base on the FILE time axis, used by BOTH bracket selection  !
-   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Three   !
-   !      regimes: (a) CALENDAR recycle (whole-year Jan-1 file) maps the model date to its file      !
-   !      calendar year, preserving month/day/hour so day-of-year is exact across leap boundaries;   !
-   !      (b) LEGACY absolute-seconds span-wrap (non-calendar recyclable file, e.g. an idealized      !
-   !      diurnal repeat) once past EOF; (c) identity while the model date is within the file range.  !
+   !      (met_advance) and the interpolation weight (met_instant) so they stay consistent. Under   !
+   !      calendar recycling the model date maps into the declared window (recycle_model_to_file),   !
+   !      keeping month/day/hour so day-of-year is exact across leap boundaries; otherwise it is the !
+   !      model date itself.                                                                          !
    pure function file_lookup_sec(src, now) result(s)
       type(met_source_t), intent(in)  :: src
       type(meds_time_t),  intent(in) :: now
@@ -648,9 +636,8 @@ contains
    !         yf  = anchor_year + off + modulo(model_year - anchor_year - off, n_cycle_years)            !
    !                                                                                                   !
    !      For a Jan-1 00:00:00 anchor `off` is identically 0 and this reduces, term for term, to the    !
-   !      plain year substitution -- so a window that the old Jan-1-only classifier would have accepted !
-   !      maps bit-for-bit as before. Without `off`, a mid-year window (or an end-of-interval file      !
-   !      whose first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.    !
+   !      plain year substitution. Without `off`, a mid-year window (or an end-of-interval file whose   !
+   !      first stamp is 01:00) maps instants OUTSIDE the window it is supposed to cycle over.         !
    !                                                                                                   !
    !      LEAP DAY: Feb-29 -> Feb-28 when the target file year is non-leap (ED2 read_ol_file repeats    !
    !      Feb 28). A non-leap model year never asks for Feb-29, so the substitution is one-directional. !
@@ -884,6 +871,32 @@ contains
       yes = src%buffer%year == src%month_year(k) .and. src%buffer%month == src%month_month(k)
    end function month_loaded
 
+   pure logical function in_window_head(src, irec) result(yes)
+      type(met_source_t), intent(in)  :: src
+      integer(ik),        intent(in) :: irec
+      yes = irec >= src%irec_cycle_first .and. irec < src%irec_cycle_first + src%n_head
+   end function in_window_head
+
+   !----- Keep the recycle window's first day, from axis month 1 just loaded: its first record    !
+   !      through the next midnight, all in that month's file. The seam falls inside a daily step  !
+   !      unless the window starts at 01:00, and that step reads the window's last record, in the  !
+   !      axis's last month, and then these. A midnight anchor needs its one record.               !
+   subroutine keep_window_head(src)
+      type(met_source_t), intent(inout) :: src
+      real(wp)    :: time_of_day
+      integer(ik) :: h1
+      src%n_head = 0_ik
+      if (allocated(src%head)) deallocate(src%head)
+      if (src%n_cycle_years < 1_ik) return
+      time_of_day = seconds_into_day(src%cycle_anchor)
+      src%n_head = 1_ik
+      if (time_of_day > REC_MATCH_TOL)                                                            &
+         src%n_head = 1_ik + nint((86400.0_wp - time_of_day) / src%dt_forcing, ik)
+      h1 = src%irec_cycle_first - src%month_rec0(1)
+      allocate(src%head(src%n_head, src%cells%ncell, ERA_NVAR))
+      src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
+   end subroutine keep_window_head
+
    !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
    subroutine load_axis_month(src, k)
       type(met_source_t), intent(inout)  :: src
@@ -899,8 +912,9 @@ contains
       src%n_loads = src%n_loads + 1_ik
    end subroutine load_axis_month
 
-   !----- Where record irec's values are: its hour h in the loaded month, or h = 0 for the carried !
-   !      record. Anything else was not prefetched, which is a programming error, not a data gap. !
+   !----- Where record irec's values are: its hour h > 0 in the loaded month, h = 0 for the carried !
+   !      record, h < 0 for the -h-th record of the window's first day. Anything else was not       !
+   !      prefetched, which is a programming error, not a data gap. -------------------------------!
    subroutine locate_record(src, irec, h)
       type(met_source_t), intent(in)   :: src
       integer(ik),        intent(in)  :: irec
@@ -911,6 +925,8 @@ contains
          h = irec - src%month_rec0(k)
       else if (irec == src%carry_rec) then
          h = 0_ik
+      else if (in_window_head(src, irec)) then
+         h = src%irec_cycle_first - 1_ik - irec
       else
          write(*,'(a,i0,2a)') ' met_driver: forcing record ', irec, ' at ',                            &
                time_to_string(time_advance_seconds(src%base_time, src%time_sec(irec)))
@@ -924,6 +940,8 @@ contains
       integer(ik),        intent(in) :: h, var
       if (h == 0_ik) then
          val = real(src%carry(cur%cell, var), wp)
+      else if (h < 0_ik) then
+         val = real(src%head(-h, cur%cell, var), wp)
       else
          val = real(src%buffer%values(h, cur%cell, var), wp)
       end if

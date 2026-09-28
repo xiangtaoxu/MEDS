@@ -30,7 +30,6 @@ Example (New York State, July-August 2022, 2 m temperature, from both sources):
 """
 import argparse
 import datetime as dt
-import glob
 import os
 import sys
 
@@ -39,7 +38,6 @@ from netCDF4 import Dataset, num2date
 
 import era5land_common as common
 
-EPOCH = dt.datetime(1970, 1, 1)
 HOUR = dt.timedelta(hours=1)
 SOURCE_NOTE = {"cds": "Copernicus Climate Data Store, reanalysis-era5-land",
                "gdex": "NSF NCAR GDEX d633008, ERA5-Land hourly (GDEX subset of the CDS product)"}
@@ -109,14 +107,7 @@ def grib_fields(paths, variable, first, last, area, wanted):
         with open(path, "rb") as fh:
             while (h := eccodes.codes_grib_new_from_file(fh)) is not None:
                 try:
-                    ni, nj = eccodes.codes_get(h, "Ni"), eccodes.codes_get(h, "Nj")
-                    lat0 = eccodes.codes_get(h, "latitudeOfFirstGridPointInDegrees")
-                    lon0 = eccodes.codes_get(h, "longitudeOfFirstGridPointInDegrees")
-                    dlat = eccodes.codes_get(h, "jDirectionIncrementInDegrees")
-                    dlon = eccodes.codes_get(h, "iDirectionIncrementInDegrees")
-                    step = dlat if eccodes.codes_get(h, "jScansPositively") else -dlat
-                    lat = lat0 + step * np.arange(nj)
-                    lon = lon0 + dlon * np.arange(ni)            # monotonic, possibly past 360
+                    _, lat, lon = common.grib_grid(h)            # longitudes monotonic, possibly past 360
                     rows = common.select_rows(lat, north, south)
                     cols, out_lon = common.select_cols(lon, west, east)
                     if len(rows) == 0 or len(cols) == 0:
@@ -135,7 +126,7 @@ def grib_fields(paths, variable, first, last, area, wanted):
                     stamp = dt.datetime.strptime(f"{vdate:08d}{vtime:04d}", "%Y%m%d%H%M")
                     if not (first <= stamp <= last and wanted(stamp)):
                         continue
-                    values = eccodes.codes_get_values(h).reshape(nj, ni)
+                    values = eccodes.codes_get_values(h).reshape(len(lat), len(lon))
                     if eccodes.codes_get(h, "bitmapPresent"):
                         values = np.where(values == eccodes.codes_get(h, "missingValue"), np.nan, values)
                     yield stamp, values[np.ix_(rows, cols)].astype(np.float32)
@@ -146,17 +137,15 @@ def grib_fields(paths, variable, first, last, area, wanted):
 # --- output --------------------------------------------------------------------------------------------
 def period_key(stamp, split):
     """End-stamped periods: the stamp at 00:00 on the 1st closes the previous month/year."""
-    s = stamp - HOUR
-    return {"year": f"{s.year}", "month": f"{s.year}{s.month:02d}", "none": "all"}[split]
+    y, m = common.stamp_month(stamp)
+    return {"year": f"{y}", "month": f"{y}{m:02d}", "none": "all"}[split]
 
 
 def period_bounds(key, split, first, last):
     if split == "year":
-        p0, p1 = dt.datetime(int(key), 1, 1, 1), dt.datetime(int(key) + 1, 1, 1, 0)
+        p0, p1 = common.month_interval(int(key), 1)[0], common.month_interval(int(key), 12)[1]
     elif split == "month":
-        y, m = int(key[:4]), int(key[4:])
-        p0 = dt.datetime(y, m, 1, 1)
-        p1 = dt.datetime(y + (m == 12), 1 if m == 12 else m + 1, 1, 0)
+        p0, p1 = common.month_interval(int(key[:4]), int(key[4:]))
     else:
         p0, p1 = first, last
     return max(p0, first), min(p1, last)
@@ -196,8 +185,8 @@ class PeriodWriter:
         ds.createDimension("latitude", len(lat))
         ds.createDimension("longitude", len(lon))
         t = ds.createVariable("valid_time", "f8", ("valid_time",))
-        t.units, t.calendar, t.standard_name = "seconds since 1970-01-01", "proleptic_gregorian", "time"
-        t[:] = [((p0 + k * HOUR) - EPOCH).total_seconds() for k in range(n)]
+        t.units, t.calendar, t.standard_name = common.EPOCH_UNITS, "proleptic_gregorian", "time"
+        t[:] = common.epoch_seconds([p0 + k * HOUR for k in range(n)])
         la = ds.createVariable("latitude", "f8", ("latitude",))
         la.units, la.standard_name, la[:] = "degrees_north", "latitude", lat
         lo = ds.createVariable("longitude", "f8", ("longitude",))
@@ -259,8 +248,8 @@ def raw_files(source, raw_dir, variable, first, last):
             sys.exit(f"{len(missing)} GDEX file(s) missing from the raw pool, e.g. {missing[0]}\n"
                      f"run download_era5land_gdex.py for this period first")
         return paths, "netcdf"
-    gribs = sorted(glob.glob(os.path.join(raw_dir, f"era5land_cds_{variable}_*.grib")))
-    ncs = sorted(glob.glob(os.path.join(raw_dir, f"era5land_cds_{variable}_*.nc")))
+    gribs = common.cds_raw_files(raw_dir, variable, "grib")
+    ncs = common.cds_raw_files(raw_dir, variable, "nc")
     if gribs and ncs:
         sys.exit(f"{raw_dir} holds both GRIB and NetCDF CDS files for {variable}; keep one format per directory")
     if not gribs and not ncs:

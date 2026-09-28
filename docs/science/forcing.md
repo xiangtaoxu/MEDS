@@ -32,15 +32,18 @@ variables:
     double time(time) ; time:calendar = "proleptic_gregorian" ;
         time:units = "seconds since 2024-01-01 01:00:00" ;      // the base-time anchor
     double latitude(grid) ["degrees_north"], longitude(grid) ["degrees_east"] ;
-    double elevation(grid) ["m"] ;                              // optional, not read
+    double elevation(grid) ["m"] ;              // optional, not read: the cell's orography (archive only)
     float Tair(time,grid) ["K"], Qair(time,grid) ["kg kg-1"],       // cell_methods = "time: point"
           PSurf(time,grid) ["Pa"], Wind(time,grid) ["m s-1"] ;
     float u10(time,grid), v10(time,grid) ["m s-1"] ;            // optional wind vector; see below
     float Rainf(time,grid) ["kg m-2 s-1"], LWdown(time,grid) ["W m-2"],  // cell_methods = "time: mean"
           SWdown(time,grid) ["W m-2"] ;                         // SWdown is the TOTAL; see sec. 6
-// global attributes -- provenance only, never read by the model:
+    // every float carries _FillValue = 1.e20, and MEDS stops on one (it never gap-fills)
+// global attributes -- avg_convention and sw_input_kind are checked against [forcing] at open,
+// and timestep_seconds against dt_forcing; the rest is provenance:
     :Conventions = "MEDS-forcing-1.0" ; :source = "ERA5-Land hourly" ; :time_zone = "UTC" ;
     :timestep_seconds = 3600 ; :avg_convention = "end" ; :sw_input_kind = "total" ;
+    :wind_meas_height_m = 10. ;          // provenance; [forcing].wind_height declares the height
 }
 ```
 
@@ -64,8 +67,9 @@ components and derives the speed $`\sqrt{u_{10}^2+v_{10}^2}`$ from them, ignorin
 at open). `grid_match = "nearest"` instead reads the `latitude(grid)`/`longitude(grid)` vectors and picks
 the cell minimising the great-circle distance to the `[site]` coordinates (`great_circle_distance`, ED2's
 `dist_gc`), with strict `<` in the scan so ties keep the lowest index; only the ordering matters, so the
-Earth radius is immaterial. Every value is read as one `(time, grid)` hyperslab of count `[1,1]` — the
-reader never loads a variable's whole time series, only the cached `time` coordinate.
+Earth radius is immaterial. At `met_open` the reader loads, for that column, every record the run can
+reach — the recycle window, or the run period — into memory, one read per variable, so no step reads
+the file; a file written in 1 × 1 chunks is read only over that range.
 
 **Producing one from ERA5-Land.** `scripts/prepare_era5/make_forcing_file.py` writes the file above,
 either by cutting the site's cell out of an ED_ERA5land archive (`--data-path`) or from a small download:
@@ -73,10 +77,16 @@ either by cutting the site's cell out of an ED_ERA5land archive (`--data-path`) 
 `ssrd`, `strd`) for a box around the site from the CDS, `postprocess_era5land.py --split none` decodes them
 into one box file per variable, and `make_forcing_file.py --box-dir` converts them. Either way,
 `Tair = t2m`, `PSurf = sp`, `Qair` from the
-dewpoint by (10) in the *same* Bolton form the model uses, $`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, and
-the three **accumulated** fluxes de-accumulated then unit-converted:
+dewpoint by (10) in the *same* Bolton form the model uses, the components `u10`, `v10` with their speed
+$`\mathrm{Wind}=\sqrt{u_{10}^2+v_{10}^2}`$, unfloored (the reader floors every source's speed at
+0.1 m s⁻¹ itself, for the Monin–Obukhov stability), and the three **accumulated** fluxes de-accumulated
+then unit-converted:
 $`\mathrm{Rainf}=\Delta tp\cdot 1000/3600`$ [kg m⁻² s⁻¹], $`\mathrm{SWdown}=\Delta ssrd/3600`$,
-$`\mathrm{LWdown}=\Delta strd/3600`$ [W m⁻²].
+$`\mathrm{LWdown}=\Delta strd/3600`$ [W m⁻²]. Both inputs go through one table and one rule,
+`ARCHIVE_VARIABLES` and `deaccumulate` in `scripts/prepare_era5/era5land_common.py`, the ones the archive
+is built with, so the file names and describes each variable as the archive does. The location is always
+named (`--lat` with `--lon`, `--cells`, or `--all-cells` for box files); only the archive knows the cell's
+orography, so only a file cut from it carries `elevation`.
 
 *The 00Z trap.* ERA5-Land accumulations run from 00 UTC and reset daily, so the **00:00 stamp carries the
 whole previous day's total** (step 24) — not zero, and not one hour. Ordered by valid time, the per-hour
@@ -92,7 +102,9 @@ last, and nothing is ever filled.
 a regular `(time, lat, lon)` grid at 0.1°: `Tair`, `Tdew`, `PSurf`, `u10`, `v10` as ERA5-Land
 delivers them, and `Rainf`, `SWdown`, `LWdown` already de-accumulated to hourly means, end-stamped
 from 01:00 on the 1st to 00:00 on the 1st of the next month. A static file carries the `valid`
-mask and the orography (`MEDS_FORCING_DESIGN.md` §14). Given `data_path`, the reader:
+mask and the orography (`MEDS_FORCING_DESIGN.md` §14). An archive run steps daily from midnight
+(`[run].dt_slow = "1d"`, `start_time` at 00:00, checked by `validate_config`), because the reader
+loads one month at a time before a step. Given `data_path`, the reader:
 
 - **binds the site to a cell** by regular-grid arithmetic; a site on a no-data cell (a coast, a
   lake edge) takes the nearest valid cell by great-circle distance, lowest index on a tie, up to
@@ -111,11 +123,14 @@ the 1st lives in the previous month's file, and the bracket that spans it reads 
 
 ## 2. The reader: a two-record window
 
-`met_open` reads the dimensions, base time and time coordinate, validates the recycle window (§9) and
-loads records #1–#2; `met_advance(drv, now)` slides the bracket so `rec_prev%when ≤ now < rec_next%when`,
-marching the cursor incrementally; `met_close` releases the handle. `met_instant(drv, now)` is a **pure
-function of (reader state, time)** — it interpolates and disaggregates the loaded bracket to the instant,
-so it is safe to sample ahead of the threaded patch loop. A run starting before the first record either
+The reader state comes in two parts: one `met_source_t` per run, which `met_open` fills with the
+dimensions, base time and time coordinate, the validated recycle window (§9) and the records in
+memory, and one `met_cursor_t` per polygon, which `met_cursor_init` binds to the polygon's cell and
+location and loads with its first bracket. `met_advance(src, cur, now)` slides the cursor's bracket so
+`rec_prev%when ≤ now < rec_next%when`, marching incrementally; `met_close` releases the source.
+`met_instant(src, cur, now)` is a **pure function of (reader state, time)** — it interpolates and
+disaggregates the loaded bracket to the instant, so it is safe to sample ahead of the threaded patch
+loop. A run starting before the first record either
 hard-errors (`start_clamp = "error"`, the default) or holds record #1 (`"hold"`); a non-recycling run past
 the last record clamps to the final interval. The no-file **`const`** backend returns the `met_forcing_t`
 defaults — a reference climate whose four shortwave streams sum to 400 W m⁻², $`\cos z`$ and
@@ -432,10 +447,15 @@ of day are preserved exactly** — that exactness is what lets the sub-daily pha
 an arbitrary number of wraps; for a Jan-1 00:00 anchor `off` is identically 0 and (14) reduces term for term
 to plain year substitution. The one exception is the **leap day**: a Feb-29 model instant reads Feb-28 when
 the target file year is not a leap year (ED2's `read_ol_file` repeats Feb 28), one-directionally — a non-leap
-model year never asks for Feb-29 — so no record is skipped or double-counted. At the cycle edge the reader
+model year never asks for Feb-29 — so no record is double-counted, and a leap file year's Feb-29 records
+go unread in the model years that have none. At the cycle edge the reader
 loads a **seam bracket**: `rec_prev` is the last record inside the window, `rec_next` is the window's *first*
 record, so the closing interval interpolates across the wrap instead of clamping. The window may be a
 sub-range of a longer file; records past `recycle_end` belong to the next file year, not to this cycle.
+The window may start at any record stamp, so the seam may fall anywhere in a day. With the archive the
+reader keeps the window's first day (its first record through the next midnight) in memory from open, so
+a daily step that crosses the seam reads the window's last month and that day and loads nothing mid-step.
+A region's window starts at 00:00 or 01:00 on the 1st, because a region loads each month once, before it.
 
 ## 10. MEDS never gap-fills
 
@@ -597,7 +617,7 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
 | grid match | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index` |
 | vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
-| the reader | `meds_met_driver`: `met_open`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `ensure_month` |
+| the reader | `meds_met_driver`: `met_open`, `met_cursor_init`, `met_prefetch`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `load_axis_month`, `locate_record`, `keep_window_head` |
 | the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
 | recycling | `meds_met_driver`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`, `load_wrap_bracket` |
 | CO₂ | `meds_co2_series`: `co2_series_read`, `co2_series_at`, `co2_series_covers`; `meds_met_driver`: `open_co2`, and `met_instant` sets `met%co2`; the `CO2air` rejection in `validate_file_against_config` |

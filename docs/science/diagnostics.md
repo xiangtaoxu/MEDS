@@ -160,10 +160,12 @@ restructuring, and owes none.
 
 #### Variance companions
 
-A monthly mean hides the diurnal cycle entirely, and for some variables that cycle *is* the signal: a
-canopy-air temperature whose monthly mean is 288 K is a very different place depending on whether the
-day swings 2 K or 20 K. `AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$, dt-weighted
-like its `AGG_TMEAN` partner.
+`AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$ over the samples the tick hands it,
+dt-weighted like its `AGG_TMEAN` partner. The four that ship read their partner's **end-of-step
+state**, once per slow step, so each is the variance of those samples across the period. With a daily
+step that is the **day-to-day spread of the state at one fixed hour**, the step's end. It is not the
+diurnal cycle, which needs a sum of squares accumulated inside the step (#275), and the long names say
+so: "variance of end-of-step samples of ...".
 
 It is registered as an **ordinary variable sharing its partner's source id** — `cas_temp_var_site`
 beside `cas_temp_site` — rather than as a companion slot bolted to the mean. Two consequences, both
@@ -176,9 +178,8 @@ monthly and annual only. The units are the partner's **squared**, because that i
 take the square root for a standard deviation. Emitting the standard deviation directly would have
 lost the additivity that lets a variance be combined across periods.
 
-Measured on a spun-up Ithaca stand, the canopy-air standard deviation runs 2.3 K in July against
-5.4 K in December — the mean alone cannot tell you that, and the difference is most of what a
-sub-daily process sees.
+Measured on a spun-up Ithaca stand, the canopy-air standard deviation of these samples runs 2.3 K in
+July against 5.4 K in December, which the monthly mean alone cannot show.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
@@ -209,8 +210,11 @@ by default; `radiation` and `ecophys` off. `forcing` is the atmospheric boundary
 the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
 monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
 the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
-`cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins. With `sw_in_*` and `precip_site`, it
-is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
+`cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins, and three patch rows at the daily and
+monthly tiers: the forcing each patch saw at its canopy-air top, `wind_cas_top_patch` and
+`air_temp_cas_top_patch`, and that top's height `cas_depth_patch` (with `rough_patch` and
+`displace_patch`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
+and `precip_site`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
 `numerics` defaults **on** because it carries the energy and water budget residuals. A closure
@@ -277,15 +281,15 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 
 ## 7. Variable inventory
 
-248 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
+252 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
 groups, axes and default streams — it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 67 | | site | 142 |
-| energy | 47 | | cohort | 55 |
-| carbon | 34 | | patch | 24 |
-| forcing | 25 | | pft | 9 |
+| structure | 67 | | site | 141 |
+| energy | 48 | | cohort | 55 |
+| carbon | 34 | | patch | 29 |
+| forcing | 28 | | pft | 9 |
 | ecophys | 24 | | soil | 7 |
 | water | 18 | | dbh_class | 6 |
 | biogeochem | 15 | | (patch, soil) | 5 |

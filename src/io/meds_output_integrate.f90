@@ -132,11 +132,11 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
    !----- SLOW-loop diagnostics (1200+), read from site%cohort%sdiag. NOT from site%deriv: that     !
-   !      bundle is transient and deliberately NOT lockstep-reordered, so at the output tick -- which !
-   !      runs after the monthly fiss/fuse -- its index no longer matches the cohort axis.  ---------!
+   !      bundle is transient and deliberately NOT lockstep-reordered, and the step re-sorts the     !
+   !      cohorts after filling it, so at the output tick its index need not match the cohort axis. !
    integer(ik), parameter :: FLD_C_SDIAG0          = 1200_ik
    !----- FAST-LOOP per-cohort DIAGNOSTICS (1100+), read from site%cohort%diag. These are the      !
-   !      quantities the fast loop computes every dt_fast and used to discard; the id encodes the   !
+   !      quantities the fast loop computes every dt_fast and keeps nowhere else; the id encodes the !
    !      row of the diagnostic block (CD_*), offset by FLD_C_DIAG0.  --------------------------!
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
    !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PD_* + FLD_P_DIAG0). !
@@ -497,10 +497,6 @@ contains
                                     + site%cohort%fineroot_carbon(1:n)                         &
                                     + site%cohort%wood_carbon(1:n)                             &
                                     + site%cohort%nonstructural_carbon(1:n)
-      !----- slow-loop tendencies, read off the still-live per-step deriv bundle. ------------!
-      !      site%deriv is refilled every slow step and is NOT lockstep-reordered, so it is      !
-      !      meaningful only at the output tick, which is exactly when this runs. A run whose     !
-      !      slow tier is frozen ([run].slow_on = false) leaves it at 0, which is the truth.      !
       case default
          !----- FAST-loop diagnostic rows (FLD_C_DIAG0 + CD_*): read the dt-weighted accumulator     !
          !      and normalize. A cohort with no samples this window (there should be none, but a     !

@@ -351,6 +351,9 @@ contains
       call met_open(src, fc, stat=st)
       call check_true('a half-hourly config against an hourly file is rejected',                   &
                       st == MET_ERR_DT_MISMATCH, real(st, wp))
+      !----- A rejected open leaves nothing open: a caller's met_close must not close the file twice. !
+      call check_true('a rejected open releases the file', src%ncid < 0_ik, real(src%ncid, wp))
+      call met_close(src)
       fc%dt_forcing = 3600.0_wp
 
       !----- the file says its flux means end at the stamp; the config says they begin there. ------!

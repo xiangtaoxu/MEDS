@@ -333,7 +333,7 @@ module meds_output_types
       logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
       integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
       type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
-      type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) sub-step midpoint stamps
+      type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
       real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
       real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort cap, n_fast_sub) per-cohort leaf temp [K]

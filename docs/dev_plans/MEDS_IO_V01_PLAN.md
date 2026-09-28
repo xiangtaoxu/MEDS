@@ -1,20 +1,19 @@
 # MEDS v0.1 — Diagnostic I/O: audit, target architecture, and variable plan
 
-> # 📚 REFERENCE — status refreshed 2026-09-13. Cited by section from ~12 source and test files.
+> # 📚 REFERENCE — status refreshed 2026-09-28. Cited by section from ~12 source and test files.
 >
-> **Shipped in PR #111** (2026-08-02), tagged as v0.1.0. All 8 groups and all 7 axes are live, with
-> ~208 registered variables (this plan estimated ~203). Verified byte-identical at 1 versus 4
-> threads across all 75 files of a 3-year run.
+> **Shipped in PR #111** (2026-08-02), tagged as v0.1.0. All 8 groups and all 7 axes went live, with
+> ~208 registered variables (this plan estimated ~203); v0.3.0 has 9 groups and 252 variables.
+> Verified byte-identical at 1 versus 4 threads across all 75 files of a 3-year run.
 >
-> **Its own deferred list is still deferred:** mortality carbon by pathway, the disturbance-area
-> flux (the accumulator slot `PD_DISTURB_AREA` is declared but has no writer and no registry row),
-> and per-band albedo.
+> **Its deferred list shipped in v0.2.0** (#169–#175): mortality carbon by pathway, the
+> disturbance-area flux, per-band albedo, variance output, and the `[io]` → `[state]` rename (the
+> `[io]` spelling is refused since v0.3.0, #309). What remains has issues: within-step variances
+> and a skin temperature (#275), a spectrally resolved radiative record (#255).
 >
-> **Three further items it planned were not done:** §6-P2 did not delete the FAST tier's bespoke
-> staging path (`fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast` all still exist);
-> §5.3 retired the legacy `[io]` *writer* but not the `[io]` block, which still carries the restart
-> settings under a name that no longer fits; and the §6-P5 evaluation notebook and PFT/size-class
-> plotter were never written. All tracked in `docs/ROADMAP.md` §6.
+> **Not done, and unfiled because low in value:** §6-P2's retirement of the FAST tier's own staging
+> path (`fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast` all still exist), and the
+> §6-P5 evaluation notebook and PFT/size-class plotter.
 >
 > **Reader-facing page:** `docs/science/diagnostics.md`. Module paths below predate the 2026-09
 > reorganization.

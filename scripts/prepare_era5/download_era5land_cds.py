@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """download_era5land_cds.py -- download ERA5-Land hourly fields for a lat/lon box from the Copernicus
-Climate Data Store (CDS), dataset "reanalysis-era5-land". Adapted from scripts/download_era5land.py.
+Climate Data Store (CDS), dataset "reanalysis-era5-land".
 
 A single site is simply a small box. This script only downloads: the files are kept exactly as the
 CDS delivers them (GRIB by default), one per request, and checked by message or time-stamp count.
@@ -171,45 +171,64 @@ def main(argv=None):
     if not os.path.exists(os.path.expanduser("~/.cdsapirc")) and not os.environ.get("CDSAPI_KEY"):
         sys.exit("no CDS credentials: create ~/.cdsapirc with the url and key lines (see --help)")
     os.makedirs(args.out_dir, exist_ok=True)
-    log = common.RunLog(args.out_dir, "download_log.jsonl")
-    lock = threading.Lock()
+    failures = download(plan, args.out_dir, args.format, args.parallel, cdsapi)
+    if failures:
+        sys.exit(f"{failures} download(s) failed; a rerun submits them again and skips the complete files")
+    print(f"done: {args.out_dir}")
+
+
+def download(plan, out_dir, data_format, parallel, cdsapi):
+    """Submit every request of the plan whose file is not already complete. Only the CDS requests run in
+    worker threads, each thread with its own client; every file check (GRIB or netCDF/HDF5) stays in the
+    main thread, since HDF5 is not guaranteed thread-safe. The client retries transient HTTP failures
+    itself (cdsapi's retry_max and sleep_max); a request that still fails, or a file that fails its
+    check, is reported and logged, and the others go on. Returns the number that failed."""
+    log = common.RunLog(out_dir, "download_log.jsonl")
     local = threading.local()
 
-    def fetch(item):
-        """One request: queue, transfer, verify. Each thread keeps its own CDS client."""
-        v, tag, req, n = item
-        raw_path = os.path.join(args.out_dir, f"era5land_cds_{v}_{tag}.{EXTENSION[args.format]}")
-        if raw_complete(raw_path, n, args.format):
-            return f"  skip  {os.path.basename(raw_path)} (already complete)", True
+    def fetch(req, part):
         if not hasattr(local, "client"):
             local.client = cdsapi.Client(quiet=True, progress=False)
         t0 = common.monotonic_seconds()
         result = local.client.retrieve(DATASET, req)         # returns when the CDS job is complete
         queue_s = common.monotonic_seconds() - t0
         t0 = common.monotonic_seconds()
-        result.download(raw_path + ".part")
-        transfer_s = common.monotonic_seconds() - t0
-        if zipfile.is_zipfile(raw_path + ".part"):
-            unzip_single(raw_path + ".part")
-        os.replace(raw_path + ".part", raw_path)
-        nbytes = os.path.getsize(raw_path)
-        ok = raw_complete(raw_path, n, args.format)
-        with lock:
-            log.write(source="cds", dataset=DATASET, variable=v, tag=tag, request=req, file=os.path.basename(raw_path),
-                      format=args.format, bytes=nbytes, queue_seconds=round(queue_s, 1),
-                      transfer_seconds=round(transfer_s, 2), expected_stamps=n, verified=ok)
-        return (f"  got   {os.path.basename(raw_path)}  {nbytes / 1e6:.1f} MB: queue {queue_s:.0f} s, transfer "
-                f"{transfer_s:.1f} s ({nbytes / 1e6 / max(transfer_s, 1e-9):.1f} MB/s), "
-                f"{'verified' if ok else 'VERIFY FAILED'}"), ok
+        result.download(part)
+        return queue_s, common.monotonic_seconds() - t0
 
     failures = 0
-    with cf.ThreadPoolExecutor(max_workers=max(1, args.parallel)) as pool:
-        for message, ok in pool.map(fetch, plan):
-            print(message, flush=True)
+    with cf.ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
+        pending = {}
+        for v, tag, req, n in plan:
+            raw_path = common.cds_raw_file(out_dir, v, tag, EXTENSION[data_format])
+            if raw_complete(raw_path, n, data_format):
+                print(f"  skip  {os.path.basename(raw_path)} (already complete)", flush=True)
+                continue
+            pending[pool.submit(fetch, req, raw_path + ".part")] = (v, tag, req, n, raw_path)
+        for fut in cf.as_completed(pending):
+            v, tag, req, n, raw_path = pending[fut]
+            name = os.path.basename(raw_path)
+            record = dict(source="cds", dataset=DATASET, variable=v, tag=tag, request=req, file=name,
+                          format=data_format)
+            try:
+                queue_s, transfer_s = fut.result()
+                if zipfile.is_zipfile(raw_path + ".part"):
+                    unzip_single(raw_path + ".part")
+                os.replace(raw_path + ".part", raw_path)
+            except Exception as err:                        # the request failed; it stops only itself
+                failures += 1
+                log.write(**record, error=str(err))
+                print(f"  FAILED {name}: {err}", flush=True)
+                continue
+            nbytes = os.path.getsize(raw_path)
+            ok = raw_complete(raw_path, n, data_format)
+            log.write(**record, bytes=nbytes, queue_seconds=round(queue_s, 1), transfer_seconds=round(transfer_s, 2),
+                      expected_stamps=n, verified=ok)
+            print(f"  got   {name}  {nbytes / 1e6:.1f} MB: queue {queue_s:.0f} s, transfer {transfer_s:.1f} s "
+                  f"({nbytes / 1e6 / max(transfer_s, 1e-9):.1f} MB/s), {'verified' if ok else 'VERIFY FAILED'}",
+                  flush=True)
             failures += 0 if ok else 1
-    if failures:
-        sys.exit(f"{failures} download(s) failed verification")
-    print(f"done: {args.out_dir}")
+    return failures
 
 
 if __name__ == "__main__":

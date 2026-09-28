@@ -140,7 +140,7 @@ module meds_config
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
       real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
-      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat
+      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat (< 0)
       real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
       real(wp)    :: root_beta   = 2.0_wp     !< [-]   exponential root-profile decay
       real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
@@ -513,9 +513,20 @@ contains
          if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
          if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
          if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
-         if (sc%curve_par_a <= 0.0_wp)    error stop tag//'soil_column.curve_par_a <= 0'
-         if (sc%retention == SOIL_RETENTION_VG .and. sc%curve_par_n <= 1.0_wp)                    &
-            error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
+         !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
+         !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
+         !      The other family's pair makes the curve raise a negative base to a fractional power. -!
+         if (sc%retention == SOIL_RETENTION_VG) then
+            if (sc%curve_par_a <= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
+            if (sc%curve_par_n <= 1.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
+         else
+            if (sc%curve_par_a >= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_a (Campbell psi_sat, m) must be < 0'
+            if (sc%curve_par_n <= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_n (Campbell b) must be > 0'
+         end if
          if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil_column.psi_fc must be negative (a suction head)'
          if (sc%solid_conductivity <= 0.0_wp .or. sc%dry_conductivity <= 0.0_wp)                  &
             error stop tag//'soil_column conductivities must be positive'
@@ -726,6 +737,16 @@ contains
          end associate
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
             error stop tag//'region.land_fraction_min must lie in [0, 1]'
+         !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
+         !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
+         !      1st. A site run takes a window starting at any record stamp. ------------------------!
+         if (cfg%forcing%recycle .and. time_valid(cfg%forcing%recycle_start)) then
+            associate (a => cfg%forcing%recycle_start)
+               if (a%day /= 1_ik .or. a%hour > 1_ik .or. a%minute /= 0_ik .or. a%second /= 0_ik)    &
+                  error stop tag//'[run].mode = "region" needs forcing.recycle_start at 00:00 or '//  &
+                                  '01:00 on the 1st of a month'
+            end associate
+         end if
       end if
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !

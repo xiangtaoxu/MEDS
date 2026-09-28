@@ -3,11 +3,12 @@
 ! meds_polygon -- one polygon of a run: everything that evolves at one forcing cell, and the one  !
 ! step that advances it (MEDS_POLYGON_RUNTIME_PLAN.md §4, R2).                                     !
 !                                                                                          !
-! A polygon owns its site, fast context, forcing cursor, output buffers, conservation ledgers and !
-! status. What every polygon of a run shares -- the config, the forcing source, the output files  !
-! -- is passed in read-only. A site run (meds_driver) is one polygon; a region (meds_region) is    !
-! many, stepped by the same polygon_step, so a polygon of a region computes exactly what a site    !
-! run at its cell computes.                                                                        !
+! A polygon owns its site, fast context, forcing cursor, conservation ledgers and status. What     !
+! every polygon of a run shares -- the config, the forcing source, the output files -- is passed   !
+! in read-only. Its output buffers are passed in too: the run holds them, one per polygon in a     !
+! contiguous array, so the I/O phase takes that array whole rather than a component section.      !
+! A site run (meds_driver) is one polygon; a region (meds_region) is many, stepped by the same     !
+! polygon_step, so a polygon of a region computes exactly what a site run at its cell computes.    !
 !                                                                                          !
 ! polygon_step does no file work: the caller loads the step's forcing before it (met_prefetch)     !
 ! and writes the queued output records after a month closes.                                       !
@@ -19,6 +20,7 @@ module meds_polygon
    use meds_time,                   only : meds_time_t, time_to_string
    use meds_site_state_types,       only : site_t, reset_step_diagnostics
    use meds_stepper,                only : advance_one_step, advance_boundary
+   use meds_slow_dynamics,          only : refresh_canopy_depth
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
    use meds_fast_config,            only : acclimate_leaf_photo_table
    use meds_biogeochem_types,       only : litter_input_t, n_soil_pool, soilc_seam_t
@@ -40,8 +42,8 @@ module meds_polygon
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
    public :: N_PATCH_INIT
 
-   !----- Step and run status codes. OK/DONE are normal; the ERR codes are the conditions the model  !
-   !      used to `error stop` on, returned instead so a library caller survives them.             !
+   !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
+   !      status rather than an `error stop` so a library caller survives them.                   !
    integer(ik), parameter :: DRIVER_OK      = 0_ik   !< a slow step was taken
    integer(ik), parameter :: DRIVER_FINISHED= 1_ik   !< the calendar already reached end_time; nothing done
    integer(ik), parameter :: DRIVER_ERR_NAN = 2_ik   !< NaN in the state at a year roll-over
@@ -57,7 +59,6 @@ module meds_polygon
       type(site_t)           :: site
       type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
-      type(output_buffers_t) :: out_bufs          !< its share of the run's output files
       !----- A region's detail polygon also writes a full single-site file set of its own. ---------!
       type(output_files_t),  allocatable :: detail_files
       type(output_buffers_t), allocatable :: detail_bufs
@@ -124,6 +125,10 @@ contains
          if (cfg%snow_init_swe > 0.0_wp) call seed_snow(cfg, poly, verbose)
          if (verbose) write(*,'(a)') ' fast  : sub-daily biophysics ON'
       end if
+      !----- The canopy-air depth follows the stand from the first step, whatever the stand came    !
+      !      from (bare ground, census, restart); the slow step keeps it current after that (#306).  !
+      !      No ledger: a plain geometry update that keeps the canopy air's intensive state.  -------!
+      call refresh_canopy_depth(poly%site, cfg)
 
       !----- Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the real !
       !      persisted pools; otherwise the pools start at the allocation-time zero unless          !
@@ -139,14 +144,15 @@ contains
    ! step's boundary owes (if any), the growth-temperature mean, the coupled stepper (which         !
    ! sub-steps the fast loop inside it), the fast output tier's replay, the slower tiers' tick, and !
    ! the NaN and soil-carbon guards. The step's forcing must already be loaded into `met_src`;      !
-   ! closed output records are queued in the polygon's buffers.                                     !
+   ! closed output records are queued in the polygon's buffers, `out_bufs`.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine polygon_step(cfg, met_src, out_files, poly, prev, now, step_days, is_new_month,        &
-                           is_new_year, status)
-      type(meds_config_t),   intent(in)    :: cfg
-      type(met_source_t),    intent(in)    :: met_src
-      type(output_files_t),  intent(in)    :: out_files
-      type(meds_polygon_t),  intent(inout) :: poly
+   subroutine polygon_step(cfg, met_src, out_files, out_bufs, poly, prev, now, step_days,           &
+                           is_new_month, is_new_year, status)
+      type(meds_config_t),    intent(in)    :: cfg
+      type(met_source_t),     intent(in)    :: met_src
+      type(output_files_t),   intent(in)    :: out_files
+      type(output_buffers_t), intent(inout) :: out_bufs   !< this polygon's share of out_files
+      type(meds_polygon_t),   intent(inout) :: poly
       type(meds_time_t),     intent(in)    :: prev, now
       integer(ik),           intent(in)    :: step_days
       logical,               intent(in)    :: is_new_month, is_new_year
@@ -177,7 +183,7 @@ contains
       if (allocated(poly%detail_bufs)) then
          call stepper(poly%detail_bufs)
       else
-         call stepper(poly%out_bufs)
+         call stepper(out_bufs)
       end if
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
@@ -193,7 +199,7 @@ contains
       !      to `now` and its post-dynamics state at `now` -- into the slower tiers' windows that   !
       !      hold `prev`, closing each period `now` has left and queueing it for the I/O phase. ----!
       is_new_day = is_new_month .or. (now%day /= prev%day)
-      if (out_files%enabled) call tick_output(out_files, poly%out_bufs)
+      if (out_files%enabled) call tick_output(out_files, out_bufs)
       if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
 
       !----- The step's diagnostics are read: zero them for the next window. If the step ended on a  !

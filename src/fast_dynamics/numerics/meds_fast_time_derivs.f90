@@ -371,7 +371,8 @@ contains
       !      -- rather than from qface_own, so that swapping the argument above to some other array    !
       !      changes this too and the check keeps its meaning instead of becoming a tautology. --------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
-      call soil_energy_time_deriv(soil_e, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, f%dedt)
+      call soil_energy_time_deriv(soil_e, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, &
+                                  f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !
       !      transpiration demand out -- see the header. transp_i mirrors exactly the conversion the    !

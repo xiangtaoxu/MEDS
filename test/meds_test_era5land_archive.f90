@@ -2,9 +2,10 @@
 !==========================================================================================!
 ! meds_test_era5land_archive -- a tiny synthetic ED_ERA5land archive for the tests, written       !
 ! through the netCDF C API: a 4 x 18 grid (10 deg x 20 deg) spanning the antimeridian and two     !
-! 16-cell chunk columns wide, every month of 2021, two no-data cells, a mostly-water column, and    !
-! values that are analytic functions of cell and hour, so every check has a known answer. Shared   !
-! by test_met_era5land (the reader) and test_region (a region against site runs).                 !
+! 16-cell chunk columns wide, every month of 2021 and January 2022 (so a recycle window may start  !
+! after January 1st), two no-data cells, a mostly-water column, and values that are analytic       !
+! functions of cell and hour, so every check has a known answer. Shared by test_met_era5land (the  !
+! reader) and test_region (a region against site runs).                                            !
 !==========================================================================================!
 module meds_test_era5land_archive
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
@@ -75,8 +76,11 @@ contains
       call write_static(dir//'/static_allvalid.nc', .true.)
       do m = 1_ik, 12_ik
          do v = 1_ik, ERA_NVAR
-            call write_month(dir, v, m)
+            call write_month(dir, v, 2021_ik, m)
          end do
+      end do
+      do v = 1_ik, ERA_NVAR
+         call write_month(dir, v, 2022_ik, 1_ik)
       end do
    end subroutine write_archive
 
@@ -136,9 +140,9 @@ contains
       st = nc_close(ncid) ; call nc_check(st, 'close static')
    end subroutine write_static
 
-   subroutine write_month(dir, v, m)
+   subroutine write_month(dir, v, y, m)
       character(len=*), intent(in) :: dir
-      integer(ik),      intent(in) :: v, m
+      integer(ik),      intent(in) :: v, y, m
       character(len=:), allocatable :: path
       integer(c_int)    :: st, ncid, dt, dla, dlo, vt, vx, dims1(1), dims3(3)
       integer(c_size_t) :: start1(1), count1(1), start3(3), count3(3)
@@ -146,9 +150,9 @@ contains
       real(c_double) :: nan
       integer(ik) :: nt, g0, h, r, c
       nan = ieee_value(0.0_c_double, ieee_quiet_nan)
-      nt = era5land_month_hours(2021_ik, m)
-      g0 = hour_index(meds_time_t(2021_ik, m, 1_ik, 1_ik))
-      path = trim(era5land_path(era5land_default_template(), dir, ERA_VAR_NAME(v), 2021_ik, m))
+      nt = era5land_month_hours(y, m)
+      g0 = hour_index(meds_time_t(y, m, 1_ik, 1_ik))
+      path = trim(era5land_path(era5land_default_template(), dir, ERA_VAR_NAME(v), y, m))
       st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st, 'create '//path)
       st = nc_def_dim_f(ncid, 'time', int(nt, c_size_t), dt) ; call nc_check(st, 'def time dim')
       call define_grid(ncid, dla, dlo)

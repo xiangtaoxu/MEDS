@@ -46,19 +46,21 @@ same output stream, not three separate studies:
 | Plant hydraulics | matrix-exponential network solve, multi-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
 | Soil water | implicit Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
 | Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
-| Meteorological forcing | interval-mean-conserving disaggregation; never gap-fills | [forcing](docs/science/forcing.md) |
+| Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
+| Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |
 | Phenology | rate-based signal kernel: cues → flush and shed tendencies | [plant_phenology](docs/science/plant_phenology.md) |
 | Carbon allocation | daily FATES PARTEH-H1 priority ladder | [plant_carbon_allocation](docs/science/plant_carbon_allocation.md) |
 | Respiration | leaf, stem and fine-root maintenance; growth charged on realized growth | [plant_respiration](docs/science/plant_respiration.md) |
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |
 | Demography | cohort and patch fusion/fission, treefall disturbance, wood-density PFT axis | [ed2_comparison](docs/ed2_comparison.md) |
 | Time integration | ESDIRK2 by default, adaptive Cash-Karp RK45 as the accuracy baseline | [numerical_scheme](docs/science/numerical_scheme.md) |
-| Output | ~208 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
+| Output | 252 variables, 7 axes, individually switchable per timescale | [diagnostics](docs/science/diagnostics.md) |
+| Regional runs | every cell of a box of the ERA5-Land grid as its own polygon, in one process | [configuration](docs/configuration.md#regional-runs) |
 
 Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
 threaded and the output is byte-identical at any thread count.
 
-**Status: v0.2.0, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
+**Status: v0.3.0, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
 been compared flux-for-flux, and no output has been scored against observations. What is verified is
 internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
 Treat the numbers a MEDS run produces as a working model's numbers.
@@ -118,6 +120,6 @@ the parallel builds and three compiler traps that cost real time, are in
 ## License
 
 MEDS is released under the [Apache License 2.0](LICENSE), and the license also covers every earlier
-release, v0.1.0 through v0.2.1. [`NOTICE`](NOTICE) carries the copyright notice and the attribution
+release, v0.1.0 through v0.2.2. [`NOTICE`](NOTICE) carries the copyright notice and the attribution
 to ED2, from which parts of MEDS are adapted, and [`AUTHORS`](AUTHORS) lists the copyright holders.
 Contributions are welcome under the same license; see [`CONTRIBUTING.md`](CONTRIBUTING.md).

@@ -600,11 +600,12 @@ contains
       !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
       !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
       call assign_patch_id(site, newp)
-      !----- The gap's diagnostics: its ground was donor ground for the whole step (every fast       !
-      !      sub-step, and every slow row written before the disturbance), so it inherits the        !
-      !      donors' slot blended by area, as its reservoirs above inherit their state. Every        !
-      !      donor lost the same fraction, so their current areas give the same blend as their       !
-      !      original ones.                                                                          !
+      !----- The gap's diagnostics: it inherits the donors' slots blended by area, as its reservoirs !
+      !      above inherit their state, so the stand total Sum(area * v) is unchanged by the carving.  !
+      !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
+      !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
+      !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
+      !      the same blend as their original ones.                                                   !
       call patch_diag_grow(site%patch%diag, newp)
       call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n

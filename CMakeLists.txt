@@ -11,10 +11,10 @@
 # viable as scoped: measured, the offload build runs 1.4x SLOWER than the CPU (49.8 s against  #
 # 36.2 s), one kernel sits at 0.4% occupancy, and the device treated as 20 slow cores is 26x   #
 # slower than 4 CPU cores. MEDS_GPU=gpu is kept as a reproducible experiment, not a fast path. #
-# See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
+# See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md. (#194)                                    #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.2.2 LANGUAGES Fortran
+project(MEDS VERSION 0.3.0 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -349,12 +349,12 @@ meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
-#----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
-#      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
-#      it has two callers: the executable below, and the C-API shim src/c_api/meds_c_api_run.f90   #
-#      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
-#      it is the one place that owns configuration, the calendar, the output manager and the       #
-#      closing conservation reports together.                                                      #
+#----- The coupled model as OPEN / STEP / FINALIZE objects: one polygon's state and step           #
+#      (meds_polygon), the site run (meds_driver) and the region run (meds_region). A LIBRARY       #
+#      rather than part of the program because it has two callers: the executable below, and the  #
+#      C-API shim src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It  #
+#      sits above meds_model + the IO layer -- the one place that owns configuration, the          #
+#      calendar, the output files and the closing conservation reports together.                   #
 add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)

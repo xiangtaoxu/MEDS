@@ -458,20 +458,27 @@ contains
    !=======================================================================================!
    !  REGION files (MEDS_POLYGON_RUNTIME_PLAN.md §6): one file per tier per time chunk for all     !
    !  polygons, with a `polygon` dimension after `time`. Record i of tier t is the same closed      !
-   !  period in every polygon's buffers (all polygons step the same calendar); each variable is    !
-   !  packed from them into one region-wide array and written with ONE hyperslab. A polygon's slice !
-   !  holds exactly what its single-site file would: the slab entries past its live length, which  !
-   !  the site writer leaves unwritten, carry the fill value here too.                             !
+   !  period in the buffers of every polygon that holds it (all polygons step the same calendar);   !
+   !  each variable is packed from them into one region-wide array and written with ONE hyperslab.  !
+   !  A polygon's slice holds exactly what its single-site file would: the slab entries past its    !
+   !  live length, which the site writer leaves unwritten, carry the fill value here too, and so    !
+   !  does the whole slice of a polygon that does not hold record i (it failed earlier this month). !
    !=======================================================================================!
    subroutine region_write_record(files, bufs, t, i)
       type(output_files_t),  intent(inout) :: files
       type(output_buffers_t), intent(in)    :: bufs(:)
       integer(ik),           intent(in)    :: t, i
-      integer(ik) :: bucket, np, p
+      integer(ik) :: bucket, np, p, p1
       np = size(bufs, kind=ik)
       if (np /= files%n_polygon) error stop 'region_write_record: one set of buffers per polygon of the region'
-      associate (r1 => bufs(1)%queue(t)%rec(i))
-         do p = 2_ik, np
+      p1 = 1_ik
+      do while (bufs(p1)%queue(t)%n < i)
+         p1 = p1 + 1_ik
+         if (p1 > np) error stop 'region_write_record: no polygon holds the record'
+      end do
+      associate (r1 => bufs(p1)%queue(t)%rec(i))
+         do p = p1 + 1_ik, np
+            if (bufs(p)%queue(t)%n < i) cycle
             if (.not. same_time(bufs(p)%queue(t)%rec(i)%t_open, r1%t_open))                     &
                error stop 'region_write_record: the polygons'' records are not the same period'
          end do
@@ -481,7 +488,7 @@ contains
             call region_open_file(files, t, r1, bucket)
          end if
       end associate
-      call region_write_one(files, bufs, t, i)
+      call region_write_one(files, bufs, t, i, p1)
       if (files%sync_every == SYNC_FLUSH) call nc_check(nc_sync(int(files%stream(t)%ncid, c_int)), 'nc_sync')
    end subroutine region_write_record
 
@@ -642,17 +649,18 @@ contains
       end associate
    end subroutine region_open_file
 
-   !----- Append record i of tier t: the calendar, then each variable packed over the polygons. ---!
-   subroutine region_write_one(files, bufs, t, i)
+   !----- Append record i of tier t: the calendar, from polygon p1, the first that holds the record, !
+   !      then each variable packed over the polygons, the fill value for one that does not. -------!
+   subroutine region_write_one(files, bufs, t, i, p1)
       type(output_files_t),  intent(inout) :: files
       type(output_buffers_t), intent(in)    :: bufs(:)
-      integer(ik),           intent(in)    :: t, i
+      integer(ik),           intent(in)    :: t, i, p1
       integer(c_int)    :: ncid
       integer(c_size_t) :: t0, i1(1), s2(2), c2(2), s3(3), c3(3)
       integer(ik)       :: j, k, np, p, n, ns, c, m
       real(c_double),  allocatable :: x1(:), x2(:,:)
       integer(c_int),  allocatable :: k1(:), k2(:,:)
-      associate (stream => files%stream(t), reg => files%reg, r1 => bufs(1)%queue(t)%rec(i))
+      associate (stream => files%stream(t), reg => files%reg, r1 => bufs(p1)%queue(t)%rec(i))
       ncid = int(stream%ncid, c_int)
       t0 = int(stream%nrec, c_size_t) ; i1 = [t0]
       np = size(bufs, kind=ik)
@@ -665,15 +673,17 @@ contains
          if (reg%var(k)%dim == DIM_SCALAR) then
             s2 = [t0, 0_c_size_t] ; c2 = [1_c_size_t, int(np, c_size_t)]
             if (reg%var(k)%xtype == XTYPE_INT) then
-               allocate(k1(np))
+               allocate(k1(np)) ; k1 = int(MISSING_INT, c_int)
                do p = 1_ik, np
+                  if (bufs(p)%queue(t)%n < i) cycle
                   k1(p) = real_to_int(bufs(p)%queue(t)%rec(i)%sval(k), bufs(p)%queue(t)%rec(i)%svalid(k))
                end do
                call nc_check(nc_put_vara_int(ncid, int(stream%vid(k), c_int), s2, c2, k1), 'put '//trim(reg%var(k)%name))
                deallocate(k1)
             else
-               allocate(x1(np))
+               allocate(x1(np)) ; x1 = real(MISSING_VALUE, c_double)
                do p = 1_ik, np
+                  if (bufs(p)%queue(t)%n < i) cycle
                   x1(p) = bufs(p)%queue(t)%rec(i)%sval(k)
                end do
                call nc_check(nc_put_vara_double(ncid, int(stream%vid(k), c_int), s2, c2, x1), 'put '//trim(reg%var(k)%name))
@@ -689,6 +699,7 @@ contains
             if (reg%var(k)%xtype == XTYPE_INT) then
                allocate(k2(n, np)) ; k2 = int(MISSING_INT, c_int)
                do p = 1_ik, np
+                  if (bufs(p)%queue(t)%n < i) cycle
                   associate (r => bufs(p)%queue(t)%rec(i))
                      ns = min(r%nslab(k), n) ; c = slab_col(r, k)
                      do m = 1_ik, ns
@@ -701,6 +712,7 @@ contains
             else
                allocate(x2(n, np)) ; x2 = real(MISSING_VALUE, c_double)
                do p = 1_ik, np
+                  if (bufs(p)%queue(t)%n < i) cycle
                   associate (r => bufs(p)%queue(t)%rec(i))
                      ns = min(r%nslab(k), n) ; c = slab_col(r, k)
                      if (ns > 0_ik) x2(1:ns, p) = r%slab(1:ns, c)
