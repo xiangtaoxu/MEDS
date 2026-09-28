@@ -118,8 +118,8 @@ falls back to near-bare ground with a warning.
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
 
-- **Diagnostic timeseries** — the `[output]` subsystem. Around 208 variables across 8 groups and
-  7 axes, each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
+- **Diagnostic timeseries** — the `[output]` subsystem. 252 variables across 9 groups and 7 axes,
+  each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
   `meds_main --dump-io-config` to generate a file listing every available variable name; the
   override mechanism always worked, what was missing was any way to learn what exists.
   See [`science/diagnostics.md`](science/diagnostics.md).
@@ -134,10 +134,9 @@ a mean.
 
 > **`[io]` was renamed to `[state]`.** The block was named for a legacy diagnostic writer that was
 > retired at v0.1; what remained was the restart stream, so `io` named the one output path it did
-> *not* cover. The old spelling still loads in v0.2.x and prints one deprecation warning naming the
-> keys; `io.state_interval_years` becomes `state.interval_years` (the `state_` prefix was stuttering
-> once the block itself was called `state`). It will be removed in a later release — a 0.x minor is
-> the cheapest moment a rename like this will ever have.
+> *not* cover. The old spelling still loads and prints one deprecation warning naming the keys;
+> `io.state_interval_years` becomes `state.interval_years` (the `state_` prefix was stuttering once
+> the block itself was called `state`). Its removal is #309.
 
 ## The forcing file
 
@@ -223,8 +222,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   single-site files named `<prefix>-p<polygon id>-...`.
 - **Rules.** A region needs `[forcing].format = "era5land"` with forcing and the fast loop on. It
   takes its locations from its cells, so `[site].latitude`, `longitude`, `utc_offset`, `elevation`
-  and `[forcing].max_distance_km` are refused; the rest of `[site]` (reference heights, profile and
-  lapse switches) still applies. Until restarts of regions exist, a region starts from bare ground
+  and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
+  rates, still applies. Until restarts of regions exist, a region starts from bare ground
   (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
   thread without the fast probe. A region loads each month's forcing once, before the month, so a
   recycle window must start at 00:00 or 01:00 on the 1st of a month.

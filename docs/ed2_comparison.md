@@ -1,19 +1,25 @@
-# MEDS v0.2.0, for people who use ED2
+# MEDS v0.3.0, for people who use ED2
 
 MEDS is a ground-up reimplementation of [ED2](https://github.com/EDmodel/ED2) in Fortran 2018. If you
 already run ED2, this page tells you what carried over, what changed, what is missing, and what a MEDS
 run costs you to set up.
 
-**Reference points.** MEDS at tag `v0.2.0`; ED2 mainline at commit `125f814d` (ED-2.2). ED2
+**Reference points.** MEDS at tag `v0.3.0`; ED2 mainline at commit `125f814d` (ED-2.2). ED2
 options are named by their `ED2IN` namelist key, and "ED2 default" means the value in the shipped
 `ED/run/ED2IN`.
 
 **If you read the v0.1.0 version of this page, start at [§0](#0-what-changed-since-v010).** v0.2.0
 moved real numbers, and one of the things it changed is that phenology now runs at all.
 
+**What v0.3.0 adds** (the CHANGELOG has the numbers): **regional runs**, every cell of a box of the
+ERA5-Land grid as its own polygon in one process; a reader for a global **ERA5-Land archive**; the
+forcing moved from its own heights to each patch's **canopy-air top**, with an optional terrain lapse;
+**prescribed CO₂** from a file, on model time; and fixes that move numbers, of which the largest is a
+closed whole-column energy ledger under the Dirichlet soil base.
+
 **One thing to establish up front: MEDS has not been benchmarked against ED2.** No EDTS-equivalent
 regression suite has been run, no site has been compared flux-for-flux, and no output of any kind has
-been scored against observations. What has been verified is internal — 38 unit tests on two compilers,
+been scored against observations. What has been verified is internal — 53 unit tests on two compilers,
 per-step conservation ledgers, and thread-invariant output. Everything below describes *what the code
 does*, not *how well it does it*. Treat the numbers a MEDS run produces as a working model's numbers.
 
@@ -59,8 +65,9 @@ allometry, ED2's negative-*z* soil geometry, Chambers-2004 stem respiration.
 
 **What is different, in one sentence each.**
 
-- **Scope is much narrower.** One site, one soil column, no fire, no land use or harvest, no nitrogen,
-  no MPI, no gridded/regional runs. MEDS v0.2 is a site model.
+- **Scope is much narrower.** One soil column per patch, no fire, no land use or harvest, no nitrogen,
+  no MPI. A run is one site, or a region of independent polygons on the ERA5-Land grid (one site each,
+  in one process, from bare ground).
 - **Options are decisions, not switches.** ED2 exposes ~40 scheme selectors (`ICANRAD`, `IPHEN_SCHEME`,
   `IALLOM`, `DECOMP_SCHEME`, …), most with legacy and beta branches. MEDS mostly implements one path —
   usually ED2's default or its best-supported alternative — and deletes the rest. Where MEDS keeps a
@@ -78,7 +85,7 @@ allometry, ED2's negative-*z* soil geometry, Chambers-2004 stem respiration.
 - **Configuration and output are wholly rebuilt.** TOML instead of `ED2IN` + XML; netCDF instead of
   HDF5; and roughly 200 output variables individually switchable per timescale rather than a fixed
   schema gated by frequency flags.
-- **The code is unit-tested and thread-deterministic.** 49 CTest targets on two compilers; output
+- **The code is unit-tested and thread-deterministic.** 53 CTest targets on two compilers; output
   byte-identical at any OpenMP thread count.
 
 **Who should look at it.** If you need fire, land use, a nitrogen cycle, regional runs, or the ED2
@@ -96,9 +103,9 @@ Read the notes column — that is where the qualifications live.
 
 ### 2.1 Structure and demography
 
-| | MEDS v0.2.0 | ED2 (ED-2.2) | Notes |
+| | MEDS v0.3.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
-| **State hierarchy** | site → patch → cohort | grid → polygon → site → patch → cohort | MEDS drops the grid/polygon levels and supports one site. State is a flat site-wide Structure-of-Arrays with a CSR patch map, not nested ragged arrays. |
+| **State hierarchy** | polygon → site → patch → cohort, one site per polygon | grid → polygon → site → patch → cohort | MEDS drops the grid level: a region is N polygons on the ERA5-Land grid, each stepped on its own, and a site run is one. State is a flat site-wide Structure-of-Arrays with a CSR patch map, not nested ragged arrays. |
 | **PFTs** | Run-time count; every trait supplied from a TOML file. No built-in table. | 17 hard-coded PFTs with defaults in `ed_params.f90`, overridable by XML. | MEDS has **no PFT defaults at all** — a missing key is a hard error. That is a deliberate trade: no hidden parameterisation, but no curated ED2 PFT set to inherit either. The shipped example uses three PFTs contrasted along wood density. |
 | **Allometry** | Pan-tropical, ED2 `IALLOM = 3` | `IALLOM` 0–4, default 3 | Same family. MEDS additionally inverts AGB→DBH for fusion. |
 | **Cohort fusion / fission** | Keys on height similarity + an LAI cap; conserves per-plant AGB (DBH re-derived, never averaged) and plant number | `fuse_fiss_utils.f90`, `MAXCOHORT` target with tolerance relaxation | Same idea, different similarity metric. MEDS asserts the conservation invariants at 1% and `error stop`s otherwise. |
@@ -110,7 +117,7 @@ Read the notes column — that is where the qualifications live.
 
 ### 2.2 Plant physiology
 
-| | MEDS v0.2.0 | ED2 (ED-2.2) | Notes |
+| | MEDS v0.3.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
 | **Photosynthesis** | FvCB (C3) with Rubisco / RuBP-regeneration / TPU limitation; Collatz (C4). Arrhenius or peaked temperature response. C3 and C4 carry **separate co-limitation curvatures** (`theta_cj_c3` 0.98 / `theta_ip_c3` 0.95) | `IPHYSIOL` 0–3; default 2 (Collatz Q10 with Moorcroft high/low-T corrections). Options 1 and 3 add Jmax and TPU | MEDS is closest to `IPHYSIOL = 3` in structure (explicit Jmax + TPU) but exposes the temperature response as a per-trait choice rather than a bundled scheme number. The C3 curvatures were C4's until v0.2.0; giving C3 its own moved leaf A **+22.4%** and coupled GPP **+18.4%**. |
 | **Thermal acclimation** | Kattge & Knorr 2007: entropy terms and the Jmax:Vcmax ratio track a 30-day running mean growth temperature. **Opt-in, default off** | `IPHYSIOL` has no acclimation; `TRAIT_PLASTICITY_SCHEME` acclimates to *light*, not temperature | New in v0.2.0. Vcmax optimum moves 28.2 → 35.0 °C over a 20 K growth range. Coupled GPP **+42.8%** when enabled — and two thirds of that is the **Jmax:Vcmax ratio**, which K&K puts at 2.24 at Ithaca's growth temperature against the PFT file's fixed 1.7. Requires the peaked temperature response. |
@@ -146,7 +153,7 @@ closed before they landed. Turning any of them on is a decision to leave the shi
 
 ### 2.3 Biophysics
 
-| | MEDS v0.2.0 | ED2 (ED-2.2) | Notes |
+| | MEDS v0.3.0 | ED2 (ED-2.2) | Notes |
 |---|---|---|---|
 | **Canopy radiative transfer** | Two-stream, multi-layer, one solver run per band (VIS, NIR, thermal LW); Beta leaf-angle distribution; absolute W m⁻² throughout | `ICANRAD` 0/1/2, default 2 (Liou two-stream) | Ported from `twostream_rad.f90`. MEDS generalises the band loop and drops ED2's normalise-to-unit-incidence convention. No horizontal shading (`IHRZRAD`), no finite crown radius (`CROWN_MOD`). |
 | **Canopy turbulence** | CLM5 Monin–Obukhov surface layer + per-cohort exponential wind extinction + ED2 Nusselt leaf/wood boundary layers + CLM ground conductance | `ICANTURB` 0–4, default 2 (Massman 1997); `ISFCLYRM` 1–4, default 3 (Beljaars–Holtslag) | MEDS's combination is closest to ED2's `ICANTURB = 4` / `ISFCLYRM = 4` (the CLM-based branches), not to the ED2 defaults. |
@@ -193,7 +200,7 @@ page — *conservation is not stability*, and it applies to any model with this 
 
 ### 3.2 Integrators
 
-| | MEDS v0.2.0 | ED2 (ED-2.2) |
+| | MEDS v0.3.0 | ED2 (ED-2.2) |
 |---|---|---|
 | **Default** | `ark` — a 2-stage, second-order, **L-stable ESDIRK2** implicit scheme with an embedded error estimate and adaptive sub-stepping inside each `dt_fast` | `INTEGRATION_SCHEME = 1` — **fourth-order Runge–Kutta**, adaptive, `RK4_TOLERANCE = 0.01` |
 | **Alternative** | `rk45` — adaptive explicit **Cash–Karp 5(4)** over the whole column state, kept as the accuracy baseline and the closest analogue of ED2's RK4 | `0` Euler (`NSUB_EULER`), `2` Heun, `3` hybrid (BDF2 implicit canopy + explicit rest) |
@@ -259,8 +266,8 @@ MEDS threads the patch axis with OpenMP (opt-in at both build and run time), and
 byte-identical at any thread count** — site accumulators are staged per (sub-step, patch) and folded
 back in patch order rather than by `reduction(+:)`, so the last bits do not drift with thread
 scheduling. The hot demographic kernel carries OpenMP `target` regions and runs on GPU under
-nvfortran. There is **no MPI**; ED2's polygon-parallel decomposition has no counterpart because MEDS
-runs one site.
+nvfortran. There is **no MPI**: a region's polygons run one after another in one process, and a
+larger domain is split into boxes run as separate jobs.
 
 Measured on a 50-year forced spin-up: ~2.0× on 4 cores, which is ~67% of that machine's *measured*
 4-core aggregate throughput (3.03×, not 4× — turbo and shared cache). Speedup is bounded by patch
@@ -318,7 +325,7 @@ simplification; for anything regional it is a wall.
 | Multi-year cycling | Calendar recycling with Feb-29 reconciliation, day-of-year exact | `METCYC1` / `METCYCF`, `ISHUFFLE` |
 | Preparation | ERA5-Land tools in `scripts/prepare_era5/` | Community drivers in ED2 format |
 | Downwelling longwave | From the file, or **synthesized** (Brutsaert clear-sky + an Idso-style cloud correction driven by a clearness index) | Required in the driver |
-| CO₂ | Constant from config, or from the forcing file; echoed into the output | `INITIAL_CO2` or from the driver |
+| CO₂ | A constant (`co2_const`), or a prescribed series (`co2_file`; the CMIP7 global annual means ship) read on model time, so it keeps rising under recycled met; never from the met file. Echoed into the output | `INITIAL_CO2` or from the driver |
 
 The no-gap-filling policy is deliberate and will reject forcing files ED2 would happily run.
 
@@ -360,11 +367,11 @@ stream**, because a window longer than a month would straddle the disturbance re
 | | MEDS | ED2 |
 |---|---|---|
 | Build | CMake ≥ 3.20, automatic Fortran module dependency resolution | `make` with per-platform `include.mk`; the well-known "run make six times" pattern |
-| Compilers | ifx and nvfortran verified each release; gfortran supported | gfortran, ifort, others |
+| Compilers | ifx and gfortran verified for v0.3.0; nvfortran is the multicore back end | gfortran, ifort, others |
 | Dependencies | netCDF-C (mandatory) | HDF5, optionally MPI |
-| Tests | 49 CTest targets, run on both compilers, Release and Debug | `EDTS` regression suite comparing whole-model output |
+| Tests | 53 CTest targets, run on both compilers, Release and Debug | `EDTS` regression suite comparing whole-model output |
 | Parallelism | OpenMP over patches, bit-identical at any thread count. (GPU offload exists and is measured 1.4× *slower* than the CPU.) | MPI over polygons + OpenMP within a rank |
-| Scale | One site | Single points, regional grids, or coupled to BRAMS |
+| Scale | One site, or a region of polygons in one process | Single points, regional grids, or coupled to BRAMS |
 
 MEDS has no equivalent of EDTS. That is the gap behind the "not benchmarked" caveat at the top of
 this page, and closing it is the obvious next piece of work.
@@ -375,7 +382,7 @@ this page, and closing it is the obvious next piece of work.
 
 - Fire (`INCLUDE_FIRE`), land use and logging (`IANTH_DISTURB`, `SL_*`, `CL_*`)
 - Nitrogen limitation (`N_PLANT_LIM`, `N_DECOMP_LIM`)
-- Multiple sites per polygon, multiple polygons, regional grids, MPI
+- Multiple sites per polygon, MPI, restarts of regional runs
 - Map-database initialization and soil texture classes / pedotransfer functions
 - Prescribed phenology from files (`IPHEN_SCHEME = 1`)
 - Frost mortality and explicit hydraulic-failure mortality

@@ -3,7 +3,7 @@
 This page is the map: which process runs when, and what each one sees. The other science pages
 give each process's equations; this one gives their sequence. Three clocks nest:
 
-- a **fast sub-step** `dt_fast` (default 900 s) advances the surface column: canopy air, leaves and
+- a **fast sub-step** `dt_fast` (900 s in the shipped configs) advances the surface column: canopy air, leaves and
   wood, soil and snow;
 - a **slow step** `dt_slow` (one day) runs `n_fast_per_slow` fast sub-steps, then the vegetation and
   soil-carbon dynamics, then the output;
@@ -17,14 +17,14 @@ same way ([§1](#1-a-run)).
 
 ## 1. A run
 
-**Setup** (`driver_init`):
+**Setup** (`driver_open`):
 
 1. Read the configuration.
 2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A restart
    also restores the calendar date and any restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
 3. Open the forcing source. Prepare the polygon: the fast context, the forcing cursor, and the fast
-   reservoirs (unless the restart restored them); the initial snow; the steady-state soil carbon
-   (unless restored); and the slow ledger.
+   reservoirs (unless the restart restored them); the initial snow; the canopy-air depth, from the
+   stand; the steady-state soil carbon (unless restored); and the slow ledger.
 4. Open the state (restart) stream and the output manager.
 
 **The loop.** Until `end_time`, each `driver_step`:
@@ -164,7 +164,8 @@ it.
 
 A slow step whose end `now` lies in a new month leaves the stand's restructuring **owed**. The next
 step performs it first, before its fast loop (`advance_boundary` → `restructure_stand`). Between the
-two steps sit the output tick, the I/O phase and any checkpoint.
+two steps sit the output tick, the I/O phase and any checkpoint. The restructuring runs only with
+`[run].slow_on` (the master freeze of the slow tier), and each operator has its own switch besides.
 
 **At every month boundary** (`demography_on` and `do_cohort_fissfuse`), in order:
 1. recruitment from the recruit pools;
@@ -207,7 +208,8 @@ Three consequences:
   period in a queue. No netCDF call is made inside a step.
 - **The I/O phase** runs at each month boundary, after the step and before the next one:
   - it writes the queued records;
-  - every `[state].interval_years`, it writes the checkpoint at the year boundary.
+  - in a site run, every `[state].interval_years`, it writes the checkpoint at the year boundary
+    (a region writes none until its restarts exist).
 
   The terminal checkpoint is written at the end of the run.
 
@@ -217,7 +219,7 @@ Three consequences:
 
 | Stage | Routine | Module |
 |---|---|---|
-| run setup, loop, finish | `driver_init`, `driver_step`, `driver_io_phase`, `driver_finalize` | `meds_driver` |
+| run setup, loop, finish | `driver_open`, `driver_step`, `driver_io_phase`, `driver_finalize` | `meds_driver` |
 | region month | `region_step_month`, `io_phase` | `meds_region` |
 | one slow step | `polygon_step` | `meds_polygon` |
 | fast loop + slow dynamics | `advance_one_step` | `meds_stepper` |
