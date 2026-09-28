@@ -1,5 +1,20 @@
 # MEDS Slow-Timescale Biogeochemistry — Design Document
 
+> # 🗃️ ARCHIVED — 2026-09-28. P0 and P3 shipped; the rest is issues.
+>
+> **What shipped:** the pools, the CENTURY matrix, EXPM and SASU (PR #35); per-patch state, the
+> `[soil_carbon]` block, the restart, and the litter → daily step → fast-Rh seam (PR #64); the
+> `soil_carbon_on` default (#143); the Λ and lignin audits (#141).
+>
+> **Deleted:** the DAMM kernel, unreachable (#153; it survives on branch `archive/damm-hr`).
+>
+> **Deferred, with issues:** nitrogen (#154), vertically resolved pools (#155), coarse woody debris
+> (#156), fire (#157) — ROADMAP §3.
+>
+> **The live description** is `docs/science/soil_carbon.md` and `src/slow_dynamics/soil/README.md`.
+> **Do not trust** the §5.1 and §10 paths, §9's "Ra is still 0", or §7's P1 "DAMM (already in
+> `meds_column_co2`)". The status header below is the 2026-09-13 one.
+
 > # ✅ LIVE — status reviewed 2026-09-13.
 >
 > **P0 shipped** (PR #35, 2026-07-08) and **P3 shipped** (PR #64, 2026-07-22: per-patch state, the

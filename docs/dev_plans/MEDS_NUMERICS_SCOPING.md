@@ -17,8 +17,10 @@
 > **Three items it lists as remaining have closed:** the transpiration ↔ uptake gap (PR #91's
 > corrector), the L-stable midpoint predictor (superseded), and the ARK snow guard (PRs #77/#80).
 >
-> **Still open:** MB2 soil-energy substepping, the §11.3 bare-array conversions, and the §8b
-> "enforce conservation everywhere" sweep — `docs/ROADMAP.md` §4.
+> **Closed since** (header refreshed 2026-09-28): MB2 soil-energy substepping (#163, its knobs deleted)
+> and the §11.3 bare-array conversions (#164, closed with its premise measured false). The §8b
+> "enforce conservation everywhere" sweep was never filed; its nearest descendants are #189 (per-layer
+> face budgets) and the bottom-face ledger fix of #290. Nothing listed here remains open.
 >
 > Module paths below predate the 2026-09 reorganization.
 

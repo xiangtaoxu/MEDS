@@ -1,5 +1,16 @@
 # MEDS source-tree structure — decisions, rules, and what is left
 
+> # 📚 REFERENCE — status refreshed 2026-09-28. §15 is closed; the decisions and rules stay cited.
+>
+> **§15 is closed:** Phase 1 (#141), Phase 2 (#143, #145 → #254), Phase 3 (#201, delivered as
+> `MEDS_FROZEN_SEAM_CONTRACT.md`), Phase 4 (#147 → #146), Phase 5 (→ #188, #189, #190), Phase 6
+> (#191, `meds_test_assert.f90`). Decision #13 was reversed (#193: `test/` is flat).
+>
+> **What stays live:** the §1 decisions, the §5 straddlers, the §6 placement rules and §7.6 #3–#4,
+> cited by number from ~20 files. **Do not trust** §7.2 (the Python package is `meds.plant`,
+> `meds.demography`, `meds.model`) or decision #13. The live tree is `src/README.md`. The status
+> header below is the 2026-09-13 one.
+
 > # ✅ LIVE — split and status-rewritten 2026-09-13.
 >
 > **Migration steps 0–10 are all merged** (PRs #125, #126, #127, #138, with §15 Phase 1 in #141,
@@ -401,6 +412,8 @@ default that kept PR #139's and PR #140's defects out of every path anyone ran.
 the headline diagnostics), and either a changed default or a recorded decision not to change it.
 
 ### 15.4 Phase 3 — the frozen-seam contract (design only, no code)
+
+> **Delivered (#201):** `MEDS_FROZEN_SEAM_CONTRACT.md`.
 
 The slow→fast seam freezes a slow state across the whole slow step while the fast loop computes
 fluxes from it. That pattern is everywhere in MEDS (`soil_carbon` as a frozen store; `xi_accum` as

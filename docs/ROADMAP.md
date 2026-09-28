@@ -54,7 +54,7 @@ site, under any strategy. That is not a roadmap item with a design — it is the
 
 ## 3. Soil biogeochemistry
 
-Source: `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
+Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
 [`science/soil_carbon.md`](science/soil_carbon.md).
 
 - **The nitrogen twin.** *Planned.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) Shaped in already: `n_cycle_on` is parsed and the N fields
@@ -101,7 +101,7 @@ Source: `docs/dev_plans/MEDS_NUMERICS_SCOPING.md`.
 
 ## 5. Vegetation energy
 
-Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
+Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
 [`science/vegetation_energy_dynamics.md`](science/vegetation_energy_dynamics.md).
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
@@ -217,7 +217,7 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
 
 ## 9. Snow
 
-Source: `docs/dev_plans/MEDS_SNOW_DESIGN.md` §7. Science page:
+Source: `docs/dev_plans/archive/MEDS_SNOW_DESIGN.md` §7. Science page:
 [`science/snow_biophysics.md`](science/snow_biophysics.md).
 
 - **P1 — multi-layer snow.** *Planned.* [#186](https://github.com/xiangtaoxu/MEDS/issues/186) Compaction and densification, an aging albedo, and a
@@ -254,7 +254,7 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 ## 11. Performance
 
-Source: `docs/dev_plans/MEDS_GPU_EVALUATION.md` §12.
+Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 - **Attack the allocator traffic.** *Planned.* [#195](https://github.com/xiangtaoxu/MEDS/issues/195) About 24 % of fast-loop self time is allocator
   work in `build_column_frozen`.

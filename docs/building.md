@@ -109,7 +109,7 @@ the `!$omp` lines are comments without an OpenMP flag.
 model**. The GPU build ran 1.4× slower than the CPU (49.8 s against 36.2 s), with one kernel at
 0.4 % occupancy. `MEDS_GPU=multicore` is useful; `MEDS_GPU=gpu` builds and runs correctly and is
 kept so the offload path does not rot, but it is not a speedup. The measurement and what to do
-instead are in [`dev_plans/MEDS_GPU_EVALUATION.md`](dev_plans/MEDS_GPU_EVALUATION.md).
+instead are in [`dev_plans/archive/MEDS_GPU_EVALUATION.md`](dev_plans/archive/MEDS_GPU_EVALUATION.md).
 
 **Do not use `-stdpar=gpu`.** It forces the global CUDA managed allocator, whose deep copy and
 finalize of the allocatable-component site type double-frees on the host. OpenMP `target` with

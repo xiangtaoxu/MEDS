@@ -1,5 +1,17 @@
 # Vegetation energy: the exact-exponential tissue store
 
+> # 🗃️ ARCHIVED — 2026-09-28, with ⚰️ §9–§11 and §14. The tissue store shipped; the rest is issues.
+>
+> **What shipped:** §1–§8 and §12–§13, the exact-exponential tissue store (2026-07-31), with the
+> scheme selectors deleted. **⚰️ §9–§11 and §14 were overturned the same day** by PR #90: one
+> coefficient, refreshed per stage, and a 900 s default step — the correction header below says how.
+>
+> **Open, with issues:** the canopy-film thermal store (#165) and the free-convection slope (#167) —
+> ROADMAP §5. #166 and #168 closed.
+>
+> **The live description** is `docs/science/vegetation_energy_dynamics.md`; stability by stand height
+> is `docs/science/numerical_scheme.md` §5a′.
+
 > # 📚 REFERENCE with a CORRECTION — 2026-09-13. **§9–§11 and §14 are overturned. Read this first.**
 >
 > **What is sound and is why this file is kept:** §1–§8 and §12–§13, the exact-exponential tissue

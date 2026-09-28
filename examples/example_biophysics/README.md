@@ -226,7 +226,8 @@ measure it yourself.
 The old oscillation is worth remembering even though it is fixed, for one reason: photosynthesis,
 respiration and VPD are all nonlinear in temperature, so by Jensen's inequality a symmetric
 oscillation produces a *biased* carbon balance, not merely a noisy one — daily means do not rescue it,
-and no ledger reports it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
+and no ledger reports it. See `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10 for
+the measurement; the remedy that section proposes was overturned, as its tombstone says.
 
 Then the four figures are built. `python run_example.py --replot` skips the model entirely and
 rebuilds them from existing output; stage 1 is also skipped automatically whenever its state file

@@ -9,10 +9,12 @@
 > **Three things below are stale.** §9's P1 note says the FAST tier is deferred pending a fast-loop
 > restructure — the FAST tier shipped on 2026-07-13 without that restructure. §3.5's variable table
 > is superseded by `MEDS_IO_V01_PLAN.md` §4 and `docs/science/diagnostics.md`: the registry grew
-> from 56 rows to ~208. The P2 asynchronous writer is shelved, not pending —
+> from 56 rows to 252 (v0.3.0). The P2 asynchronous writer is shelved, not pending —
 > `MEDS_IO_V01_PLAN.md` §8 recommends against building it.
 >
-> **Still deferred:** variance output (`AGG_MEANSQ` exists with no consumer) — `docs/ROADMAP.md` §6.
+> **Nothing below is still deferred** (refreshed 2026-09-28): variance output shipped as
+> `AGG_VARIANCE` (#174), and what remains of it — within-step sampling and a skin temperature — is
+> #275. Region files, with a polygon axis, are `MEDS_POLYGON_RUNTIME_PLAN.md` §6.
 >
 > **Reader-facing page:** `docs/science/diagnostics.md`. Module paths below predate the 2026-09
 > reorganization; the netCDF-free half is `meds_io_prep` and the serializer `meds_io_stream`.
@@ -607,7 +609,8 @@ demographic average" problem:
 **before** that month-boundary's fiss/fuse restructures it; the fresh window then integrates the new
 month's (new) slot set. Equivalently: fiss/fuse defines the *start* of a window, never a point inside
 one. (Finer tiers — fast, daily — sit strictly inside a month, so they never straddle a boundary at
-all.) The old §4.4 machinery — id-keyed slabs, the averaged per-id `owner_patch` map, the
+all. How the flush and the restructuring are ordered as built is the "As built (#294)" note at the
+end of this section.) The old §4.4 machinery — id-keyed slabs, the averaged per-id `owner_patch` map, the
 `ragged_avg_alive_only` flag, the mid-window fusion value-discontinuity, and the across-a-window
 cap-overflow policy — is **deleted**: none of it can arise when the window cannot straddle a
 restructuring event. `integrate_slab` folds each live index `i` in `[1:n]` directly into `slab(i)`,

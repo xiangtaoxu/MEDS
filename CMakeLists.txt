@@ -11,7 +11,7 @@
 # viable as scoped: measured, the offload build runs 1.4x SLOWER than the CPU (49.8 s against  #
 # 36.2 s), one kernel sits at 0.4% occupancy, and the device treated as 20 slow cores is 26x   #
 # slower than 4 CPU cores. MEDS_GPU=gpu is kept as a reproducible experiment, not a fast path. #
-# See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
+# See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md. (#194)                                    #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
 project(MEDS VERSION 0.2.2 LANGUAGES Fortran

@@ -91,7 +91,7 @@ what keeps `shared/` from becoming the place a file goes when no other place fit
 `slow_dynamics/{plant,soil}` and `state/column` link only `state_column` and `config`. That is what
 keeps each kernel library building standalone, keeps the kernels eligible for OpenMP `target`
 offload (a portability property worth holding, though offload is not currently a speedup — see
-[`dev_plans/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/MEDS_GPU_EVALUATION.md)), and lets twelve of
+[`dev_plans/archive/MEDS_GPU_EVALUATION.md`](../docs/dev_plans/archive/MEDS_GPU_EVALUATION.md)), and lets twelve of
 the tests link one kernel library alone. It is checked, not assumed:
 there is no occurrence of `site_t` in any of those folders. **If a new routine needs `site_t`, it
 is driver code**, and it belongs in a `driver/` folder.

@@ -1,5 +1,18 @@
 # MEDS on the GPU — an evaluation, MEASURED 2026-08-02
 
+> # 🗃️ ARCHIVED — 2026-09-28. The measurement stands; every recommendation is done, decided or an issue.
+>
+> **Measured** (PR #110): GPU offload ran 1.4× slower than the CPU, one kernel at 0.4 % occupancy,
+> and the GPU used as 20 cores 26× slower.
+>
+> **Done:** BB2/BB3 refuted in `MEDS_NUMERICS_SCOPING.md` §7; the overselling in the build docs and
+> `CLAUDE.md` fixed (#194); `MEDS_GPU=gpu` demoted. **Decided:** `wp` stays `real64` (#197).
+> **Deferred, with issues:** allocator traffic (#195), cohort-axis threading (#196), the `rwc_floor`
+> decision (#104). The regional axis is `MEDS_POLYGON_RUNTIME_PLAN.md` (#183).
+>
+> **The live verdict** is in `docs/building.md` and the `CMakeLists.txt` header. **Do not trust** the
+> §2 counts or the §13 paths. The status header below is the 2026-09-13 one.
+
 > # ✅ LIVE — status reviewed 2026-09-13.
 >
 > **The measurement stands** (PR #110, 2026-08-02): GPU offload is **not viable for the current

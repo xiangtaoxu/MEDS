@@ -1634,7 +1634,7 @@ but uncalibrated, so MEDS ships hydraulically identical PFTs.
   occupancy, and the device treated as 20 slow cores is 26× slower than 4 CPU cores. Patch-axis CPU
   threading is the parallel path. `MEDS_GPU=gpu` is kept as a reproducible experiment.
   `CMakeLists.txt`, `docs/building.md`, `src/README.md` and `docs/ed2_comparison.md` corrected.
-- **A v0.2.0 release plan** in [`docs/dev_plans/MEDS_V02_RELEASE_PLAN.md`](docs/dev_plans/MEDS_V02_RELEASE_PLAN.md):
+- **A v0.2.0 release plan** in [`docs/dev_plans/archive/MEDS_V02_RELEASE_PLAN.md`](docs/dev_plans/archive/MEDS_V02_RELEASE_PLAN.md):
   all 66 open issues triaged into six phases plus release, 48 in scope and 18 deferred to v0.3+,
   with twelve decisions recorded.
 - **The documentation was reorganized against the restructured source tree.** Thirty design
