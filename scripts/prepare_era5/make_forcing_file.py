@@ -16,7 +16,8 @@ Both inputs give the same file (MEDS_FORCING_DESIGN.md §7.1):
   * dims (time, grid); coordinates time (seconds since the first record), latitude, longitude,
     elevation per grid point;
   * Tair [K], PSurf [Pa], Qair [kg/kg] from the dewpoint by the model's own Bolton (1980) saturation
-    form, Wind [m/s] = max(sqrt(u10^2 + v10^2), 0.1) at 10 m, and the hour-mean fluxes Rainf
+    form, the 10 m wind vector u10, v10 [m/s] and its speed Wind = sqrt(u10^2 + v10^2) (the model
+    floors the speed itself, for every source), and the hour-mean fluxes Rainf
     [kg m-2 s-1], SWdown (total; the model partitions it) and LWdown [W m-2];
   * end-stamped hourly records (avg_convention = "end"), UTC.
 No CO2air: CO2 is not meteorology, and the model takes it from [forcing].co2_source (a constant, or
@@ -58,7 +59,6 @@ import era5land_common as common
 
 RHO_W = 1000.0          # [kg/m3] water density (1 m of water = 1000 kg/m2)
 SEC_PER_HOUR = 3600.0
-U_MIN = 0.1             # [m/s] wind floor (M-O similarity stability in the aero kernel)
 EARTH_RADIUS_KM = 6371.0
 
 # ERA5-Land NetCDF variable names in the box files (NOT the GRIB shortnames).
@@ -192,7 +192,7 @@ def from_box_files(args):
         strd_hr = deaccumulate_hourly(data["strd"][:, i, j], hours_utc, clip_negative=False)
         fields.append(dict(
             Tair=t2m, PSurf=sp, Qair=dewpoint_to_specific_humidity(d2m, sp),
-            Wind=np.maximum(np.hypot(u10, v10), U_MIN),
+            u10=u10, v10=v10, Wind=np.hypot(u10, v10),
             Rainf=tp_hr * RHO_W / SEC_PER_HOUR,       # [m/hr] -> [kg/m2/s]
             SWdown=ssrd_hr / SEC_PER_HOUR,            # [J/m2/hr] -> [W/m2] (total; reader partitions)
             LWdown=strd_hr / SEC_PER_HOUR))           # [J/m2/hr] -> [W/m2]
@@ -272,7 +272,7 @@ def from_archive(args):
         s = {n: np.concatenate(series[n][g]) for n in names}
         fields.append(dict(
             Tair=s["Tair"], PSurf=s["PSurf"], Qair=dewpoint_to_specific_humidity(s["Tdew"], s["PSurf"]),
-            Wind=np.maximum(np.hypot(s["u10"], s["v10"]), U_MIN),
+            u10=s["u10"], v10=s["v10"], Wind=np.hypot(s["u10"], s["v10"]),
             Rainf=s["Rainf"], SWdown=s["SWdown"], LWdown=s["LWdown"]))
     grid = [(la, lo, el) for la, lo, el, _, _ in cells]
     with Dataset(common.archive_file(args.data_path, "Tair", first.year, first.month)) as ds:
@@ -350,7 +350,7 @@ def main(argv=None):
     else:
         times, grid, per_cell, source = from_box_files(args)
     ng, nt = len(grid), len(times)
-    names = ["Tair", "Qair", "PSurf", "Wind", "Rainf", "SWdown", "LWdown"]
+    names = ["Tair", "Qair", "PSurf", "u10", "v10", "Wind", "Rainf", "SWdown", "LWdown"]
     arrays = {n: np.column_stack([f[n] for f in per_cell]) for n in names}
 
     # ---- MEDS never gap-fills (design comment 2). Two steps: -----------------------------------
@@ -383,7 +383,9 @@ def main(argv=None):
         "Tair":   ("K",         "air temperature",              "time: point"),
         "Qair":   ("kg kg-1",   "specific humidity",            "time: point"),
         "PSurf":  ("Pa",        "surface pressure",             "time: point"),
-        "Wind":   ("m s-1",     "wind speed",                   "time: point"),
+        "u10":    ("m s-1",     "eastward wind at 10 m",        "time: point"),
+        "v10":    ("m s-1",     "northward wind at 10 m",       "time: point"),
+        "Wind":   ("m s-1",     "wind speed at 10 m",           "time: point"),
         "Rainf":  ("kg m-2 s-1","precipitation rate",           "time: mean"),
         "SWdown": ("W m-2",     "downward shortwave (total)",   "time: mean"),
         "LWdown": ("W m-2",     "downward longwave",            "time: mean"),

@@ -6,7 +6,7 @@ GDEX files or global CDS GRIB files (docs/dev_plans/archive/MEDS_FORCING_DESIGN.
 Output, one file per variable per month, directly in data_path (no subfolders; the name carries the
 variable and month, so a prefix glob selects any subset):
   <data_path>/ED_ERA5land_<Var>_<YYYYMM>.nc
-  dims time (the month's hours) x lat (1801, 90 -> -90) x lon (3600, -180 -> 179.9)
+  dims time (the month's hours) x lat (1801, 90 -> -90) x lon (3600, -179.9 -> 180.0)
   time: end-stamped hourly, 01:00 on the 1st .. 00:00 on the 1st of the next month, seconds since
         1970-01-01 00:00:00 UTC; flux means cover the hour ending at each stamp
   float32, NaN where ERA5-Land has no data; chunks (month length, 16, 16); chunks with no valid cell

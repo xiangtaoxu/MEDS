@@ -1667,7 +1667,7 @@ been written, has passed the gates, and is recorded in the manifest with checksu
 ### 14.2 Layout inside each data file
 
 - **Dimensions:** `time` (the month's hours: 744, 720, 696 or 672), `lat` (1801, 90 → −90) and `lon`
-  (3600, −180 → 179.9).
+  (3600, −179.9 → 180.0).
 - **Coordinates:**
   - `time` holds `seconds since 1970-01-01 00:00:00`;
   - the stamps run from **01:00 on the 1st to 00:00 on the 1st of the next month**, so flux means

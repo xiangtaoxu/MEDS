@@ -3,7 +3,7 @@
 """build_era5land_static.py -- build the ED_ERA5land archive's static file,
 <data_path>/ED_ERA5land_static.nc (docs/dev_plans/archive/MEDS_FORCING_DESIGN.md section 14.3).
 
-Contents, on the regular 0.1 deg grid (lat 90 -> -90, lon -180 -> 179.9):
+Contents, on the regular 0.1 deg grid (lat 90 -> -90, lon -179.9 -> 180.0):
   valid          int8  1 where ERA5-Land supplies data. Taken from the DATA (non-NaN at every hour of
                        one raw file), not from the land-sea mask: the two disagree in both directions
                        (large lakes are valid with lsm = 0; fractional coastal cells have lsm > 0 but no
