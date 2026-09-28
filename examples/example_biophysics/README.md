@@ -183,15 +183,15 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
-   **Roughly 9 minutes** on 4 threads (`-DMEDS_OPENMP=ON`, `[run].n_threads = 4`, ifx Release),
-   or ~25 minutes single-core. This stage runs the **900 s production default**: `dt_fast` is no
+   **About 4½ minutes** for both stages on one core of a 2026 compute node (ifx Release);
+   `-DMEDS_OPENMP=ON` with `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
    longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
    spin-up takes the long step. Because `dt_fast` perturbs growth it changes *which* cohorts fuse or
    are culled, which is a discrete difference rather than a shrinking truncation error — so runs at
    different `dt_fast` compare through site aggregates, not cohort by cohort
    (`docs/science/numerical_scheme.md` §6a).
-   It ends at 14 cohorts / 2 patches, peak LAI 4.16, AGB 9.6 kgC m⁻², mean dbh 24.7 cm, and
-   16.2 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
+   It ends at 14 cohorts / 2 patches, LAI 4.11 on 1 July, AGB 9.6 kgC m⁻², mean dbh 24.6 cm, and
+   16.4 kgC m⁻² of soil carbon. Peak LAI plateaus near year 39, so the
    canopy the figure depends on is settled well before the run ends; the remaining years are still
    developing biomass, size structure and soil carbon (see the trajectory figure above).
 2. **`meds_config_july.toml`** — restarts from that checkpoint and runs July 2074 alone, writing
@@ -226,7 +226,8 @@ measure it yourself.
 The old oscillation is worth remembering even though it is fixed, for one reason: photosynthesis,
 respiration and VPD are all nonlinear in temperature, so by Jensen's inequality a symmetric
 oscillation produces a *biased* carbon balance, not merely a noisy one — daily means do not rescue it,
-and no ledger reports it. See `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10.
+and no ledger reports it. See `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §10 for
+the measurement; the remedy that section proposes was overturned, as its tombstone says.
 
 Then the four figures are built. `python run_example.py --replot` skips the model entirely and
 rebuilds them from existing output; stage 1 is also skipped automatically whenever its state file
@@ -240,8 +241,27 @@ is already present, so iterating on a figure costs seconds rather than the full 
   alternative: build with `-DMEDS_BUILD_PYLIB=ON`, then put `python/` on `PYTHONPATH` and point
   `MEDS_LIB` at the resulting `libmeds.so`.)
 - The forcing file `../../data/forcing/ithaca_forcing.nc`. NetCDF files are git-ignored, so it is
-  not in the repo — build it with `scripts/download_era5land.py` (needs a CDS API key) followed by
-  `scripts/prep_era5land_forcing.py`.
+  not in the repo. Make it for calendar year 2024, the configs' recycle window, with
+  `scripts/prepare_era5/make_forcing_file.py` in the `meds-era5` environment
+  (`scripts/prepare_era5/environment.yml`). From an ED_ERA5land archive:
+
+  ```bash
+  cd ../../scripts/prepare_era5
+  python make_forcing_file.py --data-path <archive> --start 2024-01-01 --end 2024-12-31 \
+      --lat 42.44 --lon -76.50 --out ../../data/forcing/ithaca_forcing.nc
+  ```
+
+  Without an archive, download the year for a small box from the CDS (needs a CDS API key):
+
+  ```bash
+  cd ../../scripts/prepare_era5
+  python download_era5land_cds.py --bbox 42.5,-76.6,42.4,-76.4 --start 2024-01-01 --end 2024-12-31 \
+      --variables all --out-dir raw_ithaca
+  python postprocess_era5land.py --source cds --raw-dir raw_ithaca --bbox 42.5,-76.6,42.4,-76.4 \
+      --start 2024-01-01 --end 2024-12-31 --variables all --split none --out-dir box_ithaca
+  python make_forcing_file.py --box-dir box_ithaca --lat 42.44 --lon -76.50 \
+      --out ../../data/forcing/ithaca_forcing.nc
+  ```
 - `matplotlib` for the figures (`numpy` and `netCDF4` come with the package).
 
 The `meds_main` executable is no longer required by this example, though it still runs both stages
@@ -283,6 +303,36 @@ keeps its derived default of 3.12 m, the optimum for this column. See
 `docs/science/soil_biophysics.md`.
 
 
+**The forcing's heights and the terrain lapse (`[forcing]`, `[site]`).** MEDS moves every forcing
+sample from the heights it was measured at to the top of each patch's canopy air space, so both
+configs declare ERA5-Land's heights:
+
+```toml
+[forcing]
+tq_height            = 2.0             # [m] 2 m temperature and dewpoint
+wind_height          = 10.0            # [m] 10 m wind
+height_above         = "zero_plane"    # reanalysis heights: above the displacement height
+wind_exposure        = "open_terrain"  # an open-terrain diagnostic, taken back to its blending height
+wind_exposure_z0     = 0.03            # [m]
+wind_blending_height = 40.0            # [m]
+```
+
+and move temperature, pressure, humidity and longwave from the forcing cell to the site:
+
+```toml
+[site]
+elevation             = 320.0
+apply_elevation_lapse = true
+lapse_rate_tair       = 0.0065         # [K/m]
+grid_elevation        = 367.5          # [m] the orography of the cell the file was cut from
+```
+
+`grid_elevation` is the orography `make_forcing_file.py` prints for the cell it cuts (42.40 °N,
+76.50 °W). The site sits 47.5 m below it, which the lapse turns into +0.31 K of air temperature,
++2.2 W m⁻² of longwave and +0.56 kPa of pressure; the move to the canopy-air top raises the friction
+velocity over an established stand by about a third (`CHANGELOG.md`, #305). With the archive
+(`format = "era5land"`) the reader takes the grid elevation from the archive itself.
+
 **Forcing recycling.** One calendar year of ERA5-Land drives all 50 years. The recycle window is
 *declared*, never inferred:
 
@@ -298,7 +348,7 @@ is stamped at the *end* of the hour it averages — so the first record of calen
 The window must also span a whole number of calendar years, so that hour-of-day and day-of-year
 survive every wrap. (They do not survive a wrap on any other span, and the failure is quiet: the
 daily *mean* shortwave stays correct while the sub-daily phase drifts. See
-`docs/dev_plans/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
+`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §P3.) Model year 2074 is 50 wraps past the file year and
 reads the correct hour of the correct day.
 
 **`[soil_carbon].soil_carbon_on = true`** in *both* stages — the default since 2026-09-11, set
@@ -312,12 +362,10 @@ restarting from a spin-up that never built them respires nothing whatever its ow
 **The `seam[soil_carbon_rh]` line** in the run output is the soil analogue of the whole-column
 budget residuals: `|the daily pool debit − the fast loop's own accumulated Rh|`, worst over patches
 and over the run. Both ends read the same frozen daily pool and the same per-pool ξ integral, so it
-is ~0 by construction and a nonzero value means that contract broke. It is machine-zero (1×10⁻¹⁴)
-over the July stage. Over the 50-year spin-up the worst is 8.4×10⁻⁴ kgC m⁻², on 2073-01-01 — a
-*year rollover*, when the annual patch cadence fires, so the exactness holds except on days when
-patch structure changes between the fast window and the slow step. That is a known caveat rather
-than a mystery, and it only became visible because the check is now reported: it had been computed
-and discarded on every step of every run since it was written.
+is ~0 by construction and a nonzero value means that contract broke. It is machine-zero in both
+stages: 4×10⁻¹⁵ kgC m⁻² over the July stage and 6×10⁻¹⁵ over the 50-year spin-up. (It used to reach
+8×10⁻⁴ on a year rollover, when the annual patch restructuring ran inside the step, between the fast
+window and the slow step; the restructuring now runs between steps, #297.)
 
 **`energy_fluxes = true`** in `[output]` is required — every temperature plotted here belongs to
 the `GRP_ENERGY` output group and is silently absent without it.

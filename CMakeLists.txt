@@ -11,10 +11,10 @@
 # viable as scoped: measured, the offload build runs 1.4x SLOWER than the CPU (49.8 s against  #
 # 36.2 s), one kernel sits at 0.4% occupancy, and the device treated as 20 slow cores is 26x   #
 # slower than 4 CPU cores. MEDS_GPU=gpu is kept as a reproducible experiment, not a fast path. #
-# See docs/dev_plans/MEDS_GPU_EVALUATION.md. (#194)                                            #
+# See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md. (#194)                                    #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.2.2 LANGUAGES Fortran
+project(MEDS VERSION 0.3.0 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -349,13 +349,15 @@ meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
 message(STATUS "MEDS: netCDF output (always compiled)")
 
-#----- The coupled model as an OPEN / STEP / FINALIZE object (src/main/meds_driver.f90).        #
-#      This is meds_main's former body. It is a LIBRARY rather than part of the program because   #
-#      it has two callers: the executable below, and the C-API shim src/c_api/meds_c_api_run.f90   #
-#      that drives the full coupled model from Python. It sits above meds_model + the IO layer --  #
-#      it is the one place that owns configuration, the calendar, the output manager and the       #
-#      closing conservation reports together.                                                      #
-add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90)
+#----- The coupled model as OPEN / STEP / FINALIZE objects: one polygon's state and step           #
+#      (meds_polygon), the site run (meds_driver) and the region run (meds_region). A LIBRARY       #
+#      rather than part of the program because it has two callers: the executable below, and the  #
+#      C-API shim src/c_api/meds_c_api_run.f90 that drives the full coupled model from Python. It  #
+#      sits above meds_model + the IO layer -- the one place that owns configuration, the          #
+#      calendar, the output files and the closing conservation reports together.                   #
+add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
+                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
+                        ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
 target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
 
@@ -521,6 +523,15 @@ if(MEDS_BUILD_TESTS)
    add_test(NAME c_api_run COMMAND test_c_api_run
             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
 
+   #      A region against its site runs (MEDS_POLYGON_RUNTIME_PLAN.md R2), on the synthetic archive.
+   #      Runs from examples/example_biophysics, whose July config it derives its configs from; it
+   #      writes everything under the work directory in the build tree.
+   add_executable(test_region test/test_region.f90)
+   target_link_libraries(test_region PRIVATE meds_driver meds_testassert meds_testarchive)
+   meds_fortran_flags(test_region)
+   add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
+
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
    #     allocation and trait dynamics are daily -- so it links both kernel libraries. Since
@@ -575,7 +586,16 @@ if(MEDS_BUILD_TESTS)
    add_executable(test_met_driver test/test_met_driver.f90)
    target_link_libraries(test_met_driver PRIVATE meds_forcing meds_testassert)
    meds_fortran_flags(test_met_driver)
-   add_test(NAME met_driver COMMAND test_met_driver)
+   add_test(NAME met_driver COMMAND test_met_driver
+            ${CMAKE_CURRENT_SOURCE_DIR}/data/co2/co2_cmip7_global_annual_1000-2022.txt)
+   #      The synthetic ED_ERA5land archive, shared by the reader test and the region test.
+   add_library(meds_testarchive STATIC test/meds_test_era5land_archive.f90)
+   target_link_libraries(meds_testarchive PUBLIC meds_forcing)
+   meds_fortran_flags(meds_testarchive)
+   add_executable(test_met_era5land test/test_met_era5land.f90)
+   target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
+   meds_fortran_flags(test_met_era5land)
+   add_test(NAME met_era5land COMMAND test_met_era5land)
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)

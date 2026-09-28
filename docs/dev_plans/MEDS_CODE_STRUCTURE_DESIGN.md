@@ -1,5 +1,16 @@
 # MEDS source-tree structure — decisions, rules, and what is left
 
+> # 📚 REFERENCE — status refreshed 2026-09-28. §15 is closed; the decisions and rules stay cited.
+>
+> **§15 is closed:** Phase 1 (#141), Phase 2 (#143, #145 → #254), Phase 3 (#201, delivered as
+> `MEDS_FROZEN_SEAM_CONTRACT.md`), Phase 4 (#147 → #146), Phase 5 (→ #188, #189, #190), Phase 6
+> (#191, `meds_test_assert.f90`). Decision #13 was reversed (#193: `test/` is flat).
+>
+> **What stays live:** the §1 decisions, the §5 straddlers, the §6 placement rules and §7.6 #3–#4,
+> cited by number from ~20 files. **Do not trust** §7.2 (the Python package is `meds.plant`,
+> `meds.demography`, `meds.model`) or decision #13. The live tree is `src/README.md`. The status
+> header below is the 2026-09-13 one.
+
 > # ✅ LIVE — split and status-rewritten 2026-09-13.
 >
 > **Migration steps 0–10 are all merged** (PRs #125, #126, #127, #138, with §15 Phase 1 in #141,
@@ -43,7 +54,7 @@ Both were correct **given** the two-shared-library Python split. That split is r
 | # | Decision |
 |---|----------|
 | **#1** | **ONE Python shared library.** `libmeds_plant_c` + `libmeds_c` → **`libmeds.so`**. Per-subsystem independence moves from the *link* level to the *call* level (verbs, not libraries). The per-domain STATIC libs all stay. |
-| **#2** | **State becomes a LAYER, in two halves.** `src/state/column/` (per-patch reservoirs + params + fusion blends — the boundary types kernels legitimately need) and `src/state/site/` (cohort SoA, patch CSR, lockstep, `site_t`, diag blocks — drivers only). Kernels link `state/column` and stay `site_t`-free. Two folders, not two file prefixes in one folder: every library in the tree is a per-folder GLOB, and the folder boundary *is* the link guard. **Naming (2026-09-09):** `column` is kept although a column is exactly one patch's vertical profile — `patch/` was rejected because `patch_block` (the CSR container of all patches) lives in the *site* half, so a `patch/` folder would point readers at the wrong half. The `state/column` README states the synonym once. **Grid-ready:** a future `state/grid/` (`grid_t` = array of `site_t` + geolocation + the met-forcing handle) is a third folder, not a rework: `met_driver_t` is already passed beside `site` (the stepper takes both), `meds_forcing` links shared + netCDF only and never `site_t`, so `grid_t` can own the forcing with no DAG cycle. Do **not** create an empty `state/grid/` now. |
+| **#2** | **State becomes a LAYER, in two halves.** `src/state/column/` (per-patch reservoirs + params + fusion blends — the boundary types kernels legitimately need) and `src/state/site/` (cohort SoA, patch CSR, lockstep, `site_t`, diag blocks — drivers only). Kernels link `state/column` and stay `site_t`-free. Two folders, not two file prefixes in one folder: every library in the tree is a per-folder GLOB, and the folder boundary *is* the link guard. **Naming (2026-09-09):** `column` is kept although a column is exactly one patch's vertical profile — `patch/` was rejected because `patch_block` (the CSR container of all patches) lives in the *site* half, so a `patch/` folder would point readers at the wrong half. The `state/column` README states the synonym once. **Grid-ready:** a future `state/grid/` (`grid_t` = array of `site_t` + geolocation + the met-forcing handle) is a third folder, not a rework: the met source and cursor are already passed beside `site` (the stepper takes them), `meds_forcing` links shared + netCDF only and never `site_t`, so `grid_t` can own the forcing with no DAG cycle. Do **not** create an empty `state/grid/` now. |
 | **#3** | **`shared/` dissolves** into `base/` + `functions/` + `config/` + `state/`. The word "shared" stops being a place where things go when no other place fits. **Revised 2026-09-25:** `base/` + `functions/` + `util/` regroup as **`src/shared/`**, because together they *are* the `meds_shared` library, which was the only library whose sources spanned three top-level folders; folder = library again. `config/` and `state/` stay top-level. What made the old `shared/` a catch-all was the two-`.so` link rule that forced `config/` and `state/` into it, and decision **#1** retired that rule. The regrouped folder admits only what `use`s nothing outside it (no model state, no configuration, no external library), a test a reviewer can check against the `use` lines. |
 | **#4** | **Timescale-first top level for processes:** `src/fast_dynamics/` and `src/slow_dynamics/`, each with domain subfolders and its own `driver/`. |
 | **#5** | **`src/core/` splits along the seam it already has.** `meds_core_state_types` + `meds_core_diag_types` → `state/site/` (memory structure). `meds_core_state_update` + both `*_fusefiss` → `slow_dynamics/demography/` (they are daily-cadence apply-operators, not a foundation); library `meds_core` → **`meds_demography`** (the offload flags follow it, as they follow `meds_core` today). **The name goes back to `demography`** (reversing `MEDS_CORE_MODULE_REORG_DESIGN.md`'s rename, not its content): it is what ecologists call birth/death/growth bookkeeping and it is already the name of the Python module (`meds.demography`) and the C shim (`meds_demography_capi.f90`) that wrap exactly these files. **`meds_plant_vital_rates` moves in too**, as `slow_dynamics/demography/meds_demography_rates.f90` (module `meds_demography_rates`): its three `elemental pure` laws (carbon → diameter growth, Camac additive mortality hazard, reproduction carbon → recruits) are demographic rates, depend only on `meds_allometry` (functions layer) and PFT traits, and are called only by the slow driver — so `demography/` needs nothing from `plant/`. `slow_dynamics/plant/` is then pure physiology. **What this costs:** today `meds_core` links shared only, so an operator physically cannot call a rate law; after the move that guard is a signature convention — **rule 8** below — kept honest by review and by the Python `apply_rates` path, which feeds externally computed rates through the same operators every build. Optional mechanical guard: a one-line ctest grepping the operator files for `use meds_demography_rates`. |
@@ -401,6 +412,8 @@ default that kept PR #139's and PR #140's defects out of every path anyone ran.
 the headline diagnostics), and either a changed default or a recorded decision not to change it.
 
 ### 15.4 Phase 3 — the frozen-seam contract (design only, no code)
+
+> **Delivered (#201):** `MEDS_FROZEN_SEAM_CONTRACT.md`.
 
 The slow→fast seam freezes a slow state across the whole slow step while the fast loop computes
 fluxes from it. That pattern is everywhere in MEDS (`soil_carbon` as a frozen store; `xi_accum` as

@@ -27,7 +27,7 @@ module meds_c_api_demography
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground
-   use meds_vegetation_dynamics,    only : vegetation_dynamics, accumulate_recruit_pool
+   use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
                                           size2leaf_carbon, size2wood_carbon
@@ -103,14 +103,17 @@ contains
    end subroutine meds_site_init_bare
 
    !----- Advance one slow step (the driver's CARBON orchestration + cadence). Bumps the        !
-   !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1.  !
+   !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1: !
+   !       the step's END crosses that boundary, so the stand is restructured after the step,   !
+   !       as the driver does it (restructure_stand).                                           !
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
       !----- The litter this step accumulates lands in site%patch%litter_in and is left there: no
       !      fast loop runs on this path, so soil_carbon_step (which needs a real xi_int) is not
       !      wired here either. Matches this path's pre-Part-II-B2 scope.
-      call vegetation_dynamics(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
+      call vegetation_dynamics(g_site(sh), g_cfg(ch))
       call update_patch_states(g_site(sh)%patch, g_cfg(ch)%dt_years)
+      call restructure_stand(g_site(sh), g_cfg(ch), is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_advance_slow
 

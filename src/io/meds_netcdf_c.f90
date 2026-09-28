@@ -12,7 +12,7 @@
 ! NUL-terminated (use cstr()).                                                               !
 !==========================================================================================!
 module meds_netcdf_c
-   use iso_c_binding, only : c_int, c_size_t, c_double, c_char, c_ptr, c_null_char,           &
+   use iso_c_binding, only : c_int, c_size_t, c_double, c_float, c_char, c_ptr, c_null_char,           &
                              c_f_pointer, c_associated
    use meds_kinds,    only : ik
    implicit none
@@ -24,7 +24,9 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_CLOBBER   = 0_c_int
    integer(c_int), parameter :: NC_NOWRITE   = 0_c_int      ! read-only open mode
    integer(c_int), parameter :: NC_GLOBAL    = -1_c_int
+   integer(c_int), parameter :: NC_BYTE      = 1_c_int
    integer(c_int), parameter :: NC_INT       = 4_c_int
+   integer(c_int), parameter :: NC_FLOAT     = 5_c_int
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
    integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode for nc_def_var_chunking
    integer(c_size_t), parameter :: NC_UNLIMITED = 0_c_size_t
@@ -165,6 +167,15 @@ module meds_netcdf_c
          integer(c_size_t),     intent(in)  :: startp(*), countp(*)
          real(c_double),        intent(out) :: vals(*)
       end function nc_get_vara_double
+
+      !----- Float reads, for files that store float32 (the ED_ERA5land archive): no conversion. !
+      integer(c_int) function nc_get_vara_float(ncid, varid, startp, countp, vals)           &
+                              bind(c, name="nc_get_vara_float")
+         import :: c_int, c_size_t, c_float
+         integer(c_int), value, intent(in)  :: ncid, varid
+         integer(c_size_t),     intent(in)  :: startp(*), countp(*)
+         real(c_float),         intent(out) :: vals(*)
+      end function nc_get_vara_float
 
       !----- Dimension + attribute inquiry (used by the met-forcing reader, meds_met_driver). !
       integer(c_int) function nc_inq_dimid(ncid, name, idp) bind(c, name="nc_inq_dimid")

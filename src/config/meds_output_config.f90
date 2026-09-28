@@ -21,7 +21,7 @@ module meds_output_config
    public :: output_config_t
    public :: FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE, N_FREQ
    public :: GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY, GRP_RADIATION, GRP_ECOPHYS,       &
-             GRP_BIOGEOCHEM, GRP_NUMERICS, N_GRP
+             GRP_BIOGEOCHEM, GRP_NUMERICS, GRP_FORCING, N_GRP
    public :: AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH, N_AXIS
    public :: FC_DAY, FC_MONTH, FC_YEAR, FC_RUN
    public :: SYNC_NEVER, SYNC_FLUSH
@@ -56,7 +56,12 @@ module meds_output_config
    integer(ik), parameter :: GRP_RADIATION  = 6_ik
    integer(ik), parameter :: GRP_ECOPHYS    = 7_ik
    integer(ik), parameter :: GRP_BIOGEOCHEM = 8_ik
-   integer(ik), parameter :: N_GRP          = 8_ik
+   !----- FORCING: the atmospheric boundary the run actually used, after the reader's corrections  !
+   !      and partitions (MEDS_FORCING_DESIGN.md §6.7). Write-only provenance, and the one way to   !
+   !      check the sub-daily reconstruction (the shortwave's diurnal shape, the solar-time offset) !
+   !      against observations. A dozen site scalars per record; default ON.                       !
+   integer(ik), parameter :: GRP_FORCING    = 9_ik
+   integer(ik), parameter :: N_GRP          = 9_ik
 
    !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The        !
    !      biggest single lever on output volume ("site level only, nothing per-cohort").          !
@@ -85,7 +90,7 @@ module meds_output_config
    !  carries it trivially. The per-variable overrides are NOT stored here -- they live in the      !
    !  optional meds_io_config.toml, loaded by build_output_registry (§6.4). enabled defaults        !
    !  .false., so a config with no [output] block emits no diagnostic stream at all (§6.1). The     !
-   !  [io] block is the restart stream only; it shares no variable with this one.                   !
+   !  [state] block is the restart stream only; it shares no variable with this one.                !
    !==========================================================================================!
    type :: output_config_t
       logical            :: enabled     = .false.               !< master switch (replaced the retired io.write_output)
@@ -97,14 +102,14 @@ module meds_output_config
       logical            :: strict_caps = .false.               !< .false. warn+truncate on n>cap; .true. error stop
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH (§5.5)
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast (§4.1)
-      !----- High-level variable-GROUP toggles (main config, §6). Order:                       !
-      !      STRUCTURE / CARBON / WATER / ENERGY / NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM.  !
-      !      v0.1 default (MEDS_IO_V01_PLAN.md section 8 D6): the six that make a run judgeable   !
-      !      are ON -- including NUMERICS, because it carries the budget residuals, and a closure  !
-      !      nobody records is worse than one nobody looks at. RADIATION and ECOPHYS are the two   !
-      !      heavy evaluation groups and stay OFF; each is one boolean away.  ----------------!
+      !----- High-level variable-GROUP toggles (main config, §6). Order: STRUCTURE / CARBON /  !
+      !      WATER / ENERGY / NUMERICS / RADIATION / ECOPHYS / BIOGEOCHEM / FORCING. Default    !
+      !      (MEDS_IO_V01_PLAN.md section 8 D6): the seven that make a run judgeable are ON --    !
+      !      including NUMERICS, because it carries the budget residuals, and a closure nobody     !
+      !      records is worse than one nobody looks at. RADIATION and ECOPHYS are the two heavy    !
+      !      evaluation groups and stay OFF; each is one boolean away.  ------------------------!
       logical            :: grp_on(N_GRP) = [.true., .true., .true., .true., .true.,             &
-                                             .false., .false., .true.]
+                                             .false., .false., .true., .true.]
       !----- Per-AXIS toggles: COHORT / PATCH / PFT / SIZE / SOIL_PATCH. The 2-D soil axis is    !
       !      off by default (highest-volume non-cohort axis); the rest are on.  ----------------!
       logical            :: axis_on(N_AXIS) = [.true., .true., .true., .true., .false.]

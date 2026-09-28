@@ -29,7 +29,7 @@ program test_output_integrate
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t, site_alloc, site_free
-   use meds_output_types,     only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t, &
+   use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t, fast_sample_t, &
                                      diag_params_t,                                               &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
@@ -38,8 +38,9 @@ program test_output_integrate
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
-                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE
-   use meds_output_registry,  only : manager_alloc, find_var_index
+                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, output_integrate
+   use meds_time,             only : meds_time_t, time_advance_days
+   use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index
    use meds_diagnostic_reduce, only : W_NPLANT
    use meds_output_config,    only : FREQ_MONTHLY
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -50,6 +51,8 @@ program test_output_integrate
    call test_zero_sample_guard()
    call test_slab_and_extract()
    call test_fast_tier()
+   call test_two_buffers()
+   call test_boundary_step()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
 
 contains
@@ -193,7 +196,8 @@ contains
    !      column, and per-cohort slab paths. netCDF-free; mirrors what main's replay loop does.  -------!
    subroutine test_fast_tier()
       type(meds_config_t)    :: cfg
-      type(output_manager_t) :: mgr
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
       type(fast_sample_t)    :: s
       integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
@@ -212,56 +216,176 @@ contains
       cfg%output%freq_on(1) = .true.               ! FAST tier on
       cfg%output%grp_on     = .true.
       cfg%output%cohort_max = 8_ik
-      call manager_alloc(mgr, cfg)
-      call check(mgr%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
+      call manager_alloc(files, bufs, cfg)
+      call check(files%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
       !----- Stage 2 sub-steps of known values (as fast_dynamics would). -----!
-      allocate(mgr%fast(2), mgr%fast_time(2))
-      allocate(mgr%fast_soil_temp(2,2), mgr%fast_soil_water(2,2))
-      allocate(mgr%fast_coh_ltemp(8,2), mgr%fast_coh_gpp(8,2), mgr%fast_coh_height(8,2))
-      mgr%n_fast_sub = 2_ik ; mgr%fast_n_soil = 2_ik ; mgr%fast_n_cohort = 2_ik
-      mgr%fast(1)%cas_temp = 290.0_wp ; mgr%fast(2)%cas_temp = 294.0_wp    ! mean 292
-      mgr%fast(1)%le_flux  = 100.0_wp ; mgr%fast(2)%le_flux  = 200.0_wp
-      mgr%fast(1)%air_temp = 300.0_wp ; mgr%fast(2)%air_temp = 302.0_wp    ! mean 301
-      mgr%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
-      mgr%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
-      mgr%fast_soil_water = 0.0_wp
-      mgr%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
-      mgr%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
-      mgr%fast_coh_gpp = 0.0_wp
-      mgr%fast_coh_height = 0.0_wp
-      mgr%fast_coh_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
-      mgr%fast_coh_height(1:2,2) = [10.0_wp, 12.0_wp]
+      allocate(bufs%fast(2), bufs%fast_time(2))
+      allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
+      allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
+      bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
+      bufs%fast(1)%cas_temp = 290.0_wp ; bufs%fast(2)%cas_temp = 294.0_wp    ! mean 292
+      bufs%fast(1)%le_flux  = 100.0_wp ; bufs%fast(2)%le_flux  = 200.0_wp
+      bufs%fast(1)%air_temp = 300.0_wp ; bufs%fast(2)%air_temp = 302.0_wp    ! mean 301
+      bufs%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
+      bufs%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
+      bufs%fast_soil_water = 0.0_wp
+      bufs%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
+      bufs%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
+      bufs%fast_coh_gpp = 0.0_wp
+      bufs%fast_coh_height = 0.0_wp
+      bufs%fast_coh_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
+      bufs%fast_coh_height(1:2,2) = [10.0_wp, 12.0_wp]
 
-      call output_integrate_fast(mgr, 1_ik, DT)
-      call output_integrate_fast(mgr, 2_ik, DT)
-      call close_tier(mgr, 1_ik)
+      call output_integrate_fast(files, bufs, 1_ik, DT)
+      call output_integrate_fast(files, bufs, 2_ik, DT)
+      call close_tier(files, bufs, 1_ik)
 
       !----- Scalar path: cas_temp_fast = TMEAN(290,294) = 292. The FAST-tier variables are        !
       !      DISTINCT registry entries from their coarse-tier namesakes (cas_temp_site), because    !
       !      they read the staged sub-step samples rather than live site state.  -------------------!
-      k_cas = find_var_index(mgr%reg, 'cas_temp_fast')
+      k_cas = find_var_index(files%reg, 'cas_temp_fast')
       call check(k_cas > 0_ik, 'cas_temp_fast registered')
-      call check(mgr%pending(1)%svalid(k_cas), 'FAST cas_temp valid after close')
-      call check_close(mgr%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
+      call check(bufs%pending(1)%svalid(k_cas), 'FAST cas_temp valid after close')
+      call check_close(bufs%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp TMEAN')
       !----- Soil-column slab path: soil_temp_site slot means. -----!
-      k_soil = find_var_index(mgr%reg, 'soil_temp_site_fast')
-      call check(mgr%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
-      call check_close(mgr%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
-      call check_close(mgr%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
+      k_soil = find_var_index(files%reg, 'soil_temp_site_fast')
+      call check(bufs%pending(1)%nslab(k_soil) == 2_ik, 'FAST soil slab length 2')
+      call check_close(bufs%pending(1)%slab(1,k_soil), 281.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 1')
+      call check_close(bufs%pending(1)%slab(2,k_soil), 282.0_wp, 1.0e-10_wp, 'FAST soil_temp slot 2')
       !----- Per-cohort slab path (P2): leaf_temp_cohort_fast slot means + n_cohort. -----!
-      k_leaf = find_var_index(mgr%reg, 'leaf_temp_cohort_fast')
-      call check(mgr%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
-      call check_close(mgr%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
-      call check_close(mgr%pending(1)%slab(2,k_leaf), 290.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 2')
+      k_leaf = find_var_index(files%reg, 'leaf_temp_cohort_fast')
+      call check(bufs%pending(1)%n_cohort == 2_ik, 'FAST n_cohort = 2')
+      call check_close(bufs%pending(1)%slab(1,k_leaf), 289.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 1')
+      call check_close(bufs%pending(1)%slab(2,k_leaf), 290.0_wp, 1.0e-10_wp, 'FAST leaf_temp cohort 2')
       !----- Forcing air-temp scalar path + per-cohort HEIGHT slab path (tallest-cohort post-proc). -----!
-      k_air = find_var_index(mgr%reg, 'air_temp_fast')
+      k_air = find_var_index(files%reg, 'air_temp_fast')
       call check(k_air > 0_ik, 'air_temp_fast registered')
-      call check_close(mgr%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
-      k_hgt = find_var_index(mgr%reg, 'height_cohort_fast')
+      call check_close(bufs%pending(1)%sval(k_air), 301.0_wp, 1.0e-10_wp, 'FAST air_temp TMEAN')
+      k_hgt = find_var_index(files%reg, 'height_cohort_fast')
       call check(k_hgt > 0_ik, 'height_cohort_fast registered')
-      call check_close(mgr%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
-      call check_close(mgr%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
+      call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
+      call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
    end subroutine test_fast_tier
+
+   !----- Two polygons' buffers for one file set (MEDS_POLYGON_RUNTIME_PLAN.md R2): each          !
+   !      reduces only its own samples, and closing one leaves the other's window open. Folds are  !
+   !      interleaved the way a region's month loop would interleave its polygons.  ----------------!
+   subroutine test_two_buffers()
+      type(meds_config_t)   :: cfg
+      type(output_files_t)  :: files
+      type(output_buffers_t) :: a, b
+      integer(ik) :: k_cas
+      real(wp), parameter :: DT = 900.0_wp
+      cfg = build_test_config(86400.0_wp)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on(1) = .true.
+      cfg%output%grp_on     = .true.
+      cfg%output%cohort_max = 8_ik
+      call manager_alloc(files, a, cfg)
+      call manager_alloc_buffers(files, b)
+      call check(a%fast_on .and. b%fast_on, 'both polygons'' buffers stage the FAST tier')
+      call check(b%fast_cohort_cap == 8_ik, 'the buffers size their fast cohort slabs from the file set')
+      call stage_cas(a, [290.0_wp, 294.0_wp])                              ! mean 292
+      call stage_cas(b, [270.0_wp, 280.0_wp])                              ! mean 275
+      call output_integrate_fast(files, a, 1_ik, DT)
+      call output_integrate_fast(files, b, 1_ik, DT)
+      call output_integrate_fast(files, a, 2_ik, DT)
+      call close_tier(files, a, 1_ik)
+      k_cas = find_var_index(files%reg, 'cas_temp_fast')
+      call check_close(a%pending(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a: its own mean')
+      call check(a%queue(1)%n == 1_ik .and. b%queue(1)%n == 0_ik, 'closing polygon a''s window queues only a''s record')
+      call check(b%has_data(1) .and. .not. a%has_data(1), 'polygon b''s window stays open')
+      call output_integrate_fast(files, b, 2_ik, DT)
+      call close_tier(files, b, 1_ik)
+      call check_close(b%pending(1)%sval(k_cas), 275.0_wp, 1.0e-10_wp, 'polygon b: its own mean')
+      call check_close(a%queue(1)%rec(1)%sval(k_cas), 292.0_wp, 1.0e-10_wp, 'polygon a''s queued record is untouched')
+   end subroutine test_two_buffers
+
+   !----- The slow tick across a month boundary (#294). The step from 31 January to 1 February     !
+   !      is January's: it folds into January, which then closes. The stand is restructured only   !
+   !      after that tick (advance_boundary), so January's cohort slab holds one slot set, and     !
+   !      February opens on 1 February with the new one. ------------------------------------------!
+   subroutine test_boundary_step()
+      type(meds_config_t)    :: cfg
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
+      type(site_t)           :: site
+      type(meds_time_t)      :: jan30, jan31, feb1
+      integer(ik) :: k_s, k_c, k_n
+      real(wp), parameter :: DT = 86400.0_wp
+      cfg = build_test_config(DT)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on    = [.false., .true., .true., .false.]    ! daily + monthly
+      cfg%output%grp_on     = .false.
+      cfg%output%grp_on(1)  = .true.                                 ! structure
+      cfg%output%cohort_max = 8_ik
+      call manager_alloc(files, bufs, cfg)
+      k_s = find_var_index(files%reg, 'agb_site')
+      k_c = find_var_index(files%reg, 'agb_cohort')
+      k_n = find_var_index(files%reg, 'n_cohort_site')
+      call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
+
+      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik)
+      site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
+      jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
+      jan31 = time_advance_days(jan30, 1_ik)
+      feb1  = time_advance_days(jan31, 1_ik)
+
+      !----- 30 and 31 January: one cohort, agb 10 then 12 at the ends of the two steps. The      !
+      !      second step ends on the month boundary. ---------------------------------------------!
+      call set_cohorts(site, [10.0_wp])
+      call output_integrate(files, bufs, site, jan30, DT, .true., .false., .false.)
+      call set_cohorts(site, [12.0_wp])
+      call output_integrate(files, bufs, site, jan31, DT, .true., .true., .false.)
+
+      call check(bufs%pending(2)%t_open%month == 1_ik .and. bufs%pending(2)%t_open%day == 31_ik,     &
+                 'the step from 31 January to 1 February is the 31 January daily record')
+      call check(bufs%queue(3)%n == 1_ik, 'the month turning closes January')
+      call check(bufs%pending(3)%t_open%month == 1_ik .and. bufs%pending(3)%t_open%day == 30_ik,     &
+                 'January opens at the start of its first step')
+      call check_close(bufs%pending(3)%sval(k_s), 11.0_wp, 1.0e-12_wp,                             &
+                       'January''s site mean includes its last step: (10 + 12) / 2')
+      call check(bufs%pending(3)%nslab(k_c) == 1_ik, 'January''s cohort slab: its one slot set')
+      call check_close(bufs%pending(3)%slab(1,k_c), 11.0_wp, 1.0e-12_wp,                           &
+                       'January''s cohort slab includes its last step too')
+      call check(.not. bufs%has_data(3), 'nothing of the boundary step is left for February')
+
+      !----- The boundary: a recruit joins (restructure_stand runs here in the driver). Then 1    !
+      !      February's own step; close the month by hand. ---------------------------------------!
+      call set_cohorts(site, [20.0_wp, 5.0_wp])
+      call output_integrate(files, bufs, site, feb1, DT, .true., .false., .false.)
+      call check(bufs%t_open(3)%month == 2_ik .and. bufs%t_open(3)%day == 1_ik, 'February opens on 1 February')
+      call close_tier(files, bufs, 3_ik)
+      call check_close(bufs%pending(3)%sval(k_s), 25.0_wp, 1.0e-12_wp, 'February''s site mean: its own step')
+      call check(bufs%pending(3)%nslab(k_c) == 2_ik, 'February''s cohort slab: the new slot set')
+      call check_close(bufs%pending(3)%slab(2,k_c), 5.0_wp, 1.0e-12_wp, 'February''s recruit')
+      call check_close(bufs%pending(3)%sval(k_n), 2.0_wp, 1.0e-12_wp, 'February''s cohort count')
+      call site_free(site)
+   end subroutine test_boundary_step
+
+   !----- One patch holding `agb`'s cohorts, one plant each. ------------------------------------!
+   subroutine set_cohorts(site, agb)
+      type(site_t), intent(inout) :: site
+      real(wp),     intent(in)    :: agb(:)
+      integer(ik) :: n
+      n = size(agb, kind=ik)
+      site%cohort%n = n ; site%patch%cohort_count(1) = n
+      site%cohort%nplant(1:n) = 1.0_wp ; site%cohort%pft(1:n) = 1_ik ; site%cohort%owner_patch(1:n) = 1_ik
+      call set_cohort_agb(site, agb, n)
+   end subroutine set_cohorts
+
+   !----- Stage two FAST sub-steps with the given CAS temperatures and zero everything else. -----!
+   subroutine stage_cas(bufs, cas)
+      type(output_buffers_t), intent(inout) :: bufs
+      real(wp),            intent(in)    :: cas(2)
+      allocate(bufs%fast(2), bufs%fast_time(2))
+      allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
+      allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
+      bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik
+      bufs%fast(1)%cas_temp = cas(1) ; bufs%fast(2)%cas_temp = cas(2)
+      bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_water = 0.0_wp
+      bufs%fast_coh_ltemp = 285.0_wp ; bufs%fast_coh_gpp = 0.0_wp ; bufs%fast_coh_height = 10.0_wp
+   end subroutine stage_cas
 
 end program test_output_integrate

@@ -48,11 +48,16 @@ contains
    ! Cached geometry (height/basal_area/agb/leaf_area) is omitted: it is re-derived from dbh  !
    ! on restart. Scalars travel in a small meta_int/meta_real vector.                         !
    !---------------------------------------------------------------------------------------!
-   subroutine state_write_state(site, cfg, dir, prefix, now)
+   subroutine state_write_state(site, cfg, dir, prefix, now, restructure_pending, restructure_new_year)
       type(site_t),        intent(in) :: site
       type(meds_config_t), intent(in) :: cfg
       character(len=*),    intent(in) :: dir, prefix
       type(meds_time_t),   intent(in) :: now
+      !----- The calendar restructuring the stand still owes at `now` (meds_polygon_t): a state   !
+      !      written on a boundary holds the stand BEFORE it, and the run resumed from it runs it !
+      !      first. Recorded as the global attribute `restructure_pending` = none | month | year. !
+      logical, optional,   intent(in) :: restructure_pending, restructure_new_year
+      character(len=5) :: pending
       integer(c_int) :: ncid, d_cohort, d_patch, d_pft, d_mi, d_mr, d_soill, d_snowl
       integer(c_int) :: vmi, vmr, vc_pft, vc_np, vc_dbh, vc_own, vc_gid, vc_gavg
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
@@ -69,7 +74,7 @@ contains
       !      is exactly the kind of stiff transient RK45's explicit stepper has no L-stable defense     !
       !      against (unlike split's implicit CAS box or ARK's Newton surface solve). ------------------!
       integer(c_int) :: vf_centh, vf_cshv, vf_cco2, vf_ctemp
-      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth, vp_shed
+      integer(c_int) :: vf_theta, vf_wsurf, vf_wsenth, vp_shed, vp_adt
       integer(c_int) :: vf_se, vf_stemp, vf_sfliq
       integer(c_int) :: vf_swe, vf_sneng, vf_sdep, vf_stmp, vf_sfl, vf_snl
       integer(ik)    :: ncoh, npat, npft, ip, meta_i(11)
@@ -190,6 +195,10 @@ contains
       !----- Daily leaf/root-turnover shed water handed to the ground (P4): a slow->fast seam rate    !
       !      the fast loop reads all day. Not persisting it lost one day of it per restart (2026-09). -!
       call dv(vp_shed,  'shed_water_rate',  NC_DOUBLE, [d_patch], 'turnover shed water to the ground [kg/m2/s]')
+      !----- The fast integrators' warm start, per patch (#298): the step the adaptive controller last  !
+      !      accepted, where the next fast step starts. Without it a resumed run cold-starts the        !
+      !      controller and takes different sub-steps from the continuous run. -------------------------!
+      call dv(vp_adt,   'adapt_dt_last',    NC_DOUBLE, [d_patch], 'fast-controller warm-start step [s] (0 = cold)')
       !----- Slow soil-carbon pools (opt-in, [soil_carbon].soil_carbon_on; MEDS_SLOW_DYNAMICS_DESIGN.md !
       !      Part II B0). N-cycle fields are skipped (n_cycle_on defaults false; C-only MVP). -------------!
       call dv(vp_sc1, 'soilc_fast_grnd',   NC_DOUBLE, [d_patch], 'fast/metabolic litter carbon, above-ground [kgC/m2]')
@@ -203,6 +212,15 @@ contains
       call dv(vp_lig2,'soilc_lignin_soil', NC_DOUBLE, [d_patch], 'structural litter lignin, below-ground [kgC/m2]')
       call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'title',                            &
                     int(len_trim(STATE_TITLE), c_size_t), STATE_TITLE), 'state title')
+      pending = 'none'
+      if (present(restructure_pending)) then
+         if (restructure_pending) pending = 'month'
+         if (restructure_pending .and. present(restructure_new_year)) then
+            if (restructure_new_year) pending = 'year'
+         end if
+      end if
+      call nc_check(nc_put_att_text_f(ncid, NC_GLOBAL, 'restructure_pending',              &
+                    int(len_trim(pending), c_size_t), trim(pending)), 'state restructure_pending')
       call nc_check(nc_enddef(ncid), 'state enddef')
 
       meta_i = [ncoh, npat, npft, site%next_cohort_id, site%next_patch_id,                     &
@@ -267,7 +285,7 @@ contains
                   fc(ip,1) = p%cas(ip)%can_enthalpy ; fc(ip,2) = p%cas(ip)%can_shv
                   fc(ip,3) = p%cas(ip)%can_co2      ; fc(ip,4) = p%cas(ip)%can_temp
                   fw(ip,1) = p%soil_w(ip)%w_surface ; fw(ip,2) = p%soil_w(ip)%w_surface_enth
-                  fw(ip,3) = p%shed_water_rate(ip)
+                  fw(ip,3) = p%shed_water_rate(ip) ; fw(ip,4) = p%adapt_dt_last(ip)
                   fsoil(ip,:,1) = p%soil_w(ip)%theta(1:n_soil_layer_max)
                   fsoil(ip,:,2) = p%soil_e(ip)%soil_energy(1:n_soil_layer_max)
                   fsoil(ip,:,3) = p%soil_e(ip)%soil_fliq(1:n_soil_layer_max)
@@ -291,6 +309,7 @@ contains
                call nc_check(nc_put_vara_double(ncid, vf_wsenth,[0_c_size_t], [int(npat,c_size_t)], fw(:,2)), &
                      'put soil_w_surface_enth')
                call nc_check(nc_put_vara_double(ncid, vp_shed,  [0_c_size_t], [int(npat,c_size_t)], fw(:,3)), 'put shed_water_rate')
+               call nc_check(nc_put_vara_double(ncid, vp_adt,   [0_c_size_t], [int(npat,c_size_t)], fw(:,4)), 'put adapt_dt_last')
                call nc_check(nc_put_vara_int   (ncid, vf_snl,   [0_c_size_t], [int(npat,c_size_t)], fnl),     'put snow_nlayer')
                do ip = 1_ik, npat
                   call nc_check(nc_put_vara_double(ncid, vf_theta, [int(ip-1_ik,c_size_t), 0_c_size_t],   &
@@ -374,7 +393,8 @@ contains
    ! sort order are rebuilt. found=.false. (no error stop) if the file cannot be opened, so    !
    ! the caller can fall back. Errors out only on a genuine inconsistency (PFT-count mismatch).!
    !---------------------------------------------------------------------------------------!
-   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found)
+   subroutine io_read_state(site, cfg, path, restart_time, found, fast_found, restructure_pending, &
+                            restructure_new_year)
       type(site_t),        intent(out) :: site
       type(meds_config_t), intent(in)  :: cfg
       character(len=*),    intent(in)  :: path
@@ -385,6 +405,11 @@ contains
       !      absent/.false. means an older-format file -- the caller (meds_main) must then fall back    !
       !      to init_fast_reservoirs's generic seed, exactly the pre-P5 behavior. --------------------!
       logical, optional,   intent(out) :: fast_found
+      !----- The restructuring the stand owes at restart_time (state_write_state). A file without   !
+      !      the attribute predates it and was written AFTER its boundary's restructuring, so it    !
+      !      owes nothing. -------------------------------------------------------------------------!
+      logical, optional,   intent(out) :: restructure_pending, restructure_new_year
+      character(len=16) :: pending
       integer(c_int) :: ncid, vid, vrec, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, meta_i(11)
       real(wp)       :: meta_r(2)
@@ -392,8 +417,14 @@ contains
 
       found = .false. ; restart_time = meds_time_t()
       if (present(fast_found)) fast_found = .false.
+      if (present(restructure_pending))  restructure_pending  = .false.
+      if (present(restructure_new_year)) restructure_new_year = .false.
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
+      pending = 'none'
+      if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
+      if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
+      if (present(restructure_new_year)) restructure_new_year = trim(pending) == 'year'
 
       call nc_check(nc_inq_varid_f(ncid, 'meta_int',  vid), 'inq meta_int')
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [11_c_size_t], meta_i), 'get meta_int')
@@ -523,6 +554,8 @@ contains
                   if (shed_ok) then
                      do ip = 1_ik, npat ; p%shed_water_rate(ip) = fsh(ip) ; end do
                   end if
+                  !----- The controller's warm start (#298): OPTIONAL, an older file cold-starts it. ----!
+                  call gv_dbl_opt(ncid, 'adapt_dt_last', npat, p%adapt_dt_last(1:npat))
                   call gv_int(ncid, 'snow_nlayer', npat, fnl)
                   do ip = 1_ik, npat ; p%snow(ip)%nlayer = fnl(ip) ; end do
                   do ip = 1_ik, npat

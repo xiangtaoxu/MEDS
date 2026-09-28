@@ -27,7 +27,7 @@ module meds_demography_patch_fusefiss
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_clear_slot, patch_diag_grow, PD_DISTURB_AREA,   &
+                                     patch_diag_inherit, patch_diag_grow, PD_DISTURB_AREA,      &
                                      PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
@@ -443,10 +443,10 @@ contains
       !      failure to notice.                                                                      !
       !      WRITTEN ON THE DONORS, and written HERE, before patch%n grows: every patch loses the    !
       !      same fraction `frac`, and at this point the diag block's slots still line up with the   !
-      !      donor patches. The new gap gets nothing, which is right twice over -- it was not        !
-      !      disturbed, it IS the disturbance -- and patch_diag_clear_slot zeroes its slot at the    !
-      !      end of this routine anyway. Writing after the append is the out-of-bounds trap that     !
-      !      has already been paid for once in this file's history.                                  !
+      !      donor patches. The gap then inherits the donors' blended slot (patch_diag_inherit, at   !
+      !      the end of this routine), so Sum(area * value) counts the rate on all of the ground it  !
+      !      was disturbed on. Writing after the append is the out-of-bounds trap that has already   !
+      !      been paid for once in this file's history.                                              !
       !      UNITS (#239): the block's weight is Sum(dt) in SECONDS, so the contribution is the      !
       !      declared [1/yr] rate times this step's weight in seconds. `frac` is the fraction        !
       !      disturbed over dt_yr, so the rate is frac/dt_yr and this step's weight is           !
@@ -464,17 +464,13 @@ contains
       !      The same sweep records the DISTURBANCE pathway's mortality carbon (#169) off the other !
       !      branch of the same test, so the split and the kill can never drift apart. Written on   !
       !      the DONORS and written HERE, before patch%n grows -- the same rule PD_DISTURB_AREA     !
-      !      above follows, and for a stronger reason: the gap's slot is zeroed by                  !
-      !      patch_diag_clear_slot at the end of this routine, and its WEIGHT is zero for the rest  !
-      !      of this slow step, so a value written there would read as 0, not as a small error.     !
+      !      above follows.                                                                        !
       !                                                                                          !
-      !      THE (1-frac) IS NOT A FUDGE. Every patch diagnostic is per m2 of its OWN ground and is !
-      !      aggregated to the site as Sum(area * value) at READ time -- by which point each donor  !
-      !      has been shrunk to (1-frac)*area. The carbon killed here was standing on the frac part !
-      !      that became the gap, so valuing it on the donor's ORIGINAL ground and letting it be    !
-      !      weighted by the SURVIVING ground would under-report the site total by exactly (1-frac) !
-      !      -- 1.4%/yr at the shipped hazard, one-signed, which is the shape that only shows up    !
-      !      after a decade. Dividing by the surviving fraction makes Sum(area*value) exact.        !
+      !      Valued on the donor's ORIGINAL ground. Every patch diagnostic is per m2 of its OWN      !
+      !      ground and is aggregated to the site as Sum(area * value) at READ time. The donors are  !
+      !      shrunk to (1-frac)*area by then, and the gap -- the frac part the carbon stood on --    !
+      !      inherits the donors' slot, so together they weigh the value by the donors' original     !
+      !      area and the site total is exact.                                                       !
       !      Rate [kgC/m2/yr] x weight in seconds is the block's contract (#239); dt_yr cancels     !
       !      against the weight dt_yr*yr_sec, as it does for PD_DISTURB_AREA.                        !
       nsurv = 0_ik
@@ -486,8 +482,7 @@ contains
             site%patch%diag%v(PD_MORT_C_DISTURB, d) = site%patch%diag%v(PD_MORT_C_DISTURB, d)      &
                + site%cohort%nplant(i) * frac * yr_sec                                             &
                  * (site%cohort%leaf_carbon(i)     + site%cohort%fineroot_carbon(i)                &
-                  + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))          &
-                 / max(1.0_wp - frac, tiny_num)
+                  + site%cohort%wood_carbon(i)     + site%cohort%nonstructural_carbon(i))
          end if
       end do
 
@@ -605,9 +600,14 @@ contains
       !----- Stamp the new gap patch and the moved-in survivor cohorts with fresh global ids !
       !      (the gap fragments are new entities; their donor cohorts keep their own ids).    !
       call assign_patch_id(site, newp)
-      !----- A disturbance gap is a BRAND-NEW patch: it inherited no sub-step samples, so its      !
-      !      diagnostic slot must start empty rather than carry whatever a culled patch left there. !
-      call patch_diag_clear_slot(site%patch%diag, newp)
+      !----- The gap's diagnostics: it inherits the donors' slots blended by area, as its reservoirs !
+      !      above inherit their state, so the stand total Sum(area * v) is unchanged by the carving.  !
+      !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
+      !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
+      !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
+      !      the same blend as their original ones.                                                   !
+      call patch_diag_grow(site%patch%diag, newp)
+      call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n
          call assign_cohort_id(site, i)
       end do

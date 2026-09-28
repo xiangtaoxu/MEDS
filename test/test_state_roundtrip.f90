@@ -14,7 +14,7 @@ program test_state_roundtrip
    type(meds_config_t) :: cfg
    type(site_t)        :: site, site2
    type(meds_time_t)   :: now, rt
-   logical             :: found, fast_ok
+   logical             :: found, fast_ok, owed, owed_year
    real(wp)            :: sla_set, vc_set, rd_set, ll_set
    integer(ik)         :: i
 
@@ -77,8 +77,12 @@ program test_state_roundtrip
    end do
 
    now = meds_time_t(year=2000, month=1, day=1, hour=0, minute=0, second=0)
-   call state_write_state(site, cfg, '.', 'test_sr', now)
-   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, fast_found=fast_ok)
+   !----- The file is written on a year boundary with its restructuring still owed, as the driver's   !
+   !      yearly checkpoint is (meds_polygon_t%restructure_pending); the reader must say so. ---------!
+   call state_write_state(site, cfg, '.', 'test_sr', now, .true., .true.)
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found, fast_found=fast_ok,  &
+                      restructure_pending=owed, restructure_new_year=owed_year)
+   call check(owed .and. owed_year, 'a checkpoint records the year''s restructuring as still owed')
 
    call check(found, 'state file read back')
    call check(fast_ok, 'fast reservoirs found in state file just written')
@@ -141,6 +145,12 @@ program test_state_roundtrip
       call check_close(site2%patch%shed_water_rate(i), site%patch%shed_water_rate(i), 1.0e-18_wp,          &
                        'shed_water_rate recovered from state (was not persisted)')
    end do
+
+   !----- Nothing owed: a checkpoint between boundaries, or one written before the flag existed.  !
+   call state_write_state(site, cfg, '.', 'test_sr', now)
+   call io_read_state(site2, cfg, './test_sr-S-20000101000000.nc', rt, found,                     &
+                      restructure_pending=owed, restructure_new_year=owed_year)
+   call check(found .and. .not. owed .and. .not. owed_year, 'a checkpoint with nothing owed reads so')
 
    write(*,'(a)') '   PASS'
 end program test_state_roundtrip

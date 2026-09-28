@@ -19,18 +19,21 @@ module meds_config_io
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : soil_column_config_t
+   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
-   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
+   use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
+   use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
+                                   WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_config, only : forcing_config_t,                                            &
-                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF,                       &
+                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST
    use meds_output_config, only : output_config_t, GRP_STRUCTURE, GRP_CARBON, GRP_WATER,          &
-                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM,                     &
+                                 GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_FORCING,        &
                                  AXIS_COHORT, AXIS_PATCH, AXIS_PFT, AXIS_SIZE, AXIS_SOIL_PATCH,  &
                                  MAX_DBH_EDGE,                                                   &
                                    GRP_ENERGY, GRP_NUMERICS, SYNC_FLUSH, SYNC_NEVER, FC_DAY, FC_MONTH, FC_YEAR, &
@@ -99,55 +102,6 @@ contains
       out = .false.
       if (toml_has(t, key)) then ; out = toml_logical(t, key, .false.) ; else ; call note_missing(m, key) ; end if
    end subroutine req_l
-
-   !----- RENAMED-KEY readers (#173): take the new spelling, else the old one with the caller's   !
-   !      `seen` flag set so ONE warning is printed for the block rather than one per key. A key    !
-   !      missing under BOTH spellings is reported against the NEW name, so the error message tells !
-   !      the user what to write rather than what to stop writing.  ---------------------------------!
-   subroutine req_s_renamed(t, key_new, key_old, out, m, seen_old)
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key_new, key_old
-      character(len=*),   intent(out)   :: out
-      type(keymiss_t),    intent(inout) :: m
-      logical,            intent(inout) :: seen_old
-      if (toml_has(t, key_new)) then
-         out = toml_string(t, key_new, '')
-      else if (toml_has(t, key_old)) then
-         out = toml_string(t, key_old, '') ; seen_old = .true.
-      else
-         out = '' ; call note_missing(m, key_new)
-      end if
-   end subroutine req_s_renamed
-
-   subroutine req_l_renamed(t, key_new, key_old, out, m, seen_old)
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key_new, key_old
-      logical,            intent(out)   :: out
-      type(keymiss_t),    intent(inout) :: m
-      logical,            intent(inout) :: seen_old
-      if (toml_has(t, key_new)) then
-         out = toml_logical(t, key_new, .false.)
-      else if (toml_has(t, key_old)) then
-         out = toml_logical(t, key_old, .false.) ; seen_old = .true.
-      else
-         out = .false. ; call note_missing(m, key_new)
-      end if
-   end subroutine req_l_renamed
-
-   subroutine req_i_renamed(t, key_new, key_old, out, m, seen_old)
-      type(toml_table_t), intent(in)    :: t
-      character(len=*),   intent(in)    :: key_new, key_old
-      integer(ik),        intent(out)   :: out
-      type(keymiss_t),    intent(inout) :: m
-      logical,            intent(inout) :: seen_old
-      if (toml_has(t, key_new)) then
-         out = toml_int(t, key_new, 0_ik)
-      else if (toml_has(t, key_old)) then
-         out = toml_int(t, key_old, 0_ik) ; seen_old = .true.
-      else
-         out = 0_ik ; call note_missing(m, key_new)
-      end if
-   end subroutine req_i_renamed
 
    subroutine req_s(t, key, out, m)
       type(toml_table_t), intent(in)  :: t
@@ -453,7 +407,7 @@ contains
    end subroutine req_colimitation
 
    !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "const"
+   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "era5land" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
       character(len=64) :: s
@@ -461,8 +415,9 @@ contains
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
       s = toml_string(t, key, 'netcdf')
       select case (trim(s))
-      case ('netcdf') ; mode = MET_BACKEND_NETCDF
-      case ('const')  ; mode = MET_BACKEND_CONST
+      case ('netcdf')   ; mode = MET_BACKEND_NETCDF
+      case ('era5land') ; mode = MET_BACKEND_ERA5LAND
+      case ('const')    ; mode = MET_BACKEND_CONST
       case default    ; call note_missing(m, key)
       end select
    end subroutine req_met_backend
@@ -550,11 +505,29 @@ contains
       cfg%forcing = forcing_config_t()                                  ! Ithaca/ERA5-Land defaults
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
-      call req_s            (t, 'forcing.path',           cfg%forcing%path,                  m)
-      call req_i            (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
-      call req_grid_match   (t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
-      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
+      !----- The source picks its own keys. The archive (format = "era5land", §15.2) finds the    !
+      !      site's cell itself and takes its orography from the static file, so the keys that     !
+      !      name a file, a grid slot or a grid elevation would parse and do nothing there: they    !
+      !      are rejected rather than ignored. ---------------------------------------------------!
+      if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+         call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
+         !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
+         if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
+            call req_r      (t, 'forcing.max_distance_km', cfg%forcing%max_distance_km,       m)
+         cfg%forcing%file_template = toml_string(t, 'forcing.file_template', '')
+         cfg%forcing%static_file   = toml_string(t, 'forcing.static_file',   '')
+         if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
+             toml_has(t, 'forcing.grid_match') .or. toml_has(t, 'site.grid_elevation'))            &
+            error stop 'load_meds_config: forcing.path, forcing.grid_index, forcing.grid_match and '// &
+                       'site.grid_elevation do not apply to forcing.format = "era5land" (the archive '// &
+                       'finds the site cell and its elevation itself); remove them'
+      else
+         call req_s         (t, 'forcing.path',           cfg%forcing%path,                  m)
+         call req_i         (t, 'forcing.grid_index',     cfg%forcing%grid_index,            m)
+         call req_grid_match(t, 'forcing.grid_match',     cfg%forcing%grid_match,            m)
+      end if
+      call req_dur          (t, 'forcing.timestep',       cfg%forcing%dt_forcing,            m)
       call req_avg_convention(t, 'forcing.avg_convention', cfg%forcing%avg_convention,       m)
       call req_sw_partition (t, 'forcing.sw_partition',   cfg%forcing%sw_partition,          m)
       call req_lwdown_source(t, 'forcing.lwdown_source',  cfg%forcing%lwdown_source,         m)
@@ -576,27 +549,147 @@ contains
          call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
          call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
       end if
-      call req_r            (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
-      call req_r            (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
-      call req_r            (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
-      call req_r            (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
+      !----- CO2 (#184): one source for every backend, never the met file. A DEFAULTED read      !
+      !      ("const"), so every existing config runs unchanged. The key of the other mode would  !
+      !      parse and do nothing, so it is rejected. ---------------------------------------------!
+      select case (trim(toml_string(t, 'forcing.co2_source', 'const')))
+      case ('const')
+         cfg%forcing%co2_source = CO2_SOURCE_CONST
+         call req_r         (t, 'forcing.co2_const',      cfg%forcing%co2_const,             m)
+         if (toml_has(t, 'forcing.co2_file'))                                                     &
+            error stop 'load_meds_config: forcing.co2_file needs forcing.co2_source = "file"; remove it'
+      case ('file')
+         cfg%forcing%co2_source = CO2_SOURCE_FILE
+         call req_s         (t, 'forcing.co2_file',       cfg%forcing%co2_file,              m)
+         if (toml_has(t, 'forcing.co2_const'))                                                    &
+            error stop 'load_meds_config: forcing.co2_const does not apply to forcing.co2_source = '// &
+                       '"file" (the file gives the CO2); remove it'
+      case default
+         error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
+      end select
+      !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
+      !      static orography, UTC), so the [site] location keys would parse and do nothing there:  !
+      !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
+      if (cfg%run_mode == RUN_MODE_REGION) then
+         if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
+             toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.elevation') .or.                &
+             toml_has(t, 'forcing.max_distance_km'))                                               &
+            error stop 'load_meds_config: site.latitude, site.longitude, site.utc_offset, '//       &
+                       'site.elevation and forcing.max_distance_km do not apply to [run].mode = '// &
+                       '"region" (each polygon sits at its cell centre, at the cell''s orography, '// &
+                       'in UTC); remove them'
+      else
+         call req_r         (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
+         call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
+         call req_r         (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
+         call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
+      end if
       call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
-      call req_r            (t, 'site.reference_height',  cfg%forcing%reference_height,      m)
-      call req_r            (t, 'site.wind_meas_height',  cfg%forcing%wind_meas_height,      m)
-      call req_r            (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
-      !----- wind-height + elevation-lapse corrections (§5.2/§10-Q2). -------------------------!
-      call req_l            (t, 'site.apply_wind_profile',    cfg%forcing%apply_wind_profile,    m)
+      !----- The forcing is moved to the top of each patch's canopy air space (meds_lapse_rate), so  !
+      !      the old fixed reference height and its ingest-time wind profile are gone. They would     !
+      !      parse and do nothing, so they are rejected, naming what replaced them. ------------------!
+      if (toml_has(t, 'site.reference_height') .or. toml_has(t, 'site.wind_meas_height') .or.     &
+          toml_has(t, 'site.apply_wind_profile') .or. toml_has(t, 'site.wind_roughness_z0'))      &
+         error stop 'load_meds_config: [site].reference_height, wind_meas_height, '//              &
+                    'apply_wind_profile and wind_roughness_z0 are gone -- the forcing is now moved '// &
+                    'to each patch''s canopy-air top. Declare the forcing''s own heights in '//     &
+                    '[forcing]: tq_height, wind_height, height_above, wind_exposure '//              &
+                    '(see meds_config_main.toml)'
+      !----- The forcing's own vertical frame (docs/science/forcing.md §8). ---------------------!
+      call req_r            (t, 'forcing.tq_height',      cfg%forcing%tq_height,             m)
+      call req_r            (t, 'forcing.wind_height',    cfg%forcing%wind_height,           m)
+      if (toml_has(t, 'forcing.height_above')) then
+         select case (trim(toml_string(t, 'forcing.height_above', '')))
+         case ('zero_plane') ; cfg%forcing%height_above = HEIGHT_ABOVE_ZERO_PLANE
+         case ('ground')     ; cfg%forcing%height_above = HEIGHT_ABOVE_GROUND
+         case default ; error stop 'load_meds_config: forcing.height_above must be "zero_plane" or "ground"'
+         end select
+      else
+         call note_missing(m, 'forcing.height_above')
+      end if
+      if (toml_has(t, 'forcing.wind_exposure')) then
+         select case (trim(toml_string(t, 'forcing.wind_exposure', '')))
+         case ('open_terrain')
+            cfg%forcing%wind_exposure = WIND_EXPOSURE_OPEN_TERRAIN
+            call req_r      (t, 'forcing.wind_exposure_z0',     cfg%forcing%wind_exposure_z0,     m)
+            call req_r      (t, 'forcing.wind_blending_height', cfg%forcing%wind_blending_height, m)
+         case ('local')
+            cfg%forcing%wind_exposure = WIND_EXPOSURE_LOCAL
+            if (toml_has(t, 'forcing.wind_exposure_z0') .or. toml_has(t, 'forcing.wind_blending_height')) &
+               error stop 'load_meds_config: forcing.wind_exposure_z0 and wind_blending_height apply '// &
+                          'only to forcing.wind_exposure = "open_terrain"; remove them'
+         case default ; error stop 'load_meds_config: forcing.wind_exposure must be "open_terrain" or "local"'
+         end select
+      else
+         call note_missing(m, 'forcing.wind_exposure')
+      end if
+      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December). -!
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
-      call req_r            (t, 'site.wind_roughness_z0',     cfg%forcing%wind_roughness_z0,     m)
-      call req_r            (t, 'site.lapse_rate_tair',       cfg%forcing%lapse_rate_tair,       m)
-      call req_r            (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
+      if (toml_has(t, 'site.lapse_rate_tair')) then
+         if (index(toml_string(t, 'site.lapse_rate_tair', ''), '[') > 0) then
+            block
+               real(wp)    :: gamma_month(12)
+               integer(ik) :: nout
+               call toml_real_array(t, 'site.lapse_rate_tair', gamma_month, nout)
+               if (nout /= 12_ik) error stop 'load_meds_config: site.lapse_rate_tair takes one value, '// &
+                                             'or a list of twelve (January .. December)'
+               cfg%forcing%lapse_rate_tair = gamma_month
+            end block
+         else
+            cfg%forcing%lapse_rate_tair = toml_real(t, 'site.lapse_rate_tair', 0.0_wp)
+         end if
+      else
+         call note_missing(m, 'site.lapse_rate_tair')
+      end if
+      if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
+         call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
+   !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
+   !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
+   !      required; the selection rule and the detail list default. In site mode a [region] key      !
+   !      would parse and do nothing, so it is rejected.  -------------------------------------------!
+   subroutine load_region_config(t, cfg, m)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t),     intent(inout) :: m
+      real(wp)    :: buf(MAX_DETAIL_POLYGONS + 1)
+      integer(ik) :: nout, i
+      select case (trim(toml_string(t, 'run.mode', 'site')))
+      case ('site')   ; cfg%run_mode = RUN_MODE_SITE
+      case ('region') ; cfg%run_mode = RUN_MODE_REGION
+      case default    ; error stop 'load_meds_config: [run].mode must be "site" or "region"'
+      end select
+      if (cfg%run_mode /= RUN_MODE_REGION) then
+         if (toml_has_section(t, 'region'))                                                        &
+            error stop 'load_meds_config: a [region] block needs [run].mode = "region"'
+         return
+      end if
+      call toml_real_array(t, 'region.box_nwse', buf, nout)
+      if (nout == 4_ik) then
+         cfg%region%box_nwse = buf(1:4)
+      else
+         call note_missing(m, 'region.box_nwse')
+      end if
+      cfg%region%land_fraction_min = toml_real(t, 'region.land_fraction_min', 0.5_wp)
+      if (toml_has(t, 'region.detail_polygons')) then
+         call toml_real_array(t, 'region.detail_polygons', buf, nout)
+         if (nout > MAX_DETAIL_POLYGONS)                                                           &
+            error stop 'load_meds_config: [region].detail_polygons lists more than 64 polygons'
+         do i = 1_ik, nout
+            if (buf(i) < 0.0_wp .or. abs(buf(i) - anint(buf(i))) > 0.0_wp)                          &
+               error stop 'load_meds_config: [region].detail_polygons must be polygon ids (integers >= 0)'
+            cfg%region%detail_polygons(i) = nint(buf(i), ik)
+         end do
+         cfg%region%n_detail = nout
+      end if
+   end subroutine load_region_config
+
    !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
-   !      DEFAULTED read, so a config with no [output] block leaves the new path OFF and the legacy  !
-   !      [io] path runs unchanged). ALL keys are optional-with-default (§6.1 softening), so no       !
-   !      keymiss is recorded. Per-variable overrides live in the optional meds_io_config.toml,        !
-   !      applied by the driver against the built registry (§6, MEDS_IO_DESIGN.md).                    !
+   !      DEFAULTED read, so a config with no [output] block writes no diagnostic stream). ALL keys  !
+   !      are optional-with-default (§6.1 softening), so no keymiss is recorded. Per-variable       !
+   !      overrides live in the optional meds_io_config.toml, applied by the driver against the     !
+   !      built registry (§6, MEDS_IO_DESIGN.md).                                                   !
    subroutine load_output_config(t, cfg)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
@@ -626,6 +719,7 @@ contains
       cfg%output%grp_on(GRP_RADIATION)  = toml_logical(t, 'output.radiation',  .false.)
       cfg%output%grp_on(GRP_ECOPHYS)    = toml_logical(t, 'output.ecophys',    .false.)
       cfg%output%grp_on(GRP_BIOGEOCHEM) = toml_logical(t, 'output.biogeochem', .true.)
+      cfg%output%grp_on(GRP_FORCING)    = toml_logical(t, 'output.forcing',    .true.)
       !----- AXIS toggles: suppress a whole trailing dimension without naming variables. The 2-D    !
       !      (soil layer x patch) axis is the highest-volume non-cohort axis and stays off. --------!
       cfg%output%axis_on(AXIS_COHORT)     = toml_logical(t, 'output.axes_cohort',     .true.)
@@ -828,15 +922,9 @@ contains
       type(toml_table_t) :: tm, tp
       type(keymiss_t)    :: miss
       logical            :: found
-      logical            :: io_seen                  !< #173: the deprecated [io] block was used
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
       character(len=64)  :: integrator_str
-
-      !----- Initialised in the BODY, not the declaration: an initialiser would give it the SAVE  !
-      !      attribute, so a second load_meds_config call in one process would inherit the first    !
-      !      call's value. -------------------------------------------------------------------------!
-      io_seen = .false.
 
       !----- MAIN file. -------------------------------------------------------------------!
       call toml_parse_file(path, tm, found)
@@ -854,6 +942,8 @@ contains
       !      no run.n_threads key is byte-identical). Exposed ONCE, here -- deliberately NOT also from !
       !      OMP_NUM_THREADS, so the run's thread count is recorded in the config that produced it. ---!
       cfg%n_threads = toml_int(tm, 'run.n_threads', 1_ik)
+      !----- [run].mode (DEFAULTED "site", today's behaviour) and, for a region, the [region] block. !
+      call load_region_config(tm, cfg, miss)
 
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       call req_l     (tm, 'fast.fast_biophysics_on', cfg%fast_biophysics_on, miss)
@@ -997,22 +1087,18 @@ contains
       call req_s(tm, 'init.census_file',   cfg%init_census_file,  miss)
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
 
-      !----- [state], renamed from [io] (#173). The legacy diagnostic writer that gave the block its !
-      !      name was retired at v0.1; what is left is the restart stream, so "io" now names the one   !
-      !      output path it does NOT cover -- the [output] subsystem writes every diagnostic.          !
-      !      DEPRECATION PATH, not a straight edit: [io] still loads, with one warning naming the      !
-      !      keys, because this is a user-visible rename and a config that silently stopped being read !
-      !      would fall back to whatever `miss` reports rather than to the values the user wrote.       !
-      call req_s_renamed(tm, 'state.output_dir',   'io.output_dir',   cfg%state_output_dir,   miss, io_seen)
-      call req_s_renamed(tm, 'state.output_prefix','io.output_prefix',cfg%state_output_prefix,miss, io_seen)
-      call req_l_renamed(tm, 'state.write_state',  'io.write_state',  cfg%state_write_state,  miss, io_seen)
-      call req_i_renamed(tm, 'state.interval_years','io.state_interval_years',                      &
-                             cfg%state_interval_years_cfg, miss, io_seen)
-      if (io_seen) then
-         write(*,'(a)') ' config: DEPRECATED -- the [io] block is now [state]. Rename the block and'
-         write(*,'(a)') '         io.state_interval_years -> state.interval_years. [io] still loads'
-         write(*,'(a)') '         in v0.2.x and will be removed in a later release.'
-      end if
+      !----- [state]: the restart stream (#173); every diagnostic is [output]'s. A config that still  !
+      !      spells the block [io], the name it had before v0.3.0, would parse and do nothing, so it  !
+      !      is refused, naming the keys that replaced it (#309). ------------------------------------!
+      do i = 1_ik, tm%n
+         if (index(tm%key(i), 'io.') == 1)                                                          &
+            error stop 'load_meds_config: the [io] block is now [state]: rename the block, and '//  &
+                       'io.state_interval_years to state.interval_years'
+      end do
+      call req_s(tm, 'state.output_dir',     cfg%state_output_dir,         miss)
+      call req_s(tm, 'state.output_prefix',  cfg%state_output_prefix,      miss)
+      call req_l(tm, 'state.write_state',    cfg%state_write_state,        miss)
+      call req_i(tm, 'state.interval_years', cfg%state_interval_years_cfg, miss)
 
       call req_l(tm, 'options.override_derived', cfg%override_derived,         miss)
 

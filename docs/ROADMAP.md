@@ -32,6 +32,9 @@ failure, not from a plan.
 | [#104](https://github.com/xiangtaoxu/MEDS/issues/104) | Plant hydraulics burns 13× wall clock on a collapsed (floored) wood store | Detector shipped (#105); the physics decision is open — see §4 |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#146](https://github.com/xiangtaoxu/MEDS/issues/146) | Fast-integrator state vector: only a packed layout gives compile-time omission safety (1 207 field references) | |
+| [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
+| [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
+| [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
 
 ---
 
@@ -54,7 +57,7 @@ site, under any strategy. That is not a roadmap item with a design — it is the
 
 ## 3. Soil biogeochemistry
 
-Source: `docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
+Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
 [`science/soil_carbon.md`](science/soil_carbon.md).
 
 - **The nitrogen twin.** *Planned.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) Shaped in already: `n_cycle_on` is parsed and the N fields
@@ -83,30 +86,26 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 - **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Open question.* A floored relative water
   content maps to a potential of about −10⁴ MPa, which is not a pressure any tissue reaches.
   The detector ships; whether to clamp the potential, arrest the solve, or kill the cohort is a
-  physics decision. **Deferred to v0.3.0** (2026-09-13). Note that *arresting* is not the free
+  physics decision, not taken for v0.3.0. Note that *arresting* is not the free
   option it looks: the collapsed store diagnoses ψ at about −1.5×10⁴ MPa against a soil at perhaps
   −2 MPa, so the cohort recovers today — that enormous artificial gradient IS the 13× cost — and
   removing uptake would make a transiently desiccated cohort permanently dead.
-- **`psi_leaf` is the one state that does not converge at 900 s.** *Open question.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) Its error is
-  inherited from the canopy air and amplified roughly 4×; the residual relocates to `psi_wood`
-  through the frozen uptake seam. Every other state and flux converges.
-
-Source: `docs/dev_plans/MEDS_NUMERICS_SCOPING.md`.
-
-- **Bare-array forms** ([#164](https://github.com/xiangtaoxu/MEDS/issues/164), §11.3) for `cas_column_step_implicit`, `soil_energy_step_implicit`,
-  `soil_carbon_step` and the snow kernels, so they match the device-eligible convention the
-  other kernels follow.
+- **`psi_leaf` is the one state that does not converge at 900 s.** *Known limitation.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) Its
+  error is inherited from the canopy air and amplified roughly 4×; the residual relocates to
+  `psi_wood` through the frozen uptake seam. Every other state and flux converges. The issue was
+  closed on 2026-09-14 without a comment; the limitation stands, and
+  `examples/example_biophysics/meds_config_july.toml` states it where a user will read it.
 
 ---
 
 ## 5. Vegetation energy
 
-Source: `docs/dev_plans/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
+Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. Science page:
 [`science/vegetation_energy_dynamics.md`](science/vegetation_energy_dynamics.md).
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
   has no independent thermal state and cannot freeze.
-- **The free-convection slope.** *Deferred to v0.3.0, premise re-measured.*
+- **The free-convection slope.** *Deferred, premise re-measured.*
   [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The design note says the true sensible-heat
   slope is `1.25·h` and the solved `ΔT_leaf` is overstated ~20 % in calm conditions. Measured, it is
   not. `1.25` is the **pure free-convection** limit: `H ∝ ΔT^{1+m}` holds only for the Grashof part
@@ -140,9 +139,19 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
   multispectral product (MODIS bands, Sentinel-2) needs finer bands, which is a change to the RT's
   band structure rather than to its output.
-- **Remove the `[io]` deprecation shim.** *Scheduled, post-v0.2.x.* The block was renamed to
-  `[state]` in v0.2.0 (#173) with `[io]` still loading behind one warning. Drop the
-  `req_*_renamed` readers and the warning once users have had a minor release to migrate.
+- **A patch axis on the FAST tier.** *Candidate.* [#270](https://github.com/xiangtaoxu/MEDS/issues/270) Sub-daily output is site-mean only,
+  although the fast staging already carries the patch dimension.
+- **Within-step variances and a skin temperature.** *Candidate.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275) v0.3.0 dropped
+  `ground_temp_site` and relabelled the four variances as what they are, variances of end-of-step
+  samples. What remains: a sum-of-squares row per variance in the patch block (`PD_*_SQ`) with an
+  aggregation that consumes a mean and a mean square, and the skin temperature the ground balance
+  already computes.
+- **Fast-only rows in a slow-only run read 0.** *Candidate.* [#299](https://github.com/xiangtaoxu/MEDS/issues/299) v0.3.0 weights the patch block
+  with the slow step when the fast loop is off, so the slow rows report their rates. The rows only
+  the fast loop fills (fluxes, the forcing echo) still read 0 there, where `_FillValue` would say
+  "not simulated"; that needs a per-variable flag in the registry.
+- **One serializer for site and region files.** *Candidate.* [#312](https://github.com/xiangtaoxu/MEDS/issues/312) The region writer duplicates
+  the site writer, and the forcing echo is enumerated in three places.
 
 ---
 
@@ -155,7 +164,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   relation calibrated on **leaf** rather than air temperature; applying the air-temperature fit to a
   per-cohort leaf temperature would use it well outside its range. Acclimation of **respiration**
   (as opposed to photosynthetic capacity) is also still open.
-- **Whether storage maintenance should be ON by default.** *Open, v0.3.0 question.* The mechanism
+- **Whether storage maintenance should be ON by default.** *Open question.* The mechanism
   shipped in v0.2.0 (#177) with `storage_turnover_rate` defaulting to **0**, which reproduces the
   earlier behaviour. ED2's temperate-broadleaf value of 0.6243 yr⁻¹ costs an Ithaca run 35 % of GPP
   and 43 % of AGB over five years, so switching the default on is a rebaseline decision, not a
@@ -183,7 +192,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 
 ## 8. Forcing
 
-Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
+Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
 [`science/forcing.md`](science/forcing.md).
 
 - **A better cloud term for the LWdown synthesis.** *Candidate.* [#257](https://github.com/xiangtaoxu/MEDS/issues/257)
@@ -193,16 +202,34 @@ Source: `docs/dev_plans/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page:
   adequate for a fallback, but the residual is real: driving Ithaca from synthesis leaves the soil
   surface 1.37 K cooler than the file's `strd`. A cloud-fraction formulation (Crawford & Duchon
   1999) or a nocturnal index carried from a longer window would close more of it.
-- **The multi-polygon runtime.** *Candidate.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) A grid → polygon → site state hierarchy, an array
-  of readers, a polygon loop and MPI. Large and orthogonal to everything else.
-  `nearest_grid_index` is the reusable atom, already built.
-- **A transient or observed CO₂ stream.** *Planned.* [#184](https://github.com/xiangtaoxu/MEDS/issues/184)
+- **Forcing adapters for NLDAS-3, Daymet and CHIRPS** (forcing phase F6). *Candidate.*
+  [#302](https://github.com/xiangtaoxu/MEDS/issues/302) Deferred 2026-09-27; ERA5-Land stays the
+  only product. Each would follow the ED_ERA5land pattern: a downloader, the same flat monthly
+  archive, and a `met_source` entry (`MEDS_FORCING_DESIGN.md` §16). NLDAS-3 (~1 km, hourly) could
+  drive MEDS alone but needs regional archives and its own chunk size (OD3); Daymet and CHIRPS are
+  daily corrections to an hourly base.
+- **ED_ERA5land archive years before June 2002.** *Planned.*
+  [#303](https://github.com/xiangtaoxu/MEDS/issues/303) Deferred until a study needs them. GDEX
+  starts in June 2002, so they come from the CDS, with the tools that already built 2026-04 and
+  2026-06.
+- **The multi-polygon runtime.** *Planned.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) Region runs exist since R2 (#289):
+  `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon, in
+  one process, all sharing one forcing reader. What remains is in `MEDS_POLYGON_RUNTIME_PLAN.md` §10:
+  - R3, threads: the fast loop over all patches of all polygons (plan §10.4; today the polygons
+    are stepped one after another on one thread), with the runtime consolidation of [#310](https://github.com/xiangtaoxu/MEDS/issues/310);
+  - R4, region checkpoints and restarts (a region writes none yet);
+  - R5, failure isolation and batching by tiles;
+  - R6, a C API and Python entry point, and an example.
+
+  MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).
+- **A source interface for the met reader.** *Candidate.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) `meds_met_driver` carries three
+  sources behind ten backend branches; the hourly cadence and the time-units parsing are repeated.
 
 ---
 
 ## 9. Snow
 
-Source: `docs/dev_plans/MEDS_SNOW_DESIGN.md` §7. Science page:
+Source: `docs/dev_plans/archive/MEDS_SNOW_DESIGN.md` §7. Science page:
 [`science/snow_biophysics.md`](science/snow_biophysics.md).
 
 - **P1 — multi-layer snow.** *Planned.* [#186](https://github.com/xiangtaoxu/MEDS/issues/186) Compaction and densification, an aging albedo, and a
@@ -221,7 +248,7 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 - **Per-layer face budget imbalance on the committed path**, per-cohort tissue residuals, and
   RK45 ledgers asserted after the rail decision. *Planned.* [#189](https://github.com/xiangtaoxu/MEDS/issues/189)
 - **Delete `column_cohort_t`** in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a
-  per-field policy table. *Deferred to v0.3.0, **paired with #146*** (2026-09-13).
+  per-field policy table. *Deferred, **paired with #146*** (2026-09-13).
   [#190](https://github.com/xiangtaoxu/MEDS/issues/190) 38 references across 11 files. Four of the
   five benefits the design claimed have since landed piecemeal: `column_cohort_init` gives the test
   fixtures allometric consistency, the three hard-coded constants are PFT parameters, the derived
@@ -230,7 +257,7 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `scale_cohort_ground_fields`. What is left is **completeness you cannot forget** — a table the
   blend iterates cannot omit a field a hand-written routine can — and that is #146's hazard class,
   which is why the two now travel together.
-- **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Deferred to v0.3.0, **paired with #190***.
+- **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Deferred, **paired with #190***.
   Only a packed layout makes field omission a compile-time error; there are 1 207 field references
   today. One packed, policy-carrying layout should serve the fast state vector and the cohort slice
   together — separately, each is a large refactor buying a fraction of one property.
@@ -239,14 +266,15 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 ## 11. Performance
 
-Source: `docs/dev_plans/MEDS_GPU_EVALUATION.md` §12.
+Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 - **Attack the allocator traffic.** *Planned.* [#195](https://github.com/xiangtaoxu/MEDS/issues/195) About 24 % of fast-loop self time is allocator
   work in `build_column_frozen`.
 - **Thread and vectorise the cohort axis on the CPU.** *Planned.* [#196](https://github.com/xiangtaoxu/MEDS/issues/196) This is the evaluation's
   headline recommendation. Patch-axis threading already ships; the cohort axis is untouched.
-- **A single-precision experiment** (`wp = real32`). *Candidate.* [#197](https://github.com/xiangtaoxu/MEDS/issues/197) Measured 56× on the device for
-  FP32, which is why it is worth knowing what MEDS actually needs.
+- **A single-precision experiment** (`wp = real32`). *Decided: no.* [#197](https://github.com/xiangtaoxu/MEDS/issues/197) Measured 56× on the device for
+  FP32, which is why it was worth asking what MEDS needs; the answer (2026-09-13) is that MEDS stays
+  `real64` throughout. Kept here as the record; the issue closes with v0.3.0.
 
 ---
 

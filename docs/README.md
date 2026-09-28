@@ -24,6 +24,12 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 
 ## The science pages
 
+**The whole model**
+
+| Page | Covers |
+|---|---|
+| [`order_of_processes.md`](science/order_of_processes.md) | The order of processes: a run, one slow step, the fast loop's sub-steps, the slow dynamics, the calendar boundary's restructuring, and output. |
+
 **Sub-daily, the fast loop**
 
 | Page | Covers |

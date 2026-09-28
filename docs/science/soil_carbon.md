@@ -248,10 +248,11 @@ Euler step produces them routinely — and the ceiling catches divergence, not i
 - **Nitrogen.** `soil_carbon_t` and `litter_input_t` carry N fields and `decomp_opts_t` the C:N ratios
   and `n_cycle_on`, but **no kernel reads the flag**: $`f_{\mathrm{decomp}}\equiv1`$ and every N field
   stays zero. The cycle is shaped in, not implemented.
-- **DAMM.** `heterotrophic_respiration_damm` implements Davidson's dual Arrhenius/Michaelis-Menten
-  scheme (soluble-C and O₂ limitation, unimodal moisture response *emergent* rather than imposed), and
-  `heterotrophic_respiration_flux` dispatches to it over `HR_Q10` / `HR_EXP_ED2`. Neither has a config
-  key or a production caller — the matrix form (§7) is what the fast loop respires.
+- **DAMM, or any other respiration form.** The matrix form (§7) is the only heterotrophic
+  respiration. Davidson's dual Arrhenius/Michaelis–Menten scheme (soluble-C and O₂ limitation, a
+  unimodal moisture response *emergent* rather than imposed), a Q10 form and ED2's capped exponential
+  had no config key and no production caller, and were deleted (#153); they are kept on branch
+  `archive/damm-hr`.
 - **No vertical resolution.** Pools are per-patch scalars, as in ED2; only the environmental scalar
   sees layer-resolved temperature and moisture.
 - **No fire**, so nothing yet consumes the above-ground pools; treefall is the only disturbance.

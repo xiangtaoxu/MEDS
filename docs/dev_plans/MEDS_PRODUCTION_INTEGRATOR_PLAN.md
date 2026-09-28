@@ -13,9 +13,11 @@
 > written, E2, N1 and N6. This plan is unusual in recording what it disproved, and those sections
 > should be read as findings.
 >
-> **Still open:** N5 (adaptive freeze cadence), folding soil water into the ARK tableau, the RK45
-> production-cadence warning, the `rwc_floor` clamp artefact (issue #104), E5, and `psi_leaf` as the
-> one state that does not converge at 900 s. All tracked in `docs/ROADMAP.md` §4.
+> **Still open** (refreshed 2026-09-28): N5, the adaptive freeze cadence (#158); folding soil water
+> into the ARK tableau (#159); the `rwc_floor` clamp artefact (#104); E5, the RK45 rescue snapshot
+> (never filed); and `psi_leaf` as the one state that does not converge at 900 s — #162, which was
+> closed on 2026-09-14 without a comment while the limitation stands. The RK45 production-cadence
+> warning shipped (#160). All in `docs/ROADMAP.md` §4.
 >
 > **§9 "Where the code is" is entirely stale** — every path in it predates the 2026-09
 > reorganization. The integrators are in `src/fast_dynamics/numerics/`.
@@ -559,7 +561,8 @@ Verified on `main` at `0f95e67`:
   was deliberately hoisted *out* of the loop (BB1 phase 1) — exactly the structure that blocks
   threading. §7.
 - `t_sub` depends only on `isub`, yet `met_advance` / `met_instant` / `apply_met_to_ctx` run **inside**
-  the patch loop, repeating site-uniform work `n_patch` times per sub-step. §7 C1.
+  the patch loop, repeating site-uniform work `n_patch` times per sub-step. §7 C1. (Since done: the
+  samples are hoisted out of the patch loop, and `apply_met_to_ctx` is gone, #292.)
 - CMake gives OpenMP flags to NVHPC only, and only on `meds_core`. The fast loop is in `meds_aux`.
 - **Dead split residue:** `picard_max_iter` / `picard_tol_temp` / `picard_tol_shv` / `picard_relax` /
   `picard_fixed_iter` are plumbed to no reader; `budg%picard_iters` / `picard_nonconv` are read and

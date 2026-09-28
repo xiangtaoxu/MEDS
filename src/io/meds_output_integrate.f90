@@ -19,14 +19,15 @@ module meds_output_integrate
    use meds_constants,      only : p_std
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
-   use meds_output_types,   only : var_desc_t, integ_buffer_t, output_manager_t, fast_sample_t,   &
-                                   diag_params_t,                                                  &
+   use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
+                                   fast_sample_t, diag_params_t, pending_record_t, record_queue_t, &
+                                   slab_col,                                                     &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_site_state_types,   only : site_t
-   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_value,           &
-                                       patch_diag_value
+   use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, N_PYDIAG, cohort_diag_value,           &
+                                       patch_diag_value, polygon_diag_value
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential, specific_humidity_to_vpd
@@ -51,7 +52,7 @@ module meds_output_integrate
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
    public :: FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP
-   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0
+   public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
    public :: FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD
@@ -72,6 +73,8 @@ module meds_output_integrate
    public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
+   public :: SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE
+   public :: SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -129,15 +132,17 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
    !----- SLOW-loop diagnostics (1200+), read from site%cohort%sdiag. NOT from site%deriv: that     !
-   !      bundle is transient and deliberately NOT lockstep-reordered, so at the output tick -- which !
-   !      runs after the monthly fiss/fuse -- its index no longer matches the cohort axis.  ---------!
+   !      bundle is transient and deliberately NOT lockstep-reordered, and the step re-sorts the     !
+   !      cohorts after filling it, so at the output tick its index need not match the cohort axis. !
    integer(ik), parameter :: FLD_C_SDIAG0          = 1200_ik
    !----- FAST-LOOP per-cohort DIAGNOSTICS (1100+), read from site%cohort%diag. These are the      !
-   !      quantities the fast loop computes every dt_fast and used to discard; the id encodes the   !
+   !      quantities the fast loop computes every dt_fast and keeps nowhere else; the id encodes the !
    !      row of the diagnostic block (CD_*), offset by FLD_C_DIAG0.  --------------------------!
    integer(ik), parameter :: FLD_C_DIAG0           = 1100_ik
    !----- FAST-LOOP per-patch DIAGNOSTICS (2100+), read from site%patch%diag (PD_* + FLD_P_DIAG0). !
    integer(ik), parameter :: FLD_P_DIAG0           = 2100_ik
+   !----- POLYGON diagnostics (4100+, a site-scalar family), read from site%diag (PY_* + FLD_PY_DIAG0). !
+   integer(ik), parameter :: FLD_PY_DIAG0          = 4100_ik
 
    !----- Patch FIELDS (SRCK_PATCH). ---------------------------------------------------------!
    integer(ik), parameter :: FLD_P_AREA            = 2001_ik
@@ -206,6 +211,19 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_RECO          = 5014_ik
    integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
    integer(ik), parameter :: SRC_F_ATM_CO2       = 5016_ik
+   !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7). ---------------------------------------!
+   integer(ik), parameter :: SRC_F_QAIR          = 5030_ik
+   integer(ik), parameter :: SRC_F_PSURF         = 5031_ik
+   integer(ik), parameter :: SRC_F_WIND          = 5032_ik
+   integer(ik), parameter :: SRC_F_LWDOWN        = 5033_ik
+   integer(ik), parameter :: SRC_F_PAR_BEAM      = 5034_ik
+   integer(ik), parameter :: SRC_F_PAR_DIFFUSE   = 5035_ik
+   integer(ik), parameter :: SRC_F_NIR_BEAM      = 5036_ik
+   integer(ik), parameter :: SRC_F_NIR_DIFFUSE   = 5037_ik
+   integer(ik), parameter :: SRC_F_RAINF         = 5038_ik
+   integer(ik), parameter :: SRC_F_SNOWFALL      = 5039_ik
+   integer(ik), parameter :: SRC_F_COSZ          = 5040_ik
+   integer(ik), parameter :: SRC_F_RHO_AIR       = 5041_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
@@ -479,10 +497,6 @@ contains
                                     + site%cohort%fineroot_carbon(1:n)                         &
                                     + site%cohort%wood_carbon(1:n)                             &
                                     + site%cohort%nonstructural_carbon(1:n)
-      !----- slow-loop tendencies, read off the still-live per-step deriv bundle. ------------!
-      !      site%deriv is refilled every slow step and is NOT lockstep-reordered, so it is      !
-      !      meaningful only at the output tick, which is exactly when this runs. A run whose     !
-      !      slow tier is frozen ([run].slow_on = false) leaves it at 0, which is the truth.      !
       case default
          !----- FAST-loop diagnostic rows (FLD_C_DIAG0 + CD_*): read the dt-weighted accumulator     !
          !      and normalize. A cohort with no samples this window (there should be none, but a     !
@@ -749,80 +763,149 @@ contains
       case (SRC_S_WORK_CLAMP_COMMIT) ; val = site%work_clamp_commit
       case (SRC_S_WORK_CLAMP_MASS)   ; val = site%work_clamp_mass
       case (SRC_S_WORK_CLAMP_ENERGY) ; val = site%work_clamp_energy
-      case default            ; val = MISSING_VALUE
+      case default
+         if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PYDIAG) then
+            val = MISSING_VALUE
+            if (site%diag%active) val = polygon_diag_value(site%diag, source_id - FLD_PY_DIAG0)
+         else
+            val = MISSING_VALUE
+         end if
       end select
    end function extract_scalar_source
 
    !=======================================================================================!
-   !  The per-step tick (netCDF-FREE): close any period that ended, then fold the current    !
-   !  step into every active tier. Called by the stepper (aux); stages closed records into    !
-   !  mgr%pending for main to serialize. FAST tier (index 1) is DEFERRED to P1 (§9); P0 ticks   !
-   !  DAILY/MONTHLY/ANNUAL at the slow step. The MONTHLY cohort/patch flush must run BEFORE that  !
-   !  month boundary's fiss/fuse (§4.4/§4.5) -- the caller orders this by where it calls the tick. !
+   !  The per-step tick (netCDF-FREE). The slow step just taken covers [prev, now): its    !
+   !  fluxes were accumulated over that interval, and its state is read here, at `now`,    !
+   !  after the step's dynamics. A step belongs to the period it STARTS in, so it is       !
+   !  folded into the window that holds `prev`, and only THEN is each window that `now`    !
+   !  has left closed (the flags compare now's calendar with prev's). A record stamped d   !
+   !  holds the steps that start in period d: a daily flux is that day's, and a state is   !
+   !  the value at the end of each of the period's steps. Closed records are staged in     !
+   !  bufs%queue for main to serialize.                                                    !
+   !                                                                                       !
+   !  The stand's calendar restructuring runs after this tick (advance_boundary), so every !
+   !  window holds one cohort/patch slot set (§4.4) and the restructuring's events reach   !
+   !  the period that begins.                                                              !
    !=======================================================================================!
-   subroutine output_integrate(mgr, site, now, dt, is_new_day, is_new_month, is_new_year)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine output_integrate(files, bufs, site, prev, dt, is_new_day, is_new_month, is_new_year)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       type(site_t),           intent(in)    :: site
-      type(meds_time_t),      intent(in)    :: now
+      type(meds_time_t),      intent(in)    :: prev          !< the start of the step just taken
       real(wp),               intent(in)    :: dt
-      logical,                intent(in)    :: is_new_day, is_new_month, is_new_year
+      logical,                intent(in)    :: is_new_day, is_new_month, is_new_year  !< its end left prev's period
       integer(ik) :: t, j, k, n_out
       real(wp)    :: scal
-      real(wp)    :: slab(max(mgr%max_slab, 1_ik))
-      logical     :: vslab(max(mgr%max_slab, 1_ik))
-      if (.not. mgr%enabled) return
-      !----- close periods that just ended (before folding the new step; tiers independent). ---!
-      if (is_new_year  .and. mgr%has_data(4_ik)) call close_tier(mgr, 4_ik)
-      if (is_new_month .and. mgr%has_data(3_ik)) call close_tier(mgr, 3_ik)
-      if (is_new_day   .and. mgr%has_data(2_ik)) call close_tier(mgr, 2_ik)
-      !----- fold the current step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately    !
-      !      from the staged sub-step samples (output_integrate_fast), because sub-daily          !
-      !      resolution exists only inside the fast loop.                                         !
+      real(wp)    :: slab(max(files%max_slab, 1_ik))
+      logical     :: vslab(max(files%max_slab, 1_ik))
+      if (.not. files%enabled) return
+      !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
+      !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
+      !      only inside the fast loop.                                                           !
       do t = 2_ik, N_FREQ
-         if (mgr%reg%nidx(t) == 0_ik) cycle
-         if (.not. mgr%has_data(t)) mgr%t_open(t) = now
-         do j = 1_ik, mgr%reg%nidx(t)
-            k = mgr%reg%idx_freq(j, t)
-            call extract_variable(site, mgr%diag, mgr%reg%var(k), scal, slab, vslab, n_out)
-            if (mgr%reg%var(k)%dim == DIM_SCALAR) then
-               call integrate_scalar(mgr%buf(k,t), scal, dt)
+         if (files%reg%nidx(t) == 0_ik) cycle
+         if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
+         do j = 1_ik, files%reg%nidx(t)
+            k = files%reg%idx_freq(j, t)
+            call extract_variable(site, files%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            if (files%reg%var(k)%dim == DIM_SCALAR) then
+               call integrate_scalar(bufs%buf(k,t), scal, dt)
             else
-               call integrate_slab(mgr%buf(k,t), slab, n_out, dt, vslab)
+               call integrate_slab(bufs%buf(k,t), slab, n_out, dt, vslab)
             end if
          end do
-         mgr%has_data(t) = .true.
+         bufs%has_data(t) = .true.
       end do
+      !----- then close the periods the step's end has left (tiers independent). ----------------!
+      if (is_new_year  .and. bufs%has_data(4_ik)) call close_tier(files, bufs, 4_ik)
+      if (is_new_month .and. bufs%has_data(3_ik)) call close_tier(files, bufs, 3_ik)
+      if (is_new_day   .and. bufs%has_data(2_ik)) call close_tier(files, bufs, 2_ik)
    end subroutine output_integrate
 
    !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
-   subroutine close_tier(mgr, t)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine close_tier(files, bufs, t)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: t
-      integer(ik) :: j, k, ns
-      mgr%pending(t)%used   = .true.
-      mgr%pending(t)%freq   = ishft(1_ik, t - 1_ik)
-      mgr%pending(t)%t_open = mgr%t_open(t)
-      mgr%pending(t)%n_cohort = 0_ik ; mgr%pending(t)%n_patch = 0_ik
-      mgr%pending(t)%sval(:)   = MISSING_VALUE
-      mgr%pending(t)%svalid(:) = .false.
-      mgr%pending(t)%nslab(:)  = 0_ik
-      do j = 1_ik, mgr%reg%nidx(t)
-         k = mgr%reg%idx_freq(j, t)
-         if (mgr%reg%var(k)%dim == DIM_SCALAR) then
-            call normalize_scalar(mgr%buf(k,t), mgr%pending(t)%sval(k), mgr%pending(t)%svalid(k))
+      integer(ik) :: j, k, ns, nsl
+      integer(ik) :: slab_k(files%reg%nidx(t))
+      logical     :: soil_patch(files%reg%nidx(t))
+      bufs%pending(t)%used   = .true.
+      bufs%pending(t)%freq   = ishft(1_ik, t - 1_ik)
+      bufs%pending(t)%t_open = bufs%t_open(t)
+      bufs%pending(t)%n_cohort = 0_ik ; bufs%pending(t)%n_patch = 0_ik
+      bufs%pending(t)%sval(:)   = MISSING_VALUE
+      bufs%pending(t)%svalid(:) = .false.
+      bufs%pending(t)%nslab(:)  = 0_ik
+      do j = 1_ik, files%reg%nidx(t)
+         k = files%reg%idx_freq(j, t)
+         if (files%reg%var(k)%dim == DIM_SCALAR) then
+            call normalize_scalar(bufs%buf(k,t), bufs%pending(t)%sval(k), bufs%pending(t)%svalid(k))
          else
-            call normalize_slab(mgr%buf(k,t), mgr%pending(t)%slab(:,k),                          &
-                                mgr%pending(t)%slabvalid(:,k), ns)
-            mgr%pending(t)%nslab(k) = ns
-            if (mgr%reg%var(k)%dim == DIM_COHORT)                                                &
-               mgr%pending(t)%n_cohort = max(mgr%pending(t)%n_cohort, ns)
-            if (mgr%reg%var(k)%dim == DIM_PATCH)                                                 &
-               mgr%pending(t)%n_patch  = max(mgr%pending(t)%n_patch,  ns)
+            call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,k),                          &
+                                bufs%pending(t)%slabvalid(:,k), ns)
+            bufs%pending(t)%nslab(k) = ns
+            if (files%reg%var(k)%dim == DIM_COHORT)                                                &
+               bufs%pending(t)%n_cohort = max(bufs%pending(t)%n_cohort, ns)
+            if (files%reg%var(k)%dim == DIM_PATCH)                                                 &
+               bufs%pending(t)%n_patch  = max(bufs%pending(t)%n_patch,  ns)
          end if
-         call reset_buffer(mgr%buf(k,t))
+         call reset_buffer(bufs%buf(k,t))
       end do
-      mgr%has_data(t) = .false.
+      bufs%has_data(t) = .false.
+      nsl = 0_ik                                          ! this tier's slab variables, for the queue
+      do j = 1_ik, files%reg%nidx(t)
+         k = files%reg%idx_freq(j, t)
+         if (files%reg%var(k)%dim == DIM_SCALAR) cycle
+         nsl = nsl + 1_ik
+         slab_k(nsl) = k ; soil_patch(nsl) = files%reg%var(k)%dim == DIM_SOIL_PATCH
+      end do
+      call enqueue_record(bufs%queue(t), bufs%pending(t), slab_k(1:nsl), soil_patch(1:nsl))
+      bufs%pending(t)%used = .false.
    end subroutine close_tier
+
+   !----- Append a copy of the scratch record to the tier's queue. Only what the writer reads is   !
+   !      copied: the tier's slab variables (`slab_k`), each to its nslab rows, or the whole patch x !
+   !      layer block (n_patch * n_soil_layer_max) for a soil-patch variable. The copy is exact, so  !
+   !      a queued record writes exactly what an immediate write from the scratch would have. -----!
+   subroutine enqueue_record(q, src, slab_k, soil_patch)
+      type(record_queue_t),   intent(inout) :: q
+      type(pending_record_t), intent(in)    :: src
+      integer(ik),            intent(in)    :: slab_k(:)
+      logical,                intent(in)    :: soil_patch(:)
+      type(pending_record_t), allocatable :: grown(:)
+      integer(ik) :: rows, nv, ncol, c
+      if (.not. allocated(q%rec)) allocate(q%rec(8))
+      if (q%n == size(q%rec, kind=ik)) then                   ! double the capacity (rare: once per run)
+         allocate(grown(2 * size(q%rec)))
+         grown(1:q%n) = q%rec(1:q%n)
+         call move_alloc(grown, q%rec)
+      end if
+      q%n = q%n + 1_ik
+      nv = size(src%sval, kind=ik) ; ncol = size(slab_k, kind=ik)
+      rows = 1_ik
+      do c = 1_ik, ncol
+         rows = max(rows, src%nslab(slab_k(c)))
+         if (soil_patch(c)) rows = max(rows, src%n_patch * n_soil_layer_max)
+      end do
+      rows = min(rows, size(src%slab, 1, kind=ik))
+      associate (r => q%rec(q%n))
+         r%used = .true. ; r%freq = src%freq ; r%t_open = src%t_open
+         r%n_cohort = src%n_cohort ; r%n_patch = src%n_patch
+         if (allocated(r%sval)) then
+            if (size(r%sval) /= nv .or. size(r%slab, 1) < rows .or. size(r%slab, 2) < max(ncol, 1_ik)) &
+               deallocate(r%sval, r%svalid, r%nslab, r%col, r%slab, r%slabvalid)
+         end if
+         if (.not. allocated(r%sval))                                                             &
+            allocate(r%sval(nv), r%svalid(nv), r%nslab(nv), r%col(nv),                            &
+                     r%slab(rows, max(ncol, 1_ik)), r%slabvalid(rows, max(ncol, 1_ik)))
+         r%sval = src%sval ; r%svalid = src%svalid ; r%nslab = src%nslab ; r%col = 0_ik
+         do c = 1_ik, ncol
+            r%col(slab_k(c)) = c
+            r%slab(1:rows, c) = src%slab(1:rows, slab_k(c)) ; r%slabvalid(1:rows, c) = src%slabvalid(1:rows, slab_k(c))
+         end do
+      end associate
+   end subroutine enqueue_record
 
    !=======================================================================================!
    !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of a  !
@@ -860,6 +943,18 @@ contains
       case (SRC_F_RECO)         ; val = s%reco_rate
       case (SRC_F_CAS_CO2)      ; val = s%cas_co2
       case (SRC_F_ATM_CO2)      ; val = s%atm_co2
+      case (SRC_F_QAIR)         ; val = s%qair
+      case (SRC_F_PSURF)        ; val = s%psurf
+      case (SRC_F_WIND)         ; val = s%wind
+      case (SRC_F_LWDOWN)       ; val = s%lwdown
+      case (SRC_F_PAR_BEAM)     ; val = s%par_beam
+      case (SRC_F_PAR_DIFFUSE)  ; val = s%par_diffuse
+      case (SRC_F_NIR_BEAM)     ; val = s%nir_beam
+      case (SRC_F_NIR_DIFFUSE)  ; val = s%nir_diffuse
+      case (SRC_F_RAINF)        ; val = s%rainf
+      case (SRC_F_SNOWFALL)     ; val = s%snowfall
+      case (SRC_F_COSZ)         ; val = s%cosz
+      case (SRC_F_RHO_AIR)      ; val = s%rho_air
       case default              ; val = MISSING_VALUE
       end select
    end function extract_fast_scalar
@@ -870,38 +965,39 @@ contains
    !  netCDF-FREE. Reads only the manager's own fast(:) sample + soil/cohort slabs -- never live !
    !  site state (which by then is the post-fast-loop, end-of-slow-step snapshot).               !
    !=======================================================================================!
-   subroutine output_integrate_fast(mgr, isub, dt)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine output_integrate_fast(files, bufs, isub, dt)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: isub
       real(wp),               intent(in)    :: dt
       integer(ik) :: j, k, src
-      if (.not. mgr%enabled) return
-      if (mgr%reg%nidx(1) == 0_ik) return
-      if (.not. mgr%has_data(1)) mgr%t_open(1) = mgr%fast_time(isub)
-      do j = 1_ik, mgr%reg%nidx(1)
-         k   = mgr%reg%idx_freq(j, 1_ik)
-         src = mgr%reg%var(k)%source_id
-         select case (mgr%reg%var(k)%dim)
+      if (.not. files%enabled) return
+      if (files%reg%nidx(1) == 0_ik) return
+      if (.not. bufs%has_data(1)) bufs%t_open(1) = bufs%fast_time(isub)
+      do j = 1_ik, files%reg%nidx(1)
+         k   = files%reg%idx_freq(j, 1_ik)
+         src = files%reg%var(k)%source_id
+         select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
-            call integrate_scalar(mgr%buf(k,1), extract_fast_scalar(src, mgr%fast(isub)), dt)
+            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast(isub)), dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
-               call integrate_slab(mgr%buf(k,1), mgr%fast_soil_water(:,isub), mgr%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)
             else
-               call integrate_slab(mgr%buf(k,1), mgr%fast_soil_temp(:,isub), mgr%fast_n_soil, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(:,isub), bufs%fast_n_soil, dt)
             end if
          case (DIM_COHORT)
             select case (src)
             case (SRC_F_COH_GPP)
-               call integrate_slab(mgr%buf(k,1), mgr%fast_coh_gpp(:,isub), mgr%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_gpp(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_HEIGHT)
-               call integrate_slab(mgr%buf(k,1), mgr%fast_coh_height(:,isub), mgr%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_height(:,isub), bufs%fast_n_cohort, dt)
             case default   ! SRC_F_COH_LEAF_TEMP
-               call integrate_slab(mgr%buf(k,1), mgr%fast_coh_ltemp(:,isub), mgr%fast_n_cohort, dt)
+               call integrate_slab(bufs%buf(k,1), bufs%fast_coh_ltemp(:,isub), bufs%fast_n_cohort, dt)
             end select
          end select
       end do
-      mgr%has_data(1) = .true.
+      bufs%has_data(1) = .true.
    end subroutine output_integrate_fast
 
 end module meds_output_integrate

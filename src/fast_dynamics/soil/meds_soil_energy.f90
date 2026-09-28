@@ -218,15 +218,17 @@ contains
    ! the IMEX-ARK fast integrator (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence form as  !
    ! the implicit step (conductive faces + optional water-enthalpy advection + root heat sink), but !
    ! the faces are evaluated at the CURRENT temperature T^n (the step uses the implicit T^{n+1}); as !
-   ! dt -> 0 the committed BE update / dt converges to this tendency. Commits nothing.               !
+   ! dt -> 0 the committed BE update / dt converges to this tendency. Commits nothing. `bottom_face` !
+   ! returns the bottom face's flux it used, for the caller's conservation ledger.                   !
    !---------------------------------------------------------------------------------------!
-   pure subroutine soil_energy_time_deriv(col, forcing, therm, soil, opts, dedt)
+   pure subroutine soil_energy_time_deriv(col, forcing, therm, soil, opts, dedt, bottom_face)
       type(soil_energy_column_t),  intent(in)  :: col
       type(energy_forcing_t),      intent(in)  :: forcing
       type(soil_thermal_params_t), intent(in)  :: therm
       type(soil_params_t),         intent(in)  :: soil
       type(energy_opts_t),         intent(in)  :: opts
       real(wp),                    intent(out) :: dedt(n_soil_layer_max)   !< [W/m3] dE/dt per layer (0 for k>n)
+      real(wp), optional,          intent(out) :: bottom_face   !< [W/m2] bottom-face heat flux, positive UP
 
       integer(ik) :: n, k
       real(wp), dimension(n_soil_layer_max)   :: t_n, fl_n, kappa, kf
@@ -254,6 +256,7 @@ contains
       end do
       g_deep = deep_conductance(opts, soil, kappa(n), n)
       hf(n)  = bottom_heat_face(opts, forcing, g_deep, t_n(n))
+      if (present(bottom_face)) bottom_face = hf(n)
       !----- Water-enthalpy faces at T^n -- the SAME seam the implicit sibling uses at T^{n+1}. The   !
       !      only difference between the two paths is the temperature handed in. ---------------!
       call water_enthalpy_faces(forcing, t_n, n, qwf)

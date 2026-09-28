@@ -60,7 +60,7 @@ program test_carbon_growth
    call finalize_init(site)
    wood0 = site%cohort%wood_carbon(1) ; dbh0 = site%cohort%dbh(1)
    do istep = 1_ik, 30_ik
-      call advance_one_step(site, cfg, .false., .false.)         ! growth + mortality only
+      call advance_one_step(site, cfg)                           ! growth + mortality only
    end do
    call check(site%cohort%wood_carbon(1) > wood0, 'carbon growth did not add wood_carbon')
    call check(site%cohort%dbh(1) > dbh0,          'dbh did not increase with wood_carbon (the flip)')

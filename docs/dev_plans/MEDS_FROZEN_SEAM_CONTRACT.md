@@ -5,6 +5,11 @@
 exist and are already reported. What was missing was the *rule* for reading them, so that classifying
 the next seam somebody adds is a lookup rather than a re-derivation.
 
+> **Status 2026-09-28:** #201's deliverable, and the only statement of the rate-seam and arbitration
+> rules; no source comment cites it by section. §4's proposal to make debit-before-credit an assertion
+> was never filed. Once §2–§5 are folded into `docs/science/soil_carbon.md` §7 and
+> `docs/science/order_of_processes.md`, this note can move to `archive/`.
+
 ---
 
 ## 1. What a frozen seam is

@@ -9,7 +9,7 @@
 !==========================================================================================!
 module meds_forcing_kernels
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, grav, r_dry, stefan
+   use meds_constants,      only : pi, t_3ple, tiny_num, p_std, stefan
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
    use meds_therm_lib,         only : sat_vapor_pressure
    use meds_time,           only : meds_time_t, solar_cosz, day_of_year
@@ -24,7 +24,6 @@ module meds_forcing_kernels
    public :: partition_shortwave, dewpoint_to_specific_humidity, rh_to_specific_humidity
    public :: precip_phase
    public :: great_circle_distance, nearest_grid_index
-   public :: wind_log_profile, lapse_air_temperature, lapse_pressure
 
    real(wp), parameter :: SOLAR_CONSTANT = 1361.0_wp   !< [W/m2] TOA normal irradiance (mean; eccentricity ~+-3% ignored)
    real(wp), parameter :: COSZ_MIN       = 1.0e-3_wp   !< [-] cosz floor: below this it is night (SW = 0)
@@ -32,7 +31,7 @@ module meds_forcing_kernels
    real(wp), parameter :: FPAR_BEAM      = 0.43_wp     !< [-] PAR fraction of direct-beam SW energy
    real(wp), parameter :: FPAR_DIFFUSE   = 0.52_wp     !< [-] PAR fraction of diffuse SW energy (diffuse is PAR-enriched)
    real(wp), parameter :: PHASE_BAND_K   = 1.0_wp      !< [K] half-width of the rain/snow phase-transition band
-   real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match; argmin only)
+   real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match)
 
    !----- Weiss & Norman (1985) band-specific SW partition constants (port of ED2 -------------!
    !      short_bdown_weissnorman, radiate_utils.f90). Empirical/physical -> module parameters.  !
@@ -364,8 +363,9 @@ contains
    !=======================================================================================!
    !  GRID MATCH (multi-polygon P2 subset): great-circle distance + nearest-cell argmin.        !
    !  great_circle_distance ports ED2 dist_gc (great_circle.f90); nearest_grid_index ports the    !
-   !  match_poly_grid argmin loop. Only the argmin matters for selection, so EARTH_RADIUS_M is     !
-   !  immaterial; strict '<' keeps the lowest index on ties.                                        !
+   !  match_poly_grid argmin loop; strict '<' keeps the lowest index on ties. The ED_ERA5land site  !
+   !  selection also compares the distance against [forcing].max_distance_km (§15.5), so the radius  !
+   !  sets that limit; the mean Earth radius keeps it within 0.5% of the true distance.              !
    !=======================================================================================!
    pure function great_circle_distance(lon1_deg, lat1_deg, lon2_deg, lat2_deg) result(dist_m)
       real(wp), intent(in) :: lon1_deg, lat1_deg, lon2_deg, lat2_deg
@@ -389,44 +389,5 @@ contains
          if (d < dmin) then ; dmin = d ; idx = i ; end if
       end do
    end function nearest_grid_index
-
-   !=======================================================================================!
-   !  WIND-HEIGHT + ELEVATION-LAPSE corrections (design §5.2 / §10-Q2). Applied at ingest to      !
-   !  the raw file record; both are OFF by default (forcing_config gates). Pure kernels.            !
-   !=======================================================================================!
-   !----- Neutral-log wind from the measurement height to the model reference height. The factor !
-   !      is independent of u (commutes with the energy-form interpolation); degenerate z0 -> no-op. !
-   elemental function wind_log_profile(u_meas, z_meas, z_ref, z0) result(u_ref)
-      real(wp), intent(in) :: u_meas, z_meas, z_ref, z0
-      real(wp) :: u_ref
-      if (z0 <= 0.0_wp .or. z_meas <= z0 .or. z_ref <= z0) then
-         u_ref = u_meas                                       ! degenerate: leave the wind untouched
-      else
-         u_ref = u_meas * log(z_ref / z0) / log(z_meas / z0)
-      end if
-   end function wind_log_profile
-
-   !----- Linear environmental lapse of air temperature (ED2 calc_met_lapse). dz = site - grid,  !
-   !      gamma > 0 cools with height, so a higher site is colder.                                  !
-   elemental function lapse_air_temperature(tair_grid, dz, gamma) result(tair_site)
-      real(wp), intent(in) :: tair_grid, dz, gamma
-      real(wp) :: tair_site
-      tair_site = tair_grid - gamma * dz
-   end function lapse_air_temperature
-
-   !----- Hydrostatic hypsometric pressure CONSISTENT with the same linear T(z): dP/dz=-Pg/(Rd T),  !
-   !      T(z)=T_grid-gamma*z -> P_site = P_grid*(T_site/T_grid)^(g/(Rd*gamma)); isothermal limit    !
-   !      (gamma -> 0) is the barometric exp(-g*dz/(Rd*T)). Keeps P and T ideal-gas-consistent.      !
-   elemental function lapse_pressure(psurf_grid, tair_grid, dz, gamma) result(psurf_site)
-      real(wp), intent(in) :: psurf_grid, tair_grid, dz, gamma
-      real(wp) :: psurf_site, tair_site
-      real(wp), parameter :: LAPSE_GAMMA_MIN = 1.0e-6_wp
-      if (abs(gamma) > LAPSE_GAMMA_MIN) then
-         tair_site  = tair_grid - gamma * dz
-         psurf_site = psurf_grid * (tair_site / tair_grid) ** (grav / (r_dry * gamma))
-      else
-         psurf_site = psurf_grid * exp(-grav * dz / (r_dry * tair_grid))
-      end if
-   end function lapse_pressure
 
 end module meds_forcing_kernels

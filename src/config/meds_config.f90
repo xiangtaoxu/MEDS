@@ -18,11 +18,14 @@ module meds_config
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
-   use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER
+   use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
+                                   METAVG_END, MET_BACKEND_ERA5LAND, SWPART_PASSTHROUGH,        &
+                                   WIND_EXPOSURE_OPEN_TERRAIN
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
+   use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    implicit none
    private
 
@@ -32,6 +35,7 @@ module meds_config
    public :: validate_config, growth_window_steps
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
+   public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -136,7 +140,7 @@ module meds_config
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
       real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
-      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat
+      real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat (< 0)
       real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
       real(wp)    :: root_beta   = 2.0_wp     !< [-]   exponential root-profile decay
       real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
@@ -201,6 +205,10 @@ module meds_config
       !      -DMEDS_OPENMP=ON to have                                                                  !
       !      any effect; without OpenMP flags the directives are comments and this is ignored.         !
       integer(ik) :: n_threads = 1_ik
+      !----- [run].mode: one site, or every selected cell of a box as its own polygon, with the box  !
+      !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !
+      integer(ik)         :: run_mode = RUN_MODE_SITE
+      type(region_opts_t) :: region
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -505,9 +513,20 @@ contains
          if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
          if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
          if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
-         if (sc%curve_par_a <= 0.0_wp)    error stop tag//'soil_column.curve_par_a <= 0'
-         if (sc%retention == SOIL_RETENTION_VG .and. sc%curve_par_n <= 1.0_wp)                    &
-            error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
+         !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
+         !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
+         !      The other family's pair makes the curve raise a negative base to a fractional power. -!
+         if (sc%retention == SOIL_RETENTION_VG) then
+            if (sc%curve_par_a <= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
+            if (sc%curve_par_n <= 1.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
+         else
+            if (sc%curve_par_a >= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_a (Campbell psi_sat, m) must be < 0'
+            if (sc%curve_par_n <= 0.0_wp)                                                          &
+               error stop tag//'soil_column.curve_par_n (Campbell b) must be > 0'
+         end if
          if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil_column.psi_fc must be negative (a suction head)'
          if (sc%solid_conductivity <= 0.0_wp .or. sc%dry_conductivity <= 0.0_wp)                  &
             error stop tag//'soil_column conductivities must be positive'
@@ -692,12 +711,59 @@ contains
                            &order-significant CSV; see plan sec 7 C3)'
       end if
       if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
-      !----- Forcing: the reference height must clear every PFT canopy (ED2 aborts if zref<=hgt_max), !
-      !      and the wind-profile roughness must be positive.                                          !
+      !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
+      !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
+      !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
+      !      checkpoints; until polygon threads exist (R3) the patch threads and the one-file probe    !
+      !      stay off.  ---------------------------------------------------------------------------!
+      if (cfg%run_mode == RUN_MODE_REGION) then
+         if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
+            error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
+         if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                          &
+            error stop tag//'[run].mode = "region" needs forcing.format = "era5land"'
+         if (cfg%n_threads /= 1_ik)                                                                &
+            error stop tag//'[run].mode = "region" needs run.n_threads = 1 (polygon threads come in R3)'
+         if (cfg%fast_probe)                                                                       &
+            error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
+         if (cfg%init_mode /= INIT_BARE)                                                           &
+            error stop tag//'[run].mode = "region" starts from bare ground (init.init_mode = 0) until R4'
+         if (cfg%state_write_state)                                                                &
+            error stop tag//'[run].mode = "region" writes no checkpoints (state.write_state = false) until R4'
+         associate (b => cfg%region%box_nwse)
+            if (.not. (b(1) > b(3) .and. b(1) <= 90.0_wp .and. b(3) >= -90.0_wp))               &
+               error stop tag//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
+            if (any(abs(b([2, 4])) > 360.0_wp))                                                    &
+               error stop tag//'region.box_nwse longitudes must lie within [-360, 360]'
+         end associate
+         if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
+            error stop tag//'region.land_fraction_min must lie in [0, 1]'
+         !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
+         !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
+         !      1st. A site run takes a window starting at any record stamp. ------------------------!
+         if (cfg%forcing%recycle .and. time_valid(cfg%forcing%recycle_start)) then
+            associate (a => cfg%forcing%recycle_start)
+               if (a%day /= 1_ik .or. a%hour > 1_ik .or. a%minute /= 0_ik .or. a%second /= 0_ik)    &
+                  error stop tag//'[run].mode = "region" needs forcing.recycle_start at 00:00 or '//  &
+                                  '01:00 on the 1st of a month'
+            end associate
+         end if
+      end if
+      !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
+      !      been made above its exposure roughness and below its blending height. No reference height  !
+      !      has to clear the canopy any more: the forcing is moved to each patch's canopy-air top.     !
       if (cfg%forcing%forcing_on) then
-         if (cfg%forcing%reference_height <= maxval(cfg%pft%hgt_max(1:cfg%pft%n)))               &
-            error stop tag//'forcing reference_height must exceed every PFT hgt_max'
-         if (cfg%forcing%wind_roughness_z0 <= 0.0_wp) error stop tag//'wind_roughness_z0 <= 0'
+         if (cfg%forcing%tq_height <= 0.0_wp)   error stop tag//'forcing.tq_height must be > 0'
+         if (cfg%forcing%wind_height <= 0.0_wp) error stop tag//'forcing.wind_height must be > 0'
+         if (cfg%forcing%wind_exposure == WIND_EXPOSURE_OPEN_TERRAIN) then
+            if (cfg%forcing%wind_exposure_z0 <= 0.0_wp .or.                                       &
+                cfg%forcing%wind_exposure_z0 >= cfg%forcing%wind_height)                           &
+               error stop tag//'forcing.wind_exposure_z0 must lie in (0, wind_height)'
+            if (cfg%forcing%wind_blending_height < cfg%forcing%wind_height)                         &
+               error stop tag//'forcing.wind_blending_height must be >= wind_height'
+         end if
+         !----- The terrain lapse rate: between isothermal and about the dry adiabat. --------------!
+         if (any(cfg%forcing%lapse_rate_tair < 0.0_wp) .or. any(cfg%forcing%lapse_rate_tair > 0.01_wp)) &
+            error stop tag//'site.lapse_rate_tair must lie in [0, 0.01] K/m'
          !----- lwdown_source = "synthesize" is DECLARED but NOT IMPLEMENTED: meds_met_driver      !
          !      always reads LWdown from the file. Accepting the value silently ran the file path    !
          !      under a name that promised Brutsaert/Idso clear-sky synthesis. Reject it until the    !
@@ -719,6 +785,28 @@ contains
          if (cfg%forcing%avg_convention == METAVG_CENTER)                                        &
             error stop tag//'forcing.avg_convention = "center" is not implemented (it would '//   &
                             'silently run the "end" path); use "end" or "begin"'
+         !----- The ED_ERA5land archive (§14-15) is hourly, end-stamped and stores TOTAL shortwave;  !
+         !      a config that says otherwise would mis-time or mis-partition every record. ---------!
+         if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+            if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
+            if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
+               error stop tag//'forcing.max_distance_km must be > 0'
+            if (abs(cfg%forcing%dt_forcing - 3600.0_wp) > 0.5_wp)                                  &
+               error stop tag//'forcing.timestep must be 1 hour for format = "era5land"'
+            if (cfg%forcing%avg_convention /= METAVG_END)                                          &
+               error stop tag//'forcing.avg_convention must be "end" for format = "era5land"'
+            if (cfg%forcing%sw_partition == SWPART_PASSTHROUGH)                                    &
+               error stop tag//'forcing.sw_partition cannot be "passthrough" for format = "era5land" '// &
+                               '(the archive stores total shortwave)'
+            !----- The reader loads an archive month, plus the record before it, before each step     !
+            !      (R1, MEDS_POLYGON_RUNTIME_PLAN.md §4). A daily step from midnight reads exactly that; !
+            !      a longer step, or one starting mid-day, can straddle two months.  --------------------!
+            if (abs(cfg%dt_slow - 86400.0_wp) > 0.5_wp)                                             &
+               error stop tag//'format = "era5land" needs [run].dt_slow = "1d" (the reader loads a month at a time)'
+            if (cfg%start_time%hour /= 0_ik .or. cfg%start_time%minute /= 0_ik .or.                 &
+                cfg%start_time%second /= 0_ik)                                                     &
+               error stop tag//'format = "era5land" needs [run].start_time at 00:00:00'
+         end if
          !----- V1 RECYCLE WINDOW: declared, never inferred, and required to be an exact whole      !
          !      number of calendar years. A window of any other length cannot be wrapped without     !
          !      drifting BOTH hour-of-day and day-of-year: the real ERA5-Land Ithaca file spans       !

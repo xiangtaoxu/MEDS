@@ -12,6 +12,7 @@
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
+   use meds_forcing_config, only : MET_BACKEND_ERA5LAND
    use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
@@ -20,9 +21,10 @@ module meds_output_registry
                                    N_DBH_CLASS_DEFAULT, DBH_EDGES_DEFAULT,                       &
                                    FREQ_FAST, FREQ_DAILY, FREQ_MONTHLY, FREQ_ANNUAL, FREQ_NONE,   &
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
-                                   GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS
+                                   GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
+                                   GRP_FORCING
    use meds_output_types,   only : AGG_VARIANCE
-   use meds_output_types,   only : var_desc_t, output_registry_t, output_manager_t,              &
+   use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
@@ -52,19 +54,27 @@ module meds_output_registry
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
-        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
+        FLD_PY_DIAG0,                                                                            &
+        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2,                     &
+        SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE,    &
+        SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
    use meds_site_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
                                     CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
                                     CD_LEAF_WATER, CD_WOOD_WATER,                                &
-                                    PD_LE, PD_H, PD_RNET, PD_SW_IN, PD_SW_GROUND, PD_LW_GROUND,  &
+                                    PD_LE, PD_H, PD_RNET, PD_SW_GROUND, PD_LW_GROUND,            &
                                     PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR,      &
                                     PD_LW_UP,                                                    &
                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
-                                    PD_TRANSP, PD_PRECIP, PD_GROUND_TEMP, PD_RESID_ENERGY,       &
+                                    PD_TRANSP, PD_GROUND_TEMP, PD_RESID_ENERGY,                  &
                                     PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
+                                    PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,               &
                                     PD_RESID_WATER,                                              &
+                                    PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
+                                    PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
+                                    PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
+                                    N_PYDIAG,                                                    &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
                                     CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
@@ -76,7 +86,8 @@ module meds_output_registry
    public :: build_output_registry, build_freq_index, find_var_index, parse_stream_mask
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   public :: manager_alloc, manager_setup, manager_alloc_buffers, manager_set_soil_params
+   public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
+   public :: manager_restrict_region
    public :: activate_site_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
@@ -124,6 +135,7 @@ contains
       call register_allocation(reg)
       call register_patch_fluxes(reg)
       call register_fast(reg)
+      call register_forcing(reg)
 
       call enforce_annual_guard(reg)              ! cohort/patch var MUST NOT declare FREQ_ANNUAL (§3.1)
       call enforce_fast_guard(reg)                ! FAST tier <-> FAST-staged source, both ways
@@ -402,22 +414,25 @@ contains
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_FLIQ)
-      !----- VARIANCE COMPANIONS (#174). A monthly mean hides the diurnal cycle entirely, and    !
-      !      for these four that cycle IS the signal -- a canopy-air temperature whose mean is 288 K !
-      !      is a very different place depending on whether the day swings 2 K or 20 K. Registered   !
-      !      as ordinary variables sharing their partner's source id, so each is switchable on its   !
-      !      own through the [variables] override and costs nothing when off. OFF by default (MON_YR !
-      !      only, and the group toggles still gate them) -- this is a diagnostic for someone asking !
-      !      a specific question, not a doubling of every energy file.                                !
+      !----- VARIANCE COMPANIONS (#174). Each squares its partner's end-of-step state, read once per !
+      !      slow step, so it is the variance of those samples across the window: with a daily step,  !
+      !      the day-to-day spread of the state at one fixed hour. That is not the diurnal cycle,      !
+      !      which needs a within-step sum of squares (#275), and the long names say so. Registered as !
+      !      ordinary variables sharing their partner's source id, so each is switchable on its own    !
+      !      through the [variables] override and costs nothing when off. OFF by default (MON_YR only, !
+      !      and the group toggles still gate them).                                                   !
       !                                                                                          !
       !      The units are the partner's SQUARED, which is what a variance is; a reader wanting a    !
       !      standard deviation takes the square root. Emitting sd instead would have lost the        !
       !      additivity that makes a variance combinable across periods.                              !
-      call add_variable(reg, 'cas_temp_var_site', 'variance of canopy-air-space temperature', 'K2', &
+      call add_variable(reg, 'cas_temp_var_site',                                                &
+                        'variance of end-of-step samples of canopy-air-space temperature', 'K2',   &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_TEMP)
-      call add_variable(reg, 'soil_temp_top_var_site', 'variance of soil-top temperature', 'K2',    &
+      call add_variable(reg, 'soil_temp_top_var_site',                                           &
+                        'variance of end-of-step samples of soil-top temperature', 'K2',           &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_SOIL_TEMP_TOP)
-      call add_variable(reg, 'cas_vpd_var_site', 'variance of canopy-air vapour-pressure deficit',  &
+      call add_variable(reg, 'cas_vpd_var_site',                                                 &
+                        'variance of end-of-step samples of canopy-air vapour-pressure deficit',   &
                         'Pa2', DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_VPD)
 
       !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
@@ -425,7 +440,8 @@ contains
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_LEAF_TEMP,         &
                         w=W_LEAF_AREA, mn=.true.)
-      call add_variable(reg, 'leaf_temp_var_site', 'variance of canopy leaf temperature', 'K2',   &
+      call add_variable(reg, 'leaf_temp_var_site',                                               &
+                        'variance of end-of-step samples of canopy leaf temperature', 'K2',        &
                         DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_C_LEAF_TEMP,          &
                         w=W_LEAF_AREA, mn=.true.)
       call add_variable(reg, 'wood_temp_site', 'leaf-area-weighted wood temperature', 'K',       &
@@ -691,7 +707,7 @@ contains
       call add_variable(reg, 'lw_up_site', 'upwelling longwave at canopy top (emission included)', &
                         'W/m2', DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_LW_UP)
       call add_variable(reg, 'sw_in_site', 'incident shortwave at canopy top', 'W/m2',           &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SW_IN)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_PY_DIAG0 + PY_SW_IN)
       call add_variable(reg, 'sw_ground_site', 'shortwave absorbed at the ground', 'W/m2',       &
                         DIM_SCALAR, AGG_TMEAN, GRP_RADIATION, DAY_MON, FLD_P_DIAG0 + PD_SW_GROUND)
       call add_variable(reg, 'lw_ground_site', 'net longwave at the ground', 'W/m2',             &
@@ -704,8 +720,12 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_ROUGH)
       call add_variable(reg, 'displace_site', 'zero-plane displacement height', 'm',             &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_DIAG0 + PD_DISPLACE)
-      call add_variable(reg, 'ground_temp_site', 'ground (skin) temperature', 'K',               &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
+      !----- Per patch too: with its canopy-air depth these are what move the forcing to the patch's  !
+      !      canopy-air top (docs/science/forcing.md §8), so each patch's forcing can be rebuilt. ----!
+      call add_variable(reg, 'rough_patch', 'patch aerodynamic roughness length', 'm',           &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_ROUGH)
+      call add_variable(reg, 'displace_patch', 'patch zero-plane displacement height', 'm',      &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_DISPLACE)
       !--- carbon ---!
       call add_variable(reg, 'gpp_rate_site', 'gross primary productivity (mean rate)', 'umol/m2/s', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, DAY_MON_YR, FLD_P_DIAG0 + PD_GPP)
@@ -715,7 +735,7 @@ contains
       call add_variable(reg, 'et_rate_site', 'evapotranspiration (mean rate)', 'kg/m2/s',        &
                         DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_TRANSP)
       call add_variable(reg, 'precip_site', 'total precipitation (mean rate)', 'kg/m2/s',        &
-                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_P_DIAG0 + PD_PRECIP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_PY_DIAG0 + PY_PRECIP)
       !--- budget health (GRP_NUMERICS): the numbers that say whether anything above is real. ---!
       call add_variable(reg, 'resid_energy_site', 'mean signed whole-column energy-budget residual (+ = appearing)', 'W/m2', &
                         DIM_SCALAR, AGG_TMEAN, GRP_NUMERICS, DAY_MON_YR, FLD_P_DIAG0 + PD_RESID_ENERGY)
@@ -779,6 +799,78 @@ contains
       call add_variable(reg, 'height_cohort_fast', 'per-cohort height (tallest-cohort selection)', 'm', &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_HEIGHT)
    end subroutine register_fast
+
+   !=======================================================================================!
+   !  The FORCING the run used (MEDS_FORCING_DESIGN.md §6.7): the atmospheric boundary after the   !
+   !  reader's shortwave partition, rain/snow split and optional height and lapse corrections --   !
+   !  write-only provenance. The coarse tiers are dt-weighted means over the fast sub-steps, kept   !
+   !  once per polygon (site%diag, PY_*) with sw_in_site and precip_site, which carry the total     !
+   !  shortwave and precipitation; the FAST tier is each record's mean of the sub-step samples,     !
+   !  which is what checks the diurnal reconstruction against a tower. cosz is 0 while the sun is   !
+   !  down, so a daily mean counts the night as zero.                                               !
+   !=======================================================================================!
+   subroutine register_forcing(reg)
+      type(output_registry_t), intent(inout) :: reg
+      call add_variable(reg, 'air_temp_site', 'air temperature at the forcing''s own height (forcing)', 'K', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_TAIR)
+      call add_variable(reg, 'qair_site', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_QAIR)
+      call add_variable(reg, 'psurf_site', 'surface pressure (forcing)', 'Pa',                    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_PSURF)
+      call add_variable(reg, 'wind_site', 'wind speed at the forcing''s own height (forcing)', 'm/s',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_WIND)
+      call add_variable(reg, 'lwdown_site', 'downward longwave at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_LWDOWN)
+      call add_variable(reg, 'par_beam_site', 'direct-beam PAR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_PAR_BEAM)
+      call add_variable(reg, 'par_diffuse_site', 'diffuse PAR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_PAR_DIFFUSE)
+      call add_variable(reg, 'nir_beam_site', 'direct-beam NIR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_NIR_BEAM)
+      call add_variable(reg, 'nir_diffuse_site', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_NIR_DIFFUSE)
+      call add_variable(reg, 'snowfall_site', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_SNOWFALL)
+      call add_variable(reg, 'atm_co2_site', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_CO2)
+      call add_variable(reg, 'cosz_site', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_COSZ)
+      call add_variable(reg, 'rho_air_site', 'air density at the forcing''s own height', 'kg/m3',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_RHO_AIR)
+      !----- The patch's own forcing: the sample moved to its canopy-air top (§8). Only the wind and  !
+      !      the air temperature differ between patches; the rest is the polygon's, above. ------------!
+      call add_variable(reg, 'wind_cas_top_patch', 'wind speed at the patch canopy-air top', 'm/s', &
+                        DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_WIND_CAS_TOP)
+      call add_variable(reg, 'air_temp_cas_top_patch', 'air temperature at the patch canopy-air top', 'K', &
+                        DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_TAIR_CAS_TOP)
+      call add_variable(reg, 'cas_depth_patch', 'patch canopy-air depth (the top its forcing is moved to)', &
+                        'm', DIM_PATCH, AGG_TMEAN, GRP_FORCING, DAY_MON, FLD_P_DIAG0 + PD_Z_CAS_TOP)
+      !----- The FAST tier (air_temp_fast, sw_in_fast and atm_co2_fast are registered with it). ---!
+      call add_variable(reg, 'qair_fast', 'specific humidity at the forcing''s own height (forcing)', 'kg/kg', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_QAIR)
+      call add_variable(reg, 'psurf_fast', 'surface pressure (forcing)', 'Pa',                    &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PSURF)
+      call add_variable(reg, 'wind_fast', 'wind speed at the forcing''s own height (forcing)', 'm/s',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_WIND)
+      call add_variable(reg, 'lwdown_fast', 'downward longwave at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_LWDOWN)
+      call add_variable(reg, 'par_beam_fast', 'direct-beam PAR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PAR_BEAM)
+      call add_variable(reg, 'par_diffuse_fast', 'diffuse PAR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PAR_DIFFUSE)
+      call add_variable(reg, 'nir_beam_fast', 'direct-beam NIR at canopy top (forcing)', 'W/m2',  &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_NIR_BEAM)
+      call add_variable(reg, 'nir_diffuse_fast', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_NIR_DIFFUSE)
+      call add_variable(reg, 'rainf_fast', 'liquid precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_RAINF)
+      call add_variable(reg, 'snowfall_fast', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_SNOWFALL)
+      call add_variable(reg, 'cosz_fast', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_COSZ)
+      call add_variable(reg, 'rho_air_fast', 'air density at the forcing''s own height', 'kg/m3',     &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_RHO_AIR)
+   end subroutine register_forcing
 
    !----- Append one descriptor (the single "add a variable" registry edit).                   !
    !                                                                                          !
@@ -972,46 +1064,51 @@ contains
    end subroutine parse_stream_mask
 
    !=======================================================================================!
-   !  Build the manager's REGISTRY + config (netCDF-free; NO buffers yet). Split from buffer    !
-   !  allocation so a caller can apply meds_io_config.toml per-variable overrides to mgr%reg      !
-   !  (which change which (var,tier) buffers are needed) BEFORE manager_alloc_buffers (§6.1).     !
+   !  Build a file set's REGISTRY + config (netCDF-free; NO buffers yet). Split from           !
+   !  allocation so a caller can apply meds_io_config.toml per-variable overrides to sh%reg       !
+   !  (which change which (var,tier) buffers are needed) BEFORE manager_finalize and             !
+   !  manager_alloc_buffers (§6.1).                                                               !
    !=======================================================================================!
-   subroutine manager_setup(mgr, cfg)
-      type(output_manager_t), intent(out) :: mgr
+   subroutine manager_setup(files, cfg)
+      type(output_files_t),   intent(out) :: files
       type(meds_config_t),    intent(in)  :: cfg
       integer(ik) :: ne
-      mgr%enabled = cfg%output%enabled
-      call build_output_registry(mgr%reg, cfg)
-      mgr%cohort_max = cfg%output%cohort_max
-      mgr%patch_max  = cfg%output%patch_max
-      mgr%dir        = cfg%output%dir
-      mgr%prefix     = cfg%output%prefix
-      mgr%file_chunk = cfg%output%file_chunk
-      mgr%sync_every = cfg%output%sync_every
-      mgr%fast_interval_steps = cfg%output%fast_interval_steps
+      files%enabled = cfg%output%enabled
+      call build_output_registry(files%reg, cfg)
+      files%cohort_max = cfg%output%cohort_max
+      files%patch_max  = cfg%output%patch_max
+      files%dir        = cfg%output%dir
+      files%prefix     = cfg%output%prefix
+      files%file_chunk = cfg%output%file_chunk
+      files%sync_every = cfg%output%sync_every
+      files%fast_interval_steps = cfg%output%fast_interval_steps
+      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ERA5LAND)                &
+         files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
+                            'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
+                            'liquid-water saturation vapour pressure of meds_therm_lib'
 
       !----- Run-dependent parameters the DERIVED diagnostics need (diag_params_t). n_pft is the  !
       !      RUN-TIME PFT count, so the netCDF `pft` dimension is run-dependent -- which is why      !
       !      the serializer also writes a `pft` coordinate variable, so a file stays self-describing !
       !      when compared across runs with different PFT tables.                                    !
-      mgr%diag%n_pft  = cfg%pft%n
-      mgr%diag%n_soil = n_soil_layer_max
+      files%diag%n_pft  = cfg%pft%n
+      files%diag%n_soil = n_soil_layer_max
       !----- DBH size classes: TOML edges if given, else the built-in inventory set. -----------!
       if (cfg%output%n_dbh_class > 0_ik) then
-         mgr%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
-         ne = mgr%diag%n_dbh_class + 1_ik
-         mgr%diag%dbh_edges(1:ne) = cfg%output%dbh_edges(1:ne)
+         files%diag%n_dbh_class = min(cfg%output%n_dbh_class, MAX_DBH_CLASS)
+         ne = files%diag%n_dbh_class + 1_ik
+         files%diag%dbh_edges(1:ne) = cfg%output%dbh_edges(1:ne)
       else
-         mgr%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
-         mgr%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
+         files%diag%n_dbh_class = N_DBH_CLASS_DEFAULT
+         files%diag%dbh_edges(1:N_DBH_CLASS_DEFAULT + 1_ik) = DBH_EDGES_DEFAULT
       end if
-      call check_dbh_edges(mgr%diag%dbh_edges, mgr%diag%n_dbh_class)
+      call check_dbh_edges(files%diag%dbh_edges, files%diag%n_dbh_class)
       !----- The soil retention parameters are NOT set here: meds_main copies them from the FAST  !
       !      CONTEXT the physics actually ran (manager_set_soil_params), so a reported psi and the  !
       !      psi the roots saw are the same curve by construction. Until that call, soil_ready is   !
       !      .false. and the psi/wetness diagnostics emit _FillValue rather than a plausible        !
       !      wrong number from an assumed texture.                                                  !
-      mgr%diag%soil_ready = .false.
+      files%diag%soil_ready = .false.
 
       !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
       !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
@@ -1019,55 +1116,74 @@ contains
       !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
       !      axis it switched off. Computed AFTER the registry is finalized, for exactly that       !
       !      reason.                                                                                !
-      mgr%max_slab = live_max_slab(mgr)
+      files%max_slab = live_max_slab(files)
    end subroutine manager_setup
 
+   !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
+   !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
+   !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
+   !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
+   !      Called after manager_setup and the overrides, before manager_finalize: the slab size drops   !
+   !      with the cohort axis, and so does every polygon's buffers.  --------------------------------!
+   subroutine manager_restrict_region(files)
+      type(output_files_t),  intent(inout) :: files
+      integer(ik) :: k
+      do k = 1_ik, files%reg%nvar
+         select case (files%reg%var(k)%dim)
+         case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH) ; files%reg%var(k)%enabled = .false.
+         end select
+         files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
+      end do
+      call build_freq_index(files%reg)
+      files%max_slab = live_max_slab(files)
+   end subroutine manager_restrict_region
+
    !----- Largest slab length any LIVE variable can produce (see the sizing note above). ------!
-   pure integer(ik) function live_max_slab(mgr) result(cap)
-      type(output_manager_t), intent(in) :: mgr
+   pure integer(ik) function live_max_slab(files) result(cap)
+      type(output_files_t),   intent(in) :: files
       integer(ik) :: k
       cap = 1_ik
-      do k = 1_ik, mgr%reg%nvar
-         if (.not. mgr%reg%var(k)%enabled)      cycle
-         if (mgr%reg%var(k)%streams == FREQ_NONE) cycle
-         cap = max(cap, dim_capacity(mgr, mgr%reg%var(k)%dim))
+      do k = 1_ik, files%reg%nvar
+         if (.not. files%reg%var(k)%enabled)      cycle
+         if (files%reg%var(k)%streams == FREQ_NONE) cycle
+         cap = max(cap, dim_capacity(files, files%reg%var(k)%dim))
       end do
    end function live_max_slab
 
    !----- Slab capacity of one axis. ---------------------------------------------------------!
-   pure integer(ik) function dim_capacity(mgr, dm) result(cap)
-      type(output_manager_t), intent(in) :: mgr
+   pure integer(ik) function dim_capacity(files, dm) result(cap)
+      type(output_files_t),   intent(in) :: files
       integer(ik),            intent(in) :: dm
       select case (dm)
-      case (DIM_COHORT)     ; cap = mgr%cohort_max
-      case (DIM_PATCH)      ; cap = mgr%patch_max
+      case (DIM_COHORT)     ; cap = files%cohort_max
+      case (DIM_PATCH)      ; cap = files%patch_max
       case (DIM_SOIL)       ; cap = n_soil_layer_max
-      case (DIM_PFT)        ; cap = max(mgr%diag%n_pft, 1_ik)
-      case (DIM_SIZE)       ; cap = max(mgr%diag%n_dbh_class, 1_ik)
-      case (DIM_SOIL_PATCH) ; cap = mgr%patch_max * n_soil_layer_max
+      case (DIM_PFT)        ; cap = max(files%diag%n_pft, 1_ik)
+      case (DIM_SIZE)       ; cap = max(files%diag%n_dbh_class, 1_ik)
+      case (DIM_SOIL_PATCH) ; cap = files%patch_max * n_soil_layer_max
       case default          ; cap = 0_ik
       end select
    end function dim_capacity
 
    !----- Install the soil retention parameters the psi/wetness diagnostics need. Called by     !
    !      meds_main with the SAME soil_params_t the fast loop integrates on.                     !
-   subroutine manager_set_soil_params(mgr, params)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine manager_set_soil_params(files, params)
+      type(output_files_t),   intent(inout) :: files
       type(soil_params_t),    intent(in)    :: params
       integer(ik) :: k
-      mgr%diag%retention = params%retention
+      files%diag%retention = params%retention
       do k = 1_ik, n_soil_layer_max
-         mgr%diag%theta_sat(k) = params%theta_sat(k)
-         mgr%diag%theta_res(k) = params%theta_res(k)
+         files%diag%theta_sat(k) = params%theta_sat(k)
+         files%diag%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
          !      Campbell. Resolved through the SAME accessors the Richards solver uses, so the    !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         mgr%diag%par_a(k)     = curve_a(params, k)
-         mgr%diag%par_n(k)     = curve_n(params, k)
-         mgr%diag%soil_z(k)    = params%z_node(k)
+         files%diag%par_a(k)     = curve_a(params, k)
+         files%diag%par_n(k)     = curve_n(params, k)
+         files%diag%soil_z(k)    = params%z_node(k)
       end do
-      mgr%diag%n_soil     = params%n_active
-      mgr%diag%soil_ready = .true.
+      files%diag%n_soil     = params%n_active
+      files%diag%soil_ready = .true.
    end subroutine manager_set_soil_params
 
    !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
@@ -1082,38 +1198,53 @@ contains
       end do
    end subroutine check_dbh_edges
 
-   !----- Allocate the integrator buffers + pending records + stream handles from the (now        !
-   !      FINALIZED) registry. Call after manager_setup [+ overrides].                             !
-   subroutine manager_alloc_buffers(mgr)
-      type(output_manager_t), intent(inout) :: mgr
+   !----- Finish the file set once the registry is FINALIZED (after manager_setup and any          !
+   !      per-variable overrides): the per-tier stream handles. -------------------------------------!
+   subroutine manager_finalize(files)
+      type(output_files_t),  intent(inout) :: files
+      integer(ik) :: t
+      do t = 1_ik, N_FREQ
+         files%stream(t)%freq  = freq_bit(t)
+         allocate(files%stream(t)%vid(files%reg%nvar)) ; files%stream(t)%vid = -1_ik
+      end do
+   end subroutine manager_finalize
+
+   !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
+   !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!
+   subroutine manager_alloc_buffers(files, bufs)
+      type(output_files_t),  intent(in)  :: files
+      type(output_buffers_t), intent(out) :: bufs
       integer(ik) :: t, k, nv, cap, bit
-      nv = mgr%reg%nvar
-      allocate(mgr%buf(nv, N_FREQ))
+      nv = files%reg%nvar
+      allocate(bufs%buf(nv, N_FREQ))
       do t = 1_ik, N_FREQ
          bit = freq_bit(t)
          do k = 1_ik, nv
-            if (mgr%reg%var(k)%enabled .and. iand(mgr%reg%var(k)%streams, bit) /= 0_ik) then
-               cap = dim_capacity(mgr, mgr%reg%var(k)%dim)
-               call alloc_integ_buffer(mgr%buf(k,t), mgr%reg%var(k), bit, cap)
-               mgr%buf(k,t)%var_id = k
+            if (files%reg%var(k)%enabled .and. iand(files%reg%var(k)%streams, bit) /= 0_ik) then
+               cap = dim_capacity(files, files%reg%var(k)%dim)
+               call alloc_integ_buffer(bufs%buf(k,t), files%reg%var(k), bit, cap)
+               bufs%buf(k,t)%var_id = k
             end if
          end do
       end do
       do t = 1_ik, N_FREQ
-         allocate(mgr%pending(t)%sval(nv), mgr%pending(t)%svalid(nv), mgr%pending(t)%nslab(nv))
-         allocate(mgr%pending(t)%slab(mgr%max_slab, nv), mgr%pending(t)%slabvalid(mgr%max_slab, nv))
-         mgr%pending(t)%used = .false.
-         mgr%stream(t)%freq  = freq_bit(t)
-         allocate(mgr%stream(t)%vid(nv)) ; mgr%stream(t)%vid = -1_ik
+         allocate(bufs%pending(t)%sval(nv), bufs%pending(t)%svalid(nv), bufs%pending(t)%nslab(nv))
+         allocate(bufs%pending(t)%slab(files%max_slab, nv), bufs%pending(t)%slabvalid(files%max_slab, nv))
+         bufs%pending(t)%used = .false.
       end do
+      bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
+      bufs%fast_cohort_cap = max(files%cohort_max, 1_ik)
    end subroutine manager_alloc_buffers
 
-   !----- Convenience: registry + buffers in one call (no per-variable overrides). ------------!
-   subroutine manager_alloc(mgr, cfg)
-      type(output_manager_t), intent(out) :: mgr
-      type(meds_config_t),    intent(in)  :: cfg
-      call manager_setup(mgr, cfg)
-      call manager_alloc_buffers(mgr)
+   !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
+   !      overrides). ---------------------------------------------------------------------------!
+   subroutine manager_alloc(files, bufs, cfg)
+      type(output_files_t),  intent(out) :: files
+      type(output_buffers_t), intent(out) :: bufs
+      type(meds_config_t),   intent(in)  :: cfg
+      call manager_setup(files, cfg)
+      call manager_finalize(files)
+      call manager_alloc_buffers(files, bufs)
    end subroutine manager_alloc
 
    !----- Step 5: precompute, per tier, the list of live (enabled + in-tier) variable indices.-!
@@ -1139,26 +1270,28 @@ contains
    !  point in meds_site_diag_types a no-op, and the fast loop never even asks the leaf kernel for   !
    !  the extra flux fields.                                                                         !
    !=======================================================================================!
-   subroutine activate_site_diag(mgr, site)
-      type(output_manager_t), intent(in)    :: mgr
+   subroutine activate_site_diag(files, site)
+      type(output_files_t),   intent(in)    :: files
       type(site_t),           intent(inout) :: site
-      logical     :: need_c, need_p, need_s
+      logical     :: need_c, need_p, need_s, need_y
       integer(ik) :: t, j, k, src
-      need_c = .false. ; need_p = .false. ; need_s = .false.
-      if (mgr%enabled) then
+      need_c = .false. ; need_p = .false. ; need_s = .false. ; need_y = .false.
+      if (files%enabled) then
          do t = 1_ik, N_FREQ
-            do j = 1_ik, mgr%reg%nidx(t)
-               k   = mgr%reg%idx_freq(j, t)
-               src = mgr%reg%var(k)%source_id
+            do j = 1_ik, files%reg%nidx(t)
+               k   = files%reg%idx_freq(j, t)
+               src = files%reg%var(k)%source_id
                if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) need_c = .true.
                if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) need_p = .true.
                if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) need_s = .true.
+               if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PYDIAG) need_y = .true.
             end do
          end do
       end if
       call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
       call cohort_diag_alloc(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
       call patch_diag_alloc (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
+      site%diag%active = need_y                    ! the polygon block: fixed size, nothing to allocate
    end subroutine activate_site_diag
 
    !=======================================================================================!
@@ -1226,6 +1359,7 @@ contains
       case (GRP_RADIATION)  ; s = 'radiation'
       case (GRP_ECOPHYS)    ; s = 'ecophys'
       case (GRP_BIOGEOCHEM) ; s = 'biogeochem'
+      case (GRP_FORCING)    ; s = 'forcing'
       case default          ; s = '?'
       end select
    end function group_name

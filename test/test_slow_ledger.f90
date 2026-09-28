@@ -31,7 +31,7 @@ program test_slow_ledger
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
-   use meds_vegetation_dynamics,        only : vegetation_dynamics
+   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
@@ -218,7 +218,7 @@ contains
          st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
          st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
-         call vegetation_dynamics(st, c, .false., .false.)
+         call vegetation_dynamics(st, c)
       end do
       pool = st%patch%recruit_pool(1, 1)
    end subroutine pool_after_steps
@@ -264,7 +264,8 @@ contains
       st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
       np0 = st%patch%n
 
-      call vegetation_dynamics(st, c, .true., .true.)   ! monthly + annual: every operator fires
+      call vegetation_dynamics(st, c)
+      call restructure_stand(st, c, .true., .true.)   ! monthly + annual: every operator fires
 
       !----- THE invariant. `>=` not `==`: the patch block is capacity-allocated, so the array is  !
       !      allowed to be longer than the live patch count -- it must never be SHORTER.  ---------!
@@ -316,7 +317,7 @@ contains
       st%cohort%wood_water_mass(1:st%cohort%n) = 2.3_wp
       tis0  = tissue_water_total(st)
       shed0 = shed_total(st, c)
-      call vegetation_dynamics(st, c, .false., .false.)
+      call vegetation_dynamics(st, c)
       tis1  = tissue_water_total(st)
       shed1 = shed_total(st, c)
       call check(tis1 < tis0, 'mortality water: the tissue store actually falls')
@@ -436,7 +437,7 @@ contains
             st%cohort%nonstructural_carbon(1:st%cohort%n) = 0.0_wp
          end if
       end if
-      call vegetation_dynamics(st, c, .false., .false.)
+      call vegetation_dynamics(st, c)
       co2_rate     = st%patch%slow_co2_rate(1)
       !----- The litter accumulator is patch state now, so it is read off the site rather than
       !      returned: st%patch%litter_in(1), in lockstep with patch 1.

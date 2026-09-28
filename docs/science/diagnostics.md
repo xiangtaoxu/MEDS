@@ -30,6 +30,10 @@ accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
   [5] SERIALIZE   meds_output_stream          per-tier, per-time-chunk netCDF
 ```
 
+Stages [1]–[4] run inside the time step; a closed period's record is queued, and stage [5] writes the
+queues when a calendar month closes and at the end of the run, so a step makes no netCDF call
+(`MEDS_POLYGON_RUNTIME_PLAN.md` §4).
+
 Stage [2] is why per-cohort ecophysiology is available at all. Sub-daily resolution exists only
 inside the fast loop's sub-step; before it existed, `A_net`, `g_sw`, `C_i`, ψ_leaf, ψ_wood, PLC,
 sapflow, root uptake, absorbed radiation and the turbulent fluxes were recomputed roughly 48 times
@@ -124,12 +128,44 @@ slot set present at flush. The registry rejects it at start-up.
 | `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
 | `AGG_VARIANCE` | `time: variance` | dt-weighted variance over the period |
 
+#### Which steps a record holds
+
+A slow step runs from `prev` to `now`. Its fluxes are accumulated over that interval, and its state is
+read at `now`, after the step's dynamics. **A step belongs to the period it starts in**, so a record
+stamped *d* holds the steps that start in period *d*:
+
+- a daily flux is that day's: the daily record stamped 1 July is the mean of the fast records stamped
+  1 July;
+- a state is the value at the end of each of the period's steps, so the daily state stamped 31 July is
+  the state at 1 August 00:00, and a monthly mean is the mean over the ends of the month's steps;
+- no record is stamped at or after the run's end.
+
+**The calendar's restructuring belongs to the period it opens.** At the turn of a month the stand's
+cohorts are recruited, fused, split and culled; at the turn of a year its patches are disturbed and
+fused. This restructuring runs **between** two slow steps: after the output has read the step that
+ends on the boundary, and before the fast loop of the step that begins there. As a result:
+
+- **every record describes one stand.** A monthly cohort or patch record is the mean of its daily
+  records, slot by slot, and a file's cohort and patch axes are the same throughout;
+- **the restructuring's events and the stand it leaves are recorded in the new period.** The year's
+  disturbance area and disturbance mortality are in January's record, never December's, and the
+  biomass the disturbance removes first shows in the 1 January daily state. The 31 December state is
+  the stand before it.
+
+**A checkpoint on a boundary holds the stand before the restructuring.** The global attribute
+`restructure_pending` (`none`, `month` or `year`) records which restructuring is still owed. A run
+resumed from the checkpoint performs it first, so its first record holds the same events as the
+continuous run's. A state file without the attribute was written after its boundary's
+restructuring, and owes none.
+
 #### Variance companions
 
-A monthly mean hides the diurnal cycle entirely, and for some variables that cycle *is* the signal: a
-canopy-air temperature whose monthly mean is 288 K is a very different place depending on whether the
-day swings 2 K or 20 K. `AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$, dt-weighted
-like its `AGG_TMEAN` partner.
+`AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$ over the samples the tick hands it,
+dt-weighted like its `AGG_TMEAN` partner. The four that ship read their partner's **end-of-step
+state**, once per slow step, so each is the variance of those samples across the period. With a daily
+step that is the **day-to-day spread of the state at one fixed hour**, the step's end. It is not the
+diurnal cycle, which needs a sum of squares accumulated inside the step (#275), and the long names say
+so: "variance of end-of-step samples of ...".
 
 It is registered as an **ordinary variable sharing its partner's source id** — `cas_temp_var_site`
 beside `cas_temp_site` — rather than as a companion slot bolted to the mean. Two consequences, both
@@ -142,9 +178,8 @@ monthly and annual only. The units are the partner's **squared**, because that i
 take the square root for a standard deviation. Emitting the standard deviation directly would have
 lost the additivity that lets a variance be combined across periods.
 
-Measured on a spun-up Ithaca stand, the canopy-air standard deviation runs 2.3 K in July against
-5.4 K in December — the mean alone cannot tell you that, and the difference is most of what a
-sub-daily process sees.
+Measured on a spun-up Ithaca stand, the canopy-air standard deviation of these samples runs 2.3 K in
+July against 5.4 K in December, which the monthly mean alone cannot show.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
@@ -170,8 +205,16 @@ Resolution order — later wins:
 4. `[output.<tier>].enabled` — suppress a whole tier
 5. `meds_io_config.toml` — per-variable, the finest granularity
 
-**Groups** (8): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` on by default;
-`radiation` and `ecophys` off. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
+**Groups** (9): `structure`, `carbon`, `water`, `energy`, `biogeochem`, `numerics` and `forcing` on
+by default; `radiation` and `ecophys` off. `forcing` is the atmospheric boundary the run used, after
+the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
+monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
+the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
+`cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins, and three patch rows at the daily and
+monthly tiers: the forcing each patch saw at its canopy-air top, `wind_cas_top_patch` and
+`air_temp_cas_top_patch`, and that top's height `cas_depth_patch` (with `rough_patch` and
+`displace_patch`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
+and `precip_site`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
 `numerics` defaults **on** because it carries the energy and water budget residuals. A closure
@@ -238,18 +281,19 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 
 ## 7. Variable inventory
 
-203 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
+252 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
 groups, axes and default streams — it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 62 | | site | 98 |
-| energy | 38 | | cohort | 55 |
-| carbon | 28 | | patch | 23 |
-| ecophys | 24 | | pft | 9 |
-| water | 18 | | soil | 7 |
-| biogeochem | 15 | | dbh_class | 6 |
-| numerics | 13 | | (patch, soil) | 5 |
+| structure | 67 | | site | 141 |
+| energy | 48 | | cohort | 55 |
+| carbon | 34 | | patch | 29 |
+| forcing | 28 | | pft | 9 |
+| ecophys | 24 | | soil | 7 |
+| water | 18 | | dbh_class | 6 |
+| biogeochem | 15 | | (patch, soil) | 5 |
+| numerics | 13 | | | |
 | radiation | 5 | | | |
 
 ---
@@ -275,12 +319,13 @@ array, so every permutation is a single whole-array statement that cannot omit a
 
 ### The one trap
 
-The per-cohort blocks are reset per slow step, but restructuring (fuse / split / cull / recruit /
-disturb) happens **inside** the slow step, after the fast loop fills them and before the monthly
-window closes. Anything read at the output tick must therefore ride the cohort lockstep.
+The per-cohort blocks run from one output tick to the next, and the stand is reordered while they
+fill: `sort_cohorts` re-sorts it every slow step, after the fast loop has filled them. Restructuring
+(fuse / split / cull / recruit / disturb) also runs between two steps. Anything read at the output
+tick must therefore ride the cohort lockstep.
 
 `cohort_deriv_block` (`site%deriv`) does **not** — it is documented as transient and deliberately
 unreordered, which is correct for its own consumer, since `update_cohort_states` applies it
-immediately. Reading it from the output layer pairs tendency `i` with a different plant `i` on
-exactly the month-boundary steps. That mistake was made during this work and was caught only by the
+immediately. Reading it from the output layer pairs tendency `i` with a different plant `i` whenever
+the stand has been reordered since it was formed. That mistake was made during this work and was caught only by the
 thread-invariance test, because thread count perturbs which cohorts fuse. Use `cohort%sdiag`.

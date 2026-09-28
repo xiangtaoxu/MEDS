@@ -9,6 +9,9 @@
 dt_slow    = "1d"              # slow-process (demography) timestep: "1d" | "7d" | "12h" | seconds
 start_time = "2000-01-01"      # first simulated date ("YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS")
 end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
+# mode     = "site"            # "site" (default): one location, from [site]. "region": every selected
+                               # cell of [region].box_nwse as its own polygon (see [region] at the end
+                               # of this file, and docs/configuration.md "Regional runs").
 # n_threads = 1                # host threads over the fast loop's PATCH axis (plan section 7).
                                # Default 1 = serial. Requires a build configured with
                                # -DMEDS_OPENMP=ON; without it the directives are comments and this
@@ -125,7 +128,7 @@ retention   = "van_genuchten"   # van_genuchten | campbell
 theta_sat   = 0.43         # [m3/m3]  porosity
 theta_res   = 0.078        # [m3/m3]  residual water content
 ksat        = 2.89e-6      # [m/s]    saturated hydraulic conductivity
-curve_par_a = 3.6          # [1/m] van Genuchten alpha  OR  [m] Campbell psi_sat
+curve_par_a = 3.6          # [1/m] van Genuchten alpha  OR  [m] Campbell psi_sat (negative)
 curve_par_n = 1.56         # [-]   van Genuchten n (>1)  OR  [-] Campbell b
 root_beta   = 2.0          # [-]      exponential root-profile decay
 psi_fc      = -3.37        # [m]      field-capacity matric head (derives theta_fc)
@@ -280,9 +283,11 @@ io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable
 cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
 patch_max     = 256             # fixed patch netCDF dim
 strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
-sync_every    = "flush"         # nc_sync durability: "flush" | "never"
+sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed records are written at
+                                #   month boundaries (the I/O phase), so a crash loses at most the
+                                #   current month's output; the checkpoint bounds the rerun
 
-  # --- VARIABLE GROUPS. The six that make a run judgeable are on; the two heavy evaluation
+  # --- VARIABLE GROUPS. The seven that make a run judgeable are on; the two heavy evaluation
   #     groups are off. `numerics` carries the budget residuals -- a closure nobody records is
   #     worse than one nobody looks at, so it defaults ON.
   structure     = true          # demography / size / identity / patch geometry
@@ -291,6 +296,8 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never"
   energy        = true          # LE, H, Rnet, temperatures, canopy-air state
   biogeochem    = true          # CENTURY soil-carbon pools, Rh, litterfall
   numerics      = true          # integrator work counters + energy/water budget residuals
+  forcing       = true          # the forcing the run used: T, q, P, wind, LW, the 4 SW streams, snow,
+                                #   CO2, cos(zenith), air density (daily/monthly/yearly means + *_fast)
   radiation     = false         # albedo, absorbed SW/PAR/LW, ground radiation
   ecophys       = false         # PER-COHORT leaf gas exchange + hydraulics (highest volume)
 
@@ -381,33 +388,80 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
-# constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. The file
-# is a MEDS multi-grid forcing NetCDF; produce one from ERA5-Land with scripts/download_era5land.py
-# + scripts/prep_era5land_forcing.py. When forcing_on=true, ALL keys below are required.
+# constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. Two sources:
+#   format = "era5land"  the global ED_ERA5land archive (per-variable monthly files, built with
+#                        scripts/prepare_era5/). The reader finds the site's cell itself, takes its
+#                        elevation from the archive's static file, converts dewpoint to specific
+#                        humidity with the model's own saturation curve, and carries the wind vector.
+#                        Keys: data_path and max_distance_km; NOT path, grid_index, grid_match or
+#                        [site].grid_elevation (rejected if present).
+#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; make one with
+#                        scripts/prepare_era5/make_forcing_file.py, from an ED_ERA5land archive or from
+#                        a small download (download_era5land_cds.py, then postprocess_era5land.py
+#                        --split none). Keys: path, grid_index, grid_match and [site].grid_elevation.
+# When forcing_on=true, every other key below is required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
 # longitude             = -76.50         # [deg +E] drives local solar time
 # utc_offset            = 0.0            # [h] ERA5-Land is UTC -> 0
 # elevation             = 320.0          # [m] site elevation (used by elevation lapse)
-# reference_height      = 40.0           # [m] MUST exceed every PFT hgt_max
-# wind_meas_height      = 10.0           # [m] ERA5-Land wind is 10 m
 # apply_solar_longitude = true           # UTC file -> longitude gives local solar time
-# apply_wind_profile    = false          # lift wind from wind_meas_height to reference_height (neutral log)
-# apply_elevation_lapse = false          # lapse T/P from grid_elevation to elevation
-# wind_roughness_z0     = 0.1            # [m] roughness length for the wind log-profile
-# lapse_rate_tair       = 0.0065         # [K/m] environmental lapse (positive = cooling upward)
-# grid_elevation        = 320.0          # [m] elevation of the forcing source grid cell
+#   ---- TERRAIN lapse, from the forcing cell's elevation to the site's (docs/science/forcing.md §8):
+#   T by the lapse rate, P hydrostatically, q at constant relative humidity, file LWdown by the
+#   clear-sky eps*T^4 ratio. Region polygons sit at their cell's elevation, so it is a no-op there.
+# apply_elevation_lapse = true
+# lapse_rate_tair       = 0.0065         # [K/m] one rate, or twelve (January .. December), e.g. the
+#                                        # N. Hemisphere monthly rates of Kunkel (1989), as tabulated by
+#                                        # Liston & Elder (2006, MicroMet, Table 1):
+#                                        # [0.0044, 0.0059, 0.0071, 0.0078, 0.0081, 0.0082,
+#                                        #  0.0081, 0.0081, 0.0077, 0.0068, 0.0055, 0.0047]
+# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "netcdf" only; the
+#                                        # archive reads it from its static file)
 # [forcing]
 # forcing_on            = true
-# format                = "netcdf"       # "netcdf" | "const"
+# format                = "netcdf"       # "era5land" | "netcdf" | "const"
+#   ---- format = "era5land" --------------------------------------------------------------------
+# data_path             = "/path/to/ED_ERA5land"   # the archive folder (installation-specific)
+# max_distance_km       = 15.0           # a site on a no-data cell (coast, lake edge) takes the nearest
+#                                        # valid cell within this distance; farther is an error
+# file_template         = "{data_path}/ED_ERA5land_{var}_{yyyy}{mm}.nc"   # optional; the default shown
+# static_file           = "{data_path}/ED_ERA5land_static.nc"             # optional; the default shown
+#   The months read are the recycle window when recycle = true, else the run period; every file
+#   they need must exist when the run starts. A run starting at 00:00 on the 1st also reads the
+#   previous month's file, which holds that record (the archive stamps the END of each hour).
+#   The reader loads one month (plus that record) before each step, so format = "era5land" needs
+#   [run].dt_slow = "1d" and a start_time at 00:00:00.
+#   ---- format = "netcdf" ----------------------------------------------------------------------
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")
 # grid_match            = "explicit"     # "explicit" (use grid_index) | "nearest" ([site] lat/lon -> nearest cell)
+#   --------------------------------------------------------------------------------------------
+#   ---- The forcing's own heights (docs/science/forcing.md §8). Every sample is moved from them to
+#   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
+#   potential temperature and humidity are conserved, and the wind follows the patch's own log
+#   profile. There is no fixed reference height any more. Values below are ERA5-Land's.
+# tq_height             = 2.0            # [m] height of air temperature and humidity
+# wind_height           = 10.0           # [m] height of the wind
+# height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement
+#                                        # height) | "ground" (a flux tower above this canopy)
+# wind_exposure         = "open_terrain" # "open_terrain" (ERA5's 10 m wind, made for open terrain) |
+#                                        # "local" (measured over this canopy)
+# wind_exposure_z0      = 0.03           # [m] "open_terrain" only: the roughness it was made for
+# wind_blending_height  = 40.0           # [m] "open_terrain" only: the height it came down from
+#   --------------------------------------------------------------------------------------------
 # timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
 # avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
 # lwdown_source         = "file"         # ERA5-Land has strd
-# co2_const             = 420.0          # [umol/mol] ERA5-Land has no CO2
+#   ---- CO2: never from the met file (one that carries CO2air is rejected) ----------------------
+# co2_source            = "const"        # "const" (default) | "file": the CO2 on MODEL time, every backend
+# co2_const             = 420.0          # [umol/mol] co2_source = "const" only
+# co2_file              = "data/co2/co2_cmip7_global_annual_1000-2022.txt"
+#                                        # co2_source = "file" only: a MEDS CO2 file, relative to where MEDS
+#                                        # runs. The shipped one is CMIP7 global annual means, 1000-2022;
+#                                        # its header defines the format (docs/science/forcing.md sec. 12).
+#                                        # Linear between period middles; a run it does not cover is refused.
+#   --------------------------------------------------------------------------------------------
 # recycle               = true           # cycle the forcing when the run outruns the file
 #
 #   RECYCLING IS DECLARED, NEVER INFERRED. When recycle = true, both keys below are REQUIRED and
@@ -434,3 +488,15 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # recycle_start         = "2024-01-01 01:00:00"
 # recycle_end           = "2025-01-01 01:00:00"
 # start_clamp           = "error"        # model start < first record: "error" | "hold"
+
+#-------------------------------------------------------------------------------------------------#
+# [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
+# Every valid cell of the box with enough land becomes a polygon at its cell centre, orography     #
+# and UTC; so [site].latitude/longitude/utc_offset/elevation and [forcing].max_distance_km are      #
+# refused in region mode. Needs format = "era5land", init_mode = 0 and write_state = false.         #
+#-------------------------------------------------------------------------------------------------#
+# [region]
+# box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180
+# land_fraction_min = 0.5            # default 0.5: skip lakes and fractional coastal cells
+# detail_polygons   = []             # polygon ids (row * 3600 + col) that also write full single-site
+#                                    # files: cohort, patch and sub-daily output, <prefix>-p<id>-...

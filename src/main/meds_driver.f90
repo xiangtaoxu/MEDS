@@ -1,29 +1,23 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_driver -- the coupled model as an OPEN / STEP / FINALIZE object, so something other      !
-! than the `meds_main` program can drive it.                                                    !
-!                                                                                          !
-! This is `meds_main`'s body, lifted verbatim. That program was 400 lines of driver logic with   !
-! no seam in it: configuration, initial community, fast context, met reader, output manager,     !
-! the calendar loop and the closing conservation reports were all statements in one PROGRAM, so  !
-! the ONLY way to run MEDS was to exec the binary. `meds_main` is now a thin shell over this      !
-! module and the C-API shim `meds_c_api_run` is a second caller -- which is what lets             !
-! `examples/example_biophysics` drive the full coupled model from Python.                          !
+! meds_driver -- a site run as an OPEN / STEP / FINALIZE object, so a caller other than the       !
+! `meds_main` program can drive it. `meds_main` is a thin shell over it, and the C-API shim        !
+! `meds_c_api_run` is a second caller, which is what lets `examples/example_biophysics` drive the   !
+! full coupled model from Python. The site is one polygon (meds_polygon); a region of polygons is   !
+! meds_region.                                                                                      !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
 !   call driver_open('meds_config_main.toml', run, ok)                                            !
 !   do while (.not. driver_done(run)) ; call driver_step(run, status) ; end do                     !
 !   call driver_finalize(run) ; call driver_free(run)                                              !
 !                                                                                          !
-! ONE deliberate behaviour change: the run loop's `error stop` on a NaN state is now a STATUS      !
-! RETURN. In a program those are the same thing, but this module is compiled into a shared         !
-! library that a Python interpreter dlopens, and `error stop` there takes the interpreter down     !
-! with it -- no traceback, no chance to inspect the state that went bad. `meds_main` re-raises      !
-! it as the same `error stop`, so the executable's behaviour is unchanged.                          !
+! A NaN state or an impossible soil-carbon pool is a STATUS RETURN, not an `error stop`. This       !
+! module is compiled into a shared library that a Python interpreter dlopens, and `error stop`     !
+! there takes the interpreter down with it -- no traceback, no chance to inspect the state that    !
+! went bad. `meds_main` turns the status into an `error stop`.                                     !
 !==========================================================================================!
 module meds_driver
    use meds_kinds,                  only : wp, ik
-   use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_constants,              only : day_sec, yr_day
    use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
@@ -32,73 +26,46 @@ module meds_driver
    use meds_site_state_types,       only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
    use meds_init,                   only : init_bare_ground, init_from_census
-   use meds_stepper,                only : advance_one_step
    use meds_vegetation_dynamics,    only : advance_plant_traits
-   use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
-   use meds_fast_config,            only : acclimate_leaf_photo_table
-   use meds_biogeochem_types,       only : litter_input_t, n_soil_pool
-   use meds_column_state_types,     only : soil_carbon_t
-   use meds_soil_biogeochem,        only : assemble_transfer_matrix, solve_soil_carbon_steady_state, &
-                                           build_litter_input
-   use meds_forcing_types,          only : met_driver_t
-   use meds_met_driver,             only : met_open, met_close
-   use meds_diagnostic_reduce,      only : print_summary, total_area, has_nan
-   use meds_budget_check,           only : budget_t, budget_report
-   use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_soil_biogeochem,        only : soil_carbon_bad_pool, soil_carbon_pool_name
-   use meds_biogeochem_types,       only : soilc_seam_t
+   use meds_forcing_types,          only : met_source_t
+   use meds_met_driver,             only : met_open, met_close, met_prefetch
+   use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
+   use meds_diagnostic_reduce,      only : print_summary, total_area
+   use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
+                                           polygon_report, DRIVER_OK, DRIVER_FINISHED,           &
+                                           DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC,      &
+                                           N_PATCH_INIT
    use meds_io,                     only : state_write_state, io_read_state
-   use meds_output_types,           only : output_manager_t
-   use meds_output_registry,        only : manager_setup, manager_alloc_buffers,                &
+   use meds_output_types,           only : output_files_t, output_buffers_t
+   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
                                            manager_set_soil_params, activate_site_diag,         &
                                            apply_variable_override, parse_stream_mask,          &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_manager,         only : output_serialize_pending, output_manager_close
    use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
    private
 
    public :: meds_run_t, driver_open, driver_step, driver_finalize, driver_free, driver_done
+   public :: apply_io_overrides, ensure_output_dir
+   !----- The status codes live with the step (meds_polygon); re-exported for the driver's callers. !
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
 
-   !----- driver_step status codes. OK/DONE are normal; the two ERR codes are the conditions the   !
-   !      program used to `error stop` on, returned instead so a library caller survives them.     !
-   integer(ik), parameter :: DRIVER_OK      = 0_ik   !< a slow step was taken
-   integer(ik), parameter :: DRIVER_FINISHED= 1_ik   !< the calendar already reached end_time; nothing done
-   integer(ik), parameter :: DRIVER_ERR_NAN = 2_ik   !< NaN in the state at a year roll-over
-   integer(ik), parameter :: DRIVER_ERR_AREA= 3_ik   !< patch areas no longer sum to 1 (finalize only)
-   integer(ik), parameter :: DRIVER_ERR_SOILC = 4_ik !< a CENTURY pool is physically impossible
 
-   integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
-
-   !----- Everything the calendar loop needs between steps. These were meds_main's locals; making  !
-   !      them components is the whole extraction -- no state hides in module scope, so two runs    !
-   !      can be open at once (which is exactly what the C-API's handle registry does).             !
+   !----- Everything the calendar loop needs between steps. No state hides in module scope, so two  !
+   !      runs can be open at once (which is exactly what the C-API's handle registry does). A site  !
+   !      run is one polygon (meds_polygon): the site, its fast context, forcing cursor and ledgers   !
+   !      live there; the run holds what a region would share, and the polygon's output buffers,    !
+   !      as a region holds its polygons'.                                                          !
    type :: meds_run_t
       type(meds_config_t)    :: cfg
-      type(site_t)           :: site
-      type(output_manager_t) :: mgr             !< built only if output.enabled
-      type(fast_context_t)   :: fast_ctx        !< built only if fast_biophysics_on
-      type(met_driver_t)     :: met_drv         !< opened only if forcing_on
-      type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
-      !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
-      !      because it answers the question they cannot: not "did the column conserve" but "did the  !
-      !      heat move with the water". ---------------------------------------------------------------!
-      type(budget_t)         :: face_budget
-      type(slow_ledger_t)    :: slow_ledger                   !< site store across each SLOW step
+      type(meds_polygon_t)   :: poly            !< the site
+      type(output_files_t)   :: out_files          !< the run's output files (built only if output.enabled)
+      type(output_buffers_t) :: out_bufs           !< the site's share of them
+      type(met_source_t)     :: met_src         !< opened only if forcing_on
       type(meds_time_t)      :: now, prev
-      integer(ik)            :: istep = 0_ik, iyear = 0_ik, fast_step_total = 0_ik
+      integer(ik)            :: istep = 0_ik, iyear = 0_ik
       integer(ik)            :: step_days = 1_ik, steps_per_year = 365_ik
-      real(wp)               :: area_start = 0.0_wp
-      !----- Worst soil-carbon SEAM gap over the run [kgC/m2]: |daily pool debit - the fast loop's   !
-      !      own accumulated Rh|. Both ends read the same frozen pool and the same per-pool xi        !
-      !      integral, so this is ~0 BY CONSTRUCTION; a nonzero value means the double-counting       !
-      !      contract broke (a stale frozen copy, a mid-day pool write, a lost sub-step). Reported    !
-      !      with the whole-column budgets rather than asserted fatally, matching them.  -------------!
-      type(soilc_seam_t)     :: seam                        !< per-run worsts (rh gap, lignin, lambda)
-      character(len=19)      :: worst_rh_seam_when = ''     !< the date the rh gap peaked
-      integer(ik)            :: worst_rh_seam_npatch = 0_ik !< and the patch count then
       logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
    end type meds_run_t
@@ -116,7 +83,7 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! driver_open -- config -> initial community -> fast context -> met reader -> soil-carbon      !
-   ! spin-up -> output manager. Everything meds_main did before its `do while`.                   !
+   ! spin-up -> output files: everything before the first step.                                  !
    !---------------------------------------------------------------------------------------!
    subroutine driver_open(path, run, ok, verbose)
       character(len=*),  intent(in)    :: path
@@ -129,7 +96,8 @@ contains
       ok = .false.
       if (present(verbose)) run%verbose = verbose
 
-      !----- RESET every per-run accumulator before anything writes to one. --------------------!
+      !----- RESET the run's counters before anything writes to one (polygon_prepare resets the    !
+      !      site's ledgers and budgets).                                                           !
       !                                                                                          !
       !      `meds_run_t` has default initialisers, which is enough for a fresh variable -- and   !
       !      NOT enough here. The C-API keeps its runs in a module-`save` registry and hands out   !
@@ -139,17 +107,14 @@ contains
       !      process. Caught when both stages reported the identical worst seam gap to four         !
       !      significant figures -- stage 2 was still carrying stage 1's maximum, and would have    !
       !      carried its step counters and both conservation ledgers too.  ------------------------!
-      run%istep         = 0_ik
-      run%iyear         = 0_ik
-      run%fast_step_total = 0_ik
-      run%area_start    = 0.0_wp
-      run%seam          = soilc_seam_t()
-      run%worst_rh_seam_when = ''
-      run%worst_rh_seam_npatch = 0_ik
-      run%energy_budget = budget_t()
-      run%water_budget  = budget_t()
-      run%face_budget   = budget_t()
-      run%slow_ledger   = slow_ledger_t()
+      run%istep = 0_ik
+      run%iyear = 0_ik
+      !----- The run before's output: its files are closed, but a run with [output] off would still  !
+      !      see them enabled and tick their buffers (manager_setup rebuilds both when output is on). !
+      run%out_files%enabled = .false. ; run%out_bufs = output_buffers_t()
+      !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
+      !      none unless the restart below says so. ---------------------------------------------!
+      run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
 
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing
@@ -161,8 +126,10 @@ contains
       init_ok = .false. ; fast_state_found = .false. ; run%now = run%cfg%start_time
       select case (run%cfg%init_mode)
       case (INIT_RESTART)
-         call io_read_state(run%site, run%cfg, trim(run%cfg%init_restart_file), restart_time,   &
-                            init_ok, fast_found=fast_state_found)
+         call io_read_state(run%poly%site, run%cfg, trim(run%cfg%init_restart_file), restart_time,   &
+                            init_ok, fast_found=fast_state_found,                                &
+                            restructure_pending=run%poly%restructure_pending,                    &
+                            restructure_new_year=run%poly%restructure_new_year)
          if (init_ok) then
             run%now = restart_time
             if (run%verbose) then
@@ -173,13 +140,15 @@ contains
                else
                   write(*,'(a)') '         (state file predates fast-reservoir persistence -- re-seeding)'
                end if
+               if (run%poly%restructure_pending)                                                  &
+                  write(*,'(a)') '         (the boundary''s restructuring is pending: it runs before the first step)'
             end if
          else if (run%verbose) then
             write(*,'(3a)') ' init  : restart (mode 2) ', trim(run%cfg%init_restart_file),      &
                             ' not usable -- falling back to bare ground'
          end if
       case (INIT_CENSUS)
-         call init_from_census(run%site, run%cfg, trim(run%cfg%init_census_file), init_ok)
+         call init_from_census(run%poly%site, run%cfg, trim(run%cfg%init_census_file), init_ok)
          if (run%verbose) then
             if (init_ok) then
                write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
@@ -190,43 +159,39 @@ contains
          end if
       end select
       if (.not. init_ok) then
-         call init_bare_ground(run%site, run%cfg, N_PATCH_INIT)
+         call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
       end if
-      run%area_start = total_area(run%site)
 
       !----- 2a. Census restart with plasticity ON: census cohorts sit in an established stand but !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
       !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately !
       !          starts at top-of-canopy; a state restart already read the plastic traits from file. !
       if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
-         call update_overtopping_lai(run%site)
-         call advance_plant_traits(run%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
+         call update_overtopping_lai(run%poly%site)
+         call advance_plant_traits(run%poly%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
       end if
 
-      !----- 2b. Fast biophysics context (opt-in): build the static column config + seed the      !
-      !          per-patch CAS/soil reservoirs ONCE.  ---------------------------------------------!
-      if (run%cfg%fast_biophysics_on) then
-         call build_fast_context(run%cfg, run%fast_ctx)
-         if (run%cfg%forcing%forcing_on) then
-            call met_open(run%met_drv, run%cfg%forcing)
-            run%fast_ctx%zref = run%cfg%forcing%reference_height
-            if (run%verbose) write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
+      !----- 2b. The forcing source (opt-in), then the site as a polygon: fast context and          !
+      !          reservoirs, forcing cursor at the [site] location, snow, soil-carbon spin-up.  ----!
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) then
+         call met_open(run%met_src, run%cfg%forcing, run_start=run%cfg%start_time,                &
+                       run_end=run%cfg%end_time)
+         if (run%verbose) then
+            if (run%cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+               write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(run%cfg%forcing%data_path), ')'
+            else
+               write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
+            end if
          end if
-         !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/ !
-         !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard !
-         !      exactly what io_read_state just read back, reintroducing the restart discontinuity.  !
-         if (.not. (run%cfg%init_mode == INIT_RESTART .and. init_ok .and. fast_state_found))     &
-            call init_fast_reservoirs(run%site, run%fast_ctx)
-         if (run%cfg%snow_init_swe > 0.0_wp) call seed_snow(run)
-         if (run%verbose) write(*,'(a)') ' fast  : sub-daily biophysics ON'
       end if
-
-      !----- 2c. Slow soil-carbon spin-up (opt-in): a successful STATE restart already carries the !
-      !          real persisted pools (skip); otherwise the pools start at the allocation-time zero !
-      !          unless spinup_steady requests the SASU steady-state solve.  ----------------------!
-      if (run%cfg%soil_carbon_on .and. run%cfg%soil_carbon_spinup_steady .and.                   &
-          .not. (run%cfg%init_mode == INIT_RESTART .and. init_ok)) call soil_carbon_steady(run)
+      call polygon_prepare(run%cfg, run%met_src, run%poly, run%cfg%forcing%latitude_deg,          &
+                           run%cfg%forcing%longitude_deg, run%cfg%forcing%utc_offset_h,           &
+                           run%cfg%forcing%elevation_m,                                           &
+                           keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
+                                           fast_state_found,                                     &
+                           keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
+                           verbose=run%verbose)
 
       run%step_days      = max(1_ik, nint(run%cfg%dt_slow / day_sec, ik))
       run%steps_per_year = max(1_ik, nint(yr_day / real(run%step_days, wp), ik))
@@ -247,61 +212,41 @@ contains
       end if
 
       !----- 3b. DIAGNOSTIC output ([output].enabled): the netCDF-free manager (registry +        !
-      !          integrator buffers). The per-step tick stages closed periods; the step drains them.!
+      !          integrator buffers). The per-step tick queues closed periods; the I/O phase      !
+      !          writes them.                                                                      !
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
-         call manager_setup(run%mgr, run%cfg)
+         call manager_setup(run%out_files, run%cfg)
          !----- Give the DERIVED soil diagnostics the SAME retention curve the fast loop           !
          !      integrates on, rather than a second derivation from the TOML.  --------------------!
-         if (run%cfg%fast_biophysics_on) call manager_set_soil_params(run%mgr, run%fast_ctx%col_config%soil)
+         if (run%cfg%fast_biophysics_on) call manager_set_soil_params(run%out_files, run%poly%fast_ctx%col_config%soil)
          if (len_trim(run%cfg%output%io_config) > 0)                                             &
-            call apply_io_overrides(run%mgr, trim(run%cfg%output%io_config), run%verbose)
-         call manager_alloc_buffers(run%mgr)
-         call activate_site_diag(run%mgr, run%site)
+            call apply_io_overrides(run%out_files, trim(run%cfg%output%io_config), run%verbose)
+         call manager_finalize(run%out_files)
+         call manager_alloc_buffers(run%out_files, run%out_bufs)
+         call activate_site_diag(run%out_files, run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
       if (run%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'
-         call print_summary(run%site, 'start')
+         call print_summary(run%poly%site, 'start')
       end if
 
-      run%slow_ledger%active = run%cfg%slow_on .and. run%cfg%slow_ledger_on
       run%is_open = .true.
       ok = .true.
    end subroutine driver_open
 
    !---------------------------------------------------------------------------------------!
-   ! driver_step -- ONE slow step: advance the calendar, run the coupled stepper (which sub-steps  !
-   ! the fast loop inside it), drain the FAST diagnostic tier, tick the slower tiers, and handle    !
-   ! the year roll-over (summary, NaN guard, state checkpoint).                                     !
+   ! driver_step -- ONE slow step: advance the calendar, load the step's forcing (met_prefetch),   !
+   ! step the polygon (polygon_step: the coupled stepper, the fast loop inside it, and the output   !
+   ! tick), print the year summary, and after a month's last step run the I/O phase: the queued      !
+   ! records, and at a year's end the state checkpoint.                                             !
    !---------------------------------------------------------------------------------------!
-   !---------------------------------------------------------------------------------------!
-   ! Advance the site's growth-temperature running mean and push it into the leaf table (#176).  !
-   ! Exponential mean with weight dt/window; UNSEEDED (negative) adopts the first day's mean      !
-   ! outright, so the acclimated optimum starts from the site's own climate rather than relaxing  !
-   ! toward it from an arbitrary origin over the first month.                                     !
-   !---------------------------------------------------------------------------------------!
-   subroutine advance_growth_temperature(run)
-      type(meds_run_t), intent(inout) :: run
-      real(wp) :: t_day, w
-      if (run%site%pheno_tair_n < 1_ik) return          ! no fast sub-steps ran: nothing to average
-      t_day = run%site%pheno_tair_sum / real(run%site%pheno_tair_n, wp)
-      if (run%site%t_growth_avg <= 0.0_wp) then
-         run%site%t_growth_avg = t_day
-      else
-         w = min(1.0_wp, real(run%step_days, wp) / max(run%cfg%acclim_window_days, real(run%step_days, wp)))
-         run%site%t_growth_avg = run%site%t_growth_avg + w * (t_day - run%site%t_growth_avg)
-      end if
-      call acclimate_leaf_photo_table(run%cfg, run%site%t_growth_avg, run%fast_ctx%col_config%leaf_photo)
-   end subroutine advance_growth_temperature
-
    subroutine driver_step(run, status)
       type(meds_run_t), intent(inout) :: run
       integer(ik),      intent(out)   :: status
-      logical          :: is_new_month, is_new_year, is_new_day
-      integer(ik)      :: isub
-      real(wp)         :: seam_prev
+      logical          :: is_new_month, is_new_year
       character(len=19):: datestr
 
       status = DRIVER_OK
@@ -314,107 +259,46 @@ contains
       is_new_year  = run%now%year  /= run%prev%year
       is_new_month = is_new_year .or. (run%now%month /= run%prev%month)
 
-      seam_prev = run%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
+      !----- I/O before the compute phase: the step's forcing is loaded here, so nothing below reads  !
+      !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
-      !      daily mean the PREVIOUS step's fast loop accumulated, then refresh the leaf table.     !
-      !      Taking last step's mean is not a lag to apologise for: the quantity being tracked IS   !
-      !      the preceding weeks' temperature, and one slow step is a thirtieth of the window.      !
-      !      A no-op when the flag is off, so the shipped path is untouched.  ------------------------!
-      if (run%cfg%leaf_thermal_acclimation) call advance_growth_temperature(run)
-
-      !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);    !
-      !      met_drv/mgr stay gated on forcing_on.  ------------------------------------------------!
-      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) then
-         call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
-                               met_drv=run%met_drv, step_start=run%prev, mgr=run%mgr,            &
-                               run_energy_budget=run%energy_budget,                              &
-                               run_water_budget=run%water_budget,                                &
-                               run_face_budget=run%face_budget,                                  &
-                               slow_ledger=run%slow_ledger, seam=run%seam)
-      else
-         call advance_one_step(run%site, run%cfg, is_new_month, is_new_year, run%fast_ctx,       &
-                               step_start=run%prev, run_energy_budget=run%energy_budget,         &
-                               run_water_budget=run%water_budget, run_face_budget=run%face_budget, &
-                               slow_ledger=run%slow_ledger, seam=run%seam)
-      end if
-      !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
-      !      days a patch operator fires is telling you something quite different from one that      !
-      !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
-      !      done inside the biogeochem driver, which sees every patch; this only records the date   !
-      !      on the step where the running maximum moved.  ------------------------------------------!
-      if (run%seam%worst_rh_gap > seam_prev) then
-         run%worst_rh_seam_when   = time_to_string(run%now)
-         run%worst_rh_seam_npatch = run%site%patch%n
-      end if
-
-      !----- FAST (sub-daily) tier: replay the sub-step samples the fast loop staged in mgr%fast(:),!
-      !      closing + draining the tier every fast_interval_steps sub-steps.  ---------------------!
-      if (run%cfg%output%enabled .and. run%mgr%fast_ready) then
-         do isub = 1_ik, run%mgr%n_fast_sub
-            call output_integrate_fast(run%mgr, isub, run%cfg%dt_fast)
-            run%fast_step_total = run%fast_step_total + 1_ik
-            if (mod(run%fast_step_total, max(run%mgr%fast_interval_steps, 1_ik)) == 0_ik) then
-               call close_tier(run%mgr, 1_ik)
-               call output_serialize_pending(run%mgr)
-            end if
-         end do
-         run%mgr%fast_ready = .false.
-      end if
-
-      !----- Diagnostic tick: fold this step's (post-dynamics) state into the active tiers and     !
-      !      stage any closed period, then flush.  -------------------------------------------------!
-      if (run%cfg%output%enabled) then
-         is_new_day = is_new_month .or. (run%now%day /= run%prev%day)
-         call output_integrate(run%mgr, run%site, run%now, run%cfg%dt_slow, is_new_day,          &
-                               is_new_month, is_new_year)
-         call output_serialize_pending(run%mgr)
-      end if
+      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs, run%poly, run%prev,      &
+                        run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
          run%iyear = run%iyear + 1_ik
          if (run%verbose .and. (mod(run%iyear, 5_ik) == 0_ik .or. run%iyear == 1_ik)) then
             datestr = time_to_string(run%now)
-            call print_summary(run%site, datestr(1:10))
+            call print_summary(run%poly%site, datestr(1:10))
          end if
-         !----- A NaN is a STATUS here, not an `error stop`: see the module header. ---------------!
-         if (has_nan(run%site)) then ; status = DRIVER_ERR_NAN ; return ; end if
+      end if
+      !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
+      if (status /= DRIVER_OK) then
+         if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
+         return
       end if
 
-      !----- SOIL-CARBON PLAUSIBILITY, checked every step and NOT gated on the ledger. -----------!
-      !                                                                                          !
-      !      The ledger checks the same predicate at every phase boundary and can say WHICH        !
-      !      operator broke it, which is far more useful -- but the ledger is a diagnostic with an  !
-      !      off switch ([run].slow_ledger_on), and a safety assertion that a diagnostic flag can  !
-      !      disable is a trap. So the guard itself lives here, unconditional, and the ledger's     !
-      !      copy is the attribution.                                                              !
-      !      Once per slow step over ~12 patches x 7 pools; the cost does not register.            !
-      if (run%cfg%soil_carbon_on) then
-         block
-            integer(ik) :: ipp, kk
-            do ipp = 1_ik, run%site%patch%n
-               kk = soil_carbon_bad_pool(run%site%patch%soil_carbon(ipp))
-               if (kk /= 0_ik) then
-                  write(*,'(a)') ' ERROR: a CENTURY soil-carbon pool is physically impossible.'
-                  write(*,'(3a,i0,a,i0)') '        pool ', trim(soil_carbon_pool_name(kk)),        &
-                        ', patch ', ipp, ' of ', run%site%patch%n
-                  write(*,'(2a)')  '        date ', time_to_string(run%now)
-                  write(*,'(a)') '        A carbon pool is a mass: it cannot be negative, and the'
-                  write(*,'(a)') '        ceiling is ~500x the richest real soil. Conservation can'
-                  write(*,'(a)') '        hold perfectly while this is true -- see the slow ledger.'
-                  status = DRIVER_ERR_SOILC
-                  return
-               end if
-            end do
-         end block
-      end if
+      if (is_new_month) call driver_io_phase(run, is_new_year)
+   end subroutine driver_step
 
+   !---------------------------------------------------------------------------------------!
+   ! driver_io_phase -- the file work of a closed month, done outside the compute phase so a step !
+   ! makes no netCDF call (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1): write the queued output records, !
+   ! then the yearly checkpoint. The next month's forcing is loaded by met_prefetch before the     !
+   ! next step.                                                                                     !
+   !---------------------------------------------------------------------------------------!
+   subroutine driver_io_phase(run, is_new_year)
+      type(meds_run_t), intent(inout) :: run
+      logical,          intent(in)    :: is_new_year
+      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
-            call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                  &
-                                trim(run%cfg%state_output_prefix), run%now)
+            call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                  &
+                                trim(run%cfg%state_output_prefix), run%now,                         &
+                                run%poly%restructure_pending, run%poly%restructure_new_year)
       end if
-   end subroutine driver_step
+   end subroutine driver_io_phase
 
    !---------------------------------------------------------------------------------------!
    ! driver_finalize -- terminal checkpoint, summary, the two whole-column budget reports, the    !
@@ -429,64 +313,22 @@ contains
       st = DRIVER_OK
       !----- Always checkpoint the true terminal state so a restart resumes exactly here. --------!
       if (run%cfg%state_write_state)                                                                &
-         call state_write_state(run%site, run%cfg, trim(run%cfg%state_output_dir),                     &
-                             trim(run%cfg%state_output_prefix), run%now)
+         call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                     &
+                             trim(run%cfg%state_output_prefix), run%now,                            &
+                             run%poly%restructure_pending, run%poly%restructure_new_year)
 
-      if (run%verbose) call print_summary(run%site, 'final')
-      a1 = total_area(run%site)
+      if (run%verbose) call print_summary(run%poly%site, 'final')
+      a1 = total_area(run%poly%site)
       if (run%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'
-         write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%area_start, '  end=', a1
+         write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%poly%area_start, '  end=', a1
       end if
       if (abs(a1 - 1.0_wp) > 1.0e-5_wp) st = DRIVER_ERR_AREA
 
-      !----- Whole-column conservation over the RUN: the signed cumulative residual is the number a !
-      !      per-step tolerance cannot see, so it is reported whether or not any single step        !
-      !      breached.  -----------------------------------------------------------------------------!
-      if (run%cfg%fast_biophysics_on .and. run%verbose) then
-         call budget_report(run%energy_budget, 'whole_energy', 'J/m2',  'W/m2')
-         call budget_report(run%water_budget,  'whole_water',  'kg/m2', 'kg/m2/s')
-         !----- The VERTICAL check (#189), reported in the same place and spirit as the soil-carbon   !
-         !      seam below: a number that should be machine-zero, printed whether or not it breached. !
-         !      A nonzero value means soil enthalpy was advected on a mass flux the committed water    !
-         !      never moved -- a misplacement between LAYERS, which both ledgers above sum away.       !
-         write(*,'(a,es12.3,a,es12.3,a,i0)') ' faces[soil_layer_mass]  worst = ',                  &
-               run%face_budget%worst, ' kg/m2   mean |resid| = ',                                  &
-               run%face_budget%abs_sum / max(real(run%face_budget%n_check, wp), 1.0_wp),           &
-               ' kg/m2   checks = ', run%face_budget%n_check
-         if (run%energy_budget%n_fail + run%water_budget%n_fail > 0_ik)                          &
-            write(*,'(a,i0,a)') ' WARNING: ', run%energy_budget%n_fail + run%water_budget%n_fail, &
-               ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'
-      end if
-      !----- The soil-carbon seam, in the same place and spirit as the two budgets above: a number  !
-      !      that should be machine-zero, reported whether or not it ever breached. Until now it was  !
-      !      computed inside the slow driver and thrown away, because nothing asked for it.  ---------!
-      if (run%cfg%soil_carbon_on .and. run%verbose) then
-         write(*,'(a,es12.3,a)') ' seam[soil_carbon_rh]  worst |pool debit - fast Rh| = ',        &
-               run%seam%worst_rh_gap, ' kgC/m2'
-         if (run%seam%worst_rh_gap > 0.0_wp)                                                      &
-            write(*,'(3a,i0,a)') '                       worst at ', run%worst_rh_seam_when,      &
-                  ' with ', run%worst_rh_seam_npatch, ' patches'
-         write(*,'(a,es12.3,a)') ' seam[soil_carbon_lignin]  worst passive-tracer resid = ',      &
-               run%seam%worst_lignin, ' kgC/m2/day'
-         !----- LAMBDA: the fraction of a pool one slow step withdraws -- the number that says      !
-         !      whether freezing the pool across the step is sound. Not a residual: it is expected   !
-         !      to be small-but-nonzero (3.6e-3/day measured on the mature Ithaca stand), and it is a  !
-         !      WARNING as it approaches 1, long                                                       !
-         !      before a pool could go negative.  ---------------------------------------------------!
-         write(*,'(a,es12.3,2a)') ' freeze[soil_carbon]   worst lambda = dt.K.xi / pool  = ',     &
-               run%seam%worst_lambda, ' [-]  pool ',                                              &
-               trim(soil_carbon_pool_name(run%seam%lambda_pool))
-         if (run%seam%worst_lambda > 0.1_wp)                                                      &
-            write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
-                        // ' the frozen-pool approximation is degrading; shorten dt_slow.'
-      end if
+      if (run%verbose) call polygon_report(run%cfg, run%poly)
 
-      !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!
-      if (run%verbose) call slow_ledger_report(run%slow_ledger)
-
-      if (run%cfg%output%enabled) call output_manager_close(run%mgr, .true.)
-      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_drv)
+      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%out_bufs, .true.)
+      if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st
    end subroutine driver_finalize
@@ -495,60 +337,15 @@ contains
    !      read the final state (the getters the C-API exposes) after the streams are closed. ------!
    subroutine driver_free(run)
       type(meds_run_t), intent(inout) :: run
-      call site_free(run%site)
+      call site_free(run%poly%site)
    end subroutine driver_free
-
-   !----- Seed an initial snow pack (spin-up / test); [fast].snow_init_swe. ---------------------!
-   subroutine seed_snow(run)
-      type(meds_run_t), intent(inout) :: run
-      integer(ik) :: ipp
-      do ipp = 1_ik, run%site%patch%n
-         run%site%patch%snow(ipp)%swe(1)         = run%cfg%snow_init_swe
-         run%site%patch%snow(ipp)%snow_energy(1) =                                               &
-            temp_to_internal_energy(0.0_wp, run%cfg%snow_init_swe, run%cfg%snow_init_temp, 0.0_wp)
-         run%site%patch%snow(ipp)%snow_depth(1)  = run%cfg%snow_init_swe / 250.0_wp
-         run%site%patch%snow(ipp)%nlayer         = 1_ik
-         call internal_energy_to_temp(run%site%patch%snow(ipp)%snow_energy(1),                   &
-                                      run%cfg%snow_init_swe, 0.0_wp,                             &
-                                      run%site%patch%snow(ipp)%snow_temp(1),                     &
-                                      run%site%patch%snow(ipp)%snow_fliq(1))
-      end do
-      if (run%verbose) write(*,'(a,f6.1,a)') ' snow  : seeded initial pack SWE = ',              &
-                                             run%cfg%snow_init_swe, ' kg/m2'
-   end subroutine seed_snow
-
-   !----- SASU steady-state soil-carbon spin-up from the configured climatological xi + litter. --!
-   subroutine soil_carbon_steady(run)
-      type(meds_run_t), intent(inout) :: run
-      type(soil_carbon_t)  :: pools0, pools_ss
-      type(litter_input_t) :: lit
-      real(wp)    :: a_mat(n_soil_pool, n_soil_pool), k_diag(n_soil_pool), er(n_soil_pool)
-      real(wp)    :: xi_bar(n_soil_pool), u_bar(n_soil_pool), lignin_bar(2)
-      integer(ik) :: ipp
-      pools0 = soil_carbon_t()                          ! zero-carbon reference (f_lignin=0)
-      call assemble_transfer_matrix(pools0, run%cfg%soil_carbon, a_mat, k_diag, er)
-      xi_bar = run%cfg%soil_carbon_spinup_xi
-      lit%labile_grnd = run%cfg%soil_carbon_spinup_labile_grnd
-      lit%labile_soil = run%cfg%soil_carbon_spinup_labile_soil
-      lit%struct_grnd = run%cfg%soil_carbon_spinup_struct_grnd
-      lit%struct_soil = run%cfg%soil_carbon_spinup_struct_soil
-      call build_litter_input(lit, u_bar, lignin_bar)
-      call solve_soil_carbon_steady_state(a_mat, k_diag, xi_bar, u_bar, run%cfg%soil_carbon, pools_ss)
-      do ipp = 1_ik, run%site%patch%n
-         run%site%patch%soil_carbon(ipp) = pools_ss
-      end do
-      if (run%verbose) write(*,'(a,f8.3,a)') ' soilc : steady-state spin-up, total = ',          &
-         pools_ss%fast_grnd_carbon + pools_ss%fast_soil_carbon + pools_ss%struct_grnd_carbon +   &
-         pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
-         pools_ss%passive_carbon, ' kgC/m2'
-   end subroutine soil_carbon_steady
 
    !----- Apply the optional meds_io_config.toml per-variable override table to the manager's     !
    !      registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`      !
    !      entry: a bool force-enables / disables everywhere; a quoted "F D M Y" string replaces     !
    !      the stream mask. A name matching no registry variable is a hard error.                    !
-   subroutine apply_io_overrides(mgr, tomlpath, verbose)
-      type(output_manager_t), intent(inout) :: mgr
+   subroutine apply_io_overrides(files, tomlpath, verbose)
+      type(output_files_t),   intent(inout) :: files
       character(len=*),       intent(in)    :: tomlpath
       logical,                intent(in)    :: verbose
       type(toml_table_t) :: tt
@@ -566,9 +363,9 @@ contains
          raw  = adjustl(tt%val(i))
          select case (trim(raw))
          case ('true', '.true.', 'True', 'TRUE')
-            call apply_variable_override(mgr%reg, trim(name), OVR_TRUE, 0_ik, found)
+            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
          case ('false', '.false.', 'False', 'FALSE')
-            call apply_variable_override(mgr%reg, trim(name), OVR_FALSE, 0_ik, found)
+            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
          case default
             if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
                sval = raw(2:index(raw(2:), '"'))
@@ -576,7 +373,7 @@ contains
                if (status /= 0_ik)                                                               &
                   error stop 'meds_driver: io_config unknown stream token "'//trim(bad)//        &
                              '" for variable '//trim(name)
-               call apply_variable_override(mgr%reg, trim(name), OVR_MASK, mask, found)
+               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
             else
                error stop 'meds_driver: io_config bad value for '//trim(name)//                  &
                           ' (expected true|false or a quoted "F D M Y" string)'
@@ -586,7 +383,7 @@ contains
             error stop 'meds_driver: io_config variable "'//trim(name)//                         &
                        '" matches no registry variable (typo?)'
       end do
-      call build_freq_index(mgr%reg)
+      call build_freq_index(files%reg)
       if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
    end subroutine apply_io_overrides
 

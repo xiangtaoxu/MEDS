@@ -42,7 +42,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 
 | Block | What it sets |
 |---|---|
-| `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. |
+| `[run]` | The slow timestep, and the run span as **calendar dates** (`start_time`, `end_time`, leap-year-aware Gregorian, `"YYYY-MM-DD[ HH:MM:SS]"`). Thread count. The run `mode`: one site, or a region. |
 | `[fast]` | The sub-daily loop: `dt_fast`, the integrator, tolerances, error control. |
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
@@ -52,8 +52,9 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
 | `[hydraulics]` | Plant water transport. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
+| `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Renamed from `[io]`; the old name still loads with a warning.)* |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Called `[io]` before v0.3.0; that spelling is now refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
 **`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
@@ -117,8 +118,8 @@ falls back to near-bare ground with a warning.
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
 
-- **Diagnostic timeseries** — the `[output]` subsystem. Around 208 variables across 8 groups and
-  7 axes, each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
+- **Diagnostic timeseries** — the `[output]` subsystem. 252 variables across 9 groups and 7 axes,
+  each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
   `meds_main --dump-io-config` to generate a file listing every available variable name; the
   override mechanism always worked, what was missing was any way to learn what exists.
   See [`science/diagnostics.md`](science/diagnostics.md).
@@ -133,10 +134,9 @@ a mean.
 
 > **`[io]` was renamed to `[state]`.** The block was named for a legacy diagnostic writer that was
 > retired at v0.1; what remained was the restart stream, so `io` named the one output path it did
-> *not* cover. The old spelling still loads in v0.2.x and prints one deprecation warning naming the
-> keys; `io.state_interval_years` becomes `state.interval_years` (the `state_` prefix was stuttering
-> once the block itself was called `state`). It will be removed in a later release — a 0.x minor is
-> the cheapest moment a rename like this will ever have.
+> *not* cover. Since v0.3.0 a config that still spells it `[io]` is refused at load, with a message
+> naming the new keys: rename the block, and `io.state_interval_years` to `state.interval_years`
+> (the `state_` prefix was stuttering once the block itself was called `state`).
 
 ## The forcing file
 
@@ -144,14 +144,92 @@ a mean.
 Without it the fast loop runs against a constant reference climate, which is useful for tests and
 useless for science.
 
-The forcing file format, the ERA5-Land preparation recipe, and the recycling rules are documented
-in [`science/forcing.md`](science/forcing.md). Two things to know before writing a config:
+`[forcing].format` picks the source:
+
+- **`"era5land"`** reads the global ED_ERA5land archive: one file per variable per month, built
+  with the tools in `scripts/prepare_era5/`. Give it `data_path` (the archive folder) and
+  `max_distance_km`. The reader finds the site's cell itself and takes that cell's elevation from
+  the archive, so `path`, `grid_index`, `grid_match` and `[site].grid_elevation` do not apply and
+  are rejected if present. Every month file the run needs must exist when it starts, and the run
+  must step daily from midnight (`dt_slow = "1d"`, `start_time` at 00:00:00): the reader loads a
+  month at a time before each step.
+- **`"netcdf"`** reads one MEDS forcing file, named by `path`.
+
+The file formats, the ERA5-Land preparation recipe, and the recycling rules are documented in
+[`science/forcing.md`](science/forcing.md). Two things to know before writing a config:
 
 - **The recycle window is declared, never inferred.** If `recycle = true`, then `recycle_start` and
   `recycle_end` are required, and the span must be an exact whole number of calendar years. A
   window of any other length drifts both hour-of-day and day-of-year on every wrap while the daily
-  mean stays correct, so nothing downstream complains.
+  mean stays correct, so nothing downstream complains. The window may start at any record stamp,
+  and the seam between its last record and its first may fall anywhere in a day. On an end-stamped
+  file such as ERA5-Land, a calendar year's first record is at 01:00.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
+
+**The forcing is moved to each patch's canopy-air top.** There is no fixed reference height:
+every sample is taken from the forcing's own heights to the top of each patch's canopy air space, which
+grows with the stand, and the aerodynamics runs from there ([`science/forcing.md`](science/forcing.md) §8).
+- **Declare the forcing's own heights in `[forcing]`:** `tq_height` and `wind_height`; `height_above`
+  (`"zero_plane"` for a reanalysis, `"ground"` for a flux tower); and `wind_exposure` (`"open_terrain"`
+  for ERA5's 10 m wind, with `wind_exposure_z0 = 0.03` and `wind_blending_height = 40`, or `"local"`).
+  `meds_config_main.toml` shows ERA5-Land's values.
+- **The terrain lapse** (`[site].apply_elevation_lapse`) moves temperature, pressure, humidity (at constant
+  relative humidity) and file longwave from the forcing cell's elevation to the site's.
+  `[site].lapse_rate_tair` takes one rate or twelve monthly rates.
+- The old `[site].reference_height`, `wind_meas_height`, `apply_wind_profile` and `wind_roughness_z0`
+  are rejected, with a message naming these keys.
+
+**CO₂ is set in `[forcing]`, never by the met file.**
+- **`co2_source = "const"`**, the default, holds `co2_const` for the whole run.
+- **`co2_source = "file"`** reads `co2_file`, a MEDS CO₂ file looked up on model time, so the CO₂
+  keeps rising while recycled met repeats.
+  - The repository ships `data/co2/co2_cmip7_global_annual_1000-2022.txt`, CMIP7 global annual
+    means for 1000–2022.
+  - The path is relative to where MEDS runs, like `path`.
+  - A run the file does not cover is refused at startup.
+- **Rejected combinations.** The other mode's key is rejected, and so is a met file that carries
+  `CO2air`.
+
+The format (a `timestep` line, a `units` line, then one `<period start> <value>` row per period) and
+the shipped series are in [`science/forcing.md`](science/forcing.md) §12.
+
+## Regional runs
+
+`[run].mode = "region"` simulates every selected cell of a box of the ED_ERA5land archive as its own
+polygon, in one process. Each polygon is an independent stand at its cell's centre, at the cell's
+orography, in UTC, and it computes exactly what a site run at that point would: the region steps
+every polygon with the site run's own step. Scattered sites are not a region; run them as separate
+site runs (a job array, or one allocation filled with GNU parallel).
+
+```toml
+[run]
+mode = "region"
+
+[region]
+box_nwse          = [42.95, -76.95, 41.95, -75.95]   # [N, W, S, E]; may cross 0 or 180 degrees
+land_fraction_min = 0.5                              # skip lakes and fractional coastal cells
+detail_polygons   = [1714634]                        # optional: these also write single-site files
+```
+
+- **Selection.** Every cell of the box that the archive has data for and whose static land fraction
+  is at least `land_fraction_min` (default 0.5) becomes a polygon, in row-major order. A polygon's
+  id is its cell's index on the global grid, `row * 3600 + col` at 0.1 degrees, so ids agree across
+  regions.
+- **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
+  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold the variables that
+  have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort
+  and patch variables, and the sub-daily tier, are written only for `detail_polygons`, as ordinary
+  single-site files named `<prefix>-p<polygon id>-...`.
+- **Rules.** A region needs `[forcing].format = "era5land"` with forcing and the fast loop on. It
+  takes its locations from its cells, so `[site].latitude`, `longitude`, `utc_offset`, `elevation`
+  and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
+  rates, still applies. Until restarts of regions exist, a region starts from bare ground
+  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
+  thread without the fast probe. A region loads each month's forcing once, before the month, so a
+  recycle window must start at 00:00 or 01:00 on the 1st of a month.
+- **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
+  crash loses at most the current month. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the
+  measured cost per polygon-month and the roadmap to threads, restarts and tiles.
 
 ## Worked examples
 

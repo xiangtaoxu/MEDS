@@ -38,7 +38,7 @@ program test_output_roundtrip
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_site_state_types, only : site_t, site_alloc, site_free
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
-   use meds_output_types,     only : output_manager_t
+   use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
    use meds_output_integrate, only : output_integrate
    use meds_output_manager,   only : output_serialize_pending, output_manager_close
@@ -53,8 +53,10 @@ program test_output_roundtrip
 
    type(meds_config_t)    :: cfg
    type(site_t)           :: site
-   type(output_manager_t) :: mgr
-   type(meds_time_t)      :: now
+   type(output_files_t)   :: files
+   type(output_buffers_t) :: bufs
+   type(meds_time_t)      :: prev, now
+   integer(ik)            :: iday
    real(wp)               :: dt
    type(soil_params_t)    :: soilp
    integer(ik), parameter :: N_ACTIVE = 6_ik
@@ -80,7 +82,7 @@ program test_output_roundtrip
    !----- Output config: daily + annual streams; enable the energy group (soil). -----!
    cfg = build_cfg()
    dt  = 86400.0_wp
-   call manager_alloc(mgr, cfg)
+   call manager_alloc(files, bufs, cfg)
 
    !----- A soil column with FEWER active layers than the compile-time ceiling (#246). That gap    !
    !      is the whole point: soil-dimensioned variables used to be emitted over all               !
@@ -90,26 +92,21 @@ program test_output_roundtrip
    !      evaluated on padding whose theta_sat is 0, which a -fpe0 build aborts on.  ---------------!
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soilp)
-   call manager_set_soil_params(mgr, soilp)
+   call manager_set_soil_params(files, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
-   !----- Walk 3 days of 2000-01; agb 10 / 20 / 30. is_new_day closes the previous day. -----!
+   !----- Walk 3 daily steps of 2000-01, as polygon_step calls the tick: the step from `prev` to  !
+   !      `now` folds into the day that holds `prev`, then closes it, because `now` left that day.  !
+   !      agb 10 / 20 / 30 are the states at the end of the steps of 1, 2 and 3 January. ---------!
    now = meds_time_t(year=2000_ik, month=1_ik, day=1_ik)
-   call set_site_agb(site, 10.0_wp)
-   call output_integrate(mgr, site, now, dt, .false., .false., .false.)
-   call output_serialize_pending(mgr)
+   do iday = 1_ik, 3_ik
+      prev = now ; now = time_advance_days(prev, 1_ik)
+      call set_site_agb(site, 10.0_wp * real(iday, wp))
+      call output_integrate(files, bufs, site, prev, dt, .true., .false., .false.)
+      call output_serialize_pending(files, bufs)
+   end do
 
-   now = time_advance_days(now, 1_ik)                  ! 2000-01-02
-   call set_site_agb(site, 20.0_wp)
-   call output_integrate(mgr, site, now, dt, .true., .false., .false.)
-   call output_serialize_pending(mgr)
-
-   now = time_advance_days(now, 1_ik)                  ! 2000-01-03
-   call set_site_agb(site, 30.0_wp)
-   call output_integrate(mgr, site, now, dt, .true., .false., .false.)
-   call output_serialize_pending(mgr)
-
-   call output_manager_close(mgr, .true.)              ! flush the day-3 daily + the 2000 annual partial
+   call output_manager_close(files, bufs, .true.)              ! flush the 2000 annual partial
 
    !----- Re-open and assert. -----!
    call check_daily('test_ro-D-200001.nc')
@@ -132,7 +129,7 @@ contains
       c%output%file_chunk = [FC_DAY, FC_MONTH, FC_YEAR, FC_RUN]
       !----- structure + carbon + ENERGY (soil); water/radiation/ecophys/biogeochem/numerics off. !
       !      Order: STRUCTURE CARBON WATER ENERGY NUMERICS RADIATION ECOPHYS BIOGEOCHEM.  --------!
-      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false.]
+      c%output%grp_on     = [.true., .true., .false., .true., .false., .false., .false., .false., .false.]
    end function build_cfg
 
    !----- Daily file: 3 records, agb_site = [10,20,30], n_cohort=1, agb_cohort slab = [10,20,30]. !
@@ -141,7 +138,7 @@ contains
       integer(c_int)    :: ncid, vid
       integer(c_size_t) :: nt
       real(c_double)    :: agbs(3), agbc(3), gpp(3), soilt(3)
-      integer(c_int)    :: ncoh(3)
+      integer(c_int)    :: ncoh(3), days(3)
       call nc_check(nc_open_f(trim(path), NC_NOWRITE, ncid), 'open daily')
       call nc_check(nc_inq_dimlen_f(ncid, 'time', nt), 'daily time len')
       call check(int(nt, ik) == 3_ik, 'daily has 3 records')
@@ -150,6 +147,11 @@ contains
       call check_close(real(agbs(1), wp), 10.0_wp, 1.0e-9_wp, 'daily agb_site day1')
       call check_close(real(agbs(2), wp), 20.0_wp, 1.0e-9_wp, 'daily agb_site day2')
       call check_close(real(agbs(3), wp), 30.0_wp, 1.0e-9_wp, 'daily agb_site day3')
+      !----- Each record is stamped with the day its step started (#294): the step from 1 to 2      !
+      !      January is the 1 January record, not the 2 January one. ------------------------------!
+      call nc_check(nc_inq_varid_f(ncid, 'day', vid), 'daily day id')
+      call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [3_c_size_t], days), 'get day')
+      call check(all(days == [1_c_int, 2_c_int, 3_c_int]), 'daily records are stamped 1, 2, 3 January')
       call nc_check(nc_inq_varid_f(ncid, 'n_cohort', vid), 'daily n_cohort id')
       call nc_check(nc_get_vara_int(ncid, vid, [0_c_size_t], [3_c_size_t], ncoh), 'get n_cohort')
       call check(all(ncoh == 1_c_int), 'daily n_cohort == 1')

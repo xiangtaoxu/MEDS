@@ -1,5 +1,14 @@
 # MEDS documentation review, 2026-09-13
 
+> # 🗃️ ARCHIVED — 2026-09-28. Executed 2026-09-13/14.
+>
+> **What it did** (commit `bf85b45`; PRs #203–#208, #235, #253): 29 plans archived, the README /
+> `src/README.md` / `CLAUDE.md` split, `docs/ROADMAP.md` and `CHANGELOG.md` created, three science
+> pages written.
+>
+> **Not executed:** the §5.3 comment sweep and the §5.4 page items, carried by the 2026-09-27 review
+> (`MEDS_CODE_REVIEW_2026-09-27.md` §9.5). Line numbers below are the `b9596c5` tree.
+
 **Status:** review record, read-only. No source or documentation was changed by this review; this
 file is its only output. Reviewer: Claude (Fable 5.1). Baseline: `main @ b9596c5` (PR #147,
 2026-09-11), 422 commits, 118 merged PRs since 2026-07-01, 14 open issues.

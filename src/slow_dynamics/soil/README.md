@@ -45,7 +45,7 @@ seam, not a folder.
 
 The equations, the pool table, the scalar placement and the seam are documented in
 [`docs/science/soil_carbon.md`](../../../docs/science/soil_carbon.md); the design record is
-[`docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md`](../../../docs/dev_plans/MEDS_BIOGEOCHEMISTRY_DESIGN.md).
+[`docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md`](../../../docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md).
 
 Tested in `test/test_soil_biogeochem.f90` (mass closure, the respiration complement, scalar
 placement, scheme topology, the steady-state solve, residence and capacity, litter and lignin,

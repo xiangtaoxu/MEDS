@@ -171,9 +171,12 @@ contains
       call add_cohort(site, cfg, 1_ik, 2_ik, 0.50_wp, 20.0_wp)
       call finalize_init(site)
       call arm_patch_diag(site, cfg)
+      !----- With the fast loop off, the slow step weights the block itself (#299), so the fixture's  !
+      !      stand-in for the fast sub-steps' weight would count the step twice. --------------------!
+      site%patch%diag%w = 0.0_wp
 
       n0 = site%cohort%nplant(1)
-      call advance_slow_dynamics(site, cfg, .false., .false.)    ! no month/year boundary
+      call advance_slow_dynamics(site, cfg)                      ! no month/year boundary
       call check(site%cohort%n == 1_ik, 'background fixture: the cohort survived the step')
       call check(n0 - site%cohort%nplant(1) > 0.0_wp, 'the step actually killed some density')
 

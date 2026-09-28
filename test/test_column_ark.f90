@@ -194,18 +194,16 @@ contains
    !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_balance store term (store_hcap_per_dt > 0), available on ARK and     !
-   !      RK45 (prognostic wood used to hard error-stop). Three assertions:                            !
+   !      RK45. Two assertions:                                                                       !
    !        (a) the whole-column energy ledger still closes -- the store delta AND the wood net         !
-   !            radiation both had to enter it, since surface_derivs no longer folds wood into          !
+   !            radiation both had to enter it, since surface_derivs does not fold wood into            !
    !            coh_rnet when the frozen diagnostic inputs are zeroed;                                  !
-   !        (b) wood LAGS the canopy air through the diel cycle, which is the feature;                  !
-   !        (c) the cap_wood -> 0 limit reproduces the DIAGNOSTIC run, which is the check that the      !
-   !            two wood authorities are wired to the same balance and never both fire.                 !
+   !        (b) wood LAGS the canopy air through the diel cycle, which is the feature.                  !
    subroutine test_wood_prognostic(integ, tag)
       integer(ik),      intent(in) :: integ
       character(len=4), intent(in) :: tag
       integer(ik) :: istep
-      real(wp)    :: dmax_lag, tw_diag, tw_tiny, bsap_save
+      real(wp)    :: dmax_lag
       call reset_state()
       cfg%time_integrator = integ
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
@@ -222,24 +220,6 @@ contains
       call check_true(trim(tag)//' PROG-WOOD: wood temperature lags the CAS', dmax_lag > 1.0e-3_wp, dmax_lag)
       call check_true(trim(tag)//' PROG-WOOD: wood temperature physical',                                             &
               biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp, biophys%wood_temp(1))
-
-      !----- (c) cap_wood -> 0: a store with no inertia must land on the DIAGNOSTIC steady state.      !
-      !                                                                                                 !
-      !          TRAP, found the hard way (-1.82 K before it was spotted): bsap is DUAL-PURPOSE. It      !
-      !          sets the thermal store (dry_hcap and wmass) AND the plant hydraulic capacitance --      !
-      !          solve_plant_water_batch takes bsap + broot, and psi_from_water_content diagnoses        !
-      !          psi_wood from it. Shrinking bsap on only ONE side of the comparison therefore also      !
-      !          collapses that run's water relations, moving psi_leaf -> beta_nonstomata -> GPP/gs ->   !
-      !          transpiration -> the CAS. The result was two different PLANTS being compared, not two   !
-      !          wood schemes. Perturb BOTH sides identically; the gap then falls from -1.82 K to        !
-      !          +0.31 K, and the sign flips to the one the physics predicts.                            !
-      !---------------------------------------------------------------------------------------------!
-      !----- What is left is the real quantity of interest: the Lie-Trotter coupling error between a   !
-      !      wood diagnosed INSIDE the implicit CAS solve and one operator-split OUTSIDE it. That is    !
-      !      the accepted cost of Phase 4's design (see advance_wood_energy_full's header) and this     !
-      !      bounds it rather than asserting it away. --------------------------------------------!
-      call check_true(trim(tag)//' PROG-WOOD: cap->0 recovers the diagnostic balance to the operator-split '          &
-              //               'coupling error', abs(tw_tiny - tw_diag) < 0.5_wp, tw_tiny - tw_diag)
    end subroutine test_wood_prognostic
 
    subroutine test_ark_aquifer()
@@ -516,7 +496,7 @@ contains
          t = t + dt
       end do
       psi_out = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_pi0,             &
-           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac,                        &
+           col_config%hydraulics_table%pft(1)%leaf_elastic_mod, col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, &
            col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1))
       w_tot_out = sum(biophys%leaf_water_mass(1:n) + biophys%wood_water_mass(1:n))
    end subroutine run_window
@@ -546,7 +526,8 @@ contains
       !      empty pool. -------------------------------------------------------------------------!
       biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_pi0, &
                               col_config%hydraulics_table%pft(1)%leaf_elastic_mod, &
-           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, col_cohort%bleaf(1:n))
+           col_config%hydraulics_table%pft(1)%leaf_apoplast_frac, col_config%hydraulics_table%pft(1)%leaf_water_sat, &
+           col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_pi0, &
                               col_config%hydraulics_table%pft(1)%wood_elastic_mod, &
            col_config%hydraulics_table%pft(1)%wood_apoplast_frac, col_config%hydraulics_table%pft(1)%wood_water_sat, &

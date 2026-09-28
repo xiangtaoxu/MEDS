@@ -23,10 +23,12 @@ program test_fast_loop
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
-   use meds_time,                only : meds_time_t
+   use meds_time,                only : meds_time_t, time_advance_seconds
    use meds_forcing_config,      only : MET_BACKEND_NETCDF, SWPART_CLEARIDX, METAVG_END
-   use meds_forcing_types,       only : met_driver_t
-   use meds_met_driver,          only : met_open, met_close
+   use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
+   use meds_output_types,        only : output_buffers_t
+   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -101,14 +103,14 @@ program test_fast_loop
       cfg%fast_biophysics_on = .false.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
-      call advance_one_step(site, cfg, .false., .false., ctx)     ! gate off -> fast loop skipped
+      call advance_one_step(site, cfg, ctx)     ! gate off -> fast loop skipped
       call check_close(site%patch%cas(1)%can_temp, t_before, 1.0e-12_wp, &
                        'fast loop must NOT run when fast_biophysics_on is off')
       !----- Gate ON (fast_biophysics_on = .true. + context): the hook fires, reservoirs change. -!
       cfg%fast_biophysics_on = .true.
       call init_fast_reservoirs(site, ctx)
       t_before = site%patch%cas(1)%can_temp
-      call advance_one_step(site, cfg, .false., .false., ctx)
+      call advance_one_step(site, cfg, ctx)
       call check(abs(site%patch%cas(1)%can_temp - t_before) > 0.05_wp, &
                  'advance_one_step ran the fast loop when gated on')
 
@@ -142,7 +144,7 @@ program test_fast_loop
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(site)
-   call advance_one_step(site, cfg, .false., .false., ctx)
+   call advance_one_step(site, cfg, ctx)
    cbal0 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 
@@ -151,7 +153,7 @@ program test_fast_loop
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
    call finalize_init(site)
    call init_fast_reservoirs(site, ctx)
-   call advance_one_step(site, cfg, .false., .false., ctx)
+   call advance_one_step(site, cfg, ctx)
    cbal1 = site%cohort%leaf_carbon(1) + site%cohort%fineroot_carbon(1)                          &
          + site%cohort%wood_carbon(1) + site%cohort%nonstructural_carbon(1)
 
@@ -168,7 +170,8 @@ program test_fast_loop
    !    accumulate ~0 GPP; a 2 h DAY window (15-17 UTC, high SW) must accumulate clearly more -- i.e. !
    !    the forcing's diurnal shortwave really propagates through met_instant -> the fast loop.  =====!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       real(wp)           :: gpp_night, gpp_day, tcas_n
       real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the section 7 C5 check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
@@ -182,22 +185,76 @@ program test_fast_loop
       cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
       cfg%forcing%utc_offset_h = 0.0_wp ; cfg%forcing%apply_solar_longitude = .true.
       cfg%forcing%recycle = .false.
+      cfg%forcing%co2_const = 415.0_wp          ! the file's old CO2air: CO2 is config-only now (#184)
 
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
       call finalize_init(site)
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = site%cohort%gpp_accum(1)
       tcas_n    = site%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = site%cohort%gpp_accum(1)
+
+      !=== The FORCING ECHO (MEDS_FORCING_DESIGN.md §6.7): with the polygon diagnostics and the     !
+      !    fast tier on, a step must record exactly the forcing the reader hands the fast loop --    !
+      !    the dt-weighted mean of the sub-step samples in the polygon block (site%diag, once per    !
+      !    polygon), and each sample itself in the fast staging. A second cursor on the same source  !
+      !    replays the reader's samples. ---------------------------------------------------------!
+      block
+         type(output_buffers_t) :: ob
+         type(met_cursor_t)     :: cur2
+         type(met_forcing_t)    :: m
+         type(meds_time_t)      :: t0, ts
+         real(wp)    :: sum_t, sum_q, sum_pb, sum_cz, sum_sw, w
+         integer(ik) :: isub
+         logical     :: exact
+         t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
+         site%diag%active = .true.
+         ob%fast_on = .true. ; ob%fast_cohort_cap = 8_ik
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
+         call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
+                              cfg%forcing%utc_offset_h, cfg%forcing%elevation_m)
+         sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; sum_sw = 0.0_wp
+         exact = .true.
+         do isub = 1_ik, cfg%n_fast_per_slow
+            ts = time_advance_seconds(t0, (real(isub, wp) - 1.0_wp + cfg%forcing_sample_frac) * cfg%dt_fast)
+            call met_advance(drv, cur2, ts) ; m = met_instant(drv, cur2, ts)
+            sum_t = sum_t + m%tair_k * cfg%dt_fast ; sum_q = sum_q + m%qair * cfg%dt_fast
+            sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
+            sum_sw = sum_sw + m%swdown() * cfg%dt_fast
+            exact = exact .and. ob%fast(isub)%qair == m%qair .and. ob%fast(isub)%lwdown == m%lwdown  &
+                    .and. ob%fast(isub)%par_diffuse == m%par_diffuse .and. ob%fast(isub)%cosz == m%cosz &
+                    .and. ob%fast(isub)%rho_air == m%rho_air .and. ob%fast(isub)%wind == m%wind
+         end do
+         w = site%diag%w
+         call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
+                    'the fast tier stages each sub-step''s forcing sample exactly (§6.7)')
+         call check_close(w, cfg%n_fast_per_slow * cfg%dt_fast, 1.0e-9_wp,                         &
+                          'the polygon block weighs each sub-step once (not once per patch)')
+         call check_close(site%diag%v(PY_TAIR) / w, sum_t / w, 1.0e-12_wp,                         &
+                          'the polygon block holds the step-mean air temperature the loop used')
+         call check_close(site%diag%v(PY_QAIR) / w, sum_q / w, 1.0e-15_wp,                         &
+                          'the polygon block holds the step-mean humidity')
+         call check_close(site%diag%v(PY_PAR_BEAM) / w, sum_pb / w, 1.0e-10_wp,                    &
+                          'the polygon block holds the step-mean direct-beam PAR')
+         call check_close(site%diag%v(PY_SW_IN) / w, sum_sw / w, 1.0e-10_wp,                       &
+                          'the polygon block holds the step-mean total shortwave')
+         call check(site%diag%v(PY_COSZ) / w > 0.5_wp,                                             &
+                    'a 15-17 UTC summer window at Ithaca has the sun high (mean cos zenith > 0.5)')
+         site%diag%active = .false.
+      end block
       call met_close(drv)
 
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
@@ -213,7 +270,8 @@ program test_fast_loop
       !    asserts they get identical GPP: the met stream is site-uniform, so any per-patch divergence       !
       !    means the reader's state leaked across the patch loop. -------------------------------------------!
       block
-         type(met_driver_t) :: drv3
+         type(met_source_t) :: drv3
+         type(met_cursor_t) :: cur3
          real(wp) :: g1, g2, g3
          call init_bare_ground(site, cfg, 3_ik)
          call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -221,8 +279,11 @@ program test_fast_loop
          call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(site)
          call met_open(drv3, cfg%forcing)
+         call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude_deg,      &
+                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg, met_drv=drv3,                                    &
+         call fast_dynamics(site, ctx, cfg, met_src=drv3, met_cur=cur3,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv3)
          g1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
@@ -256,7 +317,8 @@ program test_fast_loop
       !    derived type through a STATIC mold that every thread writes, and the kernel libraries' local     !
       !    arrays were in static storage until -auto was applied build-wide.) --------------------------!
       block
-         type(met_driver_t)  :: drv4
+         type(met_source_t)  :: drv4
+         type(met_cursor_t)  :: cur4
          type(meds_config_t) :: cfg_mt
          real(wp) :: h1, h2, h3
          cfg_mt = cfg ; cfg_mt%n_threads = 4_ik
@@ -266,8 +328,11 @@ program test_fast_loop
          call add_cohort(site, cfg, 3_ik, 1_ik, 0.3_wp, 16.0_wp)
          call finalize_init(site)
          call met_open(drv4, cfg%forcing)
+         call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude_deg,      &
+                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg_mt, met_drv=drv4,                                 &
+         call fast_dynamics(site, ctx, cfg_mt, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv4)
          h1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))
@@ -308,7 +373,8 @@ program test_fast_loop
    !    (Left hydraulically limited, the taller cohort's more negative psi_leaf would legitimately     !
    !    close its stomata and INVERT the GPP ranking -- correct physics, but it masks the wiring.) ===!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       integer(ik)        :: itall, ishort, ii
       real(wp)           :: gpp_la_top, gpp_la_under
       real(wp), parameter :: LAI_EACH = 2.0_wp
@@ -326,9 +392,12 @@ program test_fast_loop
          site%cohort%nplant(ii) = LAI_EACH / max(site%cohort%leaf_area(ii), 1.0e-9_wp)
       end do
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
 
@@ -354,7 +423,8 @@ program test_fast_loop
    !    traps; here we assert every cohort gets a finite positive day GPP. The trailing BARE patch  !
    !    (patch3, 0 cohorts) also exercises apply_rt_forcing's empty-canopy path under forcing.  ====!
    block
-      type(met_driver_t) :: drv
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
       integer(ik)        :: ii, ncoh_all
       real(wp)           :: gpp_min
       call build_fast_context(cfg, ctx)                          ! ctx WITH the RT optics table
@@ -365,8 +435,11 @@ program test_fast_loop
       call add_cohort(site, cfg, 2_ik, 1_ik, 0.20_wp,  5.0_wp)
       call finalize_init(site)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
+      call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
+                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%elevation_m)
       call init_fast_reservoirs(site, ctx)
-      call fast_dynamics(site, ctx, cfg, met_drv=drv,                                       &
+      call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       call met_close(drv)
       ncoh_all = site%cohort%n
@@ -458,13 +531,13 @@ contains
    subroutine write_diurnal_forcing(path)
       character(len=*), intent(in) :: path
       integer, parameter :: NT = 25
-      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(8), dims2(2), dims1(1)
+      integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(7), dims2(2), dims1(1)
       integer(c_size_t) :: s1(1), c1(1), s2(2), c2(2)
       real(c_double) :: tsec(NT), dat(1, NT)
       integer :: it, k
       real(wp) :: hh, sw
-      character(len=8), parameter :: nm(8) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
-                                              'Rainf   ','SWdown  ','LWdown  ','CO2air  ']
+      character(len=8), parameter :: nm(7) = ['Tair    ','Qair    ','PSurf   ','Wind    ',        &
+                                              'Rainf   ','SWdown  ','LWdown  ']
       st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st,'c')
       st = nc_def_dim_f(ncid,'time',int(NT,c_size_t),td) ; call nc_check(st,'t')
       st = nc_def_dim_f(ncid,'grid',1_c_size_t,gd) ; call nc_check(st,'g')
@@ -474,7 +547,7 @@ contains
       dims1(1)=gd ; st = nc_def_var_f(ncid,'latitude',NC_DOUBLE,1,dims1,vla) ; call nc_check(st,'la')
       st = nc_def_var_f(ncid,'longitude',NC_DOUBLE,1,dims1,vlo) ; call nc_check(st,'lo')
       dims2(1)=td ; dims2(2)=gd
-      do k=1,8 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
+      do k=1,7 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
       st = nc_enddef(ncid) ; call nc_check(st,'e')
       do it=1,NT ; tsec(it)=real(it-1,c_double)*3600.0_c_double ; end do
       s1=0_c_size_t ; c1(1)=int(NT,c_size_t) ; st=nc_put_vara_double(ncid,vt,s1,c1,tsec) ; call nc_check(st,'tw')
@@ -483,7 +556,7 @@ contains
          st=nc_put_vara_double(ncid,vla,s1,c1,la) ; call nc_check(st,'law')
          st=nc_put_vara_double(ncid,vlo,s1,c1,lo) ; call nc_check(st,'low') ; end block
       s2=0_c_size_t ; c2=[int(NT,c_size_t),1_c_size_t]
-      do k=1,8
+      do k=1,7
          do it=1,NT
             hh=real(it-1,wp)
             sw = max(0.0_wp, 850.0_wp*sin(3.14159265_wp*(hh-11.0_wp)/12.0_wp))
@@ -496,7 +569,6 @@ contains
             case(5) ; dat(1,it)=0.0_wp
             case(6) ; dat(1,it)=sw
             case(7) ; dat(1,it)=340.0_wp
-            case(8) ; dat(1,it)=415.0_wp
             end select
          end do
          st=nc_put_vara_double(ncid,vv(k),s2,c2,dat) ; call nc_check(st,'vw')

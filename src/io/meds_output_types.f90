@@ -20,7 +20,8 @@ module meds_output_types
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
-   public :: pending_record_t, stream_file_t, output_manager_t, fast_sample_t
+   public :: pending_record_t, record_queue_t, stream_file_t, fast_sample_t
+   public :: output_files_t, output_buffers_t
    public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
@@ -199,6 +200,21 @@ module meds_output_types
       !      hard-coded 400 ppm while the run used 420, turning a +1 ppm daytime canopy into an        !
       !      apparent +21 ppm ventilation problem.  ------------------------------------------------!
       real(wp) :: atm_co2       = 0.0_wp   !< [umol/mol]  free-atmosphere CO2 (the forcing)
+      !----- The rest of the FORCING the sub-step used (MEDS_FORCING_DESIGN.md §6.7), staged from   !
+      !      the site-uniform sample itself rather than area-summed. With the fluxes above, these    !
+      !      are what shows whether the reconstructed shortwave peaks at the right local time.      !
+      real(wp) :: qair          = 0.0_wp   !< [kg/kg]     specific humidity
+      real(wp) :: psurf         = 0.0_wp   !< [Pa]        surface pressure
+      real(wp) :: wind          = 0.0_wp   !< [m/s]       wind speed at the reference height
+      real(wp) :: lwdown        = 0.0_wp   !< [W/m2]      downward longwave
+      real(wp) :: par_beam      = 0.0_wp   !< [W/m2]      direct-beam PAR
+      real(wp) :: par_diffuse   = 0.0_wp   !< [W/m2]      diffuse PAR
+      real(wp) :: nir_beam      = 0.0_wp   !< [W/m2]      direct-beam NIR
+      real(wp) :: nir_diffuse   = 0.0_wp   !< [W/m2]      diffuse NIR
+      real(wp) :: rainf         = 0.0_wp   !< [kg/m2/s]   liquid precipitation
+      real(wp) :: snowfall      = 0.0_wp   !< [kg/m2/s]   frozen precipitation
+      real(wp) :: cosz          = 0.0_wp   !< [-]         cosine of the solar zenith angle
+      real(wp) :: rho_air       = 0.0_wp   !< [kg/m3]     air density
    end type fast_sample_t
 
    !==========================================================================================!
@@ -213,9 +229,10 @@ module meds_output_types
 
    !==========================================================================================!
    ! A closed period staged for the serializer (netCDF-FREE plain data). Filled at a roll-over    !
-   ! by the stepper-side tick (output_integrate); drained by main (output_serialize_pending). One  !
-   ! per tier can be pending at a time (main drains every step). Payload is indexed by REGISTRY     !
-   ! var index; only variables live in the tier are filled (§4.5, §2).                              !
+   ! by the stepper-side tick (output_integrate) into the tier's scratch record, then copied into   !
+   ! the tier's queue; drained by main (output_serialize_pending) in the I/O phase at month         !
+   ! boundaries (MEDS_POLYGON_RUNTIME_PLAN.md §4, B11). Payload is indexed by REGISTRY var index;   !
+   ! only variables live in the tier are filled (§4.5, §2).                                         !
    !==========================================================================================!
    type :: pending_record_t
       logical           :: used     = .false.
@@ -227,7 +244,21 @@ module meds_output_types
       real(wp),    allocatable :: slab(:,:)     !< (max_slab, nvar) normalized slab values
       logical,     allocatable :: slabvalid(:,:)!< (max_slab, nvar)
       integer(ik), allocatable :: nslab(:)      !< (nvar) slab length (0 for scalar vars)
+      !----- A queued record stores only its tier's slab variables: slab(:, col(k)) is registry     !
+      !      variable k's slab. The scratch record leaves col unallocated and indexes slab(:, k). ---!
+      integer(ik), allocatable :: col(:)        !< (nvar) slab column of each variable (0 = none)
    end type pending_record_t
+
+   public :: slab_col
+
+   !----- The closed records of one tier waiting for the I/O phase, in closing order. A queued     !
+   !      record keeps only the slab rows the writer reads, not the scratch's max_slab rows, so a   !
+   !      month of fast-tier records costs the live cohort count, not cohort_max. Elements are       !
+   !      reused across months; `n` counts the live ones. --------------------------------------------!
+   type :: record_queue_t
+      integer(ik) :: n = 0_ik
+      type(pending_record_t), allocatable :: rec(:)
+   end type record_queue_t
 
    !==========================================================================================!
    ! One open netCDF stream file (the serializer's per-tier handle). ncids/varids kept as plain    !
@@ -245,6 +276,7 @@ module meds_output_types
       logical     :: has_size     = .false. !< this tier defines the dbh-class dim
       integer(ik) :: d_time = -1_ik, d_cohort = -1_ik, d_patch = -1_ik, d_soil = -1_ik
       integer(ik) :: d_pft = -1_ik, d_size = -1_ik
+      integer(ik) :: d_polygon = -1_ik       !< a region file's polygon dimension
       integer(ik) :: v_pft = -1_ik, v_dbh_lower = -1_ik, v_dbh_upper = -1_ik  !< self-describing axis coords
       integer(ik) :: v_soil_z = -1_ik                                        !< soil layer node depths [m]
       integer(ik) :: cohort_dim = 0_ik, patch_dim = 0_ik   !< the file's ACTUAL trimmed cohort/patch axis length
@@ -255,41 +287,73 @@ module meds_output_types
    end type stream_file_t
 
    !==========================================================================================!
-   ! The output manager: netCDF-FREE plain-data glue (registry + integrators + pending stage +     !
-   ! stream handles). main owns it; the stepper ticks it; only output_serialize_pending touches C.  !
+   ! The output manager comes in two types (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
+   ! netCDF-FREE plain data; only output_serialize_pending touches C.                                !
+   !   output_files_t   -- one set of output files (a site's, a region's, a detail polygon's) and    !
+   !                       what writing them needs: registry, diagnostic parameters, file settings,  !
+   !                       stream handles. Read-only while a step runs.                              !
+   !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !
+   !                       windows, closed records and fast-tier staging. The only output state a    !
+   !                       step writes. Not a cache: the reductions exist nowhere else.              !
+   ! A site run has one of each. main owns them; the stepper ticks the buffers.                      !
    !==========================================================================================!
-   type :: output_manager_t
+   type :: output_files_t
       logical                 :: enabled = .false.
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
-      type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
-      logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
-      type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
-      type(pending_record_t) :: pending(N_FREQ)
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
+      !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !
+      !      archive the model computes qair itself, so a run's humidity depends on the model version and  !
+      !      the formula is recorded (MEDS_FORCING_DESIGN.md §15.4, FD8); empty -> no attribute.          !
+      character(len=512)     :: forcing_qair = ''
       integer(ik)           :: file_chunk(N_FREQ) = 0_ik
       integer(ik)           :: sync_every = 1_ik
       integer(ik)           :: fast_interval_steps = 4_ik   !< fast tier closes every N*dt_fast sub-steps
+      !----- A REGION's polygon axis (MEDS_POLYGON_RUNTIME_PLAN.md §6): its files carry a `polygon`  !
+      !      dimension, one entry per polygon's buffers, with these coordinates (0 for site files). --!
+      integer(ik)              :: n_polygon = 0_ik
+      integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
+      integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices
+      real(wp),    allocatable :: polygon_lat(:), polygon_lon(:)   !< [deg] cell centre
+   end type output_files_t
+
+   type :: output_buffers_t
+      type(integ_buffer_t), allocatable :: buf(:,:)   !< (nvar, N_FREQ) running reductions
+      logical           :: has_data(N_FREQ) = .false. !< tier's current window has >=1 sample
+      type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
+      type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
+      type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
       !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch,sub-step) by the fast     !
       !      loop, replayed into buf(:,1) by main via output_integrate_fast. Site scalars in fast(:);  !
-      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays.  --------!
+      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays. The     !
+      !      fast loop sees only the buffers, so they say whether to stage (fast_on) and how many     !
+      !      cohort slots to size (fast_cohort_cap).  -------------------------------------------------!
+      logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
+      integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
       type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
-      type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) sub-step midpoint stamps
+      type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
       real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
-      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort_max, n_fast_sub) per-cohort leaf temp [K]
-      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort_max, n_fast_sub) per-cohort GPP [umol/plant/s]
-      !< (cohort_max, n_fast_sub) per-cohort height [m] (tallest post-proc)
+      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort cap, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort cap, n_fast_sub) per-cohort GPP [umol/plant/s]
+      !< (cohort cap, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_coh_height(:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       logical              :: fast_ready   = .false.           !< fast(:) filled + awaiting replay
-   end type output_manager_t
+   end type output_buffers_t
 
 contains
+
+   !----- The slab column of registry variable k in a record (identity for the scratch record). --!
+   pure integer(ik) function slab_col(pr, k) result(c)
+      type(pending_record_t), intent(in) :: pr
+      integer(ik),            intent(in) :: k
+      if (allocated(pr%col)) then ; c = pr%col(k) ; else ; c = k ; end if
+   end function slab_col
 
    !----- .true. if the operator averages/weights (needs seed/wsum handling), used by callers. --!
    pure logical function agg_is_slabwise(dim) result(yes)
