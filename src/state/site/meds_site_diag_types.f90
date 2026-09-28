@@ -508,14 +508,13 @@ contains
       d%v(:, recp) = (area_r * d%v(:, recp) + area_d * d%v(:, donp)) / wtot
    end subroutine patch_diag_blend
 
-   !----- A patch carved out of others inherits their area-weighted history for the step: a      !
-   !      disturbance gap's ground was donor ground for every sub-step (and every slow-loop row  !
-   !      written before the disturbance), so its sums and weight are the donors', blended by    !
-   !      the area each gave. Every donor loses the same fraction, so blending by the donors'    !
-   !      areas is exact and the site aggregate Sum(area * v/w) is unchanged by the carving; a   !
-   !      cleared slot would read as 0 on the carved area and bias every patch-sourced site mean !
-   !      low by that area. `n` is raised to cover the new slot, so a reader sees it before the  !
-   !      next reorder.                                                                          !
+   !----- A patch carved out of others inherits their slots, sums and weight, blended by the area  !
+   !      each donor gave. Every donor loses the same fraction, so blending by the donors' areas is  !
+   !      exact and the stand total Sum(area * v) is unchanged by the carving; a cleared slot would  !
+   !      lose the carved area's share. At a calendar boundary the donors hold only that boundary's !
+   !      events (weight 0: the step's sums were read and reset); inside a step (the C API) they    !
+   !      hold the step so far, and the site mean Sum(area * v/w) is unchanged as well. `n` is      !
+   !      raised to cover the new slot, so a reader sees it before the next reorder.                !
    subroutine patch_diag_inherit(d, dst, donor_area)
       type(patch_diag_block), intent(inout) :: d
       integer(ik),            intent(in)    :: dst

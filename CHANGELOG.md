@@ -318,6 +318,11 @@ before and after.
   longwave synthesis and air density in an early return; only the file interpolation is skipped.
   Unchanged bit for bit (`test_fast_loop` block 8 runs the constant backend).
 
+- **`test_disturbance` covers a disturbance at a calendar boundary** (review O5, #PRNUM). There the
+  step's diagnostics were already read and reset, so every weight is 0 and the patch slots hold only
+  that boundary's events; the gap keeps its share of them. The comments on `patch_diag_inherit` and
+  its caller describe both that case and a disturbance inside a step (the C API).
+
 ### Removed
 
 - **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
