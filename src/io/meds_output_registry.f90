@@ -1109,22 +1109,14 @@ contains
       !      .false. and the psi/wetness diagnostics emit _FillValue rather than a plausible        !
       !      wrong number from an assumed texture.                                                  !
       files%diag%soil_ready = .false.
-
-      !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
-      !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
-      !      variables the pending records are the dominant memory term, and a run with            !
-      !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
-      !      axis it switched off. Computed AFTER the registry is finalized, for exactly that       !
-      !      reason.                                                                                !
-      files%max_slab = live_max_slab(files)
    end subroutine manager_setup
 
    !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
    !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
    !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
    !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
-   !      Called after manager_setup and the overrides, before manager_finalize: the slab size drops   !
-   !      with the cohort axis, and so does every polygon's buffers.  --------------------------------!
+   !      Called after manager_setup and the overrides, before manager_finalize, so the slab size      !
+   !      manager_finalize computes drops with the cohort axis, and so does every polygon's buffers. --!
    subroutine manager_restrict_region(files)
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: k
@@ -1135,10 +1127,9 @@ contains
          files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
       end do
       call build_freq_index(files%reg)
-      files%max_slab = live_max_slab(files)
    end subroutine manager_restrict_region
 
-   !----- Largest slab length any LIVE variable can produce (see the sizing note above). ------!
+   !----- Largest slab length any LIVE variable can produce (see manager_finalize). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
       integer(ik) :: k
@@ -1199,7 +1190,7 @@ contains
    end subroutine check_dbh_edges
 
    !----- Finish the file set once the registry is FINALIZED (after manager_setup and any          !
-   !      per-variable overrides): the per-tier stream handles. -------------------------------------!
+   !      per-variable overrides): the per-tier stream handles and the slab size. -------------------!
    subroutine manager_finalize(files)
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: t
@@ -1207,6 +1198,14 @@ contains
          files%stream(t)%freq  = freq_bit(t)
          allocate(files%stream(t)%vid(files%reg%nvar)) ; files%stream(t)%vid = -1_ik
       end do
+      !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
+      !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
+      !      variables the pending records are the dominant memory term, and a run with            !
+      !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
+      !      axis it switched off. It is computed HERE, after every override: an [output].io_config  !
+      !      can switch on a slab variable that manager_setup left off, and a slab sized before     !
+      !      that is too short for it. ---------------------------------------------------------!
+      files%max_slab = live_max_slab(files)
    end subroutine manager_finalize
 
    !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !

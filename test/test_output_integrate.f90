@@ -30,7 +30,7 @@ program test_output_integrate
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t, site_alloc, site_free
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t, fast_sample_t, &
-                                     diag_params_t,                                               &
+                                     diag_params_t, slab_col,                                     &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
@@ -40,9 +40,12 @@ program test_output_integrate
                                      extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
                                      SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, output_integrate
    use meds_time,             only : meds_time_t, time_advance_days
-   use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index
+   use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
+                                     manager_setup, manager_finalize, build_freq_index,          &
+                                     apply_variable_override, OVR_MASK
    use meds_diagnostic_reduce, only : W_NPLANT
-   use meds_output_config,    only : FREQ_MONTHLY
+   use meds_output_config,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
+   use meds_column_params,    only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -51,6 +54,7 @@ program test_output_integrate
    call test_zero_sample_guard()
    call test_slab_and_extract()
    call test_fast_tier()
+   call test_slab_sized_after_overrides()
    call test_two_buffers()
    call test_boundary_step()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
@@ -267,6 +271,54 @@ contains
       call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
       call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
    end subroutine test_fast_tier
+
+   !----- The driver's order: manager_setup, then an [output].io_config override that switches on a  !
+   !      slab variable setup left off, then manager_finalize and manager_alloc_buffers. The slab must !
+   !      hold every soil layer, read from the QUEUED record through slab_col, as the writer reads it. !
+   subroutine test_slab_sized_after_overrides()
+      type(meds_config_t)    :: cfg
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
+      integer(ik) :: k, c, i, nl, n_live_slab
+      logical     :: found, every_layer
+      nl = n_soil_layer_max
+      cfg = build_test_config(86400.0_wp)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on(1) = .true.               ! FAST tier on
+      cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
+      call manager_setup(files, cfg)
+      n_live_slab = 0_ik
+      do k = 1_ik, files%reg%nvar
+         if (files%reg%var(k)%dim /= DIM_SCALAR .and. files%reg%var(k)%streams /= FREQ_NONE)        &
+            n_live_slab = n_live_slab + 1_ik
+      end do
+      call check(n_live_slab == 0_ik, 'override test premise: setup leaves no slab variable live')
+
+      call apply_variable_override(files%reg, 'soil_temp_site_fast', OVR_MASK, FREQ_FAST, found)
+      call check(found, 'soil_temp_site_fast is a registry variable')
+      call build_freq_index(files%reg)             ! what apply_io_overrides does after its overrides
+      call manager_finalize(files)
+      call manager_alloc_buffers(files, bufs)
+      call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
+
+      allocate(bufs%fast(1), bufs%fast_time(1), bufs%fast_soil_temp(nl,1), bufs%fast_soil_water(nl,1))
+      allocate(bufs%fast_coh_ltemp(1,1), bufs%fast_coh_gpp(1,1), bufs%fast_coh_height(1,1))
+      bufs%n_fast_sub = 1_ik ; bufs%fast_n_soil = nl ; bufs%fast_n_cohort = 0_ik
+      bufs%fast_soil_temp(:,1) = [(270.0_wp + real(i, wp), i = 1_ik, nl)]
+      bufs%fast_soil_water = 0.0_wp
+      call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
+      call close_tier(files, bufs, 1_ik)
+
+      k = find_var_index(files%reg, 'soil_temp_site_fast')
+      associate (r => bufs%queue(1)%rec(bufs%queue(1)%n))
+         c = slab_col(r, k)
+         call check(r%nslab(k) == nl, 'the queued soil slab has every layer')
+         call check(size(r%slab, 1) >= nl, 'the queued record has a row for every layer')
+         every_layer = size(r%slab, 1) >= nl
+         if (every_layer) every_layer = all(r%slab(1:nl, c) == [(270.0_wp + real(i, wp), i = 1_ik, nl)])
+         call check(every_layer, 'every soil layer reads back through slab_col, as the writer reads it')
+      end associate
+   end subroutine test_slab_sized_after_overrides
 
    !----- Two polygons' buffers for one file set (MEDS_POLYGON_RUNTIME_PLAN.md R2): each          !
    !      reduces only its own samples, and closing one leaves the other's window open. Folds are  !

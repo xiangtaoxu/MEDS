@@ -431,7 +431,10 @@ contains
                      out_bufs%fast_coh_height(out_bufs%fast_cohort_cap, nsub))
          end if
          out_bufs%n_fast_sub    = nsub
-         out_bufs%fast_n_soil   = nl
+         !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers  !
+         !      past n_active stay unwritten and read back as the fill value, as on the coarse tiers  !
+         !      (#246). ---------------------------------------------------------------------------!
+         out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
          out_bufs%fast_n_cohort = site%cohort%n
          do isub = 1_ik, nsub
             out_bufs%fast(isub) = fast_sample_t()
