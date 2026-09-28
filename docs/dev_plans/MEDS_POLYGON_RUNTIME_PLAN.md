@@ -558,8 +558,10 @@ own single-site run. Three PRs, each keeping single-site output unchanged.
    `land_fraction_min`, `detail_polygons`); the region-mode rules of §9.
 7. **Types and driver** (a new `src/main/meds_region.f90`).
    - `meds_polygon_t`: id, cell, location, `site_t`, fast context, budgets, slow ledger, seam
-     statistics, `met_cursor_t`, `output_buffers_t` and status.
-   - `meds_region_t`: the config, `met_source_t`, `output_files_t` and `poly(1:N)`.
+     statistics, `met_cursor_t` and status.
+   - `meds_region_t`: the config, `met_source_t`, `output_files_t`, `poly(1:N)`, and the polygons'
+     `output_buffers_t` as a contiguous `out_bufs(1:N)`. A section `poly(:)%out_bufs` passed to the
+     serializer segfaults under gfortran (code review 2026-09-27 §6.2).
    - `region_open`: select the box's valid cells (`era5land_select_box`, extended to return the
      static `land_fraction`), apply `land_fraction_min`, build the polygons, and initialise each from
      bare ground.

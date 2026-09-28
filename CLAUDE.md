@@ -55,8 +55,8 @@ ctest --test-dir build-debug -R fusion_cohort --output-on-failure   # one test b
 CMake auto-resolves Fortran module dependencies. This is the deliberate fix for ED2's "run `make`
 six times" hack — **never reintroduce manual object lists or repeated builds.**
 
-**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too.
-Three traps, each invisible to ifx and each of which has bitten once:
+**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
+and gfortran. Four traps, each invisible to ifx and each of which has bitten once:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's optimizer
   miscompiles the temporary descriptor — silently wrong at `-O2`, segfault at `-O0`. Bind to a named
@@ -64,6 +64,9 @@ Three traps, each invisible to ifx and each of which has bitten once:
 - **nvfortran rejects `BLOCK` inside a parallel region.**
 - **ifx builds `private` copies of a derived type through a static mold** every thread writes, which
   is why per-thread scratch is an explicit pool, not a data-sharing clause.
+- **Never pass a component section `a(:)%c` as an actual argument when `c`'s type has allocatable
+  components.** gfortran copies it through a temporary whose copy-out dangles them. Keep such
+  objects in a contiguous array of their own.
 
 ## Where a new file goes
 

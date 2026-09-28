@@ -57,15 +57,16 @@ module meds_driver
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
 
 
-   !----- Everything the calendar loop needs between steps. These were meds_main's locals; making  !
-   !      them components is the whole extraction -- no state hides in module scope, so two runs    !
-   !      can be open at once (which is exactly what the C-API's handle registry does). A site run  !
-   !      is one polygon (meds_polygon): the site, its fast context, forcing cursor, output buffers  !
-   !      and ledgers live there; the run holds what a region would share.                          !
+   !----- Everything the calendar loop needs between steps. No state hides in module scope, so two  !
+   !      runs can be open at once (which is exactly what the C-API's handle registry does). A site  !
+   !      run is one polygon (meds_polygon): the site, its fast context, forcing cursor and ledgers   !
+   !      live there; the run holds what a region would share, and the polygon's output buffers,    !
+   !      as a region holds its polygons'.                                                          !
    type :: meds_run_t
       type(meds_config_t)    :: cfg
       type(meds_polygon_t)   :: poly            !< the site
       type(output_files_t)   :: out_files          !< the run's output files (built only if output.enabled)
+      type(output_buffers_t) :: out_bufs           !< the site's share of them
       type(met_source_t)     :: met_src         !< opened only if forcing_on
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik
@@ -220,7 +221,7 @@ contains
          if (len_trim(run%cfg%output%io_config) > 0)                                             &
             call apply_io_overrides(run%out_files, trim(run%cfg%output%io_config), run%verbose)
          call manager_finalize(run%out_files)
-         call manager_alloc_buffers(run%out_files, run%poly%out_bufs)
+         call manager_alloc_buffers(run%out_files, run%out_bufs)
          call activate_site_diag(run%out_files, run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
@@ -259,8 +260,8 @@ contains
       !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      call polygon_step(run%cfg, run%met_src, run%out_files, run%poly, run%prev, run%now,           &
-                        run%step_days, is_new_month, is_new_year, status)
+      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs, run%poly, run%prev,      &
+                        run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
          run%iyear = run%iyear + 1_ik
@@ -271,7 +272,7 @@ contains
       end if
       !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
       if (status /= DRIVER_OK) then
-         if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%poly%out_bufs)
+         if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
          return
       end if
 
@@ -287,7 +288,7 @@ contains
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run
       logical,          intent(in)    :: is_new_year
-      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%poly%out_bufs)
+      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                  &
@@ -323,7 +324,7 @@ contains
 
       if (run%verbose) call polygon_report(run%cfg, run%poly)
 
-      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%poly%out_bufs, .true.)
+      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%out_bufs, .true.)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st

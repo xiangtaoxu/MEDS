@@ -328,6 +328,19 @@ before and after.
     00:00 across their seams; the synthetic archive gains January 2022. The unfixed reader stops on
     the first of them.
 
+- **gfortran builds again** (review 6.1, #PRNUM). Six lines past column 132, a hard error in
+  gfortran 11 and 15 (ifx only warns), had stopped every gfortran build since v0.2.2. They are
+  wrapped.
+
+- **Under gfortran, a region run segfaulted at the first step after a month's output** (review 6.2,
+  #PRNUM). The region handed its polygons' output buffers to the serializer as the component
+  section `reg%poly(:)%out_bufs`. `output_buffers_t` has allocatable components, and gfortran passes
+  such a section through a temporary whose copy-out leaves the buffers' allocations dangling.
+  - The buffers now sit beside the polygons as a contiguous `meds_region_t%out_bufs(:)` (a site run:
+    `meds_run_t%out_bufs`), and `polygon_step` takes the polygon's buffers as an argument.
+  - ifx output is unchanged, bit for bit. gfortran Release and Debug pass `region`.
+  - The construct joins the compiler traps in `CLAUDE.md` and `docs/building.md`.
+
 ## [0.2.2] — 2026-09-25
 
 An **open-source and layout** release. MEDS is now licensed under the Apache License 2.0, and the

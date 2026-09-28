@@ -41,8 +41,9 @@ identically under all three compilers.
 | NVIDIA `nvfortran` | The second back end, and the host-multicore path. (GPU offload builds but is slower than the CPU — see below.) | put the HPC SDK `compilers/bin` on `PATH` |
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
-**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too.
-Three portability traps have each bitten once, and each was invisible to ifx:
+**A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
+and gfortran, which on most machines is the second compiler at hand. Four portability traps have
+each bitten once, and each was invisible to ifx:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
@@ -52,6 +53,11 @@ Three portability traps have each bitten once, and each was invisible to ifx:
 - **ifx builds `private` and `firstprivate` copies of a derived type through a compiler-generated
   static mold** that every thread writes. This is why the fast loop's per-patch scratch is an
   explicit per-thread pool indexed by thread number rather than an OpenMP data-sharing clause.
+- **Never pass a component section `a(:)%c` as an actual argument when `c`'s type has
+  allocatable components.** gfortran copies the section into a temporary and back, and the
+  copy-out leaves the originals' allocatable components dangling: a segfault a step later, with
+  nothing reported by `-fcheck=all`. Keep such objects in a contiguous array of their own, as the
+  region keeps its polygons' output buffers.
 
 ## Build types
 
