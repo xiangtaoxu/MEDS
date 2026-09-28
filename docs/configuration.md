@@ -54,7 +54,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Renamed from `[io]`; the old name still loads with a warning.)* |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Called `[io]` before v0.3.0; that spelling is now refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
 **`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
@@ -134,9 +134,9 @@ a mean.
 
 > **`[io]` was renamed to `[state]`.** The block was named for a legacy diagnostic writer that was
 > retired at v0.1; what remained was the restart stream, so `io` named the one output path it did
-> *not* cover. The old spelling still loads and prints one deprecation warning naming the keys;
-> `io.state_interval_years` becomes `state.interval_years` (the `state_` prefix was stuttering once
-> the block itself was called `state`). Its removal is #309.
+> *not* cover. Since v0.3.0 a config that still spells it `[io]` is refused at load, with a message
+> naming the new keys: rename the block, and `io.state_interval_years` to `state.interval_years`
+> (the `state_` prefix was stuttering once the block itself was called `state`).
 
 ## The forcing file
 

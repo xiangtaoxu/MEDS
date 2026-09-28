@@ -140,9 +140,6 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
   multispectral product (MODIS bands, Sentinel-2) needs finer bands, which is a change to the RT's
   band structure rather than to its output.
-- **Remove the `[io]` deprecation shim.** *Planned.* [#309](https://github.com/xiangtaoxu/MEDS/issues/309) The block was renamed to `[state]` in
-  v0.2.0 (#173) with `[io]` still loading behind one warning, and it still loads in v0.3.0. Drop the
-  `req_*_renamed` readers and the warning, and refuse `[io]` with a message naming `[state]`.
 - **A patch axis on the FAST tier.** *Candidate.* [#270](https://github.com/xiangtaoxu/MEDS/issues/270) Sub-daily output is site-mean only,
   although the fast staging already carries the patch dimension.
 - **Within-step variances and a skin temperature.** *Candidate.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275) v0.3.0 dropped

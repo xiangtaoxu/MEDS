@@ -7,9 +7,9 @@
 > Verified byte-identical at 1 versus 4 threads across all 75 files of a 3-year run.
 >
 > **Its deferred list shipped in v0.2.0** (#169–#175): mortality carbon by pathway, the
-> disturbance-area flux, per-band albedo, variance output, and the `[io]` → `[state]` rename. What
-> remains has issues: removing the `[io]` spelling (#309), within-step variances and a skin
-> temperature (#275), a spectrally resolved radiative record (#255).
+> disturbance-area flux, per-band albedo, variance output, and the `[io]` → `[state]` rename (the
+> `[io]` spelling is refused since v0.3.0, #309). What remains has issues: within-step variances
+> and a skin temperature (#275), a spectrally resolved radiative record (#255).
 >
 > **Not done, and unfiled because low in value:** §6-P2's retirement of the FAST tier's own staging
 > path (`fast_sample_t`, `extract_fast_scalar`, `output_integrate_fast` all still exist), and the

@@ -8,8 +8,9 @@ refer to `e33cb56`.
 
 **Executed 2026-09-28 in #314:** phases 0–5 of §9, and the archive audit of §10. R2 (Phase 1.7) and
 P3 (Phase 4.7) are deferred to #310 and #313; the integrator plan stays live until #162 and E5 are
-re-homed; the `[io]` shim stays for 0.3.0 (#309). The after-merge items of §8 item 6 are #308 and
-#310–#313.
+re-homed. At the owner's request the same PR also removes the `[io]` shim (#309), makes the Debug
+suite green (#308) and does the `prepare_era5` dedup (#313, which includes P3). The after-merge
+items of §8 item 6 that remain are #310–#312.
 
 The three questions asked: (1) can changes be consolidated under a generic principle and special
 cases removed; (2) is the documentation consistent with the code; (3) are the new modules

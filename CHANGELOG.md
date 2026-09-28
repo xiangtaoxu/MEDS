@@ -344,6 +344,10 @@ before and after.
 
 ### Removed
 
+- **The `[io]` config block** (#309, #314), renamed `[state]` in v0.2.0 (#173) and loaded since then
+  behind a deprecation warning. A config that still carries it is refused at load, with a message
+  naming the keys that replaced it (`io.state_interval_years` is `state.interval_years`); before, it
+  loaded. `test_region` checks the refusal.
 - **`scripts/prep_era5land_forcing.py`** (#291), replaced by `scripts/prepare_era5/make_forcing_file.py`
   (F5 of `MEDS_FORCING_DESIGN.md`). Its box-file code moved into the new tool. The config comment,
   the forcing README, the science doc, the ED2 comparison and the `example_biophysics` instructions

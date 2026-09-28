@@ -188,6 +188,8 @@ program test_region
                 'is not a polygon of this region')
    call refused('the mode is "site" or "region"', '[run]'//nl()//'mode = "globe"'//nl()//region_block(), &
                 .true., .false., '[run].mode must be "site" or "region"')
+   call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
+                site_block(1_ik), .false., .false., 'the [io] block is now [state]')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &

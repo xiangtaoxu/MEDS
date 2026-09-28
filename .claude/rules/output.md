@@ -56,7 +56,7 @@ a PFT goes locally extinct.
 - **The netCDF-free half is a separate CMake target from the serializer**, and it is an **explicit
   file list, not a glob**. Adding a diagnostic module there is a deliberate edit. That split is what
   keeps the stepper's edge free of a C dependency.
-- **`[state]` is the restart stream only** (`[io]` is its deprecated spelling). A checkpoint is raw
+- **`[state]` is the restart stream only** (the old `[io]` spelling is refused). A checkpoint is raw
   prognostic state at an instant, never a time average; diagnostics are `[output]`.
 
 ## Adding a variable
