@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """make_forcing_file.py -- write a MEDS single forcing file, the (time, grid) NetCDF that
-[forcing].format = "netcdf" reads (src/forcing/meds_met_driver.f90), from either source of ERA5-Land
+[forcing].format = "ED_default" reads (src/forcing/meds_met_driver.f90), from either source of ERA5-Land
 data this folder produces:
 
   --data-path DIR   an ED_ERA5land archive (build_era5land_archive.py), for the days --start..--end.
@@ -19,12 +19,13 @@ The location is required, as the period is: --lat with --lon, --cells for severa
 Both inputs give the same file (MEDS_FORCING_DESIGN.md §7.1):
   * dims (time, grid); coordinates time (seconds since the first record), latitude, longitude per
     grid point, and elevation where the source knows it (the archive);
-  * Tair [K], PSurf [Pa], Qair [kg/kg] from the dewpoint by the model's own Bolton (1980) saturation
-    form, the 10 m wind vector u10, v10 [m/s] and its speed Wind = sqrt(u10^2 + v10^2) (the model
-    floors the speed itself, for every source), and the hour-mean fluxes Rainf
-    [kg m-2 s-1], SWdown (total; the model partitions it) and LWdown [W m-2], each with the units,
-    names and cell method the archive gives it;
-  * end-stamped hourly records (avg_convention = "end"), UTC.
+  * Tair [K], PSurf [Pa], the dewpoint Tdew [K] as ERA5-Land delivers it (the model makes specific
+    humidity from it with its own saturation curve, as it does for the archive), the 10 m wind
+    vector u10, v10 [m/s] and its speed Wind = sqrt(u10^2 + v10^2) (the model floors the speed
+    itself, for every source), and the hour-mean fluxes Rainf [kg m-2 s-1], SWdown (total; the model
+    partitions it) and LWdown [W m-2], each with the units, names and cell method the archive gives it;
+  * end-stamped hourly records (avg_convention = "end"), UTC, written by the shared writer
+    (scripts/forcing_common/meds_forcing_file.py).
 No CO2air: CO2 is not meteorology, and the model takes it from [forcing].co2_source (a constant, or
 a MEDS CO2 file such as data/co2/), never from this file -- it rejects a file that carries one.
 MEDS never gap-fills: a missing value is an error, here as in the model.
@@ -56,43 +57,27 @@ import datetime as dt
 import glob
 import math
 import os
+import sys
 
 import numpy as np
 from netCDF4 import Dataset, num2date
 
 import era5land_common as common
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forcing_common"))
+import meds_forcing_file as forcing_file  # noqa: E402  (the shared writer, one folder over)
+
 EARTH_RADIUS_KM = 6371.0
 HOUR = dt.timedelta(hours=1)
 
 # The file's variables, in file order. Each is an archive variable as it stands, described by its
 # ARCHIVE_VARIABLES entry so that the archive and this file describe it alike, or derived here from
-# them: Qair from Tdew and PSurf, Wind from u10 and v10.
-FILE_VARIABLES = ("Tair", "Qair", "PSurf", "u10", "v10", "Wind", "Rainf", "SWdown", "LWdown")
+# them: Wind from u10 and v10. The humidity is the dewpoint, as ERA5-Land delivers it.
+FILE_VARIABLES = ("Tair", "Tdew", "PSurf", "u10", "v10", "Wind", "Rainf", "SWdown", "LWdown")
 DERIVED = {
-    "Qair": dict(units="kg kg-1", long_name="specific humidity (from the dew point)",
-                 standard_name="specific_humidity", cell_methods="time: point", height=2.0),
     "Wind": dict(units="m s-1", long_name="wind speed", standard_name="wind_speed",
                  cell_methods="time: point", height=10.0),
 }
-
-
-# ---------------------------------------------------------------------------------------------
-# Humidity from the dewpoint, as the model computes it from the archive's Tdew: Bolton (1980) over
-# liquid water (meds_therm_lib%sat_vapor_pressure without fliq, since dewpoint is defined over
-# liquid) and meds_forcing_kernels%dewpoint_to_specific_humidity, so the two Qair agree.
-# ---------------------------------------------------------------------------------------------
-def sat_vapor_pressure(t_k):
-    """Saturation vapour pressure [Pa] over liquid water at t_k [K]."""
-    tc = t_k - 273.15
-    return 611.2 * np.exp(17.67 * tc / (tc + 243.5))
-
-
-def dewpoint_to_specific_humidity(td_k, p_pa):
-    """q [kg/kg] from dewpoint Td [K] and surface pressure P [Pa]. The actual vapour pressure is the
-    saturation vapour pressure evaluated AT the dewpoint: e = e_sat(Td)."""
-    e = sat_vapor_pressure(td_k)
-    return 0.622 * e / (p_pa - 0.378 * e)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -267,21 +252,8 @@ def from_archive(args):
 # ---------------------------------------------------------------------------------------------
 def file_arrays(per_cell):
     """{file variable: (ntime, ngrid) array} from each grid point's series of the archive's variables."""
-    fields = [dict(s, Qair=dewpoint_to_specific_humidity(s["Tdew"], s["PSurf"]), Wind=np.hypot(s["u10"], s["v10"]))
-              for s in per_cell]
+    fields = [dict(s, Wind=np.hypot(s["u10"], s["v10"])) for s in per_cell]
     return {name: np.column_stack([f[name] for f in fields]) for name in FILE_VARIABLES}
-
-
-def check_complete(times, grid, arrays):
-    """MEDS never gap-fills (MEDS_FORCING_DESIGN.md §5.5): a missing value is an error, a real data gap or
-    a cell without data, and filling it is the user's decision, upstream."""
-    for name, arr in arrays.items():
-        missing = np.isnan(arr)
-        if missing.any():
-            k, g = np.argwhere(missing)[0]
-            raise SystemExit(f"ERROR: {name} has {int(missing.sum())} missing value(s), first at "
-                             f"{times[k]:%Y-%m-%d %H}:00 in grid {g} ({grid[g][0]:.3f}, {grid[g][1]:.3f}). "
-                             f"MEDS does not gap-fill: fix the source upstream.")
 
 
 def variable_attributes(name):
@@ -294,30 +266,14 @@ def variable_attributes(name):
 
 
 def write_meds_forcing(path, times, grid, arrays, attrs):
-    """Write the MEDS (time, grid) forcing NetCDF: time in seconds since the first record; latitude,
-    longitude and, where the source knows it, elevation per grid point; the FILE_VARIABLES as float32
-    with _FillValue 1e20; the global attributes attrs."""
-    lat, lon, elevation = zip(*grid)
-    with Dataset(path, "w", format="NETCDF4") as ds:
-        ds.createDimension("time", None)            # unlimited
-        ds.createDimension("grid", len(grid))
-        tv = ds.createVariable("time", "f8", ("time",))
-        tv.units = f"seconds since {times[0]:%Y-%m-%d %H:%M:%S}"
-        tv.calendar = "proleptic_gregorian"
-        tv.standard_name = "time"
-        tv[:] = [(t - times[0]).total_seconds() for t in times]
-        v = ds.createVariable("latitude", "f8", ("grid",))
-        v.units, v.standard_name, v[:] = "degrees_north", "latitude", lat
-        v = ds.createVariable("longitude", "f8", ("grid",))
-        v.units, v.standard_name, v[:] = "degrees_east", "longitude", lon
-        if None not in elevation:
-            v = ds.createVariable("elevation", "f8", ("grid",))
-            v.units, v.long_name, v[:] = "m", "orography of the ERA5-Land cell", elevation
-        for name in FILE_VARIABLES:
-            v = ds.createVariable(name, "f4", ("time", "grid"), fill_value=np.float32(1.0e20))
-            v.setncatts(variable_attributes(name))
-            v[:, :] = arrays[name]
-        ds.setncatts(attrs)
+    """Write the MEDS (time, grid) forcing NetCDF through the shared writer: time in seconds since
+    the first record; latitude, longitude and, where the source knows it, elevation per grid point;
+    the FILE_VARIABLES as float32 with _FillValue 1e20; the global attributes attrs. A missing value
+    is an error there, as in the model."""
+    forcing_file.write_forcing_file(
+        path, np.array(times, dtype="datetime64[s]"), grid, {name: arrays[name] for name in FILE_VARIABLES},
+        attrs, variable_attributes={name: variable_attributes(name) for name in FILE_VARIABLES},
+        elevation_long_name="orography of the ERA5-Land cell")
 
 
 def parse_args(argv):
@@ -361,17 +317,16 @@ def main(argv=None):
     args = parse_args(argv)
     times, grid, per_cell, source = from_archive(args) if args.data_path else from_box_files(args)
     arrays = file_arrays(per_cell)
-    check_complete(times, grid, arrays)
     attrs = dict(
-        Conventions="MEDS-forcing-1.0",
         title="MEDS meteorological forcing",
         source=source,
         history="make_forcing_file.py",
         timestep_seconds=3600,
         avg_convention="end",          # flux vars: mean over the hour ENDING at the stamp
         sw_input_kind="total",         # total SWdown; the Fortran reader partitions (design §5.6)
-        time_zone="UTC",
-        wind_meas_height_m=10.0,       # ERA5-Land wind is at 10 m (design §5.2/§10)
+        wind_meas_height_m=10.0,       # ERA5-Land wind is at 10 m; checked against [forcing].wind_height
+        tq_height_m=2.0,               # 2 m temperature and dewpoint; checked against [forcing].tq_height
+        height_above="zero_plane",     # the IFS surface layer has no displacement height (forcing.md sec. 8)
     )
     write_meds_forcing(args.out, times, grid, arrays, attrs)
     print(f"wrote {args.out}: ntime={len(times)} ({times[0]:%Y-%m-%d %H:%M} .. {times[-1]:%Y-%m-%d %H:%M} UTC), "

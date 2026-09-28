@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# Barro Colorado Island, Panama (AmeriFlux PA-Bar): the site TOML that DECLARES what the tower file
+# is, for scripts/prepare_flux_tower/make_tower_forcing.py. Every value here is checked against the
+# data where it can be (the clock against the sun, the VPD curve against RH), and the build stops on
+# a disagreement. docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md sec. 2-3 records how each was found.
+
+[input]
+format           = "csv"
+path             = "data/BCI_v5.1.csv"      # fetch_bci_data.py puts it here (Zenodo 6456527, CC0)
+timestamp        = "date"
+timestamp_format = "%Y-%m-%d %H:%M"
+missing          = ["NaN"]
+
+[site]
+name      = "Barro Colorado Island (PA-Bar)"
+latitude  = 9.1568                          # [deg N]  AmeriFlux site coordinates
+longitude = -79.8486                        # [deg E]
+elevation = 150.0                           # [m]      AmeriFlux; the papers give "about 140 m"
+
+[clock]
+utc_offset = -5.0                           # [h] the file is in Panama's local standard time
+stamp      = "begin"                        # `date` marks the START of each half hour
+timestep   = 1800                           # [s]
+
+[heights]                                   # [m] above the ground at the tower base
+tq_height       = 41.0                      # HC2S3 temperature/RH probe, taken to be at the EC level
+wind_height     = 41.0                      # CSAT3 sonic, at the eddy-covariance height
+pressure_height = 41.0                      # the mean pressure puts the barometer at the tower top
+
+[variables]                                 # MEDS variable -> the file's column and units
+Tair   = { column = "tair",  units = "degC" }
+RH     = { column = "RH",    units = "%" }
+VPD    = { column = "vpd",   units = "kPa", curve = "alduchov_eskridge" }  # checked (V3); unused for q
+PSurf  = { column = "p_kpa", units = "kPa" }
+Rainf  = { column = "PPT",   units = "mm" }                 # per half hour
+SWdown = { column = "Rs",    units = "W m-2" }
+LWdown = { column = "Rl_dn", units = "W m-2" }              # 61 % missing: none before 2015
+Wind   = { column = "ubar",  units = "m s-1" }              # 212 negative values are screened out
+PAR    = { column = "Par_tot", units = "umol m-2 s-1" }     # reports only
+
+[gapfill]
+short_gap_max = 4                           # [records] interpolate gaps up to 2 h
+longwave      = "synth"                     # "synth" | "era5" (needs era5_file)
+states        = "mdv"                       # long gaps in T, RH, P, wind, SW: "mdv" | "era5"
+era5_file     = "data/bci_era5land.nc"      # an ED_default file from prepare_era5/make_forcing_file.py

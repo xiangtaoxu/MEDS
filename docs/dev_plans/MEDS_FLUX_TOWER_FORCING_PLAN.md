@@ -1,6 +1,12 @@
 # MEDS flux-tower forcing plan
 
-**Status:** written 2026-09-28, on branch `feat/flux-tower-forcing`. Phases P0–P5 below are open.
+**Status:** written 2026-09-28, on branch `feat/flux-tower-forcing`. P0–P5 are implemented on that
+branch. Two items stay open:
+- **The ERA5-Land fill is tested on synthetic ERA5-Land only**, because the Copernicus data store
+  was unreachable from the session that built it. The BCI download is the command in the example
+  README.
+- **The BCI evaluation stage is blocked by a soil-water defect** found while running it (§13).
+
 The worked example is Barro Colorado Island (BCI), Panama.
 
 **Goal:** turn standard flux-tower meteorology (AmeriFlux BASE, FLUXNET/ONEFlux, or a plain CSV)
@@ -143,8 +149,8 @@ record mean is kept.
 ## 8. P3 — gap filling
 
 qc codes: 0 observed · 1 short-gap interpolation · 2 ERA5-Land regression · 3 synthesis
-regression or mean diurnal variation. After filling, any missing value stops the tool (MEDS never
-gap-fills, `forcing.md` §10).
+regression or mean diurnal variation · 4 filled by the data provider (FLUXNET `_QC` > 0). After
+filling, any missing value stops the tool (MEDS never gap-fills, `forcing.md` §10).
 
 1. **Short gaps** (≤ 2 h by default): linear for Tair, RH, PSurf and LWdown; energy form for wind;
    shortwave through the interpolated clearness index times the window-mean top-of-atmosphere flux.
@@ -156,12 +162,19 @@ gap-fills, `forcing.md` §10).
    night (the FLUXNET2015 `_ERA` approach, Vuichard & Papale 2015).
 3. **Long gaps, synthesis** (`--lw-fill synth`): MEDS's own Brutsaert + cloud-term longwave from the
    tower's T, humidity and clearness index (dusk's clearness held through the night, as the reader
-   does), then the same regression.
+   does), regressed in its two parts, the clear-sky emission εσT⁴ and the cloud term εσT⁴(1 − kt), so
+   the cloud coefficient is fitted at the site rather than taken as 0.22. At BCI a regression on
+   the whole synthesis collapsed to the monthly mean (r = −0.03 between synthesis and tower; the
+   observed longwave falls with daytime cloudiness), and the two-part fit gave RMSE 8.5 W m⁻² in
+   sample.
 4. **Long gaps, fallback for the other states**: mean diurnal variation over ±7 days (Falge et al.
    2001).
 
 **The comparison (D5).** Offline: withhold 20 % of the observed longwave in 10-day blocks, fill it
-both ways, and score bias, RMSE and the diurnal and seasonal cycles, day and night. In the model:
+both ways, and score bias, RMSE and the diurnal and seasonal cycles, day and night. At BCI, on
+7,200 hidden half hours: the synthesis regression scores bias +1.2, RMSE 9.1 W m⁻², r 0.86; the
+monthly climatology RMSE 13.4; MEDS's `lwdown_source = "synthesize"` as it is, bias −22.5 and
+RMSE 36.3. The ERA5-Land row waits on the download (Status). In the model:
 two forcing files identical except `LWdown`, the same runs, compared against the tower's
 upwelling longwave, net radiation, H and LE. BCI's observed 2016–2017 act as a control, since the
 two files agree there.
@@ -237,3 +250,36 @@ recycle_end   = "2017-08-01 00:00:00"
 - Tower CO₂ as forcing: nocturnal build-up in the roughness sublayer makes it a poor free-atmosphere
   value. `co2_source` stays the CMIP7 series.
 - Soil moisture from the tower's SWC as an initial condition.
+
+## 13. Found while running the example: dry soil does not re-wet
+
+The BCI spin-up does not establish a stand. After 50 years from bare ground, LAI is 0.009 and AGB is
+0.002 kgC m⁻². Seed-rain recruits never grow. On the same branch, the Ithaca spin-up takes off
+around year 16, as its README describes, so the forcing changes are not the cause.
+
+**What a three-year diagnostic run shows.** It had daily soil, water and carbon output:
+
+| month | rain (mm) | ET (mm) | top-layer θ | top-layer ψ (MPa) |
+|---|---|---|---|---|
+| 1962-12 | 365 | 49 | 0.308 | −0.00 |
+| 1963-01 | 2 | 47 | 0.128 | −6.2 |
+| 1963-02 | 52 | 30 | 0.080 | −37.6 |
+| 1963-05 | 180 | 24 | 0.081 | −25.6 |
+| 1963-07 | 292 | 22 | 0.081 | −13.1 |
+
+The first dry season dries the top layer to θ = 0.08. The next wet season's rain then runs off
+without re-wetting it, and the stand stays under water stress all year: leaf water potential sits
+at −3 to −70 MPa and the stomatal factor at 0.00–0.03.
+
+**The mechanism.** `soil_water_step` limits infiltration by the top layer's own conductivity,
+`q_inf_max = K(θ₁)·(1 + ψ₁/z₁)`. At θ = 0.08, Campbell's K is about 10⁻¹⁰ of saturation, so the
+capacity is effectively zero, and Horton overflow takes the rain. A dry soil's infiltration capacity
+is high in reality, because the conductivity that matters is the wetting front's (Green–Ampt
+capacity ≥ K_sat). ED2 evaluates the pond-to-soil flux at an interface moisture between the
+saturated pond and the dry layer. Ithaca never dries that far, which is why no run found this.
+
+**A measured experiment**, in an isolated worktree and not on this branch: flooring the capacity at
+`params%ksat(1)`. The top layer then re-wets with the 1963 wet season (θ = 0.25–0.32 from May to
+July), and monthly ET recovers from ~22 mm to ~44 mm. The 50-year spin-up grows a stand (LAI 1.0 by
+1977). The fix is a physics decision (Green–Ampt, an interface-moisture conductivity as in ED2, or a
+K_sat floor) and is not taken here.

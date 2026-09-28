@@ -57,6 +57,36 @@ Each old form stops at startup with a message naming the fix.
 
 ### Added
 
+- **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (AmeriFlux BASE,
+  FLUXNET/ONEFlux or any CSV). The tool works from a site TOML that declares the file, location,
+  clock, stamp convention, sensor heights and every column's units.
+  - **Checks (V1–V5).** It validates each declaration and stops on a disagreement: a uniform axis
+    (V1); the clock against the model's own sun, within 10 min (V2); a provider VPD against RH
+    under the declared saturation curve, naming the curve that fits (V3); physical bounds (V4). V5
+    is a JSON report.
+  - **What it writes.** An `ED_default` file on a UTC clock with the measured `RHair`, pressure
+    brought down to the ground, states re-centred to the stamps, and the tower's heights stated.
+  - **Gap filling** is explicit, with a `<Var>_qc` flag on every value: short gaps interpolated,
+    long ones from ERA5-Land or the mean diurnal variation. Longwave is filled from ERA5-Land or from
+    the model's synthesis, regressed onto the tower in its clear-sky and cloud parts.
+  - **`compare_longwave_fill.py`** scores the fills on held-out observations. `tests/` has 24
+    pytest cases on synthetic towers; two mutations of the tool (the UTC sign, the re-centring)
+    fail 15 and 2 of them.
+- **`scripts/forcing_common/meds_forcing_file.py`**, the one writer of an `ED_default` file and the
+  Python copy of the model's conversions (humidity, hypsometric pressure, solar geometry, window-mean
+  cos z, clearness index, longwave synthesis). `make_forcing_file.py` now writes through it and
+  stores ERA5-Land's dewpoint as `Tdew`, with `tq_height_m = 2` and `height_above = "zero_plane"`.
+- **`examples/example_flux_tower_bci/`**: the worked example at Barro Colorado Island (AmeriFlux
+  PA-Bar, a 41 m tower).
+  - **Data.** It downloads the CC0 data from Zenodo and checks the md5; nothing is committed.
+  - **The build.** It passes V2 5 min from the declared UTC−5 begin-stamped clock, and V3 to
+    0.000 Pa under the Alduchov–Eskridge curve.
+  - **Longwave.** The observed longwave is 61 % missing. The synthesis regression fills it with
+    RMSE 9.1 W m⁻² on hidden records, where the model's `lwdown_source = "synthesize"` would be
+    36.3 (bias −22.5).
+  - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
+    local time. They are blocked by a soil-water defect, recorded in
+    `MEDS_FLUX_TOWER_FORCING_PLAN.md` §13: rain does not infiltrate a dried top layer.
 - **`test_met_tower`**, the flux-tower contract of an `ED_default` file: the three humidity forms
   and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval
   containing the instant on end- and begin-stamped files, and the tower round trip (relative
