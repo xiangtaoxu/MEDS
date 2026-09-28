@@ -297,6 +297,17 @@ before and after.
   also computes its checksum. Writing HDF5 chunks directly over a network filesystem made builds
   3–4 times slower once several ran at once.
 
+- **`ground_temp_site` is removed, and the four variances say what they measure** (#275,
+  #PRNUM). `ground_temp_site` read the top soil layer under the name "ground (skin) temperature";
+  `soil_temp_top_site` is the same series, so a config or script that used it should switch to that
+  name. An `[output].io_config` that still lists it is refused at startup.
+  - `cas_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site` and `leaf_temp_var_site`
+    square their partner's end-of-step state, once per slow step. With daily steps that is the
+    day-to-day spread at one hour, not the diurnal cycle. Their `long_name`s now say "variance of
+    end-of-step samples of …", and `docs/science/diagnostics.md` explains the difference.
+  - A skin temperature and within-step variances stay on #275.
+  - The registry holds 252 variables; `meds_io_config.toml` is regenerated.
+
 ### Removed
 
 - **`scripts/prep_era5land_forcing.py`**, replaced by `scripts/prepare_era5/make_forcing_file.py`
