@@ -24,7 +24,7 @@ before and after.
 
 Each old form stops at startup with a message naming the fix.
 
-The root profile moves to `[hydraulics]` (#PRNUM). `[soil_column].root_beta`, an exponential decay per
+The root profile moves to `[hydraulics]` (#327). `[soil_column].root_beta`, an exponential decay per
 metre, is refused; `[hydraulics].root_beta = exp(−b · root_depth)` gives the same decay b, and a config
 that sets neither keeps the default profile. A `[hydraulics].root_beta` copied from the old
 `meds_config_main.toml` (0.96) used to be ignored and now takes effect: it puts 19% of the roots in
@@ -204,7 +204,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Added
 
-- **`[soil]` sets the bare ground's optics** (#PRNUM): `ground_albedo_vis` (0.15), `ground_albedo_nir`
+- **`[soil]` sets the bare ground's optics** (#327): `ground_albedo_vis` (0.15), `ground_albedo_nir`
   (0.30) and `ground_emissivity` (0.95), the values the code had fixed. The canopy radiation solver
   reads them, and snow still covers them by its fraction. The albedos must lie in [0, 1) and the
   emissivity in (0, 1]. Tests: `test_biophysics_opts_config` reads them and `test_pft_optics_config`
@@ -264,7 +264,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
-- **The tissue energy balance gave every leaf and all wood an emissivity of 0.95** (#PRNUM). The
+- **The tissue energy balance gave every leaf and all wood an emissivity of 0.95** (#327). The
   radiation solver takes each PFT's `leaf_emissivity` (0.97 by default) and `wood_emissivity` (0.90) and
   emits at the canopy-air temperature. The energy balance then adds the change in emission for the
   tissue's departure from that temperature, 4εσT³ per unit leaf or wood area, and took ε from a fixed
@@ -276,12 +276,12 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     radiation, the albedo and the stand agree to the digits the README prints. At BCI only this fix,
     the wood temperature and the root profile apply: it has one PFT with no pressure–volume traits of
     its own, the default ground optics, and whole-plant conductance.
-- **The wood's boundary layer took its free convection from the leaf temperature** (#PRNUM).
+- **The wood's boundary layer took its free convection from the leaf temperature** (#327).
   `boundary_gbh_mos` adds free convection driven by an element's difference from the canopy-air
   temperature, and `aero_bottom_to_top` passed the leaf's temperature for the wood too. The wood now
   gets its own. Tests: `test_column_dynamics` checks that the wood conductance ignores the leaf
   temperature and rises with the wood's.
-- **Four `[hydraulics]` settings did nothing** (#PRNUM). `root_beta` and `root_depth` were read and
+- **Four `[hydraulics]` settings did nothing** (#327). `root_beta` and `root_depth` were read and
   never used, because the root profile came from `[soil_column].root_beta`. `wood_kmax` and
   `vessel_curl` feed the segment conductance, which no key could select.
   - The root profile is now ED2's β^(d/D) from `[hydraulics]`, integrated over each layer and
@@ -298,11 +298,11 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     `root_depth` leaves the deeper layers empty; `test_region` refuses `[soil_column].root_beta` and an
     unknown `conductance`.
 - **Stomatal closure and the drought-phenology cue used one turgor-loss point for every PFT**
-  (#PRNUM). Both took ψ_tlp from the shared `[hydraulics]` `leaf_pi0` and `leaf_elastic_mod`, while the
+  (#327). Both took ψ_tlp from the shared `[hydraulics]` `leaf_pi0` and `leaf_elastic_mod`, while the
   plant-water solver used a PFT's own values where the PFT file sets them. `pft_leaf_psi_tlp` now
   gives both the PFT's own curve by the solver's rule. With the default traits ψ_tlp stays −1.71 MPa.
   Tests: `test_pft_optics_config` checks a PFT with its own `leaf_pi0` against one without.
-- **Stale config text** (#PRNUM). The PFT files said a mean leaf inclination of 45° is spherical; a
+- **Stale config text** (#327). The PFT files said a mean leaf inclination of 45° is spherical; a
   spherical distribution has mean 57.3° and standard deviation 21.6°, and the comment in
   `meds_config_pft.toml` and the three example PFT files now says so. Three example configs set
   `[phenology].phenology_on`, which nothing has read since phenology became unconditional; it is
