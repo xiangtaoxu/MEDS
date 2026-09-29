@@ -208,7 +208,8 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
   restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
   run's PFT file as a census start sets them: acclimated to each cohort's LAI above it, as the state
   holds it, with plasticity on, and the PFT's top-of-canopy values with it off. Leaf area stays as
-  read, and leaf carbon follows the new SLA, storage taking the difference. Without it a restart
+  read, and leaf carbon scales by the SLA's change, storage taking the difference, so unchanged traits
+  change nothing. Without it a restart
   keeps the state's traits, so a changed `vcmax25` never reached the cohorts. This is what lets a
   calibration trial restart from a shared state (`MEDS_FAST_CALIBRATION_PLAN.md` P0b). Tests:
   `restart_exact` checks that a restart with `vcmax25` × 1.3 carries the traits a census start with

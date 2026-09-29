@@ -142,3 +142,9 @@ def test_reacclimate_matches_census_start(tmp_path, plasticity):
         assert np.array_equal(r[trait], b[trait]), trait
     assert not np.array_equal(r["vcmax25"], a["vcmax25"]), "the changed vcmax25 did not reach the cohorts"
     assert np.array_equal(r["leaf_area"], a["leaf_area"]), "re-acclimation moved the leaf area"
+    # a restart whose PFT file gives the traits the state already has changes nothing
+    same = run(tmp_path / "s", base_config(tmp_path / "s", "2001-06-02", "2001-06-03", slow_on=False,
+                                             plasticity=plasticity, restart_file=str(written), reacclimate=True))
+    s, _ = read_state(same)
+    for v in ("sla", "vcmax25", "rd25", "llspan", "leaf_area", "leaf_carbon", "nonstructural_carbon"):
+        assert np.array_equal(s[v], a[v]), v
