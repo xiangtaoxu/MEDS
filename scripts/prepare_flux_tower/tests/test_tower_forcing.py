@@ -45,7 +45,7 @@ def synthetic_tower(start="2014-02-01 00:00", days=DAYS):
 
 
 def write_site(tmp_path, frame, stamp="begin", utc_offset=OFFSET, curve="alduchov_eskridge",
-               lw_fill="synth", extra=""):
+               extra=""):
     csv = tmp_path / "tower.csv"
     frame.to_csv(csv, index=False)
     toml = tmp_path / "site.toml"
@@ -79,7 +79,6 @@ SWdown = {{ column = "Rs", units = "W m-2" }}
 LWdown = {{ column = "Rl_dn", units = "W m-2" }}
 Wind = {{ column = "ubar", units = "m s-1" }}
 [gapfill]
-longwave = "{lw_fill}"
 {extra}
 ''')
     return ti.read_site(str(toml))
@@ -87,7 +86,7 @@ longwave = "{lw_fill}"
 
 def build(tmp_path, site, **kw):
     out = str(tmp_path / "forcing.nc")
-    report = mt.build(site, out, kw.pop("lw_fill", "synth"), kw.pop("states_fill", "mdv"), **kw)
+    report = mt.build(site, out, **kw)
     return Dataset(out), report
 
 
@@ -199,7 +198,7 @@ def test_a_long_longwave_gap_is_filled_by_the_synthesis_regression(tmp_path):
     lw = ds["LWdown"][:, 0].astype(float)
     truth = 440.0 + 2.0 * (frame["tair"].to_numpy() - 25.0)
     assert np.sqrt(np.mean((lw[600:1200] - truth[600:1200]) ** 2)) < 3.0       # T carries LW here
-    assert report["fills"]["LWdown"]["method"] == "synth"
+    assert report["fills"]["LWdown"]["method"] == "synthesis_regression"
 
 
 def test_a_tower_without_longwave_gets_the_model_synthesis(tmp_path, capsys):
@@ -211,7 +210,7 @@ def test_a_tower_without_longwave_gets_the_model_synthesis(tmp_path, capsys):
     assert "WARNING" in capsys.readouterr().out
     t = ds["Tair"][:, 0].astype(float)
     # the file's LWdown is re-centred; compare an interior stamp against the synthesis of its two intervals
-    p = mt.prepare(site, "synth", "mdv")
+    p = mt.prepare(site)
     y = p["values"]
     lw = tg.synthesized_longwave(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], p["mean_cosz"])
     assert np.allclose(ds["LWdown"][1:, 0], 0.5 * (lw[:-1] + lw[1:]), atol=1e-3)
@@ -219,21 +218,7 @@ def test_a_tower_without_longwave_gets_the_model_synthesis(tmp_path, capsys):
     assert np.isfinite(t).all()
 
 
-def test_an_interval_middle_on_an_era5_stamp_belongs_to_that_stamp(tmp_path):
-    era5 = dict(stamps=np.array(["2014-01-01T01:00", "2014-01-01T02:00", "2014-01-01T03:00"], dtype="datetime64[s]"),
-                step=3600.0, convention="end",
-                values={name: np.array([1.0, 2.0, 3.0]) for name in ("Tair", "RH", "PSurf", "Wind", "Rainf",
-                                                                     "SWdown", "LWdown")})
-    starts = np.array(["2014-01-01T01:30"], dtype="datetime64[s]")     # an hourly tower stamped at :30
-    ends = starts + np.timedelta64(3600, "s")                           # its middle is exactly 02:00
-
-    class S:
-        latitude, longitude, timestep = 0.0, 0.0, 3600.0
-    out = tg.era5_on_intervals(era5, starts, ends, S)
-    assert out["Rainf"][0] == 2.0 and out["LWdown"][0] == 2.0           # the hour (01:00, 02:00]
-
-
-def test_missing_rain_without_era5_is_an_error(tmp_path):
+def test_missing_rain_is_an_error(tmp_path):
     frame = synthetic_tower()
     frame.loc[50, "PPT"] = np.nan
     with pytest.raises(SystemExit, match="does not invent rain"):
@@ -248,35 +233,9 @@ def test_negative_wind_is_screened_then_filled(tmp_path):
     assert ds["Wind"][300, 0] > 0
 
 
-def synthetic_era5(tmp_path, frame):
-    """An ED_default file like make_forcing_file.py writes: hourly, end-stamped, UTC, Tdew."""
-    local = pd.to_datetime(frame["date"])
-    first = local.iloc[0] - pd.Timedelta(hours=OFFSET)
-    stamps = pd.date_range(first, periods=len(frame) // 2 + 2, freq="1h") + pd.Timedelta(hours=1)
-    n = len(stamps)
-    hour_local = np.asarray((stamps + pd.Timedelta(hours=OFFSET)).hour, dtype=float)
-    tk = 273.15 + 25.0 + 3.0 * np.sin(2 * np.pi * (hour_local - 9.0) / 24.0)
-    arrays = {"Tair": tk, "Tdew": tk - 3.0, "PSurf": np.full(n, 100500.0), "u10": np.full(n, 3.0),
-              "v10": np.zeros(n), "Wind": np.full(n, 3.0), "Rainf": np.full(n, 1e-4),
-              "SWdown": np.full(n, 200.0), "LWdown": 430.0 + 2.0 * (tk - 298.15)}
-    path = str(tmp_path / "era5.nc")
-    mff.write_forcing_file(path, stamps.values.astype("datetime64[s]"), [(LAT, LON, None)],
-                           {k: v[:, None] for k, v in arrays.items()},
-                           dict(avg_convention="end", sw_input_kind="total", timestep_seconds=3600))
-    return path
-
-
-def test_era5_fills_longwave_and_rain_and_flags_them(tmp_path):
-    frame = synthetic_tower()
-    frame.loc[500:1300, "Rl_dn"] = np.nan
-    frame.loc[40:44, "PPT"] = np.nan
-    era5 = synthetic_era5(tmp_path, frame)
-    ds, report = build(tmp_path, write_site(tmp_path, frame, lw_fill="era5"), lw_fill="era5", era5_path=era5)
-    assert (ds["LWdown_qc"][600:1200, 0] == tg.QC_ERA5).all()
-    assert (ds["Rainf_qc"][40:45, 0] == tg.QC_ERA5).all()
-    lw = ds["LWdown"][:, 0].astype(float)
-    truth = 440.0 + 2.0 * (frame["tair"].to_numpy() - 25.0)
-    assert np.sqrt(np.mean((lw[600:1200] - truth[600:1200]) ** 2)) < 3.0       # the regression removes the offset
+def test_a_stale_gapfill_setting_is_refused(tmp_path):
+    with pytest.raises(SystemExit, match="gapfill.longwave is not a setting"):
+        write_site(tmp_path, synthetic_tower(), extra='longwave = "era5"')
 
 
 # ---------------------------------------------------------------------------------------------

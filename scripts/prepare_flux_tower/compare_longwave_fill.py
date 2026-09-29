@@ -4,12 +4,11 @@
 (MEDS_FLUX_TOWER_FORCING_PLAN.md D5).
 
 It hides a share of the tower's observed longwave in whole blocks of days (the way real gaps come),
-fills them with each method exactly as make_tower_forcing.py would, and scores each fill against the
-hidden observations:
+fills them exactly as make_tower_forcing.py would, and scores the fill, and two references, against
+the hidden observations:
 
   synth       the model's own synthesis, split into its clear-sky and cloud parts and regressed
-              onto the tower by month and day/night (make_tower_forcing.py --lw-fill synth)
-  era5        ERA5-Land's longwave regressed the same way (--lw-fill era5; needs --era5-file)
+              onto the tower by month and day/night: the fill make_tower_forcing.py writes
   meds_synth  the synthesis exactly as MEDS computes it with lwdown_source = "synthesize"
               (cloud coefficient 0.22, no regression): what a run gets with no longwave at all
   climatology the observed monthly day/night means: the floor any fill has to beat
@@ -20,7 +19,7 @@ in local time, and the monthly bias.
 
 Usage:
   python compare_longwave_fill.py --site bci_site.toml --out data/lw_comparison.json \\
-      [--era5-file data/bci_era5land.nc] [--figure data/lw_comparison.png]
+      [--figure data/lw_comparison.png]
 """
 import argparse
 import json
@@ -70,8 +69,6 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Score the longwave gap fills on hidden observations.")
     ap.add_argument("--site", required=True)
     ap.add_argument("--out", required=True, help="the JSON of scores")
-    ap.add_argument("--era5-file", help="an ED_default file cut from ERA5-Land (enables the era5 method)")
-    ap.add_argument("--states-fill", choices=("mdv", "era5"), default="mdv")
     ap.add_argument("--holdout", type=float, default=0.2, help="share of the observed longwave hidden (0.2)")
     ap.add_argument("--block-days", type=int, default=10)
     ap.add_argument("--seed", type=int, default=1)
@@ -79,7 +76,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     site = ti.read_site(args.site)
 
-    base = mt.prepare(site, "synth", args.states_fill, args.era5_file)
+    base = mt.prepare(site)
     observed = (base["qc"]["LWdown"] == tg.QC_OBSERVED) & np.isfinite(base["source"]["LWdown"].to_numpy())
     obs_all = base["source"]["LWdown"].to_numpy()
     rpd = int(round(86400.0 / site.timestep))
@@ -88,11 +85,7 @@ def main(argv=None):
     stamps_local = pd.DatetimeIndex(base["stamps"] + np.timedelta64(int(site.utc_offset * 3600), "s"))
     months = pd.DatetimeIndex(base["stamps"]).month.to_numpy()
 
-    fills = {}
-    methods = ["synth"] + (["era5"] if args.era5_file else [])
-    for method in methods:
-        p = mt.prepare(site, method, args.states_fill, args.era5_file, lw_holdout=hidden)
-        fills[method] = p["values"]["LWdown"]
+    fills = {"synth": mt.prepare(site, lw_holdout=hidden)["values"]["LWdown"]}
     y = base["values"]
     fills["meds_synth"] = tg.synthesized_longwave(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], base["mean_cosz"])
     groups = tg.regression_groups(base["stamps"], base["mean_cosz"], by_day_night=True)
@@ -119,16 +112,15 @@ def main(argv=None):
 
 
 def draw(path, site, obs, fills, hidden, stamps_local, months, result):
-    """Three panels. The fills are the first three slots of a categorical palette validated for
-    every pair (a scatter shows them all at once); the observations are ink, and the climatology is
-    a neutral dashed reference, not a series."""
+    """Three panels. The two synthesis series take two slots of a categorical palette validated for
+    every pair (a scatter shows them at once); the observations are ink, and the climatology is a
+    neutral dashed reference, not a series."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     ink, muted, grid = "#0b0b0b", "#52514e", "#d9d8d4"
-    series = [(name, color) for name, color in (("synth", "#2a78d6"), ("era5", "#eb6834"), ("meds_synth", "#1baf7a"))
-              if name in fills]
-    label = {"synth": "synthesis, regressed", "era5": "ERA5-Land, regressed", "meds_synth": "MEDS synthesis as is"}
+    series = [("synth", "#2a78d6"), ("meds_synth", "#1baf7a")]
+    label = {"synth": "synthesis, regressed", "meds_synth": "MEDS synthesis as is"}
     plt.rcParams.update({"axes.edgecolor": muted, "axes.labelcolor": ink, "xtick.color": muted,
                          "ytick.color": muted, "axes.grid": True, "grid.color": grid, "grid.linewidth": 0.6,
                          "axes.axisbelow": True, "axes.spines.top": False, "axes.spines.right": False})

@@ -11,7 +11,7 @@ What it shows:
   each declaration against the sun and the data, and stops on a disagreement.
 - **the model's conversions, not the provider's.** The file stores relative humidity as measured,
   and MEDS turns it into specific humidity with its own saturation curve.
-- **explicit, flagged gap filling**, and a test of two ways to fill the longwave.
+- **explicit, flagged gap filling**, and a test of the longwave fill on observations it never saw.
 - **the tower's height in the model.** Every sample is moved from 41 m above the ground to the top
   of each patch's canopy air space.
 - **a start from a census, not a spin-up.** The 2010 census of the 50-ha plot is the stand, one patch
@@ -30,6 +30,14 @@ under CC0. It is not in the repository. [`fetch_bci_data.py`](fetch_bci_data.py)
 README asks that publications acknowledge the Center for Tropical Forest Science – Forest Global
 Earth Observatory (CTFS-ForestGEO), which supported the tower.
 
+**Note: the file's two longwave columns are swapped.** `Rl_up` is the downwelling longwave and
+`Rl_dn` the upwelling, so [`bci_site.toml`](bci_site.toml) reads `LWdown` from `Rl_up`. Three
+things show it:
+- the provider's `Rnet` equals Rs − Rs_dn + Rl_up − Rl_dn to the last digit;
+- at night `Rl_dn` averages 1.022 times the air's blackbody emission σT⁴, more than the sky can
+  emit, and `Rl_up` 0.948;
+- ERA5-Land's daily longwave follows `Rl_up` (r 0.86) and not `Rl_dn` (0.12).
+
 **The census** is the BCI 50-ha plot's tree table for census 7 (2010), with census 6 (2005) for the
 plot's biomass mortality: Condit R., Pérez R., Aguilar S., Lao S., Foster R., Hubbell S.P. 2019,
 *Complete data from the Barro Colorado 50-ha plot: 423617 trees, 35 years*, Dryad
@@ -41,13 +49,14 @@ must be downloaded in a browser because Dryad refuses scripts.
 
 ```bash
 cd examples/example_flux_tower_bci
-python run_example.py --forcing-only        # fetch, build the forcing, score the longwave fills, figures
+python run_example.py --forcing-only        # fetch, build the forcing, score the longwave fill, figures
 python run_example.py                       # ... then the census file, the five tower years, the comparison
 ```
 
 `run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model run a built
 `meds_main` (`--meds-main`, default `../../build-ifx/meds_main`). The forcing build takes about
-ten seconds, the census file about a minute, and the five-year run about 7 minutes on one core.
+ten seconds, the census file about a minute, and the five-year run about 7 minutes on one core, or
+6 minutes with `[run].n_threads = 4` (more threads are slower for now, #325).
 
 ## What the declarations are, and how each was checked
 
@@ -57,6 +66,7 @@ ten seconds, the census file about a minute, and the five-year run about 7 minut
 | VPD curve | Alduchov–Eskridge | V3: the provider's `vpd` is (1 − RH)·e_s(T) under it to 0.000 Pa. Bolton, the model's curve, misses by up to 5.2 Pa. The file stores RH, so this curve never reaches the model |
 | heights | T/RH, wind and barometer at 41 m above the ground | the eddy-covariance height is 41 m. The mean pressure, 98.83 kPa, puts the barometer 180–210 m above sea level, not at the 150 m ground |
 | location | 9.1568 N, −79.8486 E, 150 m | AmeriFlux PA-Bar |
+| longwave | `LWdown` is the column `Rl_up` | the file labels its two longwave columns the wrong way round (the note under "The data") |
 
 The forcing file is on a UTC clock and begin-stamped. It records the heights (`tq_height_m`,
 `wind_height_m`, `height_above = "ground"`), and MEDS stops at open if `[forcing]` says otherwise.
@@ -74,51 +84,30 @@ their few gaps upstream, and the file does not say where. Two variables needed f
   up to 2 h are interpolated; longer ones take the mean diurnal variation.
 - **Longwave:** 61 % is missing, because the radiometer arrived in 2015.
 
-## Longwave: two fills, scored on observations they never saw
+## Longwave: the fill, scored on observations it never saw
 
-![Longwave fills scored on hidden observations](lw_comparison.png)
+![The longwave fill scored on hidden observations](lw_comparison.png)
 
 [`compare_longwave_fill.py`](../../scripts/prepare_flux_tower/compare_longwave_fill.py) hides 20 %
-of the observed longwave in 10-day blocks. It fills the hidden records and scores each fill
-against them (7,200 half hours):
+of the observed longwave in 10-day blocks. It fills the hidden records as the build does and scores
+the fill, beside two references, against them (7,200 half hours):
 
 | fill | bias | RMSE | r | diurnal-cycle RMSE |
 |---|---|---|---|---|
-| the model's synthesis, regressed onto the tower (`--lw-fill synth`) | +1.2 | 9.1 | 0.86 | 4.0 |
-| monthly day/night climatology | +1.7 | 13.4 | 0.65 | 8.8 |
-| MEDS's `lwdown_source = "synthesize"` as it is | −22.5 | 36.3 | 0.10 | 25.3 |
+| the model's synthesis, regressed onto the tower (the fill) | +2.3 | 14.5 | 0.79 | 4.3 |
+| monthly day/night climatology | +4.4 | 18.6 | 0.63 | 7.1 |
+| MEDS's `lwdown_source = "synthesize"` as it is | +20.9 | 29.7 | 0.61 | 22.1 |
 
-(W m⁻²; the observed mean is 466.)
+(W m⁻²; the observed mean is 429.) Over other draws of the hidden blocks the fill scores RMSE
+13.7–14.5. Filling from ERA5-Land or another source instead is left to the user: fill the tower
+file before the build.
 
-**Why the synthesis has to be regressed in two parts.** MEDS synthesizes longwave as
-εσT⁴[1 + 0.22(1 − kt)]. At BCI the observed longwave *falls* with daytime cloudiness, the opposite
-of the cloud term's sign:
-- its correlation with (1 − kt) by day is −0.63;
-- its correlation with the clear-sky part εσT⁴ is +0.64;
-- the likely reasons are that cloudy afternoons are rain-cooled, and that a near-saturated tropical
-  sky is already close to black.
-
-A regression on the whole synthesis therefore collapses to a monthly mean (RMSE 12.3). Regressing
-on its clear-sky and cloud parts separately fits the cloud coefficient at the site instead of
-taking 0.22; the pooled fit gives −0.03. The same finding means a MEDS run here with no longwave
-at all, using `lwdown_source = "synthesize"`, would be 22 W m⁻² short.
-
-**The ERA5-Land fill** (`--lw-fill era5`) needs ERA5-Land for the site's cell, as an `ED_default`
-file:
-
-```bash
-cd scripts/prepare_era5
-python download_era5land_cds.py --bbox 9.3,-80.0,9.0,-79.7 --start 2012-07-01 --end 2017-08-31 \
-    --variables all --format netcdf --out-dir <raw>
-python postprocess_era5land.py --source cds --raw-dir <raw> --bbox 9.3,-80.0,9.0,-79.7 \
-    --start 2012-07-01 --end 2017-08-31 --variables all --split none --out-dir <box>
-python make_forcing_file.py --box-dir <box> --lat 9.1568 --lon -79.8486 \
-    --out ../../examples/example_flux_tower_bci/data/bci_era5land.nc
-```
-
-With that file present, `run_example.py` also builds `data/bci_forcing_lw-era5.nc` and adds ERA5-Land
-to the comparison. BCI sits in Gatun Lake, so check the cell's land fraction: the regression absorbs
-a lake cell's mean offset, but not a different diurnal cycle.
+**The synthesis is regressed in two parts.** MEDS synthesizes longwave as εσT⁴[1 + a(1 − kt)],
+with a = 0.22. Regressing on its clear-sky part εσT⁴ and its cloud part εσT⁴(1 − kt) separately lets
+the site set the cloud coefficient: the pooled fit gives 0.10, and the two parts beat a single
+regression on the whole synthesis on every draw (14.5 against 16.7 on the draw above). Used as it
+is, the synthesis runs 21 W m⁻² above BCI's longwave, so a run here with no longwave at all would
+receive that much too much.
 
 ## The model runs
 
@@ -150,13 +139,13 @@ The daily output carries each patch's `cas_depth_patch`, `air_temp_cas_top_patch
 
 ![MEDS against the BCI tower: mean diurnal and seasonal cycles of carbon, water and energy](evaluation.png)
 
-The run takes 7.2 minutes on one core and 0.8 GB. MEDS reads the census as 1,250 patches and 84,937
-cohorts, with the stand's LAI 5.60 and AGB 16.12 kgC m⁻², exactly as the census file states, and
-fuses it to 25 patches and 419 cohorts before the first step. The count stays above `max_patch = 12`
-because `patch_light_tol_max` keeps dissimilar patches apart, and the run says so at the end. The
-energy and water budgets close to machine precision.
+The run takes 5.7 minutes with four threads, about 7 on one core, and 0.8 GB. MEDS reads the
+census as 1,250 patches and 84,937 cohorts, with the stand's LAI 5.60 and AGB 16.12 kgC m⁻², exactly
+as the census file states, and fuses it to 25 patches and 419 cohorts before the first step. The
+count stays above `max_patch = 12` because `patch_light_tol_max` keeps dissimilar patches apart,
+and the run says so at the end. The energy and water budgets close to machine precision.
 
-**The stand over the five years:** LAI falls from 5.6 to 4.8 and AGB rises from 16.1 to 17.4 kgC m⁻²,
+**The stand over the five years:** LAI falls from 5.6 to 4.8 and AGB rises from 16.1 to 17.5 kgC m⁻²,
 and the patches fuse down to 15. The large trees grow and the canopy thins; small trees do not grow
 under this PFT with the default allometry.
 
@@ -164,22 +153,29 @@ under this PFT with the default allometry.
 
 | | tower mean | MEDS mean | bias | r, hourly | r, mean seasonal cycle |
 |---|---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.86 | +3.40 | 0.94 | 0.46 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −3.87 | +0.37 | 0.90 | 0.46 |
-| latent heat [W m⁻²] | 75.5 | 59.0 | −16.5 | 0.93 | 0.72 |
-| sensible heat [W m⁻²] | 32.4 | −14.0 | −46.4 | 0.90 | −0.42 |
-| net radiation [W m⁻²] | 136.3 | 153.0 | +16.7 | 1.00 | 0.98 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 11.07 | +3.61 | 0.94 | 0.43 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.04 | +0.20 | 0.90 | 0.45 |
+| latent heat [W m⁻²] | 75.5 | 56.5 | −19.0 | 0.93 | 0.69 |
+| sensible heat [W m⁻²] | 32.4 | −39.0 | −71.4 | 0.86 | −0.59 |
+| net radiation [W m⁻²] | 136.3 | 120.4 | −16.0 | 1.00 | 0.98 |
 
 - **The diurnal cycles** are closely followed in shape (r ≥ 0.99 for every flux) and differ in size.
-  Midday GPP is 29 against the tower's 22 µmol m⁻² s⁻¹, and midday latent heat 166 against 237 W m⁻².
-- **Sensible heat is the largest miss, and most of it is at night:** −76 W m⁻² against the tower's
-  −24. By day it is 126 against 163. The census canopy is taller than the tower: the canopy-air tops
-  reach 51 m in the tallest patches, above the tower's 41 m, so those patches take forcing moved up
-  from below their own top. Whether that explains the night-time flux is not yet checked.
-- **Net radiation** is right by day, and at night stays near +6 W m⁻² where the tower reads −33,
-  which points at the night-time longwave balance, as it did with the spin-up stand.
+  Midday GPP is 30 against the tower's 22 µmol m⁻² s⁻¹, and midday latent heat 164 against 237 W m⁻².
+- **Net radiation falls short by day because the canopy reflects too much.** Over the 695 days the
+  tower measured all four components, the model's albedo is 0.26 against the tower's 0.13: it
+  absorbs 148 W m⁻² of shortwave where the tower's canopy absorbs 173. It emits 10 W m⁻² less
+  longwave, which offsets part of that. At night the model reads −22 W m⁻² against the tower's −33.
+- **Sensible heat is the largest miss:** −96 W m⁻² at night against the tower's −23, and 90 at
+  midday against 163. The census canopy is taller than the tower: the canopy-air tops reach 51 m in
+  the tallest patches, above the tower's 41 m, so those patches take forcing moved up from below
+  their own top. Whether that explains the flux is not yet checked.
 - **The seasonal cycles** are weaker: the model's GPP is highest in the dry season, the tower's early
   in the wet season, and the model's dry-season sensible heat falls where the tower's rises.
+
+**Before the longwave columns were corrected** the forcing carried the canopy's emission, 37 W m⁻²
+more than the sky's. That hid the albedo error: net radiation looked right by day (bias +16.7
+overall), night-time net radiation was +6 against the tower's −33, and sensible heat was biased
+−46 W m⁻².
 
 ## Files
 

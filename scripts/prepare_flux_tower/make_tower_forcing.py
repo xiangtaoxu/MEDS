@@ -11,9 +11,10 @@ What it does, in order:
   3. checks the time axis (V1), the clock against the sun (V2) and a provider VPD against RH under
      its declared saturation curve (V3), and stops on any disagreement;
   4. moves the stamps to UTC, and brings the barometer's pressure down to the ground;
-  5. fills every gap explicitly -- short gaps by interpolation, long ones from ERA5-Land or the
-     mean diurnal variation, longwave from ERA5-Land or the model's own synthesis, each regressed
-     onto the tower -- and flags each value with <Var>_qc;
+  5. fills every gap explicitly -- short gaps by interpolation, long ones by the mean diurnal
+     variation, and the longwave by the model's own synthesis regressed onto the tower -- and flags
+     each value with <Var>_qc. Filling from another source (ERA5-Land, a nearby station) is the
+     user's to do in the tower file before the build;
   6. turns the states' interval means into values at the stamps, which is how MEDS reads a state;
   7. writes the file, with its heights, clock and fills stated, and a JSON report beside it (V5).
 
@@ -22,10 +23,7 @@ curve, so the provider's never enters the model. The clock of the file is UTC; s
 back to local time in post-processing.
 
 Usage:
-  python make_tower_forcing.py --site examples/example_flux_tower_bci/bci_site.toml \\
-      --out bci_forcing_lw-synth.nc --lw-fill synth
-  python make_tower_forcing.py --site bci_site.toml --out bci_forcing_lw-era5.nc --lw-fill era5 \\
-      --era5-file bci_era5land.nc        # an ED_default file from prepare_era5/make_forcing_file.py
+  python make_tower_forcing.py --site examples/example_flux_tower_bci/bci_site.toml --out bci_forcing.nc
 
 Dependencies: numpy, pandas, netCDF4 (and tomli on Python < 3.11).
 """
@@ -46,10 +44,9 @@ STATES = ("Tair", "RH", "PSurf", "Wind", "SWdown")
 FILE_NAMES = {"Tair": "Tair", "RH": "RHair", "PSurf": "PSurf", "Wind": "Wind", "Rainf": "Rainf",
               "SWdown": "SWdown", "LWdown": "LWdown"}
 RECENTRED = ("Tair", "RH", "PSurf", "LWdown", "Wind")
-BOUNDS_AFTER_FILL = {"RH": (0.0, 1.05), "Wind": (0.0, None), "SWdown": (0.0, None)}
 
 
-def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_holdout=None):
+def prepare(site, short_gap_max=4, lw_holdout=None):
     """Steps 1-5: the tower's filled interval means on UTC stamps, their qc flags and the checks'
     reports. `lw_holdout`, a boolean mask over the records, hides those longwave observations from
     the fill, so a caller can score a fill against them (compare_longwave_fill.py)."""
@@ -58,7 +55,7 @@ def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_hold
     report["V1_axis"] = tc.check_axis(data.values.index.values, site.timestep)
     values, report["V4_bounds"] = tc.screen_bounds(data.values)
     stamps = ti.to_utc(values.index.values, site.utc_offset)
-    starts, ends = ti.interval_bounds(stamps, site.stamp, site.timestep)
+    starts, _ = ti.interval_bounds(stamps, site.stamp, site.timestep)
     mean_cosz = mff.window_mean_cosz(starts, site.timestep, site.latitude, site.longitude)
     report["V2_sun"] = tc.check_sun(stamps, values["SWdown"].to_numpy(), site)
     n = len(stamps)
@@ -84,48 +81,24 @@ def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_hold
         qc["RH"][from_vpd] = tg.QC_FROM_VPD
         report["V3_humidity"]["rh_from_vpd_records"] = int(from_vpd.sum())
 
-    era5 = None
-    if era5_path:
-        era5_file = tg.read_era5_file(era5_path, site)
-        era5 = tg.era5_on_intervals(era5_file, starts, ends, site)
-        report["era5land"] = dict(file=os.path.basename(era5_path), cell=era5_file["cell"],
-                                  elevation=era5_file["elevation"])
-    if (lw_fill == "era5" or states_fill == "era5") and era5 is None:
-        raise SystemExit("ERROR: an ERA5-Land fill needs --era5-file (or gapfill.era5_file in the site TOML)")
-
     fills = {}
-    groups_month = tg.regression_groups(stamps, mean_cosz, by_day_night=False)
     records_per_day = int(round(86400.0 / site.timestep))
     for name in STATES:
         kind = {"Wind": "energy", "SWdown": "shortwave"}.get(name, "linear")
         y[name], qc[name] = tg.fill_short(y[name], qc[name], short_gap_max, kind, mean_cosz)
-        lower, upper = BOUNDS_AFTER_FILL.get(name, (None, None))
         if not np.isfinite(y[name]).all():
-            if states_fill == "era5":
-                y[name], qc[name], fills[name] = tg.fill_by_regression(
-                    y[name], qc[name], era5[name], groups_month, tg.QC_ERA5, lower, upper)
-            else:
-                y[name], qc[name] = tg.fill_mean_diurnal(y[name], qc[name], records_per_day)
-                fills[name] = dict(method="mean_diurnal_variation", filled=int((qc[name] == tg.QC_SYNTH_OR_MDV).sum()))
+            y[name], qc[name] = tg.fill_mean_diurnal(y[name], qc[name], records_per_day)
+            fills[name] = dict(method="mean_diurnal_variation", filled=int((qc[name] == tg.QC_SYNTH_OR_MDV).sum()))
         if name == "SWdown":
             y[name] = np.where(mean_cosz > mff.COSZ_BAR_MIN, np.maximum(y[name], 0.0), 0.0)
 
-    # rain is never interpolated or averaged: a gap takes ERA5-Land's rain, or stops the build
+    # rain is never interpolated or averaged: a rain gap stops the build
     missing_rain = ~np.isfinite(y["Rainf"])
     if missing_rain.any():
-        if era5 is None:
-            raise SystemExit(f"ERROR: Rainf has {int(missing_rain.sum())} missing records and there is no ERA5-Land "
-                             f"file to fill them from; MEDS does not invent rain.")
-        y["Rainf"][missing_rain] = era5["Rainf"][missing_rain]
-        qc["Rainf"][missing_rain] = tg.QC_ERA5
-        fills["Rainf"] = dict(method="era5land", filled=int(missing_rain.sum()))
+        raise SystemExit(f"ERROR: Rainf has {int(missing_rain.sum())} missing records. MEDS does not invent rain: "
+                         f"fill them in the tower file (from a nearby gauge or a reanalysis) before the build.")
 
     # the pressure at the ground, where MEDS keeps it (docs/science/forcing.md sec. 8)
-    if era5 is not None and era5_file["elevation"] is not None:
-        ok = (qc["PSurf"] == tg.QC_OBSERVED) & np.isfinite(era5["PSurf"])
-        if ok.sum() > 100:
-            dz = -mff.R_DRY * np.nanmean(y["Tair"][ok]) / mff.GRAV * np.mean(np.log(y["PSurf"][ok] / era5["PSurf"][ok]))
-            report["V5_barometer_height_above_ground_m"] = round(float(dz + era5_file["elevation"] - site.elevation), 1)
     y["PSurf"] = mff.pressure_at_height(y["PSurf"], y["Tair"], -site.pressure_height)
 
     # the longwave, last, because the synthesis needs the filled states
@@ -133,27 +106,21 @@ def prepare(site, lw_fill, states_fill, era5_path=None, short_gap_max=4, lw_hold
         y["LWdown"][lw_holdout] = np.nan
     y["LWdown"], qc["LWdown"] = tg.fill_short(y["LWdown"], qc["LWdown"], short_gap_max)
     groups_lw = tg.regression_groups(stamps, mean_cosz, by_day_night=True)
-    if lw_fill == "era5":
-        predictor, code, fallback = era5["LWdown"], tg.QC_ERA5, None
-    else:
-        predictor = tg.synthesis_predictors(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], mean_cosz)
-        code, fallback = tg.QC_SYNTH_OR_MDV, tg.SYNTHESIS_FALLBACK
-    y["LWdown"], qc["LWdown"], fills["LWdown"] = tg.fill_by_regression(y["LWdown"], qc["LWdown"], predictor,
-                                                                        groups_lw, code, 30.0, 650.0, fallback)
-    fills["LWdown"]["method"] = lw_fill
+    predictor = tg.synthesis_predictors(y["Tair"], y["RH"], y["PSurf"], y["SWdown"], mean_cosz)
+    y["LWdown"], qc["LWdown"], fills["LWdown"] = tg.fill_by_regression(
+        y["LWdown"], qc["LWdown"], predictor, groups_lw, tg.QC_SYNTH_OR_MDV, 30.0, 650.0, tg.SYNTHESIS_FALLBACK)
+    fills["LWdown"]["method"] = "synthesis_regression"
     if fills["LWdown"]["fell_back_unfitted"]:
-        print(f"WARNING: fewer than {tg.MIN_FIT_POINTS} observed longwave records to fit the {lw_fill} fill to; "
-              f"the longwave is {'the model synthesis as MEDS computes it' if lw_fill == 'synth' else 'ERA5-Land as it is'}, "
-              f"not regressed onto the tower")
+        print(f"WARNING: fewer than {tg.MIN_FIT_POINTS} observed longwave records to fit the synthesis to; the "
+              f"longwave is the model synthesis as MEDS computes it, not regressed onto the tower")
     report["fills"] = fills
     return dict(stamps=stamps, starts=starts, mean_cosz=mean_cosz, values=y, qc=qc, report=report,
                 source=values)
 
 
-def build(site, out, lw_fill, states_fill, era5_path=None, short_gap_max=4, start=None, end=None,
-          report_path=None):
+def build(site, out, short_gap_max=4, start=None, end=None, report_path=None):
     """Steps 1-7."""
-    p = prepare(site, lw_fill, states_fill, era5_path, short_gap_max)
+    p = prepare(site, short_gap_max)
     y, qc, stamps = p["values"], p["qc"], p["stamps"]
     for name in RECENTRED:
         y[name], qc[name] = tg.recentre(y[name], qc[name], site.stamp, energy=(name == "Wind"))
@@ -187,8 +154,8 @@ def build(site, out, lw_fill, states_fill, era5_path=None, short_gap_max=4, star
         state_sampling=("Tair, RHair, PSurf, LWdown and Wind are values at the stamps, the mean of the two "
                         "intervals that meet there; Rainf and SWdown are means over each record's interval"),
         humidity_source=humidity_source,
-        gapfill_longwave=lw_fill,
-        gapfill_states=states_fill,
+        gapfill_longwave="the model's synthesis, regressed onto the tower by month and day/night",
+        gapfill_states="the mean diurnal variation",
         gapfill_short_max_records=int(short_gap_max),
     )
     mff.write_forcing_file(out, stamps, [(site.latitude, site.longitude, site.elevation)], arrays, attrs, flags)
@@ -216,12 +183,6 @@ def parse_args(argv):
     ap = argparse.ArgumentParser(description="Flux-tower meteorology -> a MEDS ED_default forcing file.")
     ap.add_argument("--site", required=True, help="the site TOML that declares the data")
     ap.add_argument("--out", required=True, help="the forcing NetCDF to write")
-    ap.add_argument("--lw-fill", choices=("synth", "era5"), help="longwave gaps: the model's synthesis or ERA5-Land, "
-                    "regressed onto the tower (default: gapfill.longwave)")
-    ap.add_argument("--states-fill", choices=("mdv", "era5"), help="long gaps in T, RH, P, wind, SW: the mean "
-                    "diurnal variation or ERA5-Land (default: gapfill.states, else mdv)")
-    ap.add_argument("--era5-file", help="an ED_default file cut from ERA5-Land for the site "
-                    "(prepare_era5/make_forcing_file.py; default: gapfill.era5_file)")
     ap.add_argument("--short-gap-max", type=int, help="the longest gap interpolated, in records (default 4)")
     ap.add_argument("--start", help="first UTC stamp to write, e.g. 2012-08-01")
     ap.add_argument("--end", help="first UTC stamp NOT written")
@@ -233,19 +194,8 @@ def main(argv=None):
     args = parse_args(argv)
     site = ti.read_site(args.site)
     g = site.gapfill
-    lw_fill = args.lw_fill or g.get("longwave")
-    if lw_fill not in ("synth", "era5"):
-        raise SystemExit("ERROR: choose the longwave fill: --lw-fill synth|era5 or gapfill.longwave")
-    states_fill = args.states_fill or g.get("states", "mdv")
-    era5_path = args.era5_file or g.get("era5_file")
-    if era5_path and not os.path.isabs(era5_path) and not args.era5_file:
-        era5_path = os.path.join(os.path.dirname(site.toml_path), era5_path)
-    if era5_path and not os.path.exists(era5_path):
-        if lw_fill == "era5" or states_fill == "era5":
-            raise SystemExit(f"ERROR: the ERA5-Land file {era5_path} does not exist")
-        era5_path = None
     short = args.short_gap_max if args.short_gap_max is not None else int(g.get("short_gap_max", 4))
-    build(site, args.out, lw_fill, states_fill, era5_path, short, args.start, args.end, args.report)
+    build(site, args.out, short, args.start, args.end, args.report)
 
 
 if __name__ == "__main__":

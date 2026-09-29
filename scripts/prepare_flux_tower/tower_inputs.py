@@ -136,6 +136,13 @@ def read_site(path):
         curve = _require(variables["VPD"], "curve", "variables.VPD")
         if curve not in SATURATION_CURVES:
             raise SystemExit(f"ERROR: variables.VPD.curve = {curve!r}; choose from {list(SATURATION_CURVES)}")
+    gapfill = t.get("gapfill", {})
+    for key in gapfill:
+        if key != "short_gap_max":
+            raise SystemExit(f"ERROR: gapfill.{key} is not a setting; [gapfill] takes short_gap_max only. The "
+                             f"longwave is always the model's synthesis regressed onto the tower, and a long gap "
+                             f"in another variable the mean diurnal variation; to fill from ERA5-Land or another "
+                             f"source, fill the tower file before the build.")
     return Site(
         toml_path=os.path.abspath(path), input_format=fmt, input_path=input_path, timestamp=timestamp,
         timestamp_format=timestamp_format, missing=list(inp.get("missing", defaults["missing"])),
@@ -146,7 +153,7 @@ def read_site(path):
         tq_height=float(_require(heights, "tq_height", "heights")),
         wind_height=float(_require(heights, "wind_height", "heights")),
         pressure_height=float(_require(heights, "pressure_height", "heights")),
-        variables=variables, gapfill=t.get("gapfill", {}))
+        variables=variables, gapfill=gapfill)
 
 
 @dataclass

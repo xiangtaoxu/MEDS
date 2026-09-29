@@ -6,8 +6,8 @@ either observed or filled here, and the file says which with a <Var>_qc flag:
   0  observed
   1  short gap (at most gapfill.short_gap_max records): linear in time; wind in the energy form;
      shortwave through the clearness index
-  2  ERA5-Land, regressed onto the tower over their overlap
   3  the model's own longwave synthesis regressed onto the tower, or the mean diurnal variation
+     (2 is unused: a fill from another source, such as ERA5-Land, is the user's to make first)
   4  filled by the data provider (FLUXNET *_QC > 0)
   5  relative humidity recovered from the provider's VPD through its own saturation curve
 
@@ -16,12 +16,11 @@ each record the mean over its interval.
 """
 import numpy as np
 import pandas as pd
-from netCDF4 import Dataset, num2date
 
 import tower_inputs as ti
 
 mff = ti.mff
-QC_OBSERVED, QC_SHORT, QC_ERA5, QC_SYNTH_OR_MDV, QC_PROVIDER, QC_FROM_VPD = 0, 1, 2, 3, 4, 5
+QC_OBSERVED, QC_SHORT, QC_SYNTH_OR_MDV, QC_PROVIDER, QC_FROM_VPD = 0, 1, 3, 4, 5
 MIN_FIT_POINTS = 48            # a regression group smaller than this falls back to the pooled fit
 
 
@@ -131,9 +130,9 @@ def apply_linear(x, groups, coefficients):
 
 
 def fill_by_regression(y, qc, x, groups, code, lower=None, upper=None, fallback=None):
-    """Fill the missing values of y from predictors x (ERA5-Land, or the parts of the model's
-    synthesis) by a linear regression fitted on the observed overlap within each group; with too
-    little overlap to fit, the coefficients `fallback`. Returns the filled series, its qc, and the
+    """Fill the missing values of y from predictors x (the parts of the model's synthesis) by a
+    linear regression fitted on the observed overlap within each group; with too little overlap to
+    fit, the coefficients `fallback`. Returns the filled series, its qc, and the
     fit (for the report)."""
     y = y.copy()
     qc = qc.copy()
@@ -155,7 +154,7 @@ def fill_by_regression(y, qc, x, groups, code, lower=None, upper=None, fallback=
 
 
 # ---------------------------------------------------------------------------------------------
-# The two longwave predictors.
+# The longwave predictors: the model's synthesis.
 # ---------------------------------------------------------------------------------------------
 def clearness_held_through_night(sw, mean_cosz):
     """The clearness index the model's longwave synthesis sees: by day the interval's SW over its
@@ -179,10 +178,9 @@ def synthesized_longwave(tair_k, rh, psurf_ground_pa, sw, mean_cosz, cloud_a=mff
 def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
     """The two parts of the model's synthesis, eps_clear sigma T^4 and eps_clear sigma T^4 (1 - kt),
     as separate predictors. Regressing on both fits the cloud term's coefficient at the site
-    instead of taking the model's 0.22: at Barro Colorado Island the observed longwave FALLS with
-    daytime cloudiness (rain-cooled afternoons under a near-black sky), and the fixed +0.22 left
-    the synthesis uncorrelated with the tower (r = -0.03; RMSE 12.3 W/m2 after a one-predictor
-    regression, 8.5 with the two)."""
+    instead of taking the model's 0.22: at Barro Colorado Island the pooled fit gives 0.10 per unit
+    of clear-sky emission, and on held-out records the two parts score RMSE 13.7-14.5 W/m2 against
+    14.5-16.7 for one regression on the whole synthesis."""
     q = mff.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
     kt = clearness_held_through_night(sw, mean_cosz)
     clear = mff.synthesize_lwdown(tair_k, q, psurf_ground_pa, np.ones_like(q), 0.0)
@@ -192,77 +190,6 @@ def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
 # With too few observations to fit, the synthesis predictors fall back to the model's own
 # synthesis: clear + 0.22 clear (1 - kt), which is what lwdown_source = "synthesize" would give.
 SYNTHESIS_FALLBACK = (0.0, 1.0, mff.LW_CLOUD_A)
-
-
-# ---------------------------------------------------------------------------------------------
-# ERA5-Land on the tower's intervals.
-# ---------------------------------------------------------------------------------------------
-def read_era5_file(path, site):
-    """An ED_default file cut from ERA5-Land for the site (scripts/prepare_era5/make_forcing_file.py):
-    hourly, end-stamped, UTC. Returns its UTC stamps and, at the grid point nearest the site, Tair,
-    RH (from the dewpoint by the model's curve), PSurf, Wind, Rainf, SWdown and LWdown."""
-    with Dataset(path) as ds:
-        if getattr(ds, "time_zone", "") != "UTC":
-            raise SystemExit(f"ERROR: the ERA5-Land file {path} does not say time_zone = 'UTC'")
-        convention = getattr(ds, "avg_convention", "end")
-        tv = ds["time"]
-        stamps = num2date(tv[:], tv.units, getattr(tv, "calendar", "standard"),
-                          only_use_cftime_datetimes=False, only_use_python_datetimes=True)
-        stamps = np.array(stamps, dtype="datetime64[s]")
-        lat, lon = ds["latitude"][:], ds["longitude"][:]
-        g = int(np.argmin((lat - site.latitude) ** 2 + ((lon - site.longitude) * np.cos(np.radians(site.latitude))) ** 2))
-        get = lambda name: np.ma.filled(ds[name][:, g], np.nan).astype(float)
-        out = {name: get(name) for name in ("Tair", "PSurf", "Wind", "Rainf", "SWdown", "LWdown")}
-        if "Tdew" in ds.variables:
-            out["RH"] = mff.sat_vapor_pressure(get("Tdew")) / mff.sat_vapor_pressure(out["Tair"])
-        elif "RHair" in ds.variables:
-            out["RH"] = get("RHair")
-        else:
-            e = mff.specific_humidity_to_vapor_pressure(get("Qair"), out["PSurf"])
-            out["RH"] = e / mff.sat_vapor_pressure(out["Tair"])
-        elevation = float(ds["elevation"][g]) if "elevation" in ds.variables else None
-    step = float(np.median(np.diff(stamps).astype(float)))
-    return dict(stamps=stamps, step=step, convention=convention, values=out, elevation=elevation,
-                cell=(float(lat[g]), float(lon[g])))
-
-
-def era5_on_intervals(era5, starts, ends, site):
-    """ERA5-Land as means over the tower's intervals [start, end): its point values (Tair, RH, PSurf,
-    Wind) interpolated to each interval's middle, its hour means (Rainf, LWdown) held over their
-    hour, and its shortwave disaggregated by the model's own interval-mean-conserving cos z rule."""
-    t_era = era5["stamps"].astype("datetime64[s]").astype(float)
-    mid = ((starts.astype("datetime64[s]").astype(float) + ends.astype("datetime64[s]").astype(float)) / 2.0)
-    step = era5["step"]
-    out = {}
-    for name in ("Tair", "RH", "PSurf", "Wind"):
-        v = era5["values"][name]
-        ok = np.isfinite(v)
-        out[name] = np.interp(mid, t_era[ok], v[ok], left=np.nan, right=np.nan)
-    # the ERA5 record whose interval contains each tower interval's middle
-    n = len(t_era)
-    if era5["convention"] == "end":
-        k = np.searchsorted(t_era, mid, side="left")            # first stamp at or after the middle
-        inside = k < n
-        k = np.clip(k, 0, n - 1)
-        hour_start = t_era[k] - step
-    else:
-        k = np.searchsorted(t_era, mid, side="right") - 1       # last stamp at or before the middle
-        inside = k >= 0
-        k = np.clip(k, 0, n - 1)
-        hour_start = t_era[k]
-    # an interval middle exactly on an ERA5 stamp belongs to that stamp's own interval
-    if era5["convention"] == "end":
-        inside &= (mid > hour_start) & (mid <= hour_start + step)
-    else:
-        inside &= (mid >= hour_start) & (mid < hour_start + step)
-    for name in ("Rainf", "LWdown"):
-        out[name] = np.where(inside, era5["values"][name][k], np.nan)
-    cz_hour = mff.window_mean_cosz(hour_start.astype("datetime64[s]"), step, site.latitude, site.longitude)
-    cz_int = mff.window_mean_cosz(starts, site.timestep, site.latitude, site.longitude)
-    sw_hour = era5["values"]["SWdown"][k]
-    out["SWdown"] = np.where(inside & (cz_hour > mff.COSZ_BAR_MIN),
-                             sw_hour * cz_int / np.maximum(cz_hour, 1e-30), np.where(inside, 0.0, np.nan))
-    return out
 
 
 # ---------------------------------------------------------------------------------------------
