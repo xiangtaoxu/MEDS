@@ -48,6 +48,7 @@ compile_commands.json
 !examples/example_phenology/phenology_patterns.png
 !examples/example_flux_tower_bci/forcing_qc.png
 !examples/example_flux_tower_bci/lw_comparison.png
+!examples/example_flux_tower_bci/evaluation.png
 # The list was short of five of these. Four were tracked anyway -- they predate the *.png rule, and
 # .gitignore does not apply to a file already in the index -- so the gap was invisible until a NEW
 # figure appeared: examples/example_phenology/phenology_patterns.png was silently never added, and

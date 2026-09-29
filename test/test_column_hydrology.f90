@@ -20,8 +20,9 @@ program test_column_hydrology
    use meds_hydr_lib, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_LIN_PICARD, &
                                     SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
-   use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
-   use meds_soil_water,       only : advance_soil_water_column, ground_evap_from_state
+   use meds_hydr_lib, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi,       &
+                             soil_hydr_cond_from_theta
+   use meds_soil_water,       only : advance_soil_water_column, ground_evap_from_state, soil_water_time_deriv
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
@@ -33,6 +34,8 @@ program test_column_hydrology
    call test_free_drain()
    call test_interception()
    call test_infiltration_cap()
+   call test_face_conductivity_log_linear()
+   call test_dried_surface_rewets()
    call test_pond_subfreezing_inflow()
    call test_picard()
    call test_adaptive_substep()
@@ -209,6 +212,71 @@ contains
    !      in the pond, must equal what the pond received. It used to exceed it by cp_liq*(t_3ple -    !
    !      t_pond_inflow) per kg -- the inverter pinned the pond at t_3ple with an ice fraction and the      !
    !      infiltration was valued as liquid at t_3ple; the empty-pond reset then discarded the deficit. !
+   !----- The interior face conductivity is ED2's log-linear interpolation of K between the two   !
+   !      nodes: K_face = K_k^(1-w) K_(k+1)^w with w = dz(k)/(dz(k)+dz(k+1)), the thickness-      !
+   !      weighted geometric mean. A wet layer over a dry one is where the rules part: the upstream !
+   !      pick would return the wet layer's K, the arithmetic mean nearly half of it. ------------!
+   subroutine test_face_conductivity_log_linear()
+      type(soil_params_t) :: params
+      type(soil_column_t) :: col
+      type(soil_opts_t)   :: opts
+      real(wp) :: theta(n_soil_layer_max), dtheta(n_soil_layer_max), qface(n_soil_layer_max), uptake(n_soil_layer_max)
+      real(wp) :: drain, upt, k1, k2, w, psi1, psi2, q_expected, q_upstream
+      print '(a)', 'test_face_conductivity_log_linear:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      theta = 0.25_wp ; theta(1) = 0.30_wp ; theta(2) = 0.12_wp
+      uptake = 0.0_wp
+      call soil_water_time_deriv(theta, params, opts, 10_ik, 0.0_wp, uptake, dtheta, drain, upt, qface, &
+                                 apply_wilt_limit=.false.)
+      k1   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(1), params%theta_sat(1), params%theta_res(1), &
+                                       params%vg_alpha(1), params%vg_n(1), params%ksat(1))
+      k2   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(2), params%theta_sat(2), params%theta_res(2), &
+                                       params%vg_alpha(2), params%vg_n(2), params%ksat(2))
+      psi1 = soil_psi_from_theta(SOIL_RETENTION_VG, theta(1), params%theta_sat(1), params%theta_res(1),   &
+                                 params%vg_alpha(1), params%vg_n(1))
+      psi2 = soil_psi_from_theta(SOIL_RETENTION_VG, theta(2), params%theta_sat(2), params%theta_res(2),   &
+                                 params%vg_alpha(2), params%vg_n(2))
+      w          = params%dz(1) / (params%dz(1) + params%dz(2))
+      q_expected = k1 ** (1.0_wp - w) * k2 ** w * ((psi1 - psi2) / params%dz_node(1) + 1.0_wp)
+      q_upstream = k1 * ((psi1 - psi2) / params%dz_node(1) + 1.0_wp)
+      call check('face 1 flux is the log-linear (thickness-weighted geometric) K times the gradient',   &
+                 qface(1), q_expected, 1.0e-12_wp * abs(q_expected))
+      call check_true('the layers are unequal, so the weighting matters', abs(w - 0.5_wp) > 0.01_wp, w)
+      call check_true('and it is far below the upstream pick (wet over dry)', qface(1) < 0.1_wp * q_upstream, &
+                      qface(1) / q_upstream)
+   end subroutine test_face_conductivity_log_linear
+
+   !----- A top layer dried to near residual must take the next rain. The surface face is the      !
+   !      geometric mean of K_sat and the top layer's K; with the top layer's K alone (~1e-15 of    !
+   !      K_sat here) the pond overflowed and the soil never re-wet (MEDS_FLUX_TOWER_FORCING_PLAN.md !
+   !      §13). 12 h of 2 mm/h rain onto theta_1 = 0.08 over a moist column: the top layer re-wets    !
+   !      and almost none of it runs off. ---------------------------------------------------------!
+   subroutine test_dried_surface_rewets()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      type(chydro_flux_t)    :: flux
+      real(wp)    :: rain, runoff
+      integer(ik) :: step
+      print '(a)', 'test_dried_surface_rewets:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:10) = 0.25_wp ; col%theta(1) = 0.08_wp
+      forcing%precip_ground = 2.0_wp / 3600.0_wp            ! 2 mm/h [kg/m2/s]
+      forcing%root_uptake = 0.0_wp
+      forcing%t_ground = 298.0_wp ; forcing%q_air = 0.02_wp
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      rain = 0.0_wp ; runoff = 0.0_wp
+      do step = 1_ik, 48_ik
+         call advance_soil_water_column(col, forcing, params, opts, 900.0_wp, flux)
+         rain   = rain   + forcing%precip_ground * 900.0_wp
+         runoff = runoff + flux%runoff_surf * 900.0_wp
+      end do
+      call check_true('the dried top layer re-wets within 12 h of rain', col%theta(1) > 0.20_wp, col%theta(1))
+      call check_true('and under 5 % of the rain runs off', runoff < 0.05_wp * rain, runoff / rain)
+   end subroutine test_dried_surface_rewets
+
    subroutine test_pond_subfreezing_inflow()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
@@ -390,8 +458,11 @@ contains
       !----- (d) It relaxes toward HYDROSTATIC equilibrium with the base (psi_n -> -Delta) -- the     !
       !          physical steady state of a column standing on a water table, and precisely the       !
       !          property Zeng-Decker used to reconstruct through the INTERIOR faces. The BOUNDARY     !
-      !          now supplies it, which is why ZD was retired with this phase. --------------------!
-      do step = 1_ik, 600_ik
+      !          now supplies it, which is why ZD was retired with this phase. The interior faces'      !
+      !          log-linear (geometric) K is small between the wetting base and the drier layers above, !
+      !          so capillary rise relaxes slowly: the residual flux passes 1e-5 at about 1000 h        !
+      !          (about 450 h with upstream-weighted faces), so the window is 1200 h. ---------------!
+      do step = 1_ik, 1200_ik
          call advance_soil_water_column(col, forcing, params, opts, 3600.0_wp, flux)
       end do
       psi_n = soil_psi_from_theta(SOIL_RETENTION_VG, col%theta(n), params%theta_sat(n),            &

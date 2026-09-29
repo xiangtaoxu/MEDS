@@ -974,7 +974,7 @@ contains
    !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
    !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
    !                                                                                                  !
-   ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
+   ! face_and_sink adds nothing unguarded: kface is a log-linear blend of those K, gface and the       !
    ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
    ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
    ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !

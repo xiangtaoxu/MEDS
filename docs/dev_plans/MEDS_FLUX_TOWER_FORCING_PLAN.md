@@ -1,11 +1,9 @@
 # MEDS flux-tower forcing plan
 
 **Status:** written 2026-09-28, on branch `feat/flux-tower-forcing`. P0–P5 are implemented on that
-branch. Two items stay open:
-- **The ERA5-Land fill is tested on synthetic ERA5-Land only**, because the Copernicus data store
-  was unreachable from the session that built it. The BCI download is the command in the example
-  README.
-- **The BCI evaluation stage is blocked by a soil-water defect** found while running it (§13).
+branch, with the soil-water fix of §13 that the BCI example needed. One item stays open: **the
+ERA5-Land fill is tested on synthetic ERA5-Land only**, because the Copernicus data store was
+unreachable from the session that built it. The BCI download is the command in the example README.
 
 The worked example is Barro Colorado Island (BCI), Panama.
 
@@ -275,15 +273,41 @@ The first dry season dries the top layer to θ = 0.08. The next wet season's rai
 without re-wetting it, and the stand stays under water stress all year: leaf water potential sits
 at −3 to −70 MPa and the stomatal factor at 0.00–0.03.
 
-**The mechanism.** `soil_water_step` limits infiltration by the top layer's own conductivity,
-`q_inf_max = K(θ₁)·(1 + ψ₁/z₁)`. At θ = 0.08, Campbell's K is about 10⁻¹⁰ of saturation, so the
-capacity is effectively zero, and Horton overflow takes the rain. A dry soil's infiltration capacity
-is high in reality, because the conductivity that matters is the wetting front's (Green–Ampt
-capacity ≥ K_sat). ED2 evaluates the pond-to-soil flux at an interface moisture between the
-saturated pond and the dry layer. Ithaca never dries that far, which is why no run found this.
+**The mechanism.** `soil_water_step` limited infiltration by the top layer's own conductivity,
+`q_inf_max = K(θ₁)·(1 + ψ₁/z₁)`. For the default van Genuchten loam, K at θ = 0.08 (just above
+θ_res = 0.078) is 3×10⁻¹⁵ of K_sat. The capacity was therefore effectively zero, and Horton
+overflow took the rain. Ithaca never dries that far, which is why no run found this.
 
-**A measured experiment**, in an isolated worktree and not on this branch: flooring the capacity at
-`params%ksat(1)`. The top layer then re-wets with the 1963 wet season (θ = 0.25–0.32 from May to
-July), and monthly ET recovers from ~22 mm to ~44 mm. The 50-year spin-up grows a stand (LAI 1.0 by
-1977). The fix is a physics decision (Green–Ampt, an interface-moisture conductivity as in ED2, or a
-K_sat floor) and is not taken here.
+**What the reference models do** (checked 2026-09-28):
+- **ED2**, by default, has no conductivity limit at the surface. Water on the surface moves into the
+  top soil layer until that layer's pore space is full (`rk4_misc.f90`). Its conductivity-limited
+  alternative uses the top layer's own K, as MEDS did, and is disabled with `fatal_error`. Between
+  layers, ED2 interpolates K log-linearly (`rk4_derivs.f90`).
+- **CLM5** caps infiltration at (1 − f_sat)·Θ_ice·K_sat, independent of the top layer's moisture,
+  and evaluates interior conductivity at the two layers' mean moisture.
+- **FATES** leaves soil water to its host model (CLM or ELM).
+
+**The options measured**, in isolated worktrees on the three-year BCI diagnostic:
+
+| surface rule | top-layer θ, May 1963 | top-layer θ, July 1963 | 3-year ET / rain |
+|---|---|---|---|
+| top layer's K (old) | 0.081 | 0.081 | 16 % |
+| geometric mean of K(θ₁) and K_sat | 0.254 | 0.326 | 26 % |
+| K_sat floor | 0.254 | 0.318 | 26 % |
+
+At θ = 0.08 the geometric mean's capacity is only 0.09 mm/h. It still recovers, because the first
+~0.7 mm raises the top layer to θ = 0.10, where capacity is 1.8 mm/h, and the 5 mm pond holds the
+storm's water meanwhile. The old rule's 5×10⁻⁹ mm/h never gets there. The integral (Kirchhoff) mean
+across the half layer, the literature's accurate choice for steep fronts (Zaidel & Russo 1992),
+gives about 39 mm/h at every dryness; it was not needed to fix BCI.
+
+**Decision (the user, 2026-09-28): ED2's geometric rule on every soil-water face.**
+- **Between layers:** log-linear interpolation of K to the face,
+  K_face = K_k^(1−w)·K_(k+1)^w with w = dz(k)/(dz(k)+dz(k+1)). It replaces the upstream pick.
+- **At the surface:** the geometric mean of K(θ₁) and K_sat, the same rule with the pond as thick
+  as the top layer.
+- **The aquifer bottom boundary stays upstream-weighted.** It is a boundary with the saturated zone,
+  and changing it would change drainage and capillary rise.
+
+**The cost it brings:** capillary rise into a dry profile is slower. In `test_column_hydrology`'s
+aquifer case, the residual bottom flux passes 10⁻⁵ kg m⁻² s⁻¹ at about 1,000 h instead of about 450 h.

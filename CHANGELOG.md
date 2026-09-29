@@ -55,6 +55,27 @@ Each old form stops at startup with a message naming the fix.
   3 kPa). It is used only by output diagnostics (`cas_vpd_site` and `cas_vpd_var_site`), which move by
   that much; nothing in the model state changes.
 
+- **Soil-water faces take ED2's geometric rule** (`MEDS_FLUX_TOWER_FORCING_PLAN.md` §13).
+  - **Between layers:** conductivity is ln K interpolated linearly between the two nodes to the face,
+    the thickness-weighted geometric mean of `rk4_derivs`. It replaces the upstream pick.
+  - **At the surface:** the infiltration capacity is the geometric mean of K_sat and the top layer's
+    K, times the gradient to the top node, where it was the top layer's own K. That rule sealed a
+    dried surface: near residual water content K is 3×10⁻¹⁵ of K_sat for the default loam, so after
+    a dry season the pond overflowed and the soil never re-wet.
+  - **The aquifer bottom boundary** stays upstream-weighted.
+  - **Barro Colorado Island** is where it showed. Before, the top layer sat at θ = 0.081 through
+    the 1963 wet season, 3-year ET was 16 % of rain, and the 50-year spin-up from bare ground ended
+    at LAI 0.009. Now the top layer re-wets to θ = 0.25–0.33, ET is 26 % of rain, and the stand
+    reaches LAI 4.8 and AGB 15.3 kgC m⁻².
+  - **Ithaca** is barely moved: its 50-year spin-up ends at AGB 9.956 against 9.936 kgC m⁻², with
+    the same stem density and LAI.
+  - **Capillary rise into a dry profile is slower.** In `test_column_hydrology`'s aquifer case, the
+    residual bottom flux passes 10⁻⁵ kg m⁻² s⁻¹ at about 1,000 h instead of about 450 h, so that
+    test's relaxation window is now 1,200 h.
+  - **New tests:** the face flux against the known log-linear answer, and a dried top layer
+    re-wetting under 12 h of 2 mm/h rain. Both are mutation-checked: with the old surface rule, 79 %
+    of the rain runs off.
+
 ### Added
 
 - **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (AmeriFlux BASE,
@@ -86,8 +107,8 @@ Each old form stops at startup with a message naming the fix.
     RMSE 9.1 W m⁻² on hidden records, where the model's `lwdown_source = "synthesize"` would be
     36.3 (bias −22.5).
   - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
-    local time. They are blocked by a soil-water defect, recorded in
-    `MEDS_FLUX_TOWER_FORCING_PLAN.md` §13: rain does not infiltrate a dried top layer.
+    local time. They needed the soil-water fix above: before it, rain did not infiltrate a dried
+    top layer and no stand grew.
 - **`test_met_tower`**, the flux-tower contract of an `ED_default` file: the three humidity forms
   and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval
   containing the instant on end- and begin-stamped files, and the tower round trip (relative

@@ -36,7 +36,7 @@ python run_example.py                       # ... then the 50-year spin-up and t
 
 `run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model stages a built
 `meds_main` (`--meds-main`, default `../../build-ifx/meds_main`). The forcing build takes about
-ten seconds. The spin-up from bare ground takes about three minutes on a laptop core.
+ten seconds, the 50-year spin-up about 11 minutes on a laptop core, and the evaluation about 3.
 
 ## What the declarations are, and how each was checked
 
@@ -132,12 +132,28 @@ a lake cell's mean offset, but not a different diurnal cycle.
 The daily output carries each patch's `cas_depth_patch`, `air_temp_cas_top_patch` and
 `wind_cas_top_patch`.
 
-**Status of the evaluation stage.** The spin-up does not establish a stand here: after 50 years
-LAI is 0.009. The cause is in the soil water, not the forcing. The first dry season dries the top
-soil layer to θ = 0.08 (ψ ≈ −40 MPa), and infiltration capacity is limited by that layer's own
-conductivity, so the next wet season's rain runs off instead of re-wetting it. Details and a
-measured experiment are in the plan, §13. Until that is resolved, stage 2 runs but has no forest to
-compare with the tower.
+### Against the tower
+
+![MEDS against the BCI tower: diurnal cycles and monthly means](evaluation.png)
+
+The spin-up ends at LAI 4.8, AGB 15.3 kgC m⁻² and 114 cohorts. It takes about 11 minutes on a laptop
+core, and the five-year evaluation about 3. Over the evaluation years, against the tower's measured
+half hours:
+
+| | bias | shape |
+|---|---|---|
+| sensible heat | +1.5 W m⁻² | the diurnal cycle closely followed |
+| latent heat | −12.2 W m⁻² | midday peak about 25 % low |
+| GPP | +3.6 µmol m⁻² s⁻¹ | about 45 % high, as expected of an uncalibrated temperate PFT |
+| net radiation | +23.4 W m⁻² | right by day. At night the model stays near +8 W m⁻² where the tower reads −35, which points at the night-time longwave balance and is worth a look |
+
+The 2015 El Niño drought shows in both the modelled and measured GPP.
+
+This stage needed a soil-water fix, and the example is where it showed. Infiltration used to be
+limited by the top layer's own conductivity. The first dry season then dried the top layer to
+near residual water content, where that conductivity is effectively zero, and the wet season's
+rain ran off instead of re-wetting it. No stand grew: LAI was 0.009 after 50 years. Soil-water faces
+now take ED2's geometric rule; see `docs/science/soil_biophysics.md` and plan §13.
 
 ## Files
 
