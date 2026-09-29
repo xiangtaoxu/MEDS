@@ -204,7 +204,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Added
 
-- **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#PRNUM; default false,
+- **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#329; default false,
   restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
   run's PFT file as a census start sets them: acclimated to each cohort's LAI above it, as the state
   holds it, with plasticity on, and the PFT's top-of-canopy values with it off. Leaf area stays as
@@ -213,13 +213,13 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
   calibration trial restart from a shared state (`MEDS_FAST_CALIBRATION_PLAN.md` P0b). Tests:
   `restart_exact` checks that a restart with `vcmax25` × 1.3 carries the traits a census start with
   × 1.3 gives, with and without plasticity, and keeps the leaf area.
-- **The parameter record, `<prefix>_parameters.csv`** (#PRNUM), beside the diagnostic output and
+- **The parameter record, `<prefix>_parameters.csv`** (#329), beside the diagnostic output and
   beside the state: one row per key the loader read from any file, `source,key,index,present,value`,
   with `present` saying whether it was set in the file or defaulted and `value` the value used, to
   17 digits. A key nothing reads is absent, which is how a misspelt key in an optional block, until
   now silently ignored, can be caught. The BCI example's record has 375 rows. Tests:
   `test_biophysics_opts_config` checks a set key, a defaulted key and a misspelt one.
-- **Hourly `sw_up_fast` and `lw_up_fast`** (#PRNUM): the shortwave (VIS + NIR) and the longwave,
+- **Hourly `sw_up_fast` and `lw_up_fast`** (#329): the shortwave (VIS + NIR) and the longwave,
   emission included, leaving the canopy top, beside `rnet_fast`. Until now they were daily only.
 
 - **`[soil]` sets the bare ground's optics** (#327): `ground_albedo_vis` (0.15), `ground_albedo_nir`
@@ -282,7 +282,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
-- **A restart did not continue the run that wrote the state** (#PRNUM). The state file kept each
+- **A restart did not continue the run that wrote the state** (#329). The state file kept each
   cohort's dbh but not its carbon pools or geometry, and the reader rebuilt them on the allometry.
   Cohort fusion keeps the pools and leaves a fused cohort below the allometry for its dbh, so the
   restart moved the leaf area (BCI: LAI 5.6380 written, 5.6389 read) and, with plasticity on, reset
