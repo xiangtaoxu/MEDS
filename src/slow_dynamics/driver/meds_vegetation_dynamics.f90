@@ -17,10 +17,9 @@
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, cp_liq
-   use meds_config,               only : meds_config_t, growth_window_steps
+   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
-   use meds_hydr_lib,             only : pv_psi_tlp
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -1190,8 +1189,8 @@ contains
       !----- The turgor-loss point is DERIVED, not a phenology key: the CUE_HYDRO counters compare   !
       !      dmax_leaf_psi against the same psi_tlp the leaf gas-exchange kernel builds from the     !
       !      pressure-volume curve. One authority, so the cue cannot drift from the stress arrestor  !
-      !      that shares its threshold. (PFT-uniform until #179 makes hydraulic traits per-PFT.) ----!
-      p%leaf_psi_tlp = pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod)
+      !      that shares its threshold, from the PFT's own pressure-volume traits. -----------------!
+      p%leaf_psi_tlp = pft_leaf_psi_tlp(cfg, ipft)
    end subroutine flatten_pheno_params
 
 end module meds_vegetation_dynamics

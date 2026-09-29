@@ -165,7 +165,8 @@ the driver reverses at the call site; both reversals are identity for $n\le1$).
 Nusselt kernel `boundary_gbh_mos`, the parallel sum of forced (Reynolds) and free (Grashof) convection
 — the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
-(leaf width or branch diameter):
+(leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
+temperature for the wood layer; before v0.3.1 the wood layer used the leaf temperature too.
 
 ```math
 \mathrm{Nu}_{forced}=\max\!\big(a_{lam}\mathrm{Re}^{\,n_{lam}},\,a_{turb}\mathrm{Re}^{\,n_{turb}}\big),

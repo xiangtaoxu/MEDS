@@ -156,7 +156,7 @@ under this PFT with the default allometry.
 | GPP [µmol m⁻² s⁻¹] | 7.46 | 11.07 | +3.61 | 0.94 | 0.43 |
 | NEE [µmol m⁻² s⁻¹] | −4.24 | −4.04 | +0.20 | 0.90 | 0.45 |
 | latent heat [W m⁻²] | 75.5 | 56.5 | −19.0 | 0.93 | 0.69 |
-| sensible heat [W m⁻²] | 32.4 | −39.0 | −71.4 | 0.86 | −0.59 |
+| sensible heat [W m⁻²] | 32.4 | −39.1 | −71.5 | 0.86 | −0.59 |
 | net radiation [W m⁻²] | 136.3 | 120.4 | −16.0 | 1.00 | 0.98 |
 
 - **The diurnal cycles** are closely followed in shape (r ≥ 0.99 for every flux) and differ in size.

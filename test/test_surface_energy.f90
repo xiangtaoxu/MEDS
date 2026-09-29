@@ -55,6 +55,7 @@ contains
       type(veg_thermal_params_t) :: tp
       real(wp), parameter :: C2B = 2.0_wp, DT_FAST = 1800.0_wp, TREF = 295.0_wp
       real(wp), parameter :: GBH = 0.03_wp, RHO = 1.2_wp
+      real(wp), parameter :: WOOD_EMISS = 0.90_wp       !< the default PFT wood_emissivity
       !----- ED2 ed_params.f90: b1WAI = 0.0192*0.5 (note the *0.5), b2WAI = 2.0947 for tropical  !
       !      broadleaf; b1SA = 1.582, b2SA = 1.764 (iallom default). ----------------------------!
       real(wp), parameter :: WAI_B1 = 0.0096_wp, WAI_B2 = 2.0947_wp
@@ -83,7 +84,7 @@ contains
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
          cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_sap * cp_liq
-         drdt   = 8.0_wp * tp%leaf_emiss * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
+         drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel now uses, not backward Euler's 1/(1+x) ----!
          w_end  = exp(-DT_FAST / tau)

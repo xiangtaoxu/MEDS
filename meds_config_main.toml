@@ -73,12 +73,15 @@ wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
 wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
 wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
 wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
-k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance
-wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity (segment mode)
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
-# ---- multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN; used once per-layer soil state ----
-#      is coupled; the single-layer path above ignores these) ----
-root_beta          = 0.96  # [-]      ED2 root-profile decay (0,1); smaller = shallower rooting
+conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "segment": the sapwood's
+k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
+wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
+# ---- the root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the soil ----
+#      column; layers below root_depth hold no roots. It sets the per-layer water uptake and rhizosphere
+#      conductance, the root-zone temperature of root respiration and the root-weighted soil state.
+#      exp(-4) with a 2 m depth is the exponential exp(-2 * depth [m]).
+root_beta          = 0.01831563888873418   # [-]  ED2 root-profile decay (0,1); smaller = shallower rooting
 root_depth         = 2.0   # [m]      maximum rooting depth
 specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
 
@@ -130,7 +133,6 @@ theta_res   = 0.078        # [m3/m3]  residual water content
 ksat        = 2.89e-6      # [m/s]    saturated hydraulic conductivity
 curve_par_a = 3.6          # [1/m] van Genuchten alpha  OR  [m] Campbell psi_sat (negative)
 curve_par_n = 1.56         # [-]   van Genuchten n (>1)  OR  [-] Campbell b
-root_beta   = 2.0          # [-]      exponential root-profile decay
 psi_fc      = -3.37        # [m]      field-capacity matric head (derives theta_fc)
 solid_conductivity = 3.0   # [W/m/K]  mineral-solid thermal conductivity
 dry_conductivity   = 0.15  # [W/m/K]  dry-matrix thermal conductivity
@@ -341,15 +343,11 @@ override_derived = false   # if true, a [derived] block in the PFT file pins mor
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
 
 # ------------------------------------------------------------------------------------------
-# Leaf phenology (OPT-IN). Absent or phenology_on=false -> the carbon leaf-flush gate is hard-wired
-# ON (bit-identical to before; the empirical path ignores phenology entirely). When ON, the slow-loop
-# driver advances each cohort's cue memory (GDD / chilling) from the daily-mean air temperature and
-# the carbon leaf-flush gate obeys the resulting ON/OFF/DORMANT status -- so phenology only CHANGES a
-# run under [carbon].growth_source="carbon". The daily temperature comes from the fast loop, so this
-# REQUIRES [fast].fast_biophysics_on = true AND [forcing].forcing_on = true. Per-PFT cue parameters
-# live in the PFT config file's [phenology] block. v1 wires the TEMP (bit 1) + PHOTO (bit 8) cues.
-# [phenology]
-# phenology_on = true
+# Leaf phenology runs in every run's slow loop; there is no switch. The slow-loop driver advances
+# each cohort's cue memory (GDD / chilling) from the daily-mean air temperature, and the carbon
+# leaf-flush gate obeys the resulting ON/OFF/DORMANT status, so phenology only CHANGES a run under
+# [carbon].growth_source = "carbon". The daily temperature comes from the fast loop. Per-PFT cue
+# parameters live in the PFT config file's [phenology] block.
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model

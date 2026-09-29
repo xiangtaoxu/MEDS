@@ -91,7 +91,7 @@ program test_output_roundtrip
    !      then gave nonsense -- a 136 K soil column on a real run -- and soil_matric_potential was  !
    !      evaluated on padding whose theta_sat is 0, which a -fpe0 build aborts on.  ---------------!
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
-                               2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soilp)
+                               2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soilp)
    call manager_set_soil_params(files, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 

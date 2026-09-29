@@ -25,7 +25,7 @@ program test_plant_hydraulics
                                      kirchhoff_edge_tab, phi_inverse, psi_from_water_content,          &
                                      clamp_water_to_capacity
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
-                                HYDRO_SUBSTEP_FIXED
+                                HYDRO_SUBSTEP_FIXED, HYDRO_COND_SEGMENT
    use meds_plant_hydraulics, only : solve_plant_water
    use meds_plant_hydraulics, only : root_fraction_profile
    implicit none
@@ -37,6 +37,7 @@ program test_plant_hydraulics
    call test_hydro_table()
    call test_no_flow_equilibrium()
    call test_steady_ohm()
+   call test_segment_conductance()
    call test_vs_reference()
    call test_general_kexp_solver()
    call test_diurnal()
@@ -180,6 +181,30 @@ contains
       call check('root_uptake ~ 0 at equilibrium',    flux%root_uptake, 0.0_wp, 1.0e-9_wp)
       call check('sapflow ~ 0 at equilibrium',        flux%sapflow,     0.0_wp, 1.0e-9_wp)
    end subroutine test_no_flow_equilibrium
+
+   !=======================================================================================!
+   !----- [hydraulics].conductance = "segment": the maximum conductance is the sapwood's,          !
+   !      wood_kmax * sap_area / (height * vessel_curl), in place of k_plant_max * leaf_area. With  !
+   !      k_plant_max set so the two are equal, both modes take the same step; a changed wood_kmax  !
+   !      then moves the segment step only, which is what makes the key live. -------------------!
+   subroutine test_segment_conductance()
+      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
+      type(hydro_flux_t) :: f_plant, f_seg, f_seg2
+      real(wp) :: psi0(N_HYDRO), psi_a(N_HYDRO), psi_b(N_HYDRO), psi_c(N_HYDRO)
+      print '(a)', '-- Segment conductance --'
+      call defaults(p, env, o)
+      p%k_plant_max = p%wood_kmax * env%sap_area / (env%height * p%vessel_curl) / env%leaf_area
+      psi0(:) = 0.0_wp ; psi0(NODE_LEAF) = env%soil_psi - 0.5_wp ; psi0(NODE_WOOD) = env%soil_psi
+      psi_a = psi0 ; psi_b = psi0 ; psi_c = psi0
+      call solve_plant_water(env, p, o, 900.0_wp, psi_a, f_plant)
+      o%cond_mode = HYDRO_COND_SEGMENT
+      call solve_plant_water(env, p, o, 900.0_wp, psi_b, f_seg)
+      call check('segment = whole-plant at equal conductance: psi_leaf', psi_b(NODE_LEAF), psi_a(NODE_LEAF), 1.0e-10_wp)
+      call check('segment = whole-plant at equal conductance: sapflow', f_seg%sapflow, f_plant%sapflow, 1.0e-14_wp)
+      p%wood_kmax = 2.0_wp * p%wood_kmax
+      call solve_plant_water(env, p, o, 900.0_wp, psi_c, f_seg2)
+      call check_true('a larger wood_kmax raises the segment sapflow', f_seg2%sapflow > f_seg%sapflow)
+   end subroutine test_segment_conductance
 
    !=======================================================================================!
    subroutine test_steady_ohm()

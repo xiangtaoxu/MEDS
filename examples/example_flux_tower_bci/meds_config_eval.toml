@@ -106,9 +106,6 @@ override_derived = false
 growth_source = "carbon"
 gpp_ref       = 0.3
 
-[phenology]
-phenology_on = true
-
 [leaf_physiology]
 stomatal_model     = "medlyn"
 temp_response_form = "peaked"
