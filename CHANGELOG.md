@@ -26,8 +26,8 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
-- **OpenMP is compiled in by default: `MEDS_OPENMP` is now `ON`.** The thread count stays a run-time
-  setting, `[run].n_threads`, default 1, so a default build runs serially until a config asks for
+- **OpenMP is compiled in by default: `MEDS_OPENMP` is now `ON`** (#324). The thread count stays a
+  run-time setting, `[run].n_threads`, default 1, so a default build runs serially until a config asks for
   threads. `-DMEDS_OPENMP=OFF` builds serial, and a compiler with no Fortran OpenMP now falls back to
   serial with a CMake warning where it used to stop the configure. The Python wheel stays serial
   (`python/pyproject.toml`). An existing build directory keeps its cached value. In a default build
