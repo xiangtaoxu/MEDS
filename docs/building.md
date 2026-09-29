@@ -90,21 +90,56 @@ function in `CMakeLists.txt`.
 
 ## Parallel builds
 
-**Host threading over the patch axis** — opt in at both build and run time:
+**Host threading over the patch axis** is compiled in by default; a run asks for it:
 
 ```bash
-cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_OPENMP=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-# then set [run].n_threads in the TOML (default 1).
+cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+# then set [run].n_threads in the TOML (default 1), and give the job that many cores.
 ```
 
 Output is **byte-identical at any thread count**, and the test suite asserts it.
 
-`-DMEDS_OPENMP=ON` does two things, and the second is load-bearing: it puts the OpenMP flag on the
+- `-DMEDS_OPENMP=OFF` builds serial. A compiler with no Fortran OpenMP falls back to serial with a
+  CMake warning.
+- A build directory configured while the default was serial keeps its cached `MEDS_OPENMP=OFF`.
+  Pass `-DMEDS_OPENMP=ON` or configure a fresh directory.
+- The Python wheel builds serial (`python/pyproject.toml`), so `libmeds.so` never brings a second
+  OpenMP runtime into a Python process.
+- gfortran with a conda netCDF prefix warns that the prefix's `libgomp.so.1` may hide the
+  compiler's. That is harmless when the conda copy is the newer one, as it is in the `meds`
+  environment (GCC 16 against the system's GCC 11), and the test suite passes that way.
+
+**An OpenMP build does not reproduce a serial build bit for bit.** Compiling the patch loop as a
+parallel region changes its rounding. On the BCI census example the two builds agree for 62 hours,
+then differ in the 13th significant digit, and the drift reaches about 2% of the largest hourly flux
+after five years. The tower statistics and the stand agree to every printed digit. The stack flag
+below is not the cause: a serial build with only `-auto` reproduces the serial build exactly.
+
+`MEDS_OPENMP` does two things, and the second is load-bearing: it puts the OpenMP flag on the
 fast-loop target, **and it adds the per-compiler "all locals on the stack" flag** (`-auto`,
 `-frecursive`, `-Mrecursive`) to *every* target. Intel Fortran defaults to `-auto-scalar`, which
 places local arrays and derived types in static storage shared by every thread; without that flag
 the kernels race and return plausible, silently thread-count-dependent numbers.
+
+**What threads buy today.** The five-year BCI census example, 25 patches falling to 15, ifx Release,
+each run alone on a 40-core node:
+
+| build | `n_threads` | wall time |
+|---|---|---|
+| serial | 1 | 7 min 11 s |
+| OpenMP | 1 | 7 min 17 s |
+| OpenMP | 4 | 5 min 44 s |
+| OpenMP | 8 | 13 min 15 s |
+| OpenMP | 16 | 20 min 10 s |
+
+One thread costs 1.5%. **More than four threads make this run slower.** Sampled stacks put most of
+the threads' time in ifx's `__intel_alloc_bpv` and `__intel_free_bpv`. ifx allocates a "bound
+procedure value" on entry to any routine that passes one of its internal procedures as an actual
+argument, and those allocations serialize the threads. Two such routines sit in the fast loop:
+`flux_potential` in `meds_hydr_lib`, which hands `kirchhoff_integrand` to `gauss_legendre_7` even
+when it takes the closed form, and `solve_leaf_gas_exchange`, which hands its residuals to
+`bisect_root`. Until they stop doing so, use at most four threads.
 
 **OpenMP `target` offload** (NVHPC only):
 

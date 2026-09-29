@@ -77,12 +77,33 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  Corollary: more goes on the stack, so the OMP_STACKSIZE note above applies with more force.
 #-----------------------------------------------------------------------------------------#
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
-option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7)" OFF)
+option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7); serial if the compiler has none" ON)
+#      ON BY DEFAULT. The thread count is a RUNTIME setting ([run].n_threads, default 1), so an OpenMP
+#      build still runs serially until a config asks for threads, and its output is byte-identical at
+#      any thread count. Only an OpenMP build lets test_fast_loop's 4-thread check test anything: in a
+#      serial build the directives are comments and it passes trivially. The price is the automatic-
+#      locals flag on every target, measured in docs/building.md "Parallel builds". -DMEDS_OPENMP=OFF
+#      builds serial; a compiler with no Fortran OpenMP falls back to serial with a warning.
+set(MEDS_OPENMP_ACTIVE OFF)
+if(MEDS_OPENMP)
+   if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
+      set(MEDS_OPENMP_ACTIVE ON)                  # -mp is already PUBLIC on meds_demography (below)
+   else()
+      find_package(OpenMP COMPONENTS Fortran)
+      if(OpenMP_Fortran_FOUND)
+         set(MEDS_OPENMP_ACTIVE ON)
+      else()
+         message(WARNING "MEDS: ${CMAKE_Fortran_COMPILER_ID} offers no Fortran OpenMP, so this build is "
+                         "SERIAL and [run].n_threads has no effect. Configure with -DMEDS_OPENMP=OFF "
+                         "to ask for that and silence this warning.")
+      endif()
+   endif()
+endif()
 #      Any build that can run host threads needs automatic locals -- which includes NVHPC with
 #      MEDS_GPU != none, because that puts -mp PUBLIC on meds_demography and meds_fast inherits it, so
 #      patch-loop directives are live there whether or not MEDS_OPENMP was asked for.
 set(MEDS_AUTO_LOCALS OFF)
-if(MEDS_OPENMP OR NOT MEDS_GPU STREQUAL "none")
+if(MEDS_OPENMP_ACTIVE OR NOT MEDS_GPU STREQUAL "none")
    set(MEDS_AUTO_LOCALS ON)
 endif()
 function(meds_fortran_flags tgt)
@@ -317,23 +338,25 @@ add_library(meds_model INTERFACE)
 target_link_libraries(meds_model INTERFACE meds_stepper meds_fast meds_slow meds_init)
 
 #----- Section 7 C4: HOST OpenMP over the fast-loop PATCH axis (src/driver/meds_fast_dynamics).  #
-#      OFF by default, so no existing build changes. Applied to meds_fast -- the target that owns  #
-#      the fast loop -- and PUBLIC so meds_main and the tests inherit the link flags.               #
-#      find_package resolves the per-compiler flag (-qopenmp IntelLLVM, -fopenmp GNU, -mp NVHPC).   #
+#      ON by default (the option, beside meds_fortran_flags, says why). Applied to meds_fast -- the #
+#      target that owns the fast loop -- and PUBLIC so meds_main and the tests inherit the link     #
+#      flags. find_package, run with the option, resolves the per-compiler flag (-qopenmp         #
+#      IntelLLVM, -fopenmp GNU, -mp NVHPC).                                                         #
 #      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_demography, inherited here,   #
 #      so adding it again would fight -mp=gpu; that case is left alone. Note the consequence: such a #
 #      build compiles the patch-loop directives whether or not MEDS_OPENMP is set, which is exactly  #
 #      why the thread count is a RUNTIME knob ([run].n_threads, default 1) and not a build-time one. #
 #      The option itself is declared beside meds_fortran_flags(), which is where its OTHER (and more #
 #      important) half lives: the automatic-locals flag on every target.                             #
-if(MEDS_OPENMP)
+if(MEDS_OPENMP_ACTIVE)
    if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
       message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_demography)")
    else()
-      find_package(OpenMP REQUIRED COMPONENTS Fortran)
       target_link_libraries(meds_fast PUBLIC OpenMP::OpenMP_Fortran)
       message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
    endif()
+else()
+   message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
 
 #----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #

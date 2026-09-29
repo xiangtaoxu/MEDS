@@ -184,7 +184,7 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
    **About 4½ minutes** for both stages on one core of a 2026 compute node (ifx Release);
-   `-DMEDS_OPENMP=ON` with `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
+   `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
    longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
    spin-up takes the long step. Because `dt_fast` perturbs growth it changes *which* cohorts fuse or
    are culled, which is a discrete difference rather than a shrinking truncation error — so runs at

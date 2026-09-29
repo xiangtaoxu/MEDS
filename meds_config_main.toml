@@ -13,9 +13,9 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
                                # cell of [region].box_nwse as its own polygon (see [region] at the end
                                # of this file, and docs/configuration.md "Regional runs").
 # n_threads = 1                # host threads over the fast loop's PATCH axis (plan section 7).
-                               # Default 1 = serial. Requires a build configured with
-                               # -DMEDS_OPENMP=ON; without it the directives are comments and this
-                               # is ignored. Output is byte-identical at any thread count (the
+                               # Default 1 = serial. The default build has OpenMP; one configured
+                               # with -DMEDS_OPENMP=OFF (or on a compiler without it) ignores this.
+                               # Output is byte-identical at any thread count (the
                                # site-level reductions are folded in patch order), so this is a
                                # pure wall-clock knob. Bounded by the patch count and by per-patch
                                # cost imbalance -- each patch runs its own adaptive march.
