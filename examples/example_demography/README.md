@@ -148,3 +148,19 @@ The offset decays as the stand fills, and the trajectories converge:
 The golden is now captured from the current model, so the example reports zero error. **Recapture is
 reproducible**: `python3 examples/example_demography/empirical_spinup.py --emit-golden`. It had no
 such path before, which is why it went stale silently.
+
+## The golden was recaptured again for the allometry fix (2026-09-28)
+
+#321 put the default allometry in carbon: biomass became Chave et al. (2014) eq. 4 divided by
+`C2B`, and the leaf-area scale ED2's divided by `C2B`. At a given diameter a tree now carries about
+half the carbon and half the leaf area, so the stand fills more slowly and holds less. #321 did not
+recapture the golden, and this example's check reported `total_agb` 4.9e-1 and `total_nplant`
+1.7e-1 until it was recaptured:
+
+| year | cohorts (before) | cohorts (after) | AGB before | AGB after | after / before | LAI before | LAI after |
+|---|---|---|---|---|---|---|---|
+| 2  | 6   | 6   | 4.607e-04 | 2.648e-04 | 0.575 | 0.01 | 0.00 |
+| 5  | 26  | 18  | 6.208e-01 | 3.364e-01 | 0.542 | 1.11 | 0.62 |
+| 10 | 138 | 103 | 3.250e+00 | 2.169e+00 | 0.667 | 3.50 | 2.47 |
+| 20 | 197 | 255 | 6.943e+00 | 5.380e+00 | 0.775 | 5.57 | 4.61 |
+| 40 | 237 | 309 | 1.045e+01 | 8.476e+00 | 0.812 | 6.62 | 5.97 |
