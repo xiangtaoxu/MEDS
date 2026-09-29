@@ -102,11 +102,11 @@ mort_beta_exp  = 0.2792
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899
-agb_c1     = 0.06080334
-agb_c2     = 1.0044785
+agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
+agb_c2     = 0.976          # Chave et al. (2014) eq. 4
 ca_b1      = 0.370
 ca_b2      = 0.464
-lai_b1     = 0.46769540
+lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5
 

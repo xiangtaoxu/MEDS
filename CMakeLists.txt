@@ -660,6 +660,14 @@ if(MEDS_BUILD_TESTS)
    #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so  #
    #      it can drift silently from the registry -- it did, by twenty variables (#241). The source #
    #      tree path is passed in because ctest runs from the build tree.                            #
+   #----- The shipped [allometry] block must equal the meds_allometry initializers (the Python  #
+   #      library's config-free values); biomass must be Chave 2014 in carbon, leaf ED2's over C2B. #
+   add_executable(test_allometry_defaults test/test_allometry_defaults.f90)
+   target_link_libraries(test_allometry_defaults PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_allometry_defaults)
+   add_test(NAME allometry_defaults COMMAND test_allometry_defaults
+            ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
+
    add_executable(test_io_config_example test/test_io_config_example.f90)
    target_link_libraries(test_io_config_example PRIVATE meds_io_prep meds_testsupport)
    meds_fortran_flags(test_io_config_example)

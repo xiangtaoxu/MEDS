@@ -121,11 +121,11 @@ mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 # crown_area = ca_b1 * (dbh^2*h)^ca_b2; light = exp(-light_ext * overtopping_LAI).
 b1Ht       = 1.139963
 b2Ht       = 0.564899
-agb_c1     = 0.06080334     # [kgC] AGB scale (Chave-2014)
-agb_c2     = 1.0044785      # AGB exponent on rho and on dbh^2*h
+agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
+agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
 ca_b1      = 0.370          # crown-area scale
 ca_b2      = 0.464          # crown-area exponent
-lai_b1     = 0.46769540     # per-stem leaf-area scale (= ED2 SLA*bleaf)
+lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 

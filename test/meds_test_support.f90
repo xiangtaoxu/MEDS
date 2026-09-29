@@ -170,9 +170,9 @@ contains
       end associate
 
       cfg%allom%b1Ht   = 1.139963_wp   ; cfg%allom%b2Ht   = 0.564899_wp
-      cfg%allom%agb_c1 = 0.06080334_wp ; cfg%allom%agb_c2 = 1.0044785_wp
+      cfg%allom%agb_c1 = 0.03365_wp ; cfg%allom%agb_c2 = 0.976_wp
       cfg%allom%ca_b1  = 0.370_wp      ; cfg%allom%ca_b2  = 0.464_wp
-      cfg%allom%lai_b1 = 0.46769540_wp ; cfg%allom%lai_b2 = 0.6410495_wp
+      cfg%allom%lai_b1 = 0.23384770_wp ; cfg%allom%lai_b2 = 0.6410495_wp
       cfg%allom%light_ext = 0.5_wp
       call derive_parameters(cfg)
    end function build_test_config
