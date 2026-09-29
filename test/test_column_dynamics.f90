@@ -15,7 +15,7 @@
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : latent_heat_fusion, rho_h2o
+   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
@@ -24,7 +24,7 @@ program test_column_dynamics
    use meds_column_view,       only : column_cohort_init
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
-   use meds_canopy_types, only : set_aero_env_atm
+   use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
@@ -51,6 +51,10 @@ program test_column_dynamics
    real(wp) :: e_col_snow, e_col_rain, snow_mass_total, fusion_expect
    logical  :: cold_air = .false.   !< RUN 9b: the sub-freezing air of the snowfall runs, without snowfall
    logical  :: snow_physical, snowfall_on = .false.
+   !----- RUN 5b: a dark, isothermal, rain-free day, and the first step's reported H with the   !
+   !      conductance it ran on (rho*ustar*temp1). ------------------------------------------------!
+   logical  :: iso_dark = .false.
+   real(wp) :: h_first, gah_first
    real(wp) :: snow_swe_split
    !----- RUN 9 (snowfall with the snow STORE off): the snowfall rate is a VARIABLE so the sub-      !
    !      freezing air and the frozen-rainfall flux can be toggled INDEPENDENTLY -- the run compares    !
@@ -205,6 +209,34 @@ program test_column_dynamics
    !  RUN 5 -- goal (a) Layer 1: the sub-solver TOLERANCE UNIFICATION plumbing.            !
    !=====================================================================================!
    call test_tolerance_unification()
+
+   !=====================================================================================!
+   !  RUN 5b -- the reference level. The surface layer compares the canopy air with the air at  !
+   !  the canopy-air top (zref), both referenced to that level, and the reported sensible heat  !
+   !  is the flux the whole-column ledger exchanges. A dark column at the air's own temperature !
+   !  has nothing driving a sensible flux, so its first step reports |H| far below              !
+   !  g_atm_heat*g*zref under both integrators. Before v0.3.1 the reference air's potential     !
+   !  temperature carried +(g/cp)*zref that the canopy air's did not, and H came out at about   !
+   !  -g_atm_heat*g*zref here.                                                                  !
+   !=====================================================================================!
+   call test_reference_level()
+   iso_dark = .true.
+   do isch = 1_ik, 2_ik
+      if (isch == 1_ik) then
+         cfg%time_integrator = INTEG_ARK  ; schnm = 'ISO ARK  '
+      else
+         cfg%time_integrator = INTEG_RK45 ; schnm = 'ISO RK45 '
+      end if
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      call integrate_day()
+      call check_true(trim(schnm)//': a dark isothermal column reports |H| < 5% of g_atm_heat*g*zref',               &
+              abs(h_first) < 0.05_wp * gah_first * grav * aenv%zref, h_first)
+      print '(3a,f8.3,a,f8.3,a)', '   (RUN 5b ', trim(schnm), ' H = ', h_first, ' W/m2; g_atm_heat*g*zref = ',       &
+            gah_first * grav * aenv%zref, ' W/m2)'
+   end do
+   iso_dark = .false.
+   cfg%time_integrator = INTEG_ARK
+   col_config%integrator = build_integrator_opts(cfg)
 
    !=====================================================================================!
    !  RUN 6 -- opt-in CANOPY-SURFACE WATER (MEDS_ED2_RK45_DESIGN.md sec 3.4, P1): reruns the   !
@@ -508,7 +540,7 @@ contains
    !----- One 24 h diurnal integration from a freshly seeded column state. Fills the host    !
    !      diagnostic variables (min/max ranges, noon/night captures) + budget. ----------------!
    subroutine integrate_day()
-      real(wp)    :: t_sec, cosz, t_air
+      real(wp)    :: t_sec, cosz, t_air, h_step
       integer(ik) :: istep, k
 
 
@@ -570,6 +602,10 @@ contains
          forc%snowfall = 0.0_wp
          if (snowfall_on) forc%snowfall = snowf_rate
          if (snowfall_on .or. cold_air) t_air = 268.0_wp + 3.0_wp * (cosz - 0.3_wp)   ! sub-freezing: the pack must survive
+         if (iso_dark) then     ! RUN 5b: dark, rain-free, the air at the column's own temperature
+            t_air = t0 ; forc%abs_sw = 0.0_wp ; forc%abs_par = 0.0_wp ; forc%abs_sw_ground = 0.0_wp
+            forc%rainfall = 0.0_wp
+         end if
          forc%air_temp         = t_air                                    ! values frozen precipitation as ice at this T
          forc%enthalpy_atm = cas_enthalpy_of_temp(t_air, 0.008_wp)
          forc%shv_atm      = 0.008_wp
@@ -580,7 +616,12 @@ contains
          !      and can pin `ustar` on its floor. Go through the SAME routine fill_aenv uses. --------!
          call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)
 
-         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget)
+         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,     &
+                               h_flux=h_step)
+         if (iso_dark) then
+            h_first = h_step ; gah_first = aenv%rho_air * aero%ustar * aero%temp1
+            exit
+         end if
 
          ss_min = min(ss_min, biophys%soil_e%soil_temp(1))   ; ss_max = max(ss_max, biophys%soil_e%soil_temp(1))
          sd_min = min(sd_min, biophys%soil_e%soil_temp(nsl)) ; sd_max = max(sd_max, biophys%soil_e%soil_temp(nsl))
@@ -672,6 +713,31 @@ contains
                  minval(a_warm_wood%wood_gbh - a_ref%wood_gbh))
       end block
    end subroutine test_aero_order
+
+   !----- The reference level (RUN 5b). Canopy air at the temperature and humidity of the air at   !
+   !      the canopy-air top is a neutral surface layer with no temperature scale, whatever zref is.  !
+   !      Before v0.3.1 this case solved as stable, with tstar = temp1*(g/cp)*zref.                    !
+   subroutine test_reference_level()
+      type(column_cohort_t) :: c3
+      type(aero_out_t)      :: a3
+      type(aero_env_t)      :: e3
+      type(aero_geom_t)     :: g3
+      real(wp)              :: lt(1)
+      call alloc_column_cohort(c3, 1_ik)
+      c3%height = [38.0_wp] ; c3%lai = [5.0_wp] ; c3%crown = [0.9_wp]
+      c3%leaf_width = [0.04_wp] ; c3%branch_diam = [0.02_wp]
+      g3%veg_height = 38.0_wp ; g3%opencan_frac = 0.0_wp ; g3%snowfac = 0.0_wp
+      e3%u_ref = 3.0_wp ; e3%zref = 43.0_wp
+      call set_aero_env_atm(e3, 300.0_wp, 0.015_wp, 400.0_wp)
+      call set_aero_env_canopy(e3, 300.0_wp, 0.015_wp, 400.0_wp, 300.0_wp)
+      lt = 300.0_wp
+      call alloc_aero_out(a3, 1_ik)
+      call aero_bottom_to_top(col_config%aero, e3, g3, 1_ik, c3%height, c3%lai, c3%crown, c3%leaf_width,    &
+                              c3%branch_diam, lt, lt, a3)
+      call check_true('reference level: equal canopy and reference air has no temperature scale',               &
+              a3%tstar == 0.0_wp, a3%tstar)
+      call check_true('reference level: equal canopy and reference air is neutral', a3%zeta == 0.0_wp, a3%zeta)
+   end subroutine test_reference_level
 
    !----- Goal (a) Layer 1. The fast loop has FOUR adaptive error estimates (the ARK march plus the  !
    !      nested soil-water / soil-energy / plant-hydraulics sub-solvers), and before the unification  !

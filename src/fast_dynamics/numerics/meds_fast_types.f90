@@ -403,7 +403,7 @@ module meds_fast_types
       real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
       real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)
       real(wp) :: mo_rough      = 0.0_wp      !< [m]    roughness length     (canopy geometry, frozen)
-      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature at zref
+      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature referenced to zref (= the air temperature there)
       real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
                                               !<        which need not equal shv_atm below)
       real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density

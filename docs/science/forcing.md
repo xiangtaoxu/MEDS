@@ -423,9 +423,10 @@ T(z_c) = T_m-\frac{g}{c_p}\,(z_c-z_T) \qquad(16)
 
 with $h$ a height above $d$ (a reanalysis's heights already are; a tower's minus $d$), floored at
 $`2z_0`$ like the aerodynamics' own reference height, and $`z_T = d + `$`tq_height` above the zero plane
-or `tq_height` above the ground. A local wind (`"local"`) skips the first factor. Because the
-aerodynamics' potential temperature is $\theta = T + (g/c_p)\,z$ with the same constants, $\theta$ at
-$`z_c`$ is exactly the forcing's. Humidity, pressure, radiation, rain and CO₂ are unchanged — pressure
+or `tq_height` above the ground. A local wind (`"local"`) skips the first factor. The move
+conserves potential temperature, $\theta = T + (g/c_p)\,z$. The aerodynamics then references both the
+canopy air's potential temperature and this air's to $`z_c`$, where each equals its actual temperature
+([canopy aerodynamics](canopy_aerodynamics.md) §2). Humidity, pressure, radiation, rain and CO₂ are unchanged — pressure
 stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is re-derived.
 The aerodynamics then runs from $`z_c`$: there is no fixed reference height, and nothing has to clear the
 canopy.
