@@ -794,6 +794,8 @@ contains
                red_fast(isub,ip)%h_flux        = w_area * h_flux
                red_fast(isub,ip)%rnet          = w_area * rnet
                red_fast(isub,ip)%sw_in         = w_area * met%swdown()
+               red_fast(isub,ip)%sw_up         = w_area * (forc%sw_up_vis + forc%sw_up_nir)
+               red_fast(isub,ip)%lw_up         = w_area * forc%lw_up
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
                red_fast(isub,ip)%air_temp      = w_area * met%tair_k
                !----- CARBON. budget%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
@@ -936,6 +938,8 @@ contains
                out_bufs%fast(isub)%h_flux        = out_bufs%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
                out_bufs%fast(isub)%rnet          = out_bufs%fast(isub)%rnet          + red_fast(isub,ip)%rnet
                out_bufs%fast(isub)%sw_in         = out_bufs%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
+               out_bufs%fast(isub)%sw_up         = out_bufs%fast(isub)%sw_up         + red_fast(isub,ip)%sw_up
+               out_bufs%fast(isub)%lw_up         = out_bufs%fast(isub)%lw_up         + red_fast(isub,ip)%lw_up
                out_bufs%fast(isub)%ustar         = out_bufs%fast(isub)%ustar         + red_fast(isub,ip)%ustar
                out_bufs%fast(isub)%air_temp      = out_bufs%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
                out_bufs%fast(isub)%nee_rate      = out_bufs%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate

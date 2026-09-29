@@ -204,6 +204,24 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Added
 
+- **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#PRNUM; default false,
+  restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
+  run's PFT file as a census start sets them: acclimated to each cohort's LAI above it, as the state
+  holds it, with plasticity on, and the PFT's top-of-canopy values with it off. Leaf area stays as
+  read, and leaf carbon follows the new SLA, storage taking the difference. Without it a restart
+  keeps the state's traits, so a changed `vcmax25` never reached the cohorts. This is what lets a
+  calibration trial restart from a shared state (`MEDS_FAST_CALIBRATION_PLAN.md` P0b). Tests:
+  `restart_exact` checks that a restart with `vcmax25` × 1.3 carries the traits a census start with
+  × 1.3 gives, with and without plasticity, and keeps the leaf area.
+- **The parameter record, `<prefix>_parameters.csv`** (#PRNUM), beside the diagnostic output and
+  beside the state: one row per key the loader read from any file, `source,key,index,present,value`,
+  with `present` saying whether it was set in the file or defaulted and `value` the value used, to
+  17 digits. A key nothing reads is absent, which is how a misspelt key in an optional block, until
+  now silently ignored, can be caught. The BCI example's record has 375 rows. Tests:
+  `test_biophysics_opts_config` checks a set key, a defaulted key and a misspelt one.
+- **Hourly `sw_up_fast` and `lw_up_fast`** (#PRNUM): the shortwave (VIS + NIR) and the longwave,
+  emission included, leaving the canopy top, beside `rnet_fast`. Until now they were daily only.
+
 - **`[soil]` sets the bare ground's optics** (#327): `ground_albedo_vis` (0.15), `ground_albedo_nir`
   (0.30) and `ground_emissivity` (0.95), the values the code had fixed. The canopy radiation solver
   reads them, and snow still covers them by its fraction. The albedos must lie in [0, 1) and the
@@ -263,6 +281,21 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
   lapse keys with the lapse off, each run through `meds_main`.
 
 ### Fixed
+
+- **A restart did not continue the run that wrote the state** (#PRNUM). The state file kept each
+  cohort's dbh but not its carbon pools or geometry, and the reader rebuilt them on the allometry.
+  Cohort fusion keeps the pools and leaves a fused cohort below the allometry for its dbh, so the
+  restart moved the leaf area (BCI: LAI 5.6380 written, 5.6389 read) and, with plasticity on, reset
+  the fine-root carbon, which sets root respiration and rhizosphere conductance, by up to 2× in the
+  most shaded cohorts. The file also lacked the LAI above each cohort (so the traits' light
+  environment restarted as an open sky), the canopy's interception film, the growth-rate buffer
+  behind the mortality predictor, and the slow loop's CO₂ hand-off to the fast NEE. All are stored
+  now, optional on read, so an older state file still restarts as before.
+  - Tests: `restart_exact` checks that a run split at a restart matches the unsplit run on every
+    state variable, bit for bit, with the slow loop off (interception on) and on. The previous
+    binary fails it in 13 and 28 variables.
+  - The BCI example, which starts from a census, is unchanged: a 31-day run matches `beta` on every
+    output variable.
 
 - **The reported sensible heat was about 100 W m⁻² too low, and every surface-layer solve too
   stable** (#328). The reference air's potential temperature was referenced to the ground,

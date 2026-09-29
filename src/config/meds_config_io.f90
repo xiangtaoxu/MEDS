@@ -1128,6 +1128,7 @@ contains
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
       cfg%init_soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init_soil_temp)
       cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
+      cfg%init_reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init_reacclimate_traits)
 
       !----- [state]: the restart stream (#173); every diagnostic is [output]'s. A config that still  !
       !      spells the block [io], the name it had before v0.3.0, would parse and do nothing, so it  !

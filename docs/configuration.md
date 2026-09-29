@@ -31,8 +31,17 @@ Two exceptions, both explicit:
   each key with a fallback to its in-type default, so the feature needs no TOML edits. Where this
   applies, the block's comment says so.
 
-Every run writes `<output_dir>/<prefix>_pft_parameters.csv` — one row per PFT with every per-PFT
-trait actually used. It is a provenance record: what the run really did, not what you meant.
+Every run that writes a state writes `<output_dir>/<prefix>_pft_parameters.csv` — one row per PFT
+with every per-PFT trait actually used. It is a provenance record: what the run really did, not what
+you meant.
+
+Every run also writes the **parameter record**, `<prefix>_parameters.csv`, beside its diagnostic
+output (`[output].dir`, `[output].prefix`) and beside its state (`[state]`), whichever it writes. It
+has one row for every key the loader read, from every file it read (the main file, the PFT file,
+the output list): `source,key,index,present,value`. `index` is 0 for a scalar and the element for an
+array; `present` says whether the key was in the file or took its compiled default; `value` is what
+the run used, to the last digit. A key nothing reads is absent, so a misspelt key, which the
+optional blocks otherwise ignore silently, can be caught by looking for it here.
 
 ## The two files
 
@@ -136,7 +145,7 @@ than removed:
 |---|---|---|
 | `0` | **near-bare ground** (the default) | nothing |
 | `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort, columns matched by name from its header: `patch_id`, `dbh` [cm], `pft` and `nplant` [plants per m² of the patch] are required; `patch_area`, `site_id`, `cohort_id` and `height` are optional. `dbh` drives the allometry. |
-| `2` | a **state checkpoint** | `[init].restart_file` — a `<prefix>-S-*.nc` written by a previous run. Continues the exact instantaneous state. |
+| `2` | a **state checkpoint** | `[init].restart_file` — a `<prefix>-S-*.nc` written by a previous run. Continues the exact instantaneous state: a run split at a restart ends where the unsplit run ends, bit for bit. |
 
 Each distinct `patch_id` is a patch of age 0. With `patch_area`, in any unit, the patches take their
 areas normalized to the site; without it they share it equally. A file without a header whose rows
@@ -150,6 +159,15 @@ disturbance, and under the same `[demography]` switches. So a census can carry o
 tree size and one patch per plot cell, and the model starts from a stand within `max_cohort` and
 `max_patch`, or above them where `patch_light_tol_max` keeps dissimilar patches apart. The run log
 prints the counts before and after.
+
+**A restart can take this run's leaf traits** instead of the state file's:
+`[init].reacclimate_traits = true` (restart only; default false). The plastic traits (`sla`,
+`vcmax25`, `rd25`, leaf lifespan) are then set as a census start sets them from this run's PFT file:
+acclimated to each cohort's leaf area above it, as the state file holds it, with
+`[trait_dynamics].trait_plasticity_on`, and the PFT's top-of-canopy values without it. Leaf area stays
+as read, and leaf carbon follows the new SLA, with storage taking up the difference. A calibration
+trial restarts from a shared state this way, so a changed `vcmax25` reaches the cohorts
+(`scripts/calibrate_fast`).
 
 A census is how you start from a field inventory; see
 [`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
