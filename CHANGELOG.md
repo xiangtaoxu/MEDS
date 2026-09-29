@@ -265,7 +265,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 ### Fixed
 
 - **The reported sensible heat was about 100 W m⁻² too low, and every surface-layer solve too
-  stable** (#PRNUM). The reference air's potential temperature was referenced to the ground,
+  stable** (#328). The reference air's potential temperature was referenced to the ground,
   `T + (g/cp)·zref`, and the canopy air's was not, while the canopy air's energy budget exchanged heat
   on the two actual temperatures. So the reported H, `g_ah·cp·(T_cas − θ_atm)`, sat
   `g_ah·g·zref` below the flux the budget booked, and the Monin–Obukhov solve saw `(g/cp)·zref`
