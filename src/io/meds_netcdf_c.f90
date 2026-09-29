@@ -205,6 +205,13 @@ module meds_netcdf_c
          character(kind=c_char), intent(out) :: tp(*)
       end function nc_get_att_text
 
+      integer(c_int) function nc_get_att_double(ncid, varid, name, ip) bind(c, name="nc_get_att_double")
+         import :: c_char, c_int, c_double
+         integer(c_int), value,  intent(in)  :: ncid, varid
+         character(kind=c_char), intent(in)  :: name(*)
+         real(c_double),         intent(out) :: ip(*)
+      end function nc_get_att_double
+
       type(c_ptr) function nc_strerror(ncerr) bind(c, name="nc_strerror")
          import :: c_int, c_ptr
          integer(c_int), value, intent(in) :: ncerr
@@ -346,6 +353,24 @@ contains
          text(i:i) = cbuf(i)
       end do
    end function nc_get_att_text_f
+
+   !----- A one-value numeric attribute, converted to double by the library whatever its stored  !
+   !      type. A missing or longer attribute returns the error status and leaves `value` at 0.    !
+   integer(c_int) function nc_get_att_double_f(ncid, varid, name, value) result(st)
+      integer(c_int),   intent(in)  :: ncid, varid
+      character(len=*), intent(in)  :: name
+      real(c_double),   intent(out) :: value
+      character(kind=c_char) :: cname(len_trim(name) + 1)
+      integer(c_size_t) :: alen
+      real(c_double)    :: buf(1)
+      value = 0.0_c_double
+      cname = cstr(name)
+      st = nc_inq_attlen(ncid, varid, cname, alen)
+      if (st /= NC_NOERR) return
+      if (alen /= 1_c_size_t) then ; st = -1_c_int ; return ; end if
+      st = nc_get_att_double(ncid, varid, cname, buf)
+      if (st == NC_NOERR) value = buf(1)
+   end function nc_get_att_double_f
 
    !----- Abort with the netCDF error message if `status` is not NC_NOERR. ----------------!
    subroutine nc_check(status, context)

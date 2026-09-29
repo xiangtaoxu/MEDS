@@ -72,12 +72,10 @@ contains
    end function interpolate_wind_energy
 
    !=======================================================================================!
-   !  SOLAR TIME + ZENITH. ERA5-Land is UTC, so local apparent solar seconds require the         !
-   !  longitude + equation-of-time correction (design §5.1). The single transform:               !
-   !     t_solar = t_utc + (longitude - 15*utc_offset)*240 s/deg + eot(doy)                        !
-   !  reduces to t_utc + longitude*240 + eot for a UTC file (utc_offset = 0). A local-clock         !
-   !  file (utc_offset /= 0) shares the same one line. apply_solar_longitude = .false. passes the    !
-   !  clock seconds straight through (a file already in local apparent solar time).                   !
+   !  SOLAR TIME + ZENITH. Every forcing clock is UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1), so     !
+   !  local apparent solar seconds are the UTC seconds plus the longitude and the equation of      !
+   !  time (design §5.1):                                                                         !
+   !     t_solar = t_utc + longitude*240 s/deg + eot(doy)                                          !
    !=======================================================================================!
    pure function equation_of_time(t) result(eot_sec)
       type(meds_time_t), intent(in) :: t
@@ -87,26 +85,20 @@ contains
                             - 0.014615_wp*cos(2.0_wp*b) - 0.040849_wp*sin(2.0_wp*b) ) * 60.0_wp
    end function equation_of_time
 
-   pure function apparent_solar_seconds(t, sec_clock, longitude_deg, utc_offset_h, apply_lon) result(s)
+   pure function apparent_solar_seconds(t, sec_utc, longitude_deg) result(s)
       type(meds_time_t), intent(in) :: t              !< record/model time (for declination + EoT via doy)
-      real(wp),          intent(in) :: sec_clock      !< [s] seconds into day on the FILE clock
-      real(wp),          intent(in) :: longitude_deg, utc_offset_h
-      logical,           intent(in) :: apply_lon
+      real(wp),          intent(in) :: sec_utc        !< [s] seconds into the UTC day
+      real(wp),          intent(in) :: longitude_deg
       real(wp) :: s
-      if (apply_lon) then
-         s = sec_clock + (longitude_deg - 15.0_wp * utc_offset_h) * 240.0_wp + equation_of_time(t)
-      else
-         s = sec_clock                                 ! file clock IS local apparent solar time
-      end if
+      s = sec_utc + longitude_deg * 240.0_wp + equation_of_time(t)
    end function apparent_solar_seconds
 
-   !----- cos(solar zenith) at a file-clock sub-daily cursor (converts to solar time first). --!
-   pure function met_solar_cosz(t, sec_clock, latitude_deg, longitude_deg, utc_offset_h, apply_lon) result(cosz)
+   !----- cos(solar zenith) at a sub-daily UTC cursor (converts to solar time first). ---------!
+   pure function met_solar_cosz(t, sec_utc, latitude_deg, longitude_deg) result(cosz)
       type(meds_time_t), intent(in) :: t
-      real(wp),          intent(in) :: sec_clock, latitude_deg, longitude_deg, utc_offset_h
-      logical,           intent(in) :: apply_lon
+      real(wp),          intent(in) :: sec_utc, latitude_deg, longitude_deg
       real(wp) :: cosz, sec_solar
-      sec_solar = apparent_solar_seconds(t, sec_clock, longitude_deg, utc_offset_h, apply_lon)
+      sec_solar = apparent_solar_seconds(t, sec_utc, longitude_deg)
       cosz = solar_cosz(t, sec_solar, latitude_deg)
    end function met_solar_cosz
 
@@ -119,18 +111,17 @@ contains
    !  <cosz>_win = 0 and F_avg = 0, so factor is returned 0 and all SW routes to 0.                   !
    !=======================================================================================!
    pure function cosz_reconstruct_factor(t, win_start_sec, dt_sub, dt_win,                      &
-                                         latitude_deg, longitude_deg, utc_offset_h, apply_lon) result(factor)
+                                         latitude_deg, longitude_deg) result(factor)
       type(meds_time_t), intent(in) :: t
       real(wp),          intent(in) :: win_start_sec, dt_sub, dt_win
-      real(wp),          intent(in) :: latitude_deg, longitude_deg, utc_offset_h
-      logical,           intent(in) :: apply_lon
+      real(wp),          intent(in) :: latitude_deg, longitude_deg
       real(wp)    :: factor, cosz_sum, cosz_bar, sec, ci
       integer(ik) :: nsub, i
       nsub = max(1_ik, nint(dt_win / max(dt_sub, tiny_num), ik))
       cosz_sum = 0.0_wp
       do i = 1_ik, nsub                                   ! midpoint rule over the FULL window
          sec = win_start_sec + (real(i, wp) - 0.5_wp) * (dt_win / real(nsub, wp))
-         ci  = met_solar_cosz(t, sec, latitude_deg, longitude_deg, utc_offset_h, apply_lon)
+         ci  = met_solar_cosz(t, sec, latitude_deg, longitude_deg)
          cosz_sum = cosz_sum + max(ci, 0.0_wp)            ! night sub-samples contribute exactly 0
       end do
       cosz_bar = cosz_sum / real(nsub, wp)

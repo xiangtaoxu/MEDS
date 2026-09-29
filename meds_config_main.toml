@@ -389,38 +389,41 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
 # constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. Two sources:
-#   format = "era5land"  the global ED_ERA5land archive (per-variable monthly files, built with
+#   format = "ED_ERA5land"  the global ED_ERA5land archive (per-variable monthly files, built with
 #                        scripts/prepare_era5/). The reader finds the site's cell itself, takes its
 #                        elevation from the archive's static file, converts dewpoint to specific
 #                        humidity with the model's own saturation curve, and carries the wind vector.
 #                        Keys: data_path and max_distance_km; NOT path, grid_index, grid_match or
 #                        [site].grid_elevation (rejected if present).
-#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; make one with
-#                        scripts/prepare_era5/make_forcing_file.py, from an ED_ERA5land archive or from
-#                        a small download (download_era5land_cds.py, then postprocess_era5land.py
-#                        --split none). Keys: path, grid_index, grid_match and [site].grid_elevation.
-# When forcing_on=true, every other key below is required.
+#   format = "ED_default"   one multi-grid forcing NetCDF: from ERA5-Land with
+#                        scripts/prepare_era5/make_forcing_file.py (from an ED_ERA5land archive or a
+#                        small download), or from flux-tower data with
+#                        scripts/prepare_flux_tower/make_tower_forcing.py. Keys: path, grid_index,
+#                        grid_match. The file carries the humidity its source measured (RHair, Tdew
+#                        or Qair, exactly one), and MEDS converts it with its own saturation curve.
+# Every forcing clock is UTC: a file must say time_zone = "UTC", and local time is a matter for
+# the post-processing of the output. When forcing_on=true, every other key below is required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
-# longitude             = -76.50         # [deg +E] drives local solar time
-# utc_offset            = 0.0            # [h] ERA5-Land is UTC -> 0
+# longitude             = -76.50         # [deg +E] with the UTC clock, gives local solar time
 # elevation             = 320.0          # [m] site elevation (used by elevation lapse)
-# apply_solar_longitude = true           # UTC file -> longitude gives local solar time
 #   ---- TERRAIN lapse, from the forcing cell's elevation to the site's (docs/science/forcing.md §8):
 #   T by the lapse rate, P hydrostatically, q at constant relative humidity, file LWdown by the
 #   clear-sky eps*T^4 ratio. Region polygons sit at their cell's elevation, so it is a no-op there.
+#   lapse_rate_tair and grid_elevation are read only when the lapse is on (refused when it is off);
+#   a flux tower measures at the site, so it runs with the lapse off.
 # apply_elevation_lapse = true
 # lapse_rate_tair       = 0.0065         # [K/m] one rate, or twelve (January .. December), e.g. the
 #                                        # N. Hemisphere monthly rates of Kunkel (1989), as tabulated by
 #                                        # Liston & Elder (2006, MicroMet, Table 1):
 #                                        # [0.0044, 0.0059, 0.0071, 0.0078, 0.0081, 0.0082,
 #                                        #  0.0081, 0.0081, 0.0077, 0.0068, 0.0055, 0.0047]
-# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "netcdf" only; the
-#                                        # archive reads it from its static file)
+# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "ED_default" only;
+#                                        # the archive reads it from its static file)
 # [forcing]
 # forcing_on            = true
-# format                = "netcdf"       # "era5land" | "netcdf" | "const"
-#   ---- format = "era5land" --------------------------------------------------------------------
+# format                = "ED_default"   # "ED_ERA5land" | "ED_default" | "const"
+#   ---- format = "ED_ERA5land" -----------------------------------------------------------------
 # data_path             = "/path/to/ED_ERA5land"   # the archive folder (installation-specific)
 # max_distance_km       = 15.0           # a site on a no-data cell (coast, lake edge) takes the nearest
 #                                        # valid cell within this distance; farther is an error
@@ -429,9 +432,9 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #   The months read are the recycle window when recycle = true, else the run period; every file
 #   they need must exist when the run starts. A run starting at 00:00 on the 1st also reads the
 #   previous month's file, which holds that record (the archive stamps the END of each hour).
-#   The reader loads one month (plus that record) before each step, so format = "era5land" needs
+#   The reader loads one month (plus that record) before each step, so format = "ED_ERA5land" needs
 #   [run].dt_slow = "1d" and a start_time at 00:00:00.
-#   ---- format = "netcdf" ----------------------------------------------------------------------
+#   ---- format = "ED_default" ------------------------------------------------------------------
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")
 # grid_match            = "explicit"     # "explicit" (use grid_index) | "nearest" ([site] lat/lon -> nearest cell)
@@ -439,7 +442,8 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #   ---- The forcing's own heights (docs/science/forcing.md §8). Every sample is moved from them to
 #   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
 #   potential temperature and humidity are conserved, and the wind follows the patch's own log
-#   profile. There is no fixed reference height any more. Values below are ERA5-Land's.
+#   profile. Values below are ERA5-Land's; a flux tower gives its sensor heights above the ground,
+#   height_above = "ground" and wind_exposure = "local" (examples/example_flux_tower_bci).
 # tq_height             = 2.0            # [m] height of air temperature and humidity
 # wind_height           = 10.0           # [m] height of the wind
 # height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement
@@ -450,7 +454,8 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # wind_blending_height  = 40.0           # [m] "open_terrain" only: the height it came down from
 #   --------------------------------------------------------------------------------------------
 # timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
-# avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
+# avg_convention        = "end"          # flux vars mean over the interval ENDING at the stamp;
+#                                        # "begin" for one BEGINNING there (AmeriFlux TIMESTAMP_START)
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
 # lwdown_source         = "file"         # ERA5-Land has strd
 #   ---- CO2: never from the met file (one that carries CO2air is rejected) ----------------------
@@ -491,9 +496,9 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 
 #-------------------------------------------------------------------------------------------------#
 # [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
-# Every valid cell of the box with enough land becomes a polygon at its cell centre, orography     #
-# and UTC; so [site].latitude/longitude/utc_offset/elevation and [forcing].max_distance_km are      #
-# refused in region mode. Needs format = "era5land", init_mode = 0 and write_state = false.         #
+# Every valid cell of the box with enough land becomes a polygon at its cell centre and orography, #
+# so [site].latitude/longitude/elevation and [forcing].max_distance_km are refused in region mode.  #
+# Needs format = "ED_ERA5land", init_mode = 0 and write_state = false.                              #
 #-------------------------------------------------------------------------------------------------#
 # [region]
 # box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180

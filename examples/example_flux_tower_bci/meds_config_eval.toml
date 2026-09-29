@@ -1,0 +1,168 @@
+# SPDX-License-Identifier: Apache-2.0
+# MEDS example_flux_tower_bci -- STAGE 2 of 2: the five tower years, 2012-08-01 to 2017-08-01 UTC,
+# restarted from the stage-1 spin-up, with hourly output to compare against the tower's own fluxes.
+# Every output stamp is UTC; the post-processing shifts it to Panama time (UTC-5) for the comparison.
+
+[run]
+dt_slow    = "1d"
+start_time = "2012-08-01"
+end_time   = "2017-08-01"      # the recycle window itself, so every model year reads its own tower year
+
+[fast]
+fast_biophysics_on  = true
+dt_fast             = "900s"
+time_integrator     = "ark"
+ark_adaptive        = true
+ark_rtol            = 1.0e-3
+
+[demography]
+demography_on             = true
+do_cohort_fissfuse        = true
+do_patch_disturbance      = true
+do_patch_fissfuse         = true
+max_cohort                = 60
+n_cohort_fusion_iter      = 6
+cohort_size_tol_min       = 0.02
+cohort_size_tol_max       = 0.10
+cohort_lai_cap            = 1.0
+min_cohort_agb            = 1.0e-6
+negligible_nplant         = 1.0e-8
+split_eps                 = 1.0e-4
+enable_cohort_fission     = true
+n_height_layers           = 16
+max_patch                 = 12
+n_patch_fusion_iter       = 6
+patch_light_tol           = 0.10
+patch_light_maxdev_factor = 1.5
+patch_diff_age_tol        = 1.0
+min_patch_area            = 1.0e-4
+patch_min_area_remain     = 0.99
+enable_patch_fission      = false
+conservation_tol          = 0.001
+growth_memory_days        = 90.0
+
+[disturbance]
+patch_disturbance_rate     = 0.014
+disturbance_survive_height = 10.0
+
+[recruitment]
+min_recruit_size = 1.0e-2
+
+[init]
+init_mode    = 2                  # restart from stage 1
+restart_file = "output/spinup-S-20120801000000.nc"
+census_file  = "none"
+pft_config   = "pft_parameters.toml"
+
+[state]
+output_dir     = "output"
+output_prefix  = "eval"
+write_state    = false
+interval_years = 5
+
+[output]
+enabled       = true
+dir           = "output"
+prefix        = "eval"
+io_config     = "output_variables.toml"
+cohort_max    = 4096
+patch_max     = 256
+strict_caps   = false
+sync_every    = "flush"
+# Every group off: output_variables.toml picks the variables, so the hourly tier stays site-only
+# and is written one file per year.
+structure     = false
+carbon        = false
+water         = false
+energy        = false
+forcing       = false
+fast_interval_steps = 4                # 4 * dt_fast (900 s) = hourly records
+
+[output.fast]
+enabled    = true
+file_chunk = "year"               # one file per UTC year of hourly records
+
+[output.daily]
+enabled    = true
+file_chunk = "run"
+
+[output.monthly]
+enabled    = false
+file_chunk = "year"
+
+[output.annual]
+enabled    = false
+file_chunk = "run"
+
+[options]
+override_derived = false
+
+[carbon]
+growth_source = "carbon"
+gpp_ref       = 0.3
+
+[phenology]
+phenology_on = true
+
+[leaf_physiology]
+stomatal_model     = "medlyn"
+temp_response_form = "peaked"
+colimitation       = "quadratic"
+use_boundary_layer = false
+wstress_nonstomatal = false
+kc25    = 40.49
+ko25    = 27840.0
+gstar25 = 4.275
+ea_kc     = 79430.0
+ea_ko     = 36380.0
+ea_gstar  = 37830.0
+ea_vcmax  = 65330.0
+ea_jmax   = 43540.0
+ea_rd     = 46390.0
+hd_vcmax  = 200000.0
+hd_jmax   = 200000.0
+hd_rd     = 200000.0
+ds_vcmax  = 650.0
+ds_jmax   = 640.0
+ds_rd     = 490.0
+o2_mol_frac      = 0.209
+leaf_absorptance = 0.85
+phi_psii         = 0.85
+
+[site]
+latitude              = 9.1568        # AmeriFlux PA-Bar
+longitude             = -79.8486      # with the UTC clock, gives local solar time
+elevation             = 150.0
+apply_elevation_lapse = false         # the tower measures at the site: no terrain step
+
+[forcing]
+forcing_on     = true
+format         = "ED_default"
+path           = "data/bci_forcing_lw-synth.nc"   # or data/bci_forcing_lw-era5.nc (README, "Longwave")
+grid_index     = 1
+grid_match     = "explicit"
+# The tower's own heights, above the ground at its base (41 m). Each sample is moved from them to
+# the top of every patch's canopy air space: along the dry adiabat, and down the patch's own log
+# wind profile (docs/science/forcing.md sec. 8). The file states the same heights, and met_open
+# stops if they disagree.
+tq_height      = 41.0
+wind_height    = 41.0
+height_above   = "ground"
+wind_exposure  = "local"           # measured over this canopy, not an open-terrain diagnostic
+timestep       = "1800s"
+avg_convention = "begin"           # the tower stamps the START of each half hour
+sw_partition   = "clearidx"
+lwdown_source  = "file"
+co2_source     = "file"
+co2_file       = "../../data/co2/co2_cmip7_global_annual_1000-2022.txt"
+recycle        = true
+recycle_start  = "2012-08-01 00:00:00"   # a record stamp of the begin-stamped UTC file
+recycle_end    = "2017-08-01 00:00:00"   # five whole calendar years later
+start_clamp    = "error"
+
+[soil_carbon]
+soil_carbon_on = true
+
+[energy]
+bottom_bc = "dirichlet"
+deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08

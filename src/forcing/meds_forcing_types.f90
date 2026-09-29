@@ -20,6 +20,15 @@ module meds_forcing_types
 
    public :: met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, met_month_t
    public :: co2_series_t
+   public :: HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW
+
+   !----- The humidity a source carries (MEDS_FLUX_TOWER_FORCING_PLAN.md D2). A file stores the     !
+   !      quantity its source measured -- relative humidity for a tower, dewpoint for ERA5-Land --   !
+   !      and the reader converts it with the model's own saturation curve, so a tower's 100 % is   !
+   !      saturation in the model whatever curve the provider used. Qair is for a model-made source. !
+   integer(ik), parameter :: HUMIDITY_QAIR  = 0_ik          !< specific humidity [kg/kg], used as is
+   integer(ik), parameter :: HUMIDITY_RHAIR = 1_ik          !< relative humidity over liquid water [1]
+   integer(ik), parameter :: HUMIDITY_TDEW  = 2_ik          !< dewpoint temperature [K]
 
    !==========================================================================================!
    !  met_forcing_t -- the instantaneous per-SITE atmospheric state the fast loop consumes.       !
@@ -117,7 +126,8 @@ module meds_forcing_types
    !==========================================================================================!
    type :: met_source_t
       type(forcing_config_t)  :: fcfg                       !< [forcing]/[site] config
-      integer(ik) :: backend    = MET_BACKEND_CONST         !< NETCDF | ERA5LAND | CONST
+      integer(ik) :: backend    = MET_BACKEND_CONST         !< ED_DEFAULT | ED_ERA5LAND | CONST
+      integer(ik) :: humidity   = HUMIDITY_TDEW             !< the humidity the source carries (HUMIDITY_*)
       integer(ik) :: ncid       = -1_ik                     !< NetCDF handle (via meds_netcdf_c), -1 if closed
       integer(ik) :: grid_index = 1_ik                      !< MEDS forcing file: the location (1..ngrid) read
       integer(ik) :: ngrid      = 1_ik                      !< total locations in the file (cells for the archive)
@@ -173,8 +183,7 @@ module meds_forcing_types
    type :: met_cursor_t
       integer(ik) :: cell = 1_ik                            !< this polygon's cell in the source (1 for a site)
       real(wp)    :: latitude_deg     = 42.44_wp            !< [deg +N] solar geometry
-      real(wp)    :: longitude_deg    = -76.50_wp           !< [deg +E] local solar time
-      real(wp)    :: utc_offset_h     = 0.0_wp              !< [h] of the forcing clock
+      real(wp)    :: longitude_deg    = -76.50_wp           !< [deg +E] local solar time from the UTC clock
       real(wp)    :: elevation_m      = 320.0_wp            !< [m] site elevation (elevation lapse target)
       real(wp)    :: grid_elevation_m = 320.0_wp            !< [m] forcing-cell elevation (lapse origin)
       integer(ik) :: irec_prev  = 0_ik                      !< cursor: index of the "previous" bracketing record

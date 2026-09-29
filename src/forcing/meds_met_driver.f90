@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_met_driver -- the meteorological-forcing READER (design MEDS_FORCING_DESIGN.md sections !
-! 4 and 15). Opens the MEDS multi-grid forcing NetCDF, the global ED_ERA5land archive, or the     !
+! 4 and 15). Opens the multi-grid forcing NetCDF (ED_default), the global ED_ERA5land archive, or the !
 ! no-file CONST backend into a met_source_t shared by every polygon of a run; each polygon has a   !
 ! met_cursor_t holding its cell, its location and the two records bracketing the model time,      !
 ! slides that window as the model marches, and produces an instantaneous met_forcing_t via the     !
@@ -29,13 +29,14 @@ module meds_met_driver
                                    seconds_between, seconds_into_day, time_lt, time_le,        &
                                    is_leap_year, days_in_year, time_to_string,                 &
                                    time_advance_years, whole_years_between
-   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,     &
-                                   MET_BACKEND_ERA5LAND, MET_PATH_LEN,                          &
+   use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,  &
+                                   MET_BACKEND_ED_ERA5LAND, MET_PATH_LEN,                       &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
-                                   CLAMP_ERROR, INTERP_LINEAR, INTERP_STEP,                     &
+                                   CLAMP_ERROR, INTERP_LINEAR,                                  &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE,        &
-                                   CO2_SOURCE_FILE
-   use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t
+                                   CO2_SOURCE_FILE, HEIGHT_ABOVE_GROUND
+   use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, &
+                                   HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW
    use meds_config,         only : MAX_RECYCLE_YEARS   ! the config's bound: one definition
    use meds_lapse_rate,     only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,    &
                                    lapse_specific_humidity, lapse_longwave
@@ -45,14 +46,16 @@ module meds_met_driver
                                    met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                    partition_shortwave, precip_phase, nearest_grid_index,       &
                                    great_circle_distance,                                      &
-                                   clearness_index, synthesize_lwdown, dewpoint_to_specific_humidity
+                                   clearness_index, synthesize_lwdown, dewpoint_to_specific_humidity, &
+                                   rh_to_specific_humidity
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_default_static, &
                                    era5land_select_site, era5land_load_month, era5land_month_hours, &
                                    ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10,        &
                                    ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN, ERA_VAR_NAME, ERA_EPOCH,       &
                                    ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
-                                   nc_get_att_text_f, nc_get_vara_double, nc_close, nc_check,   &
+                                   nc_get_att_text_f, nc_get_att_double_f, nc_get_vara_double,  &
+                                   nc_close, nc_check,                                          &
                                    NC_NOERR, NC_NOWRITE, NC_GLOBAL
    implicit none
    private
@@ -61,7 +64,7 @@ module meds_met_driver
    public :: MET_OK, MET_ERR_WINDOW_NOT_WHOLE_YEARS, MET_ERR_START_NOT_A_RECORD,                &
              MET_ERR_WINDOW_NOT_COVERED, MET_ERR_DT_MISMATCH, MET_ERR_AXIS_NOT_UNIFORM,         &
              MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,  &
-             MET_ERR_CO2_IN_MET_FILE
+             MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
 
    real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
@@ -78,16 +81,22 @@ module meds_met_driver
    integer(ik), parameter :: MET_ERR_CO2_FILE                = 8_ik   !< the CO2 file is unreadable or breaks format 1
    integer(ik), parameter :: MET_ERR_CO2_NOT_COVERED         = 9_ik   !< the CO2 file does not cover the run
    integer(ik), parameter :: MET_ERR_CO2_IN_MET_FILE         = 10_ik  !< the met file carries CO2air
+   integer(ik), parameter :: MET_ERR_NOT_UTC                 = 11_ik  !< the file does not say time_zone = "UTC"
+   integer(ik), parameter :: MET_ERR_HUMIDITY                = 12_ik  !< no, two, or out-of-range humidity variables
 
    !----- Upper bound on the declared recycle window, in whole calendar years (search bound only). !
    !----- Tolerance for "this record stamp IS that instant" [s]. The time axis is float seconds,   !
    !      so an exact == would be brittle; sub-second slack is far below any real forcing dt. -------!
    real(wp), parameter :: REC_MATCH_TOL = 0.5_wp
+   !----- A file's declared measurement height agrees with the config within this [m]. -----------!
+   real(wp), parameter :: HEIGHT_MATCH_TOL = 0.01_wp
+   !----- RHair is a fraction; a value above this is a percentage written into a fractional field. !
+   real(wp), parameter :: RH_FRACTION_MAX = 1.5_wp
 
 contains
 
    !=======================================================================================!
-   !  OPEN: CONST -> reference climate; NETCDF -> read the grid/time dims, the time axis, the    !
+   !  OPEN: CONST -> reference climate; ED_DEFAULT -> read the grid/time dims, the time axis, the !
    !  base-time anchor from the `time:units` attribute, and load records #1-2 at grid_index.     !
    !=======================================================================================!
    !  `stat` (optional) reports a rejected recycle window instead of halting, so the validation    !
@@ -129,7 +138,7 @@ contains
          return
       end if
 
-      if (fcfg%backend == MET_BACKEND_ERA5LAND) then
+      if (fcfg%backend == MET_BACKEND_ED_ERA5LAND) then
          call open_archive(src, run_start, run_end, vstat, cells)
          if (vstat == MET_OK) call validate_recycle_window(src, vstat)
          if (vstat /= MET_OK) then
@@ -184,6 +193,14 @@ contains
                                nc_inq_varid_f(ncid, 'v10', vv) == NC_NOERR
       end block
 
+      !----- The humidity the file carries: exactly one of RHair, Tdew and Qair. ------------------!
+      call detect_humidity(src, ncid, vstat)
+      if (vstat /= MET_OK) then
+         call met_close(src)
+         if (present(stat)) then ; stat = vstat ; return ; end if
+         error stop 'met_open: the forcing file''s humidity is ambiguous or absent (see the message above)'
+      end if
+
       !----- V4 (#185): the file's own record spacing against [forcing].dt_forcing, and the two   !
       !      global attributes the prep script writes against the config that claims to describe    !
       !      the same file. A file that disagreed with its config would otherwise be silently       !
@@ -227,6 +244,22 @@ contains
          st = nc_close(ncid) ; src%ncid = -1_ik
          src%rec_first = r0                          ! a cursor's first bracket: the first records in range
       end block
+
+      !----- RHair is a fraction. Written as a percentage it would clip every record to saturation, !
+      !      a silent 100 % sky, so a value no fraction can reach stops the run here. ---------------!
+      if (src%humidity == HUMIDITY_RHAIR) then
+         block
+            integer(ik) :: j
+            j = series_field(src, 'RHair')
+            if (maxval(src%series(:, j)) > RH_FRACTION_MAX) then
+               write(*,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),                &
+                                     ', but it is a fraction (units "1"), not a percentage.'
+               call met_close(src)
+               if (present(stat)) then ; stat = MET_ERR_HUMIDITY ; return ; end if
+               error stop 'met_open: RHair is in percent (see the message above)'
+            end if
+         end block
+      end if
    end subroutine met_open
 
    !----- CO2 (#184): with co2_source = "file", read the MEDS CO2 file and check it covers the  !
@@ -264,16 +297,16 @@ contains
    !  cell centre. The grid elevation (the lapse origin) is the cell's orography for the archive,  !
    !  the configured grid_elevation for a MEDS forcing file.                                       !
    !=======================================================================================!
-   subroutine met_cursor_init(src, cur, cell, latitude_deg, longitude_deg, utc_offset_h, elevation_m)
+   subroutine met_cursor_init(src, cur, cell, latitude_deg, longitude_deg, elevation_m)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(out) :: cur
       integer(ik),        intent(in)  :: cell
-      real(wp),           intent(in)  :: latitude_deg, longitude_deg, utc_offset_h, elevation_m
+      real(wp),           intent(in)  :: latitude_deg, longitude_deg, elevation_m
       cur%cell = cell
       cur%latitude_deg = latitude_deg ; cur%longitude_deg = longitude_deg
-      cur%utc_offset_h = utc_offset_h ; cur%elevation_m   = elevation_m
+      cur%elevation_m  = elevation_m
       cur%grid_elevation_m = src%fcfg%grid_elevation_m
-      if (src%backend == MET_BACKEND_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
+      if (src%backend == MET_BACKEND_ED_ERA5LAND) cur%grid_elevation_m = src%cells%elevation(cell)
       if (src%backend == MET_BACKEND_CONST) then
          cur%rec_prev = met_record_t() ; cur%rec_next = met_record_t()
          return
@@ -296,7 +329,7 @@ contains
       real(wp)    :: s0
       integer(ik) :: r, k, kp, p
       logical     :: wrap
-      if (src%backend /= MET_BACKEND_ERA5LAND) return
+      if (src%backend /= MET_BACKEND_ED_ERA5LAND) return
       s0 = file_lookup_sec(src, step_start)
       wrap = .false.
       if (src%n_cycle_years >= 1_ik .and. src%irec_cycle_last > src%irec_cycle_first) then
@@ -476,14 +509,27 @@ contains
       type(met_cursor_t), intent(inout) :: cur
       type(meds_time_t),  intent(in)    :: now
       real(wp) :: cosz_now, sw_total, kt
-      associate (f => src%fcfg, r => cur%rec_next)
-         cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg, &
-                                   cur%utc_offset_h, f%apply_solar_longitude)
-         sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
-         kt = clearness_index(sw_total, cosz_now)
-         if (kt >= 0.0_wp) cur%kt_last_day = kt      ! negative = night: keep dusk's value
-      end associate
+      type(met_record_t) :: r
+      r = interval_mean_record(src, cur)
+      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
+      sw_total = r%par_beam + r%par_diffuse + r%nir_beam + r%nir_diffuse
+      kt = clearness_index(sw_total, cosz_now)
+      if (kt >= 0.0_wp) cur%kt_last_day = kt         ! negative = night: keep dusk's value
    end subroutine remember_clearness
+
+   !----- The record carrying the means over the interval that contains the model instant: the  !
+   !      later of the bracket on an avg_convention = "end" file, the earlier on a "begin" one.     !
+   !      Every consumer of an interval mean -- rain, shortwave, the clearness the longwave         !
+   !      synthesis remembers -- takes it from here, so none of them reads a neighbouring interval.  !
+   pure function interval_mean_record(src, cur) result(r)
+      type(met_source_t), intent(in) :: src
+      type(met_cursor_t), intent(in) :: cur
+      type(met_record_t) :: r
+      select case (src%fcfg%avg_convention)
+      case (METAVG_BEGIN) ; r = cur%rec_prev
+      case default        ; r = cur%rec_next            ! METAVG_END (ERA5-Land) + fallback
+      end select
+   end function interval_mean_record
 
    !=======================================================================================!
    !  INSTANT: interpolate/disaggregate the loaded window to the model instant `now`.           !
@@ -500,9 +546,8 @@ contains
       real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec, precip_total
       associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
-      !----- solar zenith at `now` (file clock -> apparent solar seconds inside met_solar_cosz). !
-      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg,   &
-                                cur%utc_offset_h, f%apply_solar_longitude)
+      !----- solar zenith at `now` (UTC -> apparent solar seconds inside met_solar_cosz). ------!
+      cosz_now = met_solar_cosz(now, seconds_into_day(now), cur%latitude_deg, cur%longitude_deg)
       met%cosz = cosz_now
 
       !----- CO2 on MODEL time, one way for every backend (#184). ------------------------------!
@@ -543,17 +588,17 @@ contains
             met%has_wind_vector = .true.
          end if
 
-         !----- rainfall: step-constant total (never smeared), then phase-split. -----------------!
-         precip_total = interpolate_forcing(INTERP_STEP, p%rainf, n%rainf, w_next)
+         !----- The fluxes are interval means: the interval CONTAINING now is [prev, next], whose     !
+         !      mean is rec_next's on an avg_convention = "end" file and rec_prev's on a "begin" one.    !
+         !      Rain and shortwave both come from that record, so neither lags the other.              !
+         mean_rec = interval_mean_record(src, cur)
+
+         !----- rainfall: the interval's total rate, held across it (never smeared), then split by  !
+         !      phase on the interpolated temperature. ------------------------------------------------!
+         precip_total = mean_rec%rainf
          call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
 
-         !----- shortwave: the interval-mean streams of the interval CONTAINING now, disaggregated  !
-         !      by cosz(now)/<cosz>_win. avg_convention=end -> the interval [prev,next] mean is        !
-         !      rec_next's; begin -> rec_prev's.                                                        !
-         select case (f%avg_convention)
-         case (METAVG_BEGIN) ; mean_rec = p
-         case default        ; mean_rec = n            ! METAVG_END (ERA5-Land) + fallback
-         end select
+         !----- shortwave: that interval's mean streams, disaggregated by cosz(now)/<cosz>_win. ----!
          !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !
          !      with cosz_now on the model calendar (identity = rec_prev%when when not recycling; under  !
          !      calendar recycling it follows the model sun, so the interval-mean identity still holds).  !
@@ -561,8 +606,7 @@ contains
          win_start_sec = seconds_into_day(mws)
          factor = cosz_reconstruct_factor(mws, win_start_sec,                                       &
                                           (tnext - tprev) / real(N_COSZ_SUB, wp), tnext - tprev,   &
-                                          cur%latitude_deg, cur%longitude_deg, cur%utc_offset_h,         &
-                                          f%apply_solar_longitude)
+                                          cur%latitude_deg, cur%longitude_deg)
          met%par_beam    = disaggregate_sw(mean_rec%par_beam,    cosz_now, factor)
          met%par_diffuse = disaggregate_sw(mean_rec%par_diffuse, cosz_now, factor)
          met%nir_beam    = disaggregate_sw(mean_rec%nir_beam,    cosz_now, factor)
@@ -595,7 +639,7 @@ contains
    subroutine met_close(src)
       type(met_source_t), intent(inout)  :: src
       integer(c_int) :: st
-      if (src%backend == MET_BACKEND_NETCDF .and. src%ncid >= 0_ik) then
+      if (src%backend == MET_BACKEND_ED_DEFAULT .and. src%ncid >= 0_ik) then
          st = nc_close(int(src%ncid, c_int)) ; call nc_check(st, 'met_close: nc_close')
          src%ncid = -1_ik
       end if
@@ -757,6 +801,7 @@ contains
       end if
       src%grid_index = 1_ik ; src%ngrid = src%cells%ncell
       src%has_wind_vector = .true.
+      src%humidity = HUMIDITY_TDEW                           ! the archive stores the 2 m dewpoint
       if (present(cells)) then
          write(*,'(a,i0,a)') ' force : ED_ERA5land region, ', src%cells%ncell, ' cells'
       else
@@ -974,16 +1019,16 @@ contains
       type(met_cursor_t), intent(in) :: cur
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(out)   :: rec
-      real(wp)    :: sw_total, cosz_mid, mid_sec
+      real(wp)    :: sw_total, cosz_mid, mid_sec, humidity_value
       integer(ik) :: h
       rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
-      if (src%backend == MET_BACKEND_ERA5LAND) then
+      if (src%backend == MET_BACKEND_ED_ERA5LAND) then
          !----- The archive stores dewpoint and the wind components (§15.4): humidity comes from the !
          !      model's own saturation curve, the speed from the vector at each stamp. -------------!
          call locate_record(src, irec, h)
          rec%tair_k   = archive_value(src, cur, h, ERA_TAIR)
          rec%psurf_pa = archive_value(src, cur, h, ERA_PSURF)
-         rec%qair     = dewpoint_to_specific_humidity(archive_value(src, cur, h, ERA_TDEW), rec%psurf_pa)
+         humidity_value = archive_value(src, cur, h, ERA_TDEW)
          rec%wind_u   = archive_value(src, cur, h, ERA_U10)
          rec%wind_v   = archive_value(src, cur, h, ERA_V10)
          rec%wind     = sqrt(rec%wind_u**2 + rec%wind_v**2)
@@ -991,7 +1036,7 @@ contains
          rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
       else
          rec%tair_k   = read_scalar(src, 'Tair',  irec)
-         rec%qair     = read_scalar(src, 'Qair',  irec)
+         humidity_value = read_scalar(src, humidity_name(src%humidity), irec)
          rec%psurf_pa = read_scalar(src, 'PSurf', irec)
          if (src%has_wind_vector) then
             rec%wind_u = read_scalar(src, 'u10', irec)
@@ -1012,8 +1057,16 @@ contains
          end if
       end if
       call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
-      call assert_finite(rec%qair, 'Qair', irec, src%grid_index)
+      call assert_finite(humidity_value, humidity_name(src%humidity), irec, src%grid_index)
       call assert_finite(rec%psurf_pa, 'PSurf', irec, src%grid_index)
+      !----- Specific humidity at the forcing's own temperature and pressure. A dewpoint becomes q  !
+      !      exactly as the archive reader always made it; relative humidity goes through the same   !
+      !      liquid-water curve (docs/science/forcing.md §7). --------------------------------------!
+      select case (src%humidity)
+      case (HUMIDITY_RHAIR) ; rec%qair = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
+      case (HUMIDITY_TDEW)  ; rec%qair = dewpoint_to_specific_humidity(humidity_value, rec%psurf_pa)
+      case default          ; rec%qair = humidity_value
+      end select
       call assert_finite(rec%wind, 'Wind', irec, src%grid_index)
       call assert_finite(rec%rainf, 'Rainf', irec, src%grid_index)
       if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                                  &
@@ -1031,7 +1084,13 @@ contains
             t_grid = rec%tair_k ; p_grid = rec%psurf_pa ; q_grid = rec%qair   ! capture BEFORE overwrite
             rec%psurf_pa = lapse_pressure(p_grid, t_grid, dz, gamma)
             rec%tair_k   = lapse_air_temperature(t_grid, dz, gamma)
-            rec%qair     = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%tair_k, rec%psurf_pa)
+            !----- Relative humidity is held across the lapse: a measured one is used directly, and a  !
+            !      dewpoint or specific humidity gives its own at the cell. ----------------------------!
+            if (src%humidity == HUMIDITY_RHAIR) then
+               rec%qair  = rh_to_specific_humidity(humidity_value, rec%tair_k, rec%psurf_pa)
+            else
+               rec%qair  = lapse_specific_humidity(q_grid, t_grid, p_grid, rec%tair_k, rec%psurf_pa)
+            end if
             !----- A synthesized longwave is built later from the lapsed T and q, so only a file's   !
             !      longwave is scaled here. ------------------------------------------------------------!
             if (src%fcfg%lwdown_source /= LW_SYNTHESIZE)                                           &
@@ -1050,7 +1109,7 @@ contains
          call assert_finite(rec%nir_beam,    'SWdown_nir_beam',    irec, src%grid_index)
          call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, src%grid_index)
       else
-         if (src%backend == MET_BACKEND_ERA5LAND) then
+         if (src%backend == MET_BACKEND_ED_ERA5LAND) then
             sw_total = archive_value(src, cur, h, ERA_SWDOWN)
          else
             sw_total = read_scalar(src, 'SWdown', irec)
@@ -1060,9 +1119,7 @@ contains
          mid_sec  = seconds_into_day(rec%when)
          if (src%fcfg%avg_convention == METAVG_END)   mid_sec = mid_sec - 0.5_wp * src%dt_forcing
          if (src%fcfg%avg_convention == METAVG_BEGIN)  mid_sec = mid_sec + 0.5_wp * src%dt_forcing
-         cosz_mid = met_solar_cosz(rec%when, mid_sec, cur%latitude_deg,                    &
-                                   cur%longitude_deg, cur%utc_offset_h,               &
-                                   src%fcfg%apply_solar_longitude)
+         cosz_mid = met_solar_cosz(rec%when, mid_sec, cur%latitude_deg, cur%longitude_deg)
          call partition_shortwave(sw_total, cosz_mid, rec%psurf_pa, src%fcfg%sw_partition,       &
                                   rec%par_beam, rec%par_diffuse, rec%nir_beam, rec%nir_diffuse)
       end if
@@ -1073,8 +1130,8 @@ contains
       type(met_source_t), intent(inout)  :: src
       integer(c_int),     intent(in)    :: ncid
       integer(ik),        intent(in)    :: r0, r1
-      character(len=24), parameter :: FIELDS(13) = [character(len=24) ::                            &
-         'Tair', 'Qair', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown',                 &
+      character(len=24), parameter :: FIELDS(15) = [character(len=24) ::                            &
+         'Tair', 'Qair', 'RHair', 'Tdew', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown', &
          'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
       integer(c_int)    :: st, vid
       integer(c_size_t) :: start2(2), count2(2)
@@ -1105,6 +1162,17 @@ contains
       end do
       j = 0_ik
    end function series_field
+
+   !----- The file variable that carries each humidity form. -----------------------------------!
+   pure function humidity_name(form) result(name)
+      integer(ik), intent(in) :: form
+      character(len=5) :: name
+      select case (form)
+      case (HUMIDITY_RHAIR) ; name = 'RHair'
+      case (HUMIDITY_TDEW)  ; name = 'Tdew'
+      case default          ; name = 'Qair'
+      end select
+   end function humidity_name
 
    function read_scalar(src, name, irec) result(val)
       type(met_source_t), intent(in)  :: src
@@ -1247,7 +1315,39 @@ contains
          end if
       end if
 
-      !----- (d) CO2air (#184): CO2 comes from [forcing].co2_source, never the met file, so a file  !
+      !----- (d) The clock. Every forcing file is in UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1) and   !
+      !      says so. A local-time file read as UTC keeps its daily totals and moves its sun by the   !
+      !      offset, which nothing downstream notices, so the attribute is required. The archive is   !
+      !      UTC by construction and is not asked. -------------------------------------------------!
+      if (src%backend == MET_BACKEND_ED_DEFAULT) then
+         st = nc_get_att_text_f(ncid, NC_GLOBAL, 'time_zone', attr)
+         if (st /= NC_NOERR) attr = '(absent)'
+         if (trim(attr) /= 'UTC') then
+            write(*,'(3a)') ' met_open: the forcing file''s time_zone attribute is "', trim(attr), '".'
+            write(*,'(a)')  '   MEDS runs in UTC: build the file on a UTC clock and set time_zone = "UTC".'
+            vstat = MET_ERR_NOT_UTC ; return
+         end if
+      end if
+
+      !----- (e) The heights the file was measured at, when it states them, against the heights the  !
+      !      config moves the forcing from (docs/science/forcing.md §8). A disagreement would move   !
+      !      every sample from the wrong height. -------------------------------------------------!
+      call check_height_attribute(ncid, 'tq_height_m',        src%fcfg%tq_height,   vstat)
+      if (vstat /= MET_OK) return
+      call check_height_attribute(ncid, 'wind_height_m',      src%fcfg%wind_height, vstat)
+      if (vstat /= MET_OK) return
+      call check_height_attribute(ncid, 'wind_meas_height_m', src%fcfg%wind_height, vstat)
+      if (vstat /= MET_OK) return
+      st = nc_get_att_text_f(ncid, NC_GLOBAL, 'height_above', attr)
+      if (st == NC_NOERR .and. len_trim(attr) > 0) then
+         if (trim(attr) /= trim(height_above_name(src%fcfg%height_above))) then
+            write(*,'(4a)') ' met_open: file height_above = "', trim(attr), '", config = "',        &
+                            trim(height_above_name(src%fcfg%height_above))//'"'
+            vstat = MET_ERR_ATTR_MISMATCH ; return
+         end if
+      end if
+
+      !----- (f) CO2air (#184): CO2 comes from [forcing].co2_source, never the met file, so a file  !
       !      carrying it would be read by nothing. Rejected rather than ignored. -------------------!
       block
          integer(c_int) :: vid
@@ -1260,6 +1360,55 @@ contains
          end if
       end block
    end subroutine validate_file_against_config
+
+   !----- A file's stated measurement height (a global attribute in m), when present, against the   !
+   !      configured one.                                                                             !
+   subroutine check_height_attribute(ncid, name, configured, vstat)
+      integer(c_int),   intent(in)  :: ncid
+      character(len=*), intent(in)  :: name
+      real(wp),         intent(in)  :: configured
+      integer(ik),      intent(out) :: vstat
+      real(c_double) :: stated
+      vstat = MET_OK
+      if (nc_get_att_double_f(ncid, NC_GLOBAL, name, stated) /= NC_NOERR) return
+      if (abs(real(stated, wp) - configured) > HEIGHT_MATCH_TOL) then
+         write(*,'(3a,f0.3,a,f0.3,a)') ' met_open: the forcing file states ', name, ' = ', stated,     &
+                                       ' m, but [forcing] says ', configured, ' m.'
+         vstat = MET_ERR_ATTR_MISMATCH
+      end if
+   end subroutine check_height_attribute
+
+   !----- The humidity form of a MEDS forcing file: exactly one of its three variables (D2). A file  !
+   !      with none cannot drive the canopy air; a file with two leaves the reader to pick one, and   !
+   !      the two may disagree through the provider's own saturation curve. ------------------------!
+   subroutine detect_humidity(src, ncid, stat)
+      type(met_source_t), intent(inout) :: src
+      integer(c_int),     intent(in)    :: ncid
+      integer(ik),        intent(out)   :: stat
+      integer(ik), parameter :: FORMS(3) = [HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW]
+      integer(c_int) :: vid
+      integer(ik)    :: i, n
+      stat = MET_OK ; n = 0_ik
+      do i = 1_ik, size(FORMS, kind=ik)
+         if (nc_inq_varid_f(ncid, trim(humidity_name(FORMS(i))), vid) == NC_NOERR) then
+            n = n + 1_ik ; src%humidity = FORMS(i)
+         end if
+      end do
+      if (n /= 1_ik) then
+         write(*,'(a,i0,a)') ' met_open: the forcing file carries ', n,                                &
+                             ' of the humidity variables RHair, Tdew and Qair; it must carry exactly one.'
+         write(*,'(a)')      '   Store the humidity the source measured (RHair for a tower, Tdew for'
+         write(*,'(a)')      '   ERA5-Land); MEDS converts it with its own saturation curve.'
+         stat = MET_ERR_HUMIDITY
+      end if
+   end subroutine detect_humidity
+
+   pure function height_above_name(code) result(nm)
+      integer(ik), intent(in) :: code
+      character(len=10) :: nm
+      nm = 'zero_plane'
+      if (code == HEIGHT_ABOVE_GROUND) nm = 'ground'
+   end function height_above_name
 
    !----- The config code's own spelling, so the mismatch message quotes both sides in one vocabulary. !
    pure function avg_convention_name(code) result(nm)

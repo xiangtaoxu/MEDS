@@ -56,9 +56,9 @@ contains
    !                there is no aquifer store, no baseflow bucket and no water-table state.  !
    !                                                                                        !
    ! K_bot is UPSTREAM-weighted on the head gradient (which is K-independent, so there is no !
-   ! circularity), matching face_and_sink's own interior rule: K(theta_n) for downward flow, !
-   ! K_sat for upward flow OUT of the saturated zone.  Using K(theta_n) upward would silently!
-   ! under-predict capillary rise, which is the entire point of the boundary.                !
+   ! circularity): K(theta_n) for downward flow, K_sat for upward flow OUT of the saturated  !
+   ! zone.  Using K(theta_n) upward would silently under-predict capillary rise, which is    !
+   ! the entire point of the boundary.                                                        !
    !---------------------------------------------------------------------------------------!
    pure subroutine bottom_flux(params, opts, n, psi_n, k_n, qbot, dq_dpsi)
       type(soil_params_t), intent(in)  :: params
@@ -136,8 +136,13 @@ contains
       !      process. All rain reaches the surface; only Horton overflow runs off. --------------------!
       q_liq = forcing%precip_ground
 
-      !----- Conductivity-limited infiltration + ponding partition (design 3d). -------------!
-      q_inf_max = kn1 * (1.0_wp + (-psi1) / (-params%z_node(1)))           ! Darcy velocity [m/s]
+      !----- Conductivity-limited infiltration + ponding partition (design 3d). The pond is a      !
+      !      saturated layer above the top node, so the surface face takes the geometric mean of    !
+      !      K_sat and the top layer's K: face_and_sink's inter-layer rule, with the pond as thick   !
+      !      as the top layer. The top layer's K alone would seal a dried surface against rain -- at !
+      !      theta near residual it is ~1e-15 of K_sat, so the pond overflows and the soil never     !
+      !      re-wets (MEDS_FLUX_TOWER_FORCING_PLAN.md §13). ---------------------------------------!
+      q_inf_max = sqrt(kn1 * params%ksat(1)) * (1.0_wp + (-psi1) / (-params%z_node(1)))   ! [m/s]
       q_avail   = col%w_surface / dt + q_liq                              ! [kg/m2/s]
       infl      = min(q_avail, q_inf_max * rho_h2o)
       q_top     = (infl - e_soil) / rho_h2o                              ! [m/s down], constant over substeps
@@ -577,7 +582,7 @@ contains
       qface_out(1:n) = qface(1:n)
    end subroutine soil_water_time_deriv
 
-   !----- Fill node K/C, upstream face K, the gravity factor, and the psi-limited sink         !
+   !----- Fill node K/C, the log-linear face K, the gravity factor, and the psi-limited sink   !
    !      + its psi-derivative, all at the current iterate (psi_m, theta_m).                    !
    !---------------------------------------------------------------------------------------!
    pure subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
@@ -591,7 +596,7 @@ contains
       real(wp),            intent(out) :: kface(n_soil_layer_max), gface(n_soil_layer_max)
       real(wp),            intent(out) :: sk(n_soil_layer_max), dsk(n_soil_layer_max)
       integer(ik) :: k
-      real(wp)    :: dh, fwilt, dfwilt
+      real(wp)    :: w_below, fwilt, dfwilt
       do k = 1_ik, n
          kk(k) = soil_hydr_cond_from_theta(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),      &
                                 curve_a(params,k), curve_n(params,k), params%ksat(k))
@@ -602,13 +607,12 @@ contains
          dsk(k) = root_uptake(k) / (rho_h2o * params%dz(k)) * dfwilt
       end do
       do k = 1_ik, n - 1_ik
-         !----- Upstream K by the total-head gradient (down if dh >= 0). ------------------!
-         dh = (psi_m(k) - psi_m(k+1)) + params%dz_node(k)
-         if (dh >= 0.0_wp) then
-            kface(k) = kk(k)
-         else
-            kface(k) = kk(k+1)
-         end if
+         !----- ED2's inter-layer rule (rk4_derivs): ln K interpolated linearly between the nodes  !
+         !      to the face, which lies dz(k)/2 below node k and dz(k+1)/2 above node k+1 -- a      !
+         !      thickness-weighted geometric mean, the plain one for equal layers. The nearer node  !
+         !      weighs more, so the lower layer's K takes the weight dz(k)/(dz(k)+dz(k+1)). --------!
+         w_below  = params%dz(k) / (params%dz(k) + params%dz(k+1))
+         kface(k) = kk(k) ** (1.0_wp - w_below) * kk(k+1) ** w_below
          gface(k) = 1.0_wp                                             ! plain gravity (Zeng-Decker retired)
       end do
    end subroutine face_and_sink

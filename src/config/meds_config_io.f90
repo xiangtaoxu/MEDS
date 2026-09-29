@@ -27,7 +27,7 @@ module meds_config_io
    use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_config, only : forcing_config_t,                                            &
-                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
+                                   MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
@@ -407,18 +407,25 @@ contains
    end subroutine req_colimitation
 
    !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "era5land" | "const"
+   !----- The two file formats are named after their families (MEDS_FLUX_TOWER_FORCING_PLAN.md D3), !
+   !      matched exactly. The earlier spellings stop with the name that replaced them, so an old      !
+   !      config gets the fix rather than a list of missing keys. -------------------------------------!
+   subroutine req_met_backend(t, key, mode, m)      ! "ED_default" | "ED_ERA5land" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
       character(len=64) :: s
-      mode = MET_BACKEND_NETCDF
+      mode = MET_BACKEND_ED_DEFAULT
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'netcdf')
+      s = toml_string(t, key, 'ED_default')
       select case (trim(s))
-      case ('netcdf')   ; mode = MET_BACKEND_NETCDF
-      case ('era5land') ; mode = MET_BACKEND_ERA5LAND
-      case ('const')    ; mode = MET_BACKEND_CONST
-      case default    ; call note_missing(m, key)
+      case ('ED_default')  ; mode = MET_BACKEND_ED_DEFAULT
+      case ('ED_ERA5land') ; mode = MET_BACKEND_ED_ERA5LAND
+      case ('const')       ; mode = MET_BACKEND_CONST
+      case ('netcdf')
+         error stop 'load_meds_config: forcing.format = "netcdf" is now "ED_default"; rename it'
+      case ('era5land')
+         error stop 'load_meds_config: forcing.format = "era5land" is now "ED_ERA5land"; rename it'
+      case default         ; call note_missing(m, key)
       end select
    end subroutine req_met_backend
 
@@ -506,11 +513,11 @@ contains
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
-      !----- The source picks its own keys. The archive (format = "era5land", §15.2) finds the    !
+      !----- The source picks its own keys. The archive (format = "ED_ERA5land", §15.2) finds the  !
       !      site's cell itself and takes its orography from the static file, so the keys that     !
       !      name a file, a grid slot or a grid elevation would parse and do nothing there: they    !
       !      are rejected rather than ignored. ---------------------------------------------------!
-      if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+      if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
          call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
          if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
@@ -520,7 +527,7 @@ contains
          if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
              toml_has(t, 'forcing.grid_match') .or. toml_has(t, 'site.grid_elevation'))            &
             error stop 'load_meds_config: forcing.path, forcing.grid_index, forcing.grid_match and '// &
-                       'site.grid_elevation do not apply to forcing.format = "era5land" (the archive '// &
+                       'site.grid_elevation do not apply to forcing.format = "ED_ERA5land" (the archive '// &
                        'finds the site cell and its elevation itself); remove them'
       else
          call req_s         (t, 'forcing.path',           cfg%forcing%path,                  m)
@@ -567,24 +574,27 @@ contains
       case default
          error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
       end select
+      !----- Every forcing clock is UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1): the solar geometry takes  !
+      !      local solar time from the longitude alone, and a shift to local time belongs to the       !
+      !      post-processing of the output. The two keys that described another clock are refused.     !
+      if (toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.apply_solar_longitude'))            &
+         error stop 'load_meds_config: [site].utc_offset and apply_solar_longitude are gone -- every '// &
+                    'forcing file is in UTC (its time_zone attribute says so); convert a local-time '// &
+                    'source to UTC when you build the file, and remove both keys'
       !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
-      !      static orography, UTC), so the [site] location keys would parse and do nothing there:  !
+      !      static orography), so the [site] location keys would parse and do nothing there:      !
       !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
-             toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.elevation') .or.                &
-             toml_has(t, 'forcing.max_distance_km'))                                               &
-            error stop 'load_meds_config: site.latitude, site.longitude, site.utc_offset, '//       &
-                       'site.elevation and forcing.max_distance_km do not apply to [run].mode = '// &
-                       '"region" (each polygon sits at its cell centre, at the cell''s orography, '// &
-                       'in UTC); remove them'
+             toml_has(t, 'site.elevation') .or. toml_has(t, 'forcing.max_distance_km'))            &
+            error stop 'load_meds_config: site.latitude, site.longitude, site.elevation and '//     &
+                       'forcing.max_distance_km do not apply to [run].mode = "region" (each '//     &
+                       'polygon sits at its cell centre, at the cell''s orography); remove them'
       else
          call req_r         (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
          call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
-         call req_r         (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
          call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
       end if
-      call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
       !----- The forcing is moved to the top of each patch's canopy air space (meds_lapse_rate), so  !
       !      the old fixed reference height and its ingest-time wind profile are gone. They would     !
       !      parse and do nothing, so they are rejected, naming what replaced them. ------------------!
@@ -623,8 +633,16 @@ contains
       else
          call note_missing(m, 'forcing.wind_exposure')
       end if
-      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December). -!
+      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December).   !
+      !      Its two keys are read only when the lapse is on; with it off they would parse and do     !
+      !      nothing, so they are refused. -------------------------------------------------------------!
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
+      if (.not. cfg%forcing%apply_elevation_lapse) then
+         if (toml_has(t, 'site.lapse_rate_tair') .or. toml_has(t, 'site.grid_elevation'))          &
+            error stop 'load_meds_config: site.lapse_rate_tair and site.grid_elevation apply only '// &
+                       'with site.apply_elevation_lapse = true; remove them'
+         return
+      end if
       if (toml_has(t, 'site.lapse_rate_tair')) then
          if (index(toml_string(t, 'site.lapse_rate_tair', ''), '[') > 0) then
             block
@@ -641,7 +659,7 @@ contains
       else
          call note_missing(m, 'site.lapse_rate_tair')
       end if
-      if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
+      if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                        &
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 

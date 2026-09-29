@@ -11,7 +11,7 @@ program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_time,            only : meds_time_t
-   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ERA5LAND, METAVG_END,          &
+   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
@@ -64,7 +64,7 @@ contains
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
       type(forcing_config_t), intent(in)  :: fc
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%utc_offset_h,  &
+      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg,                   &
                            fc%elevation_m)
    end subroutine site_cursor
 
@@ -173,10 +173,10 @@ contains
    !----- A reader config on the synthetic archive at the valid cell (1,3), 35 N 120 W. ----------!
    function archive_config() result(fc)
       type(forcing_config_t) :: fc
-      fc%backend = MET_BACKEND_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
+      fc%backend = MET_BACKEND_ED_ERA5LAND ; fc%data_path = DIR ; fc%max_distance_km = 50.0_wp
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 35.0_wp ; fc%longitude_deg = -120.0_wp ; fc%utc_offset_h = 0.0_wp
-      fc%apply_solar_longitude = .true. ; fc%recycle = .false. ; fc%start_clamp = CLAMP_ERROR
+      fc%latitude_deg = 35.0_wp ; fc%longitude_deg = -120.0_wp
+      fc%recycle = .false. ; fc%start_clamp = CLAMP_ERROR
    end function archive_config
 
    !=======================================================================================!
@@ -363,7 +363,7 @@ contains
       call check_true('a region opens on its cells (MET_OK)', st == MET_OK .and. region%cells%ncell == 5_ik)
       do k = 1_ik, 2_ik
          call met_cursor_init(region, cur(k), PICK(k), cells%lat(PICK(k)), cells%lon(PICK(k)),    &
-                              fc%utc_offset_h, fc%elevation_m)
+                              fc%elevation_m)
          fc = archive_config()
          fc%latitude_deg = cells%lat(PICK(k)) ; fc%longitude_deg = cells%lon(PICK(k))
          call met_open(site(k), fc, stat=st, run_start=meds_time_t(2021_ik, 1_ik, 15_ik),        &

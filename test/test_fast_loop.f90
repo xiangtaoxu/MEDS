@@ -24,7 +24,7 @@ program test_fast_loop
    use meds_stepper,             only : advance_one_step
    use meds_test_support, only : banner, build_test_config, check, check_close
    use meds_time,                only : meds_time_t, time_advance_seconds
-   use meds_forcing_config,      only : MET_BACKEND_NETCDF, SWPART_CLEARIDX, METAVG_END
+   use meds_forcing_config,      only : MET_BACKEND_ED_DEFAULT, SWPART_CLEARIDX, METAVG_END
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
@@ -178,12 +178,11 @@ program test_fast_loop
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
       call write_diurnal_forcing('test_fast_loop_forcing.nc')
       cfg%forcing%forcing_on   = .true.
-      cfg%forcing%backend      = MET_BACKEND_NETCDF
+      cfg%forcing%backend      = MET_BACKEND_ED_DEFAULT
       cfg%forcing%path         = 'test_fast_loop_forcing.nc'
       cfg%forcing%grid_index   = 1_ik ; cfg%forcing%dt_forcing = 3600.0_wp
       cfg%forcing%avg_convention = METAVG_END ; cfg%forcing%sw_partition = SWPART_CLEARIDX
       cfg%forcing%latitude_deg = 42.44_wp ; cfg%forcing%longitude_deg = -76.50_wp
-      cfg%forcing%utc_offset_h = 0.0_wp ; cfg%forcing%apply_solar_longitude = .true.
       cfg%forcing%recycle = .false.
       cfg%forcing%co2_const = 415.0_wp          ! the file's old CO2air: CO2 is config-only now (#184)
 
@@ -192,7 +191,7 @@ program test_fast_loop
       call finalize_init(site)
       call met_open(drv, cfg%forcing)
       call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%longitude_deg,                            &
                            cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
@@ -225,7 +224,7 @@ program test_fast_loop
          call init_fast_reservoirs(site, ctx)
          call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
          call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
-                              cfg%forcing%utc_offset_h, cfg%forcing%elevation_m)
+                              cfg%forcing%elevation_m)
          sum_t = 0.0_wp ; sum_q = 0.0_wp ; sum_pb = 0.0_wp ; sum_cz = 0.0_wp ; sum_sw = 0.0_wp
          exact = .true.
          do isub = 1_ik, cfg%n_fast_per_slow
@@ -286,7 +285,7 @@ program test_fast_loop
          call finalize_init(site)
          call met_open(drv3, cfg%forcing)
          call met_cursor_init(drv3, cur3, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%longitude_deg,                            &
                               cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
          call fast_dynamics(site, ctx, cfg, met_src=drv3, met_cur=cur3,             &
@@ -335,7 +334,7 @@ program test_fast_loop
          call finalize_init(site)
          call met_open(drv4, cfg%forcing)
          call met_cursor_init(drv4, cur4, 1_ik, cfg%forcing%latitude_deg,      &
-                              cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                              cfg%forcing%longitude_deg,                            &
                               cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
          call fast_dynamics(site, ctx, cfg_mt, met_src=drv4, met_cur=cur4,             &
@@ -399,7 +398,7 @@ program test_fast_loop
       end do
       call met_open(drv, cfg%forcing)
       call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%longitude_deg,                            &
                            cfg%forcing%elevation_m)
 
       call init_fast_reservoirs(site, ctx)
@@ -442,7 +441,7 @@ program test_fast_loop
       call finalize_init(site)                                   ! patch 3 keeps 0 cohorts (bare)
       call met_open(drv, cfg%forcing)
       call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg,      &
-                           cfg%forcing%longitude_deg, cfg%forcing%utc_offset_h, &
+                           cfg%forcing%longitude_deg,                            &
                            cfg%forcing%elevation_m)
       call init_fast_reservoirs(site, ctx)
       call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
@@ -554,6 +553,7 @@ contains
       st = nc_def_var_f(ncid,'longitude',NC_DOUBLE,1,dims1,vlo) ; call nc_check(st,'lo')
       dims2(1)=td ; dims2(2)=gd
       do k=1,7 ; st = nc_def_var_f(ncid,trim(nm(k)),NC_DOUBLE,2,dims2,vv(k)) ; call nc_check(st,'v') ; end do
+      st = nc_put_att_text_f(ncid,NC_GLOBAL,'time_zone',3_c_size_t,'UTC') ; call nc_check(st,'tz')
       st = nc_enddef(ncid) ; call nc_check(st,'e')
       do it=1,NT ; tsec(it)=real(it-1,c_double)*3600.0_c_double ; end do
       s1=0_c_size_t ; c1(1)=int(NT,c_size_t) ; st=nc_put_vara_double(ncid,vt,s1,c1,tsec) ; call nc_check(st,'tw')

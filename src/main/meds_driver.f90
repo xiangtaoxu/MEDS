@@ -29,7 +29,7 @@ module meds_driver
    use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_forcing_types,          only : met_source_t
    use meds_met_driver,             only : met_open, met_close, met_prefetch
-   use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
+   use meds_forcing_config,         only : MET_BACKEND_ED_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            polygon_report, DRIVER_OK, DRIVER_FINISHED,           &
@@ -182,7 +182,7 @@ contains
          call met_open(run%met_src, run%cfg%forcing, run_start=run%cfg%start_time,                &
                        run_end=run%cfg%end_time)
          if (run%verbose) then
-            if (run%cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+            if (run%cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(run%cfg%forcing%data_path), ')'
             else
                write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
@@ -190,8 +190,7 @@ contains
          end if
       end if
       call polygon_prepare(run%cfg, run%met_src, run%poly, run%cfg%forcing%latitude_deg,          &
-                           run%cfg%forcing%longitude_deg, run%cfg%forcing%utc_offset_h,           &
-                           run%cfg%forcing%elevation_m,                                           &
+                           run%cfg%forcing%longitude_deg, run%cfg%forcing%elevation_m,            &
                            keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
                                            fast_state_found,                                     &
                            keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &

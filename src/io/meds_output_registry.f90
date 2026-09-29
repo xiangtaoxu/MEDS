@@ -12,7 +12,7 @@
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_forcing_config, only : MET_BACKEND_ERA5LAND
+   use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
@@ -1082,7 +1082,7 @@ contains
       files%file_chunk = cfg%output%file_chunk
       files%sync_every = cfg%output%sync_every
       files%fast_interval_steps = cfg%output%fast_interval_steps
-      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ERA5LAND)                &
+      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND)                &
          files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'

@@ -331,7 +331,7 @@ grid_elevation        = 367.5          # [m] the orography of the cell the file 
 76.50 °W). The site sits 47.5 m below it, which the lapse turns into +0.31 K of air temperature,
 +2.2 W m⁻² of longwave and +0.56 kPa of pressure; the move to the canopy-air top raises the friction
 velocity over an established stand by about a third (`CHANGELOG.md`, #305). With the archive
-(`format = "era5land"`) the reader takes the grid elevation from the archive itself.
+(`format = "ED_ERA5land"`) the reader takes the grid elevation from the archive itself.
 
 **Forcing recycling.** One calendar year of ERA5-Land drives all 50 years. The recycle window is
 *declared*, never inferred:
