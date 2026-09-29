@@ -143,6 +143,13 @@ A census is how you start from a field inventory; see
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
 falls back to near-bare ground with a warning.
 
+**The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
+every soil layer of every patch starts there, unless a state checkpoint restores the soil. They
+default to 288 K and 0.30. A run with no spin-up starts from them, so set them to the site: the
+mean annual air temperature, for instance, keeps a warm site's column from starting cold. The
+loader refuses a temperature outside 233–333 K and a water content outside
+(`[soil_column].theta_res`, `theta_sat`].
+
 ## Output
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:

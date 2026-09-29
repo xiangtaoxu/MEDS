@@ -173,6 +173,9 @@ contains
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
       ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
+      ctx%theta_init     = cfg%init_soil_theta
+      ctx%soil_temp_init = cfg%init_soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 

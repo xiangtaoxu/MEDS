@@ -26,6 +26,13 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The initial soil state is configurable** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
+  `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³] set every soil layer of every patch at the
+  start of a run that does not restore the soil from a state file. They default to the constants the
+  fast context carried, 288 K and 0.30, so no existing config changes. The loader refuses a
+  temperature outside 233–333 K and a water content outside (`theta_res`, `theta_sat`]. Test:
+  `init_soil_state`.
+
 - **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15** (#322).
   The light-profile tolerance steps geometrically from `patch_light_tol` to the ceiling over
   `n_patch_fusion_iter` passes, as the cohort tolerance does, and goes no further. Patches more

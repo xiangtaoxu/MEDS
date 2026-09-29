@@ -320,6 +320,11 @@ module meds_config
       !----- Initial conditions (init_mode: 0 bare | 1 census | 2 restart). ---------------!
       integer(ik)        :: init_mode
       character(len=256) :: init_restart_file, init_census_file
+      !----- The soil state a run starts from when no state file restores one: every layer of   !
+      !      every patch at this temperature and volumetric water content. The defaults are the   !
+      !      constants the fast context carried before they were keys.  -------------------------!
+      real(wp)           :: init_soil_temp  = 288.0_wp   !< [K]
+      real(wp)           :: init_soil_theta = 0.30_wp    !< [m3/m3]
 
       !----- netCDF output. ---------------------------------------------------------------!
       character(len=256) :: state_output_dir, state_output_prefix
@@ -524,6 +529,8 @@ contains
          if (sc%grid_growth < 0.0_wp)     error stop tag//'soil_column.grid_growth < 0'
          if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
          if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
+         if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)             &
+            error stop tag//'init.soil_theta must lie in (soil_column.theta_res, theta_sat]'
          if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
@@ -888,6 +895,8 @@ contains
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
       if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
       if (cfg%patch_light_tol <= 0.0_wp)                    error stop tag//'patch_light_tol <= 0'
+      if (cfg%init_soil_temp < 233.0_wp .or. cfg%init_soil_temp > 333.0_wp)                          &
+         error stop tag//'init.soil_temp outside 233-333 K'
       if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
