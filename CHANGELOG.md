@@ -26,6 +26,16 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The census reader matches columns by name and reads `patch_area`**
+  (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
+  in any order: `patch_id`, `dbh`, `pft` and `nplant` required, `patch_area`, `site_id`,
+  `cohort_id` and `height` optional. With `patch_area` the patches take their areas normalized to
+  the site, where every census patch used to get an equal share. A header-less file of seven
+  numbers per row still reads positionally, so existing census files load unchanged. An unknown or
+  repeated column, a missing required one, and a patch whose rows disagree on `patch_area` stop
+  the run with the name. Tests: `init_census` (reordered columns and areas),
+  `init_census_refuses_area`, `init_census_refuses_column`.
+
 - **The initial soil state is configurable** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
   `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³] set every soil layer of every patch at the
   start of a run that does not restore the soil from a state file. They default to the constants the

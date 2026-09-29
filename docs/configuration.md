@@ -135,8 +135,14 @@ than removed:
 | Mode | Start from | Needs |
 |---|---|---|
 | `0` | **near-bare ground** (the default) | nothing |
-| `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort: `site_id, patch_id, cohort_id, dbh, height, pft, nplant`. `dbh` drives the allometry. |
+| `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort, columns matched by name from its header: `patch_id`, `dbh` [cm], `pft` and `nplant` [plants per m² of the patch] are required; `patch_area`, `site_id`, `cohort_id` and `height` are optional. `dbh` drives the allometry. |
 | `2` | a **state checkpoint** | `[init].restart_file` — a `<prefix>-S-*.nc` written by a previous run. Continues the exact instantaneous state. |
+
+Each distinct `patch_id` is a patch of age 0. With `patch_area`, in any unit, the patches take their
+areas normalized to the site; without it they share it equally. A file without a header whose rows
+are seven numbers is read in the old positional order, `site_id, patch_id, cohort_id, dbh, height,
+pft, nplant`. An unknown or repeated column, a missing required one, or a patch whose rows disagree
+on `patch_area` stops the run, naming it.
 
 A census is how you start from a field inventory; see
 [`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)

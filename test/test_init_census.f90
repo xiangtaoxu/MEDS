@@ -5,12 +5,12 @@ program test_init_census
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t
    use meds_init,             only : init_from_census
-   use meds_test_support, only : banner, build_test_config, check
+   use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
    type(site_t)        :: site
-   integer(ik)         :: u
+   integer(ik)         :: u, i
    logical             :: found
 
    call banner('init: from census CSV')
@@ -57,6 +57,30 @@ program test_init_census
    open(newunit=u, file='test_census_nohdr.csv', status='old', action='read')
    close(u, status='delete')
 
+   !=== Columns by NAME, in any order, with patch_area and without site_id. =================!
+   !    Patch 7 has three times the area of patch 9, so the site fractions are 0.75 and 0.25.  !
+   open(newunit=u, file='test_census_named.csv', status='replace', action='write')
+   write(u,'(a)') '# columns reordered, areas in m2'
+   write(u,'(a)') 'nplant,pft,dbh,patch_area,patch_id'
+   write(u,'(a)') '0.05,1,30.0,300.0,7'
+   write(u,'(a)') '0.20,1,10.0,300.0,7'
+   write(u,'(a)') '0.40,1,5.0,100.0,9'
+   close(u)
+   call init_from_census(site, cfg, 'test_census_named.csv', found)
+   call check(found, 'named-column census should be usable')
+   call check(site%patch%n  == 2_ik, 'named-column census should yield 2 patches')
+   call check(site%cohort%n == 3_ik, 'named-column census should yield 3 cohorts')
+   call check_close(sum(site%patch%area(1:2)), 1.0_wp, 1.0e-12_wp, 'patch areas must sum to the site')
+   call check_close(site%patch%area(1), 0.75_wp, 1.0e-12_wp, 'patch_area not normalized to the site (7)')
+   call check_close(site%patch%area(2), 0.25_wp, 1.0e-12_wp, 'patch_area not normalized to the site (9)')
+   do i = 1_ik, site%cohort%n
+      if (abs(site%cohort%dbh(i) - 5.0_wp) < 1.0e-9_wp) then
+         call check(site%cohort%owner_patch(i) == 2_ik, 'the 5 cm cohort must sit in patch 9')
+         call check_close(site%cohort%nplant(i), 0.40_wp, 1.0e-12_wp, 'nplant not read by name')
+      end if
+   end do
+   open(newunit=u, file='test_census_named.csv', status='old', action='read')
+   close(u, status='delete')
    !=== A missing file is reported (found=.false.), not a crash. ===========================!
    call init_from_census(site, cfg, 'no_such_census_file.csv', found)
    call check(.not. found, 'missing census file should report found=.false.')
