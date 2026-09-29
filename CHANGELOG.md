@@ -14,7 +14,7 @@ before and after.
 
 ## [Unreleased]
 
-**Upgrading.** Forcing configs change in four ways (`MEDS_FLUX_TOWER_FORCING_PLAN.md` §5):
+**Upgrading.** Forcing configs change in four ways (#320, `MEDS_FLUX_TOWER_FORCING_PLAN.md` §5):
 - rename `[forcing].format = "netcdf"` to `"ED_default"` and `"era5land"` to `"ED_ERA5land"`;
 - delete `[site].utc_offset` and `[site].apply_solar_longitude`, and build every forcing file on a
   UTC clock with `time_zone = "UTC"` (`make_forcing_file.py` always has);
@@ -26,8 +26,8 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
-- **Forcing files carry the humidity their source measured, and MEDS converts it**
-  (`MEDS_FLUX_TOWER_FORCING_PLAN.md` D2). An `ED_default` file carries exactly one of `RHair`
+- **Forcing files carry the humidity their source measured, and MEDS converts it** (#320,
+  `MEDS_FLUX_TOWER_FORCING_PLAN.md` D2). An `ED_default` file carries exactly one of `RHair`
   (a fraction; a flux tower), `Tdew` (a reanalysis) or `Qair`, and the reader turns it into specific
   humidity at each stamp with the model's own Bolton curve, as it always did for the ED_ERA5land
   archive's dewpoint. A file with none, with two, or with `RHair` above 1.5 (a percentage) is
@@ -36,26 +36,26 @@ Each old form stops at startup with a message naming the fix.
   saturation pressure is 5.7 Pa below Bolton's at 25 °C. With `RHair` in the file, the model's
   relative humidity at the forcing temperature is the tower's to 4e-15, and a saturated record reads
   back as VPD = 0. Qair files still load unchanged; `make_forcing_file.py` now writes `Tdew`.
-- **Every forcing clock is UTC** (D1). `[site].utc_offset` and `apply_solar_longitude` are refused,
+- **Every forcing clock is UTC** (#320, D1). `[site].utc_offset` and `apply_solar_longitude` are refused,
   and an `ED_default` file whose `time_zone` attribute is missing or not `"UTC"` stops at open,
   because a local-time file read as UTC keeps its daily totals and moves its sun. Solar time is the
   UTC clock plus the longitude and the equation of time.
-- **The two file formats are named `"ED_default"` and `"ED_ERA5land"`** (D3). The old names stop
+- **The two file formats are named `"ED_default"` and `"ED_ERA5land"`** (#320, D3). The old names stop
   with the name that replaced them.
-- **A file's stated heights are checked against `[forcing]`.** `tq_height_m`, `wind_height_m`,
+- **A file's stated heights are checked against `[forcing]`** (#320). `tq_height_m`, `wind_height_m`,
   `wind_meas_height_m` (within 0.01 m) and `height_above`, when present, must match
   `tq_height`, `wind_height` and `height_above`, because a disagreement moves every sample to the
   canopy-air top from the wrong height.
-- **The terrain-lapse keys are read only with the lapse on.** `[site].lapse_rate_tair` and
+- **The terrain-lapse keys are read only with the lapse on** (#320). `[site].lapse_rate_tair` and
   `grid_elevation` are required with `apply_elevation_lapse = true` and refused with it off; they
   used to be required either way and did nothing.
-- **`specific_humidity_to_vpd` is the exact inverse of the forcing conversions.** It used the
+- **`specific_humidity_to_vpd` is the exact inverse of the forcing conversions** (#320). It used the
   molar-mass ratio 0.621987 where every forward conversion and `sat_specific_humidity` use 0.622,
   so a humidity round trip was off by 2e-5 in relative humidity (0.06 Pa of vapour pressure at
   3 kPa). It is used only by output diagnostics (`cas_vpd_site` and `cas_vpd_var_site`), which move by
   that much; nothing in the model state changes.
 
-- **Soil-water faces take ED2's geometric rule** (`MEDS_FLUX_TOWER_FORCING_PLAN.md` §13).
+- **Soil-water faces take ED2's geometric rule** (#320, `MEDS_FLUX_TOWER_FORCING_PLAN.md` §13).
   - **Between layers:** conductivity is ln K interpolated linearly between the two nodes to the face,
     the thickness-weighted geometric mean of `rk4_derivs`. It replaces the upstream pick.
   - **At the surface:** the infiltration capacity is the geometric mean of K_sat and the top layer's
@@ -78,7 +78,7 @@ Each old form stops at startup with a message naming the fix.
 
 ### Added
 
-- **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (AmeriFlux BASE,
+- **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (#320; AmeriFlux BASE,
   FLUXNET/ONEFlux or any CSV). The tool works from a site TOML that declares the file, location,
   clock, stamp convention, sensor heights and every column's units.
   - **Checks (V1–V5).** It validates each declaration and stops on a disagreement: a uniform axis
@@ -94,11 +94,11 @@ Each old form stops at startup with a message naming the fix.
     pytest cases on synthetic towers, run by CTest as `prepare_flux_tower` when the Python it finds
     has the dependencies; two mutations of the tool (the UTC sign, the re-centring) fail 15 and 2
     of them.
-- **`scripts/forcing_common/meds_forcing_file.py`**, the one writer of an `ED_default` file and the
+- **`scripts/forcing_common/meds_forcing_file.py`** (#320), the one writer of an `ED_default` file and the
   Python copy of the model's conversions (humidity, hypsometric pressure, solar geometry, window-mean
   cos z, clearness index, longwave synthesis). `make_forcing_file.py` now writes through it and
   stores ERA5-Land's dewpoint as `Tdew`, with `tq_height_m = 2` and `height_above = "zero_plane"`.
-- **`examples/example_flux_tower_bci/`**: the worked example at Barro Colorado Island (AmeriFlux
+- **`examples/example_flux_tower_bci/`** (#320): the worked example at Barro Colorado Island (AmeriFlux
   PA-Bar, a 41 m tower).
   - **Data.** It downloads the CC0 data from Zenodo and checks the md5; nothing is committed.
   - **The build.** It passes V2 5 min from the declared UTC−5 begin-stamped clock, and V3 to
@@ -109,25 +109,26 @@ Each old form stops at startup with a message naming the fix.
   - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
     local time. They needed the soil-water fix above: before it, rain did not infiltrate a dried
     top layer and no stand grew.
-- **`test_met_tower`**, the flux-tower contract of an `ED_default` file: the three humidity forms
+- **`test_met_tower`** (#320), the flux-tower contract of an `ED_default` file: the three humidity forms
   and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval
   containing the instant on end- and begin-stamped files, and the tower round trip (relative
   humidity, VPD = 0 at saturation, the move from a 41 m tower to a canopy-air top). Each fix above
   was mutation-checked: restoring the old rain read fails the three end-stamped rain checks, and
   restoring the old ratio fails the humidity round trip by 1.9e-5.
-- **`test_region` refusals** for the old format names, `utc_offset`, `apply_solar_longitude` and the
+- **`test_region` refusals** (#320) for the old format names, `utc_offset`, `apply_solar_longitude` and the
   lapse keys with the lapse off, each run through `meds_main`.
 
 ### Fixed
 
-- **Rain arrived one forcing record late on end-stamped files, including every ED_ERA5land run.**
+- **Rain arrived one forcing record late on end-stamped files, including every ED_ERA5land run**
+  (#320).
   `met_instant` held `rec_prev%rainf` over each interval whatever the stamp convention, while it
   took shortwave from the record whose interval contains the instant (`rec_next` on an `"end"`
   file). On ERA5-Land, whose records are means over the hour ending at the stamp, each hour's rain
   fell in the following hour; totals were unchanged, and a begin-stamped file was read correctly.
   Rain now comes from the same record as shortwave. No test caught it because every fixture's rain
   was zero.
-- **The longwave synthesis held the wrong interval's clearness on begin-stamped files.** With
+- **The longwave synthesis held the wrong interval's clearness on begin-stamped files** (#320). With
   `lwdown_source = "synthesize"`, `met_advance` remembered the clearness of `rec_next` whatever the
   stamp convention. On a `"begin"` file that is the next interval, dark after the last daylight
   one, so `kt_last_day` was 0 every night and every night took the full cloud term, about +40 W m⁻²
