@@ -5,7 +5,7 @@ the five tower years: observed, or filled (and how). Reads the <Var>_qc flags ma
 writes. Observed values are neutral grey; the fills take the first slots of a validated categorical
 palette in a fixed order, so the same method is the same colour in every row.
 
-Usage: python plot_forcing.py [--forcing data/bci_forcing_lw-synth.nc] [--out forcing_qc.png]
+Usage: python plot_forcing.py [--forcing data/bci_forcing.nc] [--out forcing_qc.png]
 """
 import argparse
 import os
@@ -21,14 +21,14 @@ from netCDF4 import Dataset  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 INK, MUTED, OBSERVED = "#0b0b0b", "#52514e", "#dad9d4"
 CODES = [(0, "observed", OBSERVED), (1, "short gap, interpolated", "#2a78d6"),
-         (2, "ERA5-Land, regressed", "#eb6834"), (3, "synthesis regressed / mean diurnal", "#1baf7a"),
+         (3, "synthesis regressed / mean diurnal", "#1baf7a"),
          (4, "filled by the provider", "#eda100"), (5, "RH from the provider's VPD", "#e87ba4")]
 ROWS = ["Tair", "RHair", "PSurf", "Wind", "Rainf", "SWdown", "LWdown"]
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--forcing", default=os.path.join(HERE, "data", "bci_forcing_lw-synth.nc"))
+    ap.add_argument("--forcing", default=os.path.join(HERE, "data", "bci_forcing.nc"))
     ap.add_argument("--out", default=os.path.join(HERE, "forcing_qc.png"))
     args = ap.parse_args(argv)
     with Dataset(args.forcing) as ds:

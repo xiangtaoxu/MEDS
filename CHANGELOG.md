@@ -26,6 +26,18 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The flux-tower tool fills the longwave by the synthesis regression only; its ERA5-Land fill is
+  removed.** Filling from ERA5-Land or another source is the user's to do in the tower file before
+  the build. `make_tower_forcing.py` loses `--lw-fill`, `--states-fill` and `--era5-file`, and a
+  site TOML's `gapfill.longwave`, `gapfill.states` or `gapfill.era5_file` stops the build with that
+  message. A rain gap now stops the build instead of taking ERA5-Land's rain, the V5 report no
+  longer gives the barometer height ERA5-Land implied, and qc code 2 is unused.
+  `compare_longwave_fill.py` scores the synthesis regression beside a monthly climatology and the
+  synthesis as MEDS computes it. Scored against the ED_ERA5land archive before its removal, the
+  ERA5-Land fill tied with the synthesis at BCI (RMSE 14.8 against 14.5 W m⁻² on 7,200 hidden half
+  hours). The BCI example builds one forcing file, `data/bci_forcing.nc`. Tests: two ERA5-Land
+  cases removed, and one added for a refused `gapfill` key.
+
 - **OpenMP is compiled in by default: `MEDS_OPENMP` is now `ON`** (#324). The thread count stays a
   run-time setting, `[run].n_threads`, default 1, so a default build runs serially until a config asks for
   threads. `-DMEDS_OPENMP=OFF` builds serial, and a compiler with no Fortran OpenMP now falls back to
@@ -206,8 +218,9 @@ Each old form stops at startup with a message naming the fix.
   - **What it writes.** An `ED_default` file on a UTC clock with the measured `RHair`, pressure
     brought down to the ground, states re-centred to the stamps, and the tower's heights stated.
   - **Gap filling** is explicit, with a `<Var>_qc` flag on every value: short gaps interpolated,
-    long ones from ERA5-Land or the mean diurnal variation. Longwave is filled from ERA5-Land or from
-    the model's synthesis, regressed onto the tower in its clear-sky and cloud parts.
+    long ones by the mean diurnal variation. Longwave is filled from the model's synthesis,
+    regressed onto the tower in its clear-sky and cloud parts. (An ERA5-Land fill added here was
+    removed before release; see Changed.)
   - **`compare_longwave_fill.py`** scores the fills on held-out observations. `tests/` has 24
     pytest cases on synthetic towers, run by CTest as `prepare_flux_tower` when the Python it finds
     has the dependencies; two mutations of the tool (the UTC sign, the re-centring) fail 15 and 2
@@ -223,7 +236,8 @@ Each old form stops at startup with a message naming the fix.
     0.000 Pa under the Alduchov–Eskridge curve.
   - **Longwave.** The observed longwave is 61 % missing. The synthesis regression fills it with
     RMSE 9.1 W m⁻² on hidden records, where the model's `lwdown_source = "synthesize"` would be
-    36.3 (bias −22.5).
+    36.3 (bias −22.5). Those numbers were measured on the upwelling column, which the file labels
+    as downwelling; the correction is under Fixed.
   - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
     local time. They needed the soil-water fix above: before it, rain did not infiltrate a dried
     top layer and no stand grew.
@@ -237,6 +251,30 @@ Each old form stops at startup with a message naming the fix.
   lapse keys with the lapse off, each run through `meds_main`.
 
 ### Fixed
+
+- **The BCI flux-tower example forced MEDS with the canopy's upwelling longwave.** `BCI_v5.1.csv`
+  labels its downwelling longwave `Rl_up` and its upwelling `Rl_dn`, and `bci_site.toml` took the
+  label at its word. Three independent checks agree: the provider's `Rnet` equals
+  Rs − Rs_dn + Rl_up − Rl_dn (RMS residual 1.7 W m⁻² after the bounds screen, 87.6 as labelled); at
+  night `Rl_dn` averages 1.022 times the air's blackbody emission σT⁴ and `Rl_up` 0.948; and
+  ERA5-Land's daily longwave follows `Rl_up` (r 0.86) and not `Rl_dn` (0.12). `LWdown` now reads
+  `Rl_up`, and both the site TOML and the example README say why. The observed longwave the
+  forcing carries averages 429 W m⁻² instead of 466, and the synthesis regression is re-fitted to
+  it. The five-year census run against the tower, before and after:
+
+  | | before | after | tower |
+  |---|---|---|---|
+  | net radiation, mean [W m⁻²] | 153.0 | 120.4 | 136.3 |
+  | net radiation, night (20–05 h local) | +6.4 | −21.8 | −33.5 |
+  | sensible heat, mean | −14.0 | −39.0 | 32.4 |
+  | latent heat, mean | 59.0 | 56.5 | 75.5 |
+  | GPP, mean [µmol m⁻² s⁻¹] | 10.86 | 11.07 | 7.46 |
+
+  The mislabelled forcing had hidden an albedo error: the model's canopy reflects 0.26 of the
+  shortwave against the tower's 0.13, and net radiation now falls short by day. The story the
+  example told about BCI's longwave, that it fell with daytime cloudiness so the synthesis's cloud
+  term had the wrong sign, came from the same mislabelling and is gone: the fitted cloud coefficient
+  is +0.10.
 
 - **Rain arrived one forcing record late on end-stamped files, including every ED_ERA5land run**
   (#320).

@@ -4,10 +4,9 @@
 
 Steps (each skipped when its product already exists, unless --force):
   1. fetch the tower data into data/ (Zenodo 6456527, CC0; checked by md5)
-  2. build the forcing file with scripts/prepare_flux_tower/make_tower_forcing.py -- the longwave
-     filled by the model's synthesis regressed onto the tower, and, when data/bci_era5land.nc exists,
-     a second file filled from ERA5-Land
-  3. score the longwave fills on hidden observations (compare_longwave_fill.py)
+  2. build the forcing file data/bci_forcing.nc with scripts/prepare_flux_tower/make_tower_forcing.py,
+     the longwave filled by the model's synthesis regressed onto the tower
+  3. score that longwave fill on hidden observations (compare_longwave_fill.py)
   4. draw the forcing's fill flags (plot_forcing.py)
   5. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
   6. run the five tower years from the census, with hourly output (meds_config_eval.toml)
@@ -58,23 +57,12 @@ def main(argv=None):
     os.makedirs(OUTPUT, exist_ok=True)
 
     run([py, "fetch_bci_data.py"] + (["--copy-from", args.copy_from] if args.copy_from else []))
-    synth = os.path.join(DATA, "bci_forcing_lw-synth.nc")
-    if args.force or not os.path.exists(synth):
-        run([py, os.path.join(TOOLS, "make_tower_forcing.py"), "--site", "bci_site.toml", "--out", synth,
-             "--lw-fill", "synth"])
-    era5 = os.path.join(DATA, "bci_era5land.nc")
-    compare = [py, os.path.join(TOOLS, "compare_longwave_fill.py"), "--site", "bci_site.toml",
-               "--out", os.path.join(DATA, "lw_comparison.json"), "--figure", os.path.join(HERE, "lw_comparison.png")]
-    if os.path.exists(era5):
-        lw_era5 = os.path.join(DATA, "bci_forcing_lw-era5.nc")
-        if args.force or not os.path.exists(lw_era5):
-            run([py, os.path.join(TOOLS, "make_tower_forcing.py"), "--site", "bci_site.toml", "--out", lw_era5,
-                 "--lw-fill", "era5", "--era5-file", era5])
-        compare += ["--era5-file", era5]
-    else:
-        print(f"note: no {os.path.relpath(era5, HERE)}; the ERA5-Land longwave fill is skipped (README, 'Longwave')")
-    run(compare)
-    run([py, "plot_forcing.py", "--forcing", synth])
+    forcing = os.path.join(DATA, "bci_forcing.nc")
+    if args.force or not os.path.exists(forcing):
+        run([py, os.path.join(TOOLS, "make_tower_forcing.py"), "--site", "bci_site.toml", "--out", forcing])
+    run([py, os.path.join(TOOLS, "compare_longwave_fill.py"), "--site", "bci_site.toml",
+         "--out", os.path.join(DATA, "lw_comparison.json"), "--figure", os.path.join(HERE, "lw_comparison.png")])
+    run([py, "plot_forcing.py", "--forcing", forcing])
     if args.forcing_only:
         return
 

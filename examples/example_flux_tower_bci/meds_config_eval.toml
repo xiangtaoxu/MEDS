@@ -143,7 +143,7 @@ apply_elevation_lapse = false         # the tower measures at the site: no terra
 [forcing]
 forcing_on     = true
 format         = "ED_default"
-path           = "data/bci_forcing_lw-synth.nc"   # or data/bci_forcing_lw-era5.nc (README, "Longwave")
+path           = "data/bci_forcing.nc"             # run_example.py builds it (make_tower_forcing.py)
 grid_index     = 1
 grid_match     = "explicit"
 # The tower's own heights, above the ground at its base (41 m). Each sample is moved from them to

@@ -1,9 +1,10 @@
 # MEDS flux-tower forcing plan
 
-**Status:** written 2026-09-28, on branch `feat/flux-tower-forcing`. P0–P5 are implemented on that
-branch, with the soil-water fix of §13 that the BCI example needed. One item stays open: **the
-ERA5-Land fill is tested on synthetic ERA5-Land only**, because the Copernicus data store was
-unreachable from the session that built it. The BCI download is the command in the example README.
+**Status:** written 2026-09-28; P0–P5 merged in #320, with the soil-water fix of §13 that the BCI
+example needed. Revisited 2026-09-29 on branch `feat/bci-lw-fill`: the BCI file's two longwave
+columns were found swapped (D9, §2), and the ERA5-Land fill, until then tested on synthetic
+ERA5-Land only, was scored against the ED_ERA5land archive, found no better than the synthesis
+regression at BCI, and removed (D5, §8).
 
 The worked example is Barro Colorado Island (BCI), Panama.
 
@@ -21,10 +22,11 @@ else; the model's saturation curve, pressure convention and solar geometry are.
 | D2 | **The file carries the humidity the source measured, and the reader converts it** with the model's own saturation curve: `RHair` for a tower, `Tdew` for ERA5-Land (as the ED_ERA5land archive already does), `Qair` for a model-made source. Exactly one per file. |
 | D3 | **Format names:** `[forcing].format = "ED_default"` (the single-file format, and the default) and `"ED_ERA5land"` (the archive). `"netcdf"` and `"era5land"` are refused with a message naming the new value. Names are matched exactly. |
 | D4 | **Half-hour means are re-centred to point values at the stamps** for the state variables, because MEDS interpolates states as instants (§5.2). |
-| D5 | **LW↓ gaps are filled two ways**, ERA5-Land regression and MEDS-synthesis regression, and the two are compared (§8). |
+| D5 | **LW↓ gaps are filled by the MEDS-synthesis regression, and by nothing else** (§8). An ERA5-Land regression was built beside it and scored equal at BCI; it was removed, with ERA5-Land filling of the other variables, because filling from another source is the user's to do in the tower file before the build. |
 | D6 | **BCI heights:** temperature/humidity, wind and the barometer all at 41 m above the ground. |
 | D7 | **No data in the repository.** The BCI CSV and every forcing file built from it stay out of git; the example downloads the CSV (CC0) from Zenodo. |
 | D8 | **Recycle window** 2012-08-01 → 2017-08-01 (UTC). It includes the 2015–16 El Niño drought; the example README says so. |
+| D9 | **BCI's longwave is the column `Rl_up`.** `BCI_v5.1.csv` labels its downwelling and upwelling longwave the wrong way round (§2), so the site TOML declares `LWdown = Rl_up`, and it and the example README say why. The tool does not test for a swap: no one pattern holds across towers. |
 
 ## 2. What the BCI file shows (measured 2026-09-28)
 
@@ -36,10 +38,11 @@ half-hours, 2012-07-03 00:00 → 2017-08-31 23:30, regular, no duplicates.
 | Clock and stamp | Local standard time (UTC−5); `date` stamps the **start** of each interval. Fitting the 95th-percentile Rs envelope against MEDS's window-mean cos z: RMSE 36 W m⁻² start-stamped, 61 end-stamped; best shift within 5 min of start-stamping in every year 2013–17 | convert to UTC, keep `avg_convention = "begin"` |
 | `vpd` | Computed by the provider with the Alduchov–Eskridge Magnus curve (610.94, 17.625, 243.04): residual 0.000 Pa. Against Bolton the residual reaches 5.2 Pa | build humidity from RH, never from `vpd` (D2) |
 | Complete columns | tair, RH, vpd, p_kpa, PPT, Rs: 0 % missing (filled upstream by an ANN, no flag) | provenance only |
-| LW↓ | 61 % missing: none 2012–2014, 46 % of 2015, 88 % of 2016, 100 % of 2017 | long-gap fill (§8) |
+| LW↓ | 61 % missing: observed in none of 2012–2014, 46 % of 2015, 88 % of 2016, all of 2017 | long-gap fill (§8) |
+| LW columns | **swapped** (D9). The provider's `Rnet` = Rs − Rs_dn + **Rl_up − Rl_dn** (RMS residual 1.7 W m⁻² after V4; 87.6 as labelled). At night `Rl_dn`/σT⁴ = 1.022, more than the air can emit, and `Rl_up`/σT⁴ = 0.948. ERA5-Land's daily longwave: r 0.86 with `Rl_up`, 0.12 with `Rl_dn`; bias −10 and −48 W m⁻² | `LWdown = Rl_up` (D9) |
 | Wind (`ubar`) | 14 % NaN plus 212 negative values | negatives are QC failures |
 | PAR | 2014–2016 only; daytime diffuse ≤ total; diffuse fraction 0.98 (kt<0.3) → 0.33 (kt>0.7); Par_tot/Rs 2.08–2.11 µmol J⁻¹ every year | evaluation of the SW partition, not forcing |
-| MEDS LW synthesis | Brutsaert + cloud term (a = 0.22) vs observed: bias −12.7, RMSE 30.1 W m⁻²; clear-sky alone −65.5; refitting `a` only reaches −9.7 | synthesis alone cannot fill three years |
+| MEDS LW synthesis | Brutsaert + cloud term (a = 0.22) vs observed (`Rl_up`): bias +21.5, RMSE 30.6 W m⁻², r 0.48; clear-sky alone −27.8; refitting `a` alone gives a = 0.12, bias −1.4, RMSE 17.3 | synthesis alone cannot fill three years; regress it (§8) |
 | PPT | 1,423–2,491 mm yr⁻¹ (2013–16) | report only |
 | Pressure | mean 98.83 kPa ⇒ 182–208 m ASL for a sea-level pressure of 1009–1012 hPa; the ground is 140–150 m | the barometer is at the tower top (D6) |
 
@@ -146,39 +149,56 @@ record mean is kept.
 
 ## 8. P3 — gap filling
 
-qc codes: 0 observed · 1 short-gap interpolation · 2 ERA5-Land regression · 3 synthesis
-regression or mean diurnal variation · 4 filled by the data provider (FLUXNET `_QC` > 0) · 5
-relative humidity recovered from the provider's VPD through its declared curve. With too few
+qc codes: 0 observed · 1 short-gap interpolation · 3 synthesis regression or mean diurnal
+variation · 4 filled by the data provider (FLUXNET `_QC` > 0) · 5
+relative humidity recovered from the provider's VPD through its declared curve. Code 2 is unused.
+With too few
 observed longwave records to fit (fewer than 48), the synthesis fill is the model's own synthesis,
 cloud coefficient 0.22, with a warning. After
 filling, any missing value stops the tool (MEDS never gap-fills, `forcing.md` §10).
 
 1. **Short gaps** (≤ 2 h by default): linear for Tair, RH, PSurf and LWdown; energy form for wind;
    shortwave through the interpolated clearness index times the window-mean top-of-atmosphere flux.
-   Rain is never interpolated.
-2. **Long gaps, ERA5-Land** (`--lw-fill era5` for longwave; the same path for the other variables):
-   the site's cell from box files or an ED_ERA5land archive, moved to UTC half-hours on the tower's
-   stamp convention (states interpolated to the stamps, fluxes held over their hour), then a
-   per-variable linear regression on the overlap, by calendar month and, for longwave, day and
-   night (the FLUXNET2015 `_ERA` approach, Vuichard & Papale 2015).
-3. **Long gaps, synthesis** (`--lw-fill synth`): MEDS's own Brutsaert + cloud-term longwave from the
+   Rain is never interpolated, and a rain gap stops the build.
+2. **Long gaps in the longwave, synthesis:** MEDS's own Brutsaert + cloud-term longwave from the
    tower's T, humidity and clearness index (dusk's clearness held through the night, as the reader
    does), regressed in its two parts, the clear-sky emission εσT⁴ and the cloud term εσT⁴(1 − kt), so
-   the cloud coefficient is fitted at the site rather than taken as 0.22. At BCI a regression on
-   the whole synthesis collapsed to the monthly mean (r = −0.03 between synthesis and tower; the
-   observed longwave falls with daytime cloudiness), and the two-part fit gave RMSE 8.5 W m⁻² in
-   sample.
-4. **Long gaps, fallback for the other states**: mean diurnal variation over ±7 days (Falge et al.
-   2001).
+   the cloud coefficient is fitted at the site rather than taken as 0.22. At BCI the pooled fit
+   gives 0.10 per unit of clear-sky emission, and the two parts beat a single regression on the
+   whole synthesis on every held-out draw (13.7–14.5 against 14.5–16.7 W m⁻²). (Before D9 this
+   paragraph reported that the observed longwave fell with daytime cloudiness; that was the
+   canopy's emission, read from the mislabelled column.)
+3. **Long gaps in the other states**: mean diurnal variation over ±7 days (Falge et al. 2001).
 
-**The comparison (D5).** Offline: withhold 20 % of the observed longwave in 10-day blocks, fill it
-both ways, and score bias, RMSE and the diurnal and seasonal cycles, day and night. At BCI, on
-7,200 hidden half hours: the synthesis regression scores bias +1.2, RMSE 9.1 W m⁻², r 0.86; the
-monthly climatology RMSE 13.4; MEDS's `lwdown_source = "synthesize"` as it is, bias −22.5 and
-RMSE 36.3. The ERA5-Land row waits on the download (Status). In the model:
-two forcing files identical except `LWdown`, the same runs, compared against the tower's
-upwelling longwave, net radiation, H and LE. BCI's observed 2016–2017 act as a control, since the
-two files agree there.
+**The comparison (D5).** Offline: withhold 20 % of the observed longwave in 10-day blocks, fill it,
+and score bias, RMSE and the diurnal and seasonal cycles, day and night. The ERA5-Land row is from
+before its removal. At BCI, on 7,200
+hidden half hours (seed 1; seeds 2 and 3 in brackets):
+
+| fill | bias | RMSE | r | diurnal-cycle RMSE |
+|---|---|---|---|---|
+| synthesis regression | +2.3 | 14.5 (13.7, 13.9) | 0.79 | 4.3 |
+| ERA5-Land regression (removed) | +2.4 | 14.8 (13.6, 13.8) | 0.77 | 3.9 |
+| monthly day/night climatology | +4.4 | 18.6 (16.0, 16.3) | 0.63 | 7.1 |
+| `lwdown_source = "synthesize"` as it is | +20.9 | 29.7 (30.0, 31.1) | 0.61 | 22.1 |
+
+- **ERA5-Land**, before its removal, was the archive's cell at 9.2 N, −79.8 E, 7.2 km from the tower, 73 % land at 73 m.
+  It was aligned in time with the tower (shortwave and air temperature correlate best at zero lag),
+  its raw longwave was 10 W m⁻² low, and its daily means followed the tower's with r = 0.86. A fill
+  on the synthesis parts and ERA5-Land together scored 13.6 against 14.3 for either alone, over
+  five draws.
+- **In the model:** two forcing files identical except `LWdown` (the synthesis and ERA5-Land fills),
+  the same five-year census run.
+  Every flux's mean agrees between them to 0.1 W m⁻², and in 2013–2014, when the tower measured
+  net radiation but no longwave, the night-time net radiation is −18.9 (synthesis) and −19.7
+  (ERA5-Land) against the tower's −28.4.
+- **Not adopted: rebuilding LW↓ from the tower's own Rnet.** Where Rnet was measured and the
+  longwave was not (48 % of 2013, 99 % of 2014, 42 % of 2015), LW↓ = Rnet − (Rs − Rs_dn) + LW↑, with
+  LW↑ regressed on σT⁴ and the absorbed shortwave, scores RMSE 7.3–7.6 and r 0.94 on the same hidden
+  records, half the error of either fill. It is not in the tool: the upwelling sensor's night-time
+  ratio to σT⁴ drifts from 1.007 in 2015 to 1.038 in 2017, which a regression fitted on 2015–2017
+  would carry into 2013–2014, and a forcing made from the tower's Rnet makes the model's net
+  radiation partly circular against it.
 
 ## 9. Validation gates
 
@@ -192,8 +212,7 @@ Errors, not warnings, except V5.
 - **V3** — humidity. With RH and VPD both present, the VPD residual under the declared curve is
   below 1 Pa (BCI: 0.000 with Alduchov–Eskridge).
 - **V4** — physical bounds per variable.
-- **V5** — reports: PAR/SW per year, observed − filled longwave per year, annual rain, the
-  barometer height implied by ERA5-Land pressure when ERA5-Land is given.
+- **V5** — reports: PAR/SW per year, observed − filled longwave per year, annual rain.
 - **V6** — the round trip through the reader (a CTest): a tower-style `ED_default` file is read by
   `met_open`/`met_instant`, and the model's RH at the forcing temperature equals `RHair`, the rain
   and shortwave interval means are returned in the right interval, and the canopy-air-top
@@ -201,8 +220,9 @@ Errors, not warnings, except V5.
 
 ## 10. P4 — `examples/example_flux_tower_bci/`
 
-A download script (Zenodo, pinned checksum), the site TOML, the two forcing builds, a spin-up on
-the five-year cycle, an evaluation run with sub-daily output, and post-processing that shifts the
+A download script (Zenodo, pinned checksum), the site TOML, the forcing build, a five-year run
+from the 2010 census with sub-daily output (`MEDS_BCI_CENSUS_INIT_PLAN.md`; it replaced the
+spin-up), and post-processing that shifts the
 output to local time and compares it with the tower's LE, H, net radiation, upwelling longwave and
 GPP (FLAG = 1 only). Figures: forcing QC, the longwave comparison, and the diffuse-PAR check of the
 shortwave partition.
@@ -216,7 +236,7 @@ apply_elevation_lapse = false          # measured at the site
 [forcing]
 forcing_on = true
 format = "ED_default"
-path = "<user path>/bci_forcing_lw-era5.nc"
+path = "data/bci_forcing.nc"
 grid_index = 1
 grid_match = "explicit"
 tq_height   = 41.0                     # HC2S3, assumed at the EC height (D6)

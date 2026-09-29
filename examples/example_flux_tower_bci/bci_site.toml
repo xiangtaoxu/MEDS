@@ -34,12 +34,14 @@ VPD    = { column = "vpd",   units = "kPa", curve = "alduchov_eskridge" }  # che
 PSurf  = { column = "p_kpa", units = "kPa" }
 Rainf  = { column = "PPT",   units = "mm" }                 # per half hour
 SWdown = { column = "Rs",    units = "W m-2" }
-LWdown = { column = "Rl_dn", units = "W m-2" }              # 61 % missing: none before 2015
+LWdown = { column = "Rl_up", units = "W m-2" }              # not Rl_dn: the file swaps the two (below)
 Wind   = { column = "ubar",  units = "m s-1" }              # 212 negative values are screened out
 PAR    = { column = "Par_tot", units = "umol m-2 s-1" }     # reports only
+# THE LONGWAVE COLUMNS ARE SWAPPED IN BCI_v5.1.csv: `Rl_up` is the downwelling longwave and `Rl_dn`
+# the upwelling. The provider's Rnet equals Rs - Rs_dn + Rl_up - Rl_dn to the last digit; at night
+# `Rl_dn` averages 1.022 times the air's blackbody emission sigma T^4, more than the sky can emit,
+# and `Rl_up` 0.948; and ERA5-Land's daily longwave follows `Rl_up` (r 0.86) and not `Rl_dn` (0.12).
+# The longwave is observed only from 2015 on: 46 % of 2015, 88 % of 2016 and all of 2017.
 
 [gapfill]
 short_gap_max = 4                           # [records] interpolate gaps up to 2 h
-longwave      = "synth"                     # "synth" | "era5" (needs era5_file)
-states        = "mdv"                       # long gaps in T, RH, P, wind, SW: "mdv" | "era5"
-era5_file     = "data/bci_era5land.nc"      # an ED_default file from prepare_era5/make_forcing_file.py
