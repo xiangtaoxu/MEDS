@@ -27,7 +27,7 @@ Each old form stops at startup with a message naming the fix.
 ### Changed
 
 - **The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot, with no spin-up**
-  (`MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
   `bci_census.toml` declares the census; `run_example.py` builds the census file with
   `scripts/prepare_census` and runs the five tower years from it, with the soil at 298.65 K and soil
   carbon in steady state with the stand's litter. MEDS fuses the 1,250 quadrat patches and 84,937
@@ -35,7 +35,7 @@ Each old form stops at startup with a message naming the fix.
   diurnal and seasonal cycles of GPP, NEE, latent and sensible heat and net radiation against the
   tower, and writes their statistics. The README and `evaluation.png` are regenerated from this run.
 
-- **A census stand is restructured before the first step** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
+- **A census stand is restructured before the first step** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
   After `init_from_census`, the driver applies the slow step's own monthly cohort block (fusion, cull,
   fission, sort) and yearly patch block (fusion, cull, cohort fusion), without recruitment or
   disturbance and under the same switches. A census used to run its first month with every row a
@@ -44,7 +44,7 @@ Each old form stops at startup with a message naming the fix.
   size, conserving the site's stems and biomass, and does nothing with the switches off.
 
 - **The census reader matches columns by name and reads `patch_area`**
-  (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
   in any order: `patch_id`, `dbh`, `pft` and `nplant` required, `patch_area`, `site_id`,
   `cohort_id` and `height` optional. With `patch_area` the patches take their areas normalized to
   the site, where every census patch used to get an equal share. A header-less file of seven
@@ -53,7 +53,7 @@ Each old form stops at startup with a message naming the fix.
   the run with the name. Tests: `init_census` (reordered columns and areas),
   `init_census_refuses_area`, `init_census_refuses_column`.
 
-- **The initial soil state is configurable** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
+- **The initial soil state is configurable** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
   `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³] set every soil layer of every patch at the
   start of a run that does not restore the soil from a state file. They default to the constants the
   fast context carried, 288 K and 0.30, so no existing config changes. The loader refuses a
@@ -166,7 +166,7 @@ Each old form stops at startup with a message naming the fix.
 ### Added
 
 - **`scripts/prepare_census/make_census.py`: a ForestGEO tree table to a MEDS census**
-  (`MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
   at its true area, one row per distinct (cell, diameter), `nplant` the count over the area. It
   keeps live trees with a diameter of at least the declared minimum, and counts every exclusion. Given
   a PFT file and an earlier census, its summary also carries the stand's steady-state litter input for
