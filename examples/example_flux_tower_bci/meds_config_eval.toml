@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# MEDS example_flux_tower_bci -- STAGE 2 of 2: the five tower years, 2012-08-01 to 2017-08-01 UTC,
-# restarted from the stage-1 spin-up, with hourly output to compare against the tower's own fluxes.
+# MEDS example_flux_tower_bci: the five tower years, 2012-08-01 to 2017-08-01 UTC, started from the
+# 2010 census of the BCI 50-ha plot, with hourly output to compare against the tower's own fluxes.
+# There is no spin-up: the stand is the census (bci_census.toml -> scripts/prepare_census), the soil
+# starts at the site's temperature, and soil carbon starts in steady state with the stand's litter.
 # Every output stamp is UTC; the post-processing shifts it to Panama time (UTC-5) for the comparison.
 
 [run]
@@ -50,10 +52,12 @@ disturbance_survive_height = 10.0
 min_recruit_size = 1.0e-2
 
 [init]
-init_mode    = 2                  # restart from stage 1
-restart_file = "output/spinup-S-20120801000000.nc"
-census_file  = "none"
+init_mode    = 1                  # a census: one patch per 20 m quadrat, fused by MEDS before the first step
+restart_file = "none"
+census_file  = "data/bci_census2010_meds.csv"   # run_example.py builds it from bci_census.toml
 pft_config   = "pft_parameters.toml"
+soil_temp    = 298.65             # [K] the tower's mean air temperature, as [energy].deep_temp
+soil_theta   = 0.30               # [m3/m3] wet season: August is three months into it
 
 [state]
 output_dir     = "output"
@@ -163,6 +167,13 @@ start_clamp    = "error"
 
 [soil_carbon]
 soil_carbon_on = true
+# Start in steady state with the census stand's litter (make_census.py's summary): leaf and fine-root
+# turnover from the PFT, wood from the plot's biomass mortality of 1.90 %/yr (2005-2010).
+spinup_steady      = true
+spinup_labile_grnd = 3.3080e-04     # [kgC/m2/day]
+spinup_labile_soil = 8.0198e-04
+spinup_struct_grnd = 9.2093e-04
+spinup_struct_soil = 6.7763e-04
 
 [energy]
 bottom_bc = "dirichlet"

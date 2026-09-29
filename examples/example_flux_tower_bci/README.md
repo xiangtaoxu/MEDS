@@ -1,8 +1,9 @@
 # Forcing from a flux tower: Barro Colorado Island
 
 This example builds a MEDS forcing file from a flux tower's own meteorology, then drives MEDS with
-it at the tower. The site is Barro Colorado Island (BCI), Panama: AmeriFlux PA-Bar, a 41 m tower
-above a seasonal tropical forest, 2012–2017.
+it at the tower, starting from the forest the BCI 50-ha plot census measured. The site is Barro
+Colorado Island (BCI), Panama: AmeriFlux PA-Bar, a 41 m tower above a seasonal tropical forest,
+2012–2017.
 
 What it shows:
 - **declare, then validate.** A site TOML ([`bci_site.toml`](bci_site.toml)) declares what the
@@ -13,9 +14,12 @@ What it shows:
 - **explicit, flagged gap filling**, and a test of two ways to fill the longwave.
 - **the tower's height in the model.** Every sample is moved from 41 m above the ground to the top
   of each patch's canopy air space.
+- **a start from a census, not a spin-up.** The 2010 census of the 50-ha plot is the stand, one patch
+  per 20 m quadrat, and MEDS fuses it with its own restructuring before the first step.
 
-The design record is
-[`docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md`](../../docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md).
+The design records are
+[`docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md`](../../docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md)
+and [`docs/dev_plans/MEDS_BCI_CENSUS_INIT_PLAN.md`](../../docs/dev_plans/MEDS_BCI_CENSUS_INIT_PLAN.md).
 
 ## The data
 
@@ -26,17 +30,24 @@ under CC0. It is not in the repository. [`fetch_bci_data.py`](fetch_bci_data.py)
 README asks that publications acknowledge the Center for Tropical Forest Science – Forest Global
 Earth Observatory (CTFS-ForestGEO), which supported the tower.
 
+**The census** is the BCI 50-ha plot's tree table for census 7 (2010), with census 6 (2005) for the
+plot's biomass mortality: Condit R., Pérez R., Aguilar S., Lao S., Foster R., Hubbell S.P. 2019,
+*Complete data from the Barro Colorado 50-ha plot: 423617 trees, 35 years*, Dryad
+[doi:10.15146/5xcp-0d46](https://doi.org/10.15146/5xcp-0d46), CC0. The PIs ask to be told of papers
+that use it. [`bci_census.toml`](bci_census.toml) names the copy to read and its checksum; the one it
+names is the lab's CSV export, and the public tables are `bci.tree.zip` on the Dryad page, which
+must be downloaded in a browser because Dryad refuses scripts.
 ## Running it
 
 ```bash
 cd examples/example_flux_tower_bci
 python run_example.py --forcing-only        # fetch, build the forcing, score the longwave fills, figures
-python run_example.py                       # ... then the 50-year spin-up and the 5-year evaluation
+python run_example.py                       # ... then the census file, the five tower years, the comparison
 ```
 
-`run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model stages a built
+`run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model run a built
 `meds_main` (`--meds-main`, default `../../build-ifx/meds_main`). The forcing build takes about
-ten seconds, the 50-year spin-up about 11 minutes on a laptop core, and the evaluation about 3.
+ten seconds, the census file about a minute, and the five-year run about 7 minutes on one core.
 
 ## What the declarations are, and how each was checked
 
@@ -111,17 +122,20 @@ a lake cell's mean offset, but not a different diurnal cycle.
 
 ## The model runs
 
-- **Stage 1**, [`meds_config_spinup.toml`](meds_config_spinup.toml), runs 50 years from bare ground,
-  1962-08-01 to 2012-08-01. It recycles the tower's five whole years, 2012-08-01 to 2017-08-01 UTC,
-  with CO₂ from the CMIP7 series.
-- **Stage 2**, [`meds_config_eval.toml`](meds_config_eval.toml), runs those five years themselves
-  with hourly output. [`plot_evaluation.py`](plot_evaluation.py) then moves the output to local time
-  and compares it with the tower.
-- **The PFT.** [`pft_parameters.toml`](pft_parameters.toml) is one evergreen broadleaf PFT: the
-  example_biophysics PFT with its leaf habit changed. The example is about the forcing, and this is
-  not a calibration for BCI.
-- **The recycle window** spans the 2015–16 El Niño drought, so the spin-up sees one strong drought
-  year in every five.
+[`meds_config_eval.toml`](meds_config_eval.toml) runs the five tower years, 2012-08-01 to
+2017-08-01 UTC, with hourly output and CO₂ from the CMIP7 series. There is no spin-up.
+- **The stand is the 2010 census.** [`make_census.py`](../../scripts/prepare_census/make_census.py)
+  turns the 207,259 live trees of at least 1 cm into one patch per 20 m quadrat, 1,250 patches, and
+  one row per distinct (quadrat, diameter), 84,937 rows. MEDS reads them and restructures the stand
+  with its own cohort and patch fusion before the first step, down to 25 patches and 419 cohorts.
+- **The soil starts at the site:** 298.65 K, the tower's mean air temperature, and 0.30 m³ m⁻³.
+- **Soil carbon starts in steady state** with the census stand's litter: leaf and fine-root
+  turnover from the PFT, and wood from the plot's biomass mortality, 1.90 % per year from 2005 to
+  2010.
+- **The PFT.** [`pft_parameters.toml`](pft_parameters.toml) is one evergreen broadleaf PFT for every
+  tree, with MEDS's default allometry. The example is about the forcing and the start, and this is
+  not a calibration for BCI. Under it the census stand has LAI 5.6 and AGB 16.1 kgC m⁻², against the
+  census's own 15.1.
 
 `[forcing]` declares `tq_height = wind_height = 41`, `height_above = "ground"` and
 `wind_exposure = "local"`. Each patch's forcing is moved from 41 m to its own canopy-air top.
@@ -134,26 +148,38 @@ The daily output carries each patch's `cas_depth_patch`, `air_temp_cas_top_patch
 
 ### Against the tower
 
-![MEDS against the BCI tower: diurnal cycles and monthly means](evaluation.png)
+![MEDS against the BCI tower: mean diurnal and seasonal cycles of carbon, water and energy](evaluation.png)
 
-The spin-up ends at LAI 4.8, AGB 15.3 kgC m⁻² and 114 cohorts. It takes about 11 minutes on a laptop
-core, and the five-year evaluation about 3. Over the evaluation years, against the tower's measured
-half hours:
+The run takes 7.2 minutes on one core and 0.8 GB. MEDS reads the census as 1,250 patches and 84,937
+cohorts, with the stand's LAI 5.60 and AGB 16.12 kgC m⁻², exactly as the census file states, and
+fuses it to 25 patches and 419 cohorts before the first step. The count stays above `max_patch = 12`
+because `patch_light_tol_max` keeps dissimilar patches apart, and the run says so at the end. The
+energy and water budgets close to machine precision.
 
-| | bias | shape |
-|---|---|---|
-| sensible heat | +1.5 W m⁻² | the diurnal cycle closely followed |
-| latent heat | −12.2 W m⁻² | midday peak about 25 % low |
-| GPP | +3.6 µmol m⁻² s⁻¹ | about 45 % high, as expected of an uncalibrated temperate PFT |
-| net radiation | +23.4 W m⁻² | right by day. At night the model stays near +8 W m⁻² where the tower reads −35, which points at the night-time longwave balance and is worth a look |
+**The stand over the five years:** LAI falls from 5.6 to 4.8 and AGB rises from 16.1 to 17.4 kgC m⁻²,
+and the patches fuse down to 15. The large trees grow and the canopy thins; small trees do not grow
+under this PFT with the default allometry.
 
-The 2015 El Niño drought shows in both the modelled and measured GPP.
+**Against the tower**, over its measured hours (FLAG = 1 for the turbulent fluxes), 2012-08 to 2017-07:
 
-This stage needed a soil-water fix, and the example is where it showed. Infiltration used to be
-limited by the top layer's own conductivity. The first dry season then dried the top layer to
-near residual water content, where that conductivity is effectively zero, and the wet season's
-rain ran off instead of re-wetting it. No stand grew: LAI was 0.009 after 50 years. Soil-water faces
-now take ED2's geometric rule; see `docs/science/soil_biophysics.md` and plan §13.
+| | tower mean | MEDS mean | bias | r, hourly | r, mean seasonal cycle |
+|---|---|---|---|---|---|
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.86 | +3.40 | 0.94 | 0.46 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −3.87 | +0.37 | 0.90 | 0.46 |
+| latent heat [W m⁻²] | 75.5 | 59.0 | −16.5 | 0.93 | 0.72 |
+| sensible heat [W m⁻²] | 32.4 | −14.0 | −46.4 | 0.90 | −0.42 |
+| net radiation [W m⁻²] | 136.3 | 153.0 | +16.7 | 1.00 | 0.98 |
+
+- **The diurnal cycles** are closely followed in shape (r ≥ 0.99 for every flux) and differ in size.
+  Midday GPP is 29 against the tower's 22 µmol m⁻² s⁻¹, and midday latent heat 166 against 237 W m⁻².
+- **Sensible heat is the largest miss, and most of it is at night:** −76 W m⁻² against the tower's
+  −24. By day it is 126 against 163. The census canopy is taller than the tower: the canopy-air tops
+  reach 51 m in the tallest patches, above the tower's 41 m, so those patches take forcing moved up
+  from below their own top. Whether that explains the night-time flux is not yet checked.
+- **Net radiation** is right by day, and at night stays near +6 W m⁻² where the tower reads −33,
+  which points at the night-time longwave balance, as it did with the spin-up stand.
+- **The seasonal cycles** are weaker: the model's GPP is highest in the dry season, the tower's early
+  in the wet season, and the model's dry-season sensible heat falls where the tower's rises.
 
 ## Files
 
@@ -163,5 +189,6 @@ now take ED2's geometric rule; see `docs/science/soil_biophysics.md` and plan §
 | [`fetch_bci_data.py`](fetch_bci_data.py) | downloads and verifies the data |
 | [`run_example.py`](run_example.py) | runs every step |
 | [`plot_forcing.py`](plot_forcing.py), [`plot_evaluation.py`](plot_evaluation.py) | the figures |
-| [`meds_config_spinup.toml`](meds_config_spinup.toml), [`meds_config_eval.toml`](meds_config_eval.toml) | the two MEDS stages |
-| [`output_variables.toml`](output_variables.toml), [`pft_parameters.toml`](pft_parameters.toml) | their output list and PFT |
+| [`bci_census.toml`](bci_census.toml) | the declaration of the census the run starts from |
+| [`meds_config_eval.toml`](meds_config_eval.toml) | the MEDS run |
+| [`output_variables.toml`](output_variables.toml), [`pft_parameters.toml`](pft_parameters.toml) | its output list and PFT |

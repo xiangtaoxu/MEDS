@@ -5,16 +5,20 @@
 The model's hourly records are stamped at the START of their hour in UTC; the tower's half hours
 at their start in Panama time (UTC-5). This moves the model to local time -- the post-processing
 step that UTC-only forcing leaves to the user -- and averages the tower's two half hours of each
-model hour. Turbulent fluxes are compared only where the tower's FLAG says they were measured.
+model hour. Turbulent fluxes (and the tower's GPP, partitioned from them) are compared only where
+the tower's FLAG says they were measured; net radiation wherever the tower has it.
 
-Panels: the mean diurnal cycle (local time) of net radiation, latent and sensible heat and GPP,
-over the evaluation years; and the monthly means of latent heat and GPP, for the months with at
-least ten days of measured hours (the tower's dry-season records are sparse).
+The figure: for carbon (GPP, NEE), water (LE) and energy (H, net radiation), the mean diurnal cycle
+in local time over the evaluation years (top), and the mean seasonal cycle by calendar month
+(bottom). Every mean uses only the hours both have, so the two curves see the same sample; a
+calendar month is shown when the tower measured at least ten days of it over the five years.
+NEE is positive toward the atmosphere in both.
 
-Usage: python plot_evaluation.py [--out evaluation.png]
+Usage: python plot_evaluation.py [--out evaluation.png] [--stats output/evaluation_stats.json]
 """
 import argparse
 import glob
+import json
 import os
 
 import matplotlib
@@ -26,13 +30,16 @@ from netCDF4 import Dataset  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 UTC_OFFSET_H = -5.0
-MIN_MONTH_HOURS = 240          # a monthly mean needs at least ten days of hours the tower measured
+MIN_MONTH_HOURS = 240          # a calendar month needs at least ten days of hours the tower measured
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 MODEL, TOWER = "#2a78d6", INK
-PAIRS = [("rnet_fast", "Rnet", "net radiation", "W m⁻²", False),
-         ("le_flux_fast", "LE", "latent heat", "W m⁻²", True),
-         ("h_flux_fast", "H", "sensible heat", "W m⁻²", True),
-         ("gpp_rate_fast", "gpp", "GPP", "µmol m⁻² s⁻¹", True)]
+#        model variable    tower column  group      name             units            measured only
+PAIRS = [("gpp_rate_fast", "gpp",   "carbon", "GPP",             "µmol m⁻² s⁻¹", True),
+         ("nee_fast",      "NEE",   "carbon", "NEE",             "µmol m⁻² s⁻¹", True),
+         ("le_flux_fast",  "LE",    "water",  "latent heat",     "W m⁻²",        True),
+         ("h_flux_fast",   "H",     "energy", "sensible heat",   "W m⁻²",        True),
+         ("rnet_fast",     "Rnet",  "energy", "net radiation",   "W m⁻²",        False)]
+MONTHS = "JFMAMJJASOND"
 
 
 def read_model(pattern):
@@ -45,7 +52,7 @@ def read_model(pattern):
                                         hour=ds["hour"][:], minute=ds["minute"][:]))
         frames.append(pd.DataFrame(cols, index=stamp + pd.Timedelta(hours=UTC_OFFSET_H)))
     if not frames:
-        raise SystemExit(f"ERROR: no model output matches {pattern}; run the evaluation stage first")
+        raise SystemExit(f"ERROR: no model output matches {pattern}; run the model first")
     model = pd.concat(frames).sort_index()
     return model.where(model.abs() < 1e30)
 
@@ -53,12 +60,20 @@ def read_model(pattern):
 def read_tower(path):
     """The tower's half hours averaged to local clock hours; turbulent fluxes only where measured."""
     tower = pd.read_csv(path, parse_dates=["date"], index_col="date")
-    for _, col, _, _, turbulent in PAIRS:
-        if turbulent:
+    for _, col, *_rest, measured_only in PAIRS:
+        if measured_only:
             tower[col] = tower[col].where(tower["FLAG"] == 1)
-    hourly = tower[[col for _, col, *_ in PAIRS]].resample("1h").mean()
-    counts = tower[[col for _, col, *_ in PAIRS]].resample("1h").count()
+    cols = [col for _, col, *_ in PAIRS]
+    hourly = tower[cols].resample("1h").mean()
+    counts = tower[cols].resample("1h").count()
     return hourly.where(counts == 2)
+
+
+def stats(m, t):
+    d = m - t
+    return {"n_hours": int(len(d)), "model_mean": float(m.mean()), "tower_mean": float(t.mean()),
+            "bias": float(d.mean()), "rmse": float(np.sqrt((d ** 2).mean())),
+            "r_hourly": float(np.corrcoef(m, t)[0, 1])}
 
 
 def main(argv=None):
@@ -66,40 +81,63 @@ def main(argv=None):
     ap.add_argument("--model", default=os.path.join(HERE, "output", "eval-F-*.nc"))
     ap.add_argument("--tower", default=os.path.join(HERE, "data", "BCI_v5.1.csv"))
     ap.add_argument("--out", default=os.path.join(HERE, "evaluation.png"))
+    ap.add_argument("--stats", default=os.path.join(HERE, "output", "evaluation_stats.json"))
     args = ap.parse_args(argv)
     model = read_model(args.model)
     tower = read_tower(args.tower).reindex(model.index)
+
     plt.rcParams.update({"axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED,
                          "ytick.color": MUTED, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
                          "axes.spines.top": False, "axes.spines.right": False, "axes.axisbelow": True})
-    fig, ax = plt.subplots(2, 4, figsize=(15, 6.6))
-    hour = model.index.hour
-    for i, (mv, tv, name, units, _) in enumerate(PAIRS):
+    fig, ax = plt.subplots(2, len(PAIRS), figsize=(3.3 * len(PAIRS), 6.8))
+    hour, month = model.index.hour, model.index.month
+    out = {}
+    for i, (mv, tv, group, name, units, _) in enumerate(PAIRS):
         both = model[mv].notna() & tower[tv].notna()
-        m = model.loc[both, mv].groupby(hour[both]).mean()
-        t = tower.loc[both, tv].groupby(hour[both]).mean()
-        ax[0, i].plot(t.index + 0.5, t.values, color=TOWER, lw=2, label="tower")
-        ax[0, i].plot(m.index + 0.5, m.values, color=MODEL, lw=1.8, label="MEDS")
-        ax[0, i].set(title=f"{name} ({units})", xlabel=f"local time (UTC{UTC_OFFSET_H:+g})", xticks=range(0, 25, 6))
-        bias = float((model.loc[both, mv] - tower.loc[both, tv]).mean())
-        ax[0, i].text(0.02, 0.95, f"bias {bias:+.1f}", transform=ax[0, i].transAxes, va="top", color=MUTED, fontsize=9)
-    ax[0, 0].legend(frameon=False, fontsize=9)
-    for j, (mv, tv, name, units) in enumerate([("le_flux_fast", "LE", "latent heat", "W m⁻²"),
-                                               ("gpp_rate_fast", "gpp", "GPP", "µmol m⁻² s⁻¹")]):
-        both = model[mv].notna() & tower[tv].notna()
-        enough = both.resample("MS").sum() >= MIN_MONTH_HOURS      # the tower's measured hours vary a lot
-        mm = model.loc[both, mv].resample("MS").mean().where(enough)
-        tm = tower.loc[both, tv].resample("MS").mean().where(enough)
-        a = plt.subplot(2, 2, 3 + j)
-        a.plot(tm.index, tm.values, color=TOWER, lw=2, label="tower")
-        a.plot(mm.index, mm.values, color=MODEL, lw=1.8, label="MEDS")
-        a.set(title=f"monthly mean {name} ({units})")
-    ax[1, 0].set_visible(False) ; ax[1, 1].set_visible(False) ; ax[1, 2].set_visible(False) ; ax[1, 3].set_visible(False)
-    fig.suptitle("MEDS driven by the Barro Colorado Island tower, against the same tower "
-                 "(turbulent fluxes where FLAG = 1)", color=INK)
+        m, t = model.loc[both, mv], tower.loc[both, tv]
+        s = stats(m, t)
+        #----- the mean diurnal cycle ----------------------------------------------------------#
+        md, td = m.groupby(hour[both]).mean(), t.groupby(hour[both]).mean()
+        s["r_diurnal"] = float(np.corrcoef(md, td)[0, 1])
+        a = ax[0, i]
+        a.plot(td.index + 0.5, td.values, color=TOWER, lw=2, label="tower")
+        a.plot(md.index + 0.5, md.values, color=MODEL, lw=1.8, label="MEDS")
+        a.set(title=f"{group}: {name}\n({units})", xlabel=f"local time (UTC{UTC_OFFSET_H:+g})",
+              xticks=range(0, 25, 6))
+        a.text(0.03, 0.97, f"bias {s['bias']:+.2f}\nr (hourly) {s['r_hourly']:.2f}", transform=a.transAxes,
+               va="top", color=MUTED, fontsize=8.5)
+        #----- the mean seasonal cycle, by calendar month --------------------------------------#
+        n = m.groupby(month[both]).size()
+        ms = m.groupby(month[both]).mean().where(n >= MIN_MONTH_HOURS)
+        ts = t.groupby(month[both]).mean().where(n >= MIN_MONTH_HOURS)
+        ok = ms.notna() & ts.notna()
+        s["r_seasonal"] = float(np.corrcoef(ms[ok], ts[ok])[0, 1]) if ok.sum() > 2 else None
+        s["months_shown"] = [int(k) for k in ms.index[ok]]
+        a = ax[1, i]
+        a.axvspan(0.5, 4.5, color=GRID, alpha=0.35, lw=0)          # the dry season, January to April
+        a.plot(ts.index, ts.values, color=TOWER, lw=2, marker="o", ms=3.5, label="tower")
+        a.plot(ms.index, ms.values, color=MODEL, lw=1.8, marker="o", ms=3.5, label="MEDS")
+        a.set(xlim=(0.5, 12.5), xticks=range(1, 13), xticklabels=list(MONTHS), xlabel="month (local)")
+        out[name] = s
+    ax[0, 0].legend(frameon=False, fontsize=9, loc="center left")
+    ax[1, 0].text(0.03, 0.03, "shaded: dry season", transform=ax[1, 0].transAxes, color=MUTED, fontsize=8)
+    ax[0, 0].set_ylabel("mean diurnal cycle")
+    ax[1, 0].set_ylabel("mean seasonal cycle")
+    years = f"{model.index.min():%Y-%m} to {model.index.max():%Y-%m}"
+    fig.suptitle(f"MEDS started from the 2010 BCI census, driven by the BCI tower, against the same tower "
+                 f"({years}; turbulent fluxes where FLAG = 1)", color=INK, fontsize=11)
     fig.tight_layout()
     fig.savefig(args.out, dpi=130)
+    os.makedirs(os.path.dirname(os.path.abspath(args.stats)), exist_ok=True)
+    with open(args.stats, "w") as fh:
+        json.dump(out, fh, indent=2)
     print(f"figure: {args.out}")
+    print(f"{'':15s} {'hours':>6} {'tower':>8} {'MEDS':>8} {'bias':>8} {'RMSE':>8} {'r hour':>7} "
+          f"{'r diurn':>8} {'r season':>9}")
+    for name, s in out.items():
+        rs = f"{s['r_seasonal']:.2f}" if s["r_seasonal"] is not None else "--"
+        print(f"{name:15s} {s['n_hours']:6d} {s['tower_mean']:8.2f} {s['model_mean']:8.2f} {s['bias']:+8.2f} "
+              f"{s['rmse']:8.2f} {s['r_hourly']:7.2f} {s['r_diurnal']:8.2f} {rs:>9}")
 
 
 if __name__ == "__main__":

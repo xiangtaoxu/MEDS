@@ -25,7 +25,8 @@ module meds_driver
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_site_state_types,       only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_init,                   only : init_bare_ground, init_from_census
+   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
+   use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits
    use meds_forcing_types,          only : met_source_t
    use meds_met_driver,             only : met_open, met_close, met_prefetch
@@ -156,12 +157,22 @@ contains
          if (run%verbose) then
             if (init_ok) then
                write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
+               write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',      &
+                                        run%poly%site%cohort%n, ' cohorts'
             else
                write(*,'(3a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file),     &
                                ' not usable -- falling back to bare ground'
             end if
          end if
       end select
+      !----- A census stand is restructured by the slow step's own operators before the first step: !
+      !      it arrives with a cohort per measured size and a patch per plot cell.  ------------------!
+      if (run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+         call restructure_census_stand(run%poly%site, run%cfg)
+         if (run%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
+               run%poly%site%patch%n, ' patches, ', run%poly%site%cohort%n, ' cohorts (at most ',  &
+               max_cohort_count(run%poly%site), ' in a patch)'
+      end if
       if (.not. init_ok) then
          call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'

@@ -26,6 +26,40 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot, with no spin-up**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
+  `bci_census.toml` declares the census; `run_example.py` builds the census file with
+  `scripts/prepare_census` and runs the five tower years from it, with the soil at 298.65 K and soil
+  carbon in steady state with the stand's litter. MEDS fuses the 1,250 quadrat patches and 84,937
+  rows to 25 patches and 419 cohorts before the first step. `plot_evaluation.py` now shows the mean
+  diurnal and seasonal cycles of GPP, NEE, latent and sensible heat and net radiation against the
+  tower, and writes their statistics. The README and `evaluation.png` are regenerated from this run.
+
+- **A census stand is restructured before the first step** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
+  After `init_from_census`, the driver applies the slow step's own monthly cohort block (fusion, cull,
+  fission, sort) and yearly patch block (fusion, cull, cohort fusion), without recruitment or
+  disturbance and under the same switches. A census used to run its first month with every row a
+  cohort and its first year with every cell a patch. The run log prints the patch and cohort counts
+  before and after. Test: `init_census` fuses 20 identical cells to one patch with one cohort per
+  size, conserving the site's stems and biomass, and does nothing with the switches off.
+
+- **The census reader matches columns by name and reads `patch_area`**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
+  in any order: `patch_id`, `dbh`, `pft` and `nplant` required, `patch_area`, `site_id`,
+  `cohort_id` and `height` optional. With `patch_area` the patches take their areas normalized to
+  the site, where every census patch used to get an equal share. A header-less file of seven
+  numbers per row still reads positionally, so existing census files load unchanged. An unknown or
+  repeated column, a missing required one, and a patch whose rows disagree on `patch_area` stop
+  the run with the name. Tests: `init_census` (reordered columns and areas),
+  `init_census_refuses_area`, `init_census_refuses_column`.
+
+- **The initial soil state is configurable** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
+  `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³] set every soil layer of every patch at the
+  start of a run that does not restore the soil from a state file. They default to the constants the
+  fast context carried, 288 K and 0.30, so no existing config changes. The loader refuses a
+  temperature outside 233–333 K and a water content outside (`theta_res`, `theta_sat`]. Test:
+  `init_soil_state`.
+
 - **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15** (#322).
   The light-profile tolerance steps geometrically from `patch_light_tol` to the ceiling over
   `n_patch_fusion_iter` passes, as the cohort tolerance does, and goes no further. Patches more
@@ -130,6 +164,16 @@ Each old form stops at startup with a message naming the fix.
     of the rain runs off.
 
 ### Added
+
+- **`scripts/prepare_census/make_census.py`: a ForestGEO tree table to a MEDS census**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
+  at its true area, one row per distinct (cell, diameter), `nplant` the count over the area. It
+  keeps live trees with a diameter of at least the declared minimum, and counts every exclusion. Given
+  a PFT file and an earlier census, its summary also carries the stand's steady-state litter input for
+  `[soil_carbon].spinup_steady`. On the Barro Colorado Island 2010 census at 20 m it writes 84,937
+  rows in 1,250 patches, conserving all 207,259 stems. Tests: `prepare_census` (pytest, run by CTest
+  when the Python it finds has numpy, pandas and pytest). `environment.yml` gains pandas and pytest,
+  which this tool and the flux-tower tool need.
 
 - **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (#320; AmeriFlux BASE,
   FLUXNET/ONEFlux or any CSV). The tool works from a site TOML that declares the file, location,

@@ -135,13 +135,33 @@ than removed:
 | Mode | Start from | Needs |
 |---|---|---|
 | `0` | **near-bare ground** (the default) | nothing |
-| `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort: `site_id, patch_id, cohort_id, dbh, height, pft, nplant`. `dbh` drives the allometry. |
+| `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort, columns matched by name from its header: `patch_id`, `dbh` [cm], `pft` and `nplant` [plants per m² of the patch] are required; `patch_area`, `site_id`, `cohort_id` and `height` are optional. `dbh` drives the allometry. |
 | `2` | a **state checkpoint** | `[init].restart_file` — a `<prefix>-S-*.nc` written by a previous run. Continues the exact instantaneous state. |
+
+Each distinct `patch_id` is a patch of age 0. With `patch_area`, in any unit, the patches take their
+areas normalized to the site; without it they share it equally. A file without a header whose rows
+are seven numbers is read in the old positional order, `site_id, patch_id, cohort_id, dbh, height,
+pft, nplant`. An unknown or repeated column, a missing required one, or a patch whose rows disagree
+on `patch_area` stops the run, naming it.
+
+**A census stand is restructured before the first step**, by the slow step's own operators: its
+monthly cohort fusion, fission and cull, then its yearly patch fusion, without recruitment or
+disturbance, and under the same `[demography]` switches. So a census can carry one row per measured
+tree size and one patch per plot cell, and the model starts from a stand within `max_cohort` and
+`max_patch`, or above them where `patch_light_tol_max` keeps dissimilar patches apart. The run log
+prints the counts before and after.
 
 A census is how you start from a field inventory; see
 [`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
 falls back to near-bare ground with a warning.
+
+**The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
+every soil layer of every patch starts there, unless a state checkpoint restores the soil. They
+default to 288 K and 0.30. A run with no spin-up starts from them, so set them to the site: the
+mean annual air temperature, for instance, keeps a warm site's column from starting cold. The
+loader refuses a temperature outside 233–333 K and a water content outside
+(`[soil_column].theta_res`, `theta_sat`].
 
 ## Output
 

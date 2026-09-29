@@ -465,12 +465,25 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways)
+   foreach(t containers fusion_cohort patch allometry disturbance init_census init_soil_state time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- Census files the reader must refuse: each passes only on its refusal's message. --#
+   add_executable(test_init_census_refuses test/test_init_census_refuses.f90)
+   target_link_libraries(test_init_census_refuses PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_init_census_refuses)
+   add_test(NAME init_census_refuses_area COMMAND test_init_census_refuses area)
+   set_tests_properties(init_census_refuses_area PROPERTIES
+                        PASS_REGULAR_EXPRESSION "two different patch_area values"
+                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
+   add_test(NAME init_census_refuses_column COMMAND test_init_census_refuses column)
+   set_tests_properties(init_census_refuses_column PROPERTIES
+                        PASS_REGULAR_EXPRESSION "column \"basal\" is unknown"
+                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
 
    #----- Leaf-physiology test links the flat plant library + test support (assertions). ---#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
@@ -616,6 +629,19 @@ if(MEDS_BUILD_TESTS)
       else()
          message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "netCDF4, pytest or tomli)")
+      endif()
+      #----- The census preparation tool's tests (scripts/prepare_census/tests), on the same terms. -#
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, pandas, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_census_tool_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_census_tool_deps EQUAL 0)
+         add_test(NAME prepare_census
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_census/tests)
+         set_tests_properties(prepare_census PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+      else()
+         message(STATUS "MEDS: prepare_census tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
+                        "pytest or tomli)")
       endif()
    endif()
 
