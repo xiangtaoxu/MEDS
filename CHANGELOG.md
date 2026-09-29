@@ -26,6 +26,15 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot, with no spin-up**
+  (`MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
+  `bci_census.toml` declares the census; `run_example.py` builds the census file with
+  `scripts/prepare_census` and runs the five tower years from it, with the soil at 298.65 K and soil
+  carbon in steady state with the stand's litter. MEDS fuses the 1,250 quadrat patches and 84,937
+  rows to 25 patches and 419 cohorts before the first step. `plot_evaluation.py` now shows the mean
+  diurnal and seasonal cycles of GPP, NEE, latent and sensible heat and net radiation against the
+  tower, and writes their statistics. The README and `evaluation.png` are regenerated from this run.
+
 - **A census stand is restructured before the first step** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
   After `init_from_census`, the driver applies the slow step's own monthly cohort block (fusion, cull,
   fission, sort) and yearly patch block (fusion, cull, cohort fusion), without recruitment or

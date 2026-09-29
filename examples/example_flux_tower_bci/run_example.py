@@ -9,9 +9,9 @@ Steps (each skipped when its product already exists, unless --force):
      a second file filled from ERA5-Land
   3. score the longwave fills on hidden observations (compare_longwave_fill.py)
   4. draw the forcing's fill flags (plot_forcing.py)
-  5. spin up 50 years from bare ground on the recycled tower years (meds_config_spinup.toml)
-  6. run the five tower years with hourly output (meds_config_eval.toml)
-  7. compare with the tower in local time (plot_evaluation.py)
+  5. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
+  6. run the five tower years from the census, with hourly output (meds_config_eval.toml)
+  7. compare with the tower in local time: mean diurnal and seasonal cycles (plot_evaluation.py)
 
 Usage:
   python run_example.py                          # everything
@@ -29,9 +29,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 TOOLS = os.path.join(ROOT, "scripts", "prepare_flux_tower")
+CENSUS_TOOL = os.path.join(ROOT, "scripts", "prepare_census", "make_census.py")
 DATA = os.path.join(HERE, "data")
 OUTPUT = os.path.join(HERE, "output")
-STATE = os.path.join(OUTPUT, "spinup-S-20120801000000.nc")
+CENSUS = os.path.join(DATA, "bci_census2010_meds.csv")
 
 
 def run(cmd, log=None):
@@ -79,8 +80,8 @@ def main(argv=None):
 
     if not os.path.exists(args.meds_main):
         raise SystemExit(f"ERROR: no meds_main at {args.meds_main}; build MEDS or pass --meds-main")
-    if args.force or not os.path.exists(STATE):
-        run([args.meds_main, "meds_config_spinup.toml"], log=os.path.join(OUTPUT, "spinup.log"))
+    if args.force or not os.path.exists(CENSUS):
+        run([py, CENSUS_TOOL, "--declaration", "bci_census.toml", "--out", CENSUS])
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
     run([py, "plot_evaluation.py"])
 

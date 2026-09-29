@@ -1,7 +1,11 @@
 # MEDS BCI census initialization plan
 
-**Status:** written 2026-09-28 against `beta` at `73ab654`, revised the same day after review. Design
-only: nothing here is implemented. Branch it from `beta` as `feat/bci-census-init`. It builds on the
+**Status:** written 2026-09-28 against `beta` at `73ab654`, revised the same day after review.
+**First trial implemented 2026-09-29** on `feat/bci-census-init`: P0a–P0c, P1 and the P2 example,
+with the five-year run from the census finishing within the flux period and compared with the tower
+(`examples/example_flux_tower_bci/README.md`). G2 passes (the model's first stand equals the census
+file: LAI 5.60, AGB 16.12 kgC m⁻²), G4 matches the simulation (25 patches against 24), and G8 is 7.2
+minutes. `plot_census.py` and the remaining gates are left for the next round. It builds on the
 allometry fix merged into `beta` as #321 (§5.2): every number below uses those defaults. The 2010
 census was measured from the local copy in `/ibstorage/xiangtao/bci_census/` (§4), and MEDS's patch
 fusion was simulated on it (§6.3). The user took the open decisions on 2026-09-28 (§11). Gates G2
