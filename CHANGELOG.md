@@ -24,6 +24,12 @@ before and after.
 
 Each old form stops at startup with a message naming the fix.
 
+The root profile moves to `[hydraulics]` (#PRNUM). `[soil_column].root_beta`, an exponential decay per
+metre, is refused; `[hydraulics].root_beta = exp(−b · root_depth)` gives the same decay b, and a config
+that sets neither keeps the default profile. A `[hydraulics].root_beta` copied from the old
+`meds_config_main.toml` (0.96) used to be ignored and now takes effect: it puts 19% of the roots in
+the top 0.37 m instead of 53%. Delete it to keep the default.
+
 ### Changed
 
 - **The flux-tower tool fills the longwave by the synthesis regression only; its ERA5-Land fill is
@@ -198,6 +204,12 @@ Each old form stops at startup with a message naming the fix.
 
 ### Added
 
+- **`[soil]` sets the bare ground's optics** (#PRNUM): `ground_albedo_vis` (0.15), `ground_albedo_nir`
+  (0.30) and `ground_emissivity` (0.95), the values the code had fixed. The canopy radiation solver
+  reads them, and snow still covers them by its fraction. The albedos must lie in [0, 1) and the
+  emissivity in (0, 1]. Tests: `test_biophysics_opts_config` reads them and `test_pft_optics_config`
+  checks that they reach the fast loop.
+
 - **`scripts/prepare_census/make_census.py`: a ForestGEO tree table to a MEDS census**
   (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
   at its true area, one row per distinct (cell, diameter), `nplant` the count over the area. It
@@ -251,6 +263,50 @@ Each old form stops at startup with a message naming the fix.
   lapse keys with the lapse off, each run through `meds_main`.
 
 ### Fixed
+
+- **The tissue energy balance gave every leaf and all wood an emissivity of 0.95** (#PRNUM). The
+  radiation solver takes each PFT's `leaf_emissivity` (0.97 by default) and `wood_emissivity` (0.90) and
+  emits at the canopy-air temperature. The energy balance then adds the change in emission for the
+  tissue's departure from that temperature, 4εσT³ per unit leaf or wood area, and took ε from a fixed
+  `leaf_emiss = 0.95` for both. It now takes the cohort's PFT values, so the two halves of the longwave
+  agree, and `veg_thermal_params_t` loses `leaf_emiss`. Tests: `test_column_ark` checks that the frozen
+  tissue carries each cohort's own emissivities.
+  - Together with the next three fixes, on the five-year BCI census example: sensible heat moves
+    from −39.01 to −39.08 W m⁻², and its midday mean from 90.3 to 89.7. GPP, NEE, latent heat, net
+    radiation, the albedo and the stand agree to the digits the README prints. At BCI only this fix,
+    the wood temperature and the root profile apply: it has one PFT with no pressure–volume traits of
+    its own, the default ground optics, and whole-plant conductance.
+- **The wood's boundary layer took its free convection from the leaf temperature** (#PRNUM).
+  `boundary_gbh_mos` adds free convection driven by an element's difference from the canopy-air
+  temperature, and `aero_bottom_to_top` passed the leaf's temperature for the wood too. The wood now
+  gets its own. Tests: `test_column_dynamics` checks that the wood conductance ignores the leaf
+  temperature and rises with the wood's.
+- **Four `[hydraulics]` settings did nothing** (#PRNUM). `root_beta` and `root_depth` were read and
+  never used, because the root profile came from `[soil_column].root_beta`. `wood_kmax` and
+  `vessel_curl` feed the segment conductance, which no key could select.
+  - The root profile is now ED2's β^(d/D) from `[hydraulics]`, integrated over each layer and
+    renormalized over the column; a layer below `root_depth` holds no roots (Upgrading above;
+    `plant_hydraulics.md` §4). The default β = e⁻⁴ with D = 2 m is the old e^(−2d) decay, integrated
+    over each layer instead of sampled at its centre. On the default ten-layer grid that moves 0.4% of
+    the roots, and no layer by more than 0.15 percentage points. ED2's own default, β = 0.001, would
+    put 72% of them in the top 0.37 m.
+  - `[hydraulics].conductance = "whole_plant"` (default) or `"segment"` selects the conductance form.
+  - `validate_config` refuses `root_beta` outside (0, 1), `root_depth` ≤ 0 and, in segment mode, a
+    non-positive `wood_kmax` or `vessel_curl`, shared or per PFT.
+  - Tests: `test_plant_hydraulics` checks the segment conductance; `test_soil_column_config` checks
+    that the profile sums to one, that the default is the integrated e^(−2d), and that a shallow
+    `root_depth` leaves the deeper layers empty; `test_region` refuses `[soil_column].root_beta` and an
+    unknown `conductance`.
+- **Stomatal closure and the drought-phenology cue used one turgor-loss point for every PFT**
+  (#PRNUM). Both took ψ_tlp from the shared `[hydraulics]` `leaf_pi0` and `leaf_elastic_mod`, while the
+  plant-water solver used a PFT's own values where the PFT file sets them. `pft_leaf_psi_tlp` now
+  gives both the PFT's own curve by the solver's rule. With the default traits ψ_tlp stays −1.71 MPa.
+  Tests: `test_pft_optics_config` checks a PFT with its own `leaf_pi0` against one without.
+- **Stale config text** (#PRNUM). The PFT files said a mean leaf inclination of 45° is spherical; a
+  spherical distribution has mean 57.3° and standard deviation 21.6°, and the comment in
+  `meds_config_pft.toml` and the three example PFT files now says so. Three example configs set
+  `[phenology].phenology_on`, which nothing has read since phenology became unconditional; it is
+  removed, with the opt-in comment in `meds_config_main.toml`.
 
 - **The BCI flux-tower example forced MEDS with the canopy's upwelling longwave** (#326). `BCI_v5.1.csv`
   labels its downwelling longwave `Rl_up` and its upwelling `Rl_dn`, and `bci_site.toml` took the

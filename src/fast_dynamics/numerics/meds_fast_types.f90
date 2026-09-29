@@ -443,7 +443,12 @@ module meds_fast_types
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
-      real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
+      !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
+      !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
+      !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
+      !      with the longwave it was given. ----------------------------------------------------------!
+      real(wp), allocatable :: leaf_emiss(:)  !< [-]       leaf LW emissivity
+      real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
       !----- heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt: a_* = (dry hcap + water mass*cp_liq)/dt. !
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass

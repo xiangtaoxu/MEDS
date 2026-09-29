@@ -307,7 +307,6 @@ module meds_plant_types
 
    !----- Per-PFT vegetation thermal parameters. -------------------------------------------!
    type :: veg_thermal_params_t
-      real(wp) :: leaf_emiss     = 0.95_wp                  !< [-] LW emissivity (Jacobian -8*eps*sigma*T^3 term)
       real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
       real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)

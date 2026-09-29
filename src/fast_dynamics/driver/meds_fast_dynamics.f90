@@ -17,7 +17,8 @@
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
+   use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
@@ -153,7 +154,8 @@ contains
       associate (sc => cfg%soil_column)
          call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
                                      sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, sc%root_beta, sc%psi_fc, ctx%col_config%soil)
+                                     sc%curve_par_n, cfg%hydraulics%root_beta,                     &
+                                     cfg%hydraulics%root_depth, sc%psi_fc, ctx%col_config%soil)
          call build_soil_therm_params(sc%n_layer, sc%solid_conductivity, sc%dry_conductivity,      &
                                       sc%dry_heat_capacity, ctx%col_config%soil_thermal)
       end associate
@@ -164,6 +166,12 @@ contains
       !----- #179: ONE seam, and it builds the PER-PFT table. The shared [hydraulics] block is the  !
       !      base; whatever per-PFT traits the [pft] table supplied are laid over it.  ---------------!
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+      !----- [hydraulics].conductance: k_plant_max per leaf area, or the sapwood segment. ---------!
+      if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
+         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_SEGMENT
+      else
+         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_KPLANT
+      end if
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
@@ -172,6 +180,9 @@ contains
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
       ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
+      ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
+      ctx%soil_emiss     = cfg%soil%ground_emissivity
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
       ctx%theta_init     = cfg%init_soil_theta

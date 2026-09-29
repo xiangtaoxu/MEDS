@@ -96,7 +96,7 @@ program test_column_dynamics
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
@@ -645,11 +645,32 @@ contains
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
       call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width,    &
-                              c2%branch_diam, lt, a2)
+                              c2%branch_diam, lt, lt, a2)
       call check_true('aero order: tall cohort (gather idx1=top) gets more wind', a2%wind(1) > a2%wind(2),            &
               a2%wind(1) - a2%wind(2))
       call check_true('aero order: tall cohort gets higher leaf gb', a2%leaf_gbw(1) > a2%leaf_gbw(2),                 &
               a2%leaf_gbw(1) - a2%leaf_gbw(2))
+      !----- The WOOD boundary layer follows the wood's own temperature (free convection is driven by  !
+      !      the surface-air difference), not the leaves'. The leaf and wood temperatures used to be   !
+      !      the same array, so a warm leaf raised the wood's conductance. ------------------------!
+      block
+         type(aero_out_t) :: a_ref, a_warm_leaf, a_warm_wood
+         real(wp) :: tair(2), twarm(2)
+         tair = e2%can_temp ; twarm = e2%can_temp + 8.0_wp
+         call alloc_aero_out(a_ref, 2_ik) ; call alloc_aero_out(a_warm_leaf, 2_ik) ; call alloc_aero_out(a_warm_wood, 2_ik)
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+                                 c2%branch_diam, tair, tair, a_ref)
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+                                 c2%branch_diam, twarm, tair, a_warm_leaf)
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+                                 c2%branch_diam, tair, twarm, a_warm_wood)
+         call check_true('wood gb ignores the leaf temperature', all(a_warm_leaf%wood_gbh == a_ref%wood_gbh), &
+                 maxval(abs(a_warm_leaf%wood_gbh - a_ref%wood_gbh)))
+         call check_true('warm leaves raise the leaf gb (free convection)', all(a_warm_leaf%leaf_gbh > a_ref%leaf_gbh), &
+                 minval(a_warm_leaf%leaf_gbh - a_ref%leaf_gbh))
+         call check_true('warm wood raises the wood gb (free convection)', all(a_warm_wood%wood_gbh > a_ref%wood_gbh), &
+                 minval(a_warm_wood%wood_gbh - a_ref%wood_gbh))
+      end block
    end subroutine test_aero_order
 
    !----- Goal (a) Layer 1. The fast loop has FOUR adaptive error estimates (the ARK march plus the  !

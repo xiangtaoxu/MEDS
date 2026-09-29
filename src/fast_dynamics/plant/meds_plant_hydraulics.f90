@@ -17,7 +17,7 @@ module meds_plant_hydraulics
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_params_table_t, hydro_opts_t,  &
                                hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
-   use meds_hydr_lib,      only : kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
+   use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
                                      water_content, plc_retained
    use meds_numerics,         only : adaptive_step_update
    implicit none
@@ -67,23 +67,6 @@ contains
       rai = broot * sra * root_frac * nplant                     ! root area index [m2/m2]
       gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny(1.0_wp))
    end function rhizosphere_cond
-
-   !----- ED2 cumulative-exponential root fraction in a soil layer spanning depths [z_top, z_bot]     !
-   !      (both >= 0, below surface, z_bot > z_top): frac = beta^(z_top/D) - beta^(z_bot/D), with      !
-   !      D = root_depth and beta in (0,1). Shallower layers get more roots; depths clamp to [0, D] so  !
-   !      layers below the rooting depth contribute 0. Summed over [0, D] the profile telescopes to     !
-   !      1 - beta (ED2 convention; only the RELATIVE distribution enters the conductance weights).     !
-   pure real(wp) function root_fraction_profile(root_beta, root_depth, z_top, z_bot) result(frac)
-      real(wp), intent(in) :: root_beta   !< [-]  root-profile decay (0,1); smaller => shallower
-      real(wp), intent(in) :: root_depth  !< [m]  maximum rooting depth (> 0)
-      real(wp), intent(in) :: z_top       !< [m]  depth of the layer top    (>= 0)
-      real(wp), intent(in) :: z_bot       !< [m]  depth of the layer bottom (> z_top)
-      real(wp) :: inv_d, a, b
-      inv_d = 1.0_wp / max(root_depth, tiny_num)
-      a = min(max(z_top, 0.0_wp), root_depth) * inv_d
-      b = min(max(z_bot, 0.0_wp), root_depth) * inv_d
-      frac = root_beta**a - root_beta**b
-   end function root_fraction_profile
 
    !----- Reduce the root boundary to an effective (conductance, soil potential) at the wood node.    !
    !      Multi-layer (n_root_layer > 1): the per-layer conductances are in PARALLEL to the common     !

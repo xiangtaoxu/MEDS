@@ -59,7 +59,7 @@ program test_slow_ledger
    associate (sc => cfg%soil_column)
       call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth, sc%theta_sat, &
                                   sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,            &
-                                  sc%root_beta, sc%psi_fc, soil)
+                                  cfg%hydraulics%root_beta, cfg%hydraulics%root_depth, sc%psi_fc, soil)
    end associate
 
    !----- Give every reservoir a non-zero value, so a perturbation below is a change to a store !

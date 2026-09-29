@@ -190,6 +190,13 @@ program test_region
                 .true., .false., '[run].mode must be "site" or "region"')
    call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
                 site_block(1_ik), .false., .false., 'the [io] block is now [state]')
+   !----- The root profile is a plant trait: the old [soil_column] key is refused, naming [hydraulics]. -!
+   call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
+                '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
+                'soil_column.root_beta is gone')
+   call refused('hydraulics.conductance is whole_plant or segment',                                 &
+                '[hydraulics]'//nl()//'conductance = "xylem"'//nl()//site_block(1_ik), .false., .false., &
+                'hydraulics.conductance must be')
    !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
    !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
    call refused('format = "netcdf" is refused, naming ED_default',                                  &

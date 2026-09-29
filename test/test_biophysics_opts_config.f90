@@ -34,6 +34,7 @@ program test_biophysics_opts_config
    write(u,'(a)') 'rtol       = 2.5e-4'
    write(u,'(a)') 'max_picard = 9'
    write(u,'(a)') 'psi_wilt   = -160.0'
+   write(u,'(a)') 'ground_albedo_nir = 0.25'
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
    write(u,'(a)') 'atol         = 0.05'
@@ -65,6 +66,9 @@ program test_biophysics_opts_config
    call check('soil.rtol overridden',       s%rtol,     2.5e-4_wp, 1.0e-12_wp)
    call check('soil.max_picard overridden', real(s%max_picard, wp), 9.0_wp, 0.0_wp)
    call check('soil.psi_wilt overridden',   s%psi_wilt, -160.0_wp, 1.0e-9_wp)
+   call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
+   call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
+   call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)
    call check_true('soil.substep absent -> default ADAPTIVE', s%substep == SOIL_SUBSTEP_ADAPTIVE, real(s%substep, wp))
    call check('soil.h_init absent -> default 900', s%h_init, 900.0_wp, 1.0e-9_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)

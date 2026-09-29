@@ -57,10 +57,10 @@ contains
       type(soil_column_t), intent(out) :: col
       if (retention == SOIL_RETENTION_CAMPBELL) then
          call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.44_wp, 0.0_wp,            &
-              4.53e-6_wp, -0.26_wp, 5.65_wp, 2.0_wp, -3.37_wp, params)
+              4.53e-6_wp, -0.26_wp, 5.65_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, params)
       else
          call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
-              2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, params)
+              2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, params)
       end if
       col%theta(1:10) = 0.30_wp
       col%w_surface = 0.0_wp
@@ -286,7 +286,7 @@ contains
       real(wp) :: dt, e_in, e_to_soil, e_left, e_runoff
       print '(a)', 'test_pond_subfreezing_inflow:'
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, params)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, params)
       col%theta(1:10) = 0.25_wp
       col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
       forcing%precip_ground = 5.0e-6_wp                 ! 18 mm/day, well inside the infiltration capacity
@@ -320,7 +320,7 @@ contains
       !      infiltration is capped and the excess ponds/runs off (Hortonian). A bone-dry clay !
       !      would instead have huge suction-driven capacity (Green-Ampt) -- not the cap case.  !
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
-           5.6e-7_wp, 0.8_wp, 1.09_wp, 2.0_wp, -3.37_wp, params)
+           5.6e-7_wp, 0.8_wp, 1.09_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, params)
       col%theta(1:10) = 0.36_wp
       col%w_surface = 0.0_wp
       forcing%precip_ground = 1.0e-2_wp                  ! 36 mm/hr downpour

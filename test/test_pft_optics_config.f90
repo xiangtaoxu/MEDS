@@ -13,11 +13,11 @@
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t
+   use meds_config,         only : meds_config_t, pft_leaf_psi_tlp
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_hydr_lib,       only : plc_retained
+   use meds_hydr_lib,       only : plc_retained, pv_psi_tlp
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -63,9 +63,17 @@ program test_pft_optics_config
    call check_close(ctx%rad_opt%omega_leaf(RAD_LW,2), 1.0_wp - 0.80_wp, 1.0e-12_wp,                        &
                     'leaf LW omega must be 1 - emissivity (a leaf is opaque in the thermal band)')
 
+   !=== 4b. The ground optics come from [soil], not a constant in the fast context. =============!
+   cfg%soil%ground_albedo_vis = 0.11_wp ; cfg%soil%ground_albedo_nir = 0.22_wp ; cfg%soil%ground_emissivity = 0.93_wp
+   call build_fast_context(cfg, ctx)
+   call check_close(ctx%soil_albedo(1), 0.11_wp, 0.0_wp, 'soil.ground_albedo_vis did not reach the radiation solver')
+   call check_close(ctx%soil_albedo(2), 0.22_wp, 0.0_wp, 'soil.ground_albedo_nir did not reach the radiation solver')
+   call check_close(ctx%soil_emiss,     0.93_wp, 0.0_wp, 'soil.ground_emissivity did not reach the radiation solver')
+   cfg%soil%ground_albedo_vis = 0.15_wp ; cfg%soil%ground_albedo_nir = 0.30_wp ; cfg%soil%ground_emissivity = 0.95_wp
+
    !=== 5. Clumping and the leaf-angle distribution are per PFT too. ========================!
    cfg%pft%leaf_clumping(2)   = 0.40_wp
-   cfg%pft%leaf_angle_mean(2) = 20.0_wp        ! erectophile against PFT 1's spherical 45 deg
+   cfg%pft%leaf_angle_mean(2) = 20.0_wp        ! erectophile against PFT 1's 45 deg (spherical is 57.3)
    call build_fast_context(cfg, ctx)
    call check_close(ctx%rad_opt%clumping_leaf(2), 0.40_wp, 1.0e-14_wp, 'leaf clumping did not reach the table')
    call check_close(ctx%rad_opt%clumping_leaf(1), 0.80_wp, 1.0e-14_wp, 'PFT 1 clumping must be untouched')
@@ -96,6 +104,18 @@ program test_pft_optics_config
       plc1 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)
       plc2 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(2)%wood_psi50, tab%pft(2)%wood_kexp)
       call check(plc2 > plc1, 'a more vulnerable PFT loses more conductance at the same psi')
+      !----- The stomatal closure (2x the turgor-loss point) follows the PFT's OWN pressure-volume  !
+      !      curve, the one the plant-water solver stores its leaf water on; it used to take the     !
+      !      shared [hydraulics] values whatever the PFT said. ----------------------------------!
+      call build_fast_context(cfg, ctx)
+      call check_close(ctx%col_config%leaf_photo%pft(2)%psi_tlp,                                  &
+                       pv_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,           &
+                       'PFT 2 stomata close on its own turgor-loss point')
+      call check_close(ctx%col_config%leaf_photo%pft(1)%psi_tlp,                                  &
+                       pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp, &
+                       'PFT 1 with no override keeps the shared turgor-loss point')
+      call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_config%leaf_photo%pft(2)%psi_tlp, 0.0_wp, &
+                       'the phenology reads the same per-PFT turgor-loss point')
    end block
 
    !=== 6. The PFT-parameter CSV dump has as many values as it has column headers. ==========!

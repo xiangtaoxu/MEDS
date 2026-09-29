@@ -309,8 +309,9 @@ empty. An *arrestor* is therefore needed on top of the $`\beta_s`$ ramp. `[run].
 selects it.
 
 **`ARREST_GS_CLAMP` (default).** Below twice the turgor-loss point
-$`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ — the same PV curve the hydraulics solver uses —
-the stomata shut completely: $`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$. It latches on the
+$`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ — the same PV curve the hydraulics solver uses, from
+each PFT's own `leaf_pi0` and `leaf_elastic_mod` (a PFT that sets neither takes the `[hydraulics]`
+values) — the stomata shut completely: $`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$. It latches on the
 *daily-max* potential, so it is a once-a-day decision on a slow integrated measure rather than a
 per-step switch on a noisy sub-daily $`\psi`$.
 

@@ -18,7 +18,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t
+   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -199,7 +199,12 @@ contains
       c%ksat        = toml_real(tm, 'soil_column.ksat',        c%ksat)
       c%curve_par_a = toml_real(tm, 'soil_column.curve_par_a', c%curve_par_a)
       c%curve_par_n = toml_real(tm, 'soil_column.curve_par_n', c%curve_par_n)
-      c%root_beta   = toml_real(tm, 'soil_column.root_beta',   c%root_beta)
+      !----- The root profile is a plant hydraulic trait, [hydraulics].root_beta and root_depth. A   !
+      !      [soil_column].root_beta would parse and do nothing, so it is refused, naming the keys.  !
+      if (toml_has(tm, 'soil_column.root_beta'))                                                    &
+         error stop 'load_meds_config: soil_column.root_beta is gone; the root profile is a plant '// &
+                    'trait: set [hydraulics].root_beta (0 < beta < 1) and root_depth. '//            &
+                    'root_beta = exp(-b*root_depth) gives the old exponential decay b per metre'
       c%psi_fc      = toml_real(tm, 'soil_column.psi_fc',      c%psi_fc)
       c%solid_conductivity = toml_real(tm, 'soil_column.solid_conductivity', c%solid_conductivity)
       c%dry_conductivity   = toml_real(tm, 'soil_column.dry_conductivity',   c%dry_conductivity)
@@ -248,6 +253,9 @@ contains
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
       s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
       s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
+      s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
+      s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
+      s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
    end subroutine load_soil_opts
 
    subroutine load_energy_opts(tm, e)                   ! [energy] -> soil-thermal opts
@@ -1035,6 +1043,14 @@ contains
       cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
       cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
+      if (toml_has(tm, 'hydraulics.conductance')) then
+         select case (trim(adjustl(toml_string(tm, 'hydraulics.conductance', 'whole_plant'))))
+         case ('whole_plant') ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_WHOLE_PLANT
+         case ('segment')     ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_SEGMENT
+         case default
+            error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
+         end select
+      end if
       cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
       cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
       cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)

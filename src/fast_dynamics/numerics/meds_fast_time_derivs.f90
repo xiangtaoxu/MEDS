@@ -151,7 +151,7 @@ contains
       coh_h = 0.0_wp ; coh_qw = 0.0_wp ; coh_transp = 0.0_wp ; coh_rnet = 0.0_wp
       coh_film_evap = 0.0_wp
       do i = 1_ik, n
-         lw_slope = lw_emission_slope(tissue%leaf_emiss, tcas, tissue%lai(i))
+         lw_slope = lw_emission_slope(tissue%leaf_emiss(i), tcas, tissue%lai(i))
          !----- The leaf pays the FULL specific enthalpy of the vapour it sheds, h_evap = enthalpy_vapor  !
          !      at the canopy-air temperature the balance is linearized around (the same reference        !
          !      qsat_c/dqdt use; the cp_vap*(t_leaf - t_cas) difference is ~0.2% of h_evap), and the      !
@@ -192,7 +192,7 @@ contains
          !      sensible + net-LW join coh_h / coh_rnet; a diagnostic wood has no storage so the two     !
          !      wood terms are equal (h_coeff_w*dtw) and telescope in the ledger. Frozen wood inputs are !
          !      zero when wood is not diagnostic (build_column_frozen), making this a no-op then.        !
-         lw_slope_w = lw_emission_slope(tissue%leaf_emiss, tcas, tissue%wai(i))
+         lw_slope_w = lw_emission_slope(tissue%wood_emiss(i), tcas, tissue%wai(i))
          h_evap_w = h_evap_l
          h_film_w = h_evap_w - film%film_liquid_enthalpy
          le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt

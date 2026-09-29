@@ -95,10 +95,12 @@ K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_
 \;\xrightarrow[\Delta\psi\to0]{}\; k_{\text{cond}}\,k(\psi)
 ```
 
-$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance: whole-plant
-$`k_{\text{cond}}=k_{plant\_max}\cdot\text{leaf area}`$ (default), or segment
-$`k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel\_curl})`$ from stem allometry (Huber value
-$`H_v=A_{sap}/A_{leaf}`$). For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
+$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance. `[hydraulics].conductance`
+picks its form: `"whole_plant"` (default), $`k_{\text{cond}}=k_{plant\_max}\cdot\text{leaf area}`$, or
+`"segment"`, $`k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel\_curl})`$ from stem allometry
+(Huber value $`H_v=A_{sap}/A_{leaf}`$). `wood_kmax` and `vessel_curl` are read only in segment
+mode, and `k_plant_max` only in whole-plant mode. Before v0.3.1 there was no key for the mode, so
+`wood_kmax` and `vessel_curl` were accepted and never used. For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
 uniform-grid **lookup table** $G(r)$ and read by linear interpolation on the hot path (the closed
 forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$ is a runtime
 scale.
@@ -121,8 +123,14 @@ g_k=\frac{K_{soil}(k)\,\sqrt{\text{RAI}_k}}{\pi\,\Delta z_k}\cdot\frac{1}{n_{pla
 ```
 
 with the ED2 cumulative-exponential root profile
-$`\text{root\_frac}(k)=\beta^{\,d_{k-1}/D}-\beta^{\,d_k/D}`$ ($\beta=$ `root_beta`, $D$ the max rooting
-depth). The parallel network collapses to an effective boundary,
+$`\text{root\_frac}(k)=\beta^{\,d_{k-1}/D}-\beta^{\,d_k/D}`$ ($\beta=$ `[hydraulics].root_beta`, $D$ =
+`[hydraulics].root_depth`, both depths clamped to $[0,D]$), renormalized to sum to one over the
+column, so a shallow column still holds all the roots and a layer below $D$ holds none. The profile
+is a plant trait, so it lives in `[hydraulics]`. Before v0.3.1 it came from `[soil_column].root_beta`
+as a per-layer $`e^{-2d}`$ weight, and the `[hydraulics]` pair was never read; a config that still
+sets `[soil_column].root_beta` is refused. The default $`\beta=e^{-4}`$, $D$ = 2 m is that same
+$`e^{-2d}`$ profile, so a default run keeps its roots. ED2's own default is $\beta=0.001$, which puts
+more of the roots near the surface. The parallel network collapses to an effective boundary,
 
 ```math
 G_{\text{root}}=\sum_k g_k, \qquad
@@ -172,10 +180,11 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | $\psi_{50}$ | `wood_psi50` | xylem potential at 50 % loss of conductance [MPa] |
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
 | $`k_{plant\_max}`$ | `k_plant_max` | max whole-plant conductance [kg s⁻¹ MPa⁻¹ m⁻²_leaf] |
+| — | `conductance` | `"whole_plant"` (default) or `"segment"`: which of the two rows below sets $k_{\text{cond}}$ |
 | $K_s$ | `wood_kmax` | sapwood specific conductivity (segment mode) [kg m⁻¹ s⁻¹ MPa⁻¹] |
-| — | `vessel_curl` | tortuosity / path-length factor [–] |
+| — | `vessel_curl` | tortuosity / path-length factor (segment mode) [–] |
 | — | `rhizo_cond` | rhizosphere conductance (single-BC) [kg s⁻¹ MPa⁻¹] |
-| $\beta$ | `root_beta` | ED2 root-profile decay [–] (feeds `root_fraction_profile`) |
+| $\beta$ | `root_beta` | ED2 root-profile decay [–], $0<\beta<1$ (feeds `root_fraction_profile`) |
 | $D$ | `root_depth` | maximum rooting depth [m] |
 | SRA | `specific_root_area` | specific root area [m² kgC⁻¹] (multi-layer rhizosphere conductance) |
 | $b_{1SA}, b_{2SA}$ | `sapwood_area_b1`, `sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |

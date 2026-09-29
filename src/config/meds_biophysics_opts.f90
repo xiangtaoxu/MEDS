@@ -69,6 +69,12 @@ module meds_biophysics_opts
       real(wp)    :: psi_wilt = -152.96_wp               !< [m] wilting head (~ -1.5 MPa) for the sink f_wilt
       real(wp)    :: psi_open = -3.37_wp                 !< [m] onset head (~ -0.033 MPa) for the f_wilt ramp
       logical     :: debug_error = .false.
+      !----- Ground optics under the canopy: the bare soil's shortwave albedo per band and its        !
+      !      longwave emissivity, as the canopy radiation solver sees the ground (blended with snow   !
+      !      where there is snow). ------------------------------------------------------------------!
+      real(wp)    :: ground_albedo_vis = 0.15_wp        !< [-] soil albedo, visible
+      real(wp)    :: ground_albedo_nir = 0.30_wp        !< [-] soil albedo, near infrared
+      real(wp)    :: ground_emissivity = 0.95_wp        !< [-] soil longwave emissivity
    end type soil_opts_t
 
    !----- Soil-energy: solver selectors + tolerances (NOT the whole config). ----------------!

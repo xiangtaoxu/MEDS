@@ -10,13 +10,13 @@
 module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec
-   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params
+   use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use meds_allometry,  only : set_allometry
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
@@ -33,6 +33,7 @@ module meds_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
+   public :: pft_leaf_psi_tlp
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -41,6 +42,7 @@ module meds_config
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
    public :: ARREST_NONE, ARREST_GS_CLAMP
+   public :: HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -79,6 +81,8 @@ module meds_config
    !      g0 and never reaches zero. The two options are alternatives, not a sequence.               !
    integer(ik), parameter :: ARREST_NONE       = 0_ik  !< no arrestor (pre-#95 behaviour; for A/B only)
    integer(ik), parameter :: ARREST_GS_CLAMP   = 1_ik  !< shut gs completely below 2*psi_tlp (DEFAULT)
+   integer(ik), parameter :: HYD_CONDUCTANCE_WHOLE_PLANT = 1_ik  !< [hydraulics] conductance = "whole_plant"
+   integer(ik), parameter :: HYD_CONDUCTANCE_SEGMENT     = 2_ik  !< [hydraulics] conductance = "segment"
    !----- RESERVED: a "dynamic vapour pressure" arrestor -- the substomatal air held at the Kelvin    !
    !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
    !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
@@ -142,7 +146,6 @@ module meds_config
       real(wp)    :: ksat        = 2.89e-6_wp !< [m/s]   saturated hydraulic conductivity
       real(wp)    :: curve_par_a = 3.6_wp     !< [1/m] van Genuchten alpha, OR [m] Campbell psi_sat (< 0)
       real(wp)    :: curve_par_n = 1.56_wp    !< [-]   van Genuchten n (>1), OR [-] Campbell b
-      real(wp)    :: root_beta   = 2.0_wp     !< [-]   exponential root-profile decay
       real(wp)    :: psi_fc      = -3.37_wp   !< [m]   field-capacity matric head (derives theta_fc)
       !----- Thermal texture (uniform over the column). ---------------------------------------------!
       real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
@@ -163,13 +166,20 @@ module meds_config
       real(wp) :: wood_psi50 = -2.0_wp   !< [MPa,<0] potential at 50% loss
       real(wp) :: wood_kexp  =  2.0_wp   !< [-]  vulnerability shape (a)
       real(wp) :: k_plant_max = 6.0e-4_wp !< [kg/s/MPa/m2_leaf] whole-plant conductance
-      real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity
-      real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor
-      !----- Multi-layer root distribution. The per-layer root boundary is UNCONDITIONAL: every     !
-      !       run resolves soil potential and rhizosphere conductance per layer, so these are always   !
-      !       consumed. Hydraulic redistribution stays off -- per-layer efflux is floored at zero in    !
-      !       both the plant solver and the soil sink (docs/ROADMAP.md section 7). ---------------------!
-      real(wp) :: root_beta          = 0.96_wp  !< [-]      ED2 root-profile decay (0,1); smaller => shallower
+      !----- How the plant's maximum internal conductance is set: `whole_plant` (default) takes      !
+      !      k_plant_max per unit leaf area; `segment` takes the sapwood's specific conductivity over    !
+      !      the path, wood_kmax * sapwood area / (height * vessel_curl). -----------------------------!
+      integer(ik) :: conductance = HYD_CONDUCTANCE_WHOLE_PLANT
+      real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity (conductance = segment)
+      real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor (conductance = segment)
+      !----- The root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the   !
+      !       soil column; layers below root_depth hold no roots. It sets the per-layer root boundary  !
+      !       (uptake and rhizosphere conductance), the root-zone temperature of root respiration, and !
+      !       the root-weighted soil state. The default beta = exp(-4) with a 2 m rooting depth is the  !
+      !       exponential profile exp(-2 m^-1 * depth) that [soil_column].root_beta = 2 used to give.   !
+      !       Hydraulic redistribution stays off -- per-layer efflux is floored at zero in both the     !
+      !       plant solver and the soil sink (docs/ROADMAP.md section 7). -----------------------------!
+      real(wp) :: root_beta          = 0.018315638888734179_wp  !< [-] ED2 root-profile decay (0,1): exp(-4)
       real(wp) :: root_depth         = 2.0_wp   !< [m]      maximum rooting depth
       real(wp) :: specific_root_area = 20.0_wp  !< [m2/kgC] fine-root absorbing area per unit root carbon
       !----- OPT-IN: couple the plant hydraulics to the per-layer soil column (feed per-layer psi_soil  !
@@ -511,12 +521,54 @@ contains
       nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
 
+   !----- A PFT's leaf turgor-loss point [MPa], from its own pressure-volume traits: the [pft]       !
+   !      leaf_pi0 and leaf_elastic_mod where given, else the shared [hydraulics] ones. That is the   !
+   !      rule apply_hydraulics_config uses for the plant-water solver, so the stomatal closure and   !
+   !      the phenology's drought counter see the curve the solver stores leaf water on. ------------!
+   pure real(wp) function pft_leaf_psi_tlp(cfg, ipft) result(psi_tlp)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      real(wp) :: pi0, elastic_mod
+      pi0 = cfg%hydraulics%leaf_pi0 ; elastic_mod = cfg%hydraulics%leaf_elastic_mod
+      if (allocated(cfg%pft%hyd_leaf_pi0)) then
+         if (cfg%pft%hyd_leaf_pi0(ipft) > HYD_UNSET) pi0 = cfg%pft%hyd_leaf_pi0(ipft)
+      end if
+      if (allocated(cfg%pft%hyd_leaf_elastic_mod)) then
+         if (cfg%pft%hyd_leaf_elastic_mod(ipft) > HYD_UNSET) elastic_mod = cfg%pft%hyd_leaf_elastic_mod(ipft)
+      end if
+      psi_tlp = pv_psi_tlp(pi0, elastic_mod)
+   end function pft_leaf_psi_tlp
+
    !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
    !---------------------------------------------------------------------------------------!
    subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
       character(len=*), parameter :: tag = 'meds_config: '
+
+      !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the    !
+      !      segment conductance needs a positive conductivity and path factor, shared and per PFT. -!
+      if (cfg%hydraulics%root_beta <= 0.0_wp .or. cfg%hydraulics%root_beta >= 1.0_wp)             &
+         error stop tag//'hydraulics.root_beta must lie in (0, 1)'
+      if (cfg%hydraulics%root_depth <= 0.0_wp) error stop tag//'hydraulics.root_depth <= 0'
+      if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
+         if (cfg%hydraulics%wood_kmax <= 0.0_wp .or. cfg%hydraulics%vessel_curl <= 0.0_wp)         &
+            error stop tag//'hydraulics.conductance = "segment" needs wood_kmax > 0 and vessel_curl > 0'
+         if (allocated(cfg%pft%hyd_wood_kmax)) then
+            if (any(cfg%pft%hyd_wood_kmax > HYD_UNSET .and. cfg%pft%hyd_wood_kmax <= 0.0_wp))       &
+               error stop tag//'pft.wood_kmax must be > 0 with conductance = "segment"'
+         end if
+         if (allocated(cfg%pft%hyd_vessel_curl)) then
+            if (any(cfg%pft%hyd_vessel_curl > HYD_UNSET .and. cfg%pft%hyd_vessel_curl <= 0.0_wp))   &
+               error stop tag//'pft.vessel_curl must be > 0 with conductance = "segment"'
+         end if
+      end if
+      !----- [soil] ground optics. --------------------------------------------------------------!
+      if (cfg%soil%ground_albedo_vis < 0.0_wp .or. cfg%soil%ground_albedo_vis >= 1.0_wp .or.       &
+          cfg%soil%ground_albedo_nir < 0.0_wp .or. cfg%soil%ground_albedo_nir >= 1.0_wp)           &
+         error stop tag//'soil.ground_albedo_vis and ground_albedo_nir must lie in [0, 1)'
+      if (cfg%soil%ground_emissivity <= 0.0_wp .or. cfg%soil%ground_emissivity > 1.0_wp)           &
+         error stop tag//'soil.ground_emissivity must lie in (0, 1]'
 
       !----- [soil_column]. Every one of these produces a silently WRONG column rather than a     !
       !      crash: a layer count over the compile-time ceiling writes past the active region, a   !
@@ -573,7 +625,7 @@ contains
             associate (sc => cfg%soil_column)
                call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,   &
                     sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,         &
-                    sc%root_beta, sc%psi_fc, sp)
+                    cfg%hydraulics%root_beta, cfg%hydraulics%root_depth, sc%psi_fc, sp)
             end associate
             if (cfg%energy%deep_depth <= abs(sp%z_node(cfg%soil_column%n_layer)))                &
                error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
