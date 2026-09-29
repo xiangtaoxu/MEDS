@@ -27,7 +27,7 @@ Each old form stops at startup with a message naming the fix.
 ### Changed
 
 - **The flux-tower tool fills the longwave by the synthesis regression only; its ERA5-Land fill is
-  removed.** Filling from ERA5-Land or another source is the user's to do in the tower file before
+  removed** (#326). Filling from ERA5-Land or another source is the user's to do in the tower file before
   the build. `make_tower_forcing.py` loses `--lw-fill`, `--states-fill` and `--era5-file`, and a
   site TOML's `gapfill.longwave`, `gapfill.states` or `gapfill.era5_file` stops the build with that
   message. A rain gap now stops the build instead of taking ERA5-Land's rain, the V5 report no
@@ -220,7 +220,7 @@ Each old form stops at startup with a message naming the fix.
   - **Gap filling** is explicit, with a `<Var>_qc` flag on every value: short gaps interpolated,
     long ones by the mean diurnal variation. Longwave is filled from the model's synthesis,
     regressed onto the tower in its clear-sky and cloud parts. (An ERA5-Land fill added here was
-    removed before release; see Changed.)
+    removed before release, #326; see Changed.)
   - **`compare_longwave_fill.py`** scores the fills on held-out observations. `tests/` has 24
     pytest cases on synthetic towers, run by CTest as `prepare_flux_tower` when the Python it finds
     has the dependencies; two mutations of the tool (the UTC sign, the re-centring) fail 15 and 2
@@ -237,7 +237,7 @@ Each old form stops at startup with a message naming the fix.
   - **Longwave.** The observed longwave is 61 % missing. The synthesis regression fills it with
     RMSE 9.1 W m⁻² on hidden records, where the model's `lwdown_source = "synthesize"` would be
     36.3 (bias −22.5). Those numbers were measured on the upwelling column, which the file labels
-    as downwelling; the correction is under Fixed.
+    as downwelling; the correction is under Fixed (#326).
   - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
     local time. They needed the soil-water fix above: before it, rain did not infiltrate a dried
     top layer and no stand grew.
@@ -252,7 +252,7 @@ Each old form stops at startup with a message naming the fix.
 
 ### Fixed
 
-- **The BCI flux-tower example forced MEDS with the canopy's upwelling longwave.** `BCI_v5.1.csv`
+- **The BCI flux-tower example forced MEDS with the canopy's upwelling longwave** (#326). `BCI_v5.1.csv`
   labels its downwelling longwave `Rl_up` and its upwelling `Rl_dn`, and `bci_site.toml` took the
   label at its word. Three independent checks agree: the provider's `Rnet` equals
   Rs − Rs_dn + Rl_up − Rl_dn (RMS residual 1.7 W m⁻² after the bounds screen, 87.6 as labelled); at
