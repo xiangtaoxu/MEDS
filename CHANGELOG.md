@@ -156,6 +156,16 @@ Each old form stops at startup with a message naming the fix.
 
 ### Added
 
+- **`scripts/prepare_census/make_census.py`: a ForestGEO tree table to a MEDS census**
+  (`MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
+  at its true area, one row per distinct (cell, diameter), `nplant` the count over the area. It
+  keeps live trees with a diameter of at least the declared minimum, and counts every exclusion. Given
+  a PFT file and an earlier census, its summary also carries the stand's steady-state litter input for
+  `[soil_carbon].spinup_steady`. On the Barro Colorado Island 2010 census at 20 m it writes 84,937
+  rows in 1,250 patches, conserving all 207,259 stems. Tests: `prepare_census` (pytest, run by CTest
+  when the Python it finds has numpy, pandas and pytest). `environment.yml` gains pandas and pytest,
+  which this tool and the flux-tower tool need.
+
 - **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (#320; AmeriFlux BASE,
   FLUXNET/ONEFlux or any CSV). The tool works from a site TOML that declares the file, location,
   clock, stamp convention, sensor heights and every column's units.

@@ -630,6 +630,19 @@ if(MEDS_BUILD_TESTS)
          message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "netCDF4, pytest or tomli)")
       endif()
+      #----- The census preparation tool's tests (scripts/prepare_census/tests), on the same terms. -#
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, pandas, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_census_tool_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_census_tool_deps EQUAL 0)
+         add_test(NAME prepare_census
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_census/tests)
+         set_tests_properties(prepare_census PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+      else()
+         message(STATUS "MEDS: prepare_census tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
+                        "pytest or tomli)")
+      endif()
    endif()
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
