@@ -27,7 +27,7 @@ Each old form stops at startup with a message naming the fix.
 ### Changed
 
 - **The default biomass law is Chave et al. (2014), and both it and the leaf-area scale are in
-  carbon.** In `meds_config_pft.toml`, every example's PFT file and the `meds_allometry`
+  carbon** (#321). In `meds_config_pft.toml`, every example's PFT file and the `meds_allometry`
   initializers:
   - `[allometry].agb_c1` goes from 0.06080334 to 0.03365 and `agb_c2` from 1.0044785 to 0.976:
     Chave's eq. 4, AGB = 0.0673 (ρD²H)^0.976 kg dry mass, divided by `C2B = 2`. The MEDS form
