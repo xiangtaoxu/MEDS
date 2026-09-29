@@ -18,8 +18,8 @@ program test_allometry
 
    call banner('pan-tropical allometry')
    !----- Install the global allometry coefficients (the model no longer hard-codes them). --!
-   call set_allometry(1.139963_wp, 0.564899_wp, 0.06080334_wp, 1.0044785_wp,         &
-                      0.370_wp, 0.464_wp, 0.46769540_wp, 0.6410495_wp, 0.5_wp)
+   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
+                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp)
 
    !=== Height <-> diameter round-trip below the height cap. ==============================!
    do i = 1_ik, 3_ik

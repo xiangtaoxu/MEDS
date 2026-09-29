@@ -26,6 +26,30 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **The default biomass law is Chave et al. (2014), and both it and the leaf-area scale are in
+  carbon** (#321). In `meds_config_pft.toml`, every example's PFT file and the `meds_allometry`
+  initializers:
+  - `[allometry].agb_c1` goes from 0.06080334 to 0.03365 and `agb_c2` from 1.0044785 to 0.976:
+    Chave's eq. 4, AGB = 0.0673 (ρD²H)^0.976 kg dry mass, divided by `C2B = 2`. The MEDS form
+    `agb_c1·ρ^agb_c2·(D²H)^agb_c2` is Chave's exactly. The old values were ED2's `IALLOM = 3` refit
+    of Chave (`c14f15_bs_tf`), in dry mass but read as carbon.
+  - `lai_b1` goes from 0.46769540 to 0.23384770, with `lai_b2` unchanged. It is ED2's BAAD leaf fit
+    `c14f15_bl_xx` as ED2 applies it (`size2bl` divides by `C2B`); MEDS used it undivided, so leaf area
+    was twice ED2's.
+  - **Per tree**, at a given diameter and the default heights: a 100 cm, 42 m tree goes from 16,261
+    to 6,315 kgC of AGB and from 1,887 to 944 m² of leaf; a 10 cm tree from 43 to 20 kgC. Wood,
+    leaf, fine-root and storage carbon follow. The recruit unit carbon falls by about half too, so a
+    given reproduction flux makes about twice the recruits.
+  - **Per stand**, on the Barro Colorado Island 2010 census (207,259 trees) the stand's AGB goes
+    from 39.8 to 16.1 kgC m⁻² against the census's own 15.1, and its LAI from 11.2 to 5.6.
+  - **Upgrading:** a PFT file copied from an earlier `meds_config_pft.toml` keeps the old values;
+    copy the three new ones into it. A file with its own fitted values needs nothing.
+  - **Every example's figures and quoted numbers predate this change** and are regenerated with the
+    next release.
+  - The new test `allometry_defaults` checks that the shipped `[allometry]` block equals the
+    `meds_allometry` initializers, that the biomass law is Chave's in carbon, and that the leaf
+    scale is ED2's over `C2B`. It fails on the old values.
+
 - **Forcing files carry the humidity their source measured, and MEDS converts it** (#320,
   `MEDS_FLUX_TOWER_FORCING_PLAN.md` D2). An `ED_default` file carries exactly one of `RHair`
   (a fraction; a flux tower), `Tdew` (a reanalysis) or `Qair`, and the reader turns it into specific

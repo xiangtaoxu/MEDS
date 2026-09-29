@@ -14,10 +14,17 @@
 !   leaf_area(dbh,h)   = lai_b1 * (dbh^2*h)^lai_b2                              [m2/plant]    !
 !                                                                                          !
 ! `leaf_area` is the per-stem one-sided leaf area; a cohort's LAI contribution is            !
-! nplant*leaf_area. lai_b1 (0.46769540) IS the ED2 pan-tropical SLA*bleaf coefficient (the    !
-! specific leaf area cancels), so MEDS gets a faithful LAI WITHOUT carrying a leaf-biomass     !
-! pool. `agb` is the Chave-2014 structural-biomass form used here as the conserved carbon     !
-! currency. `agb_to_dbh` inverts agb -> dbh and is the only place fusion/fission needs.       !
+! nplant*leaf_area. `agb` is the conserved carbon currency. `agb_to_dbh` inverts agb -> dbh    !
+! and is the only place fusion/fission needs.                                                !
+!                                                                                          !
+! The default coefficients, all in carbon at the carbon fraction C2B = 2:                    !
+!   agb    Chave et al. (2014, Glob. Change Biol.) eq. 4, AGB = 0.0673*(rho*dbh^2*h)^0.976   !
+!          in kg dry mass, so agb_c1 = 0.0673/2 = 0.03365 and agb_c2 = 0.976. The MEDS form    !
+!          agb_c1*rho^agb_c2*(dbh^2*h)^agb_c2 is Chave's exactly.                             !
+!   leaf   ED2's pan-tropical BAAD fit as ED2 applies it: size2bl uses                        !
+!          c14f15_bl_xx(1)/(SLA*C2B), so lai_b1 = 0.46769540/2 = 0.23384770 (= ED2 SLA*bleaf; !
+!          the specific leaf area cancels) and lai_b2 = 0.6410495.                            !
+! Taken without the division, AGB is dry mass labelled as carbon and leaf area twice ED2's.  !
 !==========================================================================================!
 module meds_allometry
    use meds_kinds,     only : wp
@@ -38,7 +45,7 @@ module meds_allometry
    !       offloaded growth kernel takes them as scalar arguments instead (it cannot read host    !
    !       module state on the device).                                                           !
    !                                                                                          !
-   !       THE INITIALIZERS ARE THE PAN-TROPICAL (ED2 iallom==3) VALUES, and they are here for a   !
+   !       THE INITIALIZERS ARE THE SHIPPED PAN-TROPICAL DEFAULTS, and they are here for a         !
    !       reason. Config is still the source of truth for a MODEL RUN -- set_allometry overrides   !
    !       every one of them, and meds_config_pft.toml ships exactly these numbers. But this        !
    !       module is reachable WITHOUT a config: it links into the Python shared library, where     !
@@ -49,11 +56,11 @@ module meds_allometry
    !       offloaded kernel already takes them that way.)                                          !
    real(wp), protected :: b1Ht      = 1.139963_wp    !< [--]  height <-> diameter intercept
    real(wp), protected :: b2Ht      = 0.564899_wp    !< [--]  height <-> diameter slope
-   real(wp), protected :: agb_c1    = 0.06080334_wp  !< [kgC] AGB scale (Chave-2014)
-   real(wp), protected :: agb_c2    = 1.0044785_wp   !< [--]  AGB exponent on rho and on dbh^2*h
+   real(wp), protected :: agb_c1    = 0.03365_wp     !< [kgC] AGB scale (Chave 2014 eq. 4 / C2B)
+   real(wp), protected :: agb_c2    = 0.976_wp       !< [--]  AGB exponent on rho and on dbh^2*h (Chave 2014)
    real(wp), protected :: ca_b1     = 0.370_wp       !< [--]  crown-area scale
    real(wp), protected :: ca_b2     = 0.464_wp       !< [--]  crown-area exponent
-   real(wp), protected :: lai_b1    = 0.46769540_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
+   real(wp), protected :: lai_b1    = 0.23384770_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
    real(wp), protected :: lai_b2    = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
    real(wp), protected :: light_ext = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
 
