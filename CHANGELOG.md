@@ -26,6 +26,14 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **A census stand is restructured before the first step** (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
+  After `init_from_census`, the driver applies the slow step's own monthly cohort block (fusion, cull,
+  fission, sort) and yearly patch block (fusion, cull, cohort fusion), without recruitment or
+  disturbance and under the same switches. A census used to run its first month with every row a
+  cohort and its first year with every cell a patch. The run log prints the patch and cohort counts
+  before and after. Test: `init_census` fuses 20 identical cells to one patch with one cohort per
+  size, conserving the site's stems and biomass, and does nothing with the switches off.
+
 - **The census reader matches columns by name and reads `patch_area`**
   (`MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
   in any order: `patch_id`, `dbh`, `pft` and `nplant` required, `patch_area`, `site_id`,

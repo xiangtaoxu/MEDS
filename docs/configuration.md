@@ -144,6 +144,13 @@ are seven numbers is read in the old positional order, `site_id, patch_id, cohor
 pft, nplant`. An unknown or repeated column, a missing required one, or a patch whose rows disagree
 on `patch_area` stops the run, naming it.
 
+**A census stand is restructured before the first step**, by the slow step's own operators: its
+monthly cohort fusion, fission and cull, then its yearly patch fusion, without recruitment or
+disturbance, and under the same `[demography]` switches. So a census can carry one row per measured
+tree size and one patch per plot cell, and the model starts from a stand within `max_cohort` and
+`max_patch`, or above them where `patch_light_tol_max` keeps dissimilar patches apart. The run log
+prints the counts before and after.
+
 A census is how you start from a field inventory; see
 [`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input

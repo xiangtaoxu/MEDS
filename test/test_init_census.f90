@@ -4,14 +4,16 @@ program test_init_census
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t
-   use meds_init,             only : init_from_census
+   use meds_init,             only : init_from_census, restructure_census_stand
+   use meds_diagnostic_reduce, only : total_nplant
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
    type(site_t)        :: site
-   integer(ik)         :: u, i
+   integer(ik)         :: u, i, ip
    logical             :: found
+   real(wp)            :: n0, agb0
 
    call banner('init: from census CSV')
    cfg = build_test_config()
@@ -80,6 +82,36 @@ program test_init_census
       end if
    end do
    open(newunit=u, file='test_census_named.csv', status='old', action='read')
+   close(u, status='delete')
+   !=== Restructuring a census stand: 20 identical cells, each with two rows of the same size,   !
+   !    fuse to one patch and one cohort per size, conserving the site's stems and biomass.     !
+   open(newunit=u, file='test_census_cells.csv', status='replace', action='write')
+   write(u,'(a)') 'patch_id,patch_area,dbh,pft,nplant'
+   do ip = 1_ik, 20_ik
+      write(u,'(i0,a)') ip, ',400.0,25.0,1,0.0025'
+      write(u,'(i0,a)') ip, ',400.0,25.0,1,0.0025'
+      write(u,'(i0,a)') ip, ',400.0,4.0,1,0.0500'
+   end do
+   close(u)
+   call init_from_census(site, cfg, 'test_census_cells.csv', found)
+   call check(found .and. site%patch%n == 20_ik .and. site%cohort%n == 60_ik, 'the cell census did not load')
+   n0   = total_nplant(site)
+   agb0 = sum([(site%patch%area(site%cohort%owner_patch(i)) * site%cohort%nplant(i) * site%cohort%agb(i), &
+                i = 1_ik, site%cohort%n)])
+   call restructure_census_stand(site, cfg)
+   call check(site%patch%n == 1_ik,  'identical census cells must fuse to one patch')
+   call check(site%cohort%n == 2_ik, 'identical sizes must fuse to one cohort each')
+   call check_close(total_nplant(site), n0, 1.0e-12_wp, 'restructuring must conserve the site''s stems')
+   call check_close(sum([(site%patch%area(site%cohort%owner_patch(i)) * site%cohort%nplant(i)             &
+                          * site%cohort%agb(i), i = 1_ik, site%cohort%n)]), agb0, 1.0e-12_wp,         &
+                    'restructuring must conserve the site''s biomass')
+   !----- With both switches off it leaves the stand alone. ----------------------------------!
+   call init_from_census(site, cfg, 'test_census_cells.csv', found)
+   cfg%do_cohort_fissfuse = .false. ; cfg%do_patch_fissfuse = .false.
+   call restructure_census_stand(site, cfg)
+   call check(site%patch%n == 20_ik .and. site%cohort%n == 60_ik, 'restructuring must honour the switches')
+   cfg%do_cohort_fissfuse = .true. ; cfg%do_patch_fissfuse = .true.
+   open(newunit=u, file='test_census_cells.csv', status='old', action='read')
    close(u, status='delete')
    !=== A missing file is reported (found=.false.), not a crash. ===========================!
    call init_from_census(site, cfg, 'no_such_census_file.csv', found)

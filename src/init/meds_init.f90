@@ -12,11 +12,13 @@ module meds_init
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
    use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           assign_cohort_id, assign_patch_id, init_cohort
-   use meds_demography_cohort_fusefiss, only : sort_cohorts
+   use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
+                                               split_cohorts
+   use meds_demography_patch_fusefiss,  only : sort_patches, new_fuse_patches, terminate_patches
    implicit none
    private
 
-   public :: init_bare_ground, add_cohort, finalize_init, init_from_census
+   public :: init_bare_ground, add_cohort, finalize_init, init_from_census, restructure_census_stand
 
    !----- The census file's column layout: each index is the column's position, 0 if absent. -!
    integer, parameter :: CENSUS_MAX_COLS = 32, CENSUS_FIELD_LEN = 64
@@ -172,6 +174,32 @@ contains
       call finalize_init(site)
       found = .true.
    end subroutine init_from_census
+
+   !---------------------------------------------------------------------------------------!
+   ! Restructure a census stand before the first step, with the slow step's own operators:    !
+   ! its monthly cohort block, then its yearly patch block, less recruitment and disturbance.  !
+   ! A census arrives with a cohort per measured size and a patch per plot cell, far more of   !
+   ! both than a step should carry, and nothing else fuses them before the first month or year !
+   ! boundary. Each block runs under the same switches as in the slow step.                    !
+   !---------------------------------------------------------------------------------------!
+   subroutine restructure_census_stand(site, cfg)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      if (cfg%demography_on .and. cfg%do_cohort_fissfuse) then
+         call new_fuse_cohorts(site, cfg)
+         call terminate_cohorts(site, cfg)
+         call split_cohorts(site, cfg)
+         call sort_cohorts(site)
+      end if
+      if (cfg%demography_on .and. cfg%do_patch_fissfuse) then
+         call sort_patches(site)
+         call new_fuse_patches(site, cfg)
+         call terminate_patches(site, cfg)
+         call new_fuse_cohorts(site, cfg)
+         call terminate_cohorts(site, cfg)
+         call sort_cohorts(site)
+      end if
+   end subroutine restructure_census_stand
 
    !----- A line carries data unless it is blank or a '#' comment. ------------------------!
    logical function is_data_line(line)
