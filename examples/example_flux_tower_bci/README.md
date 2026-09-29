@@ -145,7 +145,7 @@ as the census file states, and fuses it to 25 patches and 419 cohorts before the
 count stays above `max_patch = 12` because `patch_light_tol_max` keeps dissimilar patches apart,
 and the run says so at the end. The energy and water budgets close to machine precision.
 
-**The stand over the five years:** LAI falls from 5.6 to 4.8 and AGB rises from 16.1 to 17.5 kgC m⁻²,
+**The stand over the five years:** LAI falls from 5.6 to 4.8 and AGB rises from 16.1 to 17.6 kgC m⁻²,
 and the patches fuse down to 15. The large trees grow and the canopy thins; small trees do not grow
 under this PFT with the default allometry.
 
@@ -153,29 +153,39 @@ under this PFT with the default allometry.
 
 | | tower mean | MEDS mean | bias | r, hourly | r, mean seasonal cycle |
 |---|---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 11.07 | +3.61 | 0.94 | 0.43 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.04 | +0.20 | 0.90 | 0.45 |
-| latent heat [W m⁻²] | 75.5 | 56.5 | −19.0 | 0.93 | 0.69 |
-| sensible heat [W m⁻²] | 32.4 | −39.1 | −71.5 | 0.86 | −0.59 |
-| net radiation [W m⁻²] | 136.3 | 120.4 | −16.0 | 1.00 | 0.98 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 11.11 | +3.65 | 0.94 | 0.43 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.07 | +0.17 | 0.90 | 0.45 |
+| latent heat [W m⁻²] | 75.5 | 56.4 | −19.1 | 0.93 | 0.69 |
+| sensible heat [W m⁻²] | 32.4 | 77.3 | +44.9 | 0.93 | 0.95 |
+| net radiation [W m⁻²] | 136.3 | 120.6 | −15.8 | 1.00 | 0.98 |
 
 - **The diurnal cycles** are closely followed in shape (r ≥ 0.99 for every flux) and differ in size.
-  Midday GPP is 30 against the tower's 22 µmol m⁻² s⁻¹, and midday latent heat 164 against 237 W m⁻².
+  Midday GPP is 30 against the tower's 22 µmol m⁻² s⁻¹, and midday latent heat 163 against 237 W m⁻².
 - **Net radiation falls short by day because the canopy reflects too much.** Over the 695 days the
   tower measured all four components, the model's albedo is 0.26 against the tower's 0.13: it
   absorbs 148 W m⁻² of shortwave where the tower's canopy absorbs 173. It emits 10 W m⁻² less
   longwave, which offsets part of that. At night the model reads −22 W m⁻² against the tower's −33.
-- **Sensible heat is the largest miss:** −96 W m⁻² at night against the tower's −23, and 90 at
-  midday against 163. The census canopy is taller than the tower: the canopy-air tops reach 51 m in
-  the tallest patches, above the tower's 41 m, so those patches take forcing moved up from below
-  their own top. Whether that explains the flux is not yet checked.
-- **The seasonal cycles** are weaker: the model's GPP is highest in the dry season, the tower's early
-  in the wet season, and the model's dry-season sensible heat falls where the tower's rises.
+- **The model puts too much of the day's energy into sensible heat and too little into
+  evaporation.** At midday sensible heat is 244 W m⁻² against the tower's 163, and latent heat 163
+  against 237: a Bowen ratio of 1.5 against 0.69. At night sensible heat is near zero against the
+  tower's −24. The tower's own fluxes close only 0.77 of its net radiation, so part of the gap in
+  latent heat is the tower's. The model's friction velocity is about twice the tower's: 0.87 against
+  0.41 m s⁻¹ at night, and 1.0 against 0.6 by day.
+- **The seasonal cycles:** sensible heat follows the tower's, highest in the dry season (r 0.95). GPP
+  is highest in the dry season where the tower's peaks early in the wet season, and latent heat falls
+  through the wet season, to 46 W m⁻², where the tower's stays between 65 and 86.
 
 **Before the longwave columns were corrected** the forcing carried the canopy's emission, 37 W m⁻²
 more than the sky's. That hid the albedo error: net radiation looked right by day (bias +16.7
-overall), night-time net radiation was +6 against the tower's −33, and sensible heat was biased
-−46 W m⁻².
+overall), and night-time net radiation was +6 against the tower's −33.
+
+**Before v0.3.1 the reported sensible heat was about 105 W m⁻² too low.** It measured the canopy air
+against the reference air's potential temperature referenced to the ground, 0.37 K above its actual
+temperature at a 38 m canopy-air top, while the model exchanged heat on the actual temperatures. The
+example then showed a sensible heat of −39 W m⁻², negative at every hour of the night, and the
+reported fluxes left 105 W m⁻² of the net radiation unaccounted for. The same offset made every
+stability solve 0.37 K more stable than the air was. Removing it raised the night-time friction
+velocity from 0.78 to 0.87 m s⁻¹ and moved GPP, NEE, latent heat and net radiation by less than 1%.
 
 ## Files
 

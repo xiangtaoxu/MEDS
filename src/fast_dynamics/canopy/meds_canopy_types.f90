@@ -15,7 +15,6 @@
 !==========================================================================================!
 module meds_canopy_types
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : grav, cp_air
    implicit none
    private
 
@@ -95,12 +94,12 @@ module meds_canopy_types
    type :: aero_env_t
       real(wp) :: u_ref     = 2.0_wp                !< [m/s]      wind at reference height
       real(wp) :: zref      = 30.0_wp               !< [m]        reference (measurement) height
-      real(wp) :: theta_atm = 298.15_wp             !< [K]        potential temp at zref
+      real(wp) :: theta_atm = 298.15_wp             !< [K]        potential temp, referenced to zref (= the air temperature there)
       real(wp) :: shv_atm   = 0.010_wp              !< [kg/kg]    specific humidity at zref
       real(wp) :: co2_atm   = 400.0_wp              !< [umol/mol] free-atmosphere CO2
       real(wp) :: press     = 101325.0_wp           !< [Pa]
       real(wp) :: rho_air   = 1.2_wp                !< [kg/m3]    (diagnostic passthrough)
-      real(wp) :: can_theta = 298.15_wp             !< [K]        CAS potential temp
+      real(wp) :: can_theta = 298.15_wp             !< [K]        CAS potential temp, referenced to zref (= can_temp)
       real(wp) :: can_temp  = 298.15_wp             !< [K]        CAS actual temp (buoyancy Grashof)
       real(wp) :: can_shv   = 0.010_wp              !< [kg/kg]    CAS specific humidity
       real(wp) :: can_co2   = 400.0_wp              !< [umol/mol] CAS CO2
@@ -223,15 +222,22 @@ contains
    ! fix is a shared routine rather than a corrected copy: `meds_fast_dynamics::fill_aenv` and    !
    ! every test now go through this. `zref` must already be set.                                  !
    !                                                                                          !
-   ! Approximation (inherited from fill_aenv): the shallow-layer dry-adiabatic form theta =        !
-   ! T + (g/cp)*z, ignoring displacement height. A proper met driver would use zref - displace.    !
+   ! THE REFERENCE LEVEL. zref is the canopy-air top: met_to_cas_top moves the forcing there,       !
+   ! conserving potential temperature, and the canopy air exchanges enthalpy with that air on its    !
+   ! actual temperature (the whole-column ledger, meds_fast_be_stage). Both potential temperatures   !
+   ! are therefore referenced to zref, where each equals its actual temperature: theta_atm =         !
+   ! air_temp here and can_theta = can_temp in set_aero_env_canopy. Referencing theta_atm to the     !
+   ! ground instead (air_temp + (g/cp)*zref, as before v0.3.1) against a can_theta that was not, put !
+   ! (g/cp)*zref of stable stratification into every stability solve and lowered the reported       !
+   ! sensible heat by g_atm_heat*g*zref -- ~100 W/m2 at a 40 m canopy -- while the ledger exchanged   !
+   ! the actual difference.                                                                        !
    !---------------------------------------------------------------------------------------!
    pure subroutine set_aero_env_atm(aenv, air_temp, shv_atm, co2_atm)
       type(aero_env_t), intent(inout) :: aenv
       real(wp),         intent(in)    :: air_temp   !< [K] ACTUAL air temperature at zref (not potential)
       real(wp),         intent(in)    :: shv_atm    !< [kg/kg]    specific humidity at zref
       real(wp),         intent(in)    :: co2_atm    !< [umol/mol] free-atmosphere CO2
-      aenv%theta_atm = air_temp + (grav / cp_air) * aenv%zref
+      aenv%theta_atm = air_temp
       aenv%shv_atm   = shv_atm
       aenv%co2_atm   = co2_atm
    end subroutine set_aero_env_atm

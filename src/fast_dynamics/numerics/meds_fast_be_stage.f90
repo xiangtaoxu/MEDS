@@ -207,7 +207,7 @@ contains
             bf%whole_wat_in = 0.0_wp                            ; bf%whole_wat_out = g_atm_vapour*(shv1 - frozen%cas%shv_atm)
             bf%whole_cond   = surf_tend%cond                     ! row 1b: deposited into a store, not lost
             bf%whole_cond_enth = surf_tend%cond_enth   ! EXACTLY what surface_derivs debited from the CAS (one number, both sides)
-            bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)   ! the reported H, on the ledger's basis
+            bf%atm_heat_out = g_atm_heat*cp_air*(t_cas1 - frozen%cas%mo_theta_atm)   ! the reported H; theta_atm is T at zref, the ledger's basis
             bf%atm_vap_out  = g_atm_vapour*(shv1  - frozen%cas%shv_atm)
       end if
    end subroutine column_be_stage

@@ -264,6 +264,36 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
+- **The reported sensible heat was about 100 W m⁻² too low, and every surface-layer solve too
+  stable** (#PRNUM). The reference air's potential temperature was referenced to the ground,
+  `T + (g/cp)·zref`, and the canopy air's was not, while the canopy air's energy budget exchanged heat
+  on the two actual temperatures. So the reported H, `g_ah·cp·(T_cas − θ_atm)`, sat
+  `g_ah·g·zref` below the flux the budget booked, and the Monin–Obukhov solve saw `(g/cp)·zref`
+  (0.37 K at a 38 m canopy-air top) of stable stratification that was not there. Both potential
+  temperatures are now referenced to `zref`, the canopy-air top the forcing is moved to, so each is
+  its actual temperature there (`set_aero_env_atm`; `canopy_aerodynamics.md` §2). The budgets closed
+  before and still do. Every H MEDS reported before this fix is low by `g_ah·g·zref`, with zref the
+  fixed reference height (30 m by default) before 774d040 moved the forcing to each patch's
+  canopy-air top, and that top since.
+  - On the five-year BCI census example:
+
+    | | before | after | tower |
+    |---|---|---|---|
+    | sensible heat, mean [W m⁻²] | −39.1 | 77.3 | 32.4 |
+    | sensible heat, night (19–05 h) | −95.5 | −0.1 | −23.6 |
+    | sensible heat, midday (10–14 h) | 89.7 | 244.2 | 163.0 |
+    | sensible heat, r hourly / r seasonal | 0.86 / −0.59 | 0.93 / 0.95 | |
+    | Rnet − H − LE, all hours, five-year mean | +104.6 | −11.4 | |
+    | friction velocity, night [m s⁻¹] | 0.78 | 0.87 | 0.41 |
+
+    GPP, NEE, latent heat and net radiation move by less than 1%. The miss the example shows is now
+    the partition, not the sign: a midday Bowen ratio of 1.5 against the tower's 0.69, and the
+    README says so.
+  - Tests: `test_column_dynamics` RUN 5b checks that canopy air at the reference air's temperature
+    and humidity is a neutral surface layer with no temperature scale, and that a dark isothermal
+    column reports |H| under 5% of `g_ah·g·zref` under both integrators (−0.4 against 26 W m⁻²).
+    With the old line restored all four checks fail, at H = −16.9 W m⁻².
+
 - **The tissue energy balance gave every leaf and all wood an emissivity of 0.95** (#327). The
   radiation solver takes each PFT's `leaf_emissivity` (0.97 by default) and `wood_emissivity` (0.90) and
   emits at the canopy-air temperature. The energy balance then adds the change in emission for the
