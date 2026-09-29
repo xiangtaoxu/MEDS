@@ -26,7 +26,7 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
-- **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15.**
+- **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15** (#322).
   The light-profile tolerance steps geometrically from `patch_light_tol` to the ceiling over
   `n_patch_fusion_iter` passes, as the cohort tolerance does, and goes no further. Patches more
   different than the ceiling stay apart even when the count is still above `max_patch`, which is
@@ -49,7 +49,7 @@ Each old form stops at startup with a message naming the fix.
     ceiling and fuse under the old schedule. It fails with the ceiling removed.
   - Documented in `docs/configuration.md`, "Cohort and patch fusion".
 
-- **The demography example's golden is recaptured for #321.** #321 moved
+- **The demography example's golden is recaptured for #321** (#322). #321 moved
   `test/golden/empirical_spinup_golden.csv` without recapturing it, so `empirical_spinup.py`
   reported a maximum relative error of 4.9e-1 in `total_agb` and 1.7e-1 in `total_nplant`; it
   reports 0 again. At year 40 the stand's AGB goes from 10.45 to 8.48 kgC m⁻² and its LAI from
