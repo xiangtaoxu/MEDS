@@ -66,7 +66,7 @@ contains
       cfg%negligible_nplant = 1.0e-8_wp ; cfg%split_eps = 1.0e-4_wp ; cfg%enable_cohort_fission = .true.
 
       cfg%n_height_layers = 16_ik ; cfg%max_patch = 12_ik ; cfg%n_patch_fusion_iter = 6_ik
-      cfg%patch_light_tol = 0.10_wp ; cfg%patch_light_maxdev_factor = 1.5_wp
+      cfg%patch_light_tol = 0.10_wp ; cfg%patch_light_tol_max = 0.15_wp ; cfg%patch_light_maxdev_factor = 1.5_wp
       cfg%patch_diff_age_tol = 1.0_wp ; cfg%min_patch_area = 1.0e-4_wp
       cfg%patch_min_area_remain = 0.99_wp ; cfg%enable_patch_fission = .false.
 
