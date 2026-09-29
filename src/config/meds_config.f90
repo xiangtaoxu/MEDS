@@ -201,9 +201,9 @@ module meds_config
       !      site-level reductions are staged per (sub-step, patch) and folded back in patch order    !
       !      (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
       !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on               !
-      !      meds_demography, which its dependents inherit) stays serial until asked. Requires          !
-      !      -DMEDS_OPENMP=ON to have                                                                  !
-      !      any effect; without OpenMP flags the directives are comments and this is ignored.         !
+      !      meds_demography, which its dependents inherit) stays serial until asked. Has effect only !
+      !      in an OpenMP build, which is the default; with -DMEDS_OPENMP=OFF the directives are      !
+      !      comments and this is ignored.                                                            !
       integer(ik) :: n_threads = 1_ik
       !----- [run].mode: one site, or every selected cell of a box as its own polygon, with the box  !
       !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !

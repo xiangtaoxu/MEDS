@@ -26,6 +26,27 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **OpenMP is compiled in by default: `MEDS_OPENMP` is now `ON`.** The thread count stays a run-time
+  setting, `[run].n_threads`, default 1, so a default build runs serially until a config asks for
+  threads. `-DMEDS_OPENMP=OFF` builds serial, and a compiler with no Fortran OpenMP now falls back to
+  serial with a CMake warning where it used to stop the configure. The Python wheel stays serial
+  (`python/pyproject.toml`). An existing build directory keeps its cached value. In a default build
+  `test_fast_loop`'s 4-thread check now runs threaded; in a serial build the directives are comments
+  and it passes trivially.
+  - **Numbers move at rounding level.** An OpenMP build gives the same bytes at every thread count,
+    but not the bytes of a serial build: compiling the patch loop as a parallel region changes its
+    rounding. On the BCI census example the two builds part in the 13th significant digit after 62
+    hours, and single hourly fluxes differ by up to 2% of their largest value after five years. The
+    tower statistics and the stand agree to every printed digit, and the test suite passes
+    unchanged.
+  - Measured on the five-year BCI census example, each run alone on a 40-core node: serial 7 min
+    11 s; OpenMP at 1 thread 7 min 17 s, 4 threads 5 min 44 s, 8 threads 13 min 15 s, 16 threads
+    20 min 10 s. More than four threads are slower because ifx's bound-procedure-value allocations in
+    `flux_potential` and `solve_leaf_gas_exchange` serialize the threads (`docs/building.md`,
+    "Parallel builds").
+  - Tests: ifx Release, ifx Debug, gfortran Release and a serial ifx build, 60/60 each; the ifx
+    OpenMP suite also under an 8 MB stack.
+
 - **The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot, with no spin-up**
   (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
   `bci_census.toml` declares the census; `run_example.py` builds the census file with

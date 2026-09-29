@@ -262,7 +262,7 @@ analysis code:
 
 ### 3.5 Parallelism and determinism
 
-MEDS threads the patch axis with OpenMP (opt-in at both build and run time), and **the output is
+MEDS threads the patch axis with OpenMP (compiled in by default, asked for at run time), and **the output is
 byte-identical at any thread count** — site accumulators are staged per (sub-step, patch) and folded
 back in patch order rather than by `reduction(+:)`, so the last bits do not drift with thread
 scheduling. The hot demographic kernel carries OpenMP `target` regions and runs on GPU under

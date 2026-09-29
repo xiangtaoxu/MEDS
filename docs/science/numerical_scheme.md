@@ -383,17 +383,12 @@ debug_error = false              # true = HALT on a non-closing budget. Use it w
 ## 6a. Multi-core: threading the patch axis
 
 The fast loop's columns are **independent within a `dt_fast`** — patches couple only through the slow
-loop — so patches are the parallel axis, and threading them costs no accuracy at all. It is opt-in
-twice, at build time and at run time, so no existing result moves without being asked for:
-
-```bash
-cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_OPENMP=ON -DCMAKE_PREFIX_PATH=$HOME/miniforge3/envs/common
-```
+loop — so patches are the parallel axis, and threading them costs no accuracy at all. The default
+build compiles the threading in (`-DMEDS_OPENMP=OFF` leaves it out), and a run asks for threads:
 
 ```toml
 [run]
-n_threads = 4                    # default 1. Ignored unless the build has -DMEDS_OPENMP=ON.
+n_threads = 4                    # default 1. Ignored by a serial build.
 ```
 
 **The output is byte-identical at every thread count**, and that is a design requirement rather than a
@@ -401,9 +396,11 @@ happy accident. Every site-level accumulator (ET, the daily-mean air temperature
 work counters, the sub-daily output staging) is written into a per-`(sub-step, patch)` staging array
 and folded back **in patch order** after the loop. An OpenMP `reduction(+:)` would sum thread partials
 in *arrival* order, so the last bits of every site diagnostic would drift with the thread count. Folding
-in patch order reproduces the serial fold exactly, which is why the threaded results are also
-bit-identical to the code that preceded threading. Verified over a 12-patch / 115-cohort forced month:
-35 netCDF files across all four output tiers, identical at 1, 2 and 4 threads.
+in patch order reproduces the serial fold exactly, so the answer does not move with the thread count.
+Verified over a 12-patch / 115-cohort forced month: 35 netCDF files across all four output tiers,
+identical at 1, 2 and 4 threads; and over the five-year BCI census example at 1, 4, 8 and 16 threads.
+An OpenMP build is not bit-identical to a serial build, because compiling the loop as a parallel region
+changes its rounding (`docs/building.md`, "Parallel builds").
 
 One knob is deliberately incompatible: `[fast].fast_probe` writes a single, order-significant CSV from
 a saved unit, so `fast_probe` together with `n_threads > 1` is a hard configuration error rather than a
