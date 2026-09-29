@@ -31,6 +31,7 @@ module meds_polygon
    use meds_forcing_types,          only : met_source_t, met_cursor_t
    use meds_met_driver,             only : met_cursor_init
    use meds_diagnostic_reduce,      only : total_area, has_nan
+   use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_output_types,           only : output_files_t, output_buffers_t
@@ -76,6 +77,11 @@ module meds_polygon
       type(soilc_seam_t)     :: seam                        !< per-run worsts (rh gap, lignin, lambda)
       character(len=19)      :: worst_rh_seam_when = ''     !< the date the rh gap peaked
       integer(ik)            :: worst_rh_seam_npatch = 0_ik !< and the patch count then
+      !----- The most patches, and the most cohorts in one patch, that any restructuring left, and    !
+      !      when. Above max_patch or max_cohort, the fusion tolerance ceilings kept dissimilar       !
+      !      patches or cohorts apart; the end-of-run report says so.                                  !
+      integer(ik)            :: most_patches = 0_ik, most_cohorts = 0_ik
+      character(len=19)      :: most_patches_when = '', most_cohorts_when = ''
       integer(ik)            :: fast_step_total = 0_ik      !< fast sub-steps replayed into the output
       real(wp)               :: area_start = 0.0_wp
       integer(ik)            :: status = DRIVER_OK          !< the last step's status
@@ -109,6 +115,8 @@ contains
       poly%slow_ledger   = slow_ledger_t()
       poly%seam          = soilc_seam_t()
       poly%worst_rh_seam_when = '' ; poly%worst_rh_seam_npatch = 0_ik
+      poly%most_patches = 0_ik ; poly%most_cohorts = 0_ik
+      poly%most_patches_when = '' ; poly%most_cohorts_when = ''
       poly%fast_step_total = 0_ik ; poly%status = DRIVER_OK
       poly%area_start = total_area(poly%site)
 
@@ -159,6 +167,7 @@ contains
       integer(ik),           intent(out)   :: status
       logical  :: is_new_day
       real(wp) :: seam_prev
+      integer(ik) :: n_cohort_max
 
       status = DRIVER_OK
       seam_prev = poly%seam%worst_rh_gap      ! so the date below records the step the max MOVED on
@@ -169,6 +178,13 @@ contains
          call advance_boundary(poly%site, cfg, .true., poly%restructure_new_year,                  &
                                slow_ledger=poly%slow_ledger)
          poly%restructure_pending = .false. ; poly%restructure_new_year = .false.
+         if (poly%site%patch%n > poly%most_patches) then
+            poly%most_patches = poly%site%patch%n ; poly%most_patches_when = time_to_string(prev)
+         end if
+         n_cohort_max = max_cohort_count(poly%site)
+         if (n_cohort_max > poly%most_cohorts) then
+            poly%most_cohorts = n_cohort_max ; poly%most_cohorts_when = time_to_string(prev)
+         end if
       end if
 
       !----- THERMAL ACCLIMATION (#176). Advance the growth-temperature running mean from the      !
@@ -340,6 +356,16 @@ contains
             write(*,'(a)') '   WARNING: a slow step withdraws >10% of a soil-carbon pool --'      &
                         // ' the frozen-pool approximation is degrading; shorten dt_slow.'
       end if
+      !----- Fusion targets the tolerance ceilings overrode. Silent when every restructuring      !
+      !      reached them, which is the usual case.  -------------------------------------------------!
+      if (cfg%do_patch_fissfuse .and. cfg%max_patch > 0_ik .and. poly%most_patches > cfg%max_patch)    &
+         write(*,'(a,i0,3a,i0,a)') ' NOTE: patch fusion left ', poly%most_patches, ' patches on ',        &
+               trim(poly%most_patches_when), ' (max_patch = ', cfg%max_patch,                           &
+               '): patch_light_tol_max kept dissimilar patches apart'
+      if (cfg%do_cohort_fissfuse .and. cfg%max_cohort > 0_ik .and. poly%most_cohorts > cfg%max_cohort) &
+         write(*,'(a,i0,3a,i0,a)') ' NOTE: cohort fusion left ', poly%most_cohorts, ' cohorts in one patch on ', &
+               trim(poly%most_cohorts_when), ' (max_cohort = ', cfg%max_cohort,                         &
+               '): cohort_size_tol_max kept dissimilar cohorts apart'
       !----- The SLOW tier's ledger, over the window the two above cannot see (plan §10.2). -------!
       call slow_ledger_report(poly%slow_ledger)
    end subroutine polygon_report

@@ -1088,6 +1088,12 @@ contains
       call req_i(tm, 'demography.n_patch_fusion_iter',    cfg%n_patch_fusion_iter,    miss)
       call req_r(tm, 'demography.patch_light_tol',        cfg%patch_light_tol,        miss)
       call req_r(tm, 'demography.patch_light_maxdev_factor', cfg%patch_light_maxdev_factor, miss)
+      !----- The tolerance ceiling is optional, so older configs load. Absent, it is 0.15, or       !
+      !      patch_light_tol when that is larger, which keeps a looser config valid.  ---------------!
+      cfg%patch_light_tol_max = 0.15_wp
+      if (toml_has(tm, 'demography.patch_light_tol'))                                               &
+         cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)
+      cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
       call req_r(tm, 'demography.patch_diff_age_tol',     cfg%patch_diff_age_tol,     miss)
       call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)
       call req_r(tm, 'demography.patch_min_area_remain',  cfg%patch_min_area_remain,  miss)

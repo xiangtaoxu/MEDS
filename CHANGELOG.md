@@ -26,6 +26,35 @@ Each old form stops at startup with a message naming the fix.
 
 ### Changed
 
+- **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15** (#322).
+  The light-profile tolerance steps geometrically from `patch_light_tol` to the ceiling over
+  `n_patch_fusion_iter` passes, as the cohort tolerance does, and goes no further. Patches more
+  different than the ceiling stay apart even when the count is still above `max_patch`, which is
+  now a target. Before, the tolerance grew by a fixed 1.5 per pass with no bound, from 0.10 to 0.76
+  over six passes, and the last pass's largest-difference limit, 1.14, could never bind. So
+  `max_patch` acted as a hard limit, paid for with heterogeneity.
+  - The key is optional. Absent, it is 0.15, or `patch_light_tol` if that is larger. A ceiling of
+    0.759375 reproduces the old schedule exactly: a 50-year biophysics spin-up is identical to the
+    build before this change.
+  - **No shipped example moves.** Their patch counts stay within `max_patch`, so fusion never gets
+    past the first pass, which uses `patch_light_tol` under both schedules. The biophysics spin-up
+    (50 years, with the allometry before #321) and the demography golden are identical under both.
+  - **Where it binds:** a stand more heterogeneous than `max_patch` patches can hold. Simulated on
+    the Barro Colorado Island 2010 census with one patch per 20 m quadrat, six passes leave 24
+    patches, where the old schedule went down to 9.
+  - A run whose restructuring left more than `max_patch` patches, or more than `max_cohort`
+    cohorts in a patch, says so at the end, for example
+    `NOTE: patch fusion left 24 patches on ... (max_patch = 12)`.
+  - `test_patch` gains the case: two unlike patches under `max_patch = 1` stay two under the
+    ceiling and fuse under the old schedule. It fails with the ceiling removed.
+  - Documented in `docs/configuration.md`, "Cohort and patch fusion".
+
+- **The demography example's golden is recaptured for #321** (#322). #321 moved
+  `test/golden/empirical_spinup_golden.csv` without recapturing it, so `empirical_spinup.py`
+  reported a maximum relative error of 4.9e-1 in `total_agb` and 1.7e-1 in `total_nplant`; it
+  reports 0 again. At year 40 the stand's AGB goes from 10.45 to 8.48 kgC m⁻² and its LAI from
+  6.62 to 5.97. The example README records the table.
+
 - **The default biomass law is Chave et al. (2014), and both it and the leaf-area scale are in
   carbon** (#321). In `meds_config_pft.toml`, every example's PFT file and the `meds_allometry`
   initializers:

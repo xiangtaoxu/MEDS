@@ -37,6 +37,7 @@ n_height_layers           = 16
 max_patch                 = 12
 n_patch_fusion_iter       = 6
 patch_light_tol           = 0.10
+patch_light_tol_max       = 0.15
 patch_light_maxdev_factor = 1.5
 patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4

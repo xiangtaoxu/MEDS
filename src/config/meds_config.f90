@@ -305,6 +305,11 @@ module meds_config
       !----- Patch fusion / termination. --------------------------------------------------!
       integer(ik) :: max_patch, n_patch_fusion_iter
       real(wp)    :: patch_light_tol, patch_light_maxdev_factor, patch_diff_age_tol
+      !----- The light-profile tolerance steps from patch_light_tol to this ceiling and no further:   !
+      !      two patches more different than it stay apart even above max_patch, which makes the   !
+      !      patch count a target rather than a hard limit.                                          !
+      real(wp)    :: patch_light_tol_max
+      real(wp)    :: patch_light_tol_mult        !< DERIVED (geometric multiplier)
       real(wp)    :: min_patch_area, patch_min_area_remain
       logical     :: enable_patch_fission
 
@@ -454,6 +459,13 @@ contains
                                ** (1.0_wp / real(cfg%n_cohort_fusion_iter - 1_ik, wp))
       else
          cfg%cohort_size_tol_mult = 1.0_wp
+      end if
+      !----- The patch-fusion tolerance grows the same way, from patch_light_tol to its ceiling. ----!
+      if (cfg%n_patch_fusion_iter > 1_ik .and. cfg%patch_light_tol > 0.0_wp) then
+         cfg%patch_light_tol_mult = (cfg%patch_light_tol_max / cfg%patch_light_tol)                  &
+                               ** (1.0_wp / real(cfg%n_patch_fusion_iter - 1_ik, wp))
+      else
+         cfg%patch_light_tol_mult = 1.0_wp
       end if
 
       !----- Evenly spaced height-layer edges from 0 to the tallest PFT's height cap. ------!
@@ -875,6 +887,8 @@ contains
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
       if (cfg%n_patch_fusion_iter < 1_ik)                   error stop tag//'n_patch_fusion_iter < 1'
+      if (cfg%patch_light_tol <= 0.0_wp)                    error stop tag//'patch_light_tol <= 0'
+      if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
       if (cfg%cohort_lai_cap <= 0.0_wp)              error stop tag//'cohort_lai_cap <= 0'

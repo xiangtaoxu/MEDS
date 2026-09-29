@@ -40,8 +40,6 @@ module meds_demography_patch_fusefiss
    public :: sort_patches, apply_patch_disturbance
    public :: new_fuse_patches, fuse_2_patches, terminate_patches, patch_light_profile
 
-   real(wp), parameter :: prof_relax = 1.5_wp     !< per-iteration patch-fusion tolerance growth
-
 contains
 
    !---------------------------------------------------------------------------------------!
@@ -130,7 +128,10 @@ contains
    end subroutine patch_light_profile
 
    !---------------------------------------------------------------------------------------!
-   ! Patch fusion with geometric tolerance relaxation.                                      !
+   ! Patch fusion with geometric tolerance relaxation, from patch_light_tol to               !
+   ! patch_light_tol_max over n_patch_fusion_iter passes. It stops at the first pass that    !
+   ! brings the count to max_patch. The ceiling is hard: patches more different than it      !
+   ! stay apart even when the count is still above max_patch (forced fusion aside).          !
    !---------------------------------------------------------------------------------------!
    subroutine new_fuse_patches(site, cfg)
       type(site_t),     intent(inout) :: site
@@ -147,7 +148,7 @@ contains
       do it = 1_ik, cfg%n_patch_fusion_iter
          call patch_fuse_pass(site, cfg, tol, force)
          if (.not. force .and. site%patch%n <= maxp) exit
-         tol = tol * prof_relax
+         tol = tol * cfg%patch_light_tol_mult
       end do
    end subroutine new_fuse_patches
 

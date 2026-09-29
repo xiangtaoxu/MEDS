@@ -88,6 +88,35 @@ the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](scie
 Deepening the column with `[soil_column].depth` remains available and is the other way out, at the
 cost of layers; it also moves the root profile and the drainage, so it is not a thermal-only change.
 
+### Cohort and patch fusion — `[demography]`
+
+Fusion merges similar cohorts within a patch every month, and similar patches every year. Both run
+in passes. Each pass merges every pair that passes a similarity test at one tolerance, and the
+tolerance grows geometrically from pass to pass, from a minimum to a **ceiling**. Passes stop early
+once the count is within its **target**.
+
+| | Cohorts | Patches |
+|---|---|---|
+| similar when | their heights differ by less than `tol · hgt_max`, and their combined LAI is below `cohort_lai_cap` | their light profiles differ by at most `tol` on average, and by at most `tol · patch_light_maxdev_factor` in any layer |
+| tolerance, first pass | `cohort_size_tol_min` | `patch_light_tol` |
+| tolerance ceiling | `cohort_size_tol_max` | `patch_light_tol_max` (default 0.15) |
+| passes, at most | `n_cohort_fusion_iter` | `n_patch_fusion_iter` |
+| target | `max_cohort`, in the most crowded patch | `max_patch` |
+
+A patch's light profile is the fraction of full sunlight left under each of `n_height_layers` equal
+layers up to the tallest `hgt_max`, `exp(−light_ext × LAI at and above the layer)`. Layers fully lit
+in both patches are not compared.
+
+**The ceiling is hard and the target is not.** Two cohorts or patches more different than the
+ceiling stay apart even if the count is then above its target, because merging them would lose
+structure the model needs. A run in which that happened says so at the end, for example
+`NOTE: patch fusion left 24 patches on 2013-01-01 (max_patch = 12): ...`. A negative `max_cohort` or
+`max_patch` forces fusion instead, ignoring the test.
+
+`patch_light_tol_max` is optional. Absent, it is 0.15, or `patch_light_tol` if that is larger. Set
+it to `patch_light_tol × 1.5^(n_patch_fusion_iter − 1)`, 0.759375 for the shipped 0.10 and six
+passes, to reproduce the schedule before the ceiling existed.
+
 ### The PFT file
 
 Everything PFT-specific: the `[pft]` trait table, the `[camac]` mortality-hazard derivation
