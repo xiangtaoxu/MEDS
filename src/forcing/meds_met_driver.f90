@@ -536,7 +536,7 @@ contains
    !  State vars linear; wind energy-form; rainfall step-constant then phase-split; shortwave via    !
    !  the reciprocal-mean-cosz reconstruction of the interval-mean streams; cosz + rho_air derived. !
    !=======================================================================================!
-   function met_instant(src, cur, now) result(met)
+   pure function met_instant(src, cur, now) result(met)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(in) :: cur
       type(meds_time_t),  intent(in) :: now
