@@ -46,7 +46,7 @@ module meds_fast_types
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, ark_workspace_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
 
@@ -662,6 +662,21 @@ module meds_fast_types
       type(root_zone_t)            :: roots        !< realized uptake, its placement, the rhizosphere boundary
       type(plant_water_t)          :: plant        !< frozen sapflow/uptake + cohort geometry for the corrector
    end type column_frozen_t
+
+   !----- Storage the ARK march reuses from step to step on one thread (#195). Every routine that      !
+   !      writes into it fills its fields in place, so the arrays are allocated again only when the    !
+   !      cohort count changes (when the thread moves to a patch with a different number of cohorts). !
+   !      The step's stages are a record of their own so that the march can hand them to the step      !
+   !      beside its own states without passing any storage twice.                                     !
+   type :: ark_stages_t
+      type(column_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
+      type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
+   end type ark_stages_t
+
+   type :: ark_workspace_t
+      type(column_state_t) :: y_march, y_new, y_err, y_lo   !< the adaptive march's state and trial step
+      type(ark_stages_t)   :: stages                        !< the step's stages
+   end type ark_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
    type :: column_tend_t

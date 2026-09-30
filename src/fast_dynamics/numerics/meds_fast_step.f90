@@ -15,7 +15,7 @@ module meds_fast_step
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t
+                                     column_budget_t, ark_workspace_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
    use meds_hydr_lib,        only : psi_from_water_content
@@ -38,8 +38,8 @@ contains
    !   time_integrator = "rk45"           -- the fully explicit adaptive Cash-Karp march, kept as    !
    !                                        the ACCURACY BASELINE. Deliberately not optimised.       !
    !---------------------------------------------------------------------------------------!
-   subroutine column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh, &
-                               leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters,        &
+   subroutine column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
+                               gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
                                le_flux, h_flux, psi_leaf_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
@@ -51,6 +51,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budget
+      type(ark_workspace_t),   intent(inout) :: ws           !< this thread's ARK step storage, reused step to step
       real(wp), optional,      intent(out)   :: gpp_coh(:)   !< [umol CO2/plant/s] per-cohort GROSS GPP (fast->slow)
       real(wp), optional,      intent(out)   :: psi_leaf_coh(:) !< [MPa] this step's per-cohort psi_leaf (daily-max accumulator)
       real(wp), optional,      intent(out)   :: leaf_resp_coh(:) !< [umol CO2/plant/s] leaf dark respiration
@@ -138,7 +139,7 @@ contains
       end if
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!
-      call column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,      &
+      call column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,  &
                                 gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged,   &
                                 iters, cdiag)
       call atm_fluxes(budget, dt_fast, le_flux, h_flux)

@@ -51,7 +51,7 @@ module meds_fast_dynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
-   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity
+   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, ark_workspace_t
    use meds_hydr_lib, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
@@ -365,6 +365,7 @@ contains
       type(aero_out_t),       allocatable :: aero_pool(:)
       type(patch_biophys_t),  allocatable :: bio_pool(:)
       type(column_budget_t),  allocatable :: budg_pool(:)
+      type(ark_workspace_t),  allocatable :: ark_pool(:)       !< the ARK march's stage storage (#195)
       type(met_forcing_t),    allocatable :: met_pool(:)
       type(met_forcing_t),    allocatable :: met_top_pool(:)   !< the sample at the patch's canopy-air top
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
@@ -553,7 +554,7 @@ contains
       !  literally the serial code that preceded it.                                                    !
       !=========================================================================================!
       allocate(coh_pool(n_thread), forc_pool(n_thread), aenv_pool(n_thread), ageom_pool(n_thread),  &
-               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread),                        &
+               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread), ark_pool(n_thread),    &
                met_pool(n_thread), met_top_pool(n_thread))
       allocate(gpp_pool(ncoh_max, n_thread), leaf_resp_pool(ncoh_max, n_thread),                    &
                stem_resp_pool(ncoh_max, n_thread), root_resp_pool(ncoh_max, n_thread),              &
@@ -580,7 +581,7 @@ contains
          associate (col_cohort           => coh_pool(ith),        forc          => forc_pool(ith),         &
                     aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
                     aero          => aero_pool(ith),       biophys           => bio_pool(ith),          &
-                    budget          => budg_pool(ith),                                              &
+                    budget          => budg_pool(ith),       ark_ws        => ark_pool(ith),          &
                     met           => met_pool(ith),        met_top       => met_top_pool(ith),      &
                     gpp_coh       => gpp_pool(:,ith),                                               &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
@@ -700,13 +701,13 @@ contains
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
                call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     ark_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
                call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     ark_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux)

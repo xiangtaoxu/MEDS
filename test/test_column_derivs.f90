@@ -41,12 +41,13 @@ program test_column_derivs
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
-   use meds_fast_types,       only : error_control_t
+   use meds_fast_types,       only : error_control_t, ark_workspace_t
    use meds_config,           only : CTRL_PI
    implicit none
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !
    !      freezes each step; the parameters travel separately, as in the model). --------------------!
    type(column_config_t) :: col_config
+   type(ark_workspace_t) :: ws           !< the ARK march's storage, reused by every test as in the model
 
    call test_leaf_closure()
    call test_leaf_analytic()
@@ -669,9 +670,9 @@ contains
       !      IMEX-Euler tier's own step-doubling controller (#198) -- machinery that existed only to
       !      serve that tier, so the test could not fail for any reason a real run would hit.
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ns1, nr1)
+      call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y1, ws, ns1, nr1)
       ec = default_error_control(1.0e-6_wp)
-      call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ns2, nr2)
+      call adaptive_ark_march(y, frozen, col_config, n, nsl, 1800.0_wp, ec, 50.0_wp, y2, ws, ns2, nr2)
       !----- fine fixed reference: ARK2 at dt = 2 s, 900 steps. -------------------------------------!
       call march_ark2(y, frozen, n, nsl, 2.0_wp, 900_ik, yr)
       tc1 = cas_temp_of_enthalpy(y1%cas_enthalpy, y1%cas_shv)
@@ -704,7 +705,7 @@ contains
       integer(ik) :: s
       call copy_state(y0, y, n)
       do s = 1_ik, nstep
-         call ark2_column_step(y, frozen, col_config, n, nsl, dt, ytmp, yerr, niter=8_ik)
+         call ark2_column_step(y, frozen, col_config, n, nsl, dt, ytmp, yerr, ws%stages, niter=8_ik)
          call copy_state(ytmp, y, n)
       end do
       call copy_state(y, y_out, n)
@@ -728,7 +729,7 @@ contains
 
       !----- (a) An ordinary step must NOT fire the floor. A reporter that fires on healthy state  !
       !          is worse than none. ------------------------------------------------------------!
-      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, 8_ik, sf_out=sf)
+      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, sf, 8_ik)
       call advance_water_mass_full(y, frozen, col_config, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
                                    floor_mass=fmass, floor_n=fcount)
       call check_true('ordinary step: the tissue-water floor does not fire', fcount == 0_ik, real(fcount, wp))
@@ -740,7 +741,7 @@ contains
       w_before = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
       y%leaf_water_mass(1:n) = 1.0e-12_wp
       y%wood_water_mass(1:n) = 1.0e-12_wp
-      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, 8_ik, sf_out=sf)
+      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, sf, 8_ik)
       call advance_water_mass_full(y, frozen, col_config, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
                                    floor_mass=fmass, floor_n=fcount)
       call check_true('emptied stores: the floor fires', fcount > 0_ik, real(fcount, wp))
@@ -779,7 +780,7 @@ contains
       type(column_state_t),  intent(out) :: y_out
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled Newton
       type(surface_tend_t) :: surf_tend
-      call column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, niter, sf_out=surf_tend)
+      call column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter)
       call advance_water_mass_full(y, frozen, col_config, n, nsl, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine be_euler_step
 
@@ -857,7 +858,7 @@ contains
       !----- (b) FATAL-1 guard: mass stays physical (finite, positive) at production dt=900. ---------!
       call copy_state(y, y1, n) ; physical = .true.
       do step = 1_ik, 24_ik
-         call ark2_column_step(y1, frozen, col_config, n, nsl, 900.0_wp, ytmp, yerr, niter=8_ik)
+         call ark2_column_step(y1, frozen, col_config, n, nsl, 900.0_wp, ytmp, yerr, ws%stages, niter=8_ik)
          call copy_state(ytmp, y1, n)
          physical = physical .and. all(y1%leaf_water_mass(1:n) == y1%leaf_water_mass(1:n)) .and.   &
                     all(y1%wood_water_mass(1:n) == y1%wood_water_mass(1:n)) .and.                  &
@@ -867,13 +868,13 @@ contains
                       minval(y1%leaf_water_mass(1:n)))
 
       !----- (c) embedded error estimate is bounded (not detonating -- the pre-fix failure mode). ----!
-      call ark2_column_step(y, frozen, col_config, n, nsl, 900.0_wp, ynew, yerr, niter=8_ik)
+      call ark2_column_step(y, frozen, col_config, n, nsl, 900.0_wp, ynew, yerr, ws%stages, niter=8_ik)
       call state_err_norm(ynew, yerr, y, n, nsl, errnorm)
       call check_true('ARK2 embedded estimate bounded (WRMS < 50) at dt=900', errnorm < 50.0_wp, errnorm)
 
       !----- (d) stiffness: 24 h adaptive-ARK march stays physical + bounded. -----------------------!
       ec = default_error_control(1.0e-3_wp)
-      call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns, nr)
+      call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns, nr)
       tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   adaptive-ARK 24 h: steps = ', ns, ' , rejects = ', nr
       call check_true('adaptive-ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)
@@ -882,7 +883,7 @@ contains
       !      physical -- proves the meds_fast_control PI path is wired + functional. On a multi-substep !
       !      march it takes a different (typically smoother) step sequence than the I-controller.       !
       ec%controller = CTRL_PI
-      call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ns2, nr2)
+      call adaptive_ark_march(y, frozen, col_config, n, nsl, 86400.0_wp, ec, 300.0_wp, ytmp, ws, ns2, nr2)
       tcas = cas_temp_of_enthalpy(ytmp%cas_enthalpy, ytmp%cas_shv)
       print '(a,i0,a,i0)', '   PI-controller  24 h: steps = ', ns2, ' , rejects = ', nr2
       call check_true('PI-controller ARK 24 h stays bounded (280 < tcas < 320 K)', tcas > 280.0_wp .and. tcas < 320.0_wp, tcas)

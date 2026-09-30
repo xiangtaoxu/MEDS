@@ -121,7 +121,10 @@ contains
       type(snow_stage_t),           intent(in)  :: snow     !< the snow stage's outcome
       real(wp),               intent(in)  :: t_ground   !< [K] soil-top temperature at THIS evaluation (a live input, not frozen)
       integer(ik),            intent(in)  :: n
-      type(surface_tend_t),   intent(out) :: f
+      !----- Filled in place: every field is assigned below, and the per-cohort arrays are allocated  !
+      !      only when missing or of another length, so a Newton solve that evaluates this many times  !
+      !      on one record allocates them once (#195). -----------------------------------------------!
+      type(surface_tend_t),   intent(inout) :: f
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
@@ -142,7 +145,7 @@ contains
       type(cas_column_t) :: cas_col
       integer(ik) :: i
 
-      allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n), f%film_evap_leaf(n), f%film_evap_wood(n))
+      call ensure_surface_tend(f, n)
 
       tcas   = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
       qcas   = y%cas_shv
@@ -278,6 +281,23 @@ contains
       call cas_column_time_deriv(y%cas_enthalpy, y%cas_shv, y%cas_co2, cas_src, cas_col,        &
                                  f%d_cas_enthalpy, f%d_cas_shv, f%d_cas_co2)
    end subroutine surface_derivs
+
+   !----- Allocate a surface-tendency record's per-cohort arrays for n cohorts, unless they are. -!
+   pure subroutine ensure_surface_tend(f, n)
+      type(surface_tend_t), intent(inout) :: f
+      integer(ik),          intent(in)    :: n
+      if (allocated(f%leaf_temp) .and. allocated(f%wood_temp) .and. allocated(f%transp_c) .and.   &
+          allocated(f%film_evap_leaf) .and. allocated(f%film_evap_wood)) then
+         if (size(f%leaf_temp) == n .and. size(f%wood_temp) == n .and. size(f%transp_c) == n .and. &
+             size(f%film_evap_leaf) == n .and. size(f%film_evap_wood) == n) return
+      end if
+      if (allocated(f%leaf_temp))      deallocate(f%leaf_temp)
+      if (allocated(f%wood_temp))      deallocate(f%wood_temp)
+      if (allocated(f%transp_c))       deallocate(f%transp_c)
+      if (allocated(f%film_evap_leaf)) deallocate(f%film_evap_leaf)
+      if (allocated(f%film_evap_wood)) deallocate(f%film_evap_wood)
+      allocate(f%leaf_temp(n), f%wood_temp(n), f%transp_c(n), f%film_evap_leaf(n), f%film_evap_wood(n))
+   end subroutine ensure_surface_tend
 
    !---------------------------------------------------------------------------------------!
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !

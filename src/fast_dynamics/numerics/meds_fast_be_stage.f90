@@ -58,23 +58,23 @@ contains
    ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
    ! validated production kernels -- no new numerics.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, niter, bf, sf_out)
+   subroutine column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out
+      !----- The stage's state and its OWN surface tendencies (incl. transp_c), for the caller to      !
+      !      b-weight into the plant water-mass update (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2) -- the    !
+      !      SAME surf_tend the stage's own bf/CAS-source used, so the mass debit and the CAS credit     !
+      !      agree. Both are filled in place (the caller's workspace keeps their arrays, #195). ------!
+      type(column_state_t),  intent(inout) :: y_out
+      type(surface_tend_t),  intent(inout) :: surf_tend
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
       type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux RATES for the ARK ledger
-      !----- this stage's OWN surface tendencies (incl. transp_c), for the caller to b-weight into      !
-      !      the plant water-mass update (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2) -- the SAME surf_tend the      !
-      !      stage's own bf/CAS-source already used, so the mass debit and the CAS credit agree. --------!
-      type(surface_tend_t), optional, intent(out) :: sf_out
 
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with THIS stage's conductances
-      type(surface_tend_t)       :: surf_tend
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
@@ -131,7 +131,6 @@ contains
                                          g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth_unused, shv_unused, &
                                               co21)   ! CO2 rides the same box
       y_out%cas_co2      = co21
-      if (present(sf_out)) sf_out = surf_tend
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
@@ -233,7 +232,7 @@ contains
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt, cas_mass_capacity, g_atm_heat, g_atm_vapour
       real(wp),               intent(out)   :: enth1, shv1
-      type(surface_tend_t),   intent(out)   :: surf_tend
+      type(surface_tend_t),   intent(inout) :: surf_tend   !< filled in place by every evaluation
       integer(ik),            intent(out)   :: nfeval
       logical,                intent(out)   :: ok
 

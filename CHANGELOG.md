@@ -78,6 +78,22 @@ before and after.
     relative on the r1 cases' fluxes.
   - **Test:** `state_combinators` checks the round trip through the flat array and the rule counts.
 
+- **The ARK march reuses its storage from step to step** (#195). Every ARK step allocated its three
+  stage states, their surface tendencies and the march's trial states afresh, and each stage then
+  copied its tendencies to the caller. Each thread now keeps one `ark_workspace_t` (in the patch
+  loop's per-thread pool), and the stages, `column_be_stage` and `surface_derivs` fill it in place;
+  its arrays are allocated again only when a thread moves to a patch with a different number of
+  cohorts.
+  - **Allocations:** 287 per patch-step before, 104 after (Ithaca, 14 cohorts, serial build; 304
+    before #146). The allocator's share of a serial BCI run falls from 14.9% to 7.7% of CPU time.
+  - **Timings**, 60 days of the BCI example, the second of two runs on an idle `R128C40` node: 1
+    thread 25.9 → 23.7 s, 4 threads 14.6 → 13.6 s; 8 and 16 threads unchanged (11.5 s, mostly the
+    serial start-up).
+  - **Not reused:** the frozen record (about 50 of the remaining 104 allocations, 4% of the serial
+    fast loop) is still built afresh each step. It relies on a new record's defaults for its
+    scalars, and reusing it would need a reset that lists them all.
+  - Outputs are bit-identical on every r1 case.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
