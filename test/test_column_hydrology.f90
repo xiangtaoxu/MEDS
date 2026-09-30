@@ -43,6 +43,7 @@ program test_column_hydrology
    call test_snow_free_evap()
    call test_evap_moisture_response()
    call test_clip_layer_decomposition()
+   call test_face_check_wilting_sink()
 
    call test_report('test_column_hydrology')
 
@@ -94,6 +95,34 @@ contains
    end subroutine test_constitutive
 
    !=======================================================================================!
+   !----- #331: the per-face check must subtract the sink the solver REMOVED. A top layer drier     !
+   !      than psi_open has its root uptake cut by the wilting ramp; the check used to subtract the   !
+   !      plant's request instead, and reported the difference (here ~0.02 kg/m2) as a face error    !
+   !      -- which [energy].debug_error turns into a stop. ----------------------------------------!
+   subroutine test_face_check_wilting_sink()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      type(chydro_flux_t)    :: flux
+      real(wp), parameter    :: dt = 900.0_wp, demand = 1.0e-4_wp    ! [s], [kg/m2/s] from layer 1
+      print '(a)', 'test_face_check_wilting_sink:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1) = 0.10_wp                                 ! psi ~ -39 m: the ramp passes ~3/4 of it
+      forcing%precip_ground = 0.0_wp
+      forcing%root_uptake   = 0.0_wp
+      forcing%root_uptake(1) = demand
+      forcing%t_ground = 298.15_wp ; forcing%q_air = 0.010_wp
+      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
+      call check_true('the wilting ramp cuts the top layer''s uptake',                            &
+                      flux%uptake_total < 0.9_wp * demand, flux%uptake_total / demand)
+      call check_true('the per-face check reads machine zero on the realized sink',               &
+                      flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
+      call check_true('and the column still closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
+   end subroutine test_face_check_wilting_sink
+
    subroutine test_mass_conservation()
       type(soil_params_t)  :: params
       type(soil_column_t)  :: col
