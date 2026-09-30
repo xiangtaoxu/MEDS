@@ -373,7 +373,7 @@ contains
    ! 6e-5 K at dt = 25 s and 0.007 K at 900 s -- also vanishing with dt, as a consistent scheme must.          !
    ! (MEDS_ED2_RK45_DESIGN.md sec 1/4/5 described the pre-corrector Euler form.) --------------------------!
    subroutine advance_water_mass_full(y, frozen, n, nsl, dt, transp_c_bw, y_out,                   &
-                                      floor_mass, floor_n)
+                                      floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: frozen
       integer(ik),           intent(in)    :: n, nsl
@@ -385,6 +385,10 @@ contains
       !      caller owns budget%clamp_mass and may call this more than once per step.                 !
       real(wp),    optional, intent(out)   :: floor_mass  !< [kg/m2 ground] water CREATED by the floor
       integer(ik), optional, intent(out)   :: floor_n     !< tissue-cohort activations of the floor
+      !----- The corrector's own hydraulics work, exported the same way: sub-steps summed over the  !
+      !      cohorts, and cohorts whose solve did not converge (0 when the corrector does not run). -!
+      integer(ik), optional, intent(out)   :: hydro_nsub
+      integer(ik), optional, intent(out)   :: hydro_nonconv
       real(wp)    :: transp_i, raw, created, fmass
       integer(ik) :: i, fcount
       !----- CORRECTOR locals (only touched on the re-solve path). --------------------------------!
@@ -411,6 +415,8 @@ contains
       !      surface_frozen_t%mo_live). --------------------------------------------------------------!
       sap_use(1:n) = frozen%plant%sapflow_frozen(1:n)
       upt_use(1:n) = frozen%plant%uptake_frozen(1:n)
+      if (present(hydro_nsub))    hydro_nsub    = 0_ik
+      if (present(hydro_nonconv)) hydro_nonconv = 0_ik
       if (allocated(frozen%roots%rhizo_cond) .and. allocated(frozen%roots%psi_soil_pre) .and. dt > tiny_num) then
          do i = 1_ik, n
             transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
@@ -433,6 +439,8 @@ contains
               frozen%plant%pft(1:n), frozen%params%hydraulics_table, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), &
               sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &
               nsub_c(1:n), conv_c(1:n))
+         if (present(hydro_nsub))    hydro_nsub    = sum(nsub_c(1:n))
+         if (present(hydro_nonconv)) hydro_nonconv = count(.not. conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
          !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
          !      rescaled by the soil's own fwilt-limited supply). That keeps "one flux, both sides"       !

@@ -72,11 +72,11 @@ contains
    ! the full dt (advance_water_mass_full -- now a trivial closed-form Euler step, no iteration, since   !
    ! the frozen sapflow/uptake pre-pass already absorbed the only stiff physics), and excluded from the  !
    ! embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free embedded 1st-order estimate for the         !
-   ! adaptive controller (2 solves/step vs step-doubling's 3). Hydraulics WORK counters (section 5.3)     !
-   ! now come from the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen), not from       !
-   ! this per-stage endpoint update -- there is no more per-stage hydraulics solve to count. -------------!
+   ! adaptive controller (2 solves/step vs step-doubling's 3). The mass update re-solves the plant      !
+   ! hydraulics once per step (the transpiration corrector), and that solve's work is added to the      !
+   ! hydraulics WORK counters (section 5.3) on top of the pre-pass's. -----------------------------------!
    subroutine ark2_column_step(y, frozen, n, nsl, dt, y_out, y_err, niter, bf, clamp_n,      &
-                               floor_mass, floor_n)
+                               floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
@@ -97,8 +97,11 @@ contains
       !      because a march calls this many times per dt_fast; the caller zeroes once per step.      !
       real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
       integer(ik), optional, intent(inout) :: floor_n
+      !----- The corrector's hydraulics work (sub-steps, unconverged cohorts), ACCUMULATED like      !
+      !      clamp_n: work done on a rejected attempt was still done. ----------------------------!
+      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
       real(wp)    :: fmass_i
-      integer(ik) :: fcount_i
+      integer(ik) :: fcount_i, hnsub_i, hnonconv_i
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(column_state_t)  :: Y2, base3, Y3
@@ -128,9 +131,12 @@ contains
       !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
       transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
       call advance_water_mass_full(y, frozen, n, nsl, dt, transp_bw, y_out,                          &
-                                   floor_mass=fmass_i, floor_n=fcount_i)
-      if (present(floor_mass)) floor_mass = floor_mass + fmass_i
-      if (present(floor_n))    floor_n    = floor_n    + fcount_i
+                                   floor_mass=fmass_i, floor_n=fcount_i,                              &
+                                   hydro_nsub=hnsub_i, hydro_nonconv=hnonconv_i)
+      if (present(floor_mass))    floor_mass    = floor_mass    + fmass_i
+      if (present(floor_n))       floor_n       = floor_n       + fcount_i
+      if (present(hydro_nsub))    hydro_nsub    = hydro_nsub    + hnsub_i
+      if (present(hydro_nonconv)) hydro_nonconv = hydro_nonconv + hnonconv_i
       !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
       !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
       !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
@@ -171,7 +177,7 @@ contains
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine adaptive_ark_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
-                                 dt_warm_out, clamp_n, floor_mass, floor_n)
+                                 dt_warm_out, clamp_n, floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       integer(ik),           intent(in)  :: n, nsl
@@ -194,6 +200,8 @@ contains
       !      discipline (#148). -------------------------------------------------------------------!
       real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
       integer(ik), optional, intent(inout) :: floor_n
+      !----- The corrector's hydraulics work over the whole march, rejected trials included. ---!
+      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
 
       type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
@@ -229,7 +237,8 @@ contains
          clamped = dt < dt_try - tiny_num
          fmass_try = 0.0_wp ; fn_try = 0_ik
          call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
-                               clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try)
+                               clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try,             &
+                               hydro_nsub=hydro_nsub, hydro_nonconv=hydro_nonconv)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
          !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
@@ -381,7 +390,8 @@ contains
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n,                                  &
-                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
+                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,   &
+                                 hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
          biophys%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
@@ -389,15 +399,16 @@ contains
             call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n,                                 &
-                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
+                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,  &
+                                  hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
          y_out = ycur ; nsteps = nsub
       end if
       !----- section 5.3 WORK counters: record what the march actually cost. hydro_nsub/hydro_nonconv  !
-      !      are set ONCE by the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen),     !
-      !      NOT here -- there is no more per-stage hydraulics solve to accumulate over sub-steps. -------!
+      !      start from the pre-pass's solve (build_column_frozen) and the march adds the corrector's   !
+      !      solve on every ARK attempt. --------------------------------------------------------------!
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
       !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !

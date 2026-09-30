@@ -34,6 +34,14 @@ before and after.
     `scripts/prepare_flux_tower/tower_conversions.py`.
   - **Tests:** the flux-tower tool's 25 tests and the calibration smoke test pass unchanged.
 
+- **The plant-hydraulics work counters include the corrector's solves** (plan item N-2). ARK
+  re-solves the plant hydraulics on every step attempt, rejected ones included (the transpiration
+  corrector in `advance_water_mass_full`), but that solve's sub-step and non-convergence counts were
+  thrown away, so `work_hydro_nsub_site` and `work_nonconv_site` counted only the pre-pass solve. They
+  now count both. On the established Ithaca stand in July `work_hydro_nsub_site` goes from 679 to
+  2,460 sub-steps a day: about 2.4 step attempts per `dt_fast`, each re-solving every cohort.
+  `work_hydro_thrash_site` still tests the pre-pass solve, and the physics is unchanged.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
