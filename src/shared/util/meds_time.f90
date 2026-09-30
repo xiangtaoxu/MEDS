@@ -25,7 +25,7 @@ module meds_time
    public :: time_advance_years, whole_years_between
    public :: seconds_into_day, seconds_between, time_advance_seconds
    public :: time_lt, time_le, time_eq, time_valid
-   public :: time_from_string, time_to_string, time_to_stamp, time_to_decimal_year
+   public :: time_from_string, time_units_base, time_to_string, time_to_stamp, time_to_decimal_year
    public :: solar_cosz, daylength, doy_effective, solar_declination
 
    !----- A calendar instant. Defaults give a valid date so meds_time_t() is usable. ------!
@@ -356,6 +356,18 @@ contains
       t = meds_time_t(year=y, month=mo, day=d, hour=h, minute=mi, second=se)
       ok = (ios == 0_ik) .and. time_valid(t)
    end subroutine time_from_string
+
+   !----- The base date of a CF time-units string, "<unit> since YYYY-MM-DD[ HH:MM:SS]". The unit   !
+   !      itself is the caller's to check. ok = .false. without a "since" or with an unreadable date. !
+   subroutine time_units_base(units, base, ok)
+      character(len=*),  intent(in)  :: units
+      type(meds_time_t), intent(out) :: base
+      logical,           intent(out) :: ok
+      integer :: k
+      k = index(units, 'since')
+      if (k == 0) then ; ok = .false. ; return ; end if
+      call time_from_string(adjustl(units(k + 5:)), base, ok)
+   end subroutine time_units_base
 
    !----- "YYYY-MM-DD HH:MM:SS" (human-readable, e.g. for attributes/log lines). -----------!
    pure function time_to_string(t) result(s)

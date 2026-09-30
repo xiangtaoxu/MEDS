@@ -25,18 +25,22 @@ module meds_met_driver
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : tiny_num
    use meds_therm_lib,         only : air_density
-   use meds_time,           only : meds_time_t, time_from_string, time_advance_seconds,        &
+   use meds_time,           only : meds_time_t, time_units_base, time_advance_seconds,         &
                                    seconds_between, seconds_into_day, time_lt, time_le,        &
                                    is_leap_year, days_in_year, time_to_string,                 &
                                    time_advance_years, whole_years_between
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,  &
-                                   MET_BACKEND_ED_ERA5LAND, MET_PATH_LEN,                       &
+                                   MET_BACKEND_ED_ERA5LAND, MET_PATH_LEN, ARCHIVE_DT_SEC,       &
                                    METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,                &
                                    CLAMP_ERROR, INTERP_LINEAR,                                  &
                                    GRIDMATCH_EXPLICIT, GRIDMATCH_NEAREST, LW_SYNTHESIZE,        &
                                    CO2_SOURCE_FILE, HEIGHT_ABOVE_GROUND
    use meds_forcing_types,  only : met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, &
-                                   HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW
+                                   HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW,                  &
+                                   N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_QAIR, FLD_RHAIR, FLD_TDEW, &
+                                   FLD_PSURF, FLD_WIND, FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN,  &
+                                   FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE, FLD_NIR_BEAM,       &
+                                   FLD_NIR_DIFFUSE
    use meds_config,         only : MAX_RECYCLE_YEARS   ! the config's bound: one definition
    use meds_lapse_rate,     only : lapse_air_temperature, lapse_pressure, monthly_lapse_rate,    &
                                    lapse_specific_humidity, lapse_longwave
@@ -178,7 +182,7 @@ contains
          integer(c_int) :: vid
          st = nc_inq_varid_f(ncid, 'time', vid) ; call nc_check(st, 'met_open: time varid')
          st = nc_get_att_text_f(ncid, vid, 'units', units) ; call nc_check(st, 'met_open: time:units')
-         call parse_time_units(units, src%base_time, ok)
+         call time_units_base(units, src%base_time, ok)
          if (.not. ok) error stop 'met_open: could not parse time:units "seconds since <base>"'
       end block
 
@@ -250,7 +254,7 @@ contains
       if (src%humidity == HUMIDITY_RHAIR) then
          block
             integer(ik) :: j
-            j = series_field(src, 'RHair')
+            j = src%series_col(FLD_RHAIR)
             if (maxval(src%series(:, j)) > RH_FRACTION_MAX) then
                write(*,'(a,f0.2,a)') ' met_open: RHair reaches ', maxval(src%series(:, j)),                &
                                      ', but it is a fraction (units "1"), not a percentage.'
@@ -648,7 +652,8 @@ contains
       if (allocated(src%buffer%values)) deallocate(src%buffer%values)
       if (allocated(src%carry))  deallocate(src%carry)
       if (allocated(src%head))   deallocate(src%head)
-      if (allocated(src%series)) deallocate(src%series, src%series_name)
+      if (allocated(src%series)) deallocate(src%series)
+      src%series_col = 0_ik
       call co2_series_free(src%co2)
       src%buffer%year = 0_ik ; src%carry_rec = 0_ik ; src%n_head = 0_ik ; src%n_loads = 0_ik
    end subroutine met_close
@@ -725,12 +730,18 @@ contains
       call nc_check(st, 'read_time_axis: time values')
    end subroutine read_time_axis
 
-   !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at EOF). -----------!
+   !----- Load rec_prev = record(irec), rec_next = record(irec+1) (clamped at EOF). When the      !
+   !      bracket slides by one record, as it does once a forcing interval, the old upper record is !
+   !      the new lower one and only the upper is read. ------------------------------------------!
    subroutine load_bracket(src, cur, irec)
       type(met_source_t), intent(in)  :: src
       type(met_cursor_t), intent(inout) :: cur
       integer(ik),        intent(in)    :: irec
-      call read_record(src, cur, irec, cur%rec_prev)
+      if (cur%irec_prev >= 1_ik .and. irec == cur%irec_prev + 1_ik .and. .not. cur%at_wrap_seam) then
+         cur%rec_prev = cur%rec_next
+      else
+         call read_record(src, cur, irec, cur%rec_prev)
+      end if
       call read_record(src, cur, min(irec + 1_ik, src%nrec), cur%rec_next)
       cur%irec_prev    = irec
       cur%at_wrap_seam = .false.
@@ -835,7 +846,7 @@ contains
       do k = 1_ik, nmonth
          first = seconds_between(ERA_EPOCH, meds_time_t(src%month_year(k), src%month_month(k), 1_ik, 1_ik))
          do h = 1_ik, era5land_month_hours(src%month_year(k), src%month_month(k))
-            src%time_sec(src%month_rec0(k) + h) = first + 3600.0_wp * real(h - 1_ik, wp)
+            src%time_sec(src%month_rec0(k) + h) = first + ARCHIVE_DT_SEC * real(h - 1_ik, wp)
          end do
       end do
 
@@ -878,9 +889,9 @@ contains
       integer(ik),       intent(out) :: year, month
       type(meds_time_t) :: before
       real(wp) :: hours
-      hours = seconds_between(ERA_EPOCH, t) / 3600.0_wp
+      hours = seconds_between(ERA_EPOCH, t) / ARCHIVE_DT_SEC
       if (round_up) then ; hours = real(ceiling(hours), wp) ; else ; hours = real(floor(hours), wp) ; end if
-      before = time_advance_seconds(ERA_EPOCH, hours * 3600.0_wp - 1.0_wp)
+      before = time_advance_seconds(ERA_EPOCH, hours * ARCHIVE_DT_SEC - 1.0_wp)
       year = before%year ; month = before%month
    end subroutine archive_month_of
 
@@ -1035,29 +1046,29 @@ contains
          rec%rainf    = archive_value(src, cur, h, ERA_RAINF)            ! total rainfall rate [kg/m2/s]
          rec%lwdown   = archive_value(src, cur, h, ERA_LWDOWN)
       else
-         rec%tair_k   = read_scalar(src, 'Tair',  irec)
-         humidity_value = read_scalar(src, humidity_name(src%humidity), irec)
-         rec%psurf_pa = read_scalar(src, 'PSurf', irec)
+         rec%tair_k   = series_value(src, FLD_TAIR,  irec)
+         humidity_value = series_value(src, humidity_field(src%humidity), irec)
+         rec%psurf_pa = series_value(src, FLD_PSURF, irec)
          if (src%has_wind_vector) then
-            rec%wind_u = read_scalar(src, 'u10', irec)
-            rec%wind_v = read_scalar(src, 'v10', irec)
+            rec%wind_u = series_value(src, FLD_U10, irec)
+            rec%wind_v = series_value(src, FLD_V10, irec)
             rec%wind   = sqrt(rec%wind_u**2 + rec%wind_v**2)
          else
-            rec%wind   = read_scalar(src, 'Wind',  irec)
+            rec%wind   = series_value(src, FLD_WIND,  irec)
          end if
-         rec%rainf    = read_scalar(src, 'Rainf', irec)              ! total rainfall rate [kg/m2/s]
+         rec%rainf    = series_value(src, FLD_RAINF, irec)              ! total rainfall rate [kg/m2/s]
          !----- LWdown is OPTIONAL when we are synthesizing it (#182): a source without longwave is    !
          !      exactly the case lwdown_source = "synthesize" exists for, so demanding the variable      !
          !      would defeat the feature. Read it when present either way -- it costs nothing and keeps  !
          !      the record complete for diagnostics.  ---------------------------------------------------!
          if (src%fcfg%lwdown_source == LW_SYNTHESIZE) then
-            rec%lwdown = read_scalar_default(src, 'LWdown', irec, 0.0_wp)
+            rec%lwdown = series_value(src, FLD_LWDOWN, irec, default=0.0_wp)
          else
-            rec%lwdown = read_scalar(src, 'LWdown', irec)
+            rec%lwdown = series_value(src, FLD_LWDOWN, irec)
          end if
       end if
       call assert_finite(rec%tair_k, 'Tair', irec, src%grid_index)
-      call assert_finite(humidity_value, humidity_name(src%humidity), irec, src%grid_index)
+      call assert_finite(humidity_value, MEDS_FIELD(humidity_field(src%humidity)), irec, src%grid_index)
       call assert_finite(rec%psurf_pa, 'PSurf', irec, src%grid_index)
       !----- Specific humidity at the forcing's own temperature and pressure. A dewpoint becomes q  !
       !      exactly as the archive reader always made it; relative humidity goes through the same   !
@@ -1100,10 +1111,10 @@ contains
       end if
 
       if (src%fcfg%sw_partition == SWPART_PASSTHROUGH) then
-         rec%par_beam    = read_scalar(src, 'SWdown_par_beam',    irec)
-         rec%par_diffuse = read_scalar(src, 'SWdown_par_diffuse', irec)
-         rec%nir_beam    = read_scalar(src, 'SWdown_nir_beam',    irec)
-         rec%nir_diffuse = read_scalar(src, 'SWdown_nir_diffuse', irec)
+         rec%par_beam    = series_value(src, FLD_PAR_BEAM,    irec)
+         rec%par_diffuse = series_value(src, FLD_PAR_DIFFUSE, irec)
+         rec%nir_beam    = series_value(src, FLD_NIR_BEAM,    irec)
+         rec%nir_diffuse = series_value(src, FLD_NIR_DIFFUSE, irec)
          call assert_finite(rec%par_beam,    'SWdown_par_beam',    irec, src%grid_index)   ! required source
          call assert_finite(rec%par_diffuse, 'SWdown_par_diffuse', irec, src%grid_index)   ! fields -> no gap-fill
          call assert_finite(rec%nir_beam,    'SWdown_nir_beam',    irec, src%grid_index)
@@ -1112,7 +1123,7 @@ contains
          if (src%backend == MET_BACKEND_ED_ERA5LAND) then
             sw_total = archive_value(src, cur, h, ERA_SWDOWN)
          else
-            sw_total = read_scalar(src, 'SWdown', irec)
+            sw_total = series_value(src, FLD_SWDOWN, irec)
          end if
          call assert_finite(sw_total, 'SWdown', irec, src%grid_index)
          !----- interval-mean cosz for the partition (avg_convention=end -> midpoint = when - dt/2). !
@@ -1125,32 +1136,30 @@ contains
       end if
    end subroutine read_record
 
-   !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. ---------------!
+   !----- A MEDS forcing file's fields at the cell, records r0..r1, read at open. Each field's    !
+   !      column in the series is found here, once (series_col, 0 for a field the file lacks). -----!
    subroutine read_series(src, ncid, r0, r1)
       type(met_source_t), intent(inout)  :: src
       integer(c_int),     intent(in)    :: ncid
       integer(ik),        intent(in)    :: r0, r1
-      character(len=24), parameter :: FIELDS(15) = [character(len=24) ::                            &
-         'Tair', 'Qair', 'RHair', 'Tdew', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown', &
-         'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
-      integer(c_int)    :: st, vid
+      integer(c_int)    :: st, vid(N_MEDS_FIELD)
       integer(c_size_t) :: start2(2), count2(2)
-      logical     :: present_(size(FIELDS))
+      logical     :: present_(N_MEDS_FIELD)
       integer(ik) :: j, n
-      do j = 1, size(FIELDS)
-         present_(j) = nc_inq_varid_f(ncid, trim(FIELDS(j)), vid) == NC_NOERR
+      do j = 1_ik, N_MEDS_FIELD
+         present_(j) = nc_inq_varid_f(ncid, trim(MEDS_FIELD(j)), vid(j)) == NC_NOERR
       end do
-      n = int(count(present_), ik)
-      if (allocated(src%series)) deallocate(src%series, src%series_name)
-      allocate(src%series(r0:r1, n), src%series_name(n))              ! indexed by record number
-      src%series_name = pack(FIELDS, present_)
+      if (allocated(src%series)) deallocate(src%series)
+      allocate(src%series(r0:r1, count(present_)))                   ! indexed by record number
       start2 = [int(r0 - 1_ik, c_size_t), int(src%grid_index - 1_ik, c_size_t)]    ! [time, grid]
       count2 = [int(r1 - r0 + 1_ik, c_size_t), 1_c_size_t]
-      do j = 1_ik, n
-         st = nc_inq_varid_f(ncid, trim(src%series_name(j)), vid)
-         if (j == 1_ik) call note_one_record_chunks(ncid, vid, r1 - r0 + 1_ik, src%fcfg%path)
-         st = nc_get_vara_double(ncid, vid, start2, count2, src%series(:, j))
-         call nc_check(st, 'read_series: get '//trim(src%series_name(j)))
+      src%series_col = 0_ik ; n = 0_ik
+      do j = 1_ik, N_MEDS_FIELD
+         if (.not. present_(j)) cycle
+         n = n + 1_ik ; src%series_col(j) = n
+         if (n == 1_ik) call note_one_record_chunks(ncid, vid(j), r1 - r0 + 1_ik, src%fcfg%path)
+         st = nc_get_vara_double(ncid, vid(j), start2, count2, src%series(:, n))
+         call nc_check(st, 'read_series: get '//trim(MEDS_FIELD(j)))
       end do
    end subroutine read_series
 
@@ -1171,41 +1180,33 @@ contains
       write(*,'(a)')  '       "nccopy -c time/8760,grid/1 <file> <new file>" keeps every value and reads fast.'
    end subroutine note_one_record_chunks
 
-   !----- The value of field `name` at record irec (0 when the file does not carry it). ---------!
-   pure integer(ik) function series_field(src, name) result(j)
-      type(met_source_t), intent(in)  :: src
-      character(len=*),   intent(in) :: name
-      do j = 1_ik, size(src%series_name, kind=ik)
-         if (trim(src%series_name(j)) == trim(name)) return
-      end do
-      j = 0_ik
-   end function series_field
-
    !----- The file variable that carries each humidity form. -----------------------------------!
-   pure function humidity_name(form) result(name)
+   pure integer(ik) function humidity_field(form) result(fld)
       integer(ik), intent(in) :: form
-      character(len=5) :: name
       select case (form)
-      case (HUMIDITY_RHAIR) ; name = 'RHair'
-      case (HUMIDITY_TDEW)  ; name = 'Tdew'
-      case default          ; name = 'Qair'
+      case (HUMIDITY_RHAIR) ; fld = FLD_RHAIR
+      case (HUMIDITY_TDEW)  ; fld = FLD_TDEW
+      case default          ; fld = FLD_QAIR
       end select
-   end function humidity_name
+   end function humidity_field
 
-   function read_scalar(src, name, irec) result(val)
-      type(met_source_t), intent(in)  :: src
-      character(len=*),   intent(in) :: name
-      integer(ik),        intent(in) :: irec
+   !----- Field fld at record irec. A field the file does not carry stops the run, unless the     !
+   !      caller gives a default (LWdown when it is synthesized). -------------------------------!
+   function series_value(src, fld, irec, default) result(val)
+      type(met_source_t), intent(in) :: src
+      integer(ik),        intent(in) :: fld, irec
+      real(wp), optional, intent(in) :: default
       real(wp)    :: val
       integer(ik) :: j
-      j = series_field(src, name)
+      j = src%series_col(fld)
       if (j == 0_ik) then
-         write(*,'(2a)') ' met_driver: the forcing file has no variable ', trim(name)
+         if (present(default)) then ; val = default ; return ; end if
+         write(*,'(2a)') ' met_driver: the forcing file has no variable ', trim(MEDS_FIELD(fld))
          error stop 'met_driver: a required forcing variable is missing'
       end if
       call check_in_series(src, irec)
       val = src%series(irec, j)
-   end function read_scalar
+   end function series_value
 
    !----- A record outside the range read at open was not prefetched: a programming error. ------!
    subroutine check_in_series(src, irec)
@@ -1217,23 +1218,6 @@ contains
          error stop 'met_driver: a forcing record was not read before the step (internal error)'
       end if
    end subroutine check_in_series
-
-   !----- `name` if the file carries it, else the supplied default (e.g. LWdown under synthesis). -!
-   function read_scalar_default(src, name, irec, default) result(val)
-      type(met_source_t), intent(in)  :: src
-      character(len=*),   intent(in) :: name
-      integer(ik),        intent(in) :: irec
-      real(wp),           intent(in) :: default
-      real(wp)    :: val
-      integer(ik) :: j
-      j = series_field(src, name)
-      if (j == 0_ik) then
-         val = default
-      else
-         call check_in_series(src, irec)
-         val = src%series(irec, j)
-      end if
-   end function read_scalar_default
 
    !----- MEDS never gap-fills: a NaN in a required field halts the run (design §5.5). ---------!
    subroutine assert_finite(x, name, irec, grid)
@@ -1247,16 +1231,6 @@ contains
       end if
    end subroutine assert_finite
 
-   !----- Parse "seconds since YYYY-MM-DD HH:MM:SS" -> base_time. ------------------------------!
-   subroutine parse_time_units(units, base_time, ok)
-      character(len=*),  intent(in)  :: units
-      type(meds_time_t), intent(out) :: base_time
-      logical,           intent(out) :: ok
-      integer :: idx
-      idx = index(units, 'since')
-      if (idx == 0) then ; ok = .false. ; return ; end if
-      call time_from_string(adjustl(units(idx + 5:)), base_time, ok)
-   end subroutine parse_time_units
 
 
    !---------------------------------------------------------------------------------------!
@@ -1408,7 +1382,7 @@ contains
       integer(ik)    :: i, n
       stat = MET_OK ; n = 0_ik
       do i = 1_ik, size(FORMS, kind=ik)
-         if (nc_inq_varid_f(ncid, trim(humidity_name(FORMS(i))), vid) == NC_NOERR) then
+         if (nc_inq_varid_f(ncid, trim(MEDS_FIELD(humidity_field(FORMS(i)))), vid) == NC_NOERR) then
             n = n + 1_ik ; src%humidity = FORMS(i)
          end if
       end do

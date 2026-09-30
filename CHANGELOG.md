@@ -179,6 +179,17 @@ before and after.
   - **F12.** `docs/science/forcing.md` says that a run cannot start in the archive's first month:
     its first step reads the 00:00 record, which lives in the previous month's file.
 
+- **The forcing reader's names and literals, each in one place** (#311 F7, F8). Bit-identical on
+  every r1 case.
+  - **F7.** The archive's hourly spacing is one constant, `ARCHIVE_DT_SEC`, where it was a literal
+    in five places and a sixth encoding (24 records a day). The two hand-written "seconds since"
+    parsers are one, `time_units_base` in `meds_time`.
+  - **F8.** The 15 fields a MEDS forcing file may carry are listed once (`MEDS_FIELD`, with named
+    indices). `met_open` finds each field's column once, where the reader used to match names as
+    strings for every field of every record, and one `series_value` replaces `read_scalar` and
+    `read_scalar_default`. When the forcing bracket slides by one record, as it does once an hour,
+    its old upper record becomes the new lower one instead of being read again.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

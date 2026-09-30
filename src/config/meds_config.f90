@@ -20,7 +20,7 @@ module meds_config
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
-                                   WIND_EXPOSURE_OPEN_TERRAIN
+                                   WIND_EXPOSURE_OPEN_TERRAIN, ARCHIVE_DT_SEC
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
@@ -872,7 +872,7 @@ contains
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
                error stop tag//'forcing.max_distance_km must be > 0'
-            if (abs(cfg%forcing%dt_forcing - 3600.0_wp) > 0.5_wp)                                  &
+            if (abs(cfg%forcing%dt_forcing - ARCHIVE_DT_SEC) > 0.5_wp)                             &
                error stop tag//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
             if (cfg%forcing%avg_convention /= METAVG_END)                                          &
                error stop tag//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'
