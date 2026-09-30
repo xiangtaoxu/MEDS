@@ -37,9 +37,9 @@
 module meds_fast_reconcile
    use meds_kinds,            only : wp, ik
    use meds_site_state_types, only : site_t
-   use meds_config,           only : meds_config_t
+   use meds_plant_types,      only : hydro_params_table_t
    use meds_column_params, only : PSI_INIT
-   use meds_water_retention,  only : water_curve_t, water_content, clamp_water_to_capacity
+   use meds_water_retention,  only : water_content, clamp_water_to_capacity
    implicit none
    private
 
@@ -58,38 +58,38 @@ contains
    ! water ABOVE saturation, which a discontinuous biomass SHRINK can produce -- the phenology     !
    ! dormant-canopy snap-to-bare drops leaf carbon far enough in one step to do it.                !
    !---------------------------------------------------------------------------------------!
-   subroutine reconcile_tissue_water_capacity(site, cfg, seeded, discarded)
-      type(site_t),        intent(inout) :: site
-      type(meds_config_t), intent(in)    :: cfg
+   subroutine reconcile_tissue_water_capacity(site, hydraulics_table, seeded, discarded)
+      type(site_t),               intent(inout) :: site
+      type(hydro_params_table_t), intent(in)    :: hydraulics_table   !< each PFT's tissue curves
       real(wp), optional,  intent(out)   :: seeded      !< [kg/m2] water CREATED by the lazy seed
       real(wp), optional,  intent(out)   :: discarded   !< [kg/m2] water DESTROYED by the clamp
       real(wp)    :: w_new, w_seed, w_lost, wood_c
       integer(ik) :: i
-      type(water_curve_t) :: leaf_curve, wood_curve
       w_seed = 0.0_wp ; w_lost = 0.0_wp
-      associate (c => site%cohort, h => cfg%hydraulics)
-         leaf_curve = water_curve_t(h%leaf_pi0, h%leaf_elastic_mod, h%leaf_apoplast_frac, h%leaf_water_sat)
-         wood_curve = water_curve_t(h%wood_pi0, h%wood_elastic_mod, h%wood_apoplast_frac, h%wood_water_sat)
+      associate (c => site%cohort)
          do i = 1_ik, c%n
-            !----- WOOD: the sapwood ring plus the fine roots share one store. ---------------!
-            wood_c = c%sapwood_carbon(i) + c%fineroot_carbon(i)
-            if (c%wood_water_mass(i) <= 0.0_wp) then
-               w_new = water_content(PSI_INIT, wood_curve, wood_c)
-               w_seed = w_seed + c%nplant(i) * w_new
-            else
-               w_new = clamp_water_to_capacity(c%wood_water_mass(i), wood_curve, wood_c)
-               w_lost = w_lost + c%nplant(i) * (c%wood_water_mass(i) - w_new)
-            end if
-            c%wood_water_mass(i) = w_new
-            !----- LEAF: tested independently of wood, see the module header. ----------------!
-            if (c%leaf_water_mass(i) <= 0.0_wp) then
-               w_new = water_content(PSI_INIT, leaf_curve, c%leaf_carbon(i))
-               w_seed = w_seed + c%nplant(i) * w_new
-            else
-               w_new = clamp_water_to_capacity(c%leaf_water_mass(i), leaf_curve, c%leaf_carbon(i))
-               w_lost = w_lost + c%nplant(i) * (c%leaf_water_mass(i) - w_new)
-            end if
-            c%leaf_water_mass(i) = w_new
+            associate (leaf_curve => hydraulics_table%pft(c%pft(i))%leaf_curve,                    &
+                       wood_curve => hydraulics_table%pft(c%pft(i))%wood_curve)
+               !----- WOOD: the sapwood ring plus the fine roots share one store. ---------------!
+               wood_c = c%sapwood_carbon(i) + c%fineroot_carbon(i)
+               if (c%wood_water_mass(i) <= 0.0_wp) then
+                  w_new = water_content(PSI_INIT, wood_curve, wood_c)
+                  w_seed = w_seed + c%nplant(i) * w_new
+               else
+                  w_new = clamp_water_to_capacity(c%wood_water_mass(i), wood_curve, wood_c)
+                  w_lost = w_lost + c%nplant(i) * (c%wood_water_mass(i) - w_new)
+               end if
+               c%wood_water_mass(i) = w_new
+               !----- LEAF: tested independently of wood, see the module header. ----------------!
+               if (c%leaf_water_mass(i) <= 0.0_wp) then
+                  w_new = water_content(PSI_INIT, leaf_curve, c%leaf_carbon(i))
+                  w_seed = w_seed + c%nplant(i) * w_new
+               else
+                  w_new = clamp_water_to_capacity(c%leaf_water_mass(i), leaf_curve, c%leaf_carbon(i))
+                  w_lost = w_lost + c%nplant(i) * (c%leaf_water_mass(i) - w_new)
+               end if
+               c%leaf_water_mass(i) = w_new
+            end associate
          end do
       end associate
       if (present(seeded))    seeded    = w_seed

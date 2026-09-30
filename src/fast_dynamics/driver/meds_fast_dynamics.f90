@@ -473,7 +473,7 @@ contains
       !      anything reads it. Once per call, outside every loop: this used to run per cohort per  !
       !      sub-step inside the gather, and it WRITES, so an unbooked mass edit sat in the          !
       !      integrator's inner loop where the whole-column ledger could not see it. ----------------!
-      call reconcile_tissue_water_capacity(site, cfg)
+      call reconcile_tissue_water_capacity(site, ctx%col_config%hydraulics_table)
 
       ncoh_max = 0_ik
       do ip = 1_ik, npatch

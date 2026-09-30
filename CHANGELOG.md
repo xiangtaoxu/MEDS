@@ -154,6 +154,14 @@ before and after.
   dispatcher stops (`rk45_ledgers_stop`) only for a step it keeps. The failure counts were already
   right, because a rescued step's budget is rolled back. Outputs are unchanged. **Test:** `numerics`
   checks the new `last_check_closed` on a breached and a closed check.
+- **The daily tissue-water reconcile uses each PFT's own curve** (plan item N-7, found during Phase
+  3). `reconcile_tissue_water_capacity`, which seeds an empty leaf or wood store at the starting
+  potential and caps a store above saturation, read the shared `[hydraulics]` traits, while the
+  fast loop reads the same water back on the PFT's own curve (`[pft]` overrides, #179). A PFT with
+  its own saturated water or pressure-volume traits was therefore seeded off its curve and capped at
+  the wrong ceiling. It now takes the per-PFT hydraulics table. No shipped configuration overrides
+  these traits per PFT, so every r1 case is bit-identical. **Test:** `pft_optics_config` seeds and
+  caps a PFT whose saturated leaf water differs from the shared value.
 
 ## [0.3.1] — 2026-09-29
 
