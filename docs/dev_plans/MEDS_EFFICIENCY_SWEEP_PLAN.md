@@ -605,6 +605,62 @@ pool and patch threads inside a region (option A) are not pursued. It needs #325
 per-thread workspace (Phase 2) first: without #325, polygon threads would queue on the same allocator
 lock that slows patch threads today.
 
+**Phase 5 status (2026-09-30).**
+
+- **Done:**
+  - F10 (`e77bf62`);
+  - polygon threads with R4, R5 and R12 (`b3bd130`);
+  - R2, R6, R9 and R11 (`45a16a4`);
+  - the O11 comment (`6301093`).
+
+  Every r1 case is bit-identical. The region's 403 files are identical at 1, 10, 20 and 40
+  threads.
+- **Measured.** 100 cells, one year:
+
+  | threads | wall time |
+  |---|---|
+  | 1 | 785 s (v0.3.1: 1,012 s) |
+  | 10 | 131 s |
+  | 20 | 92 s |
+  | 40 | 81 s |
+
+  Below the 17–25× expected in §2.7, because the one detail polygon costs about four times an
+  ordinary one and sets each month's pace: without it, 40 threads take 53 s (15×). The region's own
+  files cost about 2 s. **Next lever:** give a detail polygon the spare threads for its patch loop,
+  or schedule it first with a smaller chunk.
+- **R10, one shared fast context: deferred, with the reason.** The only part of a polygon's context
+  that differs is its acclimated leaf table, and that sits inside `col_config`, which the whole fast
+  loop reads. Sharing the context would mean either:
+  - copying `col_config` into each polygon step, which #188 removed; or
+  - passing the leaf table through four more routines.
+
+  The saving is a few tens of kB per polygon. The stand-in that R10 names (polygon 1's soil curve
+  for the region's files) is harmless, because every polygon's curve comes from the same config.
+- **Item 5, one run container (rv-R3): proposed, not built.** It changes what callers see, so the
+  owner decides two things first:
+  - **The step.** One `driver_step` advances every polygon by one slow step: prefetch, a parallel
+    loop over polygons, and the I/O phase at a month's end. This keeps the C-API's per-day stepping,
+    which the Python examples use. Stepping a region by the day costs nothing measurable (365
+    fork-joins a year, against 21 ms per polygon-step).
+  - **Failures.** A failed polygon is flagged and skipped from then on, and `driver_step` returns
+    the failure. Does `meds_main` stop there, writing the output so far, or finish the run and
+    report the failed polygons at the end (the polygon plan's R5)?
+
+  With those answered, the two containers, the two `meds_main` loops and the two step routines
+  become one each. Open and finalize keep a site branch (census, restart, checkpoints) and a
+  region branch (cells, detail polygons).
+- **#196, first step measured: no gain from compiler vectorisation.**
+  - `surface_derivs`'s cohort loop does not vectorise: it calls `veg_energy_balance` in another
+    module once per cohort, and ifx does not inline across modules without `-ipo`.
+  - Targeting the nodes' AVX-512 (`-xHost`, Xeon Gold 6230) gives 24.4 s against 23.9 s on 60 days
+    of BCI, serial: no gain. The fast loop is branchy per-cohort work, and libm already chooses its
+    AVX-512 routines at run time.
+  - `-ipo` needs the LLVM archiver wired into CMake and was not measured.
+  - What is left of #196 is the cohort-level tasks, for a site with fewer patches than cores.
+- **Also done in this phase:**
+  - #312 O7+O8, one serializer (`e50fbaf`, below Phase 6);
+  - a stale-value read in slow-only runs (`11e00bf`).
+
 1. **#310 prep PR,** bit-identical:
    - one `open_output_files` in place of three copies (R2);
    - fold the stepper's optional-argument branches (R6), which also mends the dropped
