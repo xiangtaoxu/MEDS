@@ -149,7 +149,7 @@ how far the group drifted apart on the last stretch.
 - Canopy air + soil heat are inside the tableau. Soil water, plant water mass and canopy surface
   water are **operator-split out** and advanced once over the full `dt_fast`.
 - The leaf↔canopy-air coupling is solved implicitly *within* every stage by a direct 2×2 Newton
-  (`newton_surface_solve`, `[fast].ark_niter`, default 8) with a numerical Jacobian — which is what
+  (`newton_surface_solve`, `[fast].ark_coupled`, default true) with a numerical Jacobian — which is what
   lets it carry the tissue heat store that the retired split path could not.
 - Adaptive: the step size is chosen from the difference between the second-order and first-order
   solutions, measured by **one weighted norm over the whole column state** with a per-variable-group
@@ -267,6 +267,9 @@ High-LAI sunlit stand, 24 h, scored against a 12.5 s reference:
 | ET, capacity limb **on** | −2.6% | −5.8% | −8.7% | −14.5% | −23.8% |
 | ET, capacity limb **off** (default) | −0.0% | — | — | −0.7% | −1.2% |
 
+*Measured 2026-07-31, the day before the transpiration corrector (#91) landed; the limb-on rows have
+not been re-measured since.*
+
 **Two findings sit behind that table, and the second is the one to remember.**
 
 *It is not a quadrature bug.* GPP is accumulated as `Σ gpp(state n)·dt`, a left rectangle in the
@@ -274,10 +277,10 @@ state, so an averaging artefact was the obvious suspect. It is not: with the cap
 same accumulation reproduces the 12.5 s answer to **0.05% at `dt_fast = 900 s`**. The quadrature is
 sound.
 
-*`psi_leaf` itself does not converge in `dt_fast`, and the capacity limb amplifies that into carbon.*
-Daytime-mean leaf water potential runs **−0.23 MPa at 12.5 s against −1.19 MPa at 900 s** — the plant
-water-mass update is an explicit step with frozen sapflow and uptake, and the excursion grows with the
-step (max per-step |Δψ| reaches 0.84 MPa at 900 s). The non-stomatal limb
+*Before the corrector, `psi_leaf` itself did not converge in `dt_fast`, and the capacity limb
+amplified that into carbon.* Daytime-mean leaf water potential ran **−0.23 MPa at 12.5 s against
+−1.19 MPa at 900 s** — the plant water-mass update was an explicit step with frozen sapflow and
+uptake, and the excursion grew with the step (max per-step |Δψ| reached 0.84 MPa at 900 s). The non-stomatal limb
 `beta = (ψ − ψ_close)/(ψ_open − ψ_close)` is a linear ramp on Vcmax/Jmax/TPU with slope ~0.5 MPa⁻¹ on
 the shipped PFT file, so a 1 MPa error in ψ becomes a ~50% error in capacity. It is an **amplifier,
 not the source** — and the clamp at `beta = 0` is never reached, so this is straight linear
@@ -287,9 +290,16 @@ That limb is **off by default** (issue #47): it is rarely measured directly and 
 weakly constrained, so wiring an unconverged ψ into carbon through it is not a trade worth making.
 The *stomatal* limb (driven by ψ_soil, not ψ_leaf) is better constrained and stays on.
 
-**The ψ error is still there — it is just no longer wired into carbon.** Anything else keyed to leaf
-water potential inherits it, and fixing it (give ψ / `g_sw` the per-stage treatment the conductances
-got) is tracked as N2b in `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md`.
+**The transpiration corrector (#91) removed most of that ψ error.** Re-measured 2026-09-30 on the
+established Ithaca stand over July (`dt_fast` 12.5, 75 and 900 s):
+- the daily-mean canopy leaf water potential at 900 s matches the 12.5 s run to within 0.001 MPa on
+  every day after the first, and the July mean GPP and ET to 0.1 %;
+- each cohort's daily maximum ψ, which drives the next day's stomata, agrees to 0.008 MPa;
+- the first day after a restart carries a start-up transient: −1.83 MPa at 900 s against −0.28 at
+  12.5 s.
+
+What is left is that transient and `psi_wood`, which carries 0.17 MPa at 900 s on the 3-hour midday
+probe through the frozen uptake seam.
 
 ### 5a′. The stability multiplier, and how to measure it
 
@@ -331,8 +341,8 @@ accept** (§5a), so unlike before, a spin-up and a flux-tower study genuinely wa
 |---|---|
 | general production, including spin-ups and coupled carbon–water | `ark` at `dt_fast = 900 s` (the default) |
 | sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
-| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark`, `dt_fast` ≤ 150 s — ψ is not converged at 900 s even where carbon is (§5a) |
-| the non-stomatal water-stress limb enabled | `dt_fast` ≤ 225 s, or the limb amplifies the ψ error into −33% GPP |
+| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for daily ψ, which converges after the first day of a restart (§5a); shorten the step to study sub-daily excursions, and check `psi_wood` |
+| the non-stomatal water-stress limb enabled | `dt_fast` ≤ 225 s: before the corrector the limb turned the ψ error into −33% GPP, and that has not been re-measured |
 | a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
 
@@ -341,8 +351,8 @@ limb off) it is cheap: daily GPP within 0.05% and ET within 1.2% of a resolved r
 temperature within 0.16 K. Soil-surface temperature is the loosest at 0.70 K. **Turn the capacity limb
 on and the same step costs −33% GPP** (§5a), so if you enable
 `[leaf_physiology].wstress_nonstomatal` you should also drop `dt_fast` to ≤ 225 s; `meds_config`
-warns when you do not. Note too that leaf water potential itself is not converged at 900 s even
-though carbon is — so a study keyed to ψ wants a shorter step regardless.
+warns when you do not. Leaf water potential converges at 900 s on `ark` apart from the first day after
+a restart (§5a).
 
 Configuration essentials:
 
@@ -451,14 +461,12 @@ than a convergence proof.
 
 ## 7. Known limitations and open questions
 
-1. **Leaf water potential does not converge in `dt_fast`, and that is unfixed.** Daytime-mean ψ runs
-   −0.23 MPa at 12.5 s against −1.19 MPa at 900 s. The plant water-mass update is an explicit step
-   with frozen sapflow and uptake, so the per-step excursion grows with the step (max |Δψ| 0.84 MPa
-   at 900 s). It used to show up as a 33% GPP shift through the non-stomatal water-stress limb; that
-   limb is now off by default (§5a), which removes the *symptom* from carbon but not the *error*.
-   Anything keyed to ψ still inherits it. The fix is to give ψ / `g_sw` the per-stage treatment the
-   conductances got — same defect class, one seam over — and is tracked as N2b in
-   `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md`.
+1. **Leaf water potential at 900 s: converged on `ark`, apart from a start-up transient.** Before the
+   transpiration corrector (#91) daytime-mean ψ ran −0.23 MPa at 12.5 s against −1.19 MPa at 900 s,
+   and showed up as a 33% GPP shift through the non-stomatal water-stress limb. Re-measured on the
+   established Ithaca stand in July (§5a), daily-mean ψ at 900 s matches 12.5 s to 0.001 MPa after
+   the first day; the first day after a restart still differs (−1.83 against −0.28 MPa). `psi_wood`
+   keeps 0.17 MPa at 900 s on the midday probe, through the frozen uptake seam.
 
    **`rk45` carries more of this error than `ark` does, and now says so.** The transpiration
    corrector that cut a ~1 MPa `psi_leaf` error by 314× lives in `advance_water_mass_full`, which

@@ -232,7 +232,7 @@ module meds_output_types
    !==========================================================================================!
    ! A closed period staged for the serializer (netCDF-FREE plain data). Filled at a roll-over    !
    ! by the stepper-side tick (output_integrate) into the tier's scratch record, then copied into   !
-   ! the tier's queue; drained by main (output_serialize_pending) in the I/O phase at month         !
+   ! the tier's queue; drained by main (output_serialize) in the I/O phase at month                  !
    ! boundaries (MEDS_POLYGON_RUNTIME_PLAN.md §4, B11). Payload is indexed by REGISTRY var index;   !
    ! only variables live in the tier are filled (§4.5, §2).                                         !
    !==========================================================================================!
@@ -290,7 +290,7 @@ module meds_output_types
 
    !==========================================================================================!
    ! The output manager comes in two types (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
-   ! netCDF-FREE plain data; only output_serialize_pending touches C.                                !
+   ! netCDF-FREE plain data; only output_serialize touches C.                                        !
    !   output_files_t   -- one set of output files (a site's, a region's, a detail polygon's) and    !
    !                       what writing them needs: registry, diagnostic parameters, file settings,  !
    !                       stream handles. Read-only while a step runs.                              !
@@ -301,9 +301,13 @@ module meds_output_types
    !==========================================================================================!
    type :: output_files_t
       logical                 :: enabled = .false.
+      !----- The run has a fast loop. Without one the fast-loop diagnostic blocks stay off, so their  !
+      !      variables read as missing rather than as a 0 nothing computed (#299). ------------------!
+      logical                 :: fast_loop_on = .true.
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
+      logical           :: cohort_axis = .false., patch_axis = .false.  !< a live variable has that axis
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
       !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !

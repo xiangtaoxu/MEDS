@@ -16,7 +16,7 @@ program test_fast_loop
    use meds_site_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
-   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config
@@ -324,9 +324,8 @@ program test_fast_loop
       block
          type(met_source_t)  :: drv4
          type(met_cursor_t)  :: cur4
-         type(meds_config_t) :: cfg_mt
+         type(fast_context_t) :: ctx_mt
          real(wp) :: h1, h2, h3
-         cfg_mt = cfg ; cfg_mt%n_threads = 4_ik
          call init_bare_ground(site, cfg, 3_ik)
          call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(site, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -337,7 +336,8 @@ program test_fast_loop
                               cfg%forcing%longitude_deg,                            &
                               cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg_mt, met_src=drv4, met_cur=cur4,             &
+         ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
+         call fast_dynamics(site, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv4)
          h1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))

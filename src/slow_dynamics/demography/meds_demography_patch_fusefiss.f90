@@ -27,7 +27,7 @@ module meds_demography_patch_fusefiss
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
-                                     patch_diag_inherit, patch_diag_grow, PD_DISTURB_AREA,      &
+                                     patch_diag_inherit, PD_DISTURB_AREA,                        &
                                      PD_MORT_C_DISTURB
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    use meds_column_state_types, only : blend_cas, blend_soil_w, blend_soil_e, blend_snow, snow_column_t, blend_soil_carbon, &
@@ -606,8 +606,8 @@ contains
       !      At a calendar boundary the donors hold only that boundary's events (the step's sums were !
       !      read and reset), and the gap keeps its share of them; inside a step (the C API) they     !
       !      hold the step so far. Every donor lost the same fraction, so their current areas give    !
-      !      the same blend as their original ones.                                                   !
-      call patch_diag_grow(site%patch%diag, newp)
+      !      the same blend as their original ones. (patch_ensure_capacity above grew the block with   !
+      !      the patch arrays.)                                                                       !
       call patch_diag_inherit(site%patch%diag, newp, site%patch%area(1:np0))
       do i = m0 + 1_ik, site%cohort%n
          call assign_cohort_id(site, i)

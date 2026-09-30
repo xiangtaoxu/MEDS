@@ -41,10 +41,10 @@ program test_output_roundtrip
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
    use meds_output_integrate, only : output_integrate
-   use meds_output_manager,   only : output_serialize_pending, output_manager_close
+   use meds_output_manager,   only : output_serialize, output_close
    use meds_netcdf_c
    use meds_column_params,    only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
-   use meds_hydr_lib,         only : SOIL_RETENTION_VG
+   use meds_water_retention,  only : SOIL_RETENTION_VG
    use meds_output_registry,  only : manager_set_soil_params
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close
@@ -54,7 +54,7 @@ program test_output_roundtrip
    type(meds_config_t)    :: cfg
    type(site_t)           :: site
    type(output_files_t)   :: files
-   type(output_buffers_t) :: bufs
+   type(output_buffers_t) :: bufs(1)     !< one site's buffers: an array of one, as the driver holds them
    type(meds_time_t)      :: prev, now
    integer(ik)            :: iday
    real(wp)               :: dt
@@ -82,7 +82,7 @@ program test_output_roundtrip
    !----- Output config: daily + annual streams; enable the energy group (soil). -----!
    cfg = build_cfg()
    dt  = 86400.0_wp
-   call manager_alloc(files, bufs, cfg)
+   call manager_alloc(files, bufs(1), cfg)
 
    !----- A soil column with FEWER active layers than the compile-time ceiling (#246). That gap    !
    !      is the whole point: soil-dimensioned variables used to be emitted over all               !
@@ -102,11 +102,11 @@ program test_output_roundtrip
    do iday = 1_ik, 3_ik
       prev = now ; now = time_advance_days(prev, 1_ik)
       call set_site_agb(site, 10.0_wp * real(iday, wp))
-      call output_integrate(files, bufs, site, prev, dt, .true., .false., .false.)
-      call output_serialize_pending(files, bufs)
+      call output_integrate(files, bufs(1), site, prev, dt, .true., .false., .false.)
+      call output_serialize(files, bufs)
    end do
 
-   call output_manager_close(files, bufs, .true.)              ! flush the 2000 annual partial
+   call output_close(files, bufs)              ! flush the 2000 annual partial
 
    !----- Re-open and assert. -----!
    call check_daily('test_ro-D-200001.nc')

@@ -21,7 +21,7 @@ module meds_config_io
    use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
                                LWP_CONTROL_LINEAR_DECLINE
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
-   use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_forcing_config, only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO, CO2_SOURCE_CONST, CO2_SOURCE_FILE
@@ -728,7 +728,12 @@ contains
       cfg%output%io_config           = toml_string (t, 'output.io_config',           '')
       cfg%output%cohort_max          = toml_int    (t, 'output.cohort_max',          4096_ik)
       cfg%output%patch_max           = toml_int    (t, 'output.patch_max',           256_ik)
-      cfg%output%strict_caps         = toml_logical(t, 'output.strict_caps',         .false.)
+      !----- strict_caps promised a warn-and-truncate mode that was never built; a run always stops at !
+      !      the step its stand outgrows cohort_max or patch_max. It parsed and did nothing, so it is    !
+      !      refused, naming what to do instead. -------------------------------------------------------!
+      if (toml_has(t, 'output.strict_caps'))                                                        &
+         error stop 'load_meds_config: output.strict_caps is gone; a run always stops at the step '// &
+                    'its live cohort or patch count exceeds output.cohort_max or patch_max: raise the cap'
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
       cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
                                     trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')

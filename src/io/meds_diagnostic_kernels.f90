@@ -23,7 +23,7 @@ module meds_diagnostic_kernels
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, gsw_2_gsc, grav_head
    use meds_therm_lib, only : sat_vapor_pressure, air_vpd, specific_humidity_to_vpd
-   use meds_hydr_lib,  only : soil_psi_from_theta
+   use meds_water_retention, only : soil_psi_from_theta
    implicit none
    private
 

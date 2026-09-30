@@ -14,7 +14,7 @@ module meds_leaf_gas_exchange
                                 LIM_NONE, LIM_RUBISCO, &
                                 LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    use meds_temp_response, only : temp_response, arrhenius_scale
-   use meds_numerics,      only : quadratic_smaller_root, bisect_root
+   use meds_numerics,      only : quadratic_smaller_root
    implicit none
 
    !----- O2 mole fraction the shipped gstar25 was MEASURED at (Bernacchi et al. 2001). Gamma* is  !
@@ -41,6 +41,32 @@ module meds_leaf_gas_exchange
    real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
    integer(ik), parameter :: max_iter   = 100_ik       !< bisection iteration cap (safety net)
+
+   !----- Which stomatal conductance a pass of the Ci solve uses (solve_leaf_gas_exchange). -----!
+   integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
+   integer(ik), parameter :: GS_CUTICULAR  = 2_ik      !< the cuticular floor g0 (the fallback)
+   integer(ik), parameter :: GS_PINNED     = 3_ik      !< a fixed conductance (Katul, low potential)
+
+   !----- Everything the Ci residual reads: the leaf's biochemistry at its temperature, its air,  !
+   !      its stomatal model, and the conductance rule of the current pass. It is passed to the   !
+   !      residual explicitly, so the residual is an ordinary module function: under ifx, handing !
+   !      a contained function to a solver costs a lock-guarded allocation on every call, which   !
+   !      made more than four threads slower than four (#325). ------------------------------------!
+   type :: ci_problem_t
+      integer(ik) :: pathway, colimitation, stomatal_model
+      integer(ik) :: gs_rule = GS_FROM_MODEL
+      real(wp)    :: vcmax, jrate, tpu, rd                    !< [umol/m2/s] at leaf temperature
+      real(wp)    :: gstar, kc, ko, o2                        !< [umol/mol]
+      real(wp)    :: aj_light, kp_eff                         !< C4 light-limited rate, PEP slope
+      real(wp)    :: theta_cj_c3, theta_ip_c3, theta_cj_c4, theta_ic_c4
+      real(wp)    :: ca                                       !< [umol/mol] ambient CO2
+      real(wp)    :: gb                                       !< [mol/m2/s] boundary-layer conductance
+      logical     :: boundary_layer                           !< draw leaf-surface CO2 down through gb
+      real(wp)    :: vpd, ddef                                !< [Pa], [mol/mol] water deficit
+      real(wp)    :: g0, g1, d0, lambda                       !< the stomatal model's parameters
+      real(wp)    :: f_lwp                                    !< low-water-potential factor on gs
+      real(wp)    :: gs_pin = 0.0_wp                          !< [mol/m2/s] the GS_PINNED conductance
+   end type ci_problem_t
 
 
 contains
@@ -210,12 +236,12 @@ contains
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
       real(wp) :: f_lwp             !< low-water-potential factor on the calculated gs (1 = none)
       real(wp) :: gs_pin            !< Katul: the conductance the factor pins the solve to
-      logical  :: pin_gs
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
       real(wp) :: A_gross, Ac, Aj, Ap, An, cs_sol, gs_sol
-      logical  :: converged, do_boundary_layer, force_g0
+      logical  :: converged, do_boundary_layer
+      type(ci_problem_t) :: prob
 
       t_leaf   = env%leaf_temp
       pressure = env%pressure
@@ -288,8 +314,6 @@ contains
       !      make this control matter less. ----------------------------------------------------!
       f_lwp = 1.0_wp
       if (p%low_psi_control == 1_ik) f_lwp = low_psi_gs_factor(env%psi, p%psi_tlp)   ! linear decline
-      pin_gs = .false.
-      gs_pin = 0.0_wp
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -310,8 +334,18 @@ contains
          kp_eff    = 0.0_wp
       end if
 
+      prob = ci_problem_t(pathway = p%pathway, colimitation = colim, stomatal_model = sm,            &
+                          vcmax = vcmax, jrate = jrate, tpu = tpu, rd = rd,                           &
+                          gstar = gstar_ppm, kc = kc_ppm, ko = ko_ppm, o2 = o2_ppm,                   &
+                          aj_light = Aj_light, kp_eff = kp_eff,                                       &
+                          theta_cj_c3 = p%theta_cj_c3, theta_ip_c3 = p%theta_ip_c3,                   &
+                          theta_cj_c4 = p%theta_cj_c4, theta_ic_c4 = p%theta_ic_c4,                   &
+                          ca = ca_ppm, gb = env%gb, boundary_layer = do_boundary_layer,               &
+                          vpd = env%vpd, ddef = ddef, g0 = p%g0, g1 = g1_eff, d0 = p%d0,              &
+                          lambda = lambda_eff, f_lwp = f_lwp)
+
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
-      An_open = Anet_at_ci(ca_ppm)
+      An_open = ci_net_assimilation(prob, ca_ppm)
       if (An_open <= 0.0_wp) then
          gs_sol = f_lwp * p%g0
          An     = An_open
@@ -326,47 +360,43 @@ contains
          return
       end if
 
-      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual (meds_numerics%bisect_root)   !
-      !       to ci_tol_ppm. If the chosen stomatal model yields no consistent open solution   !
-      !       (no sign change -- e.g. Katul under strong water stress where lambda -> large),   !
-      !       fall back to a g0-pinned (closed-stomata) diffusion solve, which always brackets  !
-      !       when net A(Ca) > 0. The explicit-gs provider serves BOTH the Leuning/Medlyn model !
-      !       and the g0 fallback (gsl := g0 when force_g0); Katul uses the optimality provider. !
+      !----- Bracket Ci in (Gamma*, Ca] and bisect the residual to ci_tol_ppm. If the chosen    !
+      !       stomatal model yields no consistent open solution (no sign change -- e.g. Katul      !
+      !       under strong water stress where lambda -> large), fall back to the cuticular floor   !
+      !       g0 (closed stomata), which always brackets when net A(Ca) > 0. The explicit-gs       !
+      !       residual serves Leuning/Medlyn, the g0 fallback and the pinned pass; Katul's own     !
+      !       pass uses the optimality residual (ci_residual). ------------------------------------!
       lo0 = gstar_ppm + lo_eps_ppm
       hi0 = ca_ppm
-      force_g0 = .false.
+      prob%gs_rule = GS_FROM_MODEL
       do                                                 ! at most three passes: model, g0-pinned, f_lwp-pinned
-         if (.not. force_g0 .and. .not. pin_gs .and. sm == SM_KATUL) then
-            call bisect_root(residual_optimality,  lo0, hi0, ci_tol_ppm, max_iter, ci_sol, converged)
-         else
-            call bisect_root(residual_explicit_gs, lo0, hi0, ci_tol_ppm, max_iter, ci_sol, converged)
-         end if
-         !----- No sign change on the first (model) attempt -> retry g0-pinned. --------------!
-         if (.not. converged .and. .not. force_g0) then
-            force_g0 = .true.
+         call bisect_ci(prob, lo0, hi0, ci_sol, converged)
+         !----- No sign change -> retry with the cuticular floor g0. ----------------------------!
+         if (.not. converged .and. prob%gs_rule /= GS_CUTICULAR) then
+            prob%gs_rule = GS_CUTICULAR
             cycle
          end if
 
          !----- Assemble the solution: net A, surface CO2, back-computed gs, transpiration. ---!
-         call eval_assimilation_demand(ci_sol, A_gross, Ac, Aj, Ap)
+         call ci_assimilation_demand(prob, ci_sol, A_gross, Ac, Aj, Ap)
          An     = A_gross - rd
          cs_sol = ca_ppm
          if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
          !----- Katul optimum can land below the cuticular floor g0; re-solve once g0-pinned so   !
          !       A/gs/Ci/E stay mutually consistent (Leuning/Medlyn already return gs >= g0). ----!
-         if (sm == SM_KATUL .and. .not. force_g0 .and. .not. pin_gs .and. cs_sol - ci_sol > tiny_num) then
+         if (sm == SM_KATUL .and. prob%gs_rule == GS_FROM_MODEL .and. cs_sol - ci_sol > tiny_num) then
             if (gsw_2_gsc * An / (cs_sol - ci_sol) < p%g0) then
-               force_g0 = .true.
+               prob%gs_rule = GS_CUTICULAR
                cycle
             end if
          end if
          !----- Katul: the optimum is the calculated gs; scale it by f_lwp and re-solve with gs      !
          !       pinned there, so A/gs/Ci/E stay consistent (Leuning/Medlyn scale inside the solve). -!
-         if (sm == SM_KATUL .and. .not. force_g0 .and. .not. pin_gs .and. f_lwp < 1.0_wp) then
+         if (sm == SM_KATUL .and. prob%gs_rule == GS_FROM_MODEL .and. f_lwp < 1.0_wp) then
             gs_pin = p%g0
             if (cs_sol - ci_sol > tiny_num) gs_pin = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
-            gs_pin = f_lwp * gs_pin
-            pin_gs = .true.
+            prob%gs_pin  = f_lwp * gs_pin
+            prob%gs_rule = GS_PINNED
             cycle
          end if
          exit
@@ -389,76 +419,6 @@ contains
       call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
 
    contains
-
-      !----- Gross + raw limitation rates at a trial Ci (dispatch on pathway). -----------!
-      pure subroutine eval_assimilation_demand(ci, Ag, Rac, Raj, Rap)
-         real(wp), intent(in)  :: ci
-         real(wp), intent(out) :: Ag, Rac, Raj, Rap
-         if (p%pathway == PATH_C4) then
-            call assimilation_demand_c4(ci, vcmax, Aj_light, kp_eff, colim, p%theta_cj_c4,             &
-                                 p%theta_ic_c4,                                                 &
-                                 Ag, Rac, Raj, Rap)
-         else
-            call assimilation_demand_c3(ci, vcmax, jrate, tpu, gstar_ppm, kc_ppm, ko_ppm, o2_ppm,     &
-                                 colim, p%theta_cj_c3, p%theta_ip_c3, Ag, Rac, Raj, Rap)
-         end if
-      end subroutine eval_assimilation_demand
-
-      !----- Net assimilation at a trial Ci. ---------------------------------------------!
-      pure function Anet_at_ci(ci) result(An_loc)
-         real(wp), intent(in) :: ci
-         real(wp)             :: An_loc, Ag, Rac, Raj, Rap
-         call eval_assimilation_demand(ci, Ag, Rac, Raj, Rap)
-         An_loc = Ag - rd
-      end function Anet_at_ci
-
-      !----- Explicit-conductance residual for Leuning / Medlyn (and the g0-pinned fallback):    !
-      !       the trial Ci must satisfy the CO2 diffusion identity Ci = Cs - A / gs_co2, where    !
-      !       the stomatal model supplies gs. Returns Ci - Ci_predicted, whose ROOT is the        !
-      !       solution. PURE so it feeds bisect_root. -----------------------------------------!
-      pure function residual_explicit_gs(ci) result(r)
-         real(wp), intent(in) :: ci
-         real(wp)             :: r, An_loc, cs_surf, gs, ci_pred
-         An_loc  = Anet_at_ci(ci)                       ! net assimilation A at this trial Ci
-         !----- Leaf-surface CO2: ambient, less the boundary-layer drawdown by the CO2 flux. ---!
-         cs_surf = ca_ppm
-         if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
-         !----- Stomatal conductance from the chosen model (or the cuticular floor g0). --------!
-         if (force_g0) then
-            gs = f_lwp * p%g0                           ! closed-stomata fallback: gs pinned to g0
-         else if (pin_gs) then
-            gs = gs_pin                                 ! Katul, scaled by the low-psi factor
-         else if (sm == SM_LEUNING) then
-            gs = f_lwp * stomata_gs_leuning(An_loc, cs_surf, gstar_ppm, env%vpd, p%g0, g1_eff, p%d0)
-         else
-            gs = f_lwp * stomata_gs_medlyn(An_loc, cs_surf, env%vpd, p%g0, g1_eff)
-         end if
-         !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so  !
-         !       the CO2 conductance is gs / gsw_2_gsc); residual = trial Ci minus predicted Ci.  !
-         ci_pred = cs_surf - gsw_2_gsc * An_loc / max(gs, tiny_num)
-         r       = ci - ci_pred
-      end function residual_explicit_gs
-
-      !----- Katul optimality residual (no explicit gs). Stomata maximize A - lambda*E; the      !
-      !       first-order condition dA/dCi = lambda * dE/dCi, with CO2 supply                     !
-      !       A = gs/gsw_2_gsc * (Cs - Ci) and water loss E = gs * D (D = VPD/P = ddef),          !
-      !       rearranges to the residual below, whose ROOT is the optimal Ci. PURE (feeds         !
-      !       bisect_root). --------------------------------------------------------------------!
-      pure function residual_optimality(ci) result(r)
-         real(wp), intent(in) :: ci
-         real(wp)             :: r, An_loc, cs_surf, dAn_dci, dci
-         An_loc  = Anet_at_ci(ci)                       ! net assimilation A at this trial Ci
-         !----- Leaf-surface CO2 (ambient less boundary-layer drawdown), as for the gs models. -!
-         cs_surf = ca_ppm
-         if (do_boundary_layer) cs_surf = ca_ppm - gbw_2_gbc * An_loc / env%gb
-         !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB   !
-         !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored).!
-         dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
-         dAn_dci = (Anet_at_ci(ci + dci) - Anet_at_ci(ci - dci)) / (2.0_wp * dci)
-         !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). --!
-         r = dAn_dci * (cs_surf - ci)**2                                                          &
-             - gsw_2_gsc * ddef * lambda_eff * (dAn_dci * (cs_surf - ci) + An_loc)
-      end function residual_optimality
 
       !----- Map the binding gross rate to a limitation flag. ----------------------------!
       pure function pick_limit(Rac, Raj, Rap, An_loc) result(lim)
@@ -504,6 +464,117 @@ contains
       end subroutine fill_flux
 
    end subroutine solve_leaf_gas_exchange
+
+   !----- Gross assimilation and the three raw limitation rates at a trial Ci. ----------------!
+   pure subroutine ci_assimilation_demand(prob, ci, Ag, Ac, Aj, Ap)
+      type(ci_problem_t), intent(in)  :: prob
+      real(wp),           intent(in)  :: ci
+      real(wp),           intent(out) :: Ag, Ac, Aj, Ap
+      if (prob%pathway == PATH_C4) then
+         call assimilation_demand_c4(ci, prob%vcmax, prob%aj_light, prob%kp_eff, prob%colimitation,  &
+                                     prob%theta_cj_c4, prob%theta_ic_c4, Ag, Ac, Aj, Ap)
+      else
+         call assimilation_demand_c3(ci, prob%vcmax, prob%jrate, prob%tpu, prob%gstar, prob%kc,      &
+                                     prob%ko, prob%o2, prob%colimitation, prob%theta_cj_c3,          &
+                                     prob%theta_ip_c3, Ag, Ac, Aj, Ap)
+      end if
+   end subroutine ci_assimilation_demand
+
+   !----- Net assimilation at a trial Ci. -----------------------------------------------------!
+   pure real(wp) function ci_net_assimilation(prob, ci) result(an)
+      type(ci_problem_t), intent(in) :: prob
+      real(wp),           intent(in) :: ci
+      real(wp) :: Ag, Ac, Aj, Ap
+      call ci_assimilation_demand(prob, ci, Ag, Ac, Aj, Ap)
+      an = Ag - prob%rd
+   end function ci_net_assimilation
+
+   !----- The residual whose root is the solved Ci: Katul's optimality condition on its own     !
+   !      pass, and otherwise the CO2 diffusion identity with an explicit conductance. -----------!
+   pure real(wp) function ci_residual(prob, ci) result(r)
+      type(ci_problem_t), intent(in) :: prob
+      real(wp),           intent(in) :: ci
+      if (prob%gs_rule == GS_FROM_MODEL .and. prob%stomatal_model == SM_KATUL) then
+         r = residual_optimality(prob, ci)
+      else
+         r = residual_explicit_gs(prob, ci)
+      end if
+   end function ci_residual
+
+   !----- Explicit-conductance residual for Leuning / Medlyn, the cuticular fallback and the     !
+   !       pinned pass: the trial Ci must satisfy the CO2 diffusion identity Ci = Cs - A / gs_co2, !
+   !       where the current conductance rule supplies gs. Returns Ci - Ci_predicted. ----------!
+   pure real(wp) function residual_explicit_gs(prob, ci) result(r)
+      type(ci_problem_t), intent(in) :: prob
+      real(wp),           intent(in) :: ci
+      real(wp) :: An_loc, cs_surf, gs, ci_pred
+      An_loc  = ci_net_assimilation(prob, ci)            ! net assimilation A at this trial Ci
+      !----- Leaf-surface CO2: ambient, less the boundary-layer drawdown by the CO2 flux. ------!
+      cs_surf = prob%ca
+      if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
+      !----- Stomatal conductance from the current rule. ---------------------------------------!
+      select case (prob%gs_rule)
+      case (GS_CUTICULAR)
+         gs = prob%f_lwp * prob%g0                       ! closed-stomata fallback: gs pinned to g0
+      case (GS_PINNED)
+         gs = prob%gs_pin                                ! Katul, scaled by the low-psi factor
+      case default
+         if (prob%stomatal_model == SM_LEUNING) then
+            gs = prob%f_lwp * stomata_gs_leuning(An_loc, cs_surf, prob%gstar, prob%vpd, prob%g0,       &
+                                                 prob%g1, prob%d0)
+         else
+            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1)
+         end if
+      end select
+      !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so     !
+      !       the CO2 conductance is gs / gsw_2_gsc); residual = trial Ci minus predicted Ci. ---!
+      ci_pred = cs_surf - gsw_2_gsc * An_loc / max(gs, tiny_num)
+      r       = ci - ci_pred
+   end function residual_explicit_gs
+
+   !----- Katul optimality residual (no explicit gs). Stomata maximize A - lambda*E; the         !
+   !       first-order condition dA/dCi = lambda * dE/dCi, with CO2 supply                        !
+   !       A = gs/gsw_2_gsc * (Cs - Ci) and water loss E = gs * D (D = VPD/P), rearranges to the   !
+   !       residual below, whose root is the optimal Ci. ---------------------------------------!
+   pure real(wp) function residual_optimality(prob, ci) result(r)
+      type(ci_problem_t), intent(in) :: prob
+      real(wp),           intent(in) :: ci
+      real(wp) :: An_loc, cs_surf, dAn_dci, dci
+      An_loc  = ci_net_assimilation(prob, ci)            ! net assimilation A at this trial Ci
+      !----- Leaf-surface CO2 (ambient less boundary-layer drawdown), as for the gs models. -----!
+      cs_surf = prob%ca
+      if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
+      !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB      !
+      !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored). --!
+      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+      dAn_dci = (ci_net_assimilation(prob, ci + dci) - ci_net_assimilation(prob, ci - dci))          &
+                / (2.0_wp * dci)
+      !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). ----!
+      r = dAn_dci * (cs_surf - ci)**2                                                              &
+          - gsw_2_gsc * prob%ddef * prob%lambda * (dAn_dci * (cs_surf - ci) + An_loc)
+   end function residual_optimality
+
+   !----- Bisect ci_residual on [lo, hi] to ci_tol_ppm. A same-sign bracket returns the midpoint  !
+   !      with converged = .false., so the caller can change the conductance rule and retry. ----!
+   pure subroutine bisect_ci(prob, lo, hi, ci, converged)
+      type(ci_problem_t), intent(in)  :: prob
+      real(wp),           intent(in)  :: lo, hi
+      real(wp),           intent(out) :: ci
+      logical,            intent(out) :: converged
+      real(wp)    :: a, b, flo, fhi, mid, fmid
+      integer(ik) :: it
+      a = lo ; b = hi
+      flo = ci_residual(prob, a) ; fhi = ci_residual(prob, b)
+      converged = .false. ; ci = 0.5_wp * (a + b)
+      if (flo * fhi <= 0.0_wp) then
+         do it = 1_ik, max_iter
+            mid = 0.5_wp * (a + b) ; fmid = ci_residual(prob, mid)
+            if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
+            if (b - a < ci_tol_ppm) exit
+         end do
+         ci = 0.5_wp * (a + b) ; converged = (b - a < ci_tol_ppm)
+      end if
+   end subroutine bisect_ci
 
    !---------------------------------------------------------------------------------------!
    ! leaf_gas_exchange_batch -- BARE-ARRAY entry point over n leaves (MEDS_NUMERICS_SCOPING.md    !

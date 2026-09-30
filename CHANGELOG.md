@@ -14,6 +14,260 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **Forcing files are written in one contiguous block per variable, and read about 3 s faster**
+  (MEDS_EFFICIENCY_SWEEP_PLAN.md, item N-1). The shared writer made the time dimension unlimited
+  and took netCDF's default chunking: one record per chunk. The model reads a site's whole series at
+  open, chunk by chunk, so the BCI file (90,528 records) took about 3.3 s of every run's start-up,
+  most of a 10-day calibration trial's 8.5 s.
+  - **The writer** gives the time dimension a fixed length, so each variable is stored contiguously.
+    Rewritten this way, the BCI file shrinks from 63 MB to 4.2 MB, a 2-day run starts 3.1–3.4 s
+    sooner, and every output variable is bit-identical.
+  - **`met_open` prints a note** when a forcing file stores one time record per chunk, saying why
+    it is slow and giving the `nccopy -c time/8760,grid/1` line that rewrites it with the same
+    values. Files written before this change can be rewritten that way, or rebuilt.
+  - **One script, not a folder.** `scripts/forcing_common/meds_forcing_file.py` becomes
+    `scripts/meds_forcing_file.py`, the writer only, shared by `prepare_era5/make_forcing_file.py`
+    and the flux-tower tool. The tower tool's Python copies of the model's conversions (humidity,
+    pressure, solar geometry, the longwave synthesis) move to
+    `scripts/prepare_flux_tower/tower_conversions.py`.
+  - **Tests:** the flux-tower tool's 25 tests and the calibration smoke test pass unchanged.
+
+- **The plant-hydraulics work counters include the corrector's solves** (plan item N-2). ARK
+  re-solves the plant hydraulics on every step attempt, rejected ones included (the transpiration
+  corrector in `advance_water_mass_full`), but that solve's sub-step and non-convergence counts were
+  thrown away, so `work_hydro_nsub_site` and `work_nonconv_site` counted only the pre-pass solve. They
+  now count both. On the established Ithaca stand in July `work_hydro_nsub_site` goes from 679 to
+  2,460 sub-steps a day: about 2.4 step attempts per `dt_fast`, each re-solving every cohort.
+  `work_hydro_thrash_site` still tests the pre-pass solve, and the physics is unchanged.
+
+- **Leaf water potential converges at `dt_fast` = 900 s, and the documentation says so** (#162, plan
+  item N-3). Four places still quoted the figure measured the day before the transpiration corrector
+  (#91): "daytime mean −0.23 MPa at 12.5 s against −1.19 MPa at 900 s, not converged".
+  - **Re-measured** on the established Ithaca stand over July at 12.5, 75 and 900 s: daily-mean leaf
+    water potential at 900 s matches 12.5 s to within 0.001 MPa on every day after the first, each
+    cohort's daily maximum to 0.008 MPa, and July GPP and ET to 0.1%. The first day after a restart
+    carries a start-up transient (−1.83 against −0.28 MPa).
+  - **Corrected:** `numerical_scheme.md` §5a, §6 and §7, the `dt_fast > 900 s` warning and the
+    comments in `meds_config`, `examples/example_biophysics/meds_config_july.toml`, and ROADMAP §4.
+    The capacity-limb table and the RK45 warning keep their figures, now labelled as measured before
+    the corrector: that limb's table has not been re-measured, and RK45 has no corrector.
+  - **ROADMAP §4–§5** mark #158, #159 and #167 closed, to revisit with the numerical scheme, and #104
+    as planned (`MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3).
+  - **Removed:** `TISSUE_STORE_SCALE`, a source switch fixed at 1 whose banner still explained why the
+    tissue heat store was "not on yet". The store is simply always on; outputs are bit-identical.
+
+- **The fast loop's parameters are no longer copied into the frozen record every step** (#188).
+  `column_frozen_t` carried `column_params_t`, a copy of the column's soil, thermal and hydraulics
+  parameters taken from `column_config_t` once per `dt_fast` and patch: about 3.5 KB of fixed data
+  plus a heap copy of the per-PFT hydraulics table (n_pft × 4.2 KB). The routines that read it
+  (`column_be_stage`, `advance_water_mass_full`, `column_derivs`, both marches and both steps, the
+  RK4 oracle) now take `col_config` beside the frozen record, the two clamps take it in its place,
+  and `column_params_t` is gone. The frozen record now holds only what freezes each step.
+  Bit-identical on every r1 case.
+
+- **The fast-loop state's fields are listed once** (#146). Each of the seven state combinators
+  (`state_init`, `state_axpy`, `state_accum`, `state_extrap`, `state_sub`, `state_err_diff`,
+  `zero_like`) and the step-size error norm named every field of `column_state_t` itself, so adding a
+  field meant finding and editing eight routines by hand. Now `state_to_array`, `array_to_state` and
+  `tend_to_array` list the fields once, `state_entry_rules` says how each field enters the error norm
+  and the embedded error, and the combinators work on the flat array. The combinators fill their
+  output in place instead of allocating a new state.
+  - **Outputs move at rounding level** (the sums are evaluated in a different order): at most 2e-9
+    relative on the r1 cases' fluxes.
+  - **Test:** `state_combinators` checks the round trip through the flat array and the rule counts.
+
+- **The ARK march reuses its storage from step to step** (#195). Every ARK step allocated its three
+  stage states, their surface tendencies and the march's trial states afresh, and each stage then
+  copied its tendencies to the caller. Each thread now keeps one `ark_workspace_t` (in the patch
+  loop's per-thread pool), and the stages, `column_be_stage` and `surface_derivs` fill it in place;
+  its arrays are allocated again only when a thread moves to a patch with a different number of
+  cohorts.
+  - **Allocations:** 287 per patch-step before, 104 after (Ithaca, 14 cohorts, serial build; 304
+    before #146). The allocator's share of a serial BCI run falls from 14.9% to 7.7% of CPU time.
+  - **Timings**, 60 days of the BCI example, the second of two runs on an idle `R128C40` node: 1
+    thread 25.9 → 23.7 s, 4 threads 14.6 → 13.6 s; 8 and 16 threads unchanged (11.5 s, mostly the
+    serial start-up).
+  - **Not reused:** the frozen record (about 50 of the remaining 104 allocations, 4% of the serial
+    fast loop) is still built afresh each step. It relies on a new record's defaults for its
+    scalars, and reusing it would need a reset that lists them all.
+  - Outputs are bit-identical on every r1 case.
+
+- **The canopy radiation lists the cohorts bottom-up without sorting them** (plan item N-4).
+  `apply_rt_forcing` ordered the cohorts by height with a selection sort every sub-step (cost ∝
+  cohorts²), although the cohort block is kept tallest first; the canopy aerodynamics already took
+  the reverse in O(n) and kept the sort as a fallback. Both now call one routine,
+  `ascending_order` (`meds_numerics`): the reverse when the heights do not increase, the sort
+  otherwise, with the same order on ties. Bit-identical on every r1 case; no measurable change at
+  BCI. **Test:** `numerics` checks both paths and the tie rule.
+
+- **A tissue's pressure-volume traits travel as one record, and the storage curves have their own
+  module** (plan Phase 3, step 2). About a dozen calls passed `water_content`, `capacitance` and
+  `psi_from_water_content` the same four loose traits (π₀, ε, apoplastic fraction, saturated water)
+  plus the biomass.
+  - **The record.** `water_curve_t` holds the four traits, and `hydro_params_t` carries one per
+    tissue (`leaf_curve`, `wood_curve`) instead of eight loose fields. The curve routines and
+    `clamp_water_to_capacity` take the record and the biomass.
+  - **The module split.** `meds_hydr_lib` held four jobs. The storage curves, tissue and soil
+    (with the soil conductivity that follows from the retention curve), move to
+    `shared/functions/meds_water_retention.f90`. The vulnerability curve, the Kirchhoff flux, its
+    lookup table and the root profile stay in `meds_hydr_lib`.
+  - **Removed:** `pv_water_cap_from_traits`, which nothing called.
+  - Bit-identical on every r1 case. The science pages' code maps now name the new module, and a
+    stale row that still pointed at `gauss_legendre_7` and `bisect_root` (deleted in #325) is fixed.
+
+- **A region's polygons run side by side on threads** (#183 R3, #310 R4 and R5; plan Phase 5).
+  `[run].n_threads` now means polygon threads in a region run, where it had to be 1. Each month's
+  polygons run in one OpenMP loop, costliest (by last month's time) first, each with a
+  single-threaded patch loop; the forcing load before the month and the output after it stay on one
+  thread. A polygon's patch-loop thread count is set by `polygon_prepare` (the fast context's new
+  `patch_threads`), not read from the config, so a site run keeps threading its patches.
+  - **Timings**, the 100 cells of a 1° box around Ithaca, one year, each run alone on an idle
+    `R128C40` node: 1 thread 785 s (v0.3.1: 1,012 s), 10 threads 131 s, 20 threads 92 s, 40 threads
+    81 s. The one detail polygon costs about four times an ordinary one (29 s a year, for its hourly
+    site files and per-cohort diagnostics), so on 40 threads it sets each month's pace: without it
+    the run takes 53 s, and with no output at all 51 s. The region's own files cost about 2 s.
+  - **The same results at any thread count:** all 403 files of that run are identical at 1, 10, 20
+    and 40 threads, and `test_region` now runs its region on four threads against the site runs.
+  - **A failed polygon no longer stops the month** (R4). It is reported and stops; the others
+    finish the month, its output is written, and the region moves on. Before, the month was left
+    unfinished, and a caller that went on stepped the earlier polygons through it again.
+  - **A month's steps are listed once** (R5), instead of once for a forcing check and again for the
+    polygons. The region's write-only step counters are gone (R12).
+
+- **One output set-up, and one call into the stepper** (#310 R2, R6, R9, R11). Bit-identical on
+  every r1 case.
+  - **R2.** The six-call sequence that lays out an output file set was written three times (the
+    site run, the region's files, a detail polygon's files). It is now `open_output_files`, and
+    each polygon joins a set with `attach_output`. Both sit beside `polygon_prepare`, with
+    `apply_io_overrides` and `ensure_output_dir`, which the region no longer borrows from the site
+    driver.
+  - **R11.** `activate_site_diag` adds to what a site already accumulates, so a detail polygon keeps
+    the blocks both of its file sets need, not only the last one's.
+  - **R6.** `advance_one_step` hands every optional argument on instead of branching on which are
+    present (six calls down to three), and the polygon's step makes one call instead of two. The
+    branch that dropped the latitude is gone. `advance_slow_dynamics` takes the step's start and
+    reads its day of year itself.
+  - **R9.** The polygon carries its location; the forcing cursor and the leaf phenology read it
+    from there, not from the cursor.
+
+- **One serializer for site and region files** (#312 O7, O8). The region writer was a copy of the
+  site writer, about 130 lines: the dimensions, the calendar and axis coordinates, the variable
+  definitions and the record writer. One `write_record` now writes every file set. A site's (or a
+  detail polygon's) set has one polygon's buffers and no polygon axis; a region's has every
+  polygon's, packed into one hyperslab per variable.
+  - **The entry points.** The manager's four entry points become two, `output_serialize` and
+    `output_close`, which take the file set whole instead of nine of its fields. A site run and a
+    detail polygon hold their buffers as an array of one, as a region already did.
+  - **What a reader sees is unchanged.** A site file now writes the fill value into the slab
+    entries past a record's live length, where it used to leave them unwritten; netCDF returned
+    the fill value for them either way.
+  - Every r1 case and `test_region`'s region-against-site comparison are bit-identical.
+
+- **Small consolidations and checks** (#312 O10, O12; #311 F9, F11, F12):
+  - **O10.** `validate_config` refuses an `[output].fast_interval_steps` that does not divide the
+    fast steps in a slow step, so no fast-tier window straddles two slow steps (the stand can be
+    restructured between them). Every shipped config uses 4 or 24 of 96.
+  - **O12.** `apply_patch_disturbance` no longer grows the patch diagnostic block a second time:
+    `patch_ensure_capacity` already grows it with the patch arrays.
+  - **F9.** Deleted `wind_log_profile`, which nothing has called since #305, with its three test
+    checks, and `forcing_config_t%rad_sw_ground_const`, which nothing read.
+  - **F11.** The ED_ERA5land reader refuses a month file whose `_FillValue` is a number: it
+    recognises a missing value only as NaN, so such a number would have been read as data. The
+    archive stores NaN. **Test:** `met_era5land` writes a month declaring `_FillValue = -9999`.
+  - **F12.** `docs/science/forcing.md` says that a run cannot start in the archive's first month:
+    its first step reads the 00:00 record, which lives in the previous month's file.
+
+- **The forcing reader's names and literals, each in one place** (#311 F7, F8). Bit-identical on
+  every r1 case.
+  - **F7.** The archive's hourly spacing is one constant, `ARCHIVE_DT_SEC`, where it was a literal
+    in five places and a sixth encoding (24 records a day). The two hand-written "seconds since"
+    parsers are one, `time_units_base` in `meds_time`.
+  - **F8.** The 15 fields a MEDS forcing file may carry are listed once (`MEDS_FIELD`, with named
+    indices). `met_open` finds each field's column once, where the reader used to match names as
+    strings for every field of every record, and one `series_value` replaces `read_scalar` and
+    `read_scalar_default`. When the forcing bracket slides by one record, as it does once an hour,
+    its old upper record becomes the new lower one instead of being read again.
+
+- **`output.strict_caps` is gone, and a run stops at the step it outgrows a cap** (#312 O9).
+  `strict_caps` promised a warn-and-truncate mode that was never built, so it parsed and did
+  nothing; a config that sets it is now refused, naming what to do. Nothing checked
+  `cohort_max` or `patch_max` until a record was written, up to a month late, while the fast tier's
+  per-cohort slabs, `cohort_max` long, were written by site slot every sub-step. A run now stops at
+  the step its live cohort or patch count exceeds the cap of an axis some live variable uses (or,
+  for the fast tier, the cohort cap), with a message naming the cap. Removed from the shipped
+  configs; bit-identical on every r1 case. **Test:** `test_region` checks the refusal.
+
+### Fixed
+
+- **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
+  their contained functions to another routine: `flux_potential` passed its Kirchhoff integrand to the
+  quadrature, and `solve_leaf_gas_exchange` passed its Ci residuals to the bisection. Under ifx each
+  such call allocates a lock-guarded record, and at 8 threads those allocations took 83% of all CPU
+  time (232 of 280 CPU-seconds on 60 days of the BCI example).
+  - **What changed.** The quadrature is a written-out 7-point sum (`kirchhoff_integral`). The leaf
+    solver's residuals are module functions that take the leaf's problem as one explicit record
+    (`ci_problem_t`), with a bisection written for it; one field (`gs_rule`) replaces the two flags
+    that chose between the model, cuticular and pinned conductance passes. `bisect_root`,
+    `gauss_legendre_7` and `phi_inverse` are deleted: nothing else used them.
+  - **Timings**, the BCI example, each run alone on an idle `R128C40` node, the second of two runs:
+
+    | `n_threads` | 60 days, v0.3.1 | 60 days, now | five years, now |
+    |---|---|---|---|
+    | 1 | 29.3 s | 25.5 s | 6 min 43 s |
+    | 4 | 21.9 s | 15.1 s | 2 min 23 s (v0.3.1: 5 min 26 s) |
+    | 8 | 40.9 s | 12.3 s | 1 min 36 s |
+    | 16 | 54.4 s | 12.1 s | 1 min 25 s |
+
+    Sixty days is mostly the serial start-up (about 8 s), and a site run gains little past its
+    patch count (BCI keeps 14–25 patches).
+  - **Outputs move at rounding level**, from the changed code generation: on the r1 cases the ARK
+    fluxes differ by at most 2e-9 relative over a month (hourly H by 1e-8 W m⁻²); the stage-clamp
+    counter `work_clamp_stage_site` flips by up to 14% because it counts threshold crossings. RK45
+    amplifies the same first-day difference (9e-11 W m⁻²) to a few W m⁻² of hourly H within a week.
+  - **Guard:** a new ctest, `no_procedure_arguments`, fails if any `procedure(...)` declaration
+    appears under `src/`. `plant_hydraulics` now checks the quadrature against a composite-Simpson
+    reference and the closed form, instead of through `phi_inverse`.
+- **A discarded RK45 step no longer stops a debug run on its budget check** (#189, item 3). Under
+  `[energy].debug_error`, `column_fast_step_rk45` stopped the run on a whole-column ledger breach
+  before `column_fast_step` decided whether to keep the step or redo it on ARK, so a step about to be
+  thrown away could end the run. The step now records its checks without stopping, and the
+  dispatcher stops (`rk45_ledgers_stop`) only for a step it keeps. The failure counts were already
+  right, because a rescued step's budget is rolled back. Outputs are unchanged. **Test:** `numerics`
+  checks the new `last_check_closed` on a breached and a closed check.
+- **The daily tissue-water reconcile uses each PFT's own curve** (plan item N-7, found during Phase
+  3). `reconcile_tissue_water_capacity`, which seeds an empty leaf or wood store at the starting
+  potential and caps a store above saturation, read the shared `[hydraulics]` traits, while the
+  fast loop reads the same water back on the PFT's own curve (`[pft]` overrides, #179). A PFT with
+  its own saturated water or pressure-volume traits was therefore seeded off its curve and capped at
+  the wrong ceiling. It now takes the per-PFT hydraulics table. No shipped configuration overrides
+  these traits per PFT, so every r1 case is bit-identical. **Test:** `pft_optics_config` seeds and
+  caps a PFT whose saturated leaf water differs from the shared value.
+- **A slow-only run no longer reports stale values for fast-loop diagnostics** (found while
+  merging the serializers). With `fast_biophysics_on = false` the per-cohort and per-patch
+  diagnostic blocks hold no entries, so their readers left the caller's array unset, and the
+  site-level reduction then read whatever the previous variable had put there. On r1's
+  `demography_30yr`, `soil_temp_top_site` read the canopy-air depth, a "5 K" soil temperature, and
+  `w_surface_site` read 0 only by chance. A slot the block holds no entry for now reads 0, as one
+  with no weight already did. #299 remains: those variables should read as missing in a slow-only
+  run, and the slow operators' own rows should report their values.
+- **A slow-only run reports its slow rates, and reads fast-loop variables as missing** (#299). With
+  `fast_biophysics_on = false`:
+  - **Fast-loop variables.** 39 of them (the fluxes, canopy air, ground, forcing echo) read 0 on
+    r1's `demography_30yr`, a value nothing computed. They now read as `_FillValue`. The
+    per-cohort fast block and the polygon block stay off in such a run; the patch block reports
+    only the slow operators' rows (`patch_diag_slow_row`). A variable the run does not simulate is
+    caught once, before extraction, and the accumulator skips a missing sample, so a window closes
+    as exactly the fill value. Averaging the fill over patches used to give a number just off it.
+  - **Slow rows.** The slow step already weighted the patch block by `dt_slow`, but only the fast
+    loop set the block's patch count, so the slow rows were unreadable until a disturbance set it.
+    The step now sets it too: `nplant_recruit_site` reports its first year (0.03 plant/m²/yr
+    instead of 0). The disturbed area (0.0139/yr), background and disturbance mortality carbon
+    were already reported.
+  - **Litterfall** stays 0 in a run with soil carbon off, which does not accumulate litter.
+  - **Test:** `slow_diag_units` checks the slow-only weight, patch count and recruitment rate.
+
 ## [0.3.1] — 2026-09-29
 
 A **flux-tower** release. MEDS now runs from a tower's own meteorology, starts from a forest census,

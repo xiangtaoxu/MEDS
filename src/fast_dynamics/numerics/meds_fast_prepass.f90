@@ -22,7 +22,7 @@ module meds_fast_prepass
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
-   use meds_hydr_lib,         only : soil_psi_from_theta, psi_from_water_content
+   use meds_water_retention,  only : soil_psi_from_theta, psi_from_water_content
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
@@ -40,7 +40,7 @@ module meds_fast_prepass
    use meds_soil_biogeochem,  only : heterotrophic_respiration_matrix, &
                                      assemble_env_scalar, assemble_transfer_matrix
    use meds_therm_lib,        only : cas_molar_density, cas_temp_of_enthalpy, sat_vapor_pressure
-   use meds_numerics,         only : weighted_mean
+   use meds_numerics,         only : weighted_mean, ascending_order
    implicit none
    private
 
@@ -226,11 +226,8 @@ contains
          par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i),                          &
-              hyd_table%pft(col_cohort%pft(i))%leaf_pi0,                                                 &
-              hyd_table%pft(col_cohort%pft(i))%leaf_elastic_mod,                                         &
-              hyd_table%pft(col_cohort%pft(i))%leaf_apoplast_frac,                                       &
-              hyd_table%pft(col_cohort%pft(i))%leaf_water_sat, col_cohort%bleaf(i))
+         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hyd_table%pft(col_cohort%pft(i))%leaf_curve, &
+               col_cohort%bleaf(i))
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
                     soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))
@@ -405,17 +402,8 @@ contains
    ! and leaf/wood conductance outputs are scattered back to gather order. Identity for n<=1, so     !
    ! single-cohort behaviour is bit-unchanged.                                                       !
    !                                                                                                 !
-   ! ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM. This used to be an   !
-   ! O(n^2) selection sort -- the ONLY superlinear term in the whole fast loop (0.97 s at n = 2000,  !
-   ! 16.5 s at n = 8000 over a 6-day run) -- and it is REDUNDANT in the normal case: sort_cohorts    !
-   ! leaves the cohort block height-DESCENDING and the gather preserves that order, so bottom-to-top !
-   ! is simply the reverse, ord(k) = n-k+1. Detect that in O(n) and take the reverse; fall back to   !
-   ! the sort otherwise, because unit tests construct cohorts in arbitrary order.                    !
-   !                                                                                                 !
-   ! TIE-BREAK, and why the two branches agree exactly: the sort's `<=` keeps the LAST index         !
-   ! achieving the running minimum, so among equal heights it emits the largest index first. In a   !
-   ! descending array equal heights are consecutive and the largest remaining index is always       !
-   ! minimal, so the reverse produces the identical permutation -- ties included.                    !
+   ! ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM (ascending_order,     !
+   ! which is O(n) on the tallest-first cohort block).                                               !
    !---------------------------------------------------------------------------------------!
    subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, crown, leaf_width, branch_diam,    &
                                  leaf_temp, wood_temp, aero)
@@ -433,31 +421,16 @@ contains
       !      wood-air temperature difference, and wood lags the leaves by its larger heat capacity. -!
       real(wp),              intent(in)    :: wood_temp(:)    !< [K]  wood temperature
       type(aero_out_t),      intent(inout) :: aero
-      integer(ik) :: ord(n), k, j, imin
-      real(wp)    :: hmin
-      logical     :: used(n), descending
+      integer(ik) :: ord(n), k, i
       real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
       real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
 
-      descending = .true.
-      do j = 1_ik, n - 1_ik
-         if (height(j) < height(j+1_ik)) then ; descending = .false. ; exit ; end if
-      end do
-
-      used = .false.
+      call ascending_order(height, n, ord)
       do k = 1_ik, n
-         if (descending) then
-            imin = n - k + 1_ik                                  ! O(n) fast path
-         else
-            imin = 0_ik ; hmin = huge(1.0_wp)                    ! O(n^2) fallback (unsorted input)
-            do j = 1_ik, n
-               if (.not. used(j) .and. height(j) <= hmin) then ; hmin = height(j) ; imin = j ; end if
-            end do
-         end if
-         ord(k)    = imin ; used(imin) = .true.
-         h_bt(k)   = height(imin)     ; lai_bt(k) = lai(imin)
-         cr_bt(k)  = crown(imin)      ; lt_bt(k)  = leaf_temp(imin) ; wt_bt(k) = wood_temp(imin)
-         lw_bt(k)  = leaf_width(imin) ; bd_bt(k)  = branch_diam(imin)
+         i = ord(k)
+         h_bt(k)   = height(i)     ; lai_bt(k) = lai(i)
+         cr_bt(k)  = crown(i)      ; lt_bt(k)  = leaf_temp(i) ; wt_bt(k) = wood_temp(i)
+         lw_bt(k)  = leaf_width(i) ; bd_bt(k)  = branch_diam(i)
       end do
 
       call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)

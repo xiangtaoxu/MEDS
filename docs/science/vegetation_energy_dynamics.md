@@ -69,8 +69,8 @@ temperature. Nothing switches; the physics chooses, per cohort, every step, cont
 
 ### The store is ON, and how its capacity is sized
 
-`TISSUE_STORE_SCALE = 1` (`meds_fast_ark`). The capacity splits its two halves across **different**
-masses, which is a physical distinction and not a detail:
+The store is always on (`build_column_frozen` in `meds_fast_frozen`). The capacity splits its two
+halves across **different** masses, which is a physical distinction and not a detail:
 
 - **dry tissue → ALL the wood.** Heartwood is dead structure but still stores sensible heat, and a
   sapwood fraction defined on the bole under-counts branch wood, which is thin enough to be thermally

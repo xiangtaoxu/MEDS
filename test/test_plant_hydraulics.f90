@@ -19,11 +19,10 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head
-   use meds_hydr_lib,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
-                                     capacitance, plc_retained, flux_potential, kirchhoff_edge,       &
-                                     hydro_table_t, build_hydro_table, flux_potential_lin,            &
-                                     kirchhoff_edge_tab, phi_inverse, psi_from_water_content,          &
-                                     clamp_water_to_capacity
+   use meds_hydr_lib,      only : plc_retained, flux_potential, kirchhoff_edge, hydro_table_t, build_hydro_table, &
+                                  flux_potential_lin, kirchhoff_edge_tab
+   use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
+                                    psi_from_water_content, clamp_water_to_capacity, water_curve_t
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 HYDRO_SUBSTEP_FIXED, HYDRO_COND_SEGMENT
    use meds_plant_hydraulics, only : solve_plant_water
@@ -33,7 +32,7 @@ program test_plant_hydraulics
 
    call test_pv_curve()
    call test_kirchhoff_edge()
-   call test_phi_inverse()
+   call test_kirchhoff_quadrature()
    call test_hydro_table()
    call test_no_flow_equilibrium()
    call test_steady_ohm()
@@ -59,8 +58,8 @@ contains
       type(hydro_params_t), intent(out) :: p
       type(hydro_env_t),    intent(out) :: env
       type(hydro_opts_t),   intent(out) :: o
-      p%leaf_pi0 = -1.5_wp ; p%leaf_elastic_mod = 12.0_wp ; p%leaf_apoplast_frac = 0.30_wp ; p%leaf_water_sat = 2.0_wp
-      p%wood_pi0 = -1.0_wp ; p%wood_elastic_mod =  8.0_wp ; p%wood_apoplast_frac = 0.20_wp ; p%wood_water_sat = 1.0_wp
+      p%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
+      p%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
       p%k_plant_max = 6.0e-4_wp ; p%wood_kmax = 8.0_wp ; p%vessel_curl = 1.5_wp
       env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
@@ -72,6 +71,7 @@ contains
    !=======================================================================================!
    subroutine test_pv_curve()
       real(wp), parameter :: pi0 = -1.5_wp, eps = 12.0_wp, af = 0.3_wp, ws = 2.0_wp, bm = 0.5_wp
+      type(water_curve_t), parameter :: curve = water_curve_t(pi0, eps, af, ws)
       real(wp) :: psi_tlp, r, psi, cnum, cana, dp, w1, w2
       print '(a)', '-- PV curve --'
       !----- Turgor loss point (Bartlett eqn 1). --------------------------------------!
@@ -86,14 +86,14 @@ contains
       psi = psi_from_rwc(r, pi0, eps)
       call check('rwc round-trip (flaccid)', rwc_from_psi(psi, pi0, eps), r, 1.0e-9_wp)
       !----- Full-turgor water = saturated water. -------------------------------------!
-      call check('W(psi=0) = water_sat*biomass', water_content(0.0_wp, pi0, eps, af, ws, bm),  &
+      call check('W(psi=0) = water_sat*biomass', water_content(0.0_wp, curve, bm),  &
                  ws*bm, 1.0e-9_wp)
       !----- Capacitance = finite-difference dW/dpsi. ---------------------------------!
       psi  = -0.8_wp ; dp = 1.0e-5_wp
-      w1   = water_content(psi - dp, pi0, eps, af, ws, bm)
-      w2   = water_content(psi + dp, pi0, eps, af, ws, bm)
+      w1   = water_content(psi - dp, curve, bm)
+      w2   = water_content(psi + dp, curve, bm)
       cnum = (w2 - w1)/(2.0_wp*dp)
-      cana = capacitance(psi, pi0, eps, af, ws, bm)
+      cana = capacitance(psi, curve, bm)
       call check('C(psi) ~ dW/dpsi (turgid)', cana, cnum, 1.0e-6_wp)
    end subroutine test_pv_curve
 
@@ -119,17 +119,37 @@ contains
    end subroutine test_kirchhoff_edge
 
    !=======================================================================================!
-   ! phi_inverse (now via meds_numerics%bisect_root) recovers psi from Phi(psi), on both the     !
-   ! closed-form (kexp=2) and quadrature (kexp=3, gauss_legendre_7) branches of flux_potential.   !
+   ! flux_potential's general-exponent branch (kexp not 1 or 2, a 7-point quadrature) matches a   !
+   ! fine composite-Simpson reference of the same integral, and at kexp = 2 the same quadrature    !
+   ! reproduces the closed form atan(r) it would otherwise replace.                                !
    !=======================================================================================!
-   subroutine test_phi_inverse()
-      real(wp) :: psi, phi
-      print '(a)', '-- phi_inverse round-trip --'
-      psi = -1.3_wp ; phi = flux_potential(psi, -2.0_wp, 3.0_wp)      ! kexp=3 quadrature branch
-      call check('phi_inverse recovers psi (kexp=3)', phi_inverse(phi, -2.0_wp, 3.0_wp, -8.0_wp), psi, 1.0e-6_wp)
-      psi = -0.7_wp ; phi = flux_potential(psi, -2.0_wp, 2.0_wp)      ! kexp=2 closed-form branch
-      call check('phi_inverse recovers psi (kexp=2)', phi_inverse(phi, -2.0_wp, 2.0_wp, -8.0_wp), psi, 1.0e-6_wp)
-   end subroutine test_phi_inverse
+   subroutine test_kirchhoff_quadrature()
+      real(wp), parameter :: psi50 = -2.0_wp
+      real(wp) :: psi, r, ref
+      print '(a)', '-- Kirchhoff potential quadrature --'
+      psi = -1.3_wp ; r = psi / psi50
+      ref = psi50 * simpson_reference(r, 3.0_wp)
+      call check('quadrature matches the Simpson reference (kexp=3)', flux_potential(psi, psi50, 3.0_wp), &
+                 ref, 1.0e-6_wp)
+      psi = -0.7_wp ; r = psi / psi50
+      call check('quadrature branch at kexp~2 reproduces atan (closed form)',                         &
+                 flux_potential(psi, psi50, 2.0_wp + 2.0e-9_wp), psi50 * atan(r), 1.0e-6_wp)
+   end subroutine test_kirchhoff_quadrature
+
+   !----- integral_0^r du/(1+u^kexp) by composite Simpson on 2000 intervals: the reference. ---!
+   pure real(wp) function simpson_reference(r, kexp) result(g)
+      real(wp), intent(in) :: r, kexp
+      integer(ik), parameter :: nint = 2000_ik
+      real(wp)    :: h, u
+      integer(ik) :: k
+      h = r / real(nint, wp)
+      g = 1.0_wp + 1.0_wp / (1.0_wp + r**kexp)
+      do k = 1_ik, nint - 1_ik
+         u = real(k, wp) * h
+         g = g + merge(4.0_wp, 2.0_wp, mod(k, 2_ik) == 1_ik) / (1.0_wp + u**kexp)
+      end do
+      g = g * h / 3.0_wp
+   end function simpson_reference
 
    !=======================================================================================!
    ! The precomputed lookup table (build_hydro_table + flux_potential_lin) reproduces the      !
@@ -256,8 +276,8 @@ contains
       bwood = env%bsap + env%broot
       psiL  = psiL0 ; psiW = psiW0
       do i = 1_ik, nstep
-         cL   = capacitance(psiL, p%leaf_pi0, p%leaf_elastic_mod, p%leaf_apoplast_frac, p%leaf_water_sat, env%bleaf)
-         cW   = capacitance(psiW, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, p%wood_water_sat, bwood)
+         cL = capacitance(psiL, p%leaf_curve, env%bleaf)
+         cW = capacitance(psiW, p%wood_curve, bwood)
          keff = kirchhoff_edge(psiW, psiL, kc, p%wood_psi50, p%wood_kexp)
          dL   = (keff*(psiW - psiL - g) - env%transp)/cL
          dW   = (keff*(psiL - psiW + g) + env%rhizo_cond*(env%soil_psi - psiW))/cW
@@ -437,9 +457,8 @@ contains
       print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
       call defaults(p, env0, o)
       bwood0    = env0%bsap + env0%broot
-      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_pi0, p%wood_elastic_mod)
-      w0        = water_content(psi_wood0, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac,   &
-                                p%wood_water_sat, bwood0)
+      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
+      w0 = water_content(psi_wood0, p%wood_curve, bwood0)
 
       !----- "Small daily growth": wood biomass grows 5%, water mass carried forward UNCHANGED     !
       !      (no seam code touches it -- this is the mass-conservation premise itself). -----------!
@@ -447,8 +466,7 @@ contains
       env1%bsap  = env0%bsap  * 1.05_wp
       env1%broot = env0%broot * 1.05_wp
       bwood1     = env1%bsap + env1%broot
-      psi_wood1  = psi_from_water_content(w0, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, &
-                                          p%wood_water_sat, bwood1)
+      psi_wood1 = psi_from_water_content(w0, p%wood_curve, bwood1)
       call check_true('growth at conserved mass lowers psi_wood (drier)', psi_wood1 < psi_wood0)
 
       !----- Feed each psi_wood as the initial condition for an otherwise-identical fast step      !
@@ -467,18 +485,19 @@ contains
    ! exceed the current capacity after biomass SHRINKS (e.g. the phenology dormant-canopy leaf       !
    ! snap-to-bare), never after it grows. clamp_water_to_capacity must be an exact no-op on growth,   !
    ! must cap exactly at the new ceiling on a shrink, and must reduce a fully-bare tissue to exactly  !
-   ! 0 (no NaN/negative) -- see meds_hydr_lib.f90.                                                     !
+   ! 0 (no NaN/negative) -- see meds_water_retention.f90.                                              !
    !=======================================================================================!
    subroutine test_seam_capacity_clamp()
       real(wp), parameter :: pi0 = -1.0_wp, eps = 8.0_wp, af = 0.20_wp, ws = 1.0_wp
+      type(water_curve_t), parameter :: curve = water_curve_t(pi0, eps, af, ws)
       real(wp) :: biomass0, biomass_shrunk, biomass_grown, w0, ceiling_shrunk, w_capped
       print '(a)', '-- Biomass fast/slow seam (P3): saturation-ceiling clamp --'
       biomass0 = 7.0_wp
-      w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), pi0, eps, af, ws, biomass0)   ! near-saturated
+      w0 = water_content(psi_from_rwc(0.97_wp, pi0, eps), curve, biomass0)   ! near-saturated
 
       !----- (a) GROWING biomass: the clamp must be a strict no-op. ---------------------------!
       biomass_grown = biomass0 * 1.05_wp
-      call check('clamp is a no-op when biomass grows', clamp_water_to_capacity(w0, ws, biomass_grown), &
+      call check('clamp is a no-op when biomass grows', clamp_water_to_capacity(w0, curve, biomass_grown), &
                  w0, 1.0e-12_wp)
 
       !----- (b) SHRINKING biomass (a snap-to-bare-like 10x drop): the carried-forward mass would   !
@@ -486,17 +505,17 @@ contains
       biomass_shrunk = biomass0 * 0.10_wp
       ceiling_shrunk = ws * biomass_shrunk
       call check_true('unclamped carried-forward mass would exceed the new ceiling', w0 > ceiling_shrunk)
-      w_capped = clamp_water_to_capacity(w0, ws, biomass_shrunk)
+      w_capped = clamp_water_to_capacity(w0, curve, biomass_shrunk)
       call check('clamp caps mass exactly at the new ceiling', w_capped, ceiling_shrunk, 1.0e-12_wp)
       call check_true('released excess is non-negative', (w0 - w_capped) >= 0.0_wp)
       !----- The clamped mass reads back at exactly rwc=1 (sane, bounded), not the pathological     !
       !      super-turgid extrapolation the unclamped mass would imply. ----------------------------!
       call check('clamped mass diagnoses psi at exactly rwc=1',                                      &
-                 psi_from_water_content(w_capped, pi0, eps, af, ws, biomass_shrunk),                  &
+                 psi_from_water_content(w_capped, curve, biomass_shrunk),                  &
                  psi_from_rwc(1.0_wp, pi0, eps), 1.0e-9_wp)
 
       !----- (c) Full snap-to-bare (biomass -> 0): clamps to exactly 0, not NaN/negative. ----------!
-      w_capped = clamp_water_to_capacity(w0, ws, 0.0_wp)
+      w_capped = clamp_water_to_capacity(w0, curve, 0.0_wp)
       call check('fully-bare tissue clamps to exactly 0', w_capped, 0.0_wp, 0.0_wp)
    end subroutine test_seam_capacity_clamp
 

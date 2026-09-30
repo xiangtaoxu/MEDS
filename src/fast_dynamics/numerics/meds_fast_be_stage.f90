@@ -17,7 +17,7 @@ module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
    use meds_plant_hydraulics, only : solve_plant_water_batch
-   use meds_hydr_lib, only : psi_from_water_content, water_content
+   use meds_water_retention, only : psi_from_water_content, water_content
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
@@ -28,8 +28,9 @@ module meds_fast_be_stage
                                      clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
                                      canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
                                      diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
-   use meds_fast_types, only : column_budget_t, alloc_column_cohort, column_state_t, column_frozen_t, surface_state_t, &
-                               cas_boundary_t, surface_tend_t, stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, &
+   use meds_fast_types, only : column_config_t, column_budget_t, alloc_column_cohort, column_state_t, &
+                               column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, stage_bflux_t, &
+                               column_bflux_t, error_control_t, column_tend_t, &
                                mask_is_full
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_step_implicit
@@ -57,22 +58,23 @@ contains
    ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
    ! validated production kernels -- no new numerics.                                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine column_be_stage(y, frozen, n, nsl, dt, y_out, niter, bf, sf_out)
+   subroutine column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter, bf)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out
+      !----- The stage's state and its OWN surface tendencies (incl. transp_c), for the caller to      !
+      !      b-weight into the plant water-mass update (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2) -- the    !
+      !      SAME surf_tend the stage's own bf/CAS-source used, so the mass debit and the CAS credit     !
+      !      agree. Both are filled in place (the caller's workspace keeps their arrays, #195). ------!
+      type(column_state_t),  intent(inout) :: y_out
+      type(surface_tend_t),  intent(inout) :: surf_tend
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled leaf<->CAS Newton
       type(stage_bflux_t), optional, intent(out) :: bf  !< per-stage boundary-flux RATES for the ARK ledger
-      !----- this stage's OWN surface tendencies (incl. transp_c), for the caller to b-weight into      !
-      !      the plant water-mass update (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2) -- the SAME surf_tend the      !
-      !      stage's own bf/CAS-source already used, so the mass debit and the CAS credit agree. --------!
-      type(surface_tend_t), optional, intent(out) :: sf_out
 
       type(surface_state_t)      :: y_stage
       type(cas_boundary_t)       :: cas_stage   !< the CAS boundary with THIS stage's conductances
-      type(surface_tend_t)       :: surf_tend
       type(soil_energy_column_t) :: se
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
@@ -88,7 +90,7 @@ contains
 
       !----- diagnose the soil-top temperature so the ground skin sees the current state. --------!
       wmass1 = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_config%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       cas_mass_capacity = frozen%cas%cas_mass_capacity ; cas_molar_capacity = frozen%cas%cas_molar_capacity
       cas_stage = frozen%cas              ! plain scalars: a cheap copy, overridden with this stage's conductances below
@@ -129,7 +131,6 @@ contains
                                          g_atm_heat, g_atm_vapour, g_atm_co2, dt, enth_unused, shv_unused, &
                                               co21)   ! CO2 rides the same box
       y_out%cas_co2      = co21
-      if (present(sf_out)) sf_out = surf_tend
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
@@ -154,7 +155,7 @@ contains
                                         frozen%roots%root_share, qloss_total, frozen%hydrology%w_flux_frozen,             &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain,                     &
                                         sink_add=frozen%hydrology%clip_enth, sink_sub=frozen%hydrology%floor_enth)
-      call soil_energy_step_implicit(se, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, dt, eflux)
+      call soil_energy_step_implicit(se, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
       !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !
@@ -188,7 +189,7 @@ contains
             !      base, the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary  !
             !      of both books, the soil's and the whole column's. -------------------------------------!
             bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil + e_floor
-            bf%soil_enth_out= qloss_total * sum(frozen%params%soil%root_frac(1:nsl)) + e_drain + e_clip
+            bf%soil_enth_out= qloss_total * sum(col_config%soil%root_frac(1:nsl)) + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/rainfall are frozen fast-step).  !
@@ -231,7 +232,7 @@ contains
       integer(ik),            intent(in)    :: n
       real(wp),               intent(in)    :: dt, cas_mass_capacity, g_atm_heat, g_atm_vapour
       real(wp),               intent(out)   :: enth1, shv1
-      type(surface_tend_t),   intent(out)   :: surf_tend
+      type(surface_tend_t),   intent(inout) :: surf_tend   !< filled in place by every evaluation
       integer(ik),            intent(out)   :: nfeval
       logical,                intent(out)   :: ok
 
@@ -372,10 +373,11 @@ contains
    ! agree on to 8e-4 MPa (i.e. this changes the discretisation, NOT the dt->0 limit). T_cas differs by        !
    ! 6e-5 K at dt = 25 s and 0.007 K at 900 s -- also vanishing with dt, as a consistent scheme must.          !
    ! (MEDS_ED2_RK45_DESIGN.md sec 1/4/5 described the pre-corrector Euler form.) --------------------------!
-   subroutine advance_water_mass_full(y, frozen, n, nsl, dt, transp_c_bw, y_out,                   &
-                                      floor_mass, floor_n)
+   subroutine advance_water_mass_full(y, frozen, col_config, n, nsl, dt, transp_c_bw, y_out,                   &
+                                      floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)    :: n, nsl
       real(wp),              intent(in)    :: dt
       real(wp),              intent(in)    :: transp_c_bw(n)  !< [kg/m2 ground/s] per-cohort, b-weighted over the step
@@ -385,6 +387,10 @@ contains
       !      caller owns budget%clamp_mass and may call this more than once per step.                 !
       real(wp),    optional, intent(out)   :: floor_mass  !< [kg/m2 ground] water CREATED by the floor
       integer(ik), optional, intent(out)   :: floor_n     !< tissue-cohort activations of the floor
+      !----- The corrector's own hydraulics work, exported the same way: sub-steps summed over the  !
+      !      cohorts, and cohorts whose solve did not converge (0 when the corrector does not run). -!
+      integer(ik), optional, intent(out)   :: hydro_nsub
+      integer(ik), optional, intent(out)   :: hydro_nonconv
       real(wp)    :: transp_i, raw, created, fmass
       integer(ik) :: i, fcount
       !----- CORRECTOR locals (only touched on the re-solve path). --------------------------------!
@@ -411,6 +417,8 @@ contains
       !      surface_frozen_t%mo_live). --------------------------------------------------------------!
       sap_use(1:n) = frozen%plant%sapflow_frozen(1:n)
       upt_use(1:n) = frozen%plant%uptake_frozen(1:n)
+      if (present(hydro_nsub))    hydro_nsub    = 0_ik
+      if (present(hydro_nonconv)) hydro_nonconv = 0_ik
       if (allocated(frozen%roots%rhizo_cond) .and. allocated(frozen%roots%psi_soil_pre) .and. dt > tiny_num) then
          do i = 1_ik, n
             transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
@@ -418,21 +426,21 @@ contains
          !----- PER-PFT PV curves (#179): loops, not elemental array calls, because the parameters !
          !      are now selected by the cohort's PFT.  --------------------------------------------!
          do i = 1_ik, n
-            associate (hp => frozen%params%hydraulics_table%pft(frozen%plant%pft(i)))
-               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_pi0,       &
-                    hp%leaf_elastic_mod, hp%leaf_apoplast_frac, hp%leaf_water_sat, frozen%plant%bleaf(i))
-               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_pi0,       &
-                    hp%wood_elastic_mod, hp%wood_apoplast_frac, hp%wood_water_sat,                   &
-                    frozen%plant%bsap(i) + frozen%plant%broot(i))
+            associate (hp => col_config%hydraulics_table%pft(frozen%plant%pft(i)))
+               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_curve, frozen%plant%bleaf(i))
+               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_curve, &
+                     frozen%plant%bsap(i) + frozen%plant%broot(i))
             end associate
          end do
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
                  frozen%plant%leaf_area(1:n),                &
-              frozen%roots%psi_soil_pre(1:nsl), frozen%params%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
-              frozen%plant%pft(1:n), frozen%params%hydraulics_table, frozen%params%hydraulics_opts, dt, psi_c(:, 1:n), &
+              frozen%roots%psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
+              frozen%plant%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt, psi_c(:, 1:n), &
               sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &
               nsub_c(1:n), conv_c(1:n))
+         if (present(hydro_nsub))    hydro_nsub    = sum(nsub_c(1:n))
+         if (present(hydro_nonconv)) hydro_nonconv = count(.not. conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
          !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
          !      rescaled by the soil's own fwilt-limited supply). That keeps "one flux, both sides"       !

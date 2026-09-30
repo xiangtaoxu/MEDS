@@ -90,7 +90,8 @@ function in `CMakeLists.txt`.
 
 ## Parallel builds
 
-**Host threading over the patch axis** is compiled in by default; a run asks for it:
+**Host threading** is compiled in by default; a run asks for it. A site run threads its patches, a
+region run its polygons (`docs/configuration.md`, "Regional runs"):
 
 ```bash
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
@@ -122,24 +123,25 @@ fast-loop target, **and it adds the per-compiler "all locals on the stack" flag*
 places local arrays and derived types in static storage shared by every thread; without that flag
 the kernels race and return plausible, silently thread-count-dependent numbers.
 
-**What threads buy today.** The five-year BCI census example, 25 patches falling to 15, ifx Release,
-each run alone on a 40-core node:
+**What threads buy.** The BCI census example (25 patches falling to 14), ifx Release, each run alone
+on an idle `R128C40` node, the second of two runs:
 
-| build | `n_threads` | wall time |
+| `n_threads` | 60 days | five years |
 |---|---|---|
-| serial | 1 | 7 min 11 s |
-| OpenMP | 1 | 7 min 17 s |
-| OpenMP | 4 | 5 min 44 s |
-| OpenMP | 8 | 13 min 15 s |
-| OpenMP | 16 | 20 min 10 s |
+| 1 | 25.5 s | 6 min 43 s |
+| 4 | 15.1 s | 2 min 23 s |
+| 8 | 12.3 s | 1 min 36 s |
+| 16 | 12.1 s | 1 min 25 s |
 
-One thread costs 1.5%. **More than four threads make this run slower.** Sampled stacks put most of
-the threads' time in ifx's `__intel_alloc_bpv` and `__intel_free_bpv`. ifx allocates a "bound
-procedure value" on entry to any routine that passes one of its internal procedures as an actual
-argument, and those allocations serialize the threads. Two such routines sit in the fast loop:
-`flux_potential` in `meds_hydr_lib`, which hands `kirchhoff_integrand` to `gauss_legendre_7` even
-when it takes the closed form, and `solve_leaf_gas_exchange`, which hands its residuals to
-`bisect_root`. Until they stop doing so, use at most four threads.
+- **Sixty days is mostly start-up:** the serial census read and restructuring, and the forcing read,
+  take about 8 s.
+- **A site run gains little past about 14 threads,** because the patches are the parallel axis
+  and BCI keeps 14–25 of them.
+- **v0.3.1 was slower above four threads** (#325: 41.5 s at 8 threads and 56.7 s at 16 on the
+  60-day case). ifx allocates a lock-guarded record on every call of a routine that hands one of
+  its contained functions to another routine, and two such routines sat in the fast loop. No MEDS
+  source passes a procedure as an argument now; the `no_procedure_arguments` test keeps it that
+  way.
 
 **OpenMP `target` offload** (NVHPC only):
 

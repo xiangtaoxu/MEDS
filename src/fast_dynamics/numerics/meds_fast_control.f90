@@ -26,6 +26,7 @@ module meds_fast_control
    use meds_constants,   only : tiny_num
    use meds_numerics,    only : adaptive_step_update, clamp
    use meds_config,      only : CTRL_I, CTRL_PI
+   use meds_column_state_ops, only : state_to_array, state_entry_rules
    use meds_fast_types,  only : column_state_t, tol_set_t, error_control_t, integrator_opts_t,     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, &
                                 N_TOL_GROUP
@@ -89,30 +90,18 @@ contains
       integer(ik),          intent(in) :: n, nsl
       type(tol_set_t),      intent(in) :: tols
       real(wp)    :: err, s
-      integer(ik) :: k, i, cnt
+      real(wp)    :: va(5_ik + 2_ik*nsl + 4_ik*n), vb(5_ik + 2_ik*nsl + 4_ik*n), vr(5_ik + 2_ik*nsl + 4_ik*n)
+      integer(ik) :: j, grp, cnt
+      logical     :: counted
+      call state_to_array(a, n, nsl, va)
+      call state_to_array(b, n, nsl, vb)
+      call state_to_array(y_ref, n, nsl, vr)
       s = 0.0_wp ; cnt = 0_ik
-      s = s + ((a%cas_enthalpy - b%cas_enthalpy)                                                &
-               / (tols%atol(GRP_ENTH) + tols%rtol(GRP_ENTH)*abs(y_ref%cas_enthalpy)))**2 ; cnt = cnt + 1_ik
-      s = s + ((a%cas_shv - b%cas_shv)                                                          &
-               / (tols%atol(GRP_SHV) + tols%rtol(GRP_SHV)*abs(y_ref%cas_shv)))**2 ; cnt = cnt + 1_ik
-      s = s + ((a%cas_co2 - b%cas_co2)                                                          &
-               / (tols%atol(GRP_CO2) + tols%rtol(GRP_CO2)*abs(y_ref%cas_co2)))**2 ; cnt = cnt + 1_ik
-      do k = 1_ik, nsl
-         s = s + ((a%soil_energy(k) - b%soil_energy(k))                                         &
-                  / (tols%atol(GRP_SE) + tols%rtol(GRP_SE)*abs(y_ref%soil_energy(k))))**2
+      do j = 1_ik, size(va, kind=ik)            ! the layout's order is the order the terms are added
+         call state_entry_rules(j, n, nsl, grp, counted)
+         if (grp == 0_ik) cycle
+         s = s + ((va(j) - vb(j)) / (tols%atol(grp) + tols%rtol(grp)*abs(vr(j))))**2
          cnt = cnt + 1_ik
-      end do
-      do k = 1_ik, nsl
-         s = s + ((a%theta(k) - b%theta(k))                                                      &
-                  / (tols%atol(GRP_THETA) + tols%rtol(GRP_THETA)*abs(y_ref%theta(k))))**2
-         cnt = cnt + 1_ik
-      end do
-      do i = 1_ik, n
-         s = s + ((a%leaf_water_mass(i) - b%leaf_water_mass(i))                                  &
-                  / (tols%atol(GRP_LEAF_W) + tols%rtol(GRP_LEAF_W)*abs(y_ref%leaf_water_mass(i))))**2
-         s = s + ((a%wood_water_mass(i) - b%wood_water_mass(i))                                  &
-                  / (tols%atol(GRP_WOOD_W) + tols%rtol(GRP_WOOD_W)*abs(y_ref%wood_water_mass(i))))**2
-         cnt = cnt + 2_ik
       end do
       err = sqrt(s / real(cnt, wp))
    end function state_wrms_grouped

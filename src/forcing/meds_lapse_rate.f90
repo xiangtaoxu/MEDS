@@ -29,23 +29,11 @@ module meds_lapse_rate
    implicit none
    private
 
-   public :: wind_log_profile, lapse_air_temperature, lapse_pressure
+   public :: lapse_air_temperature, lapse_pressure
    public :: monthly_lapse_rate, lapse_specific_humidity, lapse_longwave
    public :: cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
 
 contains
-
-   !----- Neutral-log wind from the measurement height to the model reference height. The factor !
-   !      is independent of u (commutes with the energy-form interpolation); degenerate z0 -> no-op. !
-   elemental function wind_log_profile(u_meas, z_meas, z_ref, z0) result(u_ref)
-      real(wp), intent(in) :: u_meas, z_meas, z_ref, z0
-      real(wp) :: u_ref
-      if (z0 <= 0.0_wp .or. z_meas <= z0 .or. z_ref <= z0) then
-         u_ref = u_meas                                       ! degenerate: leave the wind untouched
-      else
-         u_ref = u_meas * log(z_ref / z0) / log(z_meas / z0)
-      end if
-   end function wind_log_profile
 
    !----- Linear environmental lapse of air temperature (ED2 calc_met_lapse). dz = site - grid,  !
    !      gamma > 0 cools with height, so a higher site is colder.                                  !

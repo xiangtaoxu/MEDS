@@ -17,7 +17,7 @@ module meds_forcing_config
 
    public :: forcing_config_t
    public :: MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND
-   public :: MET_PATH_LEN
+   public :: MET_PATH_LEN, ARCHIVE_DT_SEC
    public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
    public :: LW_FILE, LW_SYNTHESIZE, LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
@@ -29,6 +29,8 @@ module meds_forcing_config
 
    !----- Reader backend ([forcing].format): the single MEDS forcing file, the global ED_ERA5land  !
    !      archive, or a no-file reference-climate box. ------------------------------------------!
+   !----- The ED_ERA5land archive's record spacing: hourly, end-stamped. -----------------------!
+   real(wp), parameter :: ARCHIVE_DT_SEC = 3600.0_wp        !< [s]
    integer(ik), parameter :: MET_BACKEND_CONST       = 0_ik  !< no file: met_forcing_t defaults (reference climate)
    integer(ik), parameter :: MET_BACKEND_ED_DEFAULT  = 1_ik  !< the multi-grid forcing NetCDF (format = "ED_default")
    integer(ik), parameter :: MET_BACKEND_ED_ERA5LAND = 2_ik  !< the monthly ED_ERA5land archive (format = "ED_ERA5land")
@@ -117,7 +119,6 @@ module meds_forcing_config
       integer(ik)        :: co2_source   = CO2_SOURCE_CONST      !< "const" | "file"
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] co2_source = "const"
       character(len=MET_PATH_LEN) :: co2_file = ''               !< the MEDS CO2 file (co2_source = "file")
-      real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
       !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it REQUIRES a declared   !
       !      recycle_start/recycle_end below, and a default-constructed config has no meaningful     !
       !      window to offer. The TOML reader requires the key explicitly in any case.               !

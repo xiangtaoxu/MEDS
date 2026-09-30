@@ -62,8 +62,8 @@ python run_example.py --calibrate --workers 40   # ... and redo the calibration 
 `run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model run a built
 `meds_main` (`--meds-main`, default `../../build-ifx/meds_main`). The forcing build takes about
 ten seconds, the census file about a minute, and each five-year run about 7 minutes on one core, or
-6 minutes with `[run].n_threads = 4` (more threads are slower for now, #325). It runs the five years
-twice, with the default parameters and with the calibrated ones in `calibration/`.
+1.5 minutes with `[run].n_threads = 8` in an OpenMP build (`docs/building.md`). It runs the five
+years twice, with the default parameters and with the calibrated ones in `calibration/`.
 
 ## What the declarations are, and how each was checked
 
@@ -149,7 +149,7 @@ The daily output carries each patch's `cas_depth_patch`, `air_temp_cas_top_patch
 
 ![MEDS against the BCI tower: mean diurnal and seasonal cycles of carbon, water and energy](evaluation.png)
 
-The default run takes 7.3 minutes with four threads and 0.8 GB. MEDS reads the
+The default run takes 1.5 minutes with eight threads and 0.8 GB. MEDS reads the
 census as 1,250 patches and 84,937 cohorts, with the stand's LAI 5.60 and AGB 16.12 kgC m⁻², exactly
 as the census file states, and fuses it to 25 patches and 419 cohorts before the first step. The
 count stays above `max_patch = 12` because `patch_light_tol_max` keeps dissimilar patches apart,

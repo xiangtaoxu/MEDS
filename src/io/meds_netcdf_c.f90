@@ -28,7 +28,7 @@ module meds_netcdf_c
    integer(c_int), parameter :: NC_INT       = 4_c_int
    integer(c_int), parameter :: NC_FLOAT     = 5_c_int
    integer(c_int), parameter :: NC_DOUBLE    = 6_c_int
-   integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode for nc_def_var_chunking
+   integer(c_int), parameter :: NC_CHUNKED   = 0_c_int      ! storage mode, nc_def/inq_var_chunking
    integer(c_size_t), parameter :: NC_UNLIMITED = 0_c_size_t
 
    interface
@@ -102,6 +102,14 @@ module meds_netcdf_c
          integer(c_int), value, intent(in) :: ncid, varid, storage
          integer(c_size_t),     intent(in) :: chunks(*)
       end function nc_def_var_chunking
+
+      integer(c_int) function nc_inq_var_chunking(ncid, varid, storagep, chunksizesp)        &
+                              bind(c, name="nc_inq_var_chunking")
+         import :: c_int, c_size_t
+         integer(c_int), value, intent(in)  :: ncid, varid
+         integer(c_int),        intent(out) :: storagep
+         integer(c_size_t),     intent(out) :: chunksizesp(*)
+      end function nc_inq_var_chunking
 
       integer(c_int) function nc_enddef(ncid) bind(c, name="nc_enddef")
          import :: c_int

@@ -15,6 +15,7 @@ module meds_plant_types
    use meds_kinds,      only : wp, ik
    use meds_pft_params, only : PATH_C3, PATH_C4
    use meds_hydr_lib, only : hydro_table_t
+   use meds_water_retention, only : water_curve_t
    implicit none
    private
 
@@ -214,10 +215,8 @@ module meds_plant_types
 
    !----- Flat per-PFT hydraulic trait set (self-contained, filled by the seam from cfg%pft). !
    type :: hydro_params_t
-      !----- Pressure-volume (Bartlett/Tyree-Hammel), per tissue. --------------------------!
-      real(wp) :: leaf_pi0 = 0.0_wp, leaf_elastic_mod = 0.0_wp, leaf_apoplast_frac = 0.0_wp  !< [MPa],[MPa],[-]
-      real(wp) :: wood_pi0 = 0.0_wp, wood_elastic_mod = 0.0_wp, wood_apoplast_frac = 0.0_wp
-      real(wp) :: leaf_water_sat = 0.0_wp, wood_water_sat = 0.0_wp        !< [kg H2O / kgC] at saturation
+      !----- Pressure-volume (Bartlett/Tyree-Hammel), one curve per tissue. ------------------!
+      type(water_curve_t) :: leaf_curve, wood_curve
       !----- Xylem vulnerability (loss of conductance). -----------------------------------!
       real(wp) :: wood_psi50 = 0.0_wp   !< [MPa, <0] potential at 50% loss
       real(wp) :: wood_kexp  = 0.0_wp   !< [-]  vulnerability shape (a)

@@ -304,12 +304,18 @@ detail_polygons   = [1714634]                        # optional: these also writ
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
   rates, still applies. Until restarts of regions exist, a region starts from bare ground
-  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
-  thread without the fast probe. A region loads each month's forcing once, before the month, so a
-  recycle window must start at 00:00 or 01:00 on the 1st of a month.
+  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs without
+  the fast probe. A region loads each month's forcing once, before the month, so a recycle window
+  must start at 00:00 or 01:00 on the 1st of a month.
+- **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
+  single-threaded patch loop; the results are the same at any thread count. A polygon that fails
+  (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
-  crash loses at most the current month. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the
-  measured cost per polygon-month and the roadmap to threads, restarts and tiles.
+  crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
+  year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
+  hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
+  same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
+  for the roadmap to restarts and tiles.
 
 ## Worked examples
 

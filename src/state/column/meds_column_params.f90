@@ -21,8 +21,8 @@
 module meds_column_params
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num
-   use meds_hydr_lib,         only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, &
-                                     root_fraction_profile
+   use meds_hydr_lib,         only : root_fraction_profile
+   use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
 

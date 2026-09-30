@@ -19,7 +19,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import tomlio  # noqa: E402
 
-sys.path.insert(0, str(ROOT / "scripts" / "forcing_common"))
+sys.path.insert(0, str(ROOT / "scripts"))
 import meds_forcing_file as mff  # noqa: E402
 
 MEDS_MAIN = os.environ.get("MEDS_MAIN")

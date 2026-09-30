@@ -19,7 +19,7 @@ import pandas as pd
 
 import tower_inputs as ti
 
-mff = ti.mff
+conv = ti.conv
 QC_OBSERVED, QC_SHORT, QC_SYNTH_OR_MDV, QC_PROVIDER, QC_FROM_VPD = 0, 1, 3, 4, 5
 MIN_FIT_POINTS = 48            # a regression group smaller than this falls back to the pooled fit
 
@@ -46,8 +46,8 @@ def fill_short(y, qc, max_len, kind="linear", mean_cosz=None):
         if kind == "energy":
             y[a:b + 1] = np.sqrt((1 - w) * y[i0] ** 2 + w * y[i1] ** 2)
         elif kind == "shortwave":
-            toa = mff.SOLAR_CONSTANT * mean_cosz
-            day = mean_cosz > mff.COSZ_BAR_MIN
+            toa = conv.SOLAR_CONSTANT * mean_cosz
+            day = mean_cosz > conv.COSZ_BAR_MIN
             k0 = y[i0] / toa[i0] if day[i0] else np.nan
             k1 = y[i1] / toa[i1] if day[i1] else np.nan
             k0 = k1 if not np.isfinite(k0) else k0
@@ -88,7 +88,7 @@ def regression_groups(stamps_utc, mean_cosz, by_day_night):
     month = pd.DatetimeIndex(np.asarray(stamps_utc, dtype="datetime64[s]")).month.to_numpy()
     if not by_day_night:
         return month
-    return month * 2 + (mean_cosz > mff.COSZ_BAR_MIN).astype(int)
+    return month * 2 + (mean_cosz > conv.COSZ_BAR_MIN).astype(int)
 
 
 def _design(x):
@@ -160,19 +160,19 @@ def clearness_held_through_night(sw, mean_cosz):
     """The clearness index the model's longwave synthesis sees: by day the interval's SW over its
     mean top-of-atmosphere flux, and after dark the last daytime value (dusk's cloudiness), seeded
     clear (1) before the first sunrise."""
-    kt = np.where(mean_cosz > mff.COSZ_BAR_MIN,
-                  np.clip(np.maximum(sw, 0.0) / (mff.SOLAR_CONSTANT * np.maximum(mean_cosz, 1e-30)), 0.0, 1.0),
+    kt = np.where(mean_cosz > conv.COSZ_BAR_MIN,
+                  np.clip(np.maximum(sw, 0.0) / (conv.SOLAR_CONSTANT * np.maximum(mean_cosz, 1e-30)), 0.0, 1.0),
                   np.nan)
     kt = pd.Series(kt).ffill().fillna(1.0).to_numpy()
     return kt
 
 
-def synthesized_longwave(tair_k, rh, psurf_ground_pa, sw, mean_cosz, cloud_a=mff.LW_CLOUD_A):
+def synthesized_longwave(tair_k, rh, psurf_ground_pa, sw, mean_cosz, cloud_a=conv.LW_CLOUD_A):
     """MEDS's lwdown_source = "synthesize" from the tower's own temperature, humidity, pressure and
     shortwave (docs/science/forcing.md sec. 11)."""
-    q = mff.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
+    q = conv.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
     kt = clearness_held_through_night(sw, mean_cosz)
-    return mff.synthesize_lwdown(tair_k, q, psurf_ground_pa, kt, cloud_a)
+    return conv.synthesize_lwdown(tair_k, q, psurf_ground_pa, kt, cloud_a)
 
 
 def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
@@ -181,15 +181,15 @@ def synthesis_predictors(tair_k, rh, psurf_ground_pa, sw, mean_cosz):
     instead of taking the model's 0.22: at Barro Colorado Island the pooled fit gives 0.10 per unit
     of clear-sky emission, and on held-out records the two parts score RMSE 13.7-14.5 W/m2 against
     14.5-16.7 for one regression on the whole synthesis."""
-    q = mff.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
+    q = conv.rh_to_specific_humidity(rh, tair_k, psurf_ground_pa)
     kt = clearness_held_through_night(sw, mean_cosz)
-    clear = mff.synthesize_lwdown(tair_k, q, psurf_ground_pa, np.ones_like(q), 0.0)
+    clear = conv.synthesize_lwdown(tair_k, q, psurf_ground_pa, np.ones_like(q), 0.0)
     return np.column_stack([clear, clear * (1.0 - kt)])
 
 
 # With too few observations to fit, the synthesis predictors fall back to the model's own
 # synthesis: clear + 0.22 clear (1 - kt), which is what lwdown_source = "synthesize" would give.
-SYNTHESIS_FALLBACK = (0.0, 1.0, mff.LW_CLOUD_A)
+SYNTHESIS_FALLBACK = (0.0, 1.0, conv.LW_CLOUD_A)
 
 
 # ---------------------------------------------------------------------------------------------

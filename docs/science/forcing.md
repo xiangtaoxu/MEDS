@@ -87,7 +87,11 @@ the cell minimising the great-circle distance to the `[site]` coordinates (`grea
 `dist_gc`), with strict `<` in the scan so ties keep the lowest index; only the ordering matters, so the
 Earth radius is immaterial. At `met_open` the reader loads, for that column, every record the run can
 reach — the recycle window, or the run period — into memory, one read per variable, so no step reads
-the file; a file written in 1 × 1 chunks is read only over that range.
+the file. A file stored one time record per chunk (what an unlimited time dimension gives by default)
+reads chunk by chunk: about 3 s for BCI's 90,528 records, most of a short run's start-up. `met_open`
+prints a note when it meets one, with the `nccopy` line that rewrites it with the same values.
+`scripts/meds_forcing_file.py` writes a fixed-length time dimension, so every variable is one
+contiguous block.
 
 **Producing one from ERA5-Land.** `scripts/prepare_era5/make_forcing_file.py` writes the file above,
 either by cutting the site's cell out of an ED_ERA5land archive (`--data-path`) or from a small download:
@@ -138,12 +142,15 @@ loads one month at a time before a step. Given `data_path`, the reader:
   the run period. Every file the run needs must exist at open, so a gap stops the run before it
   starts;
 - **reads a month at a time**, one chunk column per variable, into a buffer, checking each file's
-  grid, stamps and units, and rejecting a missing value in the cell;
+  grid, stamps and units, and rejecting a missing value in the cell. A missing value is NaN, as the
+  archive stores it; a file whose `_FillValue` is a number is refused rather than read as data;
 - **converts at each stamp:** $`q`$ from the stored dewpoint and pressure by (10), and the wind
   speed from the stored components, whose vector the record also carries.
 
 Bracketing, recycling and the seam are the same code as for the single file: the record at 00:00 on
-the 1st lives in the previous month's file, and the bracket that spans it reads both.
+the 1st lives in the previous month's file, and the bracket that spans it reads both. **So a run
+cannot start in the archive's first month:** its first step, at 00:00 on the 1st, reads a record
+from the month before, whose file the run then needs.
 
 ## 2. The reader: a two-record window
 
@@ -660,7 +667,7 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`, `CO2_SOURCE_*`; validated in `meds_config`, read by `meds_config_io` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |
 | fast-loop join | `meds_fast_dynamics`: per-sub-step `met_advance`/`met_instant` sampling; `fill_forcing` and `fill_aenv` take the sampled `met_forcing_t` (`reference_met` without a forcing source) |
-| file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files, or `scripts/prepare_flux_tower/make_tower_forcing.py` from flux-tower data; the shared writer and the Python mirror of the model's conversions: `scripts/forcing_common/meds_forcing_file.py`; the shipped CO₂ series: `scripts/prepare_co2/make_co2_file.py` |
+| file production | the archive: `scripts/prepare_era5/download_era5land_gdex.py` or `download_era5land_cds.py`, then `build_era5land_archive.py`; a single file: `make_forcing_file.py`, from the archive or from `download_era5land_cds.py` and `postprocess_era5land.py` box files, or `scripts/prepare_flux_tower/make_tower_forcing.py` from flux-tower data; the shared writer: `scripts/meds_forcing_file.py`; the tower tool's Python mirror of the model's conversions: `scripts/prepare_flux_tower/tower_conversions.py`; the shipped CO₂ series: `scripts/prepare_co2/make_co2_file.py` |
 | test | `test/test_met_driver.f90` — interpolation, humidity, phase, both SW schemes, the mean-conserving identity *and* the secant bias, CONST backend, NetCDF round-trip, clamp and recycle-window rejections, recycle phase over 29 years, prescribed CO₂ (format 1 at five resolutions, every rejection, CO₂ not recycled with the met, the shipped series); `test/test_met_era5land.f90` — a synthetic archive: templates, site and box selection (across 180°), month loads, the NaN rejection, the month seam, recycling across months, dewpoint and wind-vector conversion, static elevation, rejections at open; `test/test_met_tower.f90` — the flux-tower contract of an `ED_default` file: the three humidity forms and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval containing the instant under both stamp conventions, and the tower round trip (RH, VPD = 0 at saturation, the move to the canopy-air top) |
 
 ## References

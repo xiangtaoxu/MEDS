@@ -1079,6 +1079,7 @@ contains
       type(meds_config_t),    intent(in)  :: cfg
       integer(ik) :: ne
       files%enabled = cfg%output%enabled
+      files%fast_loop_on = cfg%fast_biophysics_on
       call build_output_registry(files%reg, cfg)
       files%cohort_max = cfg%output%cohort_max
       files%patch_max  = cfg%output%patch_max
@@ -1211,7 +1212,24 @@ contains
       !      can switch on a slab variable that manager_setup left off, and a slab sized before     !
       !      that is too short for it. ---------------------------------------------------------!
       files%max_slab = live_max_slab(files)
+      !----- Whether the cohort and patch caps bind: only a live variable on that axis fills a slab of  !
+      !      that size. ------------------------------------------------------------------------------!
+      files%cohort_axis = live_axis(files, [DIM_COHORT])
+      files%patch_axis  = live_axis(files, [DIM_PATCH, DIM_SOIL_PATCH])
    end subroutine manager_finalize
+
+   !----- Does any live variable have one of these axes? ---------------------------------------!
+   pure logical function live_axis(files, dims) result(yes)
+      type(output_files_t), intent(in) :: files
+      integer(ik),          intent(in) :: dims(:)
+      integer(ik) :: k
+      yes = .false.
+      do k = 1_ik, files%reg%nvar
+         if (.not. files%reg%var(k)%enabled)        cycle
+         if (files%reg%var(k)%streams == FREQ_NONE) cycle
+         if (any(dims == files%reg%var(k)%dim)) then ; yes = .true. ; return ; end if
+      end do
+   end function live_axis
 
    !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
    !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!
@@ -1292,6 +1310,14 @@ contains
             end do
          end do
       end if
+      !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
+      !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
+      need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
+      site%patch%diag%fast_rows = files%fast_loop_on
+      !----- Additive: a site that writes into two file sets (a region's detail polygon) keeps every  !
+      !      block either set needs. ------------------------------------------------------------------!
+      need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
+      need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
       call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
       call cohort_diag_alloc(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
       call patch_diag_alloc (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)

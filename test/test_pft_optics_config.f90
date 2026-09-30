@@ -9,7 +9,8 @@
 ! only worth anything if the values arrive per PFT, and that wiring fails silently: a          !
 ! mis-threaded index leaves every PFT on the first one's optics, the radiation still solves,   !
 ! the energy budget still closes, and the canopy is quietly one optical type again. So this    !
-! asserts the values arrive AND that PFTs differ, not merely that the code compiles.           !
+! asserts the values arrive AND that PFTs differ, not merely that the code compiles. The same   !
+! holds for the per-PFT hydraulics, down to the daily tissue-water reconcile.                   !
 !==========================================================================================!
 program test_pft_optics_config
    use meds_kinds,          only : wp, ik
@@ -17,7 +18,12 @@ program test_pft_optics_config
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_hydr_lib,       only : plc_retained, pv_psi_tlp
+   use meds_hydr_lib,       only : plc_retained
+   use meds_water_retention, only : pv_psi_tlp, water_content
+   use meds_site_state_types, only : site_t
+   use meds_init,           only : init_bare_ground, add_cohort, finalize_init
+   use meds_fast_reconcile, only : reconcile_tissue_water_capacity
+   use meds_column_params,  only : PSI_INIT
    use meds_fast_dynamics,  only : fast_context_t, build_fast_context
    use meds_canopy_types,   only : RAD_VIS, RAD_NIR, RAD_LW
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -95,7 +101,7 @@ program test_pft_optics_config
       call check_close(tab%pft(1)%wood_psi50, cfg%hydraulics%wood_psi50, 1.0e-12_wp,              &
                        'PFT 1 with no override takes the shared [hydraulics] value')
       call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   1.0e-12_wp, 'PFT 2 takes its own psi50')
-      call check_close(tab%pft(2)%leaf_pi0,   -2.5_wp,   1.0e-12_wp, 'PFT 2 takes its own leaf pi0')
+      call check_close(tab%pft(2)%leaf_curve%pi0, -2.5_wp,   1.0e-12_wp, 'PFT 2 takes its own leaf pi0')
       call check_close(tab%pft(2)%k_plant_max, 3.0e-4_wp, 1.0e-15_wp, 'PFT 2 takes its own conductance')
       !----- One override must not require restating the other twelve. -------------------------!
       call check_close(tab%pft(2)%wood_kmax, cfg%hydraulics%wood_kmax, 1.0e-12_wp,                &
@@ -116,6 +122,34 @@ program test_pft_optics_config
                        'PFT 1 with no override keeps the shared turgor-loss point')
       call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_config%leaf_photo%pft(2)%psi_tlp, 0.0_wp, &
                        'the phenology reads the same per-PFT turgor-loss point')
+   end block
+
+   !=== The daily tissue-water reconcile seeds and caps each cohort on ITS PFT's curve, the one  !
+   !    the fast loop reads the water back on. It used to take the shared [hydraulics] values,   !
+   !    so a PFT with its own saturated leaf water was seeded off its own curve. ================!
+   block
+      type(hydro_params_table_t) :: tab
+      type(site_t) :: site
+      real(wp) :: w_expect
+      cfg%pft%hyd_leaf_water_sat(2) = 3.0_wp      ! vs the shared 2.0
+      call apply_hydraulics_config(cfg%hydraulics, cfg%pft, tab)
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 20.0_wp)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 20.0_wp)
+      call finalize_init(site)
+      site%cohort%leaf_water_mass(1:2) = 0.0_wp    ! empty stores: the reconcile seeds them
+      site%cohort%wood_water_mass(1:2) = 0.0_wp
+      call reconcile_tissue_water_capacity(site, tab)
+      w_expect = water_content(PSI_INIT, tab%pft(2)%leaf_curve, site%cohort%leaf_carbon(2))
+      call check_close(site%cohort%leaf_water_mass(2), w_expect, 1.0e-12_wp,                       &
+                       'PFT 2 leaf water is seeded on its own curve')
+      call check(abs(w_expect - water_content(PSI_INIT, tab%pft(1)%leaf_curve, site%cohort%leaf_carbon(2)))  &
+                 > 1.0e-6_wp * w_expect, 'the two PFTs'' curves give different seeds (the fixture bites)')
+      !----- Capped on its own ceiling too: a supersaturated store falls to 3.0 x leaf carbon. ---!
+      site%cohort%leaf_water_mass(2) = 10.0_wp * site%cohort%leaf_carbon(2)
+      call reconcile_tissue_water_capacity(site, tab)
+      call check_close(site%cohort%leaf_water_mass(2), 3.0_wp * site%cohort%leaf_carbon(2), 1.0e-12_wp, &
+                       'PFT 2 leaf water is capped at its own saturation')
    end block
 
    !=== 6. The PFT-parameter CSV dump has as many values as it has column headers. ==========!

@@ -104,8 +104,10 @@ contains
 
    !----- Advance one slow step (the driver's CARBON orchestration + cadence). Bumps the        !
    !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1: !
-   !       the step's END crosses that boundary, so the stand is restructured after the step,   !
-   !       as the driver does it (restructure_stand).                                           !
+   !       the step's END crosses that boundary, and the stand is restructured (restructure_stand) !
+   !       right after the step. The driver restructures at the start of the NEXT step instead,   !
+   !       after its output has read this one, and then resizes the canopy air; with no fast loop  !
+   !       and no output on this path, both orders leave the same stand.                           !
    subroutine meds_advance_slow(sh, ch, is_new_month, is_new_year) bind(c, name="meds_advance_slow")
       integer(c_int), value, intent(in) :: sh, ch, is_new_month, is_new_year
       !----- The litter this step accumulates lands in site%patch%litter_in and is left there: no

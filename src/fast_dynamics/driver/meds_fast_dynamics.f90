@@ -17,6 +17,7 @@
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
+   use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
    use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
    use meds_budget_check,     only : budget_t, budget_merge
@@ -51,8 +52,8 @@ module meds_fast_dynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
-   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity
-   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, ark_workspace_t
+   use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_canopy_types, only : ground_optics_state_t
@@ -63,7 +64,7 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
-   use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
+   use meds_water_retention,  only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private
@@ -123,6 +124,9 @@ module meds_fast_dynamics
       real(wp) :: snowfall         = 0.0_wp            !< [kg/m2/s] frozen rainfall (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
+      !----- Threads for this polygon's patch loop: [run].n_threads in a site run, 1 in a region,   !
+      !      whose threads go to the polygons instead (polygon_prepare sets it). ------------------!
+      integer(ik) :: patch_threads = 1_ik
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
       !----- Canopy-RT optics (per-PFT spectral/angle table + ground surface), for the RT-driven   !
       !      per-cohort absorbed SW/PAR on the forcing path. Built once from the [pft] table.        !
@@ -365,6 +369,7 @@ contains
       type(aero_out_t),       allocatable :: aero_pool(:)
       type(patch_biophys_t),  allocatable :: bio_pool(:)
       type(column_budget_t),  allocatable :: budg_pool(:)
+      type(ark_workspace_t),  allocatable :: ark_pool(:)       !< the ARK march's stage storage (#195)
       type(met_forcing_t),    allocatable :: met_pool(:)
       type(met_forcing_t),    allocatable :: met_top_pool(:)   !< the sample at the patch's canopy-air top
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
@@ -383,7 +388,7 @@ contains
       met_ref  = reference_met(ctx)
       npatch   = site%patch%n
       nsub     = cfg%n_fast_per_slow
-      n_thread = max(1_ik, cfg%n_threads)
+      n_thread = max(1_ik, ctx%patch_threads)
 
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
       !      the fast window (compute_carbon_allocation reads them after; it has site intent(in),   !
@@ -450,6 +455,13 @@ contains
          !      (#246). ---------------------------------------------------------------------------!
          out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
          out_bufs%fast_n_cohort = site%cohort%n
+         !----- The fast tier stages every cohort by its site slot into slabs output.cohort_max long:  !
+         !      stop here rather than write past them (#312 O9). -----------------------------------!
+         if (site%cohort%n > out_bufs%fast_cohort_cap) then
+            write(*,'(a,i0,a,i0,a)') ' output: the stand has more cohorts than output.cohort_max (',  &
+                                     site%cohort%n, ' > ', out_bufs%fast_cohort_cap, '); raise it in [output]'
+            error stop 'fast_dynamics: the live cohort count exceeds output.cohort_max'
+         end if
          do isub = 1_ik, nsub
             out_bufs%fast(isub) = fast_sample_t()
          end do
@@ -471,7 +483,7 @@ contains
       !      anything reads it. Once per call, outside every loop: this used to run per cohort per  !
       !      sub-step inside the gather, and it WRITES, so an unbooked mass edit sat in the          !
       !      integrator's inner loop where the whole-column ledger could not see it. ----------------!
-      call reconcile_tissue_water_capacity(site, cfg)
+      call reconcile_tissue_water_capacity(site, ctx%col_config%hydraulics_table)
 
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
@@ -553,7 +565,7 @@ contains
       !  literally the serial code that preceded it.                                                    !
       !=========================================================================================!
       allocate(coh_pool(n_thread), forc_pool(n_thread), aenv_pool(n_thread), ageom_pool(n_thread),  &
-               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread),                        &
+               aero_pool(n_thread), bio_pool(n_thread), budg_pool(n_thread), ark_pool(n_thread),    &
                met_pool(n_thread), met_top_pool(n_thread))
       allocate(gpp_pool(ncoh_max, n_thread), leaf_resp_pool(ncoh_max, n_thread),                    &
                stem_resp_pool(ncoh_max, n_thread), root_resp_pool(ncoh_max, n_thread),              &
@@ -580,7 +592,7 @@ contains
          associate (col_cohort           => coh_pool(ith),        forc          => forc_pool(ith),         &
                     aenv          => aenv_pool(ith),       ageom         => ageom_pool(ith),        &
                     aero          => aero_pool(ith),       biophys           => bio_pool(ith),          &
-                    budget          => budg_pool(ith),                                              &
+                    budget          => budg_pool(ith),       ark_ws        => ark_pool(ith),          &
                     met           => met_pool(ith),        met_top       => met_top_pool(ith),      &
                     gpp_coh       => gpp_pool(:,ith),                                               &
                     leaf_resp_coh => leaf_resp_pool(:,ith), stem_resp_coh => stem_resp_pool(:,ith), &
@@ -700,13 +712,13 @@ contains
             if (do_cdiag) then
                cdiag_buf(:, 1:ncoh) = 0.0_wp
                call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     ark_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux, cdiag=cdiag_buf(:, 1:ncoh))
             else
                call column_fast_step(cfg%dt_fast, cfg, ctx%col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                                     gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
+                                     ark_ws, gpp_coh=gpp_coh(1:ncoh), leaf_resp_coh=leaf_resp_coh(1:ncoh),            &
                                      psi_leaf_coh=psi_leaf_coh(1:ncoh),                                        &
                                      stem_resp_coh=stem_resp_coh(1:ncoh), root_resp_coh=root_resp_coh(1:ncoh), &
                                      le_flux=le_flux, h_flux=h_flux)
@@ -1100,11 +1112,10 @@ contains
       type(rad_pft_optics_t),  intent(in)    :: rad_opt          !< per-PFT canopy optics (two-stream)
       type(met_forcing_t),     intent(in)    :: met
       real(wp),                intent(in)    :: leaf_absorptance !< [-] leaf PAR absorptance (incident-PAR conversion)
-      integer(ik) :: j, k, ig, imin
+      integer(ik) :: j, i, ig
       integer(ik) :: perm(ncoh), pft_bt(ncoh)
       real(wp)    :: lai_bt(ncoh), wai_bt(ncoh), tcan_bt(ncoh), hgt_bt(ncoh)
-      logical     :: used(ncoh)
-      real(wp)    :: hmin, lf_bt
+      real(wp)    :: lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(ground_optics_state_t) :: surf
@@ -1115,16 +1126,12 @@ contains
       !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
       !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
 
-      !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
-      used = .false.
+      !----- perm: gather indices in ASCENDING height (bottom -> top). ------------------------------!
+      call ascending_order(height, ncoh, perm)
       do j = 1_ik, ncoh
-         imin = 0_ik ; hmin = huge(1.0_wp)
-         do k = 1_ik, ncoh
-            if (.not. used(k) .and. height(k) <= hmin) then ; hmin = height(k) ; imin = k ; end if
-         end do
-         perm(j) = imin ; used(imin) = .true.
-         pft_bt(j) = pft(imin) ; lai_bt(j) = lai(imin) ; hgt_bt(j) = height(imin)
-         wai_bt(j) = wai(imin)
+         i = perm(j)
+         pft_bt(j) = pft(i) ; lai_bt(j) = lai(i) ; hgt_bt(j) = height(i)
+         wai_bt(j) = wai(i)
          !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
          !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
          !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
@@ -1132,9 +1139,9 @@ contains
          !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
          !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
          !      per-element "counted once" base is a documented residual (design §8/P1).                    !
-         lf_bt      = lai(imin) / max(lai(imin) + wai(imin), tiny_num)
-         tcan_bt(j) = (lf_bt * leaf_temp(imin) ** 4                                             &
-                       + (1.0_wp - lf_bt) * wood_temp(imin) ** 4) ** 0.25_wp
+         lf_bt      = lai(i) / max(lai(i) + wai(i), tiny_num)
+         tcan_bt(j) = (lf_bt * leaf_temp(i) ** 4                                             &
+                       + (1.0_wp - lf_bt) * wood_temp(i) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!
