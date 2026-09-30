@@ -104,7 +104,7 @@ contains
       type(chydro_flux_t),    intent(out)   :: flux
 
       integer(ik) :: n, k, rc, nsub
-      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, clip_l, floor_l
+      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, clip_l, floor_l, sink_l
       real(wp) :: psi1, kn1, e_soil, q_inf_max, q_avail, infl, q_top
       real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
       real(wp) :: site_drain, wsurf, runoff, w0, w1
@@ -150,7 +150,8 @@ contains
       !----- Advance the interior (adaptive/fixed substepping of the implicit solve). --------!
       theta1(1:n) = theta0(1:n)
       call soil_water_advance(theta1, params, opts, rc, n, dt, q_top,                          &
-                              forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, nsub, ok)
+                              forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, sink_l,  &
+                              nsub, ok)
 
       !----- FACE-FLUX CONSISTENCY (the contract the soil ENERGY column depends on). ---------!
       !      soil_energy_step_implicit advects liquid enthalpy on wflux_out, so those face fluxes    !
@@ -160,7 +161,9 @@ contains
       !      a huge spurious heat flux. The column mass_resid below CANNOT see this: it checks the      !
       !      column against its BOUNDARY fluxes, and any interior face error cancels in that sum.       !
       !      Checked pre-clip, since the clip/give-back corrections are separate bookkeeping applied     !
-      !      after the solve. --------------------------------------------------------------------------!
+      !      after the solve. The sink is the one the solver REMOVED (sink_l, psi-limited by the wilting  !
+      !      ramp), not the plant's request forcing%root_uptake: in a layer drier than psi_open the two   !
+      !      differ, and checking against the request reported the difference as a face error (#331). ---!
       face_resid = 0.0_wp
       do k = 1_ik, n
          if (k == 1_ik) then
@@ -173,7 +176,7 @@ contains
          else
             f_out = flux%w_flux(k) * rho_h2o * dt
          end if
-         f_sink = forcing%root_uptake(k) * dt
+         f_sink = sink_l(k)                                           ! realized, psi-limited [kg/m2]
          face_resid = face_resid + abs((theta1(k) - theta0(k)) * params%dz(k) * rho_h2o           &
                                        - (f_in - f_out - f_sink))
       end do
@@ -326,7 +329,7 @@ contains
    !      constant across the step.                                                            !
    !---------------------------------------------------------------------------------------!
    subroutine soil_water_advance(theta, params, opts, rc, n, dt, q_top, root_uptake,           &
-                                 drainage_tot, uptake_tot, wflux_out, nsub, ok)
+                                 drainage_tot, uptake_tot, wflux_out, sink_tot, nsub, ok)
       real(wp),            intent(inout) :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)    :: params
       type(soil_opts_t),   intent(in)    :: opts
@@ -335,10 +338,12 @@ contains
       real(wp),            intent(in)    :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out)   :: drainage_tot, uptake_tot
       real(wp),            intent(out)   :: wflux_out(n_soil_layer_max)   !< [m/s] time-mean face flux (k=1..n-1)
+      real(wp),            intent(out)   :: sink_tot(n_soil_layer_max)    !< [kg/m2] realized root sink per layer over dt
       integer(ik),         intent(out)   :: nsub
       logical,             intent(out)   :: ok
 
       real(wp), dimension(n_soil_layer_max) :: th_big, th_h1, th_two, wf_b, wf_1, wf_2, wface_tot
+      real(wp), dimension(n_soil_layer_max) :: sk_b, sk_1, sk_2
       real(wp)    :: h, t, hmin, err, dr_b, up_b, dr_1, up_1, dr_2, up_2
       integer(ik) :: k, nfix
       real(wp), parameter :: safety = 0.9_wp, fmin = 0.25_wp, fmax = 4.0_wp
@@ -349,6 +354,7 @@ contains
       nsub = 0_ik
       ok = .true.
       wface_tot = 0.0_wp
+      sink_tot  = 0.0_wp
 
       if (opts%substep == SOIL_SUBSTEP_FIXED) then
          !----- Warp-uniform fixed count (GPU-friendly). ----------------------------------!
@@ -356,12 +362,13 @@ contains
          h    = dt / real(nfix, wp)
          do k = 1_ik, nfix
             call soil_water_step_implicit(theta, params, opts, rc, n, h, q_top, root_uptake,         &
-                                          th_big, dr_b, up_b, wf_b, dum)
+                                          th_big, dr_b, up_b, wf_b, sk_b, dum)
             ok = ok .and. dum                          ! aggregate inner convergence (was discarded)
             theta(1:n) = th_big(1:n)
             drainage_tot = drainage_tot + dr_b
             uptake_tot = uptake_tot + up_b
             wface_tot(1:n) = wface_tot(1:n) + wf_b(1:n)
+            sink_tot(1:n)  = sink_tot(1:n)  + sk_b(1:n)
          end do
          nsub = nfix
          wflux_out(1:n) = wface_tot(1:n) / dt
@@ -375,11 +382,11 @@ contains
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
          call soil_water_step_implicit(theta, params, opts, rc, n, h,        q_top,              &
-                                       root_uptake, th_big, dr_b, up_b, wf_b, dum)
+                                       root_uptake, th_big, dr_b, up_b, wf_b, sk_b, dum)
          call soil_water_step_implicit(theta, params, opts, rc, n, 0.5_wp*h, q_top,              &
-                                       root_uptake, th_h1, dr_1, up_1, wf_1, dum)
+                                       root_uptake, th_h1, dr_1, up_1, wf_1, sk_1, dum)
          call soil_water_step_implicit(th_h1, params, opts, rc, n, 0.5_wp*h, q_top,              &
-                                       root_uptake, th_two, dr_2, up_2, wf_2, dum)
+                                       root_uptake, th_two, dr_2, up_2, wf_2, sk_2, dum)
          err = 1.0e-12_wp
          do k = 1_ik, n
             err = max(err, abs(th_two(k) - th_big(k)) / (opts%atol + opts%rtol * abs(th_two(k))))
@@ -399,6 +406,7 @@ contains
             drainage_tot = drainage_tot + dr_1 + dr_2
             uptake_tot   = uptake_tot + up_1 + up_2
             wface_tot(1:n) = wface_tot(1:n) + wf_1(1:n) + wf_2(1:n)
+            sink_tot(1:n)  = sink_tot(1:n)  + sk_1(1:n) + sk_2(1:n)
             t    = t + h
             nsub = nsub + 1_ik
             h    = h * min(fmax, safety * err ** (-0.5_wp))
@@ -413,10 +421,10 @@ contains
    !----- One implicit backward-Euler sub-step of length h. Frozen-coefficient (1 iterate) or  !
    !      Celia (1990) modified-Picard (up to max_picard). Upstream K; retention-integral       !
    !      conservative flux-divergence theta update. Returns                                     !
-   !      drainage + uptake AMOUNTS [kg/m2 over h].                                              !
+   !      drainage + uptake AMOUNTS [kg/m2 over h], and the uptake per layer (sink_amt).         !
    !---------------------------------------------------------------------------------------!
    subroutine soil_water_step_implicit(theta_in, params, opts, rc, n, h, q_top, root_uptake,        &
-                                       theta_out, drainage_amt, uptake_amt, wface_amt, ok)
+                                       theta_out, drainage_amt, uptake_amt, wface_amt, sink_amt, ok)
       real(wp),            intent(in)  :: theta_in(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
@@ -426,6 +434,7 @@ contains
       real(wp),            intent(out) :: theta_out(n_soil_layer_max)
       real(wp),            intent(out) :: drainage_amt, uptake_amt
       real(wp),            intent(out) :: wface_amt(n_soil_layer_max)   !< [m] downward water depth across face k
+      real(wp),            intent(out) :: sink_amt(n_soil_layer_max)    !< [kg/m2] realized (psi-limited) root sink over h
       logical,             intent(out) :: ok
 
       real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
@@ -499,6 +508,7 @@ contains
          wface_amt(k) = qface(k) * h                             ! [m] downward depth crossing face k over h
       end do
       uptake_amt = 0.0_wp
+      sink_amt   = 0.0_wp
       do k = 1_ik, n
          in_k  = q_top
          if (k >= 2_ik)   in_k  = qface(k-1)
@@ -506,6 +516,7 @@ contains
          if (k <= n-1_ik) out_k = qface(k)
          theta_out(k) = theta_in(k) + h / params%dz(k) * (in_k - out_k - sk(k) * params%dz(k))
          uptake_amt   = uptake_amt + sk(k) * params%dz(k) * rho_h2o * h
+         sink_amt(k)  = sk(k) * params%dz(k) * rho_h2o * h   ! the same term per layer, for the face check
       end do
       drainage_amt = qbot * rho_h2o * h
    end subroutine soil_water_step_implicit

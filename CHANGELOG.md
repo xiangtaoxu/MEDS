@@ -264,6 +264,23 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
+- **The soil column's per-face check reported a wilting-limited root sink as a face error.**
+  `advance_soil_water_column` checks each layer's change of water against its face fluxes and its
+  root sink. It subtracted the plant's requested uptake, `forcing%root_uptake(k)·dt`. In a layer
+  drier than `psi_open` the solver removes less than that, because the wilting ramp cuts the sink,
+  and the check reported the difference as a face inconsistency. With `[energy].debug_error` that
+  stopped the run.
+  - **The fix.** `soil_water_advance` now returns the sink it removed from each layer, summed over
+    the accepted sub-steps, and the check subtracts that.
+  - **Only the diagnostic changes.** A 31-day run of the BCI census example matches the previous
+    build on every output variable.
+  - **Under the BCI calibration's parameter sets.** Over five years, `faces[soil_layer_mass]` had
+    read 1.1–2.6 kg m⁻², against 0.0011 with the defaults. For the shipped calibrated set it now
+    reads 4.6e-13. A `debug_error` run of the set with the most water-budget breaches now gets past
+    October 2012 and stops at the first real breach, in March 2016.
+  - **Test:** `column_hydrology` puts a top layer at θ = 0.10, where the ramp passes 74 % of the
+    demand, and the face residual reads 1.9e-14. The previous check fails it with 2.4e-2.
+
 - **The reported sensible heat was about 100 W m⁻² too low, and every surface-layer solve too
   stable** (#328). The reference air's potential temperature was referenced to the ground,
   `T + (g/cp)·zref`, and the canopy air's was not, while the canopy air's energy budget exchanged heat
