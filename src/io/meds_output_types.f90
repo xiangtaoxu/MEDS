@@ -301,6 +301,9 @@ module meds_output_types
    !==========================================================================================!
    type :: output_files_t
       logical                 :: enabled = .false.
+      !----- The run has a fast loop. Without one the fast-loop diagnostic blocks stay off, so their  !
+      !      variables read as missing rather than as a 0 nothing computed (#299). ------------------!
+      logical                 :: fast_loop_on = .true.
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik

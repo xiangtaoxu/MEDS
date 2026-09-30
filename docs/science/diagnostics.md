@@ -83,6 +83,12 @@ A **sum** over an empty PFT or size class is a true `0`, because reporting fill 
 the closure identity below the moment a PFT went locally extinct. The two conventions differ on
 purpose.
 
+**What a run does not simulate.** A run without the fast loop (`fast_biophysics_on = false`)
+reports every fast-loop variable as `_FillValue`: the fluxes, the canopy air, the ground, the
+forcing echo and the per-cohort fast diagnostics. The slow operators' own rates (disturbed area,
+recruitment, mortality carbon, and litterfall when soil carbon is on) are weighted by the slow step
+instead, and report their values (#299).
+
 **Closure identities** (asserted in `test_diagnostic_reduce`, and true to roundoff on real output):
 
 ```math

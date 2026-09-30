@@ -31,15 +31,17 @@
 ! fast window equals cfg%dt_slow, because the identity above is only meaningful if the fast loop   !
 ! really did span the slow step. A fixture whose fast window is shorter than its slow step would   !
 ! make every later check pass for the wrong reason.                                                 !
+!                                                                                          !
+! Last, the same identity in a SLOW-ONLY run (#299), where the slow step weighs the block itself.  !
 !==========================================================================================!
 program test_slow_diag_units
    use meds_kinds,               only : wp, ik
    use meds_constants,           only : yr_sec
    use meds_config,              only : meds_config_t
    use meds_site_state_types,    only : site_t, reset_step_diagnostics
-   use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value,                       &
+   use meds_site_diag_types,     only : patch_diag_alloc, patch_diag_value, patch_diag_slow_row,  &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,     &
-                                        PD_RECRUIT_NPLANT, PD_DISTURB_AREA
+                                        PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_column_params,       only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention,     only : SOIL_RETENTION_VG
@@ -141,6 +143,32 @@ program test_slow_diag_units
                        'PD_DISTURB_AREA rate x elapsed == the area fraction disturbed')
       write(*,'(a,es12.5,a,es12.5,a)') '   (disturbance: reported ', x(1),                         &
                                        ' 1/yr  vs configured hazard ', cfg%patch_disturbance_rate, ' 1/yr)'
+   end block
+
+   !=== 5. A SLOW-ONLY RUN (#299). No fast loop weighs the block or sets its patch count, so the  !
+   !    slow step does both: the slow rows read their rates exactly as with a fast loop, and the    !
+   !    fast rows are not slow rows (the output layer reports those as missing). ----------------!
+   block
+      type(meds_config_t) :: cfg_slow
+      cfg_slow = cfg ; cfg_slow%fast_biophysics_on = .false.
+      call reset_step_diagnostics(site)
+      site%patch%diag%n = 0_ik                                   ! as if no fast loop had ever run
+      pool0 = sum(site%patch%recruit_pool(:, 1))
+      call advance_slow_dynamics(site, cfg_slow)
+      pool1 = sum(site%patch%recruit_pool(:, 1))
+      call check_close(site%patch%diag%w(1), cfg%dt_slow, 1.0e-9_wp,                               &
+                       'slow-only: the slow step weighs the block by dt_slow')
+      call check(site%patch%diag%n == site%patch%n, 'slow-only: the slow step sets the patch count')
+      elapsed_yr = site%patch%diag%w(1) / yr_sec
+      call patch_diag_value(site%patch%diag, PD_RECRUIT_NPLANT, x, np)
+      call check(np >= 1_ik .and. pool1 - pool0 > 0.0_wp, 'slow-only: the recruit row has a slot')
+      call check_close(x(1) * elapsed_yr, pool1 - pool0, 1.0e-10_wp,                               &
+                       'slow-only: PD_RECRUIT_NPLANT rate x elapsed == the recruit-pool credit')
+      call check_true('slow-only: litter, recruitment and disturbance are slow rows',              &
+                      patch_diag_slow_row(PD_LITTER_LEAF) .and. patch_diag_slow_row(PD_RECRUIT_NPLANT) &
+                      .and. patch_diag_slow_row(PD_DISTURB_AREA))
+      call check_true('slow-only: latent heat and GPP are fast rows',                              &
+                      .not. (patch_diag_slow_row(PD_LE) .or. patch_diag_slow_row(PD_GPP)))
    end block
 
    call test_report('test_slow_diag_units')

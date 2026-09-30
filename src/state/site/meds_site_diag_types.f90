@@ -57,7 +57,7 @@ module meds_site_diag_types
    public :: patch_diag_alloc, patch_diag_free, patch_diag_grow, patch_diag_reset
    public :: patch_diag_reorder, patch_diag_copy_slot, patch_diag_blend, patch_diag_clear_slot
    public :: patch_diag_inherit
-   public :: cohort_diag_value, patch_diag_value
+   public :: cohort_diag_value, patch_diag_value, patch_diag_slow_row
 
    !----- Fusion kinds (decision 6 above). ---------------------------------------------------!
    integer(ik), parameter, public :: FK_INTENSIVE = 1_ik  !< leaf-area-weighted mean (temps, gs, psi)
@@ -253,6 +253,9 @@ module meds_site_diag_types
    type :: patch_diag_block
       integer(ik) :: n = 0_ik, cap = 0_ik
       logical     :: active = .false.
+      !----- Whether the fast loop fills the block. A slow-only run fills only the slow operators'  !
+      !      rows (patch_diag_slow_row); the rest are not simulated and read as missing (#299). ----!
+      logical     :: fast_rows = .true.
       real(wp), allocatable :: v(:,:)        !< (N_PDIAG, cap) running Sum(x*dt)
       real(wp), allocatable :: w(:)          !< (cap)          running Sum(dt)
    end type patch_diag_block
@@ -537,6 +540,19 @@ contains
          d%w(dst)    = d%w(dst)    + wd * d%w(i)
       end do
    end subroutine patch_diag_inherit
+
+   !----- The rows the slow operators write (litterfall, recruitment, disturbance, mortality      !
+   !      carbon): the ones a slow-only run fills. Every other row is the fast loop's. ------------!
+   pure logical function patch_diag_slow_row(field) result(slow)
+      integer(ik), intent(in) :: field
+      select case (field)
+      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA, &
+            PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
+         slow = .true.
+      case default
+         slow = .false.
+      end select
+   end function patch_diag_slow_row
 
    pure subroutine patch_diag_value(d, field, x, n)
       type(patch_diag_block), intent(in)  :: d

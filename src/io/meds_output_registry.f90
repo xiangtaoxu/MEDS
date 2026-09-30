@@ -1079,6 +1079,7 @@ contains
       type(meds_config_t),    intent(in)  :: cfg
       integer(ik) :: ne
       files%enabled = cfg%output%enabled
+      files%fast_loop_on = cfg%fast_biophysics_on
       call build_output_registry(files%reg, cfg)
       files%cohort_max = cfg%output%cohort_max
       files%patch_max  = cfg%output%patch_max
@@ -1292,6 +1293,10 @@ contains
             end do
          end do
       end if
+      !----- Only the fast loop fills the per-cohort and polygon blocks, and the fast rows of the     !
+      !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
+      need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
+      site%patch%diag%fast_rows = files%fast_loop_on
       !----- Additive: a site that writes into two file sets (a region's detail polygon) keeps every  !
       !      block either set needs. ------------------------------------------------------------------!
       need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active

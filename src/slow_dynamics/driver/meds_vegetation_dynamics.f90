@@ -276,6 +276,9 @@ contains
       !      `lit` is the SAME accumulator biogeochemistry consumes, so litter_*_site and the        !
       !      soil-carbon input are one number by construction, not two derivations that agree.  ----!
       if (site%patch%diag%active) then
+         !----- Without a fast loop the step also sets the block's patch count, which the fast loop  !
+         !      otherwise sets, so a reader sees these rows. -------------------------------------------!
+         if (.not. cfg%fast_biophysics_on) site%patch%diag%n = site%patch%n
          do ip = 1_ik, site%patch%n
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
                                                       + (site%patch%litter_in(ip)%labile_grnd           &

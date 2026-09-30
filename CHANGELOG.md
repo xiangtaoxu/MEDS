@@ -243,6 +243,21 @@ before and after.
   `w_surface_site` read 0 only by chance. A slot the block holds no entry for now reads 0, as one
   with no weight already did. #299 remains: those variables should read as missing in a slow-only
   run, and the slow operators' own rows should report their values.
+- **A slow-only run reports its slow rates, and reads fast-loop variables as missing** (#299). With
+  `fast_biophysics_on = false`:
+  - **Fast-loop variables.** 39 of them (the fluxes, canopy air, ground, forcing echo) read 0 on
+    r1's `demography_30yr`, a value nothing computed. They now read as `_FillValue`. The
+    per-cohort fast block and the polygon block stay off in such a run; the patch block reports
+    only the slow operators' rows (`patch_diag_slow_row`). A variable the run does not simulate is
+    caught once, before extraction, and the accumulator skips a missing sample, so a window closes
+    as exactly the fill value. Averaging the fill over patches used to give a number just off it.
+  - **Slow rows.** The slow step already weighted the patch block by `dt_slow`, but only the fast
+    loop set the block's patch count, so the slow rows were unreadable until a disturbance set it.
+    The step now sets it too: `nplant_recruit_site` reports its first year (0.03 plant/m²/yr
+    instead of 0). The disturbed area (0.0139/yr), background and disturbance mortality carbon
+    were already reported.
+  - **Litterfall** stays 0 in a run with soil carbon off, which does not accumulate litter.
+  - **Test:** `slow_diag_units` checks the slow-only weight, patch count and recruitment rate.
 
 ## [0.3.1] — 2026-09-29
 

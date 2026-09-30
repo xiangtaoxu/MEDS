@@ -27,7 +27,7 @@ module meds_output_integrate
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, N_PYDIAG, cohort_diag_value,           &
-                                       patch_diag_value, polygon_diag_value
+                                       patch_diag_value, patch_diag_slow_row, polygon_diag_value
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
                                        soil_matric_potential, specific_humidity_to_vpd
@@ -302,6 +302,7 @@ contains
    elemental subroutine integrate_scalar(buf, x, dt)
       type(integ_buffer_t), intent(inout) :: buf
       real(wp),             intent(in)    :: x, dt
+      if (x == MISSING_VALUE) return        ! nothing to report this step (see not_simulated)
       select case (buf%agg)
       case (AGG_MEAN)   ; buf%scal = buf%scal + x       ; buf%nsamp = buf%nsamp + 1_ik
       case (AGG_SUM)    ; buf%scal = buf%scal + x       ; buf%nsamp = buf%nsamp + 1_ik
@@ -436,6 +437,25 @@ contains
    !      block at the top). This one function is what makes the id ranges enforceable rather      !
    !      than a convention -- every dispatch below asks it, so a mis-ranged id fails loudly here   !
    !      instead of silently resolving to a neighbour's field.                                     !
+   !----- A diagnostic-block row whose block this run does not fill: a block that is off, or a fast  !
+   !      row of the patch block in a slow-only run (#299). Its variables read as missing, not as a   !
+   !      0 nothing computed. ----------------------------------------------------------------------!
+   pure logical function not_simulated(site, src) result(ns)
+      type(site_t), intent(in) :: site
+      integer(ik),  intent(in) :: src
+      ns = .false.
+      if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
+         ns = .not. site%cohort%diag%active
+      else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
+         ns = .not. site%cohort%sdiag%active
+      else if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) then
+         ns = .not. site%patch%diag%active .or.                                                    &
+              (.not. site%patch%diag%fast_rows .and. .not. patch_diag_slow_row(src - FLD_P_DIAG0))
+      else if (src > FLD_PY_DIAG0 .and. src <= FLD_PY_DIAG0 + N_PYDIAG) then
+         ns = .not. site%diag%active
+      end if
+   end function not_simulated
+
    pure integer(ik) function src_class(src) result(k)
       integer(ik), intent(in) :: src
       if      (src >= 1000_ik .and. src < 2000_ik) then ; k = SRCK_COHORT
@@ -505,15 +525,12 @@ contains
                                     + site%cohort%wood_carbon(1:n)                             &
                                     + site%cohort%nonstructural_carbon(1:n)
       case default
-         !----- FAST-loop diagnostic rows (FLD_C_DIAG0 + CD_*): read the dt-weighted accumulator     !
-         !      and normalize. A cohort with no samples this window (there should be none, but a     !
-         !      fast-loop-off run has all of them) reports 0 with the block inactive.  -------------!
+         !----- Diagnostic-block rows (FLD_C_DIAG0 + CD_*, FLD_C_SDIAG0 + CS_*): read the dt-weighted   !
+         !      accumulator and normalize. A block that is off never reaches here (not_simulated). ---!
          if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
             call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n)
-            if (.not. site%cohort%diag%active) then ; n = site%cohort%n ; x(1:n) = MISSING_VALUE ; end if
          else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
             call cohort_diag_value(site%cohort%sdiag, src - FLD_C_SDIAG0, x, n)
-            if (.not. site%cohort%sdiag%active) then ; n = site%cohort%n ; x(1:n) = MISSING_VALUE ; end if
          else
             x(1:n) = MISSING_VALUE
          end if
@@ -584,7 +601,6 @@ contains
       case default
          if (src > FLD_P_DIAG0 .and. src <= FLD_P_DIAG0 + N_PDIAG) then
             call patch_diag_value(site%patch%diag, src - FLD_P_DIAG0, x, n)
-            if (.not. site%patch%diag%active) then ; n = site%patch%n ; x(1:n) = MISSING_VALUE ; end if
          else
             x(1:n) = MISSING_VALUE
          end if
@@ -679,6 +695,11 @@ contains
       logical     :: ok
       scalar_out = 0.0_wp ; n_out = 0_ik
       kcls = src_class(v%source_id)
+      !----- A source this run does not simulate reads as missing: no slab entries, and a scalar    !
+      !      that integrate_scalar skips, so the whole window closes as _FillValue. ----------------!
+      if (not_simulated(site, v%source_id)) then
+         scalar_out = MISSING_VALUE ; return
+      end if
 
       select case (v%dim)
 
