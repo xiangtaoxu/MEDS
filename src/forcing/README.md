@@ -34,14 +34,18 @@ demography or state layer — so a prescribed driver stays low in the library gr
 - **`meds_met_driver`** — the reader. `met_open` opens a source (for a site, or for a region's
   cells), `met_cursor_init` places a polygon's cursor on it, `met_prefetch` loads what the next step
   reads, and `met_advance` / `met_instant` step and sample a cursor with no file access. Two file
-  sources, chosen by `[forcing].format`: the MEDS multi-grid `(time, grid)` forcing NetCDF
-  (`"ED_default"`), and the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it lays end
-  to end as one hourly axis so bracketing and recycling are the same code for both. Every clock is
-  UTC. The humidity a file carries (dewpoint, relative humidity or specific humidity, exactly one)
-  becomes specific humidity through the model's own saturation curve, and the wind components
-  become the speed, at each stamp; shortwave is partitioned at ingest. Rain and shortwave come from
-  the record whose interval contains the instant. Also the no-file constant-climate backend, used
-  by the tests.
+  sources, chosen by `[forcing].format`, each an open and one record's values as stored:
+  - `meds_met_file_source`: the MEDS multi-grid `(time, grid)` forcing NetCDF (`"ED_default"`);
+  - `meds_met_archive_source`: the global ED_ERA5land archive (`"ED_ERA5land"`), whose months it
+    lays end to end as one hourly axis.
+
+  Both share `meds_met_source_common` (the status codes, the time axis, the recycle window and the
+  check of a file against its config), so bracketing and recycling are the same code for both.
+  `read_record` is the one ingest after that. Every clock is UTC. The humidity a file carries
+  (dewpoint, relative humidity or specific humidity, exactly one) becomes specific humidity through
+  the model's own saturation curve, and the wind components become the speed, at each stamp;
+  shortwave is partitioned at ingest. Rain and shortwave come from the record whose interval
+  contains the instant. Also the no-file constant-climate backend, used by the tests.
 - **`meds_co2_series`** — the prescribed CO₂ (#184): reads a MEDS CO₂ file (format 1, a plain-text
   list of period means at a declared `timestep`) and looks it up at a model instant, linear between
   period middles. `met_open` reads it once and `met_instant` sets `met%co2` from it, or from

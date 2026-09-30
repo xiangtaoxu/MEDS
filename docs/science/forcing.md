@@ -659,10 +659,11 @@ See [`docs/ROADMAP.md`](../ROADMAP.md) §8 for what is planned, and when.
 | humidity, precip phase | `meds_forcing_kernels`: `dewpoint_to_specific_humidity`, `rh_to_specific_humidity`, `precip_phase` |
 | grid match | `meds_forcing_kernels`: `great_circle_distance`, `nearest_grid_index` |
 | vertical corrections (§8) | `meds_lapse_rate`: terrain `lapse_air_temperature`, `lapse_pressure`, `lapse_specific_humidity`, `lapse_longwave`, `monthly_lapse_rate` (called by `read_record`); canopy-air top `cas_top_wind_factor`, `cas_top_air_temperature`, `met_to_cas_top` (called per patch by `fast_dynamics`, with `canopy_roughness` from `meds_canopy_aerodynamics`) |
-| the reader | `meds_met_driver`: `met_open`, `met_cursor_init`, `met_prefetch`, `met_advance`, `met_instant`, `met_close`; `read_record`, `assert_finite`; for the archive `open_archive`, `load_axis_month`, `locate_record`, `keep_window_head` |
+| the reader | `meds_met_driver`: `met_open`, `met_cursor_init`, `met_prefetch`, `met_advance`, `met_instant`, `met_close`; the one ingest `read_record`, `assert_finite` |
+| the two file sources | `meds_met_file_source`: `file_source_open`, `file_source_record`, `read_series`, `detect_humidity`; `meds_met_archive_source`: `archive_source_open`, `archive_prefetch`, `archive_source_record`, `open_archive`, `load_axis_month`, `locate_record`, `keep_window_head` |
 | the archive's files | `meds_era5land_reader`: `era5land_path`, `era5land_select_site`, `era5land_select_box`, `era5land_load_month` |
-| recycling | `meds_met_driver`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`, `load_wrap_bracket` |
-| CO₂ | `meds_co2_series`: `co2_series_read`, `co2_series_at`, `co2_series_covers`; `meds_met_driver`: `open_co2`, and `met_instant` sets `met%co2`; the `CO2air` rejection in `validate_file_against_config` |
+| recycling | `meds_met_source_common`: `validate_recycle_window`, `file_lookup_sec`, `recycle_model_to_file`; `meds_met_driver`: `load_wrap_bracket` |
+| CO₂ | `meds_co2_series`: `co2_series_read`, `co2_series_at`, `co2_series_covers`; `meds_met_driver`: `open_co2`, and `met_instant` sets `met%co2`; the `CO2air` rejection in `validate_file_against_config` (`meds_met_source_common`) |
 | types | `meds_forcing_types`: `met_forcing_t`, `met_record_t`, `met_source_t`, `met_cursor_t`, `met_month_t`, `co2_series_t` |
 | config + selectors | `meds_forcing_config`: `forcing_config_t`, `INTERP_*`, `SWPART_*`, `LW_*`, `CLAMP_*`, `METAVG_*`, `GRIDMATCH_*`, `CO2_SOURCE_*`; validated in `meds_config`, read by `meds_config_io` |
 | TOML block | `[forcing]` + `[site]` (documented in `meds_config_main.toml`) |

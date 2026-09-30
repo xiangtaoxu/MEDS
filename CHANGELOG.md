@@ -16,6 +16,21 @@ before and after.
 
 ### Changed
 
+- **The met reader is split into its sources** (#311 F6). `meds_met_driver` was 1,415 lines, with
+  three backends behind ten branches. It is now four modules:
+  - `meds_met_file_source`: a MEDS forcing file. It holds the open and one record's values as
+    stored.
+  - `meds_met_archive_source`: the ED_ERA5land archive. It holds the open, the month prefetch and
+    one record's values.
+  - `meds_met_source_common`: what the two share. That is the status codes, the time axis with its
+    recycle window, and the check of a file against its config.
+  - `meds_met_driver`: what is the same for every backend. That is opening, the cursor, the stepping,
+    and the one ingest (`read_record`) that checks, converts, lapses and partitions a record.
+
+  The routines moved unchanged, and every r1 output is bit-identical. A forcing that `met_open`
+  rejects now prints its reason and then stops with one fixed message, because ifx garbles a stop
+  code that is not a constant.
+
 - **The FAST tier reads the patch block's own row** (#270). The fast sample was a list of its own
   (13 fields, 13 source ids, a 13-line fold) beside the patch block's table (`PD_*`) of the same
   quantities.

@@ -240,8 +240,10 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   - R6, a C API and Python entry point, and an example.
 
   MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).
-- **A source interface for the met reader.** *Candidate.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) `meds_met_driver` carries three
-  sources behind ten backend branches; the hourly cadence and the time-units parsing are repeated.
+- **A source interface for the met reader.** *Done in beta.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) The two file sources
+  are modules of their own (`meds_met_file_source`, `meds_met_archive_source`), each an open and one
+  record's values as stored, over what they share (`meds_met_source_common`). The reader keeps
+  opening, the cursor, the stepping and the one ingest. F7-F12 went in with the efficiency sweep.
 
 ---
 
