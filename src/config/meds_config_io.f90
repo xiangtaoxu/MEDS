@@ -18,7 +18,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT
+   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
+                               LWP_CONTROL_LINEAR_DECLINE
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -1166,6 +1167,14 @@ contains
       call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
       call req_l(tm, 'leaf_physiology.wstress_nonstomatal', cfg%leaf_wstress_nonstomatal, miss)
+      !----- The stomatal control at low leaf water potential (#332); optional, one option today. ----!
+      if (toml_has(tm, 'leaf_physiology.low_water_potential_control')) then
+         select case (trim(adjustl(toml_string(tm, 'leaf_physiology.low_water_potential_control', ''))))
+         case ('linear_decline') ; cfg%low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE
+         case default
+            error stop 'load_meds_config: leaf_physiology.low_water_potential_control must be "linear_decline"'
+         end select
+      end if
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)

@@ -41,7 +41,7 @@ module meds_config
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
-   public :: ARREST_NONE, ARREST_GS_CLAMP
+   public :: LWP_CONTROL_LINEAR_DECLINE
    public :: HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
@@ -76,14 +76,16 @@ module meds_config
    !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
    !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
    !      stays "ark" for compatibility. ------------------------------------------------------------!
-   !----- LEAF WATER-STRESS ARRESTOR (issue #95). Without one, a plant transpires at full rate with  !
-   !      an empty internal store: beta_stomata scales g1 only, so conductance falls to the residual  !
-   !      g0 and never reaches zero. The two options are alternatives, not a sequence.               !
-   integer(ik), parameter :: ARREST_NONE       = 0_ik  !< no arrestor (pre-#95 behaviour; for A/B only)
-   integer(ik), parameter :: ARREST_GS_CLAMP   = 1_ik  !< shut gs completely below 2*psi_tlp (DEFAULT)
+   !----- STOMATAL CONTROL AT LOW LEAF WATER POTENTIAL ([leaf_physiology].low_water_potential_control, !
+   !      #332). Without one, a plant transpires with an empty internal store: beta_stomata scales g1 !
+   !      only, so conductance falls to the residual g0 and never reaches zero (issue #95). This     !
+   !      multiplies the conductance the stomatal model calculates, g0 included, by a factor that    !
+   !      falls LINEARLY from 1 at the turgor-loss point psi_tlp to 0 at 2*psi_tlp. It replaced a    !
+   !      hard shutdown at 2*psi_tlp, whose step no calibration could see past. -------------------!
+   integer(ik), parameter :: LWP_CONTROL_LINEAR_DECLINE = 1_ik  !< "linear_decline" (the only option)
    integer(ik), parameter :: HYD_CONDUCTANCE_WHOLE_PLANT = 1_ik  !< [hydraulics] conductance = "whole_plant"
    integer(ik), parameter :: HYD_CONDUCTANCE_SEGMENT     = 2_ik  !< [hydraulics] conductance = "segment"
-   !----- RESERVED: a "dynamic vapour pressure" arrestor -- the substomatal air held at the Kelvin    !
+   !----- RESERVED: a "dynamic vapour pressure" control -- the substomatal air held at the Kelvin     !
    !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
    !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
    !      and REMOVED (see issue #96 for the pro/con and docs/science/leaf_gas_exchange.md): scaling   !
@@ -229,15 +231,12 @@ module meds_config
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
-      !----- Which leaf water-stress arrestor to run (ARREST_*). GS_CLAMP is a hard threshold on the   !
-      !      previous day's daily-max leaf potential; DYNAMIC_VP is the smooth thermodynamic route --  !
-      !      the substomatal air is at RH = exp(psi/(rho_w*Rv*T)), not saturated, so the driving       !
-      !      gradient shrinks with psi and REVERSES once e_i < e_a (foliar uptake), which arrests      !
-      !      transpiration with no threshold parameter at all.                                         !
-      !                                                                                          !
-      !      A second route -- holding the substomatal air at its Kelvin humidity instead of saturated !
-      !      -- was built and removed; see the ARREST_* block above and issue #96. -------------------!
-      integer(ik) :: leaf_stress_arrestor = ARREST_GS_CLAMP !< ARREST_NONE | ARREST_GS_CLAMP
+      !----- The stomatal control at low leaf water potential (LWP_CONTROL_*, #332): the stomatal     !
+      !      conductance times a factor falling linearly from 1 at psi_tlp to 0 at 2*psi_tlp, on the    !
+      !      previous day's daily-max leaf potential. The thermodynamic route -- the substomatal air   !
+      !      at its Kelvin humidity, so the driving gradient shrinks with psi with no threshold at all  !
+      !      -- was built and removed (issue #96); once #96 is in, this control matters less. -------!
+      integer(ik) :: low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE !< [leaf_physiology]
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
