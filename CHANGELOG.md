@@ -67,6 +67,17 @@ before and after.
   and `column_params_t` is gone. The frozen record now holds only what freezes each step.
   Bit-identical on every r1 case.
 
+- **The fast-loop state's fields are listed once** (#146). Each of the seven state combinators
+  (`state_init`, `state_axpy`, `state_accum`, `state_extrap`, `state_sub`, `state_err_diff`,
+  `zero_like`) and the step-size error norm named every field of `column_state_t` itself, so adding a
+  field meant finding and editing eight routines by hand. Now `state_to_array`, `array_to_state` and
+  `tend_to_array` list the fields once, `state_entry_rules` says how each field enters the error norm
+  and the embedded error, and the combinators work on the flat array. The combinators fill their
+  output in place instead of allocating a new state.
+  - **Outputs move at rounding level** (the sums are evaluated in a different order): at most 2e-9
+    relative on the r1 cases' fluxes.
+  - **Test:** `state_combinators` checks the round trip through the flat array and the rule counts.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

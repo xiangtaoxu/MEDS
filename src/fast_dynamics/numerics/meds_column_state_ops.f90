@@ -5,8 +5,10 @@
 ! on rather than by one integrator. Both schemes (meds_fast_ark, meds_fast_rk45) and the test-only  !
 ! oracle import from here, so RK45 no longer depends on the ARK module for non-ARK code.            !
 !                                                                                          !
+!   * the state's fields, listed once -- state_to_array / array_to_state / tend_to_array, and      !
+!                           state_entry_rules (how each field is treated)                          !
 !   * state combinators  -- state_init / state_axpy / state_accum / state_extrap / state_sub /       !
-!                           state_err_diff / zero_like  (every prognostic field, every time)        !
+!                           state_err_diff / zero_like, as operations on the flat array              !
 !   * boundary-flux ledger accumulators -- bflux_zero / bflux_add / bflux_bweight                   !
 !   * stage-domain clamps -- clamp_cas / clamp_theta / clamp_soil_energy                             !
 !   * whole-column store totals for the ledgers -- soil_water_store / soil_energy_store /            !
@@ -15,20 +17,23 @@
 !   * post-march commits shared by both schemes -- clamp_canopy_film / deposit_condensate /          !
 !                           unpack_column_state / diagnose_soil_temps                                !
 !                                                                                          !
-! ADDING A STATE FIELD: every combinator here must carry it. There is no compile-time check, so     !
-! grep this file for an existing field (e.g. wood_surf_water) and mirror each occurrence.           !
+! ADDING A STATE FIELD: list it in state_to_array, array_to_state, tend_to_array and                !
+! state_entry_rules (and in the type, the frozen-record pack, unpack_column_state and                !
+! test_state_combinators). The combinators themselves never name a field.                            !
 !==========================================================================================!
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
-   use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,                     &
-                                     stage_bflux_t, column_bflux_t, process_mask_t
+   use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
+                                     stage_bflux_t, column_bflux_t, process_mask_t,                    &
+                                     GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
    use meds_soil_types, only : energy_forcing_t
    use meds_fast_types, only : patch_biophys_t
    implicit none
    private
 
+   public :: state_size, state_to_array, array_to_state, tend_to_array, state_entry_rules
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight
    public :: assemble_soil_energy_forcing, apply_process_mask
@@ -38,80 +43,178 @@ module meds_column_state_ops
 
 contains
 
-   !----- copy the prognostic state (used to seed the RK combination). --------------------!
-   pure subroutine state_init(y, n, nsl, y_stage)
+   !=======================================================================================!
+   ! THE STATE'S FIELDS, LISTED ONCE.                                                          !
+   !                                                                                          !
+   ! The integrator's bookkeeping -- copy, y + a*k, accumulate, extrapolate, subtract, the      !
+   ! embedded error and the step-size error norm -- works on one flat array per state. The      !
+   ! three routines below are the only ones that name column_state_t's fields for it, and       !
+   ! state_entry_rules is the only place that says how each field is treated. Fortran cannot     !
+   ! check that a field is listed, so test_state_combinators runs every field through every     !
+   ! combinator.                                                                                !
+   !                                                                                          !
+   ! Layout, in the order the step-size norm adds its terms:                                    !
+   !   canopy air: enthalpy, humidity, CO2 | soil energy (1:nsl) | soil water (1:nsl) |         !
+   !   per cohort: leaf water, wood water | per cohort: leaf film, wood film |                  !
+   !   pond: water, enthalpy                                                                    !
+   !=======================================================================================!
+   pure integer(ik) function state_size(n, nsl) result(m)
+      integer(ik), intent(in) :: n, nsl
+      m = 5_ik + 2_ik*nsl + 4_ik*n
+   end function state_size
+
+   pure subroutine state_to_array(y, n, nsl, v)
       type(column_state_t), intent(in)  :: y
       integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: y_stage
-      y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
-      y_stage%soil_energy  = y%soil_energy  ; y_stage%theta   = y%theta
-      y_stage%w_surface    = y%w_surface    ; y_stage%w_surface_enth = y%w_surface_enth
-      allocate(y_stage%leaf_water_mass(n), y_stage%wood_water_mass(n))
-      y_stage%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
-      y_stage%wood_water_mass(1:n) = y%wood_water_mass(1:n)
-      allocate(y_stage%leaf_surf_water(n), y_stage%wood_surf_water(n))
-      y_stage%leaf_surf_water(1:n) = y%leaf_surf_water(1:n)
-      y_stage%wood_surf_water(1:n) = y%wood_surf_water(1:n)
+      real(wp),             intent(out) :: v(:)
+      integer(ik) :: i, o
+      v(1) = y%cas_enthalpy ; v(2) = y%cas_shv ; v(3) = y%cas_co2
+      v(4:3+nsl)       = y%soil_energy(1:nsl)
+      v(4+nsl:3+2*nsl) = y%theta(1:nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         v(o+2*i-1) = y%leaf_water_mass(i) ; v(o+2*i) = y%wood_water_mass(i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         v(o+2*i-1) = y%leaf_surf_water(i) ; v(o+2*i) = y%wood_surf_water(i)
+      end do
+      o = o + 2_ik*n
+      v(o+1) = y%w_surface ; v(o+2) = y%w_surface_enth
+   end subroutine state_to_array
+
+   !----- The inverse. The per-cohort arrays are allocated only when they are missing or of another !
+   !      length, so a state reused from call to call is filled in place. Soil layers past nsl are 0. !
+   pure subroutine array_to_state(v, n, nsl, y)
+      real(wp),             intent(in)    :: v(:)
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: y
+      integer(ik) :: i, o
+      call ensure_cohort_arrays(y, n)
+      y%cas_enthalpy = v(1) ; y%cas_shv = v(2) ; y%cas_co2 = v(3)
+      y%soil_energy = 0.0_wp ; y%theta = 0.0_wp
+      y%soil_energy(1:nsl) = v(4:3+nsl)
+      y%theta(1:nsl)       = v(4+nsl:3+2*nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         y%leaf_water_mass(i) = v(o+2*i-1) ; y%wood_water_mass(i) = v(o+2*i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         y%leaf_surf_water(i) = v(o+2*i-1) ; y%wood_surf_water(i) = v(o+2*i)
+      end do
+      o = o + 2_ik*n
+      y%w_surface = v(o+1) ; y%w_surface_enth = v(o+2)
+   end subroutine array_to_state
+
+   !----- A tendency in the same layout. The pond has no tendency (it is passed through the stages  !
+   !      and committed from the scratch hydrology solve), so its entries are 0, and y + a*k then    !
+   !      leaves it exactly as it was, with no special case. -------------------------------------!
+   pure subroutine tend_to_array(k, n, nsl, v)
+      type(column_tend_t), intent(in)  :: k
+      integer(ik),         intent(in)  :: n, nsl
+      real(wp),            intent(out) :: v(:)
+      integer(ik) :: i, o
+      v(1) = k%d_cas_enthalpy ; v(2) = k%d_cas_shv ; v(3) = k%d_cas_co2
+      v(4:3+nsl)       = k%dedt(1:nsl)
+      v(4+nsl:3+2*nsl) = k%dtheta_dt(1:nsl)
+      o = 3_ik + 2_ik*nsl
+      do i = 1_ik, n
+         v(o+2*i-1) = k%d_leaf_water_mass(i) ; v(o+2*i) = k%d_wood_water_mass(i)
+      end do
+      o = o + 2_ik*n
+      do i = 1_ik, n
+         v(o+2*i-1) = k%d_leaf_surf_water(i) ; v(o+2*i) = k%d_wood_surf_water(i)
+      end do
+      o = o + 2_ik*n
+      v(o+1) = 0.0_wp ; v(o+2) = 0.0_wp
+   end subroutine tend_to_array
+
+   !----- How entry j of the flat array is treated, for every field in one place:                  !
+   !        norm_group         its tolerance group in the step-size error norm (0: not counted);    !
+   !        in_embedded_error  whether the embedded error estimate counts it.                       !
+   !      The films and the pond are outside the norm. The plant water, the films and the pond ride !
+   !      operator-split maps outside the ESDIRK stages, so their embedded difference is set to 0   !
+   !      rather than computed: the extrapolation would leave rounding noise in it. --------------!
+   pure subroutine state_entry_rules(j, n, nsl, norm_group, in_embedded_error)
+      integer(ik), intent(in)  :: j, n, nsl
+      integer(ik), intent(out) :: norm_group
+      logical,     intent(out) :: in_embedded_error
+      integer(ik) :: o
+      o = 3_ik + 2_ik*nsl
+      if (j == 1_ik) then
+         norm_group = GRP_ENTH ; in_embedded_error = .true.
+      else if (j == 2_ik) then
+         norm_group = GRP_SHV  ; in_embedded_error = .true.
+      else if (j == 3_ik) then
+         norm_group = GRP_CO2  ; in_embedded_error = .true.
+      else if (j <= 3_ik + nsl) then
+         norm_group = GRP_SE   ; in_embedded_error = .true.
+      else if (j <= o) then
+         norm_group = GRP_THETA ; in_embedded_error = .true.
+      else if (j <= o + 2_ik*n) then
+         norm_group = merge(GRP_LEAF_W, GRP_WOOD_W, mod(j - o, 2_ik) == 1_ik) ; in_embedded_error = .false.
+      else
+         norm_group = 0_ik ; in_embedded_error = .false.         ! films and pond
+      end if
+   end subroutine state_entry_rules
+
+   !----- Allocate a state's per-cohort arrays for n cohorts, unless they already are. ------------!
+   pure subroutine ensure_cohort_arrays(y, n)
+      type(column_state_t), intent(inout) :: y
+      integer(ik),          intent(in)    :: n
+      if (allocated(y%leaf_water_mass) .and. allocated(y%wood_water_mass) .and.                   &
+          allocated(y%leaf_surf_water) .and. allocated(y%wood_surf_water)) then
+         if (size(y%leaf_water_mass) == n .and. size(y%wood_water_mass) == n .and.               &
+             size(y%leaf_surf_water) == n .and. size(y%wood_surf_water) == n) return
+      end if
+      if (allocated(y%leaf_water_mass)) deallocate(y%leaf_water_mass)
+      if (allocated(y%wood_water_mass)) deallocate(y%wood_water_mass)
+      if (allocated(y%leaf_surf_water)) deallocate(y%leaf_surf_water)
+      if (allocated(y%wood_surf_water)) deallocate(y%wood_surf_water)
+      allocate(y%leaf_water_mass(n), y%wood_water_mass(n), y%leaf_surf_water(n), y%wood_surf_water(n))
+   end subroutine ensure_cohort_arrays
+
+   !=======================================================================================!
+   ! THE COMBINATORS, on the flat array. Each fills its output in place.                       !
+   !=======================================================================================!
+   !----- copy: y_stage = y. ---------------------------------------------------------------------!
+   pure subroutine state_init(y, n, nsl, y_stage)
+      type(column_state_t), intent(in)    :: y
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: y_stage
+      real(wp) :: v(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, v)
+      call array_to_state(v, n, nsl, y_stage)
    end subroutine state_init
 
-   !----- y_stage = y + a*k  (state + a * tendency) -- the single-term combinator classical RK4's mid-  !
-   !      point/endpoint stages use. Cash-Karp's later stages need a MULTI-term combination (each    !
-   !      reads several prior k's), for which state_init + repeated state_accum is the pattern; both  !
-   !      live here together as the ONE set of generic column_state_t/column_tend_t combinators        !
-   !      every explicit fast-loop integrator (the RK4 oracle, RK45) builds its stages from. -----------!
+   !----- y_stage = y + a*k, the single-term combination classical RK4's stages use. Cash-Karp's    !
+   !      later stages read several prior k's, for which state_init + repeated state_accum is the   !
+   !      pattern. -------------------------------------------------------------------------------!
    pure subroutine state_axpy(y, a, k, n, nsl, y_stage)
-      type(column_state_t), intent(in)  :: y
-      real(wp),             intent(in)  :: a
-      type(column_tend_t),  intent(in)  :: k
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: y_stage
-      integer(ik) :: j, i
-      y_stage%cas_enthalpy = y%cas_enthalpy + a * k%d_cas_enthalpy
-      y_stage%cas_shv      = y%cas_shv      + a * k%d_cas_shv
-      y_stage%cas_co2      = y%cas_co2      + a * k%d_cas_co2
-      y_stage%soil_energy  = y%soil_energy
-      y_stage%theta        = y%theta
-      !----- pond PASSED THROUGH (no stage tendency yet -- #93 Phase 1 gives it one). ----------!
-      y_stage%w_surface    = y%w_surface ; y_stage%w_surface_enth = y%w_surface_enth
-      do j = 1_ik, nsl
-         y_stage%soil_energy(j) = y%soil_energy(j) + a * k%dedt(j)
-         y_stage%theta(j)       = y%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      allocate(y_stage%leaf_water_mass(n), y_stage%wood_water_mass(n))
-      allocate(y_stage%leaf_surf_water(n), y_stage%wood_surf_water(n))
-      do i = 1_ik, n
-         y_stage%leaf_water_mass(i) = y%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         y_stage%wood_water_mass(i) = y%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         y_stage%leaf_surf_water(i) = y%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         y_stage%wood_surf_water(i) = y%wood_surf_water(i) + a * k%d_wood_surf_water(i)
-      end do
+      type(column_state_t), intent(in)    :: y
+      real(wp),             intent(in)    :: a
+      type(column_tend_t),  intent(in)    :: k
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: y_stage
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), vk(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, vy)
+      call tend_to_array(k, n, nsl, vk)
+      vy = vy + a * vk
+      call array_to_state(vy, n, nsl, y_stage)
    end subroutine state_axpy
 
-   !----- y_stage += a*k  (accumulate a weighted tendency into a state). -----------------------!
+   !----- y_stage = y_stage + a*k, in place. ------------------------------------------------------!
    pure subroutine state_accum(y_stage, a, k, n, nsl)
       type(column_state_t), intent(inout) :: y_stage
       real(wp),             intent(in)    :: a
       type(column_tend_t),  intent(in)    :: k
       integer(ik),          intent(in)    :: n, nsl
-      integer(ik) :: j, i
-      y_stage%cas_enthalpy = y_stage%cas_enthalpy + a * k%d_cas_enthalpy
-      y_stage%cas_shv      = y_stage%cas_shv      + a * k%d_cas_shv
-      y_stage%cas_co2      = y_stage%cas_co2      + a * k%d_cas_co2
-      do j = 1_ik, nsl
-         y_stage%soil_energy(j) = y_stage%soil_energy(j) + a * k%dedt(j)
-         y_stage%theta(j)       = y_stage%theta(j)       + a * k%dtheta_dt(j)
-      end do
-      do i = 1_ik, n
-         y_stage%leaf_water_mass(i) = y_stage%leaf_water_mass(i) + a * k%d_leaf_water_mass(i)
-         y_stage%wood_water_mass(i) = y_stage%wood_water_mass(i) + a * k%d_wood_water_mass(i)
-         y_stage%leaf_surf_water(i) = y_stage%leaf_surf_water(i) + a * k%d_leaf_surf_water(i)
-         y_stage%wood_surf_water(i) = y_stage%wood_surf_water(i) + a * k%d_wood_surf_water(i)
-      end do
-      !----- w_surface / w_surface_enth are EXCLUDED, not forgotten. `column_tend_t` carries no      !
-      !      d_w_surface: the pond has no stage RHS, so it is passed through the stages untouched    !
-      !      and committed from the scratch hydrology solve. Left ALONE here (this is intent(inout), !
-      !      so "leave alone" is the correct action, and zeroing would destroy it). Asserted in      !
-      !      test_state_combinators, because otherwise this exclusion and an omission look the same. !
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), vk(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y_stage, n, nsl, vy)
+      call tend_to_array(k, n, nsl, vk)
+      vy = vy + a * vk
+      call array_to_state(vy, n, nsl, y_stage)
    end subroutine state_accum
 
    !----- ledger helpers: b-weight two stage RATE structs into accumulated AMOUNTS over dt (weights   !
@@ -183,36 +286,18 @@ contains
       end if
    end subroutine bflux_add
 
-   !----- out = (1-b)*y + b*Y2  (the ARS stage-3 extrapolation base). --------------------------!
+   !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base. The plant water, the films   !
+   !      and the pond are frozen through the stages, so for them this is y again (up to rounding). !
    pure subroutine state_extrap(y, b, Y2, n, nsl, out)
-      type(column_state_t), intent(in)  :: y, Y2
-      real(wp),             intent(in)  :: b
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: out
-      real(wp)    :: a
-      integer(ik) :: k, i
-      a = 1.0_wp - b
-      out%cas_enthalpy = a*y%cas_enthalpy + b*Y2%cas_enthalpy
-      out%cas_shv      = a*y%cas_shv      + b*Y2%cas_shv
-      out%cas_co2      = a*y%cas_co2      + b*Y2%cas_co2
-      out%soil_energy = y%soil_energy ; out%theta = y%theta
-      !----- == y%w_surface (the pond is frozen in the stages, like the mass stores). ----------!
-      out%w_surface      = a*y%w_surface      + b*Y2%w_surface
-      out%w_surface_enth = a*y%w_surface_enth + b*Y2%w_surface_enth
-      do k = 1_ik, nsl
-         out%soil_energy(k) = a*y%soil_energy(k) + b*Y2%soil_energy(k)
-         out%theta(k)       = a*y%theta(k)       + b*Y2%theta(k)
-      end do
-      allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
-      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
-      do i = 1_ik, n
-         !----- == y%*_water_mass (mass is frozen in the stages, like psi was). ----------------!
-         out%leaf_water_mass(i) = a*y%leaf_water_mass(i) + b*Y2%leaf_water_mass(i)
-         out%wood_water_mass(i) = a*y%wood_water_mass(i) + b*Y2%wood_water_mass(i)
-         !----- == y%*_surf_water (surface water is ALSO frozen/split out of the stages, sec 3.4/P2c). !
-         out%leaf_surf_water(i) = a*y%leaf_surf_water(i) + b*Y2%leaf_surf_water(i)
-         out%wood_surf_water(i) = a*y%wood_surf_water(i) + b*Y2%wood_surf_water(i)
-      end do
+      type(column_state_t), intent(in)    :: y, Y2
+      real(wp),             intent(in)    :: b
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: out
+      real(wp) :: vy(5_ik + 2_ik*nsl + 4_ik*n), v2(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(y, n, nsl, vy)
+      call state_to_array(Y2, n, nsl, v2)
+      vy = (1.0_wp - b)*vy + b*v2
+      call array_to_state(vy, n, nsl, out)
    end subroutine state_extrap
 
    !----- clamp the extrapolated CAS enthalpy + humidity into a wide PHYSICAL range so a BETA=2.414   !
@@ -296,77 +381,50 @@ contains
       end do
    end subroutine clamp_soil_energy
 
-   !----- err = (Y3 - base3) - (Y2 - y)  (the embedded 2nd-1st order difference); mass zeroed     !
-   !      (like psi before it -- mass is frozen/operator-split through the ESDIRK stages, so       !
-   !      Y3%*_water_mass == base3%*_water_mass == Y2%*_water_mass == y%*_water_mass exactly). -----!
+   !----- The embedded error estimate of the ARS(2,2,2) step: err = (Y3 - base3) - (Y2 - y), for   !
+   !      the entries state_entry_rules counts, and 0 for the rest. ---------------------------------!
    pure subroutine state_err_diff(Y3, base3, Y2, y, n, nsl, err)
-      type(column_state_t), intent(in)  :: Y3, base3, Y2, y
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: err
-      integer(ik) :: k
-      err%cas_enthalpy = (Y3%cas_enthalpy - base3%cas_enthalpy) - (Y2%cas_enthalpy - y%cas_enthalpy)
-      err%cas_shv      = (Y3%cas_shv      - base3%cas_shv)      - (Y2%cas_shv      - y%cas_shv)
-      err%cas_co2      = (Y3%cas_co2      - base3%cas_co2)      - (Y2%cas_co2      - y%cas_co2)
-      err%soil_energy = 0.0_wp ; err%theta = 0.0_wp
-      do k = 1_ik, nsl
-         err%soil_energy(k) = (Y3%soil_energy(k) - base3%soil_energy(k)) - (Y2%soil_energy(k) - y%soil_energy(k))
-         err%theta(k)       = (Y3%theta(k)       - base3%theta(k))       - (Y2%theta(k)       - y%theta(k))
+      type(column_state_t), intent(in)    :: Y3, base3, Y2, y
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: err
+      real(wp)    :: v3(5_ik + 2_ik*nsl + 4_ik*n), vb(5_ik + 2_ik*nsl + 4_ik*n)
+      real(wp)    :: v2(5_ik + 2_ik*nsl + 4_ik*n), vy(5_ik + 2_ik*nsl + 4_ik*n)
+      integer(ik) :: j, grp
+      logical     :: counted
+      call state_to_array(Y3, n, nsl, v3) ; call state_to_array(base3, n, nsl, vb)
+      call state_to_array(Y2, n, nsl, v2) ; call state_to_array(y, n, nsl, vy)
+      do j = 1_ik, size(v3, kind=ik)
+         call state_entry_rules(j, n, nsl, grp, counted)
+         if (counted) then
+            v3(j) = (v3(j) - vb(j)) - (v2(j) - vy(j))
+         else
+            v3(j) = 0.0_wp
+         end if
       end do
-      allocate(err%leaf_water_mass(n), err%wood_water_mass(n))
-      err%leaf_water_mass(1:n) = 0.0_wp
-      err%wood_water_mass(1:n) = 0.0_wp
-      !----- surface water is ALSO split out of the embedded estimate (sec 3.4/P2c), like mass above. --!
-      allocate(err%leaf_surf_water(n), err%wood_surf_water(n))
-      err%leaf_surf_water(1:n) = 0.0_wp
-      err%wood_surf_water(1:n) = 0.0_wp
-      !----- The POND is excluded too, and is written EXPLICITLY rather than left to the type's      !
-      !      default initializer. The value is the same; what changes is that a reader can tell       !
-      !      exclusion from omission. Every other field of column_state_t is assigned above, so an     !
-      !      unassigned one here is indistinguishable from a field somebody forgot -- which is the      !
-      !      whole silent-omission hazard (structure plan §10.3): the compiler cannot flag it, the      !
-      !      conservation ledgers cannot see it, and the step controller just reads a smaller error.    !
-      err%w_surface      = 0.0_wp
-      err%w_surface_enth = 0.0_wp
+      call array_to_state(v3, n, nsl, err)
    end subroutine state_err_diff
 
-   !----- out = a - b  (state difference; used to form the low-order embedded solution). --------!
+   !----- out = a - b, the state difference that forms the low-order embedded solution. --------!
    pure subroutine state_sub(a, b, n, nsl, out)
-      type(column_state_t), intent(in)  :: a, b
-      integer(ik),          intent(in)  :: n, nsl
-      type(column_state_t), intent(out) :: out
-      integer(ik) :: k
-      out%cas_enthalpy = a%cas_enthalpy - b%cas_enthalpy
-      out%cas_shv      = a%cas_shv      - b%cas_shv
-      out%cas_co2      = a%cas_co2      - b%cas_co2
-      out%soil_energy = a%soil_energy ; out%theta = a%theta
-      out%w_surface      = a%w_surface      - b%w_surface
-      out%w_surface_enth = a%w_surface_enth - b%w_surface_enth
-      do k = 1_ik, nsl
-         out%soil_energy(k) = a%soil_energy(k) - b%soil_energy(k)
-         out%theta(k)       = a%theta(k)       - b%theta(k)
-      end do
-      allocate(out%leaf_water_mass(n), out%wood_water_mass(n))
-      out%leaf_water_mass(1:n) = a%leaf_water_mass(1:n) - b%leaf_water_mass(1:n)
-      out%wood_water_mass(1:n) = a%wood_water_mass(1:n) - b%wood_water_mass(1:n)
-      allocate(out%leaf_surf_water(n), out%wood_surf_water(n))
-      out%leaf_surf_water(1:n) = a%leaf_surf_water(1:n) - b%leaf_surf_water(1:n)
-      out%wood_surf_water(1:n) = a%wood_surf_water(1:n) - b%wood_surf_water(1:n)
+      type(column_state_t), intent(in)    :: a, b
+      integer(ik),          intent(in)    :: n, nsl
+      type(column_state_t), intent(inout) :: out
+      real(wp) :: va(5_ik + 2_ik*nsl + 4_ik*n), vb(5_ik + 2_ik*nsl + 4_ik*n)
+      call state_to_array(a, n, nsl, va)
+      call state_to_array(b, n, nsl, vb)
+      va = va - vb
+      call array_to_state(va, n, nsl, out)
    end subroutine state_sub
 
-   !----- a column_state_t of the SAME shape as `ref`, every field zeroed -- lets state_wrms_grouped   !
-   !      (which takes two STATES to difference) read a already-a-difference y_err directly, without    !
-   !      a bespoke "WRMS of one state" variant. Trivial and allocation-only; not a hot path (once      !
-   !      per accept/reject trial, not per stage). ------------------------------------------------------!
+   !----- A state for n cohorts with every field zero, so the step-size norm can read an error that  !
+   !      is already a difference (state_wrms_grouped takes two states). ---------------------------!
    pure function zero_like(ref, n, nsl) result(z)
       type(column_state_t), intent(in) :: ref
-      integer(ik),           intent(in) :: n, nsl
+      integer(ik),          intent(in) :: n, nsl
       type(column_state_t) :: z
-      z%cas_enthalpy = 0.0_wp ; z%cas_shv = 0.0_wp ; z%cas_co2 = 0.0_wp
-      z%soil_energy = 0.0_wp ; z%theta = 0.0_wp
-      allocate(z%leaf_water_mass(n), z%wood_water_mass(n), z%leaf_surf_water(n), z%wood_surf_water(n))
-      z%leaf_water_mass = 0.0_wp ; z%wood_water_mass = 0.0_wp
-      z%leaf_surf_water = 0.0_wp ; z%wood_surf_water = 0.0_wp   ! every field, so the norm may read any of them
-      z%w_surface = 0.0_wp ; z%w_surface_enth = 0.0_wp
+      real(wp) :: v(5_ik + 2_ik*nsl + 4_ik*n)
+      v = 0.0_wp
+      call array_to_state(v, n, nsl, z)
    end function zero_like
 
    !---------------------------------------------------------------------------------------!
