@@ -40,6 +40,7 @@ import tower_gapfill as tg   # noqa: E402
 import tower_inputs as ti    # noqa: E402
 
 mff = ti.mff
+conv = ti.conv
 STATES = ("Tair", "RH", "PSurf", "Wind", "SWdown")
 FILE_NAMES = {"Tair": "Tair", "RH": "RHair", "PSurf": "PSurf", "Wind": "Wind", "Rainf": "Rainf",
               "SWdown": "SWdown", "LWdown": "LWdown"}
@@ -56,7 +57,7 @@ def prepare(site, short_gap_max=4, lw_holdout=None):
     values, report["V4_bounds"] = tc.screen_bounds(data.values)
     stamps = ti.to_utc(values.index.values, site.utc_offset)
     starts, _ = ti.interval_bounds(stamps, site.stamp, site.timestep)
-    mean_cosz = mff.window_mean_cosz(starts, site.timestep, site.latitude, site.longitude)
+    mean_cosz = conv.window_mean_cosz(starts, site.timestep, site.latitude, site.longitude)
     report["V2_sun"] = tc.check_sun(stamps, values["SWdown"].to_numpy(), site)
     n = len(stamps)
 
@@ -90,7 +91,7 @@ def prepare(site, short_gap_max=4, lw_holdout=None):
             y[name], qc[name] = tg.fill_mean_diurnal(y[name], qc[name], records_per_day)
             fills[name] = dict(method="mean_diurnal_variation", filled=int((qc[name] == tg.QC_SYNTH_OR_MDV).sum()))
         if name == "SWdown":
-            y[name] = np.where(mean_cosz > mff.COSZ_BAR_MIN, np.maximum(y[name], 0.0), 0.0)
+            y[name] = np.where(mean_cosz > conv.COSZ_BAR_MIN, np.maximum(y[name], 0.0), 0.0)
 
     # rain is never interpolated or averaged: a rain gap stops the build
     missing_rain = ~np.isfinite(y["Rainf"])
@@ -99,7 +100,7 @@ def prepare(site, short_gap_max=4, lw_holdout=None):
                          f"fill them in the tower file (from a nearby gauge or a reanalysis) before the build.")
 
     # the pressure at the ground, where MEDS keeps it (docs/science/forcing.md sec. 8)
-    y["PSurf"] = mff.pressure_at_height(y["PSurf"], y["Tair"], -site.pressure_height)
+    y["PSurf"] = conv.pressure_at_height(y["PSurf"], y["Tair"], -site.pressure_height)
 
     # the longwave, last, because the synthesis needs the filled states
     if lw_holdout is not None:

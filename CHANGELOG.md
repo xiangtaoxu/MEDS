@@ -14,6 +14,26 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **Forcing files are written in one contiguous block per variable, and read about 3 s faster**
+  (MEDS_EFFICIENCY_SWEEP_PLAN.md, item N-1). The shared writer made the time dimension unlimited
+  and took netCDF's default chunking: one record per chunk. The model reads a site's whole series at
+  open, chunk by chunk, so the BCI file (90,528 records) took about 3.3 s of every run's start-up,
+  most of a 10-day calibration trial's 8.5 s.
+  - **The writer** gives the time dimension a fixed length, so each variable is stored contiguously.
+    Rewritten this way, the BCI file shrinks from 63 MB to 4.2 MB, a 2-day run starts 3.1–3.4 s
+    sooner, and every output variable is bit-identical.
+  - **`met_open` prints a note** when a forcing file stores one time record per chunk, saying why
+    it is slow and giving the `nccopy -c time/8760,grid/1` line that rewrites it with the same
+    values. Files written before this change can be rewritten that way, or rebuilt.
+  - **One script, not a folder.** `scripts/forcing_common/meds_forcing_file.py` becomes
+    `scripts/meds_forcing_file.py`, the writer only, shared by `prepare_era5/make_forcing_file.py`
+    and the flux-tower tool. The tower tool's Python copies of the model's conversions (humidity,
+    pressure, solar geometry, the longwave synthesis) move to
+    `scripts/prepare_flux_tower/tower_conversions.py`.
+  - **Tests:** the flux-tower tool's 25 tests and the calibration smoke test pass unchanged.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

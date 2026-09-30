@@ -25,7 +25,7 @@ Both inputs give the same file (MEDS_FORCING_DESIGN.md §7.1):
     itself, for every source), and the hour-mean fluxes Rainf [kg m-2 s-1], SWdown (total; the model
     partitions it) and LWdown [W m-2], each with the units, names and cell method the archive gives it;
   * end-stamped hourly records (avg_convention = "end"), UTC, written by the shared writer
-    (scripts/forcing_common/meds_forcing_file.py).
+    (scripts/meds_forcing_file.py).
 No CO2air: CO2 is not meteorology, and the model takes it from [forcing].co2_source (a constant, or
 a MEDS CO2 file such as data/co2/), never from this file -- it rejects a file that carries one.
 MEDS never gap-fills: a missing value is an error, here as in the model.
@@ -64,8 +64,8 @@ from netCDF4 import Dataset, num2date
 
 import era5land_common as common
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forcing_common"))
-import meds_forcing_file as forcing_file  # noqa: E402  (the shared writer, one folder over)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import meds_forcing_file as forcing_file  # noqa: E402  (the shared writer, in scripts/)
 
 EARTH_RADIUS_KM = 6371.0
 HOUR = dt.timedelta(hours=1)

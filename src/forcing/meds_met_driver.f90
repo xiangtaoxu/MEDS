@@ -55,8 +55,8 @@ module meds_met_driver
                                    ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_netcdf_c,       only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f,                  &
                                    nc_get_att_text_f, nc_get_att_double_f, nc_get_vara_double,  &
-                                   nc_close, nc_check,                                          &
-                                   NC_NOERR, NC_NOWRITE, NC_GLOBAL
+                                   nc_close, nc_check, nc_inq_var_chunking,                     &
+                                   NC_NOERR, NC_NOWRITE, NC_GLOBAL, NC_CHUNKED
    implicit none
    private
 
@@ -1148,10 +1148,28 @@ contains
       count2 = [int(r1 - r0 + 1_ik, c_size_t), 1_c_size_t]
       do j = 1_ik, n
          st = nc_inq_varid_f(ncid, trim(src%series_name(j)), vid)
+         if (j == 1_ik) call note_one_record_chunks(ncid, vid, r1 - r0 + 1_ik, src%fcfg%path)
          st = nc_get_vara_double(ncid, vid, start2, count2, src%series(:, j))
          call nc_check(st, 'read_series: get '//trim(src%series_name(j)))
       end do
    end subroutine read_series
+
+   !----- A file stored one time record per chunk is read chunk by chunk at open: about 3 s for  !
+   !      BCI's 90,528 records, most of a short run's start-up. Say so once, with the fix. The     !
+   !      values are the same either way. ------------------------------------------------------!
+   subroutine note_one_record_chunks(ncid, varid, nrec, path)
+      integer(c_int),   intent(in) :: ncid, varid
+      integer(ik),      intent(in) :: nrec
+      character(len=*), intent(in) :: path
+      integer(c_int)    :: storage
+      integer(c_size_t) :: chunks(8)
+      if (nrec < 1000_ik) return
+      if (nc_inq_var_chunking(ncid, varid, storage, chunks) /= NC_NOERR) return
+      if (storage /= NC_CHUNKED .or. chunks(1) /= 1_c_size_t) return      ! chunks(1) is the time axis
+      write(*,'(3a)') ' note: ', trim(path), ' is stored one time record per chunk, so reading it'
+      write(*,'(a)')  '       at start-up is slow (about 3 s per 90,000 records). Rewriting it once with'
+      write(*,'(a)')  '       "nccopy -c time/8760,grid/1 <file> <new file>" keeps every value and reads fast.'
+   end subroutine note_one_record_chunks
 
    !----- The value of field `name` at record irec (0 when the file does not carry it). ---------!
    pure integer(ik) function series_field(src, name) result(j)
