@@ -716,13 +716,15 @@ lock that slows patch threads today.
   - The #299 fix (`385344d`): a slow-only run reports its slow rates and reads its fast-loop
     variables as missing. It moves `demography_30yr` only.
   - A stale-value read found on the way (`11e00bf`).
-- **Not started, and why:**
-  - **O6 + #270:** one forcing-echo table and a patch axis on the FAST tier. #270 is a new
-    output feature, and it touches the same staging lines as the fast loop.
-  - **#275:** the skin temperature, a science-output change.
-  - **F6:** splitting the 1,250-line reader into sources.
-
-  Each is a PR of its own size; this one is large enough to review as it stands.
+- **Done on `dev/output-forcing-cleanup` (PR into beta after #337):**
+  - O6: the forcing echo is listed once (`b0bdff2`). `sw_in_fast`, `air_temp_fast` and
+    `atm_co2_fast` move by 1e-16; they are now exact rather than area-summed.
+  - #270: the FAST tier reads the patch block's own row and has a patch axis (`dc92a7d`). It also
+    fixes N-9. `et_rate_site` moves by 4e-16.
+  - #275: the skin temperature (`ebeb875`), bit-identical. MEDS has no separate ground skin, so
+    it is the black-body temperature of the longwave up (CLM's `TSKIN`). The within-step variances
+    wait on a choice of definition (`docs/ROADMAP.md`).
+  - F6: the reader is split into its sources, bit-identical.
 - **#299 caveat:** litterfall stays 0 in a run with soil carbon off, which does not accumulate
   litter at all. Whether it should (it relates to #316) is a separate decision.
 
@@ -758,6 +760,7 @@ Per D6 these are not filed as issues; each is named in the commit and PR message
 | N-6 | `pow` in the soil hydraulic functions | `meds_hydr_lib` | optional: 6.5% of CPU; precomputed exponents move rounding everywhere |
 | N-7 | The daily tissue-water reconcile ignores a PFT's own curve | `meds_fast_reconcile` | 3 (fixed, `10d6482`) |
 | N-8 | A diagnostic reader leaves its slots unset when its block has no entries, so a slow-only run read stale values | `meds_site_diag_types` | 6 (fixed, `11e00bf`) |
+| N-9 | The soil-by-patch axis was missed by three rules: the record's patch count, the file-chunk cap and the annual guard | `close_tier`, `tier_has_cohort_or_patch`, the annual guards | 6 (fixed, `dc92a7d`) |
 | N-9 | A detail polygon (hourly files, per-cohort diagnostics) costs about four times an ordinary one and sets a threaded region's pace | `meds_region` | 5 (measured; the lever is noted in the Phase 5 status) |
 
 ---
