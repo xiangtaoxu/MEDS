@@ -232,6 +232,14 @@ contains
       call check_true('drip when full', dr > 0.0_wp, dr)
       call check_true('capacity respected', lw <= 0.25_wp + 1.0e-12_wp, lw)
       call check_true('sigma_w saturates to 1', abs(sw - 1.0_wp) < 1.0e-9_wp, sw)
+      !----- #333: a film already ABOVE capacity (leaf area lost under a full film) drips the excess:  !
+      !      storage capped, and throughfall + storage change = rain -- nothing discarded. ---------!
+      lw = 0.30_wp                                       ! capacity is 0.25: 0.05 too much
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+                                  tf, dr, sw)
+      call check_true('over capacity: storage capped', lw <= 0.25_wp + 1.0e-12_wp, lw)
+      bal = tf + (lw - 0.30_wp) / dt
+      call check('over capacity: the excess drips, the water balance holds', bal, rain, 1.0e-12_wp)
    end subroutine test_interception
 
    !=======================================================================================!

@@ -14,7 +14,7 @@
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
 !==========================================================================================!
 program test_column_derivs
-   use meds_test_assert, only : check, check_true, test_report
+   use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
@@ -709,14 +709,15 @@ contains
 
    !----- 11b. THE TISSUE-WATER FLOOR REPORTS THE WATER IT CREATES (#148). The floor stops the      !
    !      linear mass Euler step going negative, and does so by CREATING water. The whole-column      !
-   !      ledger is blind to it -- it sums leaf + wood over all cohorts, so water created in one       !
+   !      ledger could not see it -- it sums leaf + wood over all cohorts, so water created in one     !
    !      cohort's wood is indistinguishable from a redistribution -- which is why the case sat        !
-   !      documented as "unobserved" on no measurement at all.                                         !
+   !      documented as "unobserved" on no measurement at all. The ARK ledger now declares the        !
+   !      reported mass as created water (#333; test_column_ark's test_ark_tissue_floor_ledger).      !
    subroutine test_tissue_water_floor()
       type(column_state_t)  :: y, y_out
       type(column_frozen_t) :: frozen
       type(surface_tend_t)  :: sf
-      real(wp)    :: fmass, w_before
+      real(wp)    :: fmass, w_before, w_in, w_out, w_flux
       integer(ik) :: fcount, n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_tissue_water_floor:'
@@ -745,6 +746,14 @@ contains
                       all(y_out%leaf_water_mass(1:n) >= 0.0_wp), minval(y_out%leaf_water_mass(1:n)))
       call check_true('the reported mass is the sanity scale of the store it replaced',            &
                       fmass < max(w_before, 1.0_wp), fmass)
+      !----- (c) The reported mass is EXACTLY the water the floor made: the plant's water changed by   !
+      !          its fluxes plus fmass, and nothing else. This is what the ARK whole-column ledger now  !
+      !          relies on when it declares the mass as created water (#333). ----------------------!
+      w_in   = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
+      w_out  = sum((y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
+      w_flux = 900.0_wp * (sum(frozen%plant%uptake_frozen(1:n) * frozen%plant%nplant(1:n)) - sum(sf%transp_c(1:n)))
+      call check_close('floored stores: plant water change = fluxes + the reported floor mass',     &
+                       w_out - w_in, w_flux + fmass, 1.0e-10_wp * max(1.0_wp, abs(w_flux)))
    end subroutine test_tissue_water_floor
 
    !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !

@@ -370,6 +370,35 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
+- **Canopy interception discarded film water above capacity** (#336, #333). A cohort can start a step
+  holding more film water than its capacity, `dewmx·(LAI + WAI)`, when it loses leaf area under a full
+  film (the daily slow step sheds leaves). `intercept_canopy_layer` clipped the film to capacity, and
+  the clipped water reached neither the ground nor any flux.
+  - **The fix.** The excess now drips to the layer below with the rest of the drip.
+  - **Where it showed.** With interception on, in five BCI years under the calibrated set, 25 `whole_water
+    (ark)` breaches in heavy rain lost 1e-6 to 4e-5 kg m⁻² each. At every one, rain minus the film's
+    interception minus the throughfall equalled the residual. With the fix: 0 breaches.
+  - **What does not change.** Runs with interception off (the default) are unaffected, and a film
+    within capacity behaves as before.
+  - **Test:** `column_hydrology` starts a film 0.05 kg m⁻² above capacity. The storage is capped, and
+    throughfall plus the storage change equals the rain. The old kernel fails it.
+- **The ARK water ledger did not declare the water the tissue-water floor creates** (#336, #333). When one
+  step's transpiration debit would take a cohort's leaf or wood water below zero,
+  `advance_water_mass_full` floors the store and creates water (#148). The mass was reported
+  (`work_clamp_mass_site`) but not entered in `whole_water (ark)`, so every firing breached the ledger
+  by exactly the water made.
+  - **The fix.** The ledger now takes it as an input, as it already takes the soil's θ_res floor. The
+    adaptive march used to add the floor's mass on every attempted sub-step, rejected ones included,
+    and now counts accepted sub-steps only, so the declared mass is what the committed state received.
+    `work_clamp_mass_site` therefore now reports committed water only.
+  - **Where it showed.** In five BCI years under the calibrated set with `dsl_dmax` = 0.015, all 91
+    breaches fell on the three days the floor fired (April 2016). The daily residual equalled the
+    floor's mass. With the fix: 0 breaches, worst residual 5e-13 kg m⁻².
+  - **What is left.** Only the ledger changes: the floor still creates water where the plant
+    hydraulics collapse (#104).
+  - **Test:** `test_column_derivs` checks that on a floored step the plant water changes by its fluxes
+    plus the reported floor mass, exactly.
+
 - **The soil column's per-face check reported a wilting-limited root sink as a face error** (#334).
   `advance_soil_water_column` checks each layer's change of water against its face fluxes and its
   root sink. It subtracted the plant's requested uptake, `forcing%root_uptake(k)·dt`. In a layer

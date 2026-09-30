@@ -263,15 +263,21 @@ contains
       real(wp), intent(inout) :: leaf_water
       real(wp), intent(in)    :: rain_above, lai, sai, e_canopy, dt, dewmx, k_int, alpha_pi
       real(wp), intent(out)   :: throughfall, drip, sigma_w
-      real(wp) :: pai, f_pi, w_max, q_grab, room, q_intr
+      real(wp) :: pai, f_pi, w_max, q_grab, room, q_intr, w_new, over
       pai    = lai + sai
       f_pi   = alpha_pi * (1.0_wp - exp(-k_int * pai))
       w_max  = dewmx * pai
       q_grab = f_pi * rain_above
       room   = max(0.0_wp, w_max - leaf_water) / dt
       q_intr = min(q_grab, room + e_canopy)                      ! bounded by capacity + evap headroom
-      leaf_water  = min(max(leaf_water + (q_intr - e_canopy) * dt, 0.0_wp), w_max)
-      drip        = max(0.0_wp, q_grab - q_intr)
+      !----- A film already ABOVE capacity -- the canopy lost leaf area under a full film, e.g. the   !
+      !      daily slow step shedding leaves -- DRIPS its excess to the layer below. The clip below   !
+      !      used to discard it: the water reached neither the ground nor any flux, and the ARK      !
+      !      whole-column ledger lost exactly that much in heavy rain (#333). -------------------------!
+      w_new = leaf_water + (q_intr - e_canopy) * dt
+      over  = max(0.0_wp, w_new - w_max)
+      leaf_water  = min(max(w_new, 0.0_wp), w_max)
+      drip        = max(0.0_wp, q_grab - q_intr) + over / dt
       throughfall = (rain_above - q_grab) + drip                 ! gap-throughfall + drip -> below
       if (w_max > tiny_num) then
          sigma_w = min(1.0_wp, (leaf_water / w_max) ** (2.0_wp / 3.0_wp))
