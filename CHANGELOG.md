@@ -33,7 +33,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 ### Changed
 
 - **The BCI example's leaf traits follow the canopy's light gradient**
-  (`[trait_dynamics].trait_plasticity_on = true`; `MEDS_FAST_CALIBRATION_PLAN.md` D6). Each cohort's
+  (#330; `[trait_dynamics].trait_plasticity_on = true`; `MEDS_FAST_CALIBRATION_PLAN.md` D6). Each cohort's
   Vcmax25, Rd25, SLA and leaf lifespan are its PFT's top-of-canopy values scaled by the leaf area
   above it.
   - **The stand.** Over the five tower years LAI now holds at 5.6 where it fell to 4.8, and AGB
@@ -215,7 +215,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 ### Added
 
 - **`scripts/calibrate_fast`: calibration of the fast parameters against a flux tower**
-  (`MEDS_FAST_CALIBRATION_PLAN.md` P1, P3). It fits the sub-daily parameters (radiation,
+  (#330; `MEDS_FAST_CALIBRATION_PLAN.md` P1, P3). It fits the sub-daily parameters (radiation,
   photosynthesis and stomata, aerodynamics, water stress, respiration) to a tower's albedo,
   upwelling longwave, net radiation, LE and H corrected for closure with the Bowen ratio kept,
   daily evaporative fraction, daytime GPP, night NEE and u\*, with the stand held fixed. Every
@@ -233,7 +233,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     (gates G1 and G2), `fit`, `analyze` and `write-calibrated`.
   - **Tests:** 17 unit tests, and a smoke test through `meds_main` on the demography census with a
     synthetic tower (ctest `calibrate_fast`).
-- **The BCI example has a calibration** (`MEDS_FAST_CALIBRATION_PLAN.md` P2). `calibration.toml`
+- **The BCI example has a calibration** (#330; `MEDS_FAST_CALIBRATION_PLAN.md` P2). `calibration.toml`
   sets it up, and `calibration/` ships the fit and the calibrated configs. The fit used 8 ten-day
   windows from 2015–17 and was scored on 8 it never saw, with interception off and on.
   - **What the shipped set does.** It is interception off, with 20 fitted keys. It lowers the
@@ -329,7 +329,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
-- **The slow ledger missed the tissue heat that trait plasticity moves.** With plasticity on,
+- **The slow ledger missed the tissue heat that trait plasticity moves** (#330). With plasticity on,
   `advance_plant_traits` moves leaf carbon above the new SLA's allometric target into storage, and
   the leaves' heat content changes with it. The allocate phase then left an undeclared energy
   residual: −5,903 J m⁻² over the BCI example's five years. `vegetation_dynamics` now declares the

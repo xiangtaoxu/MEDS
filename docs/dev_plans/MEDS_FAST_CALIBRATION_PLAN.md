@@ -2,8 +2,8 @@
 
 **Status:** written 2026-09-29 against `beta` at `522def6`, and revised the same day after the
 owner's decisions (§12). P0d (#327) and P0h (#328) are merged. P0a, P0b, P0c and P0g are #329
-(`feat/fast-calibration-p0`). P1–P3 are implemented on `feat/fast-calibration-tool`, stacked on
-it, and the BCI fit is done. §13 records what the first fit showed and what to change next.
+(`feat/fast-calibration-p0`). P1–P3 are #330 (`feat/fast-calibration-tool`), stacked on it, and the
+BCI fit is done. §13 records what the first fit showed and what to change next.
 
 **Goal:** a crude, fast, repeatable refinement of the parameters that govern MEDS's sub-daily
 physics, against eddy-covariance data, with the vegetation structure held at its initial state. It
