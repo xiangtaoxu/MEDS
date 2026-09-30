@@ -19,6 +19,7 @@ module meds_toml
 
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
+   public :: toml_write_record
 
    !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds the   !
    !      forcing path fields (MET_PATH_LEN, MEDS_FORCING_DESIGN.md §15.2) with room for the key.     !
@@ -28,7 +29,21 @@ module meds_toml
       integer(ik)                     :: n = 0_ik
       character(len=KEYLEN), allocatable :: key(:)
       character(len=VALLEN), allocatable :: val(:)
+      character(len=256)              :: source = ''   !< the file it was parsed from (the record's label)
    end type toml_table_t
+
+   !----- The parameter record. Every value a toml_* reader returns is logged here with the file  !
+   !      it came from and whether the key was in that file or took the caller's default, so a run !
+   !      can write down every setting it actually read (toml_write_record). A key the loader never !
+   !      reads -- a misspelling, or a block that is not consulted -- is absent, which is how a     !
+   !      caller that set a key checks that it landed. A re-read replaces the earlier row. --------!
+   integer, parameter :: MAXREC = 4096, RECVAL = 512
+   integer(ik), save :: rec_n = 0_ik
+   character(len=256),    save :: rec_source(MAXREC)
+   character(len=KEYLEN), save :: rec_key(MAXREC)
+   integer(ik),           save :: rec_index(MAXREC)      !< 0 for a scalar, else the array element
+   logical,               save :: rec_present(MAXREC)    !< .true. = set in the file, .false. = default
+   character(len=RECVAL), save :: rec_value(MAXREC)
 
 contains
 
@@ -48,6 +63,7 @@ contains
       ok = .false.
       allocate(t%key(MAXKEYS), t%val(MAXKEYS))
       t%n = 0_ik
+      t%source = path
       section = ''
 
       open(newunit=unit, file=path, status='old', action='read', iostat=ios)
@@ -157,9 +173,11 @@ contains
       integer(ik) :: idx, ios
       v = default
       idx = find_key(t, key)
-      if (idx == 0_ik) return                             ! absent -> default
-      read(t%val(idx), *, iostat=ios) v
-      if (ios /= 0) call toml_parse_error(key, t%val(idx), 'integer')
+      if (idx /= 0_ik) then
+         read(t%val(idx), *, iostat=ios) v
+         if (ios /= 0) call toml_parse_error(key, t%val(idx), 'integer')
+      end if
+      call record_value(t, key, 0_ik, idx /= 0_ik, int_text(v))
    end function toml_int
 
    real(wp) function toml_real(t, key, default) result(v)
@@ -169,9 +187,11 @@ contains
       integer(ik) :: idx, ios
       v = default
       idx = find_key(t, key)
-      if (idx == 0_ik) return                             ! absent -> default
-      read(t%val(idx), *, iostat=ios) v
-      if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real')
+      if (idx /= 0_ik) then
+         read(t%val(idx), *, iostat=ios) v
+         if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real')
+      end if
+      call record_value(t, key, 0_ik, idx /= 0_ik, real_text(v))
    end function toml_real
 
    logical function toml_logical(t, key, default) result(v)
@@ -182,7 +202,10 @@ contains
       character(len=VALLEN) :: s
       v = default
       idx = find_key(t, key)
-      if (idx == 0_ik) return                             ! absent -> default
+      if (idx == 0_ik) then                               ! absent -> default
+         call record_value(t, key, 0_ik, .false., merge('true ', 'false', v))
+         return
+      end if
       s = adjustl(t%val(idx))
       !----- Exact match (documented lowercase true/false + common Fortran/case variants).      !
       !      Kills the old fixed-position prefix bug ('trueish' -> .true., '.true.' -> default). !
@@ -194,6 +217,7 @@ contains
       case default
          call toml_parse_error(key, t%val(idx), 'logical')
       end select
+      call record_value(t, key, 0_ik, .true., merge('true ', 'false', v))
    end function toml_logical
 
    !----- String value with surrounding double quotes stripped. ---------------------------!
@@ -205,13 +229,15 @@ contains
       character(len=VALLEN) :: s
       v = default
       idx = find_key(t, key)
-      if (idx == 0_ik) return
-      s = adjustl(t%val(idx))
-      if (len_trim(s) >= 2 .and. s(1:1) == '"') then
-         v = s(2:index(s(2:), '"'))
-      else
-         v = trim(s)
+      if (idx /= 0_ik) then
+         s = adjustl(t%val(idx))
+         if (len_trim(s) >= 2 .and. s(1:1) == '"') then
+            v = s(2:index(s(2:), '"'))
+         else
+            v = trim(s)
+         end if
       end if
+      call record_value(t, key, 0_ik, idx /= 0_ik, v)
    end function toml_string
 
    !----- Parse `[a, b, c]` into out(:) reals; nout = count read (0 if absent). ------------!
@@ -245,8 +271,76 @@ contains
          if (ios /= 0) call toml_parse_error(key, t%val(idx), 'real array')   ! any unparseable token -> hard error
          out(1:ntok) = tmp(1:ntok)
          nout = ntok                                ! TRUE parsed count (never over-reported)
+         do k = 1_ik, ntok
+            call record_value(t, key, k, .true., real_text(out(k)))
+         end do
       end block
    end subroutine toml_real_array
+
+   !----- The parameter record (see the module-level note). ------------------------------------!
+   subroutine record_value(t, key, index, present, text)
+      type(toml_table_t), intent(in) :: t
+      character(len=*),   intent(in) :: key, text
+      integer(ik),        intent(in) :: index
+      logical,            intent(in) :: present
+      integer(ik) :: i, slot
+      slot = 0_ik
+      do i = 1_ik, rec_n
+         if (rec_index(i) == index .and. rec_key(i) == key .and. rec_source(i) == t%source) then
+            slot = i ; exit
+         end if
+      end do
+      if (slot == 0_ik) then
+         if (rec_n >= MAXREC) return
+         rec_n = rec_n + 1_ik ; slot = rec_n
+      end if
+      rec_source(slot) = t%source ; rec_key(slot) = key ; rec_index(slot) = index
+      rec_present(slot) = present ; rec_value(slot) = adjustl(text)
+   end subroutine record_value
+
+   !----- 17 significant digits: the value the run used, to the last bit of a double. -------!
+   function real_text(x) result(s)
+      real(wp), intent(in) :: x
+      character(len=RECVAL) :: s
+      write(s, '(es24.16e3)') x
+      s = adjustl(s)
+   end function real_text
+
+   function int_text(i) result(s)
+      integer(ik), intent(in) :: i
+      character(len=RECVAL) :: s
+      write(s, '(i0)') i
+   end function int_text
+
+   !----- Write the record as CSV: source,key,index,present,value, one row per scalar key and one  !
+   !      per array element. Text fields are quoted. A failed open warns and returns. ------------!
+   subroutine toml_write_record(path)
+      character(len=*), intent(in) :: path
+      integer     :: u, ios
+      integer(ik) :: i
+      open(newunit=u, file=path, status='replace', action='write', iostat=ios)
+      if (ios /= 0) then
+         write(*,'(3a)') ' warning: could not write the parameter record "', trim(path), '"'
+         return
+      end if
+      write(u, '(a)') 'source,key,index,present,value'
+      do i = 1_ik, rec_n
+         write(u, '(a,",",a,",",i0,",",a,",",a)') csv_quote(rec_source(i)), trim(rec_key(i)), rec_index(i), &
+              trim(merge('true ', 'false', rec_present(i))), csv_quote(rec_value(i))
+      end do
+      close(u)
+   end subroutine toml_write_record
+
+   function csv_quote(text) result(q)
+      character(len=*), intent(in) :: text
+      character(len=:), allocatable :: q
+      integer :: i
+      q = '"'
+      do i = 1, len_trim(text)
+         if (text(i:i) == '"') then ; q = q // '""' ; else ; q = q // text(i:i) ; end if
+      end do
+      q = q // '"'
+   end function csv_quote
 
    !----- Number of whitespace-separated tokens in a string. ------------------------------!
    pure integer(ik) function count_tokens(s) result(nt)

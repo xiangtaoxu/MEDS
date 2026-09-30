@@ -225,6 +225,8 @@
 # h_flux_fast = "F"                                   # [energy, site] site sensible-heat flux (W/m2)
 # rnet_fast = "F"                                     # [energy, site] site net all-wave radiation (W/m2)
 # sw_in_fast = "F"                                    # [energy, site] incident shortwave at canopy top (W/m2)
+# sw_up_fast = "F"                                    # [energy, site] shortwave leaving the canopy top (VIS + NIR) (W/m2)
+# lw_up_fast = "F"                                    # [energy, site] longwave leaving the canopy top (emission included) (W/m2)
 # ustar_fast = "F"                                    # [energy, site] friction velocity (m/s)
 # air_temp_fast = "F"                                 # [energy, site] reference-level forcing air temperature (K)
 # nee_fast = "F"                                      # [carbon, site] net ecosystem exchange (+ to atmosphere) (umol/m2/s)

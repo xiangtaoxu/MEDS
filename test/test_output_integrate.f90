@@ -38,7 +38,8 @@ program test_output_integrate
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
-                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, output_integrate
+                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, SRC_F_SW_UP, SRC_F_LW_UP,    &
+                                     output_integrate
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &
@@ -212,6 +213,9 @@ contains
       call check_close(extract_fast_scalar(SRC_F_LE,       s), 100.0_wp, 1.0e-12_wp, 'fast extract le')
       call check_close(extract_fast_scalar(SRC_F_H,        s),  50.0_wp, 1.0e-12_wp, 'fast extract h')
       call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
+      s%sw_up = 83.0_wp ; s%lw_up = 455.0_wp
+      call check_close(extract_fast_scalar(SRC_F_SW_UP,    s),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
+      call check_close(extract_fast_scalar(SRC_F_LW_UP,    s), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
 
       !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
       !      register), then fold a 2-sub-step window and close it. -----!
