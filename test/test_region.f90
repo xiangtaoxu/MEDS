@@ -7,7 +7,8 @@
 ! boundary. Then each polygon is run again as a site at its cell (centre, orography, UTC). The     !
 ! region's files must hold, in every variable's `polygon = p` slice, exactly the site run's        !
 ! series, bit for bit; the detail polygon's own files must equal its site run's files; and the     !
-! polygon axis must carry the cells' ids and coordinates. Last, meds_main (the second argument)     !
+! polygon axis must carry the cells' ids and coordinates. The region is run again on four threads  !
+! and must give the same files. Last, meds_main (the second argument)                               !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
 !                                                                                          !
 ! The configs are DERIVED from examples/example_biophysics/meds_config_july.toml (the test runs    !
@@ -125,6 +126,37 @@ program test_region
                    .and. count_prefix('region-p'//trim(idstr)//'-F-') == 12_ik)
    call check_true('the detail polygon''s files equal its site run''s, every variable', nbad == 0_ik)
 
+   !----- The same region on four threads (#183 R3): the polygons run side by side, and every file   !
+   !      must still equal the site runs bit for bit -- region files slice by slice, the detail      !
+   !      polygon's file by file. In a build without OpenMP this is the serial run again. -------------!
+   call derive(trim(work)//'/regt.toml', '[run]'//nl()//'n_threads = 4'//nl()//'[output]'//nl()//     &
+               'prefix = "regt"'//nl()//region_block(), region=.true.)
+   call region_open(trim(work)//'/regt.toml', reg, ok, verbose=.false.)
+   if (.not. ok) error stop 'test_region: the threaded region did not open'
+   do while (.not. region_done(reg))
+      call region_step_month(reg, st)
+      if (st /= DRIVER_OK) error stop 'test_region: a threaded region month failed'
+   end do
+   call region_finalize(reg, st)
+   call region_free(reg)
+   nbad = 0_ik
+   do f = 1_ik, nf
+      if (index(files(f), 'region-') /= 1) cycle
+      if (index(files(f), 'region-p') == 1) then
+         write(idstr,'(i0)') DETAIL
+         nbad = nbad + compare_site_file(trim(work)//'/out/regt'//files(f)(7:),                      &
+                                         trim(work)//'/out/site'//trim(idstr)//                       &
+                                         files(f)(len_trim('region-p'//idstr) + 1:))
+      else
+         do p = 1_ik, NP
+            write(idstr,'(i0)') IDS(p)
+            nbad = nbad + compare_region_file(trim(work)//'/out/regt'//files(f)(7:), p,             &
+                                              trim(work)//'/out/site'//trim(idstr)//files(f)(7:))
+         end do
+      end if
+   end do
+   call check_true('on four threads every region and detail file still equals the site runs', nbad == 0_ik)
+
    !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
    !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
    !      restructured at its first step. -------------------------------------------------------------!
@@ -147,9 +179,9 @@ program test_region
    call driver_finalize(run, st) ; call driver_free(run)
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
-   !      first month, so its first February step fails: by then polygon 1 has closed February's     !
-   !      five days, polygon 2 its first, and polygon 3 none. The month's I/O phase writes what        !
-   !      closed, with the fill value where a polygon closed nothing, instead of stopping. ------------!
+   !      first month, so its first February step fails. The others finish the month: polygons 1     !
+   !      and 3 close February's five days and polygon 2 its first. The month's I/O phase writes      !
+   !      what closed, with the fill value where polygon 2 closed nothing, and the region moves on. ---!
    call derive(trim(work)//'/fail.toml', '[output]'//nl()//'prefix = "fail"'//nl()//                  &
                '[region]'//nl()//'detail_polygons = [35]'//nl()//region_block(), region=.true.)
    call region_open(trim(work)//'/fail.toml', reg, ok, verbose=.false.)
@@ -159,6 +191,7 @@ program test_region
    reg%poly(2)%site%patch%soil_carbon(1)%slow_carbon = -1.0_wp
    call region_step_month(reg, st)
    call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_SOILC)
+   call check_true('the failed month is consumed: the region moves on', region_done(reg))
    call region_finalize(reg, st)
    call region_free(reg)
    call check_failed_month(trim(work)//'/out/fail-D-202102.nc')
@@ -176,8 +209,6 @@ program test_region
                 .true., .false., 'starts from bare ground')
    call refused('a region writes no checkpoints', '[state]'//nl()//'write_state = true'//nl()//region_block(), &
                 .true., .false., 'writes no checkpoints')
-   call refused('a region runs one patch thread', '[run]'//nl()//'n_threads = 2'//nl()//region_block(), &
-                .true., .false., 'needs run.n_threads = 1')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')
@@ -495,8 +526,8 @@ contains
       call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
    end function compare_site_file
 
-   !----- The daily file of the month polygon 2 failed in: five records, polygon 1's days, polygon  !
-   !      2's first, and the fill value everywhere else, in every site variable of the tier. --------!
+   !----- The daily file of the month polygon 2 failed in: five records, polygons 1 and 3's days,   !
+   !      polygon 2's first, and the fill value in polygon 2's other days, in every site variable. ---!
    subroutine check_failed_month(path)
       character(len=*), intent(in) :: path
       integer(c_int) :: ncid
@@ -508,8 +539,9 @@ contains
       nt = dim_len(ncid, 'time')
       call check_true('a failed month writes every day the other polygons closed', nt == 5_ik)
       call read_var(ncid, 'cas_temp_site', [nt, NP], x, found)
-      call check_true('polygon 1 holds its five days, polygon 2 its first',                          &
-                      found .and. all(x(1:5*NP:NP) < 1.0e30_c_double) .and. x(2) < 1.0e30_c_double)
+      call check_true('polygons 1 and 3 hold their five days, polygon 2 its first',                  &
+                      found .and. all(x(1:5*NP:NP) < 1.0e30_c_double) .and. all(x(3:5*NP:NP) < 1.0e30_c_double) &
+                      .and. x(2) < 1.0e30_c_double)
       nbad = 0_ik
       do j = 1_ik, reg_region%nidx(2)
          k = reg_region%idx_freq(j, 2)
@@ -518,12 +550,12 @@ contains
          if (.not. found) cycle
          if (reg_region%var(k)%xtype == XTYPE_INT) then
             fill = real(MISSING_INT, c_double)
-            if (any(x(3:nt*NP:NP) /= fill) .or. any(x(NP + 2:nt*NP:NP) /= fill)) nbad = nbad + 1_ik
-         else if (any(x(3:nt*NP:NP) < 1.0e30_c_double) .or. any(x(NP + 2:nt*NP:NP) < 1.0e30_c_double)) then
+            if (any(x(NP + 2:nt*NP:NP) /= fill)) nbad = nbad + 1_ik
+         else if (any(x(NP + 2:nt*NP:NP) < 1.0e30_c_double)) then
             nbad = nbad + 1_ik
          end if
       end do
-      call check_true('the fill value where polygon 2 had failed and polygon 3 had not begun', nbad == 0_ik)
+      call check_true('the fill value where polygon 2 had failed', nbad == 0_ik)
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_failed_month
 

@@ -117,6 +117,23 @@ before and after.
   - Bit-identical on every r1 case. The science pages' code maps now name the new module, and a
     stale row that still pointed at `gauss_legendre_7` and `bisect_root` (deleted in #325) is fixed.
 
+- **A region's polygons run side by side on threads** (#183 R3, #310 R4 and R5; plan Phase 5).
+  `[run].n_threads` now means polygon threads in a region run, where it had to be 1. Each month's
+  polygons run in one OpenMP loop, costliest (by last month's time) first, each with a
+  single-threaded patch loop; the forcing load before the month and the output after it stay on one
+  thread. A polygon's patch-loop thread count is set by `polygon_prepare` (the fast context's new
+  `patch_threads`), not read from the config, so a site run keeps threading its patches.
+  - **Timings**, the 100 cells of a 1° box around Ithaca, one year, each run alone on an idle
+    `R128C40` node: 1 thread 785 s (v0.3.1: 1,012 s), 10 threads 131 s, 20 threads 92 s, 40 threads
+    81 s. With output off, 40 threads take 51 s: the rest is the output, written on one thread.
+  - **The same results at any thread count:** all 403 files of that run are identical at 1, 10, 20
+    and 40 threads, and `test_region` now runs its region on four threads against the site runs.
+  - **A failed polygon no longer stops the month** (R4). It is reported and stops; the others
+    finish the month, its output is written, and the region moves on. Before, the month was left
+    unfinished, and a caller that went on stepped the earlier polygons through it again.
+  - **A month's steps are listed once** (R5), instead of once for a forcing check and again for the
+    polygons. The region's write-only step counters are gone (R12).
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

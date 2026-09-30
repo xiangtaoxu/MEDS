@@ -124,6 +124,9 @@ module meds_fast_dynamics
       real(wp) :: snowfall         = 0.0_wp            !< [kg/m2/s] frozen rainfall (snowfall)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
+      !----- Threads for this polygon's patch loop: [run].n_threads in a site run, 1 in a region,   !
+      !      whose threads go to the polygons instead (polygon_prepare sets it). ------------------!
+      integer(ik) :: patch_threads = 1_ik
       real(wp) :: veg_height_bare = 1.0_wp          !< [m] canopy height for a cohort-free patch
       !----- Canopy-RT optics (per-PFT spectral/angle table + ground surface), for the RT-driven   !
       !      per-cohort absorbed SW/PAR on the forcing path. Built once from the [pft] table.        !
@@ -385,7 +388,7 @@ contains
       met_ref  = reference_met(ctx)
       npatch   = site%patch%n
       nsub     = cfg%n_fast_per_slow
-      n_thread = max(1_ik, cfg%n_threads)
+      n_thread = max(1_ik, ctx%patch_threads)
 
       !----- Reset the fast->slow carbon accumulators (gross GPP + maintenance-resp losses) BEFORE !
       !      the fast window (compute_carbon_allocation reads them after; it has site intent(in),   !

@@ -90,7 +90,8 @@ function in `CMakeLists.txt`.
 
 ## Parallel builds
 
-**Host threading over the patch axis** is compiled in by default; a run asks for it:
+**Host threading** is compiled in by default; a run asks for it. A site run threads its patches, a
+region run its polygons (`docs/configuration.md`, "Regional runs"):
 
 ```bash
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \

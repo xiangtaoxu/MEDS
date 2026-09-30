@@ -104,12 +104,15 @@ contains
    ! restart already restored those states, which re-seeding would silently discard.                !
    !---------------------------------------------------------------------------------------!
    subroutine polygon_prepare(cfg, met_src, poly, latitude_deg, longitude_deg, elevation_m,       &
-                              keep_fast_state, keep_soil_carbon, verbose)
+                              keep_fast_state, keep_soil_carbon, patch_threads, verbose)
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t),   intent(in)    :: met_src
       type(meds_polygon_t), intent(inout) :: poly
       real(wp),             intent(in)    :: latitude_deg, longitude_deg, elevation_m
       logical,              intent(in)    :: keep_fast_state, keep_soil_carbon, verbose
+      !----- Threads for the polygon's patch loop: a site run gives it [run].n_threads, a region, whose  !
+      !      threads go to the polygons, gives each polygon one. ----------------------------------!
+      integer(ik),          intent(in)    :: patch_threads
 
       poly%energy_budget = budget_t() ; poly%water_budget = budget_t() ; poly%face_budget = budget_t()
       poly%slow_ledger   = slow_ledger_t()
@@ -122,6 +125,7 @@ contains
 
       if (cfg%fast_biophysics_on) then
          call build_fast_context(cfg, poly%fast_ctx)
+         poly%fast_ctx%patch_threads = patch_threads
          if (cfg%forcing%forcing_on) then
             call met_cursor_init(met_src, poly%met_cur, poly%cell, latitude_deg, longitude_deg,     &
                                  elevation_m)

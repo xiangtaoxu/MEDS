@@ -211,7 +211,7 @@ contains
                            keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
                                            fast_state_found,                                     &
                            keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
-                           verbose=run%verbose)
+                           patch_threads=run%cfg%n_threads, verbose=run%verbose)
 
       run%step_days      = max(1_ik, nint(run%cfg%dt_slow / day_sec, ik))
       run%steps_per_year = max(1_ik, nint(yr_day / real(run%step_days, wp), ik))

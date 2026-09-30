@@ -12,7 +12,8 @@
 ! then each polygon runs through the whole month with polygon_step, the same step a site run       !
 ! takes, reading its own cell of the shared month buffer; then the I/O phase writes every          !
 ! polygon's queued records into the region files, one hyperslab per variable per record. Nothing  !
-! inside the polygon loop touches a file, which is what lets R3 run it on threads.                 !
+! inside the polygon loop touches a file, so the polygons of a month run side by side on           !
+! [run].n_threads threads, each with a single-threaded patch loop (#183 R3).                       !
 !                                                                                          !
 ! Each polygon sits at its cell's centre, at the cell's orography, in UTC, and starts from bare    !
 ! ground (OR8). Region files hold the fixed-shape variables; [region].detail_polygons also write   !
@@ -21,6 +22,7 @@
 module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec
+   use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t
    use meds_config_io,              only : load_meds_config
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
@@ -56,9 +58,11 @@ module meds_region
       !      so the I/O phase passes it whole: a section poly(:)%bufs of a type with allocatable        !
       !      components makes gfortran copy it through a temporary whose copy-out dangles them. -------!
       type(output_buffers_t), allocatable :: out_bufs(:)
-      type(meds_time_t)     :: now, prev
-      integer(ik)           :: istep = 0_ik, iyear = 0_ik
+      type(meds_time_t)     :: now
       integer(ik)           :: step_days = 1_ik
+      !----- Last month's wall time per polygon: the next month starts the costliest first, so a   !
+      !      slow polygon does not leave the other threads idle at the end of the month. ------------!
+      real(wp),    allocatable :: cost(:)
       logical               :: verbose = .true.
    end type meds_region_t
 
@@ -86,7 +90,6 @@ contains
 
       ok = .false.
       if (present(verbose)) reg%verbose = verbose
-      reg%istep = 0_ik ; reg%iyear = 0_ik
 
       call load_meds_config(trim(path), reg%cfg)
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
@@ -135,12 +138,13 @@ contains
             call init_bare_ground(poly%site, cfg, N_PATCH_INIT)
             call polygon_prepare(cfg, reg%met_src, poly, cells%lat(p), cells%lon(p),               &
                                  cells%elevation(p), keep_fast_state=.false.,                     &
-                                 keep_soil_carbon=.false., verbose=.false.)
+                                 keep_soil_carbon=.false., patch_threads=1_ik, verbose=.false.)
          end associate
       end do
 
       reg%now = cfg%start_time
       reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
+      allocate(reg%cost(n)) ; reg%cost = 0.0_wp
 
       !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
       !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!
@@ -194,61 +198,79 @@ contains
    ! region_step_month -- one month of the whole region: load the month's forcing for every cell, !
    ! advance each polygon through it, then write the queued output (§4). The month runs from the  !
    ! current date to the next month boundary, or to end_time.                                      !
+   !                                                                                          !
+   ! The polygons run side by side on [run].n_threads threads. They share only what they read      !
+   ! (the config, the forcing month, the output layout), and each writes its own state and output  !
+   ! buffers, so the region's results do not depend on the thread count. A polygon that fails is    !
+   ! reported and stops; the others finish the month, the month's output is written, and the       !
+   ! region moves on to the next month either way. The status returned is the first failure's.     !
    !---------------------------------------------------------------------------------------!
    subroutine region_step_month(reg, status)
       type(meds_region_t), intent(inout) :: reg
       integer(ik),         intent(out)   :: status
-      type(meds_time_t) :: t0, clk, prev
-      integer(ik)       :: nstep, s, p, loads, carry
-      logical           :: new_month, new_year
+      type(meds_time_t), allocatable :: step_start(:), step_end(:)
+      logical,           allocatable :: new_month(:), new_year(:), was_running(:)
+      integer(ik),       allocatable :: order(:), failed_step(:)
+      type(meds_time_t) :: clk
+      integer(ik)       :: nstep, s, p, k, st, npoly
+      integer(ik)       :: tick0, tick1, tick_rate
 
       status = DRIVER_OK
       if (region_done(reg)) then ; status = DRIVER_FINISHED ; return ; end if
       associate (cfg => reg%cfg)
+      npoly = size(reg%poly, kind=ik)
 
-      !----- The month's steps, and its forcing. A step's forcing lies in the month its start date  !
-      !      belongs to (daily steps from midnight, validate_config), so one prefetch loads the      !
-      !      whole month: the later steps' prefetches must load nothing, which is checked here,       !
-      !      before any polygon reads the buffer.  ----------------------------------------------------!
-      t0 = reg%now
-      call met_prefetch(reg%met_src, t0)
-      loads = reg%met_src%n_loads ; carry = reg%met_src%carry_rec
-      nstep = 0_ik ; clk = t0
+      !----- The month's steps, listed once. A step's forcing lies in the month its start date      !
+      !      belongs to (daily steps from midnight, and validate_config puts the recycle seam on a   !
+      !      month boundary), so one prefetch at the month's start loads every step's forcing. ------!
+      nstep = 0_ik ; clk = reg%now
       do
-         prev = clk ; clk = time_advance_days(prev, reg%step_days) ; nstep = nstep + 1_ik
-         if (nstep > 1_ik) then
-            call met_prefetch(reg%met_src, prev)
-            if (reg%met_src%n_loads /= loads .or. reg%met_src%carry_rec /= carry)                  &
-               error stop 'region_step_month: the forcing changed inside a month (internal error: '// &
-                          'validate_config puts the recycle seam on a month boundary)'
-         end if
-         new_month = clk%year /= prev%year .or. clk%month /= prev%month
-         if (new_month .or. .not. time_lt(clk, cfg%end_time)) exit
+         clk = time_advance_days(clk, reg%step_days) ; nstep = nstep + 1_ik
+         if (clk%year /= reg%now%year .or. clk%month /= reg%now%month) exit
+         if (.not. time_lt(clk, cfg%end_time)) exit
       end do
+      allocate(step_start(nstep), step_end(nstep), new_month(nstep), new_year(nstep))
+      clk = reg%now
+      do s = 1_ik, nstep
+         step_start(s) = clk ; clk = time_advance_days(clk, reg%step_days) ; step_end(s) = clk
+         new_year(s)  = step_end(s)%year /= step_start(s)%year
+         new_month(s) = new_year(s) .or. step_end(s)%month /= step_start(s)%month
+      end do
+      call met_prefetch(reg%met_src, reg%now)
 
-      !----- The compute phase: each polygon through the month. No file is touched here. ----------!
-      new_year = .false.
-      do p = 1_ik, size(reg%poly, kind=ik)
-         clk = t0
+      !----- The compute phase: every polygon through the month, costliest first. No file is      !
+      !      touched here; each polygon writes only its own state and buffers. ---------------------!
+      allocate(order(npoly), failed_step(npoly), was_running(npoly))
+      call ascending_order(-reg%cost, npoly, order)
+      was_running = reg%poly(:)%status == DRIVER_OK
+      failed_step = 0_ik
+      !$omp parallel do schedule(dynamic, 1) num_threads(cfg%n_threads) default(shared)            &
+      !$omp    private(k, p, s, st, tick0, tick1, tick_rate)
+      do k = 1_ik, npoly
+         p = order(k)
+         if (.not. was_running(p)) cycle
+         call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            prev = clk ; clk = time_advance_days(prev, reg%step_days)
-            new_year  = clk%year /= prev%year
-            new_month = new_year .or. clk%month /= prev%month
-            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p), prev, clk, &
-                              reg%step_days, new_month, new_year, status)
-            if (status /= DRIVER_OK) then
-               write(*,'(4a)') ' region: ', trim(reg%poly(p)%label), ' failed on ', time_to_string(clk)
-               call io_phase(reg)                       ! what closed before the failure is written
-               return
+            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
+                              step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
+            if (st /= DRIVER_OK) then
+               failed_step(p) = s ; exit
             end if
          end do
+         call system_clock(tick1)
+         reg%cost(p) = real(tick1 - tick0, wp) / real(max(tick_rate, 1_ik), wp)
       end do
-      reg%prev = prev ; reg%now = clk ; reg%istep = reg%istep + nstep
+      !$omp end parallel do
 
-      if (new_year) then
-         reg%iyear = reg%iyear + 1_ik
-         if (reg%verbose) call region_summary(reg, time_to_string(reg%now))
-      end if
+      do p = 1_ik, npoly
+         if (failed_step(p) == 0_ik) cycle
+         write(*,'(4a)') ' region: ', trim(reg%poly(p)%label), ' failed on ',                      &
+                         time_to_string(step_end(failed_step(p)))
+         if (status == DRIVER_OK) status = reg%poly(p)%status
+      end do
+      reg%now = step_end(nstep)
+
+      if (new_year(nstep) .and. reg%verbose) call region_summary(reg, time_to_string(reg%now))
 
       !----- The I/O phase. -----------------------------------------------------------------------!
       call io_phase(reg)
@@ -332,6 +354,7 @@ contains
       end do
       deallocate(reg%poly)
       if (allocated(reg%out_bufs)) deallocate(reg%out_bufs)
+      if (allocated(reg%cost))     deallocate(reg%cost)
    end subroutine region_free
 
 end module meds_region

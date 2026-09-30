@@ -223,10 +223,12 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
 - **The multi-polygon runtime.** *Planned.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) Region runs exist since R2 (#289):
   `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon, in
   one process, all sharing one forcing reader. What remains is in `MEDS_POLYGON_RUNTIME_PLAN.md` §10:
-  - R3, threads: the fast loop over all patches of all polygons (plan §10.4; today the polygons
-    are stepped one after another on one thread), with the runtime consolidation of [#310](https://github.com/xiangtaoxu/MEDS/issues/310);
+  - R3, threads: *done in part* (2026-09-30, `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 5). The polygons
+    of a month run side by side on `[run].n_threads` threads (9.7× on 40 threads for 100 cells).
+    The pool of every patch of every polygon is deferred. What remains of the runtime consolidation
+    is in [#310](https://github.com/xiangtaoxu/MEDS/issues/310);
   - R4, region checkpoints and restarts (a region writes none yet);
-  - R5, failure isolation and batching by tiles;
+  - R5, batching by tiles (failure isolation is done: a failed polygon stops, the others go on);
   - R6, a C API and Python entry point, and an example.
 
   MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).

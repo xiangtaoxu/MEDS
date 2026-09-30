@@ -207,11 +207,12 @@ module meds_config
       !      state and changes no answer -- only an end-of-run table -- so the only cost of leaving  !
       !      it on is a handful of reductions per simulated day.  ---------------------------------!
       logical     :: slow_ledger_on = .true.
-      !----- §7 C2 host THREADS over the fast-loop PATCH axis ([run].n_threads, DEFAULTED 1).       !
-      !      Patch columns are independent within a dt_fast, so this is the one lever that costs no  !
-      !      accuracy -- PROVIDED the answer does not move with the thread count, which is why the   !
-      !      site-level reductions are staged per (sub-step, patch) and folded back in patch order    !
-      !      (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
+      !----- Host THREADS ([run].n_threads, DEFAULTED 1). A site run puts them on the fast loop's    !
+      !      PATCH axis (§7 C2); a region run puts them on its POLYGONS, each polygon's patch loop   !
+      !      then running on one (#183 R3). Patches, and polygons, are independent within a step, so !
+      !      this is the one lever that costs no accuracy -- PROVIDED the answer does not move with  !
+      !      the thread count, which is why the site-level reductions are staged per (sub-step,       !
+      !      patch) and folded back in patch order (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
       !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on               !
       !      meds_demography, which its dependents inherit) stays serial until asked. Has effect only !
       !      in an OpenMP build, which is the default; with -DMEDS_OPENMP=OFF the directives are      !
@@ -794,8 +795,6 @@ contains
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
          if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                       &
             error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
-         if (cfg%n_threads /= 1_ik)                                                                &
-            error stop tag//'[run].mode = "region" needs run.n_threads = 1 (polygon threads come in R3)'
          if (cfg%fast_probe)                                                                       &
             error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
          if (cfg%init_mode /= INIT_BARE)                                                           &
