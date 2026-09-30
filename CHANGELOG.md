@@ -190,6 +190,15 @@ before and after.
     `read_scalar_default`. When the forcing bracket slides by one record, as it does once an hour,
     its old upper record becomes the new lower one instead of being read again.
 
+- **`output.strict_caps` is gone, and a run stops at the step it outgrows a cap** (#312 O9).
+  `strict_caps` promised a warn-and-truncate mode that was never built, so it parsed and did
+  nothing; a config that sets it is now refused, naming what to do. Nothing checked
+  `cohort_max` or `patch_max` until a record was written, up to a month late, while the fast tier's
+  per-cohort slabs, `cohort_max` long, were written by site slot every sub-step. A run now stops at
+  the step its live cohort or patch count exceeds the cap of an axis some live variable uses (or,
+  for the fast tier, the cohort cap), with a message naming the cap. Removed from the shipped
+  configs; bit-identical on every r1 case. **Test:** `test_region` checks the refusal.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

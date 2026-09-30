@@ -827,6 +827,10 @@ contains
       real(wp)    :: slab(max(files%max_slab, 1_ik))
       logical     :: vslab(max(files%max_slab, 1_ik))
       if (.not. files%enabled) return
+      !----- The cohort and patch slabs are output.cohort_max and patch_max long. Stop at the step the  !
+      !      stand outgrows one, not when its record is written, up to a month later (#312 O9). --------!
+      if (files%cohort_axis .and. site%cohort%n > files%cohort_max) call cap_exceeded('cohort', site%cohort%n, files%cohort_max)
+      if (files%patch_axis  .and. site%patch%n  > files%patch_max)  call cap_exceeded('patch',  site%patch%n,  files%patch_max)
       !----- fold the step into DAILY/MONTHLY/ANNUAL. The FAST tier is fed separately from the    !
       !      staged sub-step samples (output_integrate_fast), because sub-daily resolution exists !
       !      only inside the fast loop.                                                           !
@@ -849,6 +853,15 @@ contains
       if (is_new_month .and. bufs%has_data(3_ik)) call close_tier(files, bufs, 3_ik)
       if (is_new_day   .and. bufs%has_data(2_ik)) call close_tier(files, bufs, 2_ik)
    end subroutine output_integrate
+
+   !----- A live count past its output cap: say which, by how much, and what to raise. -----------!
+   subroutine cap_exceeded(axis, n, cap)
+      character(len=*), intent(in) :: axis
+      integer(ik),      intent(in) :: n, cap
+      write(*,'(5a,i0,a,i0,a)') ' output: the stand has more ', axis, 's than output.', axis, '_max (', n, ' > ', &
+                                cap, '); raise it in [output]'
+      error stop 'output: a live count exceeds its output cap (see the message above)'
+   end subroutine cap_exceeded
 
    !----- Normalize a tier's buffers into its pending record + reset them (staging, §4.5). -----!
    subroutine close_tier(files, bufs, t)

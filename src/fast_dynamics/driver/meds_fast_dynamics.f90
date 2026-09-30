@@ -455,6 +455,13 @@ contains
          !      (#246). ---------------------------------------------------------------------------!
          out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
          out_bufs%fast_n_cohort = site%cohort%n
+         !----- The fast tier stages every cohort by its site slot into slabs output.cohort_max long:  !
+         !      stop here rather than write past them (#312 O9). -----------------------------------!
+         if (site%cohort%n > out_bufs%fast_cohort_cap) then
+            write(*,'(a,i0,a,i0,a)') ' output: the stand has more cohorts than output.cohort_max (',  &
+                                     site%cohort%n, ' > ', out_bufs%fast_cohort_cap, '); raise it in [output]'
+            error stop 'fast_dynamics: the live cohort count exceeds output.cohort_max'
+         end if
          do isub = 1_ik, nsub
             out_bufs%fast(isub) = fast_sample_t()
          end do

@@ -88,7 +88,6 @@ prefix        = "cal"
 io_config     = "output_variables.toml"
 cohort_max    = 4096
 patch_max     = 256
-strict_caps   = false
 sync_every    = "flush"
 # Every group off: output_variables.toml picks the variables, so the hourly tier stays site-only
 # and is written one file per year.

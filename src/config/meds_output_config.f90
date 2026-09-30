@@ -97,9 +97,8 @@ module meds_output_config
       character(len=256) :: dir         = '.'                   !< output directory
       character(len=256) :: prefix      = 'meds'                !< filename stem
       character(len=256) :: io_config   = ''                    !< path to meds_io_config.toml ('' -> group/freq defaults only)
-      integer(ik)        :: cohort_max  = 4096_ik               !< fixed netCDF cohort dim (live n must not exceed it)
-      integer(ik)        :: patch_max   = 256_ik                !< fixed netCDF patch dim
-      logical            :: strict_caps = .false.               !< .false. warn+truncate on n>cap; .true. error stop
+      integer(ik)        :: cohort_max  = 4096_ik               !< cohort slab size: a run stops if its live count exceeds it
+      integer(ik)        :: patch_max   = 256_ik                !< patch slab size: likewise
       integer(ik)        :: sync_every  = SYNC_FLUSH            !< nc_sync policy: SYNC_NEVER | SYNC_FLUSH (§5.5)
       integer(ik)        :: fast_interval_steps = 4_ik          !< fast tier flushes every N*dt_fast (§4.1)
       !----- High-level variable-GROUP toggles (main config, §6). Order: STRUCTURE / CARBON /  !

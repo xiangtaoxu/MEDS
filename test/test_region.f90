@@ -212,6 +212,9 @@ program test_region
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
                 'output.fast_interval_steps must divide')
+   call refused('output.strict_caps is refused: the caps always stop the run',                     &
+                '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
+                'output.strict_caps is gone')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')

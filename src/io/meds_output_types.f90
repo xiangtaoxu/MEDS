@@ -307,6 +307,7 @@ module meds_output_types
       type(output_registry_t) :: reg
       type(diag_params_t)     :: diag       !< run-dependent params the derived diagnostics need
       integer(ik)       :: cohort_max = 0_ik, patch_max = 0_ik, max_slab = 0_ik
+      logical           :: cohort_axis = .false., patch_axis = .false.  !< a live variable has that axis
       type(stream_file_t)    :: stream(N_FREQ)
       character(len=256)     :: dir = '.', prefix = 'meds'
       !----- Forcing provenance written as a global attribute on every output file. With the ED_ERA5land  !

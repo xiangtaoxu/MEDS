@@ -1212,7 +1212,24 @@ contains
       !      can switch on a slab variable that manager_setup left off, and a slab sized before     !
       !      that is too short for it. ---------------------------------------------------------!
       files%max_slab = live_max_slab(files)
+      !----- Whether the cohort and patch caps bind: only a live variable on that axis fills a slab of  !
+      !      that size. ------------------------------------------------------------------------------!
+      files%cohort_axis = live_axis(files, [DIM_COHORT])
+      files%patch_axis  = live_axis(files, [DIM_PATCH, DIM_SOIL_PATCH])
    end subroutine manager_finalize
+
+   !----- Does any live variable have one of these axes? ---------------------------------------!
+   pure logical function live_axis(files, dims) result(yes)
+      type(output_files_t), intent(in) :: files
+      integer(ik),          intent(in) :: dims(:)
+      integer(ik) :: k
+      yes = .false.
+      do k = 1_ik, files%reg%nvar
+         if (.not. files%reg%var(k)%enabled)        cycle
+         if (files%reg%var(k)%streams == FREQ_NONE) cycle
+         if (any(dims == files%reg%var(k)%dim)) then ; yes = .true. ; return ; end if
+      end do
+   end function live_axis
 
    !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !
    !      every live (variable, tier) pair and the per-tier scratch records. ------------------------!

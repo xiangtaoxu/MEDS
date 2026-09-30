@@ -728,7 +728,12 @@ contains
       cfg%output%io_config           = toml_string (t, 'output.io_config',           '')
       cfg%output%cohort_max          = toml_int    (t, 'output.cohort_max',          4096_ik)
       cfg%output%patch_max           = toml_int    (t, 'output.patch_max',           256_ik)
-      cfg%output%strict_caps         = toml_logical(t, 'output.strict_caps',         .false.)
+      !----- strict_caps promised a warn-and-truncate mode that was never built; a run always stops at !
+      !      the step its stand outgrows cohort_max or patch_max. It parsed and did nothing, so it is    !
+      !      refused, naming what to do instead. -------------------------------------------------------!
+      if (toml_has(t, 'output.strict_caps'))                                                        &
+         error stop 'load_meds_config: output.strict_caps is gone; a run always stops at the step '// &
+                    'its live cohort or patch count exceeds output.cohort_max or patch_max: raise the cap'
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
       cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
                                     trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
