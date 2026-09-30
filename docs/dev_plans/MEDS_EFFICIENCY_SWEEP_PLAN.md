@@ -11,9 +11,9 @@
   - #146/#190 by option B (Phase 2).
 
   Every decision in §5 is now taken.
-- **Phase 3 finding, 2026-09-30 (during implementation).** Steps 1 and 2 of Phase 3 are done. Step
-  3, the physiology change, is **paused for the owner**: the instrument and a closer reading of the
-  sources change the case for option (b). See "Phase 3 status" under Phase 3.
+- **Phase 3 finding, 2026-09-30 (during implementation).** Steps 1 and 2 of Phase 3 are done. The
+  instrument and a closer reading of the sources changed the case for option (b); the owner dropped
+  step 3 and closed #104. See "Phase 3 status" under Phase 3.
 
 **Against:** `beta` = `main` = v0.3.1 (`eea42ec`). **Status:** being implemented on branch
 `dev/efficiency-sweep` (§0.1). Every number in §2 was measured on an unmodified `git archive eea42ec`
@@ -473,7 +473,10 @@ contends. **Gate:** allocations per patch-step close to 0 in steady state.
 **Decided (owner, 2026-09-30): option (b), in this sweep.** The wood's apoplastic water drains as
 its conduits embolise. This is a physiology change, so it goes in its own PR.
 
-**Phase 3 status (2026-09-30): steps 1 and 2 done; step 3 paused for the owner.**
+**Phase 3 status (2026-09-30): steps 1 and 2 done; step 3 dropped, #104 closed (owner, 2026-09-30).**
+The owner's rule: change the physiology only if it consolidates the equations or removes a special
+case. Leaf and wood already share one curve (step 2), so nothing more is gained, and the evidence
+below shows the current scheme works.
 
 - **Step 2 is in** (`7c7b481`): `water_curve_t` and the split into `meds_water_retention.f90`,
   bit-identical. A related fix came out of it (N-7, `10d6482`): the daily tissue-water reconcile now

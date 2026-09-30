@@ -29,7 +29,6 @@ failure, not from a plan.
 | [#1](https://github.com/xiangtaoxu/MEDS/issues/1) | Equal-height shading ambiguity: capped large trees and same-height recruits | Enhancement |
 | [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
-| [#104](https://github.com/xiangtaoxu/MEDS/issues/104) | Plant hydraulics burns 13× wall clock on a collapsed (floored) wood store | Detector shipped (#105); the physics decision is open — see §4 |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
 | [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
@@ -88,14 +87,18 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   and the fluxes its soil-heat stages use come from one solve, so the borrowed-flux defect class is
   absent there. The drought result behind closing #93 (2.3 % at 900 s) was measured under
   `ARREST_GS_CLAMP`, which #335 replaced; re-measure it in that round.
-- **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Planned* (decided 2026-09-30,
-  `dev_plans/MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3 and Appendix A): the wood's apoplastic water drains
-  as its conduits embolise, as TFS-Hydro and SurEau treat it, so every wood mass has a finite
-  potential. A floored relative water content maps today to a potential of about −10⁴ MPa, which is
-  not a pressure any tissue reaches. Note that *arresting* is not the free
-  option it looks: the collapsed store diagnoses ψ at about −1.5×10⁴ MPa against a soil at perhaps
-  −2 MPa, so the cohort recovers today — that enormous artificial gradient IS the 13× cost — and
-  removing uptake would make a transiently desiccated cohort permanently dead.
+- **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Closed
+  2026-09-30, no change.* A wood store below its apoplastic floor maps to a potential of about
+  −10⁴ MPa, and the hydraulics then take many sub-steps to refill it. Measured on the current scheme
+  (`dev_plans/MEDS_EFFICIENCY_SWEEP_PLAN.md`, Phase 3 status), it hardly happens any more:
+  - five calibrated BCI years never reach the floor;
+  - the line-searched parameter set reaches it 3 times in a million cohort-steps and never empties
+    a store;
+  - only a stand with no rain at all collapses.
+
+  Every entry happens on a step whose uptake the soil throttled, the path to revisit if it ever
+  matters. Leaf and wood already share one pressure-volume curve (`water_curve_t`), so a
+  physiology change would add a special case rather than remove one.
 - **`psi_wood` at 900 s, and a restart's first day.** *Known limitation; revisit with the numerical
   scheme.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) `psi_leaf` converges at 900 s on ARK since the
   transpiration corrector (#91): re-measured 2026-09-30 over July on the established Ithaca stand,
