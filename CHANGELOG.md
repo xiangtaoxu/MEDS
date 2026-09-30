@@ -64,6 +64,13 @@ before and after.
   - **Guard:** a new ctest, `no_procedure_arguments`, fails if any `procedure(...)` declaration
     appears under `src/`. `plant_hydraulics` now checks the quadrature against a composite-Simpson
     reference and the closed form, instead of through `phi_inverse`.
+- **A discarded RK45 step no longer stops a debug run on its budget check** (#189, item 3). Under
+  `[energy].debug_error`, `column_fast_step_rk45` stopped the run on a whole-column ledger breach
+  before `column_fast_step` decided whether to keep the step or redo it on ARK, so a step about to be
+  thrown away could end the run. The step now records its checks without stopping, and the
+  dispatcher stops (`rk45_ledgers_stop`) only for a step it keeps. The failure counts were already
+  right, because a rescued step's budget is rolled back. Outputs are unchanged. **Test:** `numerics`
+  checks the new `last_check_closed` on a breached and a closed check.
 
 ## [0.3.1] — 2026-09-29
 

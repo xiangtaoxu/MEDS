@@ -15,7 +15,7 @@ program test_numerics
    use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
-                                 budget_rtol_flux
+                                 budget_rtol_flux, last_check_closed
    implicit none
 
    call test_thomas()
@@ -109,6 +109,12 @@ contains
                'large flux', .false.)
          call check_true('budget_check: same leak on a gross flux of 1e4 passes', d%n_fail == 0_ik, real(d%n_fail, wp))
          call check('budget_check records elapsed', c%elapsed, 900.0_wp, 1.0e-12_wp)
+         !----- last_check_closed re-applies the same tolerance to the recorded amounts, so a caller  !
+         !      can check with halt = .false. and decide later whether the breach counts (RK45). ---!
+         call check_true('last_check_closed: the small-flux breach is open',                          &
+                         .not. last_check_closed(c, 900.0_wp, 1.0e-12_wp), 0.0_wp)
+         call check_true('last_check_closed: the large-flux check is closed',                         &
+                         last_check_closed(d, 900.0_wp, 1.0e-12_wp), 1.0_wp)
          !----- merge: two "patches" of area 0.25 and 0.75 with residuals +1e-5 each -> site +1e-5;   !
          !      elapsed is the common window (weights sum to 1), counts add. ----------------------!
          r = budget_t()
