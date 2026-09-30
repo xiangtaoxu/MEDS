@@ -283,6 +283,12 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
+- **The slow ledger missed the tissue heat that trait plasticity moves.** With plasticity on,
+  `advance_plant_traits` moves leaf carbon above the new SLA's allometric target into storage, and
+  the leaves' heat content changes with it. The allocate phase then left an undeclared energy
+  residual: −5,903 J m⁻² over the BCI example's five years. `vegetation_dynamics` now declares the
+  change, and the ledger closes. The fluxes are unchanged.
+
 - **A restart did not continue the run that wrote the state** (#329). The state file kept each
   cohort's dbh but not its carbon pools or geometry, and the reader rebuilt them on the allometry.
   Cohort fusion keeps the pools and leaves a fused cohort below the allometry for its dbh, so the
