@@ -234,7 +234,8 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PY_CO2            = 13_ik !< [umol/mol] free-atmosphere CO2
    integer(ik), parameter, public :: PY_COSZ           = 14_ik !< [-] cosine of the solar zenith angle (0 with the sun down)
    integer(ik), parameter, public :: PY_RHO_AIR        = 15_ik !< [kg/m3] air density
-   integer(ik), parameter, public :: N_PYDIAG          = 15_ik
+   integer(ik), parameter, public :: PY_RAINF          = 16_ik !< [kg/m2/s] liquid precipitation
+   integer(ik), parameter, public :: N_PYDIAG          = 16_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !

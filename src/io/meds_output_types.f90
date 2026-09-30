@@ -174,6 +174,8 @@ module meds_output_types
    ! inside fast_dynamics and area-weighted-accumulated into the manager's fast(:) staging          !
    ! (§FAST tier). Pure scalars -- the DIM_SOIL / DIM_COHORT fast slabs live as 2-D arrays on the   !
    ! manager, not here, so this type stays allocatable-free and trivially default-constructs to 0.  !
+   ! The forcing the sub-step used is site-uniform and lives beside it (fast_forcing), in the       !
+   ! polygon block's own table (PY_*).                                                             !
    !==========================================================================================!
    type :: fast_sample_t
       real(wp) :: cas_temp      = 0.0_wp   !< [K]         area-weighted CAS temperature
@@ -182,11 +184,9 @@ module meds_output_types
       real(wp) :: le_flux       = 0.0_wp   !< [W/m2]      latent-heat (ET) flux
       real(wp) :: h_flux        = 0.0_wp   !< [W/m2]      sensible-heat flux
       real(wp) :: rnet          = 0.0_wp   !< [W/m2]      net all-wave radiation absorbed by the column
-      real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
       real(wp) :: sw_up         = 0.0_wp   !< [W/m2]      shortwave leaving the canopy top (VIS + NIR)
       real(wp) :: lw_up         = 0.0_wp   !< [W/m2]      longwave leaving the canopy top (emission included)
       real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
-      real(wp) :: air_temp      = 0.0_wp   !< [K]         reference-level forcing air temperature
       !----- CARBON. The sub-daily carbon cycle needs more than GPP to be readable: NEE is what a   !
       !      flux tower measures, NPP is GPP net of autotrophic maintenance respiration, and the     !
       !      canopy-air CO2 drawdown is the state those two fluxes act on. All three are computed    !
@@ -195,28 +195,6 @@ module meds_output_types
       real(wp) :: npp_rate      = 0.0_wp   !< [umol/m2/s] GPP - autotrophic maintenance respiration
       real(wp) :: reco_rate     = 0.0_wp   !< [umol/m2/s] ecosystem respiration (autotrophic + Rh)
       real(wp) :: cas_co2       = 0.0_wp   !< [umol/mol]  canopy-air CO2 mixing ratio
-      !----- The FORCING's free-atmosphere CO2, echoed into the output. Not redundant: the canopy-  !
-      !      air CO2 above is only interpretable against the ambient it is being vented toward, and  !
-      !      a reader who has to look that up in the run config will eventually look up the wrong    !
-      !      one -- which is exactly what happened when this figure was first drawn against a         !
-      !      hard-coded 400 ppm while the run used 420, turning a +1 ppm daytime canopy into an        !
-      !      apparent +21 ppm ventilation problem.  ------------------------------------------------!
-      real(wp) :: atm_co2       = 0.0_wp   !< [umol/mol]  free-atmosphere CO2 (the forcing)
-      !----- The rest of the FORCING the sub-step used (MEDS_FORCING_DESIGN.md §6.7), staged from   !
-      !      the site-uniform sample itself rather than area-summed. With the fluxes above, these    !
-      !      are what shows whether the reconstructed shortwave peaks at the right local time.      !
-      real(wp) :: qair          = 0.0_wp   !< [kg/kg]     specific humidity
-      real(wp) :: psurf         = 0.0_wp   !< [Pa]        surface pressure
-      real(wp) :: wind          = 0.0_wp   !< [m/s]       wind speed at the reference height
-      real(wp) :: lwdown        = 0.0_wp   !< [W/m2]      downward longwave
-      real(wp) :: par_beam      = 0.0_wp   !< [W/m2]      direct-beam PAR
-      real(wp) :: par_diffuse   = 0.0_wp   !< [W/m2]      diffuse PAR
-      real(wp) :: nir_beam      = 0.0_wp   !< [W/m2]      direct-beam NIR
-      real(wp) :: nir_diffuse   = 0.0_wp   !< [W/m2]      diffuse NIR
-      real(wp) :: rainf         = 0.0_wp   !< [kg/m2/s]   liquid precipitation
-      real(wp) :: snowfall      = 0.0_wp   !< [kg/m2/s]   frozen precipitation
-      real(wp) :: cosz          = 0.0_wp   !< [-]         cosine of the solar zenith angle
-      real(wp) :: rho_air       = 0.0_wp   !< [kg/m3]     air density
    end type fast_sample_t
 
    !==========================================================================================!
@@ -340,6 +318,7 @@ module meds_output_types
       integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
       type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
+      real(wp),            allocatable :: fast_forcing(:,:)     !< (PY_*, n_fast_sub) the sub-step's forcing
       real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
       real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort cap, n_fast_sub) per-cohort leaf temp [K]

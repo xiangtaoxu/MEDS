@@ -39,7 +39,8 @@ program test_output_integrate
                                      extract_variable, output_integrate_fast, close_tier,        &
                                      extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
                                      SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, SRC_F_SW_UP, SRC_F_LW_UP,    &
-                                     output_integrate
+                                     SRC_F_PY0, output_integrate
+   use meds_site_diag_types,  only : N_PYDIAG, PY_TAIR, PY_CO2
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &
@@ -204,18 +205,22 @@ contains
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
       type(fast_sample_t)    :: s
+      real(wp)    :: f0(N_PYDIAG)
       integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
-      !----- extract_fast_scalar: each source id reads the matching fast_sample_t field. -----!
+      !----- extract_fast_scalar: each source id reads the matching fast_sample_t field, and a      !
+      !      forcing id its row of the sub-step's forcing table. -----------------------------------!
+      f0 = 0.0_wp ; f0(PY_CO2) = 415.0_wp
       s%cas_temp = 290.0_wp ; s%le_flux = 100.0_wp ; s%h_flux = 50.0_wp ; s%gpp_rate = 12.0_wp
-      call check_close(extract_fast_scalar(SRC_F_CAS_TEMP, s), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
-      call check_close(extract_fast_scalar(SRC_F_LE,       s), 100.0_wp, 1.0e-12_wp, 'fast extract le')
-      call check_close(extract_fast_scalar(SRC_F_H,        s),  50.0_wp, 1.0e-12_wp, 'fast extract h')
-      call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
+      call check_close(extract_fast_scalar(SRC_F_CAS_TEMP, s, f0), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
+      call check_close(extract_fast_scalar(SRC_F_LE,       s, f0), 100.0_wp, 1.0e-12_wp, 'fast extract le')
+      call check_close(extract_fast_scalar(SRC_F_H,        s, f0),  50.0_wp, 1.0e-12_wp, 'fast extract h')
+      call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s, f0),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
       s%sw_up = 83.0_wp ; s%lw_up = 455.0_wp
-      call check_close(extract_fast_scalar(SRC_F_SW_UP,    s),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
-      call check_close(extract_fast_scalar(SRC_F_LW_UP,    s), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
+      call check_close(extract_fast_scalar(SRC_F_SW_UP,    s, f0),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
+      call check_close(extract_fast_scalar(SRC_F_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
+      call check_close(extract_fast_scalar(SRC_F_PY0 + PY_CO2, s, f0), 415.0_wp, 1.0e-12_wp, 'fast extract forcing CO2')
 
       !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
       !      register), then fold a 2-sub-step window and close it. -----!
@@ -228,13 +233,14 @@ contains
       call check(files%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
       !----- Stage 2 sub-steps of known values (as fast_dynamics would). -----!
-      allocate(bufs%fast(2), bufs%fast_time(2))
+      allocate(bufs%fast(2), bufs%fast_time(2), bufs%fast_forcing(N_PYDIAG, 2))
       allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
       allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
       bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
       bufs%fast(1)%cas_temp = 290.0_wp ; bufs%fast(2)%cas_temp = 294.0_wp    ! mean 292
       bufs%fast(1)%le_flux  = 100.0_wp ; bufs%fast(2)%le_flux  = 200.0_wp
-      bufs%fast(1)%air_temp = 300.0_wp ; bufs%fast(2)%air_temp = 302.0_wp    ! mean 301
+      bufs%fast_forcing = 0.0_wp
+      bufs%fast_forcing(PY_TAIR, 1) = 300.0_wp ; bufs%fast_forcing(PY_TAIR, 2) = 302.0_wp    ! mean 301
       bufs%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
       bufs%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
       bufs%fast_soil_water = 0.0_wp
@@ -305,7 +311,9 @@ contains
       call manager_alloc_buffers(files, bufs)
       call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
 
-      allocate(bufs%fast(1), bufs%fast_time(1), bufs%fast_soil_temp(nl,1), bufs%fast_soil_water(nl,1))
+      allocate(bufs%fast(1), bufs%fast_time(1), bufs%fast_forcing(N_PYDIAG, 1), bufs%fast_soil_temp(nl,1), &
+               bufs%fast_soil_water(nl,1))
+      bufs%fast_forcing = 0.0_wp
       allocate(bufs%fast_coh_ltemp(1,1), bufs%fast_coh_gpp(1,1), bufs%fast_coh_height(1,1))
       bufs%n_fast_sub = 1_ik ; bufs%fast_n_soil = nl ; bufs%fast_n_cohort = 0_ik
       bufs%fast_soil_temp(:,1) = [(270.0_wp + real(i, wp), i = 1_ik, nl)]
@@ -435,7 +443,8 @@ contains
    subroutine stage_cas(bufs, cas)
       type(output_buffers_t), intent(inout) :: bufs
       real(wp),            intent(in)    :: cas(2)
-      allocate(bufs%fast(2), bufs%fast_time(2))
+      allocate(bufs%fast(2), bufs%fast_time(2), bufs%fast_forcing(N_PYDIAG, 2))
+      bufs%fast_forcing = 0.0_wp
       allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
       allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
       bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik

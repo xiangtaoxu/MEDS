@@ -16,6 +16,19 @@ before and after.
 
 ### Changed
 
+- **The forcing echo is listed once** (#312 O6). The forcing each fast sub-step used was listed three
+  times over: 15 fields of the fast sample, their copies in the fast loop, and 15 source ids with
+  their cases in the output layer, beside the polygon block's own table (`PY_*`).
+  - **One routine.** `forcing_echo` fills the polygon block's table once per sub-step; the coarse
+    tiers accumulate it, and the FAST tier stages it as it is (`fast_forcing`). The FAST tier's
+    forcing variables read their row of that table (`SRC_F_PY0 + PY_*`).
+  - **One more row.** The table gains the liquid rain (`PY_RAINF`), which `rainf_fast` needs.
+  - **Exact echoes.** `sw_in_fast`, `air_temp_fast` and `atm_co2_fast` were area-summed over the
+    patches although they are the same everywhere. They are now the sample itself (a 1e-16 change).
+  - **Group.** They, `sw_in_site` and `precip_site` join the `forcing` group. A config with
+    `[output].forcing = false` that wants them lists them in its `io_config`, as both examples do.
+  - Every other r1 value is bit-identical.
+
 - **Forcing files are written in one contiguous block per variable, and read about 3 s faster**
   (MEDS_EFFICIENCY_SWEEP_PLAN.md, item N-1). The shared writer made the time dimension unlimited
   and took netCDF's default chunking: one record per chunk. The model reads a site's whole series at

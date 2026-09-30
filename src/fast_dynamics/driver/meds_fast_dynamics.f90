@@ -40,7 +40,7 @@ module meds_fast_dynamics
                                      PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
-                                     cohort_diag_grow, patch_diag_grow
+                                     PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
    use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
                                  root_available_water
    use meds_column_state_types, only : xi_accum_t, snow_column_t
@@ -443,7 +443,7 @@ contains
       if (do_fast) then
          nl = n_soil_layer_max
          if (.not. allocated(out_bufs%fast)) then
-            allocate(out_bufs%fast(nsub), out_bufs%fast_time(nsub))
+            allocate(out_bufs%fast(nsub), out_bufs%fast_time(nsub), out_bufs%fast_forcing(N_PYDIAG, nsub))
             allocate(out_bufs%fast_soil_temp(nl, nsub), out_bufs%fast_soil_water(nl, nsub))
             allocate(out_bufs%fast_coh_ltemp(out_bufs%fast_cohort_cap, nsub),                            &
                      out_bufs%fast_coh_gpp(out_bufs%fast_cohort_cap, nsub),                              &
@@ -531,16 +531,11 @@ contains
          end do
       end if
       !----- The FAST tier's forcing echo (§6.7) is the sub-step's own sample: site-uniform, so it  !
-      !      is staged here, exactly, rather than area-summed over patches like the fluxes below. ----!
+      !      is staged here, exactly, rather than area-summed over patches like the fluxes below, and  !
+      !      in the same table the polygon block keeps (forcing_echo). -------------------------------!
       if (do_fast) then
          do isub = 1_ik, nsub
-            associate (fs => out_bufs%fast(isub), m => met_sample(isub))
-               fs%qair = m%qair ; fs%psurf = m%psurf_pa ; fs%wind = m%wind ; fs%lwdown = m%lwdown
-               fs%par_beam = m%par_beam ; fs%par_diffuse = m%par_diffuse
-               fs%nir_beam = m%nir_beam ; fs%nir_diffuse = m%nir_diffuse
-               fs%rainf = m%rainf ; fs%snowfall = m%snowfall
-               fs%cosz = m%cosz ; fs%rho_air = m%rho_air
-            end associate
+            call forcing_echo(met_sample(isub), out_bufs%fast_forcing(:, isub))
          end do
       end if
       !----- The polygon's forcing (PY_*, §6.7), once per sub-step: the same everywhere in the     !
@@ -805,11 +800,9 @@ contains
                red_fast(isub,ip)%le_flux       = w_area * le_flux
                red_fast(isub,ip)%h_flux        = w_area * h_flux
                red_fast(isub,ip)%rnet          = w_area * rnet
-               red_fast(isub,ip)%sw_in         = w_area * met%swdown()
                red_fast(isub,ip)%sw_up         = w_area * (forc%sw_up_vis + forc%sw_up_nir)
                red_fast(isub,ip)%lw_up         = w_area * forc%lw_up
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
-               red_fast(isub,ip)%air_temp      = w_area * met%tair_k
                !----- CARBON. budget%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
                !      the atmosphere -- the same number the CAS CO2 box is driven by, so the flux and  !
                !      the state it acts on cannot disagree. NPP is GPP net of the three MAINTENANCE    !
@@ -822,7 +815,6 @@ contains
                red_fast(isub,ip)%npp_rate      = w_area * npp_patch
                red_fast(isub,ip)%reco_rate     = w_area * (budget%nee_last + gpp_patch)
                red_fast(isub,ip)%cas_co2       = w_area * biophys%cas%can_co2
-               red_fast(isub,ip)%atm_co2       = w_area * met%co2
                red_fast_soil_temp(1:nl,isub,ip)  = w_area * biophys%soil_e%soil_temp(1:nl)
                red_fast_soil_water(1:nl,isub,ip) = w_area * biophys%soil_w%theta(1:nl)
                !----- Per-cohort slabs are written by GLOBAL cohort slot, which is DISJOINT across      !
@@ -949,16 +941,13 @@ contains
                out_bufs%fast(isub)%le_flux       = out_bufs%fast(isub)%le_flux       + red_fast(isub,ip)%le_flux
                out_bufs%fast(isub)%h_flux        = out_bufs%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
                out_bufs%fast(isub)%rnet          = out_bufs%fast(isub)%rnet          + red_fast(isub,ip)%rnet
-               out_bufs%fast(isub)%sw_in         = out_bufs%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
                out_bufs%fast(isub)%sw_up         = out_bufs%fast(isub)%sw_up         + red_fast(isub,ip)%sw_up
                out_bufs%fast(isub)%lw_up         = out_bufs%fast(isub)%lw_up         + red_fast(isub,ip)%lw_up
                out_bufs%fast(isub)%ustar         = out_bufs%fast(isub)%ustar         + red_fast(isub,ip)%ustar
-               out_bufs%fast(isub)%air_temp      = out_bufs%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
                out_bufs%fast(isub)%nee_rate      = out_bufs%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate
                out_bufs%fast(isub)%npp_rate      = out_bufs%fast(isub)%npp_rate      + red_fast(isub,ip)%npp_rate
                out_bufs%fast(isub)%reco_rate     = out_bufs%fast(isub)%reco_rate     + red_fast(isub,ip)%reco_rate
                out_bufs%fast(isub)%cas_co2       = out_bufs%fast(isub)%cas_co2       + red_fast(isub,ip)%cas_co2
-               out_bufs%fast(isub)%atm_co2       = out_bufs%fast(isub)%atm_co2       + red_fast(isub,ip)%atm_co2
                out_bufs%fast_soil_temp(1:nl,isub)  = out_bufs%fast_soil_temp(1:nl,isub)                       &
                                               + red_fast_soil_temp(1:nl,isub,ip)
                out_bufs%fast_soil_water(1:nl,isub) = out_bufs%fast_soil_water(1:nl,isub)                      &
@@ -1299,22 +1288,34 @@ contains
       type(polygon_diag_block), intent(inout) :: d
       real(wp),                 intent(in)    :: dt     !< [s] sample weight
       type(met_forcing_t),      intent(in)    :: met
-      d%v(PY_SW_IN)       = d%v(PY_SW_IN)       + met%swdown()          * dt
-      d%v(PY_PRECIP)      = d%v(PY_PRECIP)      + (met%rainf + met%snowfall) * dt
-      d%v(PY_TAIR)        = d%v(PY_TAIR)        + met%tair_k            * dt
-      d%v(PY_QAIR)        = d%v(PY_QAIR)        + met%qair              * dt
-      d%v(PY_PSURF)       = d%v(PY_PSURF)       + met%psurf_pa          * dt
-      d%v(PY_WIND)        = d%v(PY_WIND)        + met%wind              * dt
-      d%v(PY_LWDOWN)      = d%v(PY_LWDOWN)      + met%lwdown            * dt
-      d%v(PY_PAR_BEAM)    = d%v(PY_PAR_BEAM)    + met%par_beam          * dt
-      d%v(PY_PAR_DIFFUSE) = d%v(PY_PAR_DIFFUSE) + met%par_diffuse       * dt
-      d%v(PY_NIR_BEAM)    = d%v(PY_NIR_BEAM)    + met%nir_beam          * dt
-      d%v(PY_NIR_DIFFUSE) = d%v(PY_NIR_DIFFUSE) + met%nir_diffuse       * dt
-      d%v(PY_SNOWFALL)    = d%v(PY_SNOWFALL)    + met%snowfall          * dt
-      d%v(PY_CO2)         = d%v(PY_CO2)         + met%co2               * dt
-      d%v(PY_COSZ)        = d%v(PY_COSZ)        + met%cosz              * dt
-      d%v(PY_RHO_AIR)     = d%v(PY_RHO_AIR)     + met%rho_air           * dt
-      d%w                 = d%w                 + dt
+      real(wp) :: f(N_PYDIAG)
+      call forcing_echo(met, f)
+      d%v = d%v + f * dt
+      d%w = d%w + dt
    end subroutine accumulate_polygon_diag
+
+   !----- The forcing one sub-step used, in the polygon block's table (PY_*): the one list of the  !
+   !      forcing echo, which the coarse tiers accumulate (accumulate_polygon_diag) and the FAST    !
+   !      tier stages as it is. -------------------------------------------------------------------!
+   pure subroutine forcing_echo(met, f)
+      type(met_forcing_t), intent(in)  :: met
+      real(wp),            intent(out) :: f(N_PYDIAG)
+      f(PY_SW_IN)       = met%swdown()
+      f(PY_PRECIP)      = met%rainf + met%snowfall
+      f(PY_TAIR)        = met%tair_k
+      f(PY_QAIR)        = met%qair
+      f(PY_PSURF)       = met%psurf_pa
+      f(PY_WIND)        = met%wind
+      f(PY_LWDOWN)      = met%lwdown
+      f(PY_PAR_BEAM)    = met%par_beam
+      f(PY_PAR_DIFFUSE) = met%par_diffuse
+      f(PY_NIR_BEAM)    = met%nir_beam
+      f(PY_NIR_DIFFUSE) = met%nir_diffuse
+      f(PY_SNOWFALL)    = met%snowfall
+      f(PY_CO2)         = met%co2
+      f(PY_COSZ)        = met%cosz
+      f(PY_RHO_AIR)     = met%rho_air
+      f(PY_RAINF)       = met%rainf
+   end subroutine forcing_echo
 
 end module meds_fast_dynamics

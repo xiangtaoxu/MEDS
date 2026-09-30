@@ -69,13 +69,12 @@ module meds_output_integrate
    public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT,             &
              SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the live fast_sample_t.  !
-   public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP
+   public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_USTAR
    public :: SRC_F_SW_UP, SRC_F_LW_UP
    public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
+   public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
-   public :: SRC_F_QAIR, SRC_F_PSURF, SRC_F_WIND, SRC_F_LWDOWN, SRC_F_PAR_BEAM, SRC_F_PAR_DIFFUSE
-   public :: SRC_F_NIR_BEAM, SRC_F_NIR_DIFFUSE, SRC_F_RAINF, SRC_F_SNOWFALL, SRC_F_COSZ, SRC_F_RHO_AIR
+   public :: SRC_F_PY0
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -204,29 +203,16 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_LE            = 5004_ik
    integer(ik), parameter :: SRC_F_H             = 5005_ik
    integer(ik), parameter :: SRC_F_RNET          = 5006_ik
-   integer(ik), parameter :: SRC_F_SW_IN         = 5007_ik
    integer(ik), parameter :: SRC_F_USTAR         = 5008_ik
-   integer(ik), parameter :: SRC_F_AIR_TEMP      = 5009_ik
    integer(ik), parameter :: SRC_F_NEE           = 5012_ik
    integer(ik), parameter :: SRC_F_NPP_RATE      = 5013_ik
    integer(ik), parameter :: SRC_F_RECO          = 5014_ik
    integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
-   integer(ik), parameter :: SRC_F_ATM_CO2       = 5016_ik
    integer(ik), parameter :: SRC_F_SW_UP         = 5017_ik
    integer(ik), parameter :: SRC_F_LW_UP         = 5018_ik
-   !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7). ---------------------------------------!
-   integer(ik), parameter :: SRC_F_QAIR          = 5030_ik
-   integer(ik), parameter :: SRC_F_PSURF         = 5031_ik
-   integer(ik), parameter :: SRC_F_WIND          = 5032_ik
-   integer(ik), parameter :: SRC_F_LWDOWN        = 5033_ik
-   integer(ik), parameter :: SRC_F_PAR_BEAM      = 5034_ik
-   integer(ik), parameter :: SRC_F_PAR_DIFFUSE   = 5035_ik
-   integer(ik), parameter :: SRC_F_NIR_BEAM      = 5036_ik
-   integer(ik), parameter :: SRC_F_NIR_DIFFUSE   = 5037_ik
-   integer(ik), parameter :: SRC_F_RAINF         = 5038_ik
-   integer(ik), parameter :: SRC_F_SNOWFALL      = 5039_ik
-   integer(ik), parameter :: SRC_F_COSZ          = 5040_ik
-   integer(ik), parameter :: SRC_F_RHO_AIR       = 5041_ik
+   !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7): SRC_F_PY0 + PY_*, read from the sub-step's !
+   !      forcing table, the polygon block's own list. -------------------------------------------!
+   integer(ik), parameter :: SRC_F_PY0           = 5100_ik
    integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL, from the fast soil slab
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
@@ -966,9 +952,13 @@ contains
    !  disjoint by construction, so neither can resolve the other's ids. Deleting this would not    !
    !  remove a duplicate switchboard -- it would remove sub-daily sampling.                        !
    !=======================================================================================!
-   pure real(wp) function extract_fast_scalar(source_id, s) result(val)
-      integer(ik),        intent(in) :: source_id
+   pure real(wp) function extract_fast_scalar(source_id, s, forcing) result(val)
+      integer(ik),         intent(in) :: source_id
       type(fast_sample_t), intent(in) :: s
+      real(wp),            intent(in) :: forcing(:)   !< the sub-step's forcing (PY_*)
+      if (source_id > SRC_F_PY0 .and. source_id <= SRC_F_PY0 + N_PYDIAG) then
+         val = forcing(source_id - SRC_F_PY0) ; return
+      end if
       select case (source_id)
       case (SRC_F_CAS_TEMP)     ; val = s%cas_temp
       case (SRC_F_SOIL_TEMP_TOP); val = s%soil_temp_top
@@ -976,28 +966,13 @@ contains
       case (SRC_F_LE)           ; val = s%le_flux
       case (SRC_F_H)            ; val = s%h_flux
       case (SRC_F_RNET)         ; val = s%rnet
-      case (SRC_F_SW_IN)        ; val = s%sw_in
       case (SRC_F_SW_UP)        ; val = s%sw_up
       case (SRC_F_LW_UP)        ; val = s%lw_up
       case (SRC_F_USTAR)        ; val = s%ustar
-      case (SRC_F_AIR_TEMP)     ; val = s%air_temp
       case (SRC_F_NEE)          ; val = s%nee_rate
       case (SRC_F_NPP_RATE)     ; val = s%npp_rate
       case (SRC_F_RECO)         ; val = s%reco_rate
       case (SRC_F_CAS_CO2)      ; val = s%cas_co2
-      case (SRC_F_ATM_CO2)      ; val = s%atm_co2
-      case (SRC_F_QAIR)         ; val = s%qair
-      case (SRC_F_PSURF)        ; val = s%psurf
-      case (SRC_F_WIND)         ; val = s%wind
-      case (SRC_F_LWDOWN)       ; val = s%lwdown
-      case (SRC_F_PAR_BEAM)     ; val = s%par_beam
-      case (SRC_F_PAR_DIFFUSE)  ; val = s%par_diffuse
-      case (SRC_F_NIR_BEAM)     ; val = s%nir_beam
-      case (SRC_F_NIR_DIFFUSE)  ; val = s%nir_diffuse
-      case (SRC_F_RAINF)        ; val = s%rainf
-      case (SRC_F_SNOWFALL)     ; val = s%snowfall
-      case (SRC_F_COSZ)         ; val = s%cosz
-      case (SRC_F_RHO_AIR)      ; val = s%rho_air
       case default              ; val = MISSING_VALUE
       end select
    end function extract_fast_scalar
@@ -1022,7 +997,7 @@ contains
          src = files%reg%var(k)%source_id
          select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
-            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast(isub)), dt)
+            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast(isub), bufs%fast_forcing(:, isub)), dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)

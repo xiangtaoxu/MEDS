@@ -28,7 +28,8 @@ program test_fast_loop
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
-   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN
+   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
+                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -233,9 +234,12 @@ program test_fast_loop
             sum_t = sum_t + m%tair_k * cfg%dt_fast ; sum_q = sum_q + m%qair * cfg%dt_fast
             sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
             sum_sw = sum_sw + m%swdown() * cfg%dt_fast
-            exact = exact .and. ob%fast(isub)%qair == m%qair .and. ob%fast(isub)%lwdown == m%lwdown  &
-                    .and. ob%fast(isub)%par_diffuse == m%par_diffuse .and. ob%fast(isub)%cosz == m%cosz &
-                    .and. ob%fast(isub)%rho_air == m%rho_air .and. ob%fast(isub)%wind == m%wind
+            associate (f => ob%fast_forcing(:, isub))
+               exact = exact .and. f(PY_QAIR) == m%qair .and. f(PY_LWDOWN) == m%lwdown               &
+                       .and. f(PY_PAR_DIFFUSE) == m%par_diffuse .and. f(PY_COSZ) == m%cosz           &
+                       .and. f(PY_RHO_AIR) == m%rho_air .and. f(PY_WIND) == m%wind                   &
+                       .and. f(PY_TAIR) == m%tair_k .and. f(PY_SW_IN) == m%swdown()
+            end associate
          end do
          w = site%diag%w
          call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
