@@ -116,9 +116,10 @@ never dropped; a `dbh` below the first edge clamps into bin 1 for the same reaso
 preserve the closure identity, which is what makes `nplant_size` a genuine stem-density
 distribution comparable to a forest inventory.
 
-**Cohort and patch axes may not appear on the annual stream.** A window longer than a month would
-straddle the annual disturbance restructuring, so the slot set that was averaged would not be the
-slot set present at flush. The registry rejects it at start-up.
+**Cohort and patch axes may not appear on the annual stream**, and neither may the `(patch, soil)`
+profiles. A window longer than a month would straddle the annual disturbance restructuring, so the
+slot set that was averaged would not be the slot set present at flush. The registry rejects it at
+start-up.
 
 ---
 
@@ -190,6 +191,24 @@ July against 5.4 K in December, which the monthly mean alone cannot show.
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
 that is identical to chaining.
+
+### The FAST tier by patch
+
+A site mean over a closed canopy and a gap can describe neither. In the biophysics example stand,
+the gap's surface soil ran 13 K above the air at midday while the closed patch's ran 0.7 K below it
+(#270). So each FAST quantity of the patch block also has a per-patch twin:
+
+- It is named after its coarse patch variable, plus `_fast`: `cas_temp_patch_fast`,
+  `soil_temp_top_patch_fast`, `le_patch_fast`, `h_patch_fast`, `rnet_patch_fast`, `nee_patch_fast`.
+- A quantity with no coarse patch variable keeps its site stem: `gpp_rate_patch_fast`,
+  `sw_up_patch_fast`, `lw_up_patch_fast`, `ustar_patch_fast`, `npp_rate_patch_fast`,
+  `reco_patch_fast`, `cas_co2_patch_fast`.
+- The soil columns by layer and patch are `soil_temp_layer_patch_fast` and
+  `soil_water_layer_patch_fast`.
+
+The site `*_fast` value is the area-weighted sum of the patch values, taken in patch order, so the
+two always agree. The twins follow `axes_patch` (on by default) and `axes_soil_patch` (off), as the
+coarse patch variables do. Like every patch variable, they are not written for a region.
 
 ### A caveat worth stating plainly
 
@@ -320,7 +339,9 @@ registry line each**, with no new extraction code.
 
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
 `patch_diag_block` (`meds_site_diag_types`): a new index parameter, one fill line in the capture,
-and its fusion kind. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
+and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
+patch row reaches the sub-daily tier with one more registry line (`SRC_F_PD0 + PD_*`), per patch
+or as a site mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 
 ### The one trap

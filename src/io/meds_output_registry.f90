@@ -28,7 +28,7 @@ module meds_output_registry
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
-                                   XTYPE_DOUBLE, XTYPE_INT
+                                   XTYPE_DOUBLE, XTYPE_INT, ragged_dim
    use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB,        &
                                       cm2_to_m2
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
@@ -51,12 +51,9 @@ module meds_output_registry
         SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH, SRC_S_WORK_RK45_RESCUE,                     &
         SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS,                  &
         SRC_S_WORK_CLAMP_ENERGY,                                                                 &
-        SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
-        SRC_F_SW_UP, SRC_F_LW_UP,                                                                &
-        SRC_F_USTAR, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0,                              &
+        SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PD0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
-        FLD_PY_DIAG0,                                                                            &
-        SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
+        FLD_PY_DIAG0
    use meds_site_diag_types, only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,     &
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
@@ -69,7 +66,7 @@ module meds_output_registry
                                     PD_TRANSP, PD_GROUND_TEMP, PD_RESID_ENERGY,                  &
                                     PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
                                     PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,               &
-                                    PD_RESID_WATER,                                              &
+                                    PD_RESID_WATER, PD_NPP, PD_RECO, PD_SW_UP,                   &
                                     PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                     PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                     PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
@@ -760,35 +757,35 @@ contains
    subroutine register_fast(reg)
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'cas_temp_fast', 'site canopy-air-space temperature (sub-daily)', 'K', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_CAS_TEMP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_fast', 'site soil-top temperature (sub-daily)', 'K', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SOIL_TEMP_TOP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_GROUND_TEMP)
       call add_variable(reg, 'gpp_rate_fast', 'site instantaneous GPP rate', 'umol/m2/s',        &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_GPP_RATE)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_GPP)
       call add_variable(reg, 'le_flux_fast', 'site latent-heat (ET) flux', 'W/m2',               &
-                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_LE)
+                        DIM_SCALAR, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_PD0 + PD_LE)
       call add_variable(reg, 'h_flux_fast', 'site sensible-heat flux', 'W/m2',                   &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_H)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_H)
       call add_variable(reg, 'rnet_fast', 'site net all-wave radiation', 'W/m2',                 &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_RNET)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_RNET)
       call add_variable(reg, 'sw_in_fast', 'incident shortwave at canopy top (forcing)', 'W/m2', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_SW_IN)
       call add_variable(reg, 'sw_up_fast', 'shortwave leaving the canopy top (VIS + NIR)', 'W/m2', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_UP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SW_UP)
       call add_variable(reg, 'lw_up_fast', 'longwave leaving the canopy top (emission included)', 'W/m2', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_LW_UP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_LW_UP)
       call add_variable(reg, 'ustar_fast', 'friction velocity', 'm/s',                           &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_USTAR)
       call add_variable(reg, 'air_temp_fast', 'reference-level forcing air temperature', 'K',    &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_TAIR)
       call add_variable(reg, 'nee_fast', 'net ecosystem exchange (+ to atmosphere)', 'umol/m2/s', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_NEE)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_NEE)
       call add_variable(reg, 'npp_rate_fast', 'net primary productivity (GPP - maintenance Ra)',  &
-                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_NPP_RATE)
+                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_NPP)
       call add_variable(reg, 'reco_fast', 'ecosystem respiration (autotrophic + heterotrophic)',  &
-                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_RECO)
+                        'umol/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_RECO)
       call add_variable(reg, 'cas_co2_fast', 'canopy-air CO2 mixing ratio', 'umol/mol',           &
-                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_CAS_CO2)
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_CAS_CO2)
       call add_variable(reg, 'atm_co2_fast', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_CO2)
       call add_variable(reg, 'soil_temp_site_fast', 'area-weighted soil temperature (sub-daily)', 'K', &
@@ -801,6 +798,42 @@ contains
                         DIM_COHORT, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_COH_GPP)
       call add_variable(reg, 'height_cohort_fast', 'per-cohort height (tallest-cohort selection)', 'm', &
                         DIM_COHORT, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_COH_HEIGHT)
+      !----- Per-patch twins (#270): the same samples before the area-weighted sum over patches. A  !
+      !      site mean over a closed canopy and a gap describes neither -- at midday the two can     !
+      !      differ in sign -- so a patchy stand's sub-daily behaviour needs the patch axis. Each is  !
+      !      its coarse patch variable's name with _fast (a quantity only this tier has keeps its    !
+      !      site stem), and each follows [output].axes_patch or axes_soil_patch as the coarse ones  !
+      !      do. -------------------------------------------------------------------------------------!
+      call add_variable(reg, 'cas_temp_patch_fast', 'patch canopy-air-space temperature (sub-daily)', 'K', &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_CAS_TEMP)
+      call add_variable(reg, 'soil_temp_top_patch_fast', 'patch soil-top temperature (sub-daily)', 'K', &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_GROUND_TEMP)
+      call add_variable(reg, 'gpp_rate_patch_fast', 'patch instantaneous GPP rate', 'umol/m2/s',  &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_GPP)
+      call add_variable(reg, 'le_patch_fast', 'patch latent-heat (ET) flux', 'W/m2',              &
+                        DIM_PATCH, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_PD0 + PD_LE)
+      call add_variable(reg, 'h_patch_fast', 'patch sensible-heat flux', 'W/m2',                  &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_H)
+      call add_variable(reg, 'rnet_patch_fast', 'patch net all-wave radiation', 'W/m2',           &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_RNET)
+      call add_variable(reg, 'sw_up_patch_fast', 'patch shortwave leaving the canopy top (VIS + NIR)', 'W/m2', &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SW_UP)
+      call add_variable(reg, 'lw_up_patch_fast', 'patch longwave leaving the canopy top (emission included)', 'W/m2', &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_LW_UP)
+      call add_variable(reg, 'ustar_patch_fast', 'patch friction velocity', 'm/s',                &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_USTAR)
+      call add_variable(reg, 'nee_patch_fast', 'patch net ecosystem exchange (+ to atmosphere)', 'umol/m2/s', &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_NEE)
+      call add_variable(reg, 'npp_rate_patch_fast', 'patch net primary productivity (GPP - maintenance Ra)', 'umol/m2/s', &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_NPP)
+      call add_variable(reg, 'reco_patch_fast', 'patch ecosystem respiration (autotrophic + heterotrophic)', 'umol/m2/s', &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_RECO)
+      call add_variable(reg, 'cas_co2_patch_fast', 'patch canopy-air CO2 mixing ratio', 'umol/mol', &
+                        DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_CAS_CO2)
+      call add_variable(reg, 'soil_temp_layer_patch_fast', 'soil temperature by layer and patch (sub-daily)', 'K', &
+                        DIM_SOIL_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SOIL_TEMP)
+      call add_variable(reg, 'soil_water_layer_patch_fast', 'volumetric soil moisture by layer and patch (sub-daily)', 'm3/m3', &
+                        DIM_SOIL_PATCH, AGG_TMEAN, GRP_WATER, FAST_ONLY, SRC_F_SOIL_WATER)
    end subroutine register_fast
 
    !=======================================================================================!
@@ -944,8 +977,7 @@ contains
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: k
       do k = 1_ik, reg%nvar
-         if ((reg%var(k)%dim == DIM_COHORT .or. reg%var(k)%dim == DIM_PATCH) .and.               &
-             iand(reg%var(k)%streams_default, FREQ_ANNUAL) /= 0_ik)                              &
+         if (ragged_dim(reg%var(k)%dim) .and. iand(reg%var(k)%streams_default, FREQ_ANNUAL) /= 0_ik) &
             error stop 'meds_output_registry: cohort/patch variable on the annual stream ('//trim(reg%var(k)%name)//')'
       end do
    end subroutine enforce_annual_guard
@@ -1027,8 +1059,7 @@ contains
       case (OVR_FALSE) ; reg%var(k)%streams = FREQ_NONE
       case (OVR_MASK)
          m = mask
-         if ((reg%var(k)%dim == DIM_COHORT .or. reg%var(k)%dim == DIM_PATCH) .and.               &
-             iand(m, FREQ_ANNUAL) /= 0_ik)                                                       &
+         if (ragged_dim(reg%var(k)%dim) .and. iand(m, FREQ_ANNUAL) /= 0_ik)                      &
             error stop 'meds_output_registry: annual (Y) stream forbidden on cohort/patch variable ('//trim(name)//')'
          reg%var(k)%streams = m
       end select
@@ -1126,9 +1157,7 @@ contains
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: k
       do k = 1_ik, files%reg%nvar
-         select case (files%reg%var(k)%dim)
-         case (DIM_COHORT, DIM_PATCH, DIM_SOIL_PATCH) ; files%reg%var(k)%enabled = .false.
-         end select
+         if (ragged_dim(files%reg%var(k)%dim)) files%reg%var(k)%enabled = .false.
          files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
       end do
       call build_freq_index(files%reg)
@@ -1254,7 +1283,6 @@ contains
          bufs%pending(t)%used = .false.
       end do
       bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
-      bufs%fast_cohort_cap = max(files%cohort_max, 1_ik)
    end subroutine manager_alloc_buffers
 
    !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !

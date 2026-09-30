@@ -20,7 +20,7 @@ module meds_output_integrate
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
-                                   fast_sample_t, diag_params_t, pending_record_t, record_queue_t, &
+                                   diag_params_t, pending_record_t, record_queue_t,                &
                                    slab_col,                                                     &
                                    AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
@@ -68,13 +68,10 @@ module meds_output_integrate
              SRC_S_WORK_HYDRO_NSUB, SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH
    public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT,             &
              SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
-   !----- FAST-tier instantaneous sources (5000-5999): resolved against the live fast_sample_t.  !
-   public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_USTAR
-   public :: SRC_F_SW_UP, SRC_F_LW_UP
-   public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2
+   !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
+   public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
-   public :: SRC_F_PY0
+   public :: SRC_F_PY0, SRC_F_PD0
 
    !==========================================================================================!
    !  SOURCE CODE SPACE. Each source id names a FIELD, and its NUMERIC RANGE says which entity   !
@@ -195,26 +192,14 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_WORK_CLAMP_ENERGY= 4039_ik
    integer(ik), parameter :: SRC_S_WORK_HYDRO_THRASH= 4040_ik
 
-   !----- FAST-tier staged sources (SRCK_FAST): read from the live fast_sample_t / manager       !
-   !      slabs, never from site state (which at replay time is the end-of-slow-step snapshot).   !
-   integer(ik), parameter :: SRC_F_CAS_TEMP      = 5001_ik
-   integer(ik), parameter :: SRC_F_SOIL_TEMP_TOP = 5002_ik
-   integer(ik), parameter :: SRC_F_GPP_RATE      = 5003_ik
-   integer(ik), parameter :: SRC_F_LE            = 5004_ik
-   integer(ik), parameter :: SRC_F_H             = 5005_ik
-   integer(ik), parameter :: SRC_F_RNET          = 5006_ik
-   integer(ik), parameter :: SRC_F_USTAR         = 5008_ik
-   integer(ik), parameter :: SRC_F_NEE           = 5012_ik
-   integer(ik), parameter :: SRC_F_NPP_RATE      = 5013_ik
-   integer(ik), parameter :: SRC_F_RECO          = 5014_ik
-   integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
-   integer(ik), parameter :: SRC_F_SW_UP         = 5017_ik
-   integer(ik), parameter :: SRC_F_LW_UP         = 5018_ik
-   !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7): SRC_F_PY0 + PY_*, read from the sub-step's !
-   !      forcing table, the polygon block's own list. -------------------------------------------!
+   !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
+   !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
+   !      blocks' own tables: the forcing echo (MEDS_FORCING_DESIGN.md §6.7), SRC_F_PY0 + PY_*, and   !
+   !      the patch block's fast rows, SRC_F_PD0 + PD_*, as a site mean or per patch by the dim. --!
    integer(ik), parameter :: SRC_F_PY0           = 5100_ik
-   integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL, from the fast soil slab
-   integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL, from the fast soil slab
+   integer(ik), parameter :: SRC_F_PD0           = 5200_ik
+   integer(ik), parameter :: SRC_F_SOIL_TEMP     = 5010_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
+   integer(ik), parameter :: SRC_F_SOIL_WATER    = 5011_ik  !< DIM_SOIL or DIM_SOIL_PATCH, the fast soil slabs
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
@@ -872,10 +857,16 @@ contains
             call normalize_slab(bufs%buf(k,t), bufs%pending(t)%slab(:,k),                          &
                                 bufs%pending(t)%slabvalid(:,k), ns)
             bufs%pending(t)%nslab(k) = ns
-            if (files%reg%var(k)%dim == DIM_COHORT)                                                &
+            !----- The record's axis lengths. A soil-by-patch slab is patch-major, strided by the  !
+            !      layer ceiling, so it holds ns / n_soil_layer_max patches. ---------------------!
+            select case (files%reg%var(k)%dim)
+            case (DIM_COHORT)
                bufs%pending(t)%n_cohort = max(bufs%pending(t)%n_cohort, ns)
-            if (files%reg%var(k)%dim == DIM_PATCH)                                                 &
+            case (DIM_PATCH)
                bufs%pending(t)%n_patch  = max(bufs%pending(t)%n_patch,  ns)
+            case (DIM_SOIL_PATCH)
+               bufs%pending(t)%n_patch  = max(bufs%pending(t)%n_patch,  ns / n_soil_layer_max)
+            end select
          end if
          call reset_buffer(bufs%buf(k,t))
       end do
@@ -935,8 +926,9 @@ contains
    end subroutine enqueue_record
 
    !=======================================================================================!
-   !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of a  !
-   !  staged fast_sample_t. Slab (soil / cohort) sources are resolved in output_integrate_fast. !
+   !  FAST tier (sub-daily). Resolve one DIM_SCALAR variable's instantaneous value out of the !
+   !  staged sub-step: a patch-block row's site mean or a forcing row. Slab (soil / cohort /    !
+   !  patch) sources are resolved in output_integrate_fast.                                    !
    !                                                                                          !
    !  THIS IS NOT A SECOND SWITCHBOARD FOR THE SAME THING, and it was once slated for deletion  !
    !  on the belief that it was (#172, closed 2026-09-13 on the measurement below).              !
@@ -952,29 +944,17 @@ contains
    !  disjoint by construction, so neither can resolve the other's ids. Deleting this would not    !
    !  remove a duplicate switchboard -- it would remove sub-daily sampling.                        !
    !=======================================================================================!
-   pure real(wp) function extract_fast_scalar(source_id, s, forcing) result(val)
-      integer(ik),         intent(in) :: source_id
-      type(fast_sample_t), intent(in) :: s
-      real(wp),            intent(in) :: forcing(:)   !< the sub-step's forcing (PY_*)
-      if (source_id > SRC_F_PY0 .and. source_id <= SRC_F_PY0 + N_PYDIAG) then
-         val = forcing(source_id - SRC_F_PY0) ; return
+   pure real(wp) function extract_fast_scalar(source_id, site_row, forcing) result(val)
+      integer(ik), intent(in) :: source_id
+      real(wp),    intent(in) :: site_row(:)   !< the sub-step's site mean of the patch rows (PD_*)
+      real(wp),    intent(in) :: forcing(:)    !< the sub-step's forcing (PY_*)
+      if (source_id > SRC_F_PD0 .and. source_id <= SRC_F_PD0 + N_PDIAG) then
+         val = site_row(source_id - SRC_F_PD0)
+      else if (source_id > SRC_F_PY0 .and. source_id <= SRC_F_PY0 + N_PYDIAG) then
+         val = forcing(source_id - SRC_F_PY0)
+      else
+         val = MISSING_VALUE
       end if
-      select case (source_id)
-      case (SRC_F_CAS_TEMP)     ; val = s%cas_temp
-      case (SRC_F_SOIL_TEMP_TOP); val = s%soil_temp_top
-      case (SRC_F_GPP_RATE)     ; val = s%gpp_rate
-      case (SRC_F_LE)           ; val = s%le_flux
-      case (SRC_F_H)            ; val = s%h_flux
-      case (SRC_F_RNET)         ; val = s%rnet
-      case (SRC_F_SW_UP)        ; val = s%sw_up
-      case (SRC_F_LW_UP)        ; val = s%lw_up
-      case (SRC_F_USTAR)        ; val = s%ustar
-      case (SRC_F_NEE)          ; val = s%nee_rate
-      case (SRC_F_NPP_RATE)     ; val = s%npp_rate
-      case (SRC_F_RECO)         ; val = s%reco_rate
-      case (SRC_F_CAS_CO2)      ; val = s%cas_co2
-      case default              ; val = MISSING_VALUE
-      end select
    end function extract_fast_scalar
 
    !=======================================================================================!
@@ -988,21 +968,40 @@ contains
       type(output_buffers_t), intent(inout) :: bufs
       integer(ik),            intent(in)    :: isub
       real(wp),               intent(in)    :: dt
-      integer(ik) :: j, k, src
+      integer(ik) :: j, k, src, np, nsp
       if (.not. files%enabled) return
       if (files%reg%nidx(1) == 0_ik) return
+      !----- The staging follows the stand; the slabs are output.cohort_max and patch_max long. The  !
+      !      same check as the coarse tiers' (output_integrate), before this tier writes into them. --!
+      if (files%cohort_axis .and. bufs%fast_n_cohort > files%cohort_max)                           &
+         call cap_exceeded('cohort', bufs%fast_n_cohort, files%cohort_max)
+      if (files%patch_axis .and. bufs%fast_n_patch > files%patch_max)                              &
+         call cap_exceeded('patch', bufs%fast_n_patch, files%patch_max)
+      np  = bufs%fast_n_patch
+      nsp = np * n_soil_layer_max
       if (.not. bufs%has_data(1)) bufs%t_open(1) = bufs%fast_time(isub)
       do j = 1_ik, files%reg%nidx(1)
          k   = files%reg%idx_freq(j, 1_ik)
          src = files%reg%var(k)%source_id
          select case (files%reg%var(k)%dim)
          case (DIM_SCALAR)
-            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast(isub), bufs%fast_forcing(:, isub)), dt)
+            call integrate_scalar(bufs%buf(k,1), extract_fast_scalar(src, bufs%fast_site(:, isub),        &
+                                                                     bufs%fast_forcing(:, isub)), dt)
+         case (DIM_PATCH)
+            call integrate_slab(bufs%buf(k,1), bufs%fast_patch(src - SRC_F_PD0, 1:np, isub), np, dt)
          case (DIM_SOIL)
             if (src == SRC_F_SOIL_WATER) then
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water(:,isub), bufs%fast_n_soil, dt)
             else
                call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp(:,isub), bufs%fast_n_soil, dt)
+            end if
+         case (DIM_SOIL_PATCH)
+            if (src == SRC_F_SOIL_WATER) then
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_water_patch(1:nsp,isub), nsp, dt,        &
+                                   active_layers(bufs%fast_n_soil, np))
+            else
+               call integrate_slab(bufs%buf(k,1), bufs%fast_soil_temp_patch(1:nsp,isub), nsp, dt,         &
+                                   active_layers(bufs%fast_n_soil, np))
             end if
          case (DIM_COHORT)
             select case (src)
@@ -1017,5 +1016,17 @@ contains
       end do
       bufs%has_data(1) = .true.
    end subroutine output_integrate_fast
+
+   !----- Which slots of a soil-by-patch slab hold a layer the column simulates: the first n_soil  !
+   !      of each patch's n_soil_layer_max. The rest read as the fill value, as on the coarse tiers. !
+   pure function active_layers(n_soil, n_patch) result(live)
+      integer(ik), intent(in) :: n_soil, n_patch
+      logical :: live(n_soil_layer_max * n_patch)
+      integer(ik) :: ip
+      live = .false.
+      do ip = 1_ik, n_patch
+         live((ip - 1_ik) * n_soil_layer_max + 1_ik : (ip - 1_ik) * n_soil_layer_max + n_soil) = .true.
+      end do
+   end function active_layers
 
 end module meds_output_integrate

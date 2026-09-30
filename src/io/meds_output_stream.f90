@@ -27,7 +27,7 @@ module meds_output_stream
                                   DIM_SIZE, DIM_SOIL_PATCH, diag_params_t,                        &
                                   XTYPE_DOUBLE, XTYPE_INT, AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX,    &
                                   AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM,                  &
-                                  MISSING_VALUE, MISSING_INT
+                                  MISSING_VALUE, MISSING_INT, ragged_dim
    implicit none
    private
 
@@ -92,8 +92,9 @@ contains
       stream%cohort_dim = 0_ik ; stream%patch_dim = 0_ik
    end subroutine stream_close_file
 
-   !----- .true. if the tier defines a cohort- or patch-dimensioned variable (drives the ≤1-month  !
-   !      file-chunk cap, since those axes are invariant only within a month, §4.4). ---------------!
+   !----- .true. if the tier defines a variable on a ragged axis -- cohort, patch or soil by patch  !
+   !      (drives the ≤1-month file-chunk cap, since those axes are invariant only within a month,  !
+   !      §4.4). ------------------------------------------------------------------------------------!
    pure logical function tier_has_cohort_or_patch(reg, tier) result(yes)
       type(output_registry_t), intent(in) :: reg
       integer(ik),             intent(in) :: tier
@@ -101,7 +102,7 @@ contains
       yes = .false.
       do j = 1_ik, reg%nidx(tier)
          k = reg%idx_freq(j, tier)
-         if (reg%var(k)%dim == DIM_COHORT .or. reg%var(k)%dim == DIM_PATCH) then
+         if (ragged_dim(reg%var(k)%dim)) then
             yes = .true. ; return
          end if
       end do

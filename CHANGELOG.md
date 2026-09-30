@@ -16,6 +16,27 @@ before and after.
 
 ### Changed
 
+- **The FAST tier reads the patch block's own row** (#270). The fast sample was a list of its own
+  (13 fields, 13 source ids, a 13-line fold) beside the patch block's table (`PD_*`) of the same
+  quantities.
+  - **One row.** `patch_diag_row` now fills that row once per patch and sub-step. The patch
+    diagnostics accumulate it, the FAST tier stages it per patch, and the FAST site variables read
+    its area-weighted sum (`SRC_F_PD0 + PD_*`).
+  - **New rows.** The block gains NPP, Reco and the two-band upwelling shortwave, which the FAST tier
+    needs. Its four water-flux rows (root uptake, infiltration, drainage, runoff) were never written
+    or registered, and are gone.
+  - **The residuals are rates in the row.** They become rates there (the step's residual over dt),
+    so the whole row is dt-weighted alike.
+  - **Staging follows the stand.** It grows with the live patch and cohort counts. The per-cohort
+    slabs were `output.cohort_max` long, about 4.7 MB a polygon at the defaults.
+  - **The caps are checked in the output layer.** The FAST tier checks both caps there, by the
+    coarse tiers' rule: only when a cohort or patch variable is live. A run with the FAST tier on
+    used to stop past `cohort_max` even when it wrote nothing per cohort.
+  - **Rounding.** On the r1 cases every value is bit-identical except `et_rate_site`, at 4e-16.
+    Before, its expression was one line that the compiler could reassociate.
+  - **The listing.** `meds_io_config.toml` is regenerated. That also brings in the five forcing
+    echoes that O6 moved to the `forcing` group.
+
 - **The forcing echo is listed once** (#312 O6). The forcing each fast sub-step used was listed three
   times over: 15 fields of the fast sample, their copies in the fast loop, and 15 source ids with
   their cases in the output layer, beside the polygon block's own table (`PY_*`).
@@ -212,7 +233,29 @@ before and after.
   for the fast tier, the cohort cap), with a message naming the cap. Removed from the shipped
   configs; bit-identical on every r1 case. **Test:** `test_region` checks the refusal.
 
+### Added
+
+- **The FAST tier has a patch axis** (#270). A site mean over a closed canopy and a gap can describe
+  neither: in the biophysics example the gap's surface soil ran 13 K above the air at midday and the
+  closed patch's 0.7 K below it.
+  - **Fifteen variables.** Each FAST quantity of the patch block has a per-patch twin, named after
+    its coarse patch variable plus `_fast`: `cas_temp_patch_fast`, `soil_temp_top_patch_fast`,
+    `le_patch_fast`, `h_patch_fast`, `rnet_patch_fast` and `nee_patch_fast`.
+  - A quantity with no coarse patch variable keeps its site stem: `gpp_rate_`, `sw_up_`, `lw_up_`,
+    `ustar_`, `npp_rate_`, `reco_` and `cas_co2_patch_fast`.
+  - The soil columns are `soil_temp_layer_patch_fast` and `soil_water_layer_patch_fast`.
+  - They follow `[output].axes_patch` (on) and `axes_soil_patch` (off), as the coarse patch
+    variables do; a region writes none of them. The site `*_fast` value is their area-weighted sum.
+
 ### Fixed
+
+- **A soil-by-patch variable is handled like the other patch variables** (plan item N-9). Three rules
+  named the cohort and patch axes and missed the soil-by-patch profiles:
+  - **The record's patch count.** A tier whose only patch output was a `*_layer_patch` variable
+    wrote one patch, with every value as fill.
+  - **The file cap.** Such a tier's files were not capped at a month.
+  - **The annual guard.** An `[output].io_config` could put one on the annual stream.
+  - **One rule now.** All three use one test for these axes (`ragged_dim`).
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
   their contained functions to another routine: `flux_potential` passed its Kirchhoff integrand to the

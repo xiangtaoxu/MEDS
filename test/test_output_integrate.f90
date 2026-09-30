@@ -29,7 +29,7 @@ program test_output_integrate
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t, site_alloc, site_free
-   use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t, fast_sample_t, &
+   use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
                                      MISSING_VALUE,                                               &
                                      AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
@@ -37,10 +37,10 @@ program test_output_integrate
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
-                                     extract_fast_scalar, FLD_C_AGB, SRC_F_CAS_TEMP,             &
-                                     SRC_F_LE, SRC_F_H, SRC_F_GPP_RATE, SRC_F_SW_UP, SRC_F_LW_UP,    &
-                                     SRC_F_PY0, output_integrate
-   use meds_site_diag_types,  only : N_PYDIAG, PY_TAIR, PY_CO2
+                                     extract_fast_scalar, FLD_C_AGB, SRC_F_PD0, SRC_F_PY0,       &
+                                     output_integrate
+   use meds_site_diag_types,  only : N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, PD_H, &
+                                     PD_GPP, PD_SW_UP, PD_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &
@@ -57,6 +57,7 @@ program test_output_integrate
    call test_slab_and_extract()
    call test_fast_tier()
    call test_slab_sized_after_overrides()
+   call test_soil_patch_record()
    call test_two_buffers()
    call test_boundary_step()
    write(*,'(a)') 'test_output_integrate: ALL PASSED'
@@ -204,22 +205,22 @@ contains
       type(meds_config_t)    :: cfg
       type(output_files_t)   :: files
       type(output_buffers_t) :: bufs
-      type(fast_sample_t)    :: s
-      real(wp)    :: f0(N_PYDIAG)
-      integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt
+      real(wp)    :: f0(N_PYDIAG), s(N_PDIAG)
+      integer(ik) :: k_cas, k_soil, k_leaf, k_air, k_hgt, k_cas_p, k_soil_p, nl
       real(wp), parameter :: DT = 900.0_wp    ! uniform sub-step -> TMEAN == plain mean
 
-      !----- extract_fast_scalar: each source id reads the matching fast_sample_t field, and a      !
+      !----- extract_fast_scalar: a patch-block id reads its row of the sub-step's site mean, and a  !
       !      forcing id its row of the sub-step's forcing table. -----------------------------------!
       f0 = 0.0_wp ; f0(PY_CO2) = 415.0_wp
-      s%cas_temp = 290.0_wp ; s%le_flux = 100.0_wp ; s%h_flux = 50.0_wp ; s%gpp_rate = 12.0_wp
-      call check_close(extract_fast_scalar(SRC_F_CAS_TEMP, s, f0), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
-      call check_close(extract_fast_scalar(SRC_F_LE,       s, f0), 100.0_wp, 1.0e-12_wp, 'fast extract le')
-      call check_close(extract_fast_scalar(SRC_F_H,        s, f0),  50.0_wp, 1.0e-12_wp, 'fast extract h')
-      call check_close(extract_fast_scalar(SRC_F_GPP_RATE, s, f0),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
-      s%sw_up = 83.0_wp ; s%lw_up = 455.0_wp
-      call check_close(extract_fast_scalar(SRC_F_SW_UP,    s, f0),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
-      call check_close(extract_fast_scalar(SRC_F_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
+      s = 0.0_wp
+      s(PD_CAS_TEMP) = 290.0_wp ; s(PD_LE) = 100.0_wp ; s(PD_H) = 50.0_wp ; s(PD_GPP) = 12.0_wp
+      s(PD_SW_UP) = 83.0_wp ; s(PD_LW_UP) = 455.0_wp
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_CAS_TEMP, s, f0), 290.0_wp, 1.0e-12_wp, 'fast extract cas_temp')
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_LE,       s, f0), 100.0_wp, 1.0e-12_wp, 'fast extract le')
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_H,        s, f0),  50.0_wp, 1.0e-12_wp, 'fast extract h')
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_GPP,      s, f0),  12.0_wp, 1.0e-12_wp, 'fast extract gpp_rate')
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_SW_UP,    s, f0),  83.0_wp, 1.0e-12_wp, 'fast extract sw_up')
+      call check_close(extract_fast_scalar(SRC_F_PD0 + PD_LW_UP,    s, f0), 455.0_wp, 1.0e-12_wp, 'fast extract lw_up')
       call check_close(extract_fast_scalar(SRC_F_PY0 + PY_CO2, s, f0), 415.0_wp, 1.0e-12_wp, 'fast extract forcing CO2')
 
       !----- Build a manager with the FAST tier + all groups ON (so the energy/water/carbon FAST vars   !
@@ -228,26 +229,28 @@ contains
       cfg%output%enabled    = .true.
       cfg%output%freq_on(1) = .true.               ! FAST tier on
       cfg%output%grp_on     = .true.
+      cfg%output%axis_on    = .true.               ! the soil-by-patch axis too
       cfg%output%cohort_max = 8_ik
       call manager_alloc(files, bufs, cfg)
       call check(files%reg%nidx(1) > 0_ik, 'FAST tier has live variables')
 
-      !----- Stage 2 sub-steps of known values (as fast_dynamics would). -----!
-      allocate(bufs%fast(2), bufs%fast_time(2), bufs%fast_forcing(N_PYDIAG, 2))
-      allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
-      allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
-      bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
-      bufs%fast(1)%cas_temp = 290.0_wp ; bufs%fast(2)%cas_temp = 294.0_wp    ! mean 292
-      bufs%fast(1)%le_flux  = 100.0_wp ; bufs%fast(2)%le_flux  = 200.0_wp
-      bufs%fast_forcing = 0.0_wp
+      !----- Stage 2 sub-steps of two patches with known values (as fast_dynamics would). -----!
+      nl = n_soil_layer_max
+      call alloc_fast_staging(bufs, 2_ik, 2_ik, 8_ik)
+      bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 2_ik
+      bufs%fast_site(PD_CAS_TEMP, :) = [290.0_wp, 294.0_wp]                 ! mean 292
+      bufs%fast_site(PD_LE, :)       = [100.0_wp, 200.0_wp]
+      bufs%fast_patch(PD_CAS_TEMP, 1, :) = [290.0_wp, 294.0_wp]             ! patch 1 mean 292
+      bufs%fast_patch(PD_CAS_TEMP, 2, :) = [300.0_wp, 304.0_wp]             ! patch 2 mean 302
       bufs%fast_forcing(PY_TAIR, 1) = 300.0_wp ; bufs%fast_forcing(PY_TAIR, 2) = 302.0_wp    ! mean 301
-      bufs%fast_soil_temp(:,1) = [280.0_wp, 281.0_wp]                       ! slot1 mean 281
-      bufs%fast_soil_temp(:,2) = [282.0_wp, 283.0_wp]                       ! slot2 mean 282
-      bufs%fast_soil_water = 0.0_wp
+      bufs%fast_soil_temp(1:2,1) = [280.0_wp, 281.0_wp]                     ! slot1 mean 281
+      bufs%fast_soil_temp(1:2,2) = [282.0_wp, 283.0_wp]                     ! slot2 mean 282
+      bufs%fast_soil_temp_patch(1:2,1)       = [280.0_wp, 281.0_wp]         ! patch 1: 281, 282
+      bufs%fast_soil_temp_patch(1:2,2)       = [282.0_wp, 283.0_wp]
+      bufs%fast_soil_temp_patch(nl+1:nl+2,1) = [290.0_wp, 291.0_wp]         ! patch 2: 291, 292
+      bufs%fast_soil_temp_patch(nl+1:nl+2,2) = [292.0_wp, 293.0_wp]
       bufs%fast_coh_ltemp(1:2,1) = [288.0_wp, 289.0_wp]                     ! slot1 mean 289
       bufs%fast_coh_ltemp(1:2,2) = [290.0_wp, 291.0_wp]                     ! slot2 mean 290
-      bufs%fast_coh_gpp = 0.0_wp
-      bufs%fast_coh_height = 0.0_wp
       bufs%fast_coh_height(1:2,1) = [10.0_wp, 12.0_wp]                      ! slot1=10, slot2=12 (constant)
       bufs%fast_coh_height(1:2,2) = [10.0_wp, 12.0_wp]
 
@@ -280,6 +283,20 @@ contains
       call check(k_hgt > 0_ik, 'height_cohort_fast registered')
       call check_close(bufs%pending(1)%slab(1,k_hgt), 10.0_wp, 1.0e-10_wp, 'FAST height cohort 1')
       call check_close(bufs%pending(1)%slab(2,k_hgt), 12.0_wp, 1.0e-10_wp, 'FAST height cohort 2')
+      !----- The patch axis (#270): each patch's own mean, and each patch's soil column in the      !
+      !      soil-by-patch layout, with the inactive layers as fill. -----!
+      k_cas_p = find_var_index(files%reg, 'cas_temp_patch_fast')
+      call check(k_cas_p > 0_ik, 'cas_temp_patch_fast registered')
+      call check(bufs%pending(1)%n_patch == 2_ik, 'FAST n_patch = 2')
+      call check_close(bufs%pending(1)%slab(1,k_cas_p), 292.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 1')
+      call check_close(bufs%pending(1)%slab(2,k_cas_p), 302.0_wp, 1.0e-10_wp, 'FAST cas_temp patch 2')
+      k_soil_p = find_var_index(files%reg, 'soil_temp_layer_patch_fast')
+      call check(k_soil_p > 0_ik, 'soil_temp_layer_patch_fast registered')
+      call check_close(bufs%pending(1)%slab(1,k_soil_p),    281.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 1')
+      call check_close(bufs%pending(1)%slab(2,k_soil_p),    282.0_wp, 1.0e-10_wp, 'FAST soil patch 1 layer 2')
+      call check_close(bufs%pending(1)%slab(nl+1,k_soil_p), 291.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 1')
+      call check_close(bufs%pending(1)%slab(nl+2,k_soil_p), 292.0_wp, 1.0e-10_wp, 'FAST soil patch 2 layer 2')
+      call check(.not. bufs%pending(1)%slabvalid(3,k_soil_p), 'FAST soil patch 1 layer 3 is fill (inactive)')
    end subroutine test_fast_tier
 
    !----- The driver's order: manager_setup, then an [output].io_config override that switches on a  !
@@ -311,13 +328,9 @@ contains
       call manager_alloc_buffers(files, bufs)
       call check(files%max_slab >= nl, 'max_slab covers the soil axis an override switched on')
 
-      allocate(bufs%fast(1), bufs%fast_time(1), bufs%fast_forcing(N_PYDIAG, 1), bufs%fast_soil_temp(nl,1), &
-               bufs%fast_soil_water(nl,1))
-      bufs%fast_forcing = 0.0_wp
-      allocate(bufs%fast_coh_ltemp(1,1), bufs%fast_coh_gpp(1,1), bufs%fast_coh_height(1,1))
-      bufs%n_fast_sub = 1_ik ; bufs%fast_n_soil = nl ; bufs%fast_n_cohort = 0_ik
+      call alloc_fast_staging(bufs, 1_ik, 0_ik, 1_ik)
+      bufs%fast_n_soil = nl ; bufs%fast_n_cohort = 0_ik
       bufs%fast_soil_temp(:,1) = [(270.0_wp + real(i, wp), i = 1_ik, nl)]
-      bufs%fast_soil_water = 0.0_wp
       call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
       call close_tier(files, bufs, 1_ik)
 
@@ -331,6 +344,38 @@ contains
          call check(every_layer, 'every soil layer reads back through slab_col, as the writer reads it')
       end associate
    end subroutine test_slab_sized_after_overrides
+
+   !----- A tier whose only patch output is soil by patch still records its patch count: the slab  !
+   !      is patch-major, so it holds nslab / n_soil_layer_max patches. Before, only a DIM_PATCH    !
+   !      variable set the count, and such a record wrote with one patch and every value as fill. -!
+   subroutine test_soil_patch_record()
+      type(meds_config_t)    :: cfg
+      type(output_files_t)   :: files
+      type(output_buffers_t) :: bufs
+      integer(ik) :: k, nl
+      logical     :: found
+      nl = n_soil_layer_max
+      cfg = build_test_config(86400.0_wp)
+      cfg%output%enabled    = .true.
+      cfg%output%freq_on(1) = .true.               ! FAST tier on
+      cfg%output%grp_on     = .false.              ! every group off: no slab variable is live yet
+      call manager_setup(files, cfg)
+      call apply_variable_override(files%reg, 'soil_temp_layer_patch_fast', OVR_MASK, FREQ_FAST, found)
+      call check(found, 'soil_temp_layer_patch_fast is a registry variable')
+      call build_freq_index(files%reg)
+      call manager_finalize(files)
+      call manager_alloc_buffers(files, bufs)
+      call alloc_fast_staging(bufs, 1_ik, 3_ik, 1_ik)
+      bufs%fast_n_soil = 2_ik
+      bufs%fast_soil_temp_patch(:,1) = 285.0_wp
+      call output_integrate_fast(files, bufs, 1_ik, 900.0_wp)
+      call close_tier(files, bufs, 1_ik)
+      k = find_var_index(files%reg, 'soil_temp_layer_patch_fast')
+      associate (r => bufs%queue(1)%rec(bufs%queue(1)%n))
+         call check(r%n_patch == 3_ik, 'a soil-by-patch-only record counts its patches')
+         call check(r%nslab(k) == 3_ik * nl, 'the soil-by-patch slab holds every patch''s column')
+      end associate
+   end subroutine test_soil_patch_record
 
    !----- Two polygons' buffers for one file set (MEDS_POLYGON_RUNTIME_PLAN.md R2): each          !
    !      reduces only its own samples, and closing one leaves the other's window open. Folds are  !
@@ -349,7 +394,6 @@ contains
       call manager_alloc(files, a, cfg)
       call manager_alloc_buffers(files, b)
       call check(a%fast_on .and. b%fast_on, 'both polygons'' buffers stage the FAST tier')
-      call check(b%fast_cohort_cap == 8_ik, 'the buffers size their fast cohort slabs from the file set')
       call stage_cas(a, [290.0_wp, 294.0_wp])                              ! mean 292
       call stage_cas(b, [270.0_wp, 280.0_wp])                              ! mean 275
       call output_integrate_fast(files, a, 1_ik, DT)
@@ -443,14 +487,32 @@ contains
    subroutine stage_cas(bufs, cas)
       type(output_buffers_t), intent(inout) :: bufs
       real(wp),            intent(in)    :: cas(2)
-      allocate(bufs%fast(2), bufs%fast_time(2), bufs%fast_forcing(N_PYDIAG, 2))
-      bufs%fast_forcing = 0.0_wp
-      allocate(bufs%fast_soil_temp(2,2), bufs%fast_soil_water(2,2))
-      allocate(bufs%fast_coh_ltemp(8,2), bufs%fast_coh_gpp(8,2), bufs%fast_coh_height(8,2))
-      bufs%n_fast_sub = 2_ik ; bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik
-      bufs%fast(1)%cas_temp = cas(1) ; bufs%fast(2)%cas_temp = cas(2)
-      bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_water = 0.0_wp
-      bufs%fast_coh_ltemp = 285.0_wp ; bufs%fast_coh_gpp = 0.0_wp ; bufs%fast_coh_height = 10.0_wp
+      call alloc_fast_staging(bufs, 2_ik, 1_ik, 8_ik)
+      bufs%fast_n_soil = 2_ik ; bufs%fast_n_cohort = 1_ik
+      bufs%fast_site(PD_CAS_TEMP, :) = cas
+      bufs%fast_patch(PD_CAS_TEMP, 1, :) = cas
+      bufs%fast_soil_temp = 280.0_wp ; bufs%fast_soil_temp_patch = 280.0_wp
+      bufs%fast_coh_ltemp = 285.0_wp ; bufs%fast_coh_height = 10.0_wp
    end subroutine stage_cas
+
+   !----- One polygon's FAST staging as fast_dynamics sizes it (size_fast_staging): nsub sub-steps, !
+   !      np patches and nc cohort slots, all zero. ---------------------------------------------!
+   subroutine alloc_fast_staging(bufs, nsub, np, nc)
+      type(output_buffers_t), intent(inout) :: bufs
+      integer(ik),            intent(in)    :: nsub, np, nc
+      integer(ik) :: nl
+      nl = n_soil_layer_max
+      allocate(bufs%fast_time(nsub), bufs%fast_forcing(N_PYDIAG, nsub), bufs%fast_site(N_PDIAG, nsub),  &
+               bufs%fast_patch(N_PDIAG, max(np, 1_ik), nsub))
+      allocate(bufs%fast_soil_temp(nl, nsub), bufs%fast_soil_water(nl, nsub),                        &
+               bufs%fast_soil_temp_patch(nl * max(np, 1_ik), nsub),                                  &
+               bufs%fast_soil_water_patch(nl * max(np, 1_ik), nsub))
+      allocate(bufs%fast_coh_ltemp(nc, nsub), bufs%fast_coh_gpp(nc, nsub), bufs%fast_coh_height(nc, nsub))
+      bufs%fast_forcing = 0.0_wp ; bufs%fast_site = 0.0_wp ; bufs%fast_patch = 0.0_wp
+      bufs%fast_soil_temp = 0.0_wp ; bufs%fast_soil_water = 0.0_wp
+      bufs%fast_soil_temp_patch = 0.0_wp ; bufs%fast_soil_water_patch = 0.0_wp
+      bufs%fast_coh_ltemp = 0.0_wp ; bufs%fast_coh_gpp = 0.0_wp ; bufs%fast_coh_height = 0.0_wp
+      bufs%n_fast_sub = nsub ; bufs%fast_n_patch = np
+   end subroutine alloc_fast_staging
 
 end program test_output_integrate

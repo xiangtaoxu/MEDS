@@ -47,11 +47,11 @@ closed canopy it sits near the **daily mean** air temperature, running 1.4 K *be
 structure from nothing but a met file is the fast loop's whole job, and the third panel — each
 store's departure from the driving air temperature — is where it is easiest to read.
 
-Per-patch sub-daily temperatures come from the opt-in `[fast].fast_probe` CSV, since the FAST
-netCDF tier is staged as a site mean; the daily tier supplies `lai_patch` (which patch to select)
-and `cohort_offset`/`cohort_count` (which cohorts are in it). The **carbon and soil figures below
-remain site means** — per-patch sub-daily carbon fluxes and soil profiles are not currently
-written by any stream.
+Per-patch sub-daily temperatures come from the opt-in `[fast].fast_probe` CSV; the daily tier
+supplies `lai_patch` (which patch to select) and `cohort_offset`/`cohort_count` (which cohorts are
+in it). The **carbon and soil figures below remain site means**. The FAST netCDF tier now writes
+the per-patch values too (the `*_patch_fast` variables,
+[diagnostics.md](../../docs/science/diagnostics.md) §4), but this example does not use them yet.
 
 
 ## The carbon cycle, from the same hourly files

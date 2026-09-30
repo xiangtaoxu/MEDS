@@ -29,7 +29,7 @@ program test_fast_loop
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
    use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
-                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND
+                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -221,7 +221,7 @@ program test_fast_loop
          logical     :: exact
          t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
          site%diag%active = .true.
-         ob%fast_on = .true. ; ob%fast_cohort_cap = 8_ik
+         ob%fast_on = .true.
          call init_fast_reservoirs(site, ctx)
          call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
          call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
@@ -250,6 +250,26 @@ program test_fast_loop
                     'fixture has an inactive soil tail to be worth anything')
          call check(ob%fast_n_soil == ctx%col_config%soil%n_active,                                &
                     'the fast tier folds only the active soil layers')
+         !----- The patch axis (#270): each patch's staged row is its own, unweighted -- the last     !
+         !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
+         !      weighted sum, in patch order. -------------------------------------------------------!
+         block
+            integer(ik) :: ip, nsub, na, kb
+            real(wp)    :: site_cas
+            logical     :: own, folded
+            nsub = cfg%n_fast_per_slow ; na = ctx%col_config%soil%n_active
+            own = ob%fast_n_patch == site%patch%n ; site_cas = 0.0_wp
+            do ip = 1_ik, site%patch%n
+               kb = (ip - 1_ik) * n_soil_layer_max
+               own = own .and. ob%fast_patch(PD_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
+                         .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
+                                   == site%patch%soil_e(ip)%soil_temp(1:na))
+               site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
+            end do
+            folded = ob%fast_site(PD_CAS_TEMP, nsub) == site_cas
+            call check(own, 'the fast tier stages each patch''s own sample and soil column')
+            call check(folded, 'the fast tier''s site mean is the area-weighted sum of the patch rows')
+         end block
          call check_close(w, cfg%n_fast_per_slow * cfg%dt_fast, 1.0e-9_wp,                         &
                           'the polygon block weighs each sub-step once (not once per patch)')
          call check_close(site%diag%v(PY_TAIR) / w, sum_t / w, 1.0e-12_wp,                         &
