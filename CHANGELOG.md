@@ -235,6 +235,18 @@ before and after.
 
 ### Added
 
+- **A skin temperature** (#275). `skin_temp_site` is the skin temperature as land models define it
+  (CLM's `TSKIN`). It also comes per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both
+  (`skin_temp_patch_fast`).
+  - **What it is.** The black-body temperature of the longwave leaving the canopy top, what an
+    infrared thermometer or a satellite land-surface temperature sees.
+  - **Why it is a row.** It is a fourth root, so it is formed per patch and sub-step, in the patch
+    block, like the VPD.
+  - **What it is not.** MEDS has no separate ground skin, although #275 assumed one: snow-free, the
+    ground surface is the top soil layer (`soil_temp_top_site`). The patch row that holds it, which
+    was labelled "ground/skin temperature", is now `PD_SOIL_TEMP_TOP`.
+  - **Still open.** The within-step variances wait on a choice of definition (`docs/ROADMAP.md`).
+
 - **The FAST tier has a patch axis** (#270). A site mean over a closed canopy and a gap can describe
   neither: in the biophysics example the gap's surface soil ran 13 K above the air at midday and the
   closed patch's 0.7 K below it.

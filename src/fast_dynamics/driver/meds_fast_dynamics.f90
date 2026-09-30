@@ -16,7 +16,8 @@
 !==========================================================================================!
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
+   use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std, &
+                                     stefan
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
    use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
@@ -34,8 +35,8 @@ module meds_fast_dynamics
                                      PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR, PD_LW_UP, &
                                      PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_CAS_TEMP,     &
                                      PD_CAS_SHV, PD_CAS_CO2, PD_GPP, PD_NEE, PD_TRANSP,          &
-                                     PD_NPP, PD_RECO, PD_SW_UP,                                  &
-                                     PD_GROUND_TEMP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
+                                     PD_NPP, PD_RECO, PD_SW_UP, PD_SKIN_TEMP,                    &
+                                     PD_SOIL_TEMP_TOP, PD_CAS_VPD, PD_W_SURFACE, PD_RESID_ENERGY, PD_RESID_WATER, &
                                      PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,             &
                                      PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
@@ -1169,7 +1170,7 @@ contains
    !=======================================================================================!
    pure subroutine patch_diag_row(row, dt, le_flux, h_flux, rnet, sw_ground, lw_ground,             &
                                   ustar, ggnet, rough, displace, cas_temp, cas_shv, cas_co2, gpp, nee, &
-                                  npp, ground_temp, resid_energy, resid_water, wind_top, tair_top,    &
+                                  npp, soil_temp_top, resid_energy, resid_water, wind_top, tair_top,  &
                                   z_top, sw_in_vis, sw_in_nir, sw_up_vis, sw_up_nir, lw_up, w_surface)
       real(wp), intent(out) :: row(N_PDIAG)
       real(wp), intent(in)  :: dt                        !< [s]        the sub-step
@@ -1180,7 +1181,7 @@ contains
       real(wp), intent(in)  :: rough, displace           !< [m]        roughness, displacement height
       real(wp), intent(in)  :: cas_temp, cas_shv, cas_co2 !< [K],[kg/kg],[umol/mol] canopy air
       real(wp), intent(in)  :: gpp, nee, npp             !< [umol/m2/s] gross uptake, net exchange (+ to atm), NPP
-      real(wp), intent(in)  :: ground_temp               !< [K]        top soil-node temperature
+      real(wp), intent(in)  :: soil_temp_top             !< [K]        top soil-node temperature
       real(wp), intent(in)  :: resid_energy, resid_water !< [J/m2],[kg/m2] this step's SIGNED ledger residuals
       real(wp), intent(in)  :: wind_top, tair_top        !< [m/s],[K] the forcing at the canopy-air top
       real(wp), intent(in)  :: z_top                     !< [m]   that top (the canopy-air depth)
@@ -1199,6 +1200,7 @@ contains
       row(PD_SW_UP_NIR)    = sw_up_nir
       row(PD_SW_UP)        = sw_up_vis + sw_up_nir
       row(PD_LW_UP)        = lw_up
+      row(PD_SKIN_TEMP)    = sqrt(sqrt(max(lw_up, 0.0_wp) / stefan))
       row(PD_USTAR)        = ustar
       row(PD_GGNET)        = ggnet
       row(PD_ROUGH)        = rough
@@ -1227,7 +1229,7 @@ contains
       !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
       !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
       row(PD_TRANSP)       = le_flux / latent_heat_vap
-      row(PD_GROUND_TEMP)  = ground_temp
+      row(PD_SOIL_TEMP_TOP) = soil_temp_top
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !
       !      this line can be believed, which is why they are captured on the same tick rather than    !
       !      left to an assertion nobody reads. The ledger gives this step's SIGNED imbalance [J/m2,    !

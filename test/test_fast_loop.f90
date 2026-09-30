@@ -29,7 +29,9 @@ program test_fast_loop
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
    use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
-                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP
+                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
+                                        PD_SKIN_TEMP, PD_LW_UP
+   use meds_constants,           only : stefan
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -256,16 +258,20 @@ program test_fast_loop
          block
             integer(ik) :: ip, nsub, na, kb
             real(wp)    :: site_cas
-            logical     :: own, folded
+            logical     :: own, folded, skin
             nsub = cfg%n_fast_per_slow ; na = ctx%col_config%soil%n_active
-            own = ob%fast_n_patch == site%patch%n ; site_cas = 0.0_wp
+            own = ob%fast_n_patch == site%patch%n ; site_cas = 0.0_wp ; skin = .true.
             do ip = 1_ik, site%patch%n
                kb = (ip - 1_ik) * n_soil_layer_max
                own = own .and. ob%fast_patch(PD_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
                          .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
                                    == site%patch%soil_e(ip)%soil_temp(1:na))
                site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
+               !----- The skin temperature is the black-body temperature of the longwave up (#275). -!
+               skin = skin .and. abs(stefan * ob%fast_patch(PD_SKIN_TEMP, ip, nsub)**4                  &
+                                     - ob%fast_patch(PD_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PD_LW_UP, ip, nsub)
             end do
+            call check(skin, 'the skin temperature radiates the patch''s longwave up as a black body')
             folded = ob%fast_site(PD_CAS_TEMP, nsub) == site_cas
             call check(own, 'the fast tier stages each patch''s own sample and soil column')
             call check(folded, 'the fast tier''s site mean is the area-weighted sum of the patch rows')

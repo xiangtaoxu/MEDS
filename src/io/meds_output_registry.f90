@@ -63,10 +63,10 @@ module meds_output_registry
                                     PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR,      &
                                     PD_LW_UP,                                                    &
                                     PD_USTAR, PD_GGNET, PD_ROUGH, PD_DISPLACE, PD_GPP, PD_NEE,   &
-                                    PD_TRANSP, PD_GROUND_TEMP, PD_RESID_ENERGY,                  &
+                                    PD_TRANSP, PD_SOIL_TEMP_TOP, PD_RESID_ENERGY,                  &
                                     PD_CAS_VPD, PD_W_SURFACE, PD_CAS_TEMP, PD_CAS_SHV, PD_CAS_CO2, &
                                     PD_WIND_CAS_TOP, PD_TAIR_CAS_TOP, PD_Z_CAS_TOP,               &
-                                    PD_RESID_WATER, PD_NPP, PD_RECO, PD_SW_UP,                   &
+                                    PD_RESID_WATER, PD_NPP, PD_RECO, PD_SW_UP, PD_SKIN_TEMP,     &
                                     PY_SW_IN, PY_PRECIP, PY_TAIR, PY_QAIR, PY_PSURF, PY_WIND,    &
                                     PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                     PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
@@ -405,7 +405,11 @@ contains
       call add_variable(reg, 'cas_depth_site', 'site canopy-air-space depth', 'm',               &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, MON_YR, FLD_P_CAS_DEPTH)
       call add_variable(reg, 'soil_temp_top_site', 'site soil-top (layer 1) temperature', 'K',   &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_GROUND_TEMP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SOIL_TEMP_TOP)
+      !----- The skin temperature (#275): what an infrared thermometer or a satellite land-surface  !
+      !      temperature sees, not the soil. Over a forest it is mostly the canopy. -------------------!
+      call add_variable(reg, 'skin_temp_site', 'skin temperature: black-body temperature of the longwave up', 'K', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_P_DIAG0 + PD_SKIN_TEMP)
       call add_variable(reg, 'soil_temp_site', 'area-weighted soil temperature', 'K',            &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
@@ -450,7 +454,9 @@ contains
       call add_variable(reg, 'cas_temp_patch', 'patch canopy-air-space temperature', 'K',        &
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_patch', 'patch soil-top temperature', 'K',           &
-                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, MON, FLD_P_DIAG0 + PD_GROUND_TEMP)
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, MON, FLD_P_DIAG0 + PD_SOIL_TEMP_TOP)
+      call add_variable(reg, 'skin_temp_patch', 'patch skin temperature (longwave up)', 'K',     &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_SKIN_TEMP)
       call add_variable(reg, 'soil_temp_layer_patch', 'soil temperature by layer and patch', 'K', &
                         DIM_SOIL_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_layer_patch', 'soil liquid fraction by layer and patch', '-', &
@@ -759,7 +765,9 @@ contains
       call add_variable(reg, 'cas_temp_fast', 'site canopy-air-space temperature (sub-daily)', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_fast', 'site soil-top temperature (sub-daily)', 'K', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_GROUND_TEMP)
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SOIL_TEMP_TOP)
+      call add_variable(reg, 'skin_temp_fast', 'site skin temperature (longwave up, sub-daily)', 'K', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SKIN_TEMP)
       call add_variable(reg, 'gpp_rate_fast', 'site instantaneous GPP rate', 'umol/m2/s',        &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_GPP)
       call add_variable(reg, 'le_flux_fast', 'site latent-heat (ET) flux', 'W/m2',               &
@@ -807,7 +815,9 @@ contains
       call add_variable(reg, 'cas_temp_patch_fast', 'patch canopy-air-space temperature (sub-daily)', 'K', &
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_patch_fast', 'patch soil-top temperature (sub-daily)', 'K', &
-                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_GROUND_TEMP)
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SOIL_TEMP_TOP)
+      call add_variable(reg, 'skin_temp_patch_fast', 'patch skin temperature (longwave up, sub-daily)', 'K', &
+                        DIM_PATCH, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_PD0 + PD_SKIN_TEMP)
       call add_variable(reg, 'gpp_rate_patch_fast', 'patch instantaneous GPP rate', 'umol/m2/s',  &
                         DIM_PATCH, AGG_TMEAN, GRP_CARBON, FAST_ONLY, SRC_F_PD0 + PD_GPP)
       call add_variable(reg, 'le_patch_fast', 'patch latent-heat (ET) flux', 'W/m2',              &

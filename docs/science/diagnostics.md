@@ -165,6 +165,23 @@ resumed from the checkpoint performs it first, so its first record holds the sam
 continuous run's. A state file without the attribute was written after its boundary's
 restructuring, and owes none.
 
+#### The skin temperature
+
+`skin_temp_site` is the skin temperature in the land-model sense, as in CLM's `TSKIN`. It also comes
+per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both (`skin_temp_patch_fast`).
+
+- **What it is.** The black-body temperature of the longwave leaving the canopy top, $`(L^\uparrow /
+  \sigma)^{1/4}`$, taken per patch and sub-step and then averaged. It is what an infrared thermometer
+  or a satellite land-surface temperature sees, and over a forest it is mostly the canopy.
+- **What it is not.** It is not the soil. MEDS has no skin layer of its own: snow-free, the ground
+  surface is the top soil layer, `soil_temp_top_site`. That layer's node sits 1.8 cm down, so its
+  diurnal swing is damped and lagged against the air's.
+- **Why it is formed inside the step.** Because of the fourth root, the skin temperature of the mean
+  longwave is not the mean skin temperature.
+- **The emissivity.** It is taken as 1, so the reflected sky longwave counts as emission. Under a sky
+  colder than the surface, that puts the value a few tenths of a kelvin below the surface's own
+  temperature, for an emissivity of 0.98.
+
 #### Variance companions
 
 `AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$ over the samples the tick hands it,
@@ -199,7 +216,8 @@ the gap's surface soil ran 13 K above the air at midday while the closed patch's
 (#270). So each FAST quantity of the patch block also has a per-patch twin:
 
 - It is named after its coarse patch variable, plus `_fast`: `cas_temp_patch_fast`,
-  `soil_temp_top_patch_fast`, `le_patch_fast`, `h_patch_fast`, `rnet_patch_fast`, `nee_patch_fast`.
+  `soil_temp_top_patch_fast`, `skin_temp_patch_fast`, `le_patch_fast`, `h_patch_fast`,
+  `rnet_patch_fast`, `nee_patch_fast`.
 - A quantity with no coarse patch variable keeps its site stem: `gpp_rate_patch_fast`,
   `sw_up_patch_fast`, `lw_up_patch_fast`, `ustar_patch_fast`, `npp_rate_patch_fast`,
   `reco_patch_fast`, `cas_co2_patch_fast`.

@@ -164,7 +164,7 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_TRANSP        = 15_ik  !< [kg/m2/s] canopy transpiration
    integer(ik), parameter, public :: PD_NPP           = 16_ik  !< [umol CO2/m2/s] GPP net of maintenance respiration
    integer(ik), parameter, public :: PD_RECO          = 17_ik  !< [umol CO2/m2/s] ecosystem respiration, NEE + GPP
-   integer(ik), parameter, public :: PD_GROUND_TEMP   = 18_ik  !< [K] ground/skin temperature
+   integer(ik), parameter, public :: PD_SOIL_TEMP_TOP = 18_ik  !< [K] top soil layer (the ground surface when snow-free)
    integer(ik), parameter, public :: PD_RESID_ENERGY  = 19_ik  !< [W/m2] whole-column energy residual
    integer(ik), parameter, public :: PD_RESID_WATER   = 20_ik  !< [kg/m2/s] whole-column water residual
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
@@ -211,7 +211,13 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 37_ik  !< [m/s] wind speed at the canopy-air top
    integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 38_ik  !< [K]   air temperature at the canopy-air top
    integer(ik), parameter, public :: PD_Z_CAS_TOP     = 39_ik  !< [m]   that top: the canopy-air depth the fast loop used
-   integer(ik), parameter, public :: N_PDIAG            = 39_ik
+   !----- The SKIN temperature (#275), in the land-model sense (CLM's TSKIN): the black-body       !
+   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or a     !
+   !      satellite land-surface temperature sees. MEDS has no skin layer of its own -- snow-free,   !
+   !      the ground surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is   !
+   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. -------!
+   integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
+   integer(ik), parameter, public :: N_PDIAG            = 40_ik
 
    !==========================================================================================!
    !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !

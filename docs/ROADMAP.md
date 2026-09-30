@@ -152,11 +152,16 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   band structure rather than to its output.
 - **A patch axis on the FAST tier.** *Candidate.* [#270](https://github.com/xiangtaoxu/MEDS/issues/270) Sub-daily output is site-mean only,
   although the fast staging already carries the patch dimension.
-- **Within-step variances and a skin temperature.** *Candidate.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275) v0.3.0 dropped
-  `ground_temp_site` and relabelled the four variances as what they are, variances of end-of-step
-  samples. What remains: a sum-of-squares row per variance in the patch block (`PD_*_SQ`) with an
-  aggregation that consumes a mean and a mean square, and the skin temperature the ground balance
-  already computes.
+- **Within-step variances.** *Candidate.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275)
+  - **Done.** v0.3.0 dropped `ground_temp_site` and relabelled the four variances as what they are:
+    variances of end-of-step samples. The skin temperature ships as `skin_temp_*`, the black-body
+    temperature of the longwave up. MEDS has no separate ground skin to plumb: snow-free, its ground
+    surface is the top soil layer.
+  - **What remains** is a within-step variance, which first needs its definition chosen.
+    - **The variance of the site-mean series**, which is what a tower sees. It needs each sub-step's
+      site mean, which the FAST staging forms only when that tier is on.
+    - **The variance pooled over patches and time.** A sum-of-squares row in the patch block gives
+      it directly.
 - **Fast-only rows in a slow-only run read 0.** *Candidate.* [#299](https://github.com/xiangtaoxu/MEDS/issues/299) v0.3.0 weights the patch block
   with the slow step when the fast loop is off, so the slow rows report their rates. The rows only
   the fast loop fills (fluxes, the forcing echo) still read 0 there, where `_FillValue` would say
