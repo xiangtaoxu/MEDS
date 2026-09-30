@@ -1,5 +1,10 @@
 # example_biophysics — the fast loop, at hourly resolution
 
+> **The figures and numbers below are v0.3.0's.** v0.3.1 changed the rain timing on end-stamped
+> forcing and the soil-water faces (#320), and the allometry (#321), and this example has not been
+> re-run since. It is to be retired in favour of
+> [`example_flux_tower_bci`](../example_flux_tower_bci/README.md).
+
 What MEDS does with a meteorological forcing file: solve a coupled canopy energy balance every
 15 minutes and hand back leaf, canopy-air and soil temperatures that a met file never contained.
 

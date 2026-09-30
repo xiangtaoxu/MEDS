@@ -14,6 +14,40 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-29
+
+A **flux-tower** release. MEDS now runs from a tower's own meteorology, starts from a forest census,
+and calibrates its fast parameters against the tower's fluxes, with Barro Colorado Island as the
+worked example throughout.
+- **Forcing from towers.** `scripts/prepare_flux_tower/` declares, validates and builds a forcing
+  file from tower data, and the reader is UTC-only (#320). The longwave gap fill is the model's own
+  synthesis regressed onto the tower, and BCI's swapped longwave columns are read the right way
+  round (#326).
+- **A census start.** The BCI example starts from the 2010 census of the 50-ha plot, restructured
+  before the first step (#323), with a ceiling on the patch-fusion tolerance (#322).
+- **Calibration.** `scripts/calibrate_fast/` fits the sub-daily parameters to a tower with the stand
+  held fixed, and the BCI example ships a calibration scored on windows the fit never saw (#330). It
+  needed exact restarts, trait re-acclimation at restart, a parameter record and hourly upwelling
+  radiation (#329).
+
+**Physics fixes, several of which move results:**
+- The reported sensible heat was about 100 W m⁻² too low (#328).
+- The fast loop's emissivity, wood temperature, hydraulics keys, turgor-loss point and ground
+  optics are now per PFT or live (#327).
+- Allometry works in carbon throughout (#321).
+- Soil-water faces take ED2's geometric rule, so a dried surface re-wets (#320).
+- Stomata close linearly from the turgor-loss point to twice it, instead of shutting in one step
+  (#335).
+
+**Water budgets.** The calibration's parameter sets exposed three water-budget faults, all fixed:
+- the per-face soil check subtracted the requested root uptake instead of the uptake the solver
+  removed (#334);
+- the ARK water ledger did not declare the water the tissue-water floor creates;
+- interception discarded film water above capacity (both #336).
+
+**Portability and output:** nvfortran works again (#317), slab output is sized after the
+`io_config` overrides (#318), and OpenMP is compiled in by default (#324).
+
 **Upgrading.** Forcing configs change in four ways (#320, `MEDS_FLUX_TOWER_FORCING_PLAN.md` §5):
 - rename `[forcing].format = "netcdf"` to `"ED_default"` and `"era5land"` to `"ED_ERA5land"`;
 - delete `[site].utc_offset` and `[site].apply_solar_longitude`, and build every forcing file on a
@@ -2698,7 +2732,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...beta
+[0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...v0.2.1
