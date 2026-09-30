@@ -12,12 +12,11 @@
 module meds_hydr_lib
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
-   use meds_numerics,  only : gauss_legendre_7, bisect_root
    implicit none
    private
 
    !----- Vulnerability / Kirchhoff-conductance family. ------------------------------------!
-   public :: plc_retained, dplc_dpsi, flux_potential, phi_inverse, kirchhoff_edge
+   public :: plc_retained, dplc_dpsi, flux_potential, kirchhoff_edge
    !----- Pressure-volume family. ----------------------------------------------------------!
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
    public :: water_content, capacitance, pv_water_cap_from_traits, psi_from_water_content
@@ -60,9 +59,8 @@ contains
    !----- Fraction of conductance retained (1 - PLC). psi<0, psi50<0 => r>0; clamp for psi>0.    !
    !      r=0 is guarded explicitly (0**kexp=0 for any kexp>0): nvfortran's real**real codegen      !
    !      for a general (non-integer-recognized) exponent routes through log(u), and log(0) trips   !
-   !      its strict -Ktrap=fp even though the OVERALL mathematical result is well-defined -- found   !
-   !      via this exact hazard in kirchhoff_integrand below (phi_inverse's bisection deterministically !
-   !      evaluates its bracket endpoint at r=0). ------------------------------------------------!
+   !      its strict -Ktrap=fp even though the OVERALL mathematical result is well-defined. The      !
+   !      Kirchhoff integrand below guards u=0 for the same reason. -------------------------------!
    elemental real(wp) function plc_retained(psi, psi50, kexp) result(f)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
@@ -86,8 +84,8 @@ contains
    end function dplc_dpsi
 
    !----- Kirchhoff (matric flux) potential Phi(psi) = integral_0^psi plc ds [MPa]. ----------!
-   !      Closed form for kexp in {1,2}; fixed Gauss-Legendre on [0,r] otherwise. Phi(0)=0,     !
-   !      Phi(psi<0)<0, strictly increasing in psi.                                             !
+   !      Closed form for kexp in {1,2}; a fixed quadrature otherwise. Phi(0)=0, Phi(psi<0)<0,  !
+   !      strictly increasing in psi.                                                           !
    pure real(wp) function flux_potential(psi, psi50, kexp) result(phi)
       real(wp), intent(in) :: psi, psi50, kexp
       real(wp) :: r
@@ -97,39 +95,40 @@ contains
       else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
          phi = psi50 * atan(r)
       else
-         !----- integral_0^r du/(1+u^kexp) via the shared 7-pt Gauss-Legendre quadrature; the    !
-         !       integrand is a pure internal fn carrying kexp by host association. --------------!
-         phi = psi50 * gauss_legendre_7(kirchhoff_integrand, 0.0_wp, r)
+         phi = psi50 * kirchhoff_integral(r, kexp)
       end if
-   contains
-      !----- u<=0 guarded to avoid a real**real u=0 evaluation (see plc_retained above): the        !
-      !      quadrature's own affine node mapping never produces u<0 (r>=0 by construction), but     !
-      !      phi_inverse's bisect_root deterministically evaluates flux_potential(0.0,...) at its    !
-      !      hardcoded upper bracket, giving r=u=0 exactly on the FIRST call, every time. -----------!
-      pure real(wp) function kirchhoff_integrand(u) result(y)
-         real(wp), intent(in) :: u
-         if (u <= 0.0_wp) then
-            y = 1.0_wp
-         else
-            y = 1.0_wp / (1.0_wp + u**kexp)          ! kexp host-associated
-         end if
-      end function kirchhoff_integrand
    end function flux_potential
 
-   !----- Inverse of Phi: find psi in [psi_lo, 0] with flux_potential(psi)=phi_target. --------!
-   !      Monotone => robust bisection. Used by the vertical-profile diagnostic (3-node).       !
-   pure real(wp) function phi_inverse(phi_target, psi50, kexp, psi_lo) result(psi)
-      real(wp), intent(in) :: phi_target, psi50, kexp, psi_lo
-      logical :: converged
-      !----- Phi is monotone in psi, so a bracketed bisection on [psi_lo, 0] is robust. The      !
-      !       residual is a pure internal fn carrying psi50/kexp/phi_target by host association. --!
-      call bisect_root(phi_residual, psi_lo, 0.0_wp, 1.0e-9_wp, 60_ik, psi, converged)
-   contains
-      pure real(wp) function phi_residual(x) result(y)
-         real(wp), intent(in) :: x
-         y = flux_potential(x, psi50, kexp) - phi_target
-      end function phi_residual
-   end function phi_inverse
+   !----- integral_0^r du/(1+u^kexp) by 7-point Gauss-Legendre quadrature: exact for polynomials !
+   !      up to degree 13, and far below any model tolerance for this smooth integrand. The sum is !
+   !      written out rather than handed a function, because ifx allocates a lock-guarded record   !
+   !      on every call that passes a contained function as an argument, which made more than four !
+   !      threads slower than four (#325). u=0 is guarded as in plc_retained. -------------------!
+   pure real(wp) function kirchhoff_integral(r, kexp) result(g)
+      real(wp), intent(in) :: r, kexp
+      real(wp), parameter :: node(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
+                                           -0.4058451513773972_wp,  0.0000000000000000_wp,     &
+                                            0.4058451513773972_wp,  0.7415311855993945_wp,     &
+                                            0.9491079123427585_wp ]
+      real(wp), parameter :: weight(7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
+                                            0.3818300505051189_wp,  0.4179591836734694_wp,     &
+                                            0.3818300505051189_wp,  0.2797053914892766_wp,     &
+                                            0.1294849661688697_wp ]
+      real(wp)    :: mid, half, u, acc
+      integer(ik) :: k
+      mid  = 0.5_wp * r                          ! the nodes on [-1,1], mapped onto [0,r]
+      half = 0.5_wp * r
+      acc  = 0.0_wp
+      do k = 1_ik, 7_ik
+         u = mid + half * node(k)
+         if (u <= 0.0_wp) then
+            acc = acc + weight(k)
+         else
+            acc = acc + weight(k) / (1.0_wp + u**kexp)
+         end if
+      end do
+      g = half * acc
+   end function kirchhoff_integral
 
    !----- Kirchhoff edge conductance K_eff = k_cond * <plc> [kg/s/MPa]. k_cond is the maximum    !
    !      (plc=1) whole-plant/segment conductance already scaled to per-plant [kg/s/MPa]. The     !

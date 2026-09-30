@@ -22,7 +22,7 @@ program test_plant_hydraulics
    use meds_hydr_lib,      only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content,           &
                                      capacitance, plc_retained, flux_potential, kirchhoff_edge,       &
                                      hydro_table_t, build_hydro_table, flux_potential_lin,            &
-                                     kirchhoff_edge_tab, phi_inverse, psi_from_water_content,          &
+                                     kirchhoff_edge_tab, psi_from_water_content,          &
                                      clamp_water_to_capacity
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 HYDRO_SUBSTEP_FIXED, HYDRO_COND_SEGMENT
@@ -33,7 +33,7 @@ program test_plant_hydraulics
 
    call test_pv_curve()
    call test_kirchhoff_edge()
-   call test_phi_inverse()
+   call test_kirchhoff_quadrature()
    call test_hydro_table()
    call test_no_flow_equilibrium()
    call test_steady_ohm()
@@ -119,17 +119,37 @@ contains
    end subroutine test_kirchhoff_edge
 
    !=======================================================================================!
-   ! phi_inverse (now via meds_numerics%bisect_root) recovers psi from Phi(psi), on both the     !
-   ! closed-form (kexp=2) and quadrature (kexp=3, gauss_legendre_7) branches of flux_potential.   !
+   ! flux_potential's general-exponent branch (kexp not 1 or 2, a 7-point quadrature) matches a   !
+   ! fine composite-Simpson reference of the same integral, and at kexp = 2 the same quadrature    !
+   ! reproduces the closed form atan(r) it would otherwise replace.                                !
    !=======================================================================================!
-   subroutine test_phi_inverse()
-      real(wp) :: psi, phi
-      print '(a)', '-- phi_inverse round-trip --'
-      psi = -1.3_wp ; phi = flux_potential(psi, -2.0_wp, 3.0_wp)      ! kexp=3 quadrature branch
-      call check('phi_inverse recovers psi (kexp=3)', phi_inverse(phi, -2.0_wp, 3.0_wp, -8.0_wp), psi, 1.0e-6_wp)
-      psi = -0.7_wp ; phi = flux_potential(psi, -2.0_wp, 2.0_wp)      ! kexp=2 closed-form branch
-      call check('phi_inverse recovers psi (kexp=2)', phi_inverse(phi, -2.0_wp, 2.0_wp, -8.0_wp), psi, 1.0e-6_wp)
-   end subroutine test_phi_inverse
+   subroutine test_kirchhoff_quadrature()
+      real(wp), parameter :: psi50 = -2.0_wp
+      real(wp) :: psi, r, ref
+      print '(a)', '-- Kirchhoff potential quadrature --'
+      psi = -1.3_wp ; r = psi / psi50
+      ref = psi50 * simpson_reference(r, 3.0_wp)
+      call check('quadrature matches the Simpson reference (kexp=3)', flux_potential(psi, psi50, 3.0_wp), &
+                 ref, 1.0e-6_wp)
+      psi = -0.7_wp ; r = psi / psi50
+      call check('quadrature branch at kexp~2 reproduces atan (closed form)',                         &
+                 flux_potential(psi, psi50, 2.0_wp + 2.0e-9_wp), psi50 * atan(r), 1.0e-6_wp)
+   end subroutine test_kirchhoff_quadrature
+
+   !----- integral_0^r du/(1+u^kexp) by composite Simpson on 2000 intervals: the reference. ---!
+   pure real(wp) function simpson_reference(r, kexp) result(g)
+      real(wp), intent(in) :: r, kexp
+      integer(ik), parameter :: nint = 2000_ik
+      real(wp)    :: h, u
+      integer(ik) :: k
+      h = r / real(nint, wp)
+      g = 1.0_wp + 1.0_wp / (1.0_wp + r**kexp)
+      do k = 1_ik, nint - 1_ik
+         u = real(k, wp) * h
+         g = g + merge(4.0_wp, 2.0_wp, mod(k, 2_ik) == 1_ik) / (1.0_wp + u**kexp)
+      end do
+      g = g * h / 3.0_wp
+   end function simpson_reference
 
    !=======================================================================================!
    ! The precomputed lookup table (build_hydro_table + flux_potential_lin) reproduces the      !

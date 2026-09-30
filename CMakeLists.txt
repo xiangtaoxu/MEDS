@@ -464,6 +464,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
 
+   #----- No procedure is passed as an argument anywhere in src/ (#325): the ifx cost of doing  #
+   #      so serialises threads. The script explains the rule it checks.                       #
+   add_test(NAME no_procedure_arguments
+            COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_no_procedure_arguments.cmake)
+
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
    add_executable(test_pft_optics_config test/test_pft_optics_config.f90)
    target_link_libraries(test_pft_optics_config PRIVATE meds_model meds_testsupport)

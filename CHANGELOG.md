@@ -14,6 +14,37 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+
+- **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
+  their contained functions to another routine: `flux_potential` passed its Kirchhoff integrand to the
+  quadrature, and `solve_leaf_gas_exchange` passed its Ci residuals to the bisection. Under ifx each
+  such call allocates a lock-guarded record, and at 8 threads those allocations took 83% of all CPU
+  time (232 of 280 CPU-seconds on 60 days of the BCI example).
+  - **What changed.** The quadrature is a written-out 7-point sum (`kirchhoff_integral`). The leaf
+    solver's residuals are module functions that take the leaf's problem as one explicit record
+    (`ci_problem_t`), with a bisection written for it; one field (`gs_rule`) replaces the two flags
+    that chose between the model, cuticular and pinned conductance passes. `bisect_root`,
+    `gauss_legendre_7` and `phi_inverse` are deleted: nothing else used them.
+  - **Timings**, the BCI example, each run alone on an idle `R128C40` node, the second of two runs:
+
+    | `n_threads` | 60 days, v0.3.1 | 60 days, now | five years, now |
+    |---|---|---|---|
+    | 1 | 29.3 s | 25.5 s | 6 min 43 s |
+    | 4 | 21.9 s | 15.1 s | 2 min 23 s (v0.3.1: 5 min 26 s) |
+    | 8 | 40.9 s | 12.3 s | 1 min 36 s |
+    | 16 | 54.4 s | 12.1 s | 1 min 25 s |
+
+    Sixty days is mostly the serial start-up (about 8 s), and a site run gains little past its
+    patch count (BCI keeps 14–25 patches).
+  - **Outputs move at rounding level**, from the changed code generation: on the r1 cases the ARK
+    fluxes differ by at most 2e-9 relative over a month (hourly H by 1e-8 W m⁻²); the stage-clamp
+    counter `work_clamp_stage_site` flips by up to 14% because it counts threshold crossings. RK45
+    amplifies the same first-day difference (9e-11 W m⁻²) to a few W m⁻² of hourly H within a week.
+  - **Guard:** a new ctest, `no_procedure_arguments`, fails if any `procedure(...)` declaration
+    appears under `src/`. `plant_hydraulics` now checks the quadrature against a composite-Simpson
+    reference and the closed form, instead of through `phi_inverse`.
+
 ## [0.3.1] — 2026-09-29
 
 A **flux-tower** release. MEDS now runs from a tower's own meteorology, starts from a forest census,
