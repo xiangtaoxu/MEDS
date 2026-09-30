@@ -31,7 +31,6 @@ failure, not from a plan.
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#104](https://github.com/xiangtaoxu/MEDS/issues/104) | Plant hydraulics burns 13× wall clock on a collapsed (floored) wood store | Detector shipped (#105); the physics decision is open — see §4 |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
-| [#146](https://github.com/xiangtaoxu/MEDS/issues/146) | Fast-integrator state vector: only a packed layout gives compile-time omission safety (1 207 field references) | |
 | [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
 | [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
 | [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
@@ -253,23 +252,24 @@ Source: `docs/dev_plans/archive/MEDS_SNOW_DESIGN.md` §7. Science page:
 Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 - **Pass `column_params_t` through `column_config_t`** rather than copying it into the frozen
-  record every step. *Planned.* [#188](https://github.com/xiangtaoxu/MEDS/issues/188)
+  record every step. *Done* (2026-09-30, `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 2): the routines take
+  `col_config`, and `column_params_t` is gone. [#188](https://github.com/xiangtaoxu/MEDS/issues/188)
 - **Per-layer face budget imbalance on the committed path**, per-cohort tissue residuals, and
-  RK45 ledgers asserted after the rail decision. *Planned.* [#189](https://github.com/xiangtaoxu/MEDS/issues/189)
-- **Delete `column_cohort_t`** in favour of `cohort_fast_slice_t` / `patch_fast_slice_t` with a
-  per-field policy table. *Deferred, **paired with #146*** (2026-09-13).
-  [#190](https://github.com/xiangtaoxu/MEDS/issues/190) 38 references across 11 files. Four of the
-  five benefits the design claimed have since landed piecemeal: `column_cohort_init` gives the test
-  fixtures allometric consistency, the three hard-coded constants are PFT parameters, the derived
-  geometry is on the cohort block, and `reconcile_tissue_water_capacity` took the seed and clamp out
-  of the gather. The fusion/scaling policy is already centralised in `fuse_cohort_fast_state` and
-  `scale_cohort_ground_fields`. What is left is **completeness you cannot forget** — a table the
-  blend iterates cannot omit a field a hand-written routine can — and that is #146's hazard class,
-  which is why the two now travel together.
-- **A packed `column_state_t`** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)). *Deferred, **paired with #190***.
-  Only a packed layout makes field omission a compile-time error; there are 1 207 field references
-  today. One packed, policy-carrying layout should serve the fast state vector and the cohort slice
-  together — separately, each is a large refactor buying a fraction of one property.
+  RK45 ledgers asserted after the rail decision. *Planned; the RK45 item is done* (2026-09-30:
+  `rk45_ledgers_stop` stops only for a step it keeps). [#189](https://github.com/xiangtaoxu/MEDS/issues/189)
+- **Delete `column_cohort_t`** in favour of per-field policy tables. *Closed* (2026-09-30).
+  [#190](https://github.com/xiangtaoxu/MEDS/issues/190) Four of the five benefits the design claimed
+  landed piecemeal: `column_cohort_init` gives the test fixtures allometric consistency, the three
+  hard-coded constants are PFT parameters, the derived geometry is on the cohort block, and
+  `reconcile_tissue_water_capacity` took the seed and clamp out of the gather. The fifth, a fusion
+  policy that cannot omit a field, a table would not deliver either: the compiler cannot check that
+  a table lists every field. The policy stays in `fuse_cohort_fast_state` and
+  `scale_cohort_ground_fields`, with a witness per kind in `test_fusion_cohort`.
+- **One field list for the fast-loop state** ([#146](https://github.com/xiangtaoxu/MEDS/issues/146)).
+  *Done* (2026-09-30, option B of `MEDS_EFFICIENCY_SWEEP_PLAN.md` Appendix B): `state_to_array`,
+  `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each
+  enters the error, and the combinators work on the flat array. The compiler still cannot check
+  the list; `test_state_combinators` runs every field through every combinator.
 
 ---
 
@@ -277,8 +277,11 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
 
 Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
-- **Attack the allocator traffic.** *Planned.* [#195](https://github.com/xiangtaoxu/MEDS/issues/195) About 24 % of fast-loop self time is allocator
-  work in `build_column_frozen`.
+- **Attack the allocator traffic.** *Done in part* (2026-09-30). [#195](https://github.com/xiangtaoxu/MEDS/issues/195)
+  With #188, #146 and the per-thread ARK storage, a patch-step allocates 104 times instead of 304,
+  and the allocator's share of a serial BCI run fell from 14.9 % to 7.7 %. What remains is mostly the
+  frozen record, built afresh each step (4 % of the serial fast loop): it relies on a new record's
+  defaults for its scalars, so reusing it needs a reset that lists them.
 - **Thread and vectorise the cohort axis on the CPU.** *Planned.* [#196](https://github.com/xiangtaoxu/MEDS/issues/196) This is the evaluation's
   headline recommendation. Patch-axis threading already ships; the cohort axis is untouched.
 - **A single-precision experiment** (`wp = real32`). *Decided: no.* [#197](https://github.com/xiangtaoxu/MEDS/issues/197) Measured 56× on the device for
