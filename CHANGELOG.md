@@ -125,7 +125,9 @@ before and after.
   `patch_threads`), not read from the config, so a site run keeps threading its patches.
   - **Timings**, the 100 cells of a 1° box around Ithaca, one year, each run alone on an idle
     `R128C40` node: 1 thread 785 s (v0.3.1: 1,012 s), 10 threads 131 s, 20 threads 92 s, 40 threads
-    81 s. With output off, 40 threads take 51 s: the rest is the output, written on one thread.
+    81 s. The one detail polygon costs about four times an ordinary one (29 s a year, for its hourly
+    site files and per-cohort diagnostics), so on 40 threads it sets each month's pace: without it
+    the run takes 53 s, and with no output at all 51 s. The region's own files cost about 2 s.
   - **The same results at any thread count:** all 403 files of that run are identical at 1, 10, 20
     and 40 threads, and `test_region` now runs its region on four threads against the site runs.
   - **A failed polygon no longer stops the month** (R4). It is reported and stops; the others

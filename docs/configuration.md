@@ -312,9 +312,10 @@ detail_polygons   = [1714634]                        # optional: these also writ
   (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
-  year on one thread and 81 s on 40, of which about 30 s is the output, written on one thread
-  between months. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the roadmap to restarts
-  and tiles.
+  year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
+  hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
+  same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
+  for the roadmap to restarts and tiles.
 
 ## Worked examples
 
