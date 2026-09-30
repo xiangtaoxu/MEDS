@@ -41,6 +41,11 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     re-solves with gs pinned at the factor times its optimum.
   - **A fully closed leaf** exchanges no CO₂ or water by day (net assimilation 0, its respiration
     refixed), and respires at night.
+  - **The carbon consequence.** Rd is unchanged and still charged in full. As gs goes to 0 the
+    coupled solve drives net assimilation to 0, so gross assimilation, which the canopy counts as
+    GPP, tends to Rd. A fully closed leaf is therefore carbon-neutral by day (GPP = Rd, respiration
+    Rd), where the former shutdown gave it GPP 0 and a loss of Rd. At night it loses Rd, as before.
+    A tower's GPP, partitioned from NEE, cannot see refixed CO₂.
   - **It replaces a hard shutdown at 2·ψ_tlp** (`ARREST_GS_CLAMP`), which no config could change. That
     shut a cohort completely below the threshold and left it untouched above. The step made the
     fluxes jump as a parameter moved the threshold or the predawn potential across it, and no

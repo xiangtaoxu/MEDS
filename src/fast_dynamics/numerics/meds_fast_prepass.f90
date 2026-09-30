@@ -278,6 +278,9 @@ contains
       end if
       do i = 1_ik, n
          gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
+         !----- GPP is gross A. For a leaf whose stomata the low-water-potential control has nearly or  !
+         !      fully closed, gross A tends to Rd: its own respiration, refixed (#332; the CARBON NOTE in !
+         !      solve_leaf_gas_exchange). Rd is charged below either way. -------------------------------!
          gpp     = gpp     + a_gross_arr(i) * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)

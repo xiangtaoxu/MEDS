@@ -267,8 +267,19 @@ contains
       !      potential was -116 MPa (#95). So the conductance the stomatal model calculates, g0          !
       !      included, is multiplied by f_lwp, which falls LINEARLY from 1 at the turgor-loss point to  !
       !      0 at twice it. The solve below stays coupled: A and Ci are those of the reduced gs, so a    !
-      !      leaf with f_lwp = 0 exchanges no CO2 or water (net A = 0 by day, its respiration refixed).  !
-      !      It replaced a hard shutdown at 2*psi_tlp, a step no calibration could see past.            !
+      !      leaf with f_lwp = 0 exchanges no CO2 or water. It replaced a hard shutdown at 2*psi_tlp, a  !
+      !      step no calibration could see past.                                                       !
+      !                                                                                          !
+      !      CARBON NOTE (#332, option kept by the owner). Rd is untouched: it is computed as before  !
+      !      and charged in full as leaf respiration. What the factor changes is GROSS A. The solve   !
+      !      ties net A to the stomata, net A = gs*(Cs - Ci)/1.6, so as gs -> 0 net A -> 0 and the     !
+      !      leaf photosynthesises at the internal compensation point on the CO2 it respires: gross   !
+      !      A -> Rd, its respiration refixed. The canopy sums gross A as GPP and Rd as leaf          !
+      !      respiration (canopy_leaf_gas_exchange, meds_fast_prepass), so a fully closed leaf is     !
+      !      carbon-neutral by day -- credited GPP = Rd, charged Rd -- where the former clamp set     !
+      !      gross A = 0 and lost Rd. At night gross A = 0 and the leaf loses Rd, as before. This is  !
+      !      the standard coupled leaf model, and the same refixation already happens whenever gs is  !
+      !      small. A tower's GPP, partitioned from NEE, cannot see refixed CO2. ---------------------!
       !                                                                                          !
       !      The driver feeds env%psi the previous day's daily-MAX leaf water potential -- the   !
       !      model's predawn potential -- so f_lwp is set once a day from a slow, integrated measure,  !
@@ -361,7 +372,8 @@ contains
          exit
       end do
       !----- f_lwp = 0: the solve's limit, written exactly. With no conductance the leaf exchanges   !
-      !       nothing -- net A = 0, its respiration refixed at the Ci the solve found. ----------------!
+      !       nothing -- net A = 0 and gross A = Rd, its respiration refixed at the Ci the solve found  !
+      !       (see the CARBON NOTE above: the canopy counts that gross A as GPP). ---------------------!
       if (f_lwp <= 0.0_wp) then
          call fill_flux(rd, 0.0_wp, 0.0_wp, ci_sol, ca_ppm, rd, LIM_NONE, converged)
          return

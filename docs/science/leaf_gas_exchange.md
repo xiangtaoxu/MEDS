@@ -328,6 +328,16 @@ factor is set once a day on a slow, integrated measure, not per step on a noisy 
   it.
 - **A shut leaf** ($`f_{lwp}=0`$) exchanges neither water nor CO₂: by day its net assimilation is 0,
   its respiration refixed at the compensation point; at night it respires, $`A_n=-R_d`$.
+- **What this does to the carbon budget.** $`R_d`$ is unchanged and charged in full as leaf
+  respiration; the factor changes *gross* assimilation. The solve ties net assimilation to the
+  stomata, $`A_n = g_s (C_s - C_i)/1.6`$, so as $`g_s \to 0`$, $`A_n \to 0`$ and the leaf photosynthesises
+  at its internal compensation point on the CO₂ it respires: $`A_g \to R_d`$. The canopy sums $`A_g`$ as
+  GPP and $`R_d`$ as leaf respiration, so a fully closed leaf is carbon-neutral by day (credited
+  $`R_d`$ of GPP, charged $`R_d`$). The former hard shutdown set $`A_g = 0`$ and lost $`R_d`$. At night
+  $`A_g = 0`$ and the leaf loses $`R_d`$, as before. This is the standard coupled leaf model, and the
+  same refixation already happens whenever $`g_s`$ is small. A tower's GPP, partitioned from NEE,
+  cannot see refixed CO₂, so where cohorts are shut the model's GPP includes CO₂ the tower's cannot
+  count.
 - **It replaced a hard shutdown.** Until #332 the stomata shut completely below $`2\psi_{tlp}`$
   ($`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$) and were untouched above it. That all-or-nothing step
   made every flux jump as a parameter moved $`\psi_{tlp}`$ or the predawn potential across it, which
