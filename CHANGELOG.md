@@ -165,6 +165,20 @@ before and after.
     the fill value for them either way.
   - Every r1 case and `test_region`'s region-against-site comparison are bit-identical.
 
+- **Small consolidations and checks** (#312 O10, O12; #311 F9, F11, F12):
+  - **O10.** `validate_config` refuses an `[output].fast_interval_steps` that does not divide the
+    fast steps in a slow step, so no fast-tier window straddles two slow steps (the stand can be
+    restructured between them). Every shipped config uses 4 or 24 of 96.
+  - **O12.** `apply_patch_disturbance` no longer grows the patch diagnostic block a second time:
+    `patch_ensure_capacity` already grows it with the patch arrays.
+  - **F9.** Deleted `wind_log_profile`, which nothing has called since #305, with its three test
+    checks, and `forcing_config_t%rad_sw_ground_const`, which nothing read.
+  - **F11.** The ED_ERA5land reader refuses a month file whose `_FillValue` is a number: it
+    recognises a missing value only as NaN, so such a number would have been read as data. The
+    archive stores NaN. **Test:** `met_era5land` writes a month declaring `_FillValue = -9999`.
+  - **F12.** `docs/science/forcing.md` says that a run cannot start in the archive's first month:
+    its first step reads the 00:00 record, which lives in the previous month's file.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

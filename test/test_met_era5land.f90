@@ -15,6 +15,7 @@ program test_met_era5land
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
    use meds_forcing_kernels, only : dewpoint_to_specific_humidity, clear_sky_emissivity
+   use iso_c_binding,        only : c_double
    use meds_lapse_rate,      only : lapse_pressure
    use meds_therm_lib,       only : sat_vapor_pressure
    use meds_met_driver,      only : met_open, met_cursor_init, met_advance, met_instant, met_close, &
@@ -22,9 +23,9 @@ program test_met_era5land
                                     MET_OK, MET_ERR_ARCHIVE, MET_ERR_ATTR_MISMATCH
    use meds_era5land_reader, only : era5land_path, era5land_default_template, era5land_select_site, &
                                     era5land_select_box, era5land_load_month, ERA_OK, ERA_ERR_NAN,  &
-                                    ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, &
+                                    ERA_ERR_FILL, ERA_NVAR, ERA_ERR_NO_CELL, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, &
                                     ERA_LWDOWN
-   use meds_test_era5land_archive, only : T0, field, hour_index, write_archive
+   use meds_test_era5land_archive, only : T0, field, hour_index, write_archive, write_month
    implicit none
 
    character(len=*), parameter :: DIR = 'era5land_test_tmp'
@@ -35,6 +36,7 @@ program test_met_era5land
    call test_site_selection()
    call test_box_selection()
    call test_nan_rejected()
+   call test_fill_rejected()
    call test_driver_months()
    call test_driver_recycle()
    call test_driver_rejections()
@@ -169,6 +171,29 @@ contains
       call check_true('a NaN in a selected cell is rejected', st == ERA_ERR_NAN)
       call check_true('and the message names the variable', index(msg, 'Tair') > 0)
    end subroutine test_nan_rejected
+
+   !----- 4b. A missing value is recognised as NaN only, so a file whose _FillValue is a number would  !
+   !      pass that number off as data: it is refused (#311 F11). One month of every variable is     !
+   !      written again, into a directory of its own, declaring _FillValue = -9999. -----------------!
+   subroutine test_fill_rejected()
+      character(len=*), parameter :: DIR2 = 'era5land_test_fill_tmp'
+      type(met_cells_t) :: dom
+      type(met_month_t)  :: buf
+      character(len=512) :: msg
+      real(wp)    :: d
+      integer(ik) :: st, v
+      print '(a)', '-- era5land 4b: a numeric _FillValue --'
+      call execute_command_line('rm -rf '//DIR2//' && mkdir -p '//DIR2)
+      do v = 1_ik, ERA_NVAR
+         call write_month(DIR2, v, 2021_ik, 1_ik, fill=-9999.0_c_double)
+      end do
+      call era5land_select_site(DIR//'/ED_ERA5land_static.nc', 35.0_wp, -120.0_wp, 50.0_wp, dom, d, st)
+      call era5land_load_month(era5land_default_template(), DIR2, dom, 2021_ik, 1_ik, buf, st, msg)
+      call check_true('a month file with a numeric _FillValue is refused', st == ERA_ERR_FILL)
+      call check_true('and the message says so', index(msg, '_FillValue') > 0)
+      call era5land_load_month(era5land_default_template(), DIR, dom, 2021_ik, 1_ik, buf, st, msg)
+      call check_true('the same month without the attribute loads', st == ERA_OK)
+   end subroutine test_fill_rejected
 
    !----- A reader config on the synthetic archive at the valid cell (1,3), 35 N 120 W. ----------!
    function archive_config() result(fc)

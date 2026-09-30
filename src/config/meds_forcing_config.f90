@@ -117,7 +117,6 @@ module meds_forcing_config
       integer(ik)        :: co2_source   = CO2_SOURCE_CONST      !< "const" | "file"
       real(wp)           :: co2_const    = 420.0_wp              !< [umol/mol] co2_source = "const"
       character(len=MET_PATH_LEN) :: co2_file = ''               !< the MEDS CO2 file (co2_source = "file")
-      real(wp)           :: rad_sw_ground_const = 60.0_wp        !< [W/m2] CONST-backend ground SW
       !----- Recycling is OPT-IN (default off). It cannot be defaulted on: it REQUIRES a declared   !
       !      recycle_start/recycle_end below, and a default-constructed config has no meaningful     !
       !      window to offer. The TOML reader requires the key explicitly in any case.               !

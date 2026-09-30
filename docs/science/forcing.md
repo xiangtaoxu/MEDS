@@ -142,12 +142,15 @@ loads one month at a time before a step. Given `data_path`, the reader:
   the run period. Every file the run needs must exist at open, so a gap stops the run before it
   starts;
 - **reads a month at a time**, one chunk column per variable, into a buffer, checking each file's
-  grid, stamps and units, and rejecting a missing value in the cell;
+  grid, stamps and units, and rejecting a missing value in the cell. A missing value is NaN, as the
+  archive stores it; a file whose `_FillValue` is a number is refused rather than read as data;
 - **converts at each stamp:** $`q`$ from the stored dewpoint and pressure by (10), and the wind
   speed from the stored components, whose vector the record also carries.
 
 Bracketing, recycling and the seam are the same code as for the single file: the record at 00:00 on
-the 1st lives in the previous month's file, and the bracket that spans it reads both.
+the 1st lives in the previous month's file, and the bracket that spans it reads both. **So a run
+cannot start in the archive's first month:** its first step, at 00:00 on the 1st, reads a record
+from the month before, whose file the run then needs.
 
 ## 2. The reader: a two-record window
 

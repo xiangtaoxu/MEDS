@@ -785,11 +785,20 @@ contains
                            &order-significant CSV; see plan sec 7 C3)'
       end if
       if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
+      !----- The FAST output tier closes a window every fast_interval_steps sub-steps, counted over   !
+      !      the run. A window must not straddle two slow steps: the stand can be restructured between !
+      !      them, and a window's cohort and patch slots are fixed when it opens (#312 O10).  ---------!
+      if (cfg%fast_biophysics_on .and. cfg%output%enabled) then
+         if (cfg%output%fast_interval_steps < 1_ik)                                                &
+            error stop tag//'output.fast_interval_steps < 1'
+         if (mod(cfg%n_fast_per_slow, cfg%output%fast_interval_steps) /= 0_ik)                    &
+            error stop tag//'output.fast_interval_steps must divide the fast steps in a slow step '// &
+                            '(dt_slow / dt_fast), so no fast-tier window straddles two slow steps'
+      end if
       !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
       !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
       !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
-      !      checkpoints; until polygon threads exist (R3) the patch threads and the one-file probe    !
-      !      stay off.  ---------------------------------------------------------------------------!
+      !      checkpoints, and the one-file probe stays off (every polygon would write into it). ------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'

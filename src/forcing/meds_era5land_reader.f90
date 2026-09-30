@@ -17,6 +17,7 @@ module meds_era5land_reader
    use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
+                                    nc_get_att_double_f, &
                                     nc_get_vara_double, nc_get_vara_float, nc_close, NC_NOERR, NC_NOWRITE
    implicit none
    private
@@ -26,6 +27,7 @@ module meds_era5land_reader
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN
    public :: ERA_VAR_NAME, ERA_VAR_UNITS, ERA_EPOCH
    public :: ERA_OK, ERA_ERR_OPEN, ERA_ERR_GRID, ERA_ERR_TIME, ERA_ERR_UNITS, ERA_ERR_NAN, ERA_ERR_NO_CELL
+   public :: ERA_ERR_FILL
 
    !----- The archive's eight variables, their file names and the units the builder writes. -----!
    integer(ik), parameter :: ERA_NVAR = 8_ik
@@ -51,6 +53,7 @@ module meds_era5land_reader
    integer(ik), parameter :: ERA_ERR_UNITS   = 4_ik   !< a variable's units attribute is not the expected one
    integer(ik), parameter :: ERA_ERR_NAN     = 5_ik   !< a selected cell has a missing value
    integer(ik), parameter :: ERA_ERR_NO_CELL = 6_ik   !< no valid cell within the distance limit / in the box
+   integer(ik), parameter :: ERA_ERR_FILL    = 7_ik   !< a variable's _FillValue is a number, not NaN
 
 contains
 
@@ -290,6 +293,7 @@ contains
       integer(c_int)     :: ncid, vid, st
       integer(c_size_t)  :: start3(3), count3(3)
       real(c_float), allocatable :: block(:,:,:)
+      real(c_double)     :: fill
       integer(ik) :: nt, v, k, m, c, nr, nc
       integer(ik) :: bad(3)
 
@@ -317,6 +321,17 @@ contains
             st = nc_close(ncid) ; stat = ERA_ERR_UNITS
             message = trim(path)//': units "'//trim(units)//'", expected "'//trim(ERA_VAR_UNITS(v))//'"'
             return
+         end if
+         !----- The reader recognises a missing value as NaN and nothing else (below). A file whose   !
+         !      _FillValue is a number would slip that number into the forcing as data, so it is     !
+         !      refused. The archive stores NaN, and a file without the attribute has no fill.  -----!
+         st = nc_get_att_double_f(ncid, vid, '_FillValue', fill)
+         if (st == NC_NOERR) then
+            if (.not. ieee_is_nan(fill)) then
+               st = nc_close(ncid) ; stat = ERA_ERR_FILL
+               write(message, '(2a,es12.4,a)') trim(path), ': _FillValue is ', fill, ', not NaN'
+               return
+            end if
          end if
          do k = 1_ik, dom%nchunk
             nr = dom%chunk_nrow(k) ; nc = dom%chunk_ncol(k)
