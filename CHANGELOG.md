@@ -197,6 +197,14 @@ before and after.
   the wrong ceiling. It now takes the per-PFT hydraulics table. No shipped configuration overrides
   these traits per PFT, so every r1 case is bit-identical. **Test:** `pft_optics_config` seeds and
   caps a PFT whose saturated leaf water differs from the shared value.
+- **A slow-only run no longer reports stale values for fast-loop diagnostics** (found while
+  merging the serializers). With `fast_biophysics_on = false` the per-cohort and per-patch
+  diagnostic blocks hold no entries, so their readers left the caller's array unset, and the
+  site-level reduction then read whatever the previous variable had put there. On r1's
+  `demography_30yr`, `soil_temp_top_site` read the canopy-air depth, a "5 K" soil temperature, and
+  `w_surface_site` read 0 only by chance. A slot the block holds no entry for now reads 0, as one
+  with no weight already did. #299 remains: those variables should read as missing in a slow-only
+  run, and the slow operators' own rows should report their values.
 
 ## [0.3.1] — 2026-09-29
 

@@ -411,9 +411,14 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
+      !----- A slot the block holds no entry for reads 0, as one with no weight does. Callers reduce  !
+      !      over the site's live cohorts, which the block has none of when the fast loop never ran    !
+      !      (a slow-only run): without this they read the array unset (#299 is to report those as    !
+      !      missing instead). -----------------------------------------------------------------!
+      x = 0.0_wp
       n = min(d%n, int(size(x), ik))
       do i = 1_ik, n
-         if (d%w(i) > tiny_num) then ; x(i) = d%v(field, i) / d%w(i) ; else ; x(i) = 0.0_wp ; end if
+         if (d%w(i) > tiny_num) x(i) = d%v(field, i) / d%w(i)
       end do
    end subroutine cohort_diag_value
 
@@ -541,9 +546,10 @@ contains
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
+      x = 0.0_wp                         ! slots with no entry read 0 (see cohort_diag_value)
       n = min(d%n, int(size(x), ik))     ! bounded by the caller's array too (#247)
       do i = 1_ik, n
-         if (d%w(i) > tiny_num) then ; x(i) = d%v(field, i) / d%w(i) ; else ; x(i) = 0.0_wp ; end if
+         if (d%w(i) > tiny_num) x(i) = d%v(field, i) / d%w(i)
       end do
    end subroutine patch_diag_value
 
