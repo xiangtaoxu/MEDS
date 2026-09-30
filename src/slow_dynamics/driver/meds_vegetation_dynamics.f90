@@ -85,7 +85,7 @@ contains
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water
-      real(wp)                 :: tissue_heat0, tissue_heat1, handover
+      real(wp)                 :: tissue_heat0, tissue_heat1, handover, plastic_heat0
       real(wp), allocatable    :: nplant_before(:)
       real(wp)                 :: seed_rain_carbon
       integer(ik)              :: ip
@@ -104,7 +104,14 @@ contains
       !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
       !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
       !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
-      if (cfg%trait_plasticity_on) call advance_plant_traits(site, cfg, cfg%dt_years)
+      !          A rising SLA resorbs leaf carbon into storage, which has no heat capacity, so the  !
+      !          tissue's heat content changes at unchanged temperature: declared to the ledger,  !
+      !          as the cohort and patch phases declare theirs. ----------------------------------!
+      if (cfg%trait_plasticity_on) then
+         if (present(ledger)) plastic_heat0 = slow_tissue_heat(site)
+         call advance_plant_traits(site, cfg, cfg%dt_years)
+         if (present(ledger)) call slow_ledger_declare(ledger, energy_in = slow_tissue_heat(site) - plastic_heat0)
+      end if
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). Also accumulates this step's !
       !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
