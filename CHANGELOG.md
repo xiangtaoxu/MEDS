@@ -204,6 +204,26 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Added
 
+- **`scripts/calibrate_fast`: calibration of the fast parameters against a flux tower**
+  (`MEDS_FAST_CALIBRATION_PLAN.md` P1, P3). It fits the sub-daily parameters (radiation,
+  photosynthesis and stomata, aerodynamics, water stress, respiration) to a tower's albedo,
+  upwelling longwave, net radiation, LE and H corrected for closure with the Bowen ratio kept,
+  daily evaporative fraction, daytime GPP, night NEE and u\*, with the stand held fixed. Every
+  trial is a 10-day `slow_on = false` restart with `reacclimate_traits`, from the state that a chain
+  of frozen runs wrote at its window's start.
+  - **The method.** Levenberg–Marquardt with Gaussian priors on logit-transformed parameters, a
+    central-difference Jacobian whose trials all run at once, three damping values tried at once,
+    and three starts. A screening step keeps the keys the tower can inform. The covariance is a
+    Laplace approximation weighted by each target's effective sample size, and a linearity check
+    tests it.
+  - **Every trial proves what it ran.** Its parameter record must list every key the trial set,
+    and a whole-site budget breach fails the trial.
+  - **Running it.** Trials run on a local pool or, on a cluster, on a directory queue served by one
+    worker per node inside one allocation. The commands are `select-windows`, `growth-resp`, `check`
+    (gates G1 and G2), `fit`, `analyze` and `write-calibrated`.
+  - **Tests:** 17 unit tests, and a smoke test through `meds_main` on the demography census with a
+    synthetic tower (ctest `calibrate_fast`).
+
 - **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#329; default false,
   restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
   run's PFT file as a census start sets them: acclimated to each cohort's LAI above it, as the state

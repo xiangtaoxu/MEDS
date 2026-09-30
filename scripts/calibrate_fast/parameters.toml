@@ -1,0 +1,244 @@
+# SPDX-License-Identifier: Apache-2.0
+# The fast-parameter registry (docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md §4): the keys the fit
+# may move, for a closed tropical evergreen canopy. One table per key:
+#
+#   file      = "pft" (the PFT TOML) or "main"
+#   key       = the dotted TOML key as MEDS reads it
+#   pft       = the element of a per-PFT array (1-based; default 1)
+#   range     = [lo, hi]: the prior's +-2 sigma band and a hard bound (§6.1)
+#   transform = "linear" (logit on the range) or "log" (log, then logit): a positive scale is "log"
+#   default   = only where neither the base TOML nor the model's parameter record gives one
+#   variants  = only in these variants of the site declaration
+#
+# Ranges are the plan's. The leaf angle's lower bound is 30 degrees, not the plan's 45, because
+# the transform needs the default (45) strictly inside; the NIR transmittance stops at 0.40 so
+# that reflectance plus transmittance stays below 1 at the corner of the box.
+
+# ----- radiation (§4.1) --------------------------------------------------------------------------
+[leaf_reflect_nir]
+file = "pft"
+key = "pft.leaf_reflect_nir"
+range = [0.30, 0.55]
+group = "radiation"
+source = "broadleaf NIR reflectance; plan §4.1"
+
+[leaf_transmit_nir]
+file = "pft"
+key = "pft.leaf_transmit_nir"
+range = [0.15, 0.40]
+group = "radiation"
+source = "broadleaf NIR transmittance; plan §4.1 (upper bound 0.40 here)"
+
+[leaf_reflect_vis]
+file = "pft"
+key = "pft.leaf_reflect_vis"
+range = [0.05, 0.12]
+group = "radiation"
+source = "broadleaf VIS reflectance; plan §4.1"
+
+[leaf_transmit_vis]
+file = "pft"
+key = "pft.leaf_transmit_vis"
+range = [0.02, 0.08]
+group = "radiation"
+source = "broadleaf VIS transmittance; plan §4.1"
+
+[leaf_clumping]
+file = "pft"
+key = "pft.leaf_clumping"
+range = [0.50, 1.00]
+group = "radiation"
+source = "foliage clumping index of closed broadleaf canopies; plan §4.1"
+
+[leaf_angle_mean]
+file = "pft"
+key = "pft.leaf_angle_mean"
+range = [30.0, 65.0]
+group = "radiation"
+source = "mean leaf inclination [deg]; spherical is 57.3; plan §4.1 (lower bound 30 here)"
+
+# ----- photosynthesis and stomata (§4.2) ----------------------------------------------------------
+[vcmax25]
+file = "pft"
+key = "pft.vcmax25"
+range = [25.0, 80.0]
+transform = "log"
+group = "photosynthesis"
+source = "tropical evergreen top-of-canopy Vcmax25 (Kattge et al. 2009); plan §4.2"
+
+[stomatal_g1]
+file = "pft"
+key = "pft.stomatal_g1"
+range = [1.5, 6.0]
+transform = "log"
+group = "photosynthesis"
+source = "Medlyn g1 [kPa^0.5] (Medlyn et al. 2011; Lin et al. 2015); plan §4.2"
+
+[jmax_vcmax_ratio]
+file = "pft"
+key = "pft.jmax_vcmax_ratio"
+range = [1.4, 2.2]
+group = "photosynthesis"
+source = "Jmax25/Vcmax25 (Kattge and Knorr 2007); plan §4.2"
+
+[stomatal_g0]
+file = "pft"
+key = "pft.stomatal_g0"
+range = [0.001, 0.05]
+transform = "log"
+group = "photosynthesis"
+source = "residual stomatal conductance [mol m-2 s-1]; plan §4.2"
+
+[theta_j]
+file = "pft"
+key = "pft.theta_j"
+range = [0.70, 0.95]
+group = "photosynthesis"
+source = "electron-transport curvature; plan §4.2"
+
+[ds_vcmax]
+file = "main"
+key = "leaf_physiology.ds_vcmax"
+range = [630.0, 670.0]
+group = "photosynthesis"
+source = "Vcmax entropy term [J mol-1 K-1] (Kattge and Knorr 2007); plan §4.2"
+
+# ----- energy partition and aerodynamics (§4.3) -----------------------------------------------------
+[z0m_ratio]
+file = "main"
+key = "aerodynamics.z0m_ratio"
+range = [0.05, 0.20]
+group = "aerodynamics"
+source = "roughness length / canopy height; plan §4.3"
+
+[d_ratio]
+file = "main"
+key = "aerodynamics.d_ratio"
+range = [0.50, 0.80]
+group = "aerodynamics"
+source = "displacement height / canopy height; plan §4.3"
+
+[leaf_width]
+file = "pft"
+key = "pft.leaf_width"
+range = [0.02, 0.15]
+transform = "log"
+group = "aerodynamics"
+source = "characteristic leaf width [m]; plan §4.3"
+
+[canopy_freeboard]
+file = "main"
+key = "aerodynamics.canopy_freeboard"
+range = [2.0, 10.0]
+group = "aerodynamics"
+source = "canopy-air depth above the tallest crown [m]; plan §4.3"
+
+[ustmin]
+file = "main"
+key = "aerodynamics.ustmin"
+range = [0.05, 0.20]
+group = "aerodynamics"
+source = "friction-velocity floor [m s-1]; plan §4.3"
+
+[dsl_dmax]
+file = "main"
+key = "soil.dsl_dmax"
+range = [0.005, 0.05]
+transform = "log"
+group = "evaporation"
+source = "maximum dry surface layer [m]; plan §4.3"
+
+[dewmx]
+file = "main"
+key = "soil.dewmx"
+range = [0.05, 0.3]
+transform = "log"
+group = "interception"
+variants = ["interception_on"]
+source = "leaf-film water capacity [kg m-2 per unit LAI]; plan §4.3 (interception on)"
+
+[intercept_k]
+file = "main"
+key = "soil.intercept_k"
+range = [0.3, 0.8]
+group = "interception"
+variants = ["interception_on"]
+source = "interception extinction coefficient; plan §4.3 (interception on)"
+
+# ----- water stress (§4.4) --------------------------------------------------------------------------
+[wstress_sref_stomata]
+file = "pft"
+key = "pft.wstress_sref_stomata"
+range = [0.5, 5.0]
+transform = "log"
+group = "water stress"
+source = "Sabot stomatal-stress sensitivity [MPa-1]; plan §4.4"
+
+[k_plant_max]
+file = "main"
+key = "hydraulics.k_plant_max"
+range = [2.0e-4, 2.0e-3]
+transform = "log"
+group = "water stress"
+source = "whole-plant conductance [kg s-1 MPa-1 m-2 leaf]; plan §4.4"
+
+[wood_psi50]
+file = "main"
+key = "hydraulics.wood_psi50"
+range = [-3.5, -1.0]
+group = "water stress"
+source = "xylem potential at 50 % loss of conductance [MPa]; plan §4.4"
+
+[root_beta]
+file = "main"
+key = "hydraulics.root_beta"
+range = [3.4e-4, 0.37]
+transform = "log"
+group = "water stress"
+source = "ED2 root-profile decay over 2 m (an e-folding of 0.25-2 m); plan §4.4"
+
+[leaf_pi0]
+file = "pft"
+key = "pft.leaf_pi0"
+range = [-2.5, -1.0]
+default = -1.5
+group = "water stress"
+source = "leaf osmotic potential at full turgor [MPa]; the [hydraulics] default it overrides; plan §4.4"
+
+[psi_wilt]
+file = "main"
+key = "soil.psi_wilt"
+range = [-300.0, -100.0]
+group = "water stress"
+source = "soil wilting head [m]; plan §4.4"
+
+# ----- respiration (§4.5) ---------------------------------------------------------------------------
+[rd_vcmax_ratio]
+file = "pft"
+key = "pft.rd_vcmax_ratio"
+range = [0.008, 0.025]
+group = "respiration"
+source = "leaf dark respiration / Vcmax at 25 C; plan §4.5"
+
+[stem_resp_factor25]
+file = "pft"
+key = "pft.stem_resp_factor25"
+range = [0.02, 0.15]
+transform = "log"
+group = "respiration"
+source = "stem respiration at 25 C [umol m-2 stem s-1]; plan §4.5"
+
+[root_resp_factor25]
+file = "pft"
+key = "pft.root_resp_factor25"
+range = [0.1, 0.6]
+transform = "log"
+group = "respiration"
+source = "fine-root respiration at 25 C [umol kgC-1 s-1]; plan §4.5"
+
+[resp_temp_increase]
+file = "main"
+key = "soil_carbon.resp_temp_increase"
+range = [0.04, 0.10]
+group = "respiration"
+source = "heterotrophic respiration temperature sensitivity [K-1]; plan §4.5"
