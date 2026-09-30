@@ -303,7 +303,7 @@ one means the tower pins the key.
 | G4 | the validation objective falls, and no target's error rises by more than 10 % | pass: every target's error falls, by 7 % (upwelling longwave) to 70 % (albedo) |
 | G5 | keys near a bound are reported | the 8 keys above |
 | G6 | the starts agree within 5 % | 0.3 % |
-| G7 | the five-year run with the slow loop closes its budgets | pass for interception off; **fails for interception on** (53 water-budget breaches), which is why that set is not shipped |
+| G7 | the five-year run with the slow loop closes its budgets | pass for interception off; **fails for interception on** (53 water-budget breaches, #333), which is why that set is not shipped |
 
 ### The calibrated run over the five years
 
@@ -344,17 +344,21 @@ in. Each opens with a header that lists the keys the fit set and the base file's
   | calibrated | 4.3 | 2.9 | 4.8 |
 
   Latent heat falls with it, and H peaks at 106 W m⁻² in April.
-  - **The cause is the two rough hydraulic keys.** The fit saw this. In its 2016-04-13 window,
-    daytime GPP is 6.4 at the estimate against the tower's 14.3. Every one of the Jacobian's
-    neighbours gives 6.3–6.4, so no smooth key could have raised it.
-  - **The better values break the water budget.** With `wood_psi50` and `leaf_pi0` at the values
-    a line search found, the same window gives 9.5, but those values break the five-year run's
-    water budget (659 breaches). So they stay at their defaults, and the shipped set keeps its
-    budgets at the cost of the late dry season.
-- **The soil column's per-layer check is looser.** The whole-site budget closes, but the per-layer
-  face check (`faces[soil_layer_mass]` in the run log) has a worst residual of 2.2 kg m⁻², against
-  0.0011 with the default parameters. The mean residual is 9 × 10⁻⁶ kg m⁻². This is under
-  investigation in the soil-water solver.
+  - **The cause is MEDS's stomatal latch (#332).** By default MEDS shuts a cohort's stomata for
+    the whole day once the previous day's highest leaf water potential falls below twice its
+    turgor-loss point. The fit's 2016-04-13 window gives daytime GPP 6.4 at the estimate, against
+    the tower's 14.3. The same trial with the latch compiled off gives 14.8, and LE 137 against
+    the tower's 141.
+  - **The latch is also why the two hydraulic keys are rough.** `leaf_pi0` sets the turgor-loss
+    point. `wood_psi50` sets how much conductance the wood keeps as it dries, and so how low the
+    leaf water potential falls. Both move the latch's threshold, so the fit holds them at their
+    defaults. The values a line search found lift the window's GPP to 9.5, but they break the
+    five-year run's water budget (659 breaches, #333).
+- **The soil column's per-layer check reads high, but the check is wrong, not the soil (#331).** Its
+  worst residual (`faces[soil_layer_mass]` in the run log) is 2.2 kg m⁻², against 0.0011 with the
+  default parameters. The check subtracts the root uptake the plant requests, while the solver
+  removes less from a layer near wilting. That difference is the whole residual, and the flows
+  between layers are consistent.
 
 ### Redoing it
 

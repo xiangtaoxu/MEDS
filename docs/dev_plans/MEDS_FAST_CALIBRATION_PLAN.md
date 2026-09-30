@@ -530,7 +530,10 @@ The BCI fit ran on the calib-tool build, with trait plasticity on in the example
 
 - **Rough keys: default, not line search.** The line search set `wood_psi50` = −1.24 and
   `leaf_pi0` = −2.43. Those values fit the windows better but broke the five-year water budget:
-  659 breaches. Bisection found that reverting the two keys closes it.
+  659 breaches. Reverting the two keys closes it.
+  - The breaches don't follow any one key. Reverting `root_beta` or `dsl_dmax` alone gives 967 and
+    1,232 breaches, and reverting all five water keys gives 31 (#333).
+  - Both keys are rough because they move the threshold of the stomatal latch (#332, 13.3).
   - Rule: `[fit].rough_keys = "default"`.
   - The cost: the late dry season is too stressed (13.3).
 - **A trial fails on any whole-site budget breach**, not only on a crash. A breach means the
@@ -549,8 +552,11 @@ The BCI fit ran on the calib-tool build, with trait plasticity on in the example
 - **The per-layer soil-water face check** (`faces[soil_layer_mass]`) worsens under every calibrated
   set. The worst residual is 1.1–2.6 kg m⁻², against 0.0011 at the default, while the whole-site
   water budget closes. With `debug_error`, `advance_soil_water_column` stops in October 2012 on
-  "per-face mass budget did not close". This is a solver issue to fix in the model, not the
-  calibration's.
+  "per-face mass budget did not close".
+  - **The check is wrong, not the solver (#331).** It subtracts the requested root uptake, while
+    the solver removes a wilting-limited amount. At all 21 probed events the residual equals the
+    difference, all of it in layer 1.
+  - Until #331 is fixed, `debug_error` cannot locate the real water breaches (#333).
 
 ### 13.3 The late dry season
 
@@ -562,12 +568,23 @@ daytime GPP 6.4 at the MAP against the tower's 14.3.
   values give 9.5.
 - **The chain states are not the cause.** The MAP chain's soil water at the window start matches
   the five-year run's: 0.054 against 0.053 m³ m⁻³ averaged over the rooted layers.
-- **The dry-season response is carried by the two keys the method cannot use.** A fixed-state
-  Jacobian also never sees that more transpiration in January dries April.
+- **The cause is the stomatal latch (#332).** Under `ARREST_GS_CLAMP`, the default, a cohort's
+  stomata shut for the whole day once the previous day's highest leaf water potential is below
+  2·ψ_tlp. The same MAP trial with the latch compiled off gives:
 
-So the next fit needs two things:
-- **A smooth hydraulic response,** or a derivative-free step for the hydraulic keys under a budget
-  constraint.
+  | | daytime GPP | daytime LE |
+  |---|---|---|
+  | latch off | 14.8 | 137 |
+  | tower | 14.3 | 141 |
+
+  - The latch is also why `leaf_pi0` and `wood_psi50` are rough. Their screening smoothness is
+    0.0012 and 0.26, against 0.73–1.21 for the other keys: they move its threshold.
+  - The latch can't be set from the config; switching it off takes a rebuild.
+- **A fixed-state Jacobian also never sees** that more transpiration in January dries April.
+
+So the next fit needs:
+- **A continuous latch, or none (#332).** Then refit with the hydraulic keys free.
+- **The water breaches found and fixed (#333),** which first needs the face check fixed (#331).
 - **Windows long enough, or chained, for the dry-season drawdown to enter the gradient.**
 
 ### 13.4 Efficiency, measured

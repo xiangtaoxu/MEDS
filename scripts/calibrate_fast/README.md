@@ -39,7 +39,8 @@ Barro Colorado Island is the worked example: [`examples/example_flux_tower_bci/c
   response over the finite-difference step is not smooth, so a Jacobian cannot steer it. At BCI
   these were `wood_psi50` and `leaf_pi0`. `rough_keys = "line_search"` sets each by a 1-D search at
   the MAP instead. At BCI that search found values that fit the 10-day windows better but broke the
-  five-year run's water budget (gate G7), which is why it is not the default.
+  five-year run's water budget (gate G7, #333), which is why it is not the default. Both BCI keys are
+  rough because they move the threshold of MEDS's whole-day stomatal latch (#332).
 - **The covariance.** At the MAP, the Laplace covariance weights each target by its effective sample
   size, from the lag-1 autocorrelation of its residuals. A linearity check along the three leading
   directions compares the actual change in the objective at ±1σ with the quadratic prediction.

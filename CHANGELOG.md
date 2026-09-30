@@ -245,7 +245,11 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
   - **A structural limit.** Eight keys end at a bound of their range, among them `vcmax25`,
     `stomatal_g1` and `z0m_ratio`, so part of the misfit is not in the parameters.
   - **Gates.** G1–G7 pass. The five-year run closes its energy and water budgets and its slow ledger.
-    The interception-on fit scores the same but fails G7's water budget.
+    The interception-on fit scores the same but fails G7's water budget (#333).
+  - **Known limits.** The late dry season is too stressed: April GPP is 2.9 against the tower's 6.3
+    in 2016. MEDS's whole-day stomatal latch causes it, and the latch also keeps the two hydraulic
+    keys at their defaults (#332). Under calibrated sets the soil column's per-layer check reads
+    high, falsely (#331).
   - **Running it.** `run_example.py` runs the calibrated five years beside the default, and
     `evaluation.png` and `calibration.png` draw both. `run_example.py --calibrate` redoes the fit,
     about 100 core-hours.
