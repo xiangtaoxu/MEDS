@@ -316,49 +316,49 @@ in. Each opens with a header that lists the keys the fit set and the base file's
 
 | over the tower's measured hours | tower | default | calibrated |
 |---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.70 | **6.75** |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.17 | −3.09 |
-| latent heat [W m⁻²] | 75.5 | 56.4 | **82.4** |
-| sensible heat [W m⁻²] | 32.4 | 77.3 | 68.7 |
-| net radiation [W m⁻²] | 136.3 | 120.6 | **135.3** |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.70 | **6.83** |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.17 | −3.14 |
+| latent heat [W m⁻²] | 75.5 | 56.4 | **81.9** |
+| sensible heat [W m⁻²] | 32.4 | 77.3 | 69.1 |
+| net radiation [W m⁻²] | 136.3 | 120.6 | **135.2** |
 | albedo (695 days) | 0.13 | 0.26 | **0.17** |
 | u\* at night / at midday [m s⁻¹] | 0.41 / 0.68 | 0.86 / 1.08 | **0.50 / 0.67** |
-| midday GPP, LE, H | 21.7, 237, 163 | 28.5, 161, 248 | 18.1, 233, 230 |
-| stand at the end: LAI, AGB [kgC m⁻²] | | 5.64, 18.1 | 5.60, 16.9 |
+| midday GPP, LE, H | 21.7, 237, 163 | 28.5, 161, 248 | 18.2, 232, 231 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | 5.64, 18.1 | 5.62, 17.0 |
 
-- **The budgets close.** Whole-site energy and water have no failed check in 3.05 million, and the
-  slow ledger closes. The run takes 5.6 minutes.
+- **The budgets close.** Whole-site energy and water have no failed check in 3.05 million, the soil
+  column's per-layer check reads 4e-13 kg m⁻², and the slow ledger closes. The run takes 7 minutes.
 - **Net radiation, the albedo, u\*, GPP and LE are now close to the tower.** LE sits above the
   tower's own value by design. The fit's LE is the tower's corrected for closure, and the tower's
   fluxes close only 0.77 of its net radiation.
-- **H is still 36 W m⁻² high.** At midday it is 230 against 163, even with `stomatal_g1` and the
+- **H is still 37 W m⁻² high.** At midday it is 231 against 163, even with `stomatal_g1` and the
   clumping at their limits.
 - **NEE takes up less carbon than the tower does.** The daytime uptake falls with GPP, and the
-  stand grows less: AGB 16.9 kgC m⁻² at the end against 18.1.
-- **The calibrated set is too dry late in the dry season.** In three of the five years April's GPP
-  collapses:
+  stand grows less: AGB 17.0 kgC m⁻² at the end against 18.1.
+- **The calibrated set is too dry late in the dry season.** April's GPP falls short in three of the
+  five years:
 
   | April GPP [µmol m⁻² s⁻¹] | 2014 | 2016 (El Niño) | 2017 |
   |---|---|---|---|
   | tower | 6.9 | 6.3 | 7.0 |
-  | calibrated | 4.3 | 2.9 | 4.8 |
+  | calibrated | 5.2 | 3.9 | 5.3 |
+  | calibrated, under the former hard shutdown | 4.3 | 2.9 | 4.8 |
 
-  Latent heat falls with it, and H peaks at 106 W m⁻² in April.
-  - **The cause is MEDS's stomatal latch (#332).** By default MEDS shuts a cohort's stomata for
-    the whole day once the previous day's highest leaf water potential falls below twice its
-    turgor-loss point. The fit's 2016-04-13 window gives daytime GPP 6.4 at the estimate, against
-    the tower's 14.3. The same trial with the latch compiled off gives 14.8, and LE 137 against
-    the tower's 141.
-  - **The latch is also why the two hydraulic keys are rough.** `leaf_pi0` sets the turgor-loss
+  - **The fit ran under a hard stomatal shutdown.** Until #332 MEDS shut a cohort's stomata for the
+    whole day once its predawn leaf water potential fell below twice its turgor-loss point, and
+    left them open above that. The calibrated set makes the stomata insensitive to drying
+    (`wstress_sref_stomata` 0.83, `stomatal_g1` at its ceiling). The plants kept transpiring until
+    they dried out: predawn potentials reached −21.6 MPa, and in April 2016 the shutdown held 42 %
+    of the cohorts shut.
+  - **The stomata now close gradually.** Since #332 the conductance falls linearly from the
+    turgor-loss point to zero at twice it (`[leaf_physiology].low_water_potential_control`). The
+    plants save water sooner: the lowest predawn potential is −6.8 MPa, cohort-days past twice the
+    turgor-loss point fall from 2.1 % to 0.12 %, and April GPP rises by 0.6–1.0 µmol m⁻² s⁻¹. The
+    default run changes only in the fifth digit.
+  - **The shutdown was also why the two hydraulic keys are rough.** `leaf_pi0` sets the turgor-loss
     point. `wood_psi50` sets how much conductance the wood keeps as it dries, and so how low the
-    leaf water potential falls. Both move the latch's threshold, so the fit holds them at their
-    defaults. The values a line search found lift the window's GPP to 9.5, but they break the
-    five-year run's water budget (659 breaches, #333).
-- **The soil column's per-layer check reads high, but the check is wrong, not the soil (#331).** Its
-  worst residual (`faces[soil_layer_mass]` in the run log) is 2.2 kg m⁻², against 0.0011 with the
-  default parameters. The check subtracts the root uptake the plant requests, while the solver
-  removes less from a layer near wilting. That difference is the whole residual, and the flows
-  between layers are consistent.
+    leaf water potential falls. Both moved the step, so the fit held them at their defaults. With
+    the gradual closure a refit can free them; the shipped set predates it.
 
 ### Redoing it
 

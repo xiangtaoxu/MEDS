@@ -138,7 +138,7 @@ contains
       !----- KEYWORD form, deliberately. A positional structure constructor silently re-binds every  !
       !      value when a component is inserted mid-type, and components WITH defaults cannot be      !
       !      skipped positionally at all -- which is exactly how this file stopped compiling when      !
-      !      #95 added psi_tlp/stress_arrestor to leaf_photo_params_t (see to_params below). ----------!
+      !      #95 added psi_tlp and an arrestor selector to leaf_photo_params_t (see to_params below). -!
       env = leaf_env_t(par=env_c%par, leaf_temp=env_c%leaf_temp, vpd=env_c%vpd, ca=env_c%ca,      &
                        pressure=env_c%pressure, psi_leaf=env_c%psi_leaf, gb=env_c%gb,             &
                        psi=env_c%psi)
@@ -148,14 +148,14 @@ contains
       type(leaf_params_c), intent(in) :: p_c
       type(leaf_photo_params_t)       :: p
       !----- KEYWORD form (see to_env). This constructor was POSITIONAL and broke the moment           !
-      !      leaf_photo_params_t grew components in the middle: #95 inserted psi_tlp and                 !
-      !      stress_arrestor after sref_stomata, so the trailing values shifted by three and ifx         !
+      !      leaf_photo_params_t grew components in the middle: #95 inserted psi_tlp and an arrestor     !
+      !      selector after sref_stomata, so the trailing values shifted by three and ifx                !
       !      rejected the file with "Omitted component is not initialized" for o2_mol_frac /             !
       !      absorptance / phi_psii. The pylib is NOT part of the default build or of ctest, so nothing  !
       !      caught it -- see issue #100.                                                                !
       !                                                                                          !
-      !      psi_tlp, stress_arrestor and wstress_nonstomatal are absent from leaf_params_c and take     !
-      !      their type defaults (-2.0 MPa, ARREST_GS_CLAMP, .false.). Exposing them across the C ABI    !
+      !      psi_tlp, low_psi_control and wstress_nonstomatal are absent from leaf_params_c and take     !
+      !      their type defaults (-2.0 MPa, linear decline, .false.). Exposing them across the C ABI     !
       !      is a deliberate follow-up, not an oversight: adding a field to a bind(c) struct is an ABI   !
       !      break for any existing caller. --------------------------------------------------------!
       p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &

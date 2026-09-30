@@ -123,12 +123,12 @@ module meds_plant_types
       real(wp) :: theta_cj_c3, theta_ip_c3
       real(wp) :: theta_cj_c4, theta_ic_c4
       real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
-      !----- Leaf turgor-loss point [MPa], from pv_psi_tlp(leaf_pi0, leaf_elastic_mod). Below TWICE  !
-      !      this (i.e. far past the point where the leaf has lost all turgor) the stomata are shut  !
-      !      HARD -- see the psi_shut branch in solve_leaf_gas_exchange. -------------------------!
+      !----- Leaf turgor-loss point [MPa], from pv_psi_tlp(leaf_pi0, leaf_elastic_mod). Below it the  !
+      !      stomatal conductance is scaled down linearly, to zero at TWICE it -- see              !
+      !      low_psi_gs_factor in meds_leaf_gas_exchange. ---------------------------------------!
       real(wp) :: psi_tlp = -2.0_wp
-      !----- ARREST_* selector; the clamp branch only fires for ARREST_GS_CLAMP. ---------------!
-      integer(ik) :: stress_arrestor = 1_ik
+      !----- LWP_CONTROL_* selector (meds_config): 1 = linear decline, the only option (#332). ----!
+      integer(ik) :: low_psi_control = 1_ik
       !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
       !      meds_config_t%leaf_wstress_nonstomatal for why (issue #47). The stomatal limb has no    !
       !      such switch: it is driven by psi and is the better-constrained of the two. --------!

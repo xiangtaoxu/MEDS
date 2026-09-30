@@ -580,10 +580,26 @@ daytime GPP 6.4 at the MAP against the tower's 14.3.
   - The latch is also why `leaf_pi0` and `wood_psi50` are rough. Their screening smoothness is
     0.0012 and 0.26, against 0.73–1.21 for the other keys: they move its threshold.
   - The latch can't be set from the config; switching it off takes a rebuild.
+- **The latch was protecting collapsed plants.** Under the shipped set, predawn leaf potentials
+  reached −21.6 MPa, and in April 2016 42 % of cohorts sat below 2·ψ_tlp. The default run never went
+  below 2·ψ_tlp (lowest −2.65 MPa). The fit made the stomata insensitive to drying
+  (`wstress_sref_stomata` 0.83, `stomatal_g1` at its ceiling), so the plants kept transpiring until
+  the latch shut them.
+- **Replaced by a linear decline (#332).** The conductance the stomatal model calculates is now
+  multiplied by a factor falling linearly from 1 at ψ_tlp to 0 at 2·ψ_tlp
+  (`[leaf_physiology].low_water_potential_control`). With the shipped set:
+
+  | five years | latch | linear decline |
+  |---|---|---|
+  | lowest predawn ψ | −21.6 MPa | −6.8 MPa |
+  | cohort-days below 2·ψ_tlp | 2.1 % | 0.12 % |
+  | April GPP 2014 / 2016 / 2017 (tower 6.9 / 6.3 / 7.0) | 4.3 / 2.9 / 4.8 | 5.2 / 3.9 / 5.3 |
+
+  The default run changes only in the fifth digit.
 - **A fixed-state Jacobian also never sees** that more transpiration in January dries April.
 
 So the next fit needs:
-- **A continuous latch, or none (#332).** Then refit with the hydraulic keys free.
+- **A refit with the hydraulic keys free,** now that the closure is continuous (#332).
 - **The water breaches found and fixed (#333),** which first needs the face check fixed (#331).
 - **Windows long enough, or chained, for the dry-season drawdown to enter the gradient.**
 

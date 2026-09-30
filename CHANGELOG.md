@@ -32,6 +32,44 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Changed
 
+- **Stomata close gradually at low leaf water potential, not in one step** (#335, #332).
+  `[leaf_physiology].low_water_potential_control = "linear_decline"` is optional, and the only option.
+  - **What it does.** The conductance the stomatal model calculates, g0 included, is multiplied by a
+    factor that falls linearly from 1 at the leaf's turgor-loss point, ψ_tlp, to 0 at twice it. The
+    factor is set from the previous day's predawn leaf potential.
+  - **The solve stays coupled.** Leuning and Medlyn apply the factor inside the Ci solve. Katul
+    re-solves with gs pinned at the factor times its optimum.
+  - **A fully closed leaf** exchanges no CO₂ or water by day (net assimilation 0, its respiration
+    refixed), and respires at night.
+  - **The carbon consequence.** Rd is unchanged and still charged in full. As gs goes to 0 the
+    coupled solve drives net assimilation to 0, so gross assimilation, which the canopy counts as
+    GPP, tends to Rd. A fully closed leaf is therefore carbon-neutral by day (GPP = Rd, respiration
+    Rd), where the former shutdown gave it GPP 0 and a loss of Rd. At night it loses Rd, as before.
+    A tower's GPP, partitioned from NEE, cannot see refixed CO₂.
+  - **It replaces a hard shutdown at 2·ψ_tlp** (`ARREST_GS_CLAMP`), which no config could change. That
+    shut a cohort completely below the threshold and left it untouched above. The step made the
+    fluxes jump as a parameter moved the threshold or the predawn potential across it, and no
+    gradient-based calibration could see past it (the BCI calibration, #330).
+  - **What changes.** A run whose cohorts stay above ψ_tlp is bit-identical. Between ψ_tlp and 2·ψ_tlp
+    the conductance now falls. Below 2·ψ_tlp a leaf's daytime net assimilation is 0, where it was −Rd.
+    A thermodynamic limit on transpiration (#96) would make this control matter less.
+  - **On the BCI example, five years:**
+    - The default run changes only in the fifth digit (GPP 10.7023 → 10.7022 µmol m⁻² s⁻¹).
+    - With the calibrated set (#330), closing from ψ_tlp keeps the plants from drying out. The
+      lowest predawn potential goes from −21.6 to −6.8 MPa, and cohort-days below 2·ψ_tlp from
+      2.1 % to 0.12 %.
+    - April GPP in 2014, 2016 and 2017 rises from 4.3, 2.9 and 4.8 to 5.2, 3.9 and 5.3 (the tower:
+      6.9, 6.3 and 7.0).
+    - Both runs close their budgets.
+  - **Tests:** `leaf_physiology` checks:
+    - the factor itself: 1 at ψ_tlp, linear, 0 at 2·ψ_tlp;
+    - half way through the band, gs is half the Medlyn conductance of the solved leaf;
+    - for Leuning, Medlyn and Katul, gs is continuous, never rises as ψ falls, and stays consistent
+      with A through diffusion;
+    - past 2·ψ_tlp, a leaf exchanges nothing by day and respires at night.
+
+    The old shutdown fails it. `test_region` refuses any other value of the key.
+
 - **The BCI example's leaf traits follow the canopy's light gradient**
   (#330; `[trait_dynamics].trait_plasticity_on = true`; `MEDS_FAST_CALIBRATION_PLAN.md` D6). Each cohort's
   Vcmax25, Rd25, SLA and leaf lifespan are its PFT's top-of-canopy values scaled by the leaf area
@@ -246,10 +284,9 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     `stomatal_g1` and `z0m_ratio`, so part of the misfit is not in the parameters.
   - **Gates.** G1–G7 pass. The five-year run closes its energy and water budgets and its slow ledger.
     The interception-on fit scores the same but fails G7's water budget (#333).
-  - **Known limits.** The late dry season is too stressed: April GPP is 2.9 against the tower's 6.3
-    in 2016. MEDS's whole-day stomatal latch causes it, and the latch also keeps the two hydraulic
-    keys at their defaults (#332). Under calibrated sets the soil column's per-layer check reads
-    high, falsely (#331).
+  - **Known limits.** The late dry season is too stressed: April GPP is 3.9 against the tower's 6.3
+    in 2016 (2.9 before the stomata closed gradually, #335). The fit held the two hydraulic keys at
+    their defaults because the former whole-day shutdown made them rough.
   - **Running it.** `run_example.py` runs the calibrated five years beside the default, and
     `evaluation.png` and `calibration.png` draw both. `run_example.py --calibrate` redoes the fit,
     about 100 core-hours.

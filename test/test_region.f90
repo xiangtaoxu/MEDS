@@ -197,6 +197,9 @@ program test_region
    call refused('hydraulics.conductance is whole_plant or segment',                                 &
                 '[hydraulics]'//nl()//'conductance = "xylem"'//nl()//site_block(1_ik), .false., .false., &
                 'hydraulics.conductance must be')
+   call refused('leaf_physiology.low_water_potential_control is linear_decline',                    &
+                '[leaf_physiology]'//nl()//'low_water_potential_control = "clamp"'//nl()//          &
+                site_block(1_ik), .false., .false., 'low_water_potential_control must be')
    !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
    !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
    call refused('format = "netcdf" is refused, naming ED_default',                                  &

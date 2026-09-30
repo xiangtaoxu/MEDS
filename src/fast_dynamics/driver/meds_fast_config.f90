@@ -68,7 +68,7 @@ contains
          p%psi_tlp        = pft_leaf_psi_tlp(cfg, ipft)   ! the PFT's own pressure-volume curve
       end associate
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
-      p%stress_arrestor     = cfg%leaf_stress_arrestor
+      p%low_psi_control     = cfg%low_water_potential_control
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
       p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar
