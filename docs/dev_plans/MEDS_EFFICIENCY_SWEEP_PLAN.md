@@ -753,6 +753,9 @@ Per D6 these are not filed as issues; each is named in the commit and PR message
 | N-4 | A selection sort (cost ∝ cohorts²) every sub-step | `apply_rt_forcing` | 2 |
 | N-5 | Census fusion reorders all cohorts after every fused pair | `patch_fuse_pass` → `rebuild_csr` | optional: 3.9 s once per census start; reorder once per pass |
 | N-6 | `pow` in the soil hydraulic functions | `meds_hydr_lib` | optional: 6.5% of CPU; precomputed exponents move rounding everywhere |
+| N-7 | The daily tissue-water reconcile ignores a PFT's own curve | `meds_fast_reconcile` | 3 (fixed, `10d6482`) |
+| N-8 | A diagnostic reader leaves its slots unset when its block has no entries, so a slow-only run read stale values | `meds_site_diag_types` | 6 (fixed, `11e00bf`) |
+| N-9 | A detail polygon (hourly files, per-cohort diagnostics) costs about four times an ordinary one and sets a threaded region's pace | `meds_region` | 5 (measured; the lever is noted in the Phase 5 status) |
 
 ---
 
