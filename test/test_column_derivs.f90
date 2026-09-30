@@ -14,7 +14,7 @@
 !                                    budgets to round-off and warms the CAS toward a warm atmosphere. !
 !==========================================================================================!
 program test_column_derivs
-   use meds_test_assert, only : check, check_true, test_report
+   use meds_test_assert, only : check, check_true, check_close, test_report
    use meds_kinds,          only : wp, ik
    use meds_constants,      only : latent_heat_vap, stefan, cp_air, tiny_num, rho_h2o
    use meds_therm_lib,         only : cas_enthalpy_of_temp, cas_temp_of_enthalpy,                   &
@@ -98,7 +98,8 @@ contains
          frozen%tissue%h_coeff_leaf(i) = 2.0_wp * frozen%tissue%lai(i) * 0.03_wp * 1.2_wp * cp_air  ! effarea*lai*gbh*rho*cp
          frozen%tissue%g_transp_leaf(i)    = 0.004_wp * frozen%tissue%lai(i)                          ! series conductance [m/s]
       end do
-      frozen%tissue%leaf_emiss    = 0.95_wp
+      allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
+      frozen%tissue%leaf_emiss    = 0.95_wp ; frozen%tissue%wood_emiss = 0.95_wp
       frozen%cas%rho           = 1.2_wp
       frozen%cas%press         = 101325.0_wp
       frozen%cas%cas_mass_capacity          = frozen%cas%rho * 20.0_wp                                ! rho * can_depth
@@ -140,7 +141,7 @@ contains
       worst = 0.0_wp
       do i = 1_ik, n
          dtl      = f%leaf_temp(i) - tcas
-         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(i)
+         lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(i) * stefan * tcas ** 3 * frozen%tissue%lai(i)
          !----- the leaf pays the FULL vapour enthalpy at the linearization temperature (2026-09). -!
          le_slope = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * dqdt
          le_ref   = enthalpy_vapor(tcas) * frozen%cas%rho * frozen%tissue%g_transp_leaf(i) * (qsat_c - qcas)
@@ -170,7 +171,7 @@ contains
       y%cas_shv      = 0.010_wp
       call surface_derivs(y, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, 297.0_wp, 1_ik, f)
       tcas     = cas_temp_of_enthalpy(y%cas_enthalpy, y%cas_shv)
-      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss * stefan * tcas ** 3 * frozen%tissue%lai(1)
+      lw_slope = 4.0_wp * frozen%tissue%leaf_emiss(1) * stefan * tcas ** 3 * frozen%tissue%lai(1)
       expect   = tcas + frozen%tissue%abs_sw(1) / (frozen%tissue%h_coeff_leaf(1) + lw_slope)
       call check('leaf T = tcas + Rn/(h+lw_slope) (no latent, no LW)', f%leaf_temp(1), expect, 1.0e-10_wp)
    end subroutine test_leaf_analytic
@@ -272,7 +273,7 @@ contains
       nsl = 10_ik
       print '(a)', 'test_soil_energy_tendency:'
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
@@ -304,7 +305,7 @@ contains
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soil)
       hopts = soil_opts_t()
       do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
@@ -708,14 +709,15 @@ contains
 
    !----- 11b. THE TISSUE-WATER FLOOR REPORTS THE WATER IT CREATES (#148). The floor stops the      !
    !      linear mass Euler step going negative, and does so by CREATING water. The whole-column      !
-   !      ledger is blind to it -- it sums leaf + wood over all cohorts, so water created in one       !
+   !      ledger could not see it -- it sums leaf + wood over all cohorts, so water created in one     !
    !      cohort's wood is indistinguishable from a redistribution -- which is why the case sat        !
-   !      documented as "unobserved" on no measurement at all.                                         !
+   !      documented as "unobserved" on no measurement at all. The ARK ledger now declares the        !
+   !      reported mass as created water (#333; test_column_ark's test_ark_tissue_floor_ledger).      !
    subroutine test_tissue_water_floor()
       type(column_state_t)  :: y, y_out
       type(column_frozen_t) :: frozen
       type(surface_tend_t)  :: sf
-      real(wp)    :: fmass, w_before
+      real(wp)    :: fmass, w_before, w_in, w_out, w_flux
       integer(ik) :: fcount, n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_tissue_water_floor:'
@@ -744,6 +746,14 @@ contains
                       all(y_out%leaf_water_mass(1:n) >= 0.0_wp), minval(y_out%leaf_water_mass(1:n)))
       call check_true('the reported mass is the sanity scale of the store it replaced',            &
                       fmass < max(w_before, 1.0_wp), fmass)
+      !----- (c) The reported mass is EXACTLY the water the floor made: the plant's water changed by   !
+      !          its fluxes plus fmass, and nothing else. This is what the ARK whole-column ledger now  !
+      !          relies on when it declares the mass as created water (#333). ----------------------!
+      w_in   = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
+      w_out  = sum((y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
+      w_flux = 900.0_wp * (sum(frozen%plant%uptake_frozen(1:n) * frozen%plant%nplant(1:n)) - sum(sf%transp_c(1:n)))
+      call check_close('floored stores: plant water change = fluxes + the reported floor mass',     &
+                       w_out - w_in, w_flux + fmass, 1.0e-10_wp * max(1.0_wp, abs(w_flux)))
    end subroutine test_tissue_water_floor
 
    !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !
@@ -974,7 +984,7 @@ contains
    !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
    !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
    !                                                                                                  !
-   ! face_and_sink adds nothing unguarded: kface is an upstream pick among those K, gface and the      !
+   ! face_and_sink adds nothing unguarded: kface is a log-linear blend of those K, gface and the       !
    ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
    ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
    ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !
@@ -1092,7 +1102,7 @@ contains
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, frozen%params%soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, frozen%params%soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, frozen%params%therm)
       frozen%params%hydro_opts = soil_opts_t()
       hp%leaf_pi0 = -1.5_wp ; hp%leaf_elastic_mod = 12.0_wp ; hp%leaf_apoplast_frac = 0.30_wp
@@ -1126,6 +1136,8 @@ contains
       frozen%tissue%leaf_hcap_per_dt = 0.0_wp ; frozen%tissue%wood_hcap_per_dt = 0.0_wp
       frozen%tissue%t_leaf0 = 0.0_wp ; frozen%tissue%t_wood0 = 0.0_wp
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
+      allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
+      frozen%tissue%leaf_emiss = 0.95_wp ; frozen%tissue%wood_emiss = 0.95_wp
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
       frozen%tissue%h_coeff_w = 0.0_wp
       frozen%tissue%abs_sw_wood = 0.0_wp

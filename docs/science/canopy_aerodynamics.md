@@ -92,6 +92,16 @@ sub-canopy CO₂ build-up (the tracked BUG8). The kernel also reports the scale 
 $`t_*=\mathrm{temp1}\,\Delta\theta`$, $`q_*=\mathrm{temp2}\,\Delta q`$, $`c_*=\mathrm{temp2}\,\Delta
 C`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
 
+**The reference level.** $`z_{ref}`$ is the canopy-air top, where the forcing is moved to
+([forcing](forcing.md) §8), and both potential temperatures are referenced to it: $`\theta_{atm}`$ is
+the air temperature there and $`\theta_{CAS}`$ the canopy-air temperature, so
+$`\Delta\theta = T_{atm} - T_{CAS}`$. That is the difference the canopy air's energy budget
+exchanges, $`g_{ah}\,(h_{CAS}-h_{atm})`$ on actual temperatures, so the reported sensible heat
+$`H = g_{ah}\,c_p\,(T_{CAS}-T_{atm})`$ is the flux the budget books. Before v0.3.1 $`\theta_{atm}`$ was
+referenced to the ground, $`T_{atm}+(g/c_p)\,z_{ref}`$, and $`\theta_{CAS}`$ was not. That added
+$`(g/c_p)\,z_{ref}`$, 0.4 K at a 40 m canopy, of stable stratification to every solve, and lowered the
+reported H by $`g_{ah}\,g\,z_{ref}`$, about 100 W m⁻² at Barro Colorado Island.
+
 ### These three are re-solved at *every integrator stage*, and that is load-bearing
 
 Almost everything the fast loop computes per-cohort — photosynthesis, stomatal conductance, the leaf
@@ -165,7 +175,8 @@ the driver reverses at the call site; both reversals are identity for $n\le1$).
 Nusselt kernel `boundary_gbh_mos`, the parallel sum of forced (Reynolds) and free (Grashof) convection
 — the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
-(leaf width or branch diameter):
+(leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
+temperature for the wood layer; before v0.3.1 the wood layer used the leaf temperature too.
 
 ```math
 \mathrm{Nu}_{forced}=\max\!\big(a_{lam}\mathrm{Re}^{\,n_{lam}},\,a_{turb}\mathrm{Re}^{\,n_{turb}}\big),

@@ -17,7 +17,8 @@
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
+   use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
@@ -153,7 +154,8 @@ contains
       associate (sc => cfg%soil_column)
          call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
                                      sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, sc%root_beta, sc%psi_fc, ctx%col_config%soil)
+                                     sc%curve_par_n, cfg%hydraulics%root_beta,                     &
+                                     cfg%hydraulics%root_depth, sc%psi_fc, ctx%col_config%soil)
          call build_soil_therm_params(sc%n_layer, sc%solid_conductivity, sc%dry_conductivity,      &
                                       sc%dry_heat_capacity, ctx%col_config%soil_thermal)
       end associate
@@ -164,6 +166,12 @@ contains
       !----- #179: ONE seam, and it builds the PER-PFT table. The shared [hydraulics] block is the  !
       !      base; whatever per-PFT traits the [pft] table supplied are laid over it.  ---------------!
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+      !----- [hydraulics].conductance: k_plant_max per leaf area, or the sapwood segment. ---------!
+      if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
+         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_SEGMENT
+      else
+         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_KPLANT
+      end if
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
@@ -172,7 +180,13 @@ contains
       !      (all opt-in; cfg carries the meds_biophysics_opts defaults unless a block overrides).    !
       !      Same types as the column config members, so a plain verbatim struct copy. --------------!
       ctx%col_config%soil_water_opts  = cfg%soil        ! [soil]         -> soil-water Richards solver opts
+      ctx%soil_albedo(1) = cfg%soil%ground_albedo_vis   ! [soil] ground optics -> the canopy radiation solver
+      ctx%soil_albedo(2) = cfg%soil%ground_albedo_nir
+      ctx%soil_emiss     = cfg%soil%ground_emissivity
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
+      !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
+      ctx%theta_init     = cfg%init_soil_theta
+      ctx%soil_temp_init = cfg%init_soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
 
@@ -431,7 +445,10 @@ contains
                      out_bufs%fast_coh_height(out_bufs%fast_cohort_cap, nsub))
          end if
          out_bufs%n_fast_sub    = nsub
-         out_bufs%fast_n_soil   = nl
+         !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers  !
+         !      past n_active stay unwritten and read back as the fill value, as on the coarse tiers  !
+         !      (#246). ---------------------------------------------------------------------------!
+         out_bufs%fast_n_soil   = min(ctx%col_config%soil%n_active, nl)
          out_bufs%fast_n_cohort = site%cohort%n
          do isub = 1_ik, nsub
             out_bufs%fast(isub) = fast_sample_t()
@@ -777,6 +794,8 @@ contains
                red_fast(isub,ip)%h_flux        = w_area * h_flux
                red_fast(isub,ip)%rnet          = w_area * rnet
                red_fast(isub,ip)%sw_in         = w_area * met%swdown()
+               red_fast(isub,ip)%sw_up         = w_area * (forc%sw_up_vis + forc%sw_up_nir)
+               red_fast(isub,ip)%lw_up         = w_area * forc%lw_up
                red_fast(isub,ip)%ustar         = w_area * aero%ustar
                red_fast(isub,ip)%air_temp      = w_area * met%tair_k
                !----- CARBON. budget%nee_last is the model's own NEE [umol/m2/s], sign-positive to     !
@@ -919,6 +938,8 @@ contains
                out_bufs%fast(isub)%h_flux        = out_bufs%fast(isub)%h_flux        + red_fast(isub,ip)%h_flux
                out_bufs%fast(isub)%rnet          = out_bufs%fast(isub)%rnet          + red_fast(isub,ip)%rnet
                out_bufs%fast(isub)%sw_in         = out_bufs%fast(isub)%sw_in         + red_fast(isub,ip)%sw_in
+               out_bufs%fast(isub)%sw_up         = out_bufs%fast(isub)%sw_up         + red_fast(isub,ip)%sw_up
+               out_bufs%fast(isub)%lw_up         = out_bufs%fast(isub)%lw_up         + red_fast(isub,ip)%lw_up
                out_bufs%fast(isub)%ustar         = out_bufs%fast(isub)%ustar         + red_fast(isub,ip)%ustar
                out_bufs%fast(isub)%air_temp      = out_bufs%fast(isub)%air_temp      + red_fast(isub,ip)%air_temp
                out_bufs%fast(isub)%nee_rate      = out_bufs%fast(isub)%nee_rate      + red_fast(isub,ip)%nee_rate

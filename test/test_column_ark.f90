@@ -28,6 +28,8 @@ program test_column_ark
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
+   use meds_fast_frozen,        only : build_column_frozen
+   use meds_fast_types,         only : column_frozen_t, column_state_t
    use meds_hydr_lib,            only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
    implicit none
@@ -71,7 +73,7 @@ program test_column_ark
    call check_close(col_cohort%aboveground_frac(1), cfg%pft%aboveground_frac(1), 1.0e-14_wp,   &
                     'aboveground_frac did not reach the column view from the PFT table')
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, 2.0_wp, -3.37_wp, col_config%soil)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
@@ -97,6 +99,24 @@ program test_column_ark
    call check_true('ARK pre-pass gpp bit-identical to RK45 (one shared build_column_frozen)',                         &
            abs(gpp_ark(1) - gpp_rk45(1)) < 1.0e-12_wp, abs(gpp_ark(1) - gpp_rk45(1)))
    call check_true('ARK midday gpp > 0', gpp_ark(1) > 0.0_wp, gpp_ark(1))
+
+   !=== Emissivity. The energy balance's emission slope 4*eps*sigma*T^3 takes each cohort's PFT     !
+   !    leaf_emissivity and wood_emissivity, the values the radiation solver emits with; it was a    !
+   !    hard-coded 0.95 for both. Distinct values for leaf and wood catch a leaf-for-wood swap. -----!
+   block
+      type(column_frozen_t) :: fz
+      type(column_state_t)  :: ys
+      real(wp) :: eps_leaf0, eps_wood0
+      eps_leaf0 = cfg%pft%leaf_emissivity(col_cohort%pft(1)) ; eps_wood0 = cfg%pft%wood_emissivity(col_cohort%pft(1))
+      cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
+      call reset_state()
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               n, nsl, fz, ys)
+      call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
+      call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
+      cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
+      call reset_state()
+   end block
 
    !=== B. A dry-window march under INTEG_ARK stays physical + bounded + sub-saturated. ========!
    call reset_state()

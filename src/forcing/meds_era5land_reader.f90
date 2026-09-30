@@ -174,7 +174,7 @@ contains
       integer(c_int) :: ncid, st
       real(wp), allocatable :: lat(:), lon(:), valid(:,:), elev(:,:), lfrac(:,:)
       real(wp)    :: lf_min
-      integer(ik), allocatable :: cols(:)
+      integer(ik), allocatable :: cols(:), col_index(:)
       real(wp)    :: west, east
       integer(ik) :: nlat, nlon, r0, r1, j, i, k, n
 
@@ -189,11 +189,13 @@ contains
          end if
       end do
       west = wrap_longitude(nwse(2), lon(1)) ; east = wrap_longitude(nwse(4), lon(1))
+      !----- The 0-based column indices are a NAMED array: nvfortran 25.11 miscompiles an implied-do  !
+      !      inside a pack inside an array constructor -- wrong indices at -O2, a segfault at -O0. ---!
+      col_index = [(i, i = 0_ik, nlon - 1_ik)]
       if (west <= east) then
-         cols = pack([(i, i = 0_ik, nlon - 1_ik)], lon >= west - GRID_TOL .and. lon <= east + GRID_TOL)
+         cols = pack(col_index, lon >= west - GRID_TOL .and. lon <= east + GRID_TOL)
       else
-         cols = [pack([(i, i = 0_ik, nlon - 1_ik)], lon >= west - GRID_TOL),                          &
-                 pack([(i, i = 0_ik, nlon - 1_ik)], lon <= east + GRID_TOL)]
+         cols = [pack(col_index, lon >= west - GRID_TOL), pack(col_index, lon <= east + GRID_TOL)]
       end if
       if (r0 < 0_ik .or. size(cols) == 0) then
          st = nc_close(ncid) ; stat = ERA_ERR_NO_CELL ; return
@@ -338,9 +340,10 @@ contains
 
       !----- MEDS never gap-fills (§5.5): the static mask promises data in every selected cell.    !
       !      ieee_is_nan, not x /= x: a vectorized self-comparison may signal "invalid" on a quiet   !
-      !      NaN, which a -fpe0 build traps before the message below can name the cell. -----------!
+      !      NaN, which a -fpe0 build traps before the message below can name the cell. The first NaN  !
+      !      is found through an integer mask: nvfortran 25.11 has no findloc for LOGICAL arrays.    !
       if (any(ieee_is_nan(buf%values))) then
-         bad = int(findloc(ieee_is_nan(buf%values), .true.), ik)
+         bad = int(findloc(merge(1, 0, ieee_is_nan(buf%values)), 1), ik)
          write(message, '(a,a,i4.4,a,i2.2,a,i0,a,f9.3,a,f9.3,a)') trim(ERA_VAR_NAME(bad(3))), ' ',         &
                year, '-', month, ' hour ', bad(1), ' at cell (', dom%lat(bad(2)), ', ', dom%lon(bad(2)), ')'
          stat = ERA_ERR_NAN ; return

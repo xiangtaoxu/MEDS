@@ -18,7 +18,8 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t
+   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
+                               LWP_CONTROL_LINEAR_DECLINE
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_hydr_lib,   only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -27,7 +28,7 @@ module meds_config_io
    use meds_forcing_config, only : HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND,                     &
                                    WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
    use meds_forcing_config, only : forcing_config_t,                                            &
-                                   MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND, &
+                                   MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND, &
                                    METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER,      &
                                    SWPART_PASSTHROUGH, SWPART_CLEARIDX, SWPART_WEISS_NORMAN,      &
                                    LW_FILE, LW_SYNTHESIZE, CLAMP_ERROR, CLAMP_HOLD,              &
@@ -199,7 +200,12 @@ contains
       c%ksat        = toml_real(tm, 'soil_column.ksat',        c%ksat)
       c%curve_par_a = toml_real(tm, 'soil_column.curve_par_a', c%curve_par_a)
       c%curve_par_n = toml_real(tm, 'soil_column.curve_par_n', c%curve_par_n)
-      c%root_beta   = toml_real(tm, 'soil_column.root_beta',   c%root_beta)
+      !----- The root profile is a plant hydraulic trait, [hydraulics].root_beta and root_depth. A   !
+      !      [soil_column].root_beta would parse and do nothing, so it is refused, naming the keys.  !
+      if (toml_has(tm, 'soil_column.root_beta'))                                                    &
+         error stop 'load_meds_config: soil_column.root_beta is gone; the root profile is a plant '// &
+                    'trait: set [hydraulics].root_beta (0 < beta < 1) and root_depth. '//            &
+                    'root_beta = exp(-b*root_depth) gives the old exponential decay b per metre'
       c%psi_fc      = toml_real(tm, 'soil_column.psi_fc',      c%psi_fc)
       c%solid_conductivity = toml_real(tm, 'soil_column.solid_conductivity', c%solid_conductivity)
       c%dry_conductivity   = toml_real(tm, 'soil_column.dry_conductivity',   c%dry_conductivity)
@@ -248,6 +254,9 @@ contains
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
       s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
       s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
+      s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
+      s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
+      s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
    end subroutine load_soil_opts
 
    subroutine load_energy_opts(tm, e)                   ! [energy] -> soil-thermal opts
@@ -407,18 +416,25 @@ contains
    end subroutine req_colimitation
 
    !----- [forcing] string-enum mappers. ----------------------------------------------------!
-   subroutine req_met_backend(t, key, mode, m)      ! "netcdf" | "era5land" | "const"
+   !----- The two file formats are named after their families (MEDS_FLUX_TOWER_FORCING_PLAN.md D3), !
+   !      matched exactly. The earlier spellings stop with the name that replaced them, so an old      !
+   !      config gets the fix rather than a list of missing keys. -------------------------------------!
+   subroutine req_met_backend(t, key, mode, m)      ! "ED_default" | "ED_ERA5land" | "const"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
       integer(ik), intent(out) :: mode ; type(keymiss_t), intent(inout) :: m
       character(len=64) :: s
-      mode = MET_BACKEND_NETCDF
+      mode = MET_BACKEND_ED_DEFAULT
       if (.not. toml_has(t, key)) then ; call note_missing(m, key) ; return ; end if
-      s = toml_string(t, key, 'netcdf')
+      s = toml_string(t, key, 'ED_default')
       select case (trim(s))
-      case ('netcdf')   ; mode = MET_BACKEND_NETCDF
-      case ('era5land') ; mode = MET_BACKEND_ERA5LAND
-      case ('const')    ; mode = MET_BACKEND_CONST
-      case default    ; call note_missing(m, key)
+      case ('ED_default')  ; mode = MET_BACKEND_ED_DEFAULT
+      case ('ED_ERA5land') ; mode = MET_BACKEND_ED_ERA5LAND
+      case ('const')       ; mode = MET_BACKEND_CONST
+      case ('netcdf')
+         error stop 'load_meds_config: forcing.format = "netcdf" is now "ED_default"; rename it'
+      case ('era5land')
+         error stop 'load_meds_config: forcing.format = "era5land" is now "ED_ERA5land"; rename it'
+      case default         ; call note_missing(m, key)
       end select
    end subroutine req_met_backend
 
@@ -506,11 +522,11 @@ contains
       cfg%forcing%forcing_on = toml_logical(t, 'forcing.forcing_on', .false.)   ! opt-in gate (defaulted)
       if (.not. cfg%forcing%forcing_on) return
       call req_met_backend  (t, 'forcing.format',         cfg%forcing%backend,               m)
-      !----- The source picks its own keys. The archive (format = "era5land", §15.2) finds the    !
+      !----- The source picks its own keys. The archive (format = "ED_ERA5land", §15.2) finds the  !
       !      site's cell itself and takes its orography from the static file, so the keys that     !
       !      name a file, a grid slot or a grid elevation would parse and do nothing there: they    !
       !      are rejected rather than ignored. ---------------------------------------------------!
-      if (cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+      if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
          call req_s         (t, 'forcing.data_path',       cfg%forcing%data_path,             m)
          !----- A region's polygons sit on their cells, so no site-to-cell distance exists. ------!
          if (cfg%run_mode /= RUN_MODE_REGION)                                                     &
@@ -520,7 +536,7 @@ contains
          if (toml_has(t, 'forcing.path') .or. toml_has(t, 'forcing.grid_index') .or.               &
              toml_has(t, 'forcing.grid_match') .or. toml_has(t, 'site.grid_elevation'))            &
             error stop 'load_meds_config: forcing.path, forcing.grid_index, forcing.grid_match and '// &
-                       'site.grid_elevation do not apply to forcing.format = "era5land" (the archive '// &
+                       'site.grid_elevation do not apply to forcing.format = "ED_ERA5land" (the archive '// &
                        'finds the site cell and its elevation itself); remove them'
       else
          call req_s         (t, 'forcing.path',           cfg%forcing%path,                  m)
@@ -567,24 +583,27 @@ contains
       case default
          error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
       end select
+      !----- Every forcing clock is UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1): the solar geometry takes  !
+      !      local solar time from the longitude alone, and a shift to local time belongs to the       !
+      !      post-processing of the output. The two keys that described another clock are refused.     !
+      if (toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.apply_solar_longitude'))            &
+         error stop 'load_meds_config: [site].utc_offset and apply_solar_longitude are gone -- every '// &
+                    'forcing file is in UTC (its time_zone attribute says so); convert a local-time '// &
+                    'source to UTC when you build the file, and remove both keys'
       !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
-      !      static orography, UTC), so the [site] location keys would parse and do nothing there:  !
+      !      static orography), so the [site] location keys would parse and do nothing there:      !
       !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (toml_has(t, 'site.latitude') .or. toml_has(t, 'site.longitude') .or.                  &
-             toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.elevation') .or.                &
-             toml_has(t, 'forcing.max_distance_km'))                                               &
-            error stop 'load_meds_config: site.latitude, site.longitude, site.utc_offset, '//       &
-                       'site.elevation and forcing.max_distance_km do not apply to [run].mode = '// &
-                       '"region" (each polygon sits at its cell centre, at the cell''s orography, '// &
-                       'in UTC); remove them'
+             toml_has(t, 'site.elevation') .or. toml_has(t, 'forcing.max_distance_km'))            &
+            error stop 'load_meds_config: site.latitude, site.longitude, site.elevation and '//     &
+                       'forcing.max_distance_km do not apply to [run].mode = "region" (each '//     &
+                       'polygon sits at its cell centre, at the cell''s orography); remove them'
       else
          call req_r         (t, 'site.latitude',          cfg%forcing%latitude_deg,          m)
          call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
-         call req_r         (t, 'site.utc_offset',        cfg%forcing%utc_offset_h,          m)
          call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
       end if
-      call req_l            (t, 'site.apply_solar_longitude', cfg%forcing%apply_solar_longitude, m)
       !----- The forcing is moved to the top of each patch's canopy air space (meds_lapse_rate), so  !
       !      the old fixed reference height and its ingest-time wind profile are gone. They would     !
       !      parse and do nothing, so they are rejected, naming what replaced them. ------------------!
@@ -623,8 +642,16 @@ contains
       else
          call note_missing(m, 'forcing.wind_exposure')
       end if
-      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December). -!
+      !----- The terrain lapse (§8): one lapse rate for the year, or twelve (January .. December).   !
+      !      Its two keys are read only when the lapse is on; with it off they would parse and do     !
+      !      nothing, so they are refused. -------------------------------------------------------------!
       call req_l            (t, 'site.apply_elevation_lapse', cfg%forcing%apply_elevation_lapse, m)
+      if (.not. cfg%forcing%apply_elevation_lapse) then
+         if (toml_has(t, 'site.lapse_rate_tair') .or. toml_has(t, 'site.grid_elevation'))          &
+            error stop 'load_meds_config: site.lapse_rate_tair and site.grid_elevation apply only '// &
+                       'with site.apply_elevation_lapse = true; remove them'
+         return
+      end if
       if (toml_has(t, 'site.lapse_rate_tair')) then
          if (index(toml_string(t, 'site.lapse_rate_tair', ''), '[') > 0) then
             block
@@ -641,7 +668,7 @@ contains
       else
          call note_missing(m, 'site.lapse_rate_tair')
       end if
-      if (cfg%forcing%backend /= MET_BACKEND_ERA5LAND)                                           &
+      if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                        &
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
@@ -1017,6 +1044,14 @@ contains
       cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
       cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
+      if (toml_has(tm, 'hydraulics.conductance')) then
+         select case (trim(adjustl(toml_string(tm, 'hydraulics.conductance', 'whole_plant'))))
+         case ('whole_plant') ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_WHOLE_PLANT
+         case ('segment')     ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_SEGMENT
+         case default
+            error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
+         end select
+      end if
       cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
       cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
       cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
@@ -1070,6 +1105,12 @@ contains
       call req_i(tm, 'demography.n_patch_fusion_iter',    cfg%n_patch_fusion_iter,    miss)
       call req_r(tm, 'demography.patch_light_tol',        cfg%patch_light_tol,        miss)
       call req_r(tm, 'demography.patch_light_maxdev_factor', cfg%patch_light_maxdev_factor, miss)
+      !----- The tolerance ceiling is optional, so older configs load. Absent, it is 0.15, or       !
+      !      patch_light_tol when that is larger, which keeps a looser config valid.  ---------------!
+      cfg%patch_light_tol_max = 0.15_wp
+      if (toml_has(tm, 'demography.patch_light_tol'))                                               &
+         cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)
+      cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
       call req_r(tm, 'demography.patch_diff_age_tol',     cfg%patch_diff_age_tol,     miss)
       call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)
       call req_r(tm, 'demography.patch_min_area_remain',  cfg%patch_min_area_remain,  miss)
@@ -1086,6 +1127,9 @@ contains
       call req_s(tm, 'init.restart_file',  cfg%init_restart_file, miss)
       call req_s(tm, 'init.census_file',   cfg%init_census_file,  miss)
       call req_s(tm, 'init.pft_config',    cfg%pft_config,        miss)
+      cfg%init_soil_temp  = toml_real(tm, 'init.soil_temp',  cfg%init_soil_temp)
+      cfg%init_soil_theta = toml_real(tm, 'init.soil_theta', cfg%init_soil_theta)
+      cfg%init_reacclimate_traits = toml_logical(tm, 'init.reacclimate_traits', cfg%init_reacclimate_traits)
 
       !----- [state]: the restart stream (#173); every diagnostic is [output]'s. A config that still  !
       !      spells the block [io], the name it had before v0.3.0, would parse and do nothing, so it  !
@@ -1123,6 +1167,14 @@ contains
       call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
       call req_l(tm, 'leaf_physiology.wstress_nonstomatal', cfg%leaf_wstress_nonstomatal, miss)
+      !----- The stomatal control at low leaf water potential (#332); optional, one option today. ----!
+      if (toml_has(tm, 'leaf_physiology.low_water_potential_control')) then
+         select case (trim(adjustl(toml_string(tm, 'leaf_physiology.low_water_potential_control', ''))))
+         case ('linear_decline') ; cfg%low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE
+         case default
+            error stop 'load_meds_config: leaf_physiology.low_water_potential_control must be "linear_decline"'
+         end select
+      end if
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)

@@ -84,8 +84,8 @@ contains
 
       !----- 1. aerodynamics from the current canopy-air state. ------------------------------------!
       call refresh_canopy_aerodynamics(col_config%aero, aenv, ageom, col_cohort, biophys%cas,           &
-                                       biophys%soil_e%soil_temp(1), biophys%leaf_temp, aero,           &
-                                       tcas, qcas, press, rho, t_ground)
+                                       biophys%soil_e%soil_temp(1), biophys%leaf_temp,                 &
+                                       biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
       call root_zone_environment(col_config%soil, biophys%soil_e%soil_temp, biophys%soil_w%theta,       &
@@ -128,7 +128,7 @@ contains
    ! scalar profile factors, ground conductance, per-cohort boundary layers).                        !
    !---------------------------------------------------------------------------------------!
    subroutine refresh_canopy_aerodynamics(aero_cfg, aenv, ageom, col_cohort, cas, soil_temp_top,      &
-                                          leaf_temp, aero, tcas, qcas, press, rho, t_ground)
+                                          leaf_temp, wood_temp, aero, tcas, qcas, press, rho, t_ground)
       type(aero_cfg_t),      intent(in)    :: aero_cfg
       type(aero_env_t),      intent(inout) :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
@@ -136,6 +136,7 @@ contains
       type(cas_state_t),     intent(in)    :: cas
       real(wp),              intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground skin)
       real(wp),              intent(in)    :: leaf_temp(:)     !< [K] per-cohort leaf temperature
+      real(wp),              intent(in)    :: wood_temp(:)     !< [K] per-cohort wood temperature
       type(aero_out_t),      intent(inout) :: aero
       real(wp),              intent(out)   :: tcas, qcas, press, rho, t_ground
       tcas = cas_temp_of_enthalpy(cas%can_enthalpy, cas%can_shv)
@@ -143,7 +144,8 @@ contains
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = cas%can_co2
       aenv%t_ground = t_ground
       call aero_bottom_to_top(aero_cfg, aenv, ageom, col_cohort%n, col_cohort%height, col_cohort%lai,      &
-                              col_cohort%crown, col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp, aero)
+                              col_cohort%crown, col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp,      &
+                              wood_temp, aero)
    end subroutine refresh_canopy_aerodynamics
 
    !---------------------------------------------------------------------------------------!
@@ -276,6 +278,9 @@ contains
       end if
       do i = 1_ik, n
          gsw_ms  = gs_arr(i) / max(rho_mol_arr(i), tiny_num)
+         !----- GPP is gross A. For a leaf whose stomata the low-water-potential control has nearly or  !
+         !      fully closed, gross A tends to Rd: its own respiration, refixed (#332; the CARBON NOTE in !
+         !      solve_leaf_gas_exchange). Rd is charged below either way. -------------------------------!
          gpp     = gpp     + a_gross_arr(i) * col_cohort%leaf_area(i) * col_cohort%nplant(i)
          if (present(gpp_coh)) gpp_coh(i) = a_gross_arr(i) * col_cohort%leaf_area(i)
          if (present(cdiag))   cdiag(CD_GPP_RATE, i) = a_gross_arr(i) * col_cohort%leaf_area(i)
@@ -413,7 +418,7 @@ contains
    ! minimal, so the reverse produces the identical permutation -- ties included.                    !
    !---------------------------------------------------------------------------------------!
    subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, crown, leaf_width, branch_diam,    &
-                                 leaf_temp, aero)
+                                 leaf_temp, wood_temp, aero)
       type(aero_cfg_t),      intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
       type(aero_geom_t),     intent(in)    :: ageom
@@ -424,11 +429,14 @@ contains
       real(wp),              intent(in)    :: leaf_width(:)   !< [m]  leaf width (boundary layer)
       real(wp),              intent(in)    :: branch_diam(:)  !< [m]  branch diameter (wood boundary layer)
       real(wp),              intent(in)    :: leaf_temp(:)    !< [K]  leaf temperature
+      !----- The wood's own temperature: its boundary layer's free-convection term is driven by the   !
+      !      wood-air temperature difference, and wood lags the leaves by its larger heat capacity. -!
+      real(wp),              intent(in)    :: wood_temp(:)    !< [K]  wood temperature
       type(aero_out_t),      intent(inout) :: aero
       integer(ik) :: ord(n), k, j, imin
       real(wp)    :: hmin
       logical     :: used(n), descending
-      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), lw_bt(n), bd_bt(n)
+      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
       real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
 
       descending = .true.
@@ -448,11 +456,11 @@ contains
          end if
          ord(k)    = imin ; used(imin) = .true.
          h_bt(k)   = height(imin)     ; lai_bt(k) = lai(imin)
-         cr_bt(k)  = crown(imin)      ; lt_bt(k)  = leaf_temp(imin)
+         cr_bt(k)  = crown(imin)      ; lt_bt(k)  = leaf_temp(imin) ; wt_bt(k) = wood_temp(imin)
          lw_bt(k)  = leaf_width(imin) ; bd_bt(k)  = branch_diam(imin)
       end do
 
-      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, lt_bt, lw_bt, bd_bt, aero)
+      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)
 
       !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
       do k = 1_ik, n

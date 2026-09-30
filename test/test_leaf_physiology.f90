@@ -4,12 +4,12 @@
 program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
-   use meds_config,             only : meds_config_t
+   use meds_config,             only : meds_config_t, pft_leaf_psi_tlp
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
                                  kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3
-   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
+   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn, low_psi_gs_factor
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
    use meds_fast_config, only : leaf_gas_exchange
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -19,7 +19,8 @@ program test_leaf_physiology
    type(leaf_env_t)    :: env
    type(leaf_flux_t)   :: flux, flux2
    real(wp) :: a_gross, ac, aj, ap, an0, an1, an2, prev
-   integer(ik) :: i
+   real(wp) :: psi_tlp, jump, gs_top, sref0, gs_model
+   integer(ik) :: i, j
    integer(ik), dimension(3) :: sms = [ SM_LEUNING, SM_MEDLYN, SM_KATUL ]
 
    call banner('leaf physiology (photosynthesis + stomata)')
@@ -240,6 +241,61 @@ program test_leaf_physiology
    call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
 
    cfg%leaf_wstress_nonstomatal = .false.     ! back to the shipped default for the rest of the suite
+
+   !=== 7e. Low-water-potential control (#332): the conductance the stomatal model calculates is    !
+   !     multiplied by a factor falling LINEARLY from 1 at psi_tlp to 0 at 2*psi_tlp, and the solve  !
+   !     stays coupled (A and Ci are those of the reduced gs). A gentle stomatal limb keeps the     !
+   !     leaf open enough across the band to see the factor. ======================================!
+   psi_tlp = pft_leaf_psi_tlp(cfg, 1_ik)
+   call check_close(low_psi_gs_factor(0.5_wp * psi_tlp, psi_tlp), 1.0_wp, 1.0e-14_wp, 'lwp factor: 1 above psi_tlp')
+   call check_close(low_psi_gs_factor(psi_tlp, psi_tlp),          1.0_wp, 1.0e-14_wp, 'lwp factor: 1 at psi_tlp')
+   call check_close(low_psi_gs_factor(1.25_wp * psi_tlp, psi_tlp), 0.75_wp, 1.0e-14_wp, 'lwp factor: linear')
+   call check_close(low_psi_gs_factor(1.5_wp * psi_tlp, psi_tlp), 0.5_wp, 1.0e-14_wp, 'lwp factor: 0.5 half way')
+   call check_close(low_psi_gs_factor(2.0_wp * psi_tlp, psi_tlp), 0.0_wp, 1.0e-14_wp, 'lwp factor: 0 at 2*psi_tlp')
+   call check_close(low_psi_gs_factor(3.0_wp * psi_tlp, psi_tlp), 0.0_wp, 1.0e-14_wp, 'lwp factor: 0 below')
+   sref0 = cfg%pft%wstress_sref_stomata(1)
+   cfg%pft%wstress_sref_stomata(1) = 0.3_wp
+   !----- half way through the band, gs is half the Medlyn conductance of the leaf as solved. -----!
+   cfg%stomatal_model = SM_MEDLYN
+   env = std_env() ; env%psi_leaf = 0.0_wp ; env%psi = 1.5_wp * psi_tlp
+   call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   gs_model = stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd, cfg%pft%stomatal_g0(1),              &
+                                cfg%pft%stomatal_g1(1) * min(1.0_wp, exp(0.3_wp * env%psi)))
+   call check(flux%converged, 'lwp mid-band: the solve converges')
+   call check_close(flux%gs, 0.5_wp * gs_model, 1.0e-4_wp * gs_model,                              &
+                    'lwp mid-band: gs is 0.5 x the Medlyn conductance at the solved A and Cs')
+   !----- for every stomatal model: continuous, never rising as psi falls, diffusion-consistent,   !
+   !      and shut past 2*psi_tlp -- no CO2 or water exchanged by day, respiration only at night. --!
+   do j = 1_ik, size(sms)
+      cfg%stomatal_model = sms(j)
+      env = std_env() ; env%psi_leaf = 0.0_wp
+      env%psi = psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; gs_top = flux%gs
+      jump = 0.0_wp ; prev = huge(1.0_wp)
+      do i = 0_ik, 280_ik
+         env%psi = psi_tlp * (0.8_wp + 1.4_wp * real(i, wp) / 280.0_wp)
+         call leaf_gas_exchange(env, cfg, 1_ik, flux)
+         call check(flux%converged .and. flux%gs >= 0.0_wp, 'lwp sweep: converged, gs >= 0')
+         call check(flux%gs <= prev + 1.0e-12_wp, 'lwp sweep: gs never rises as psi falls')
+         if (i > 0_ik) jump = max(jump, prev - flux%gs)
+         !----- off the (scaled) g0 floor, where gs is the diffusion identity's; as in the Katul test. -!
+         if (flux%gs > low_psi_gs_factor(env%psi, psi_tlp) * cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp) &
+             .and. flux%gs > 1.0e-9_wp) then
+            call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,           &
+                             'lwp sweep: A, gs, Ci and Cs stay diffusion-consistent')
+         end if
+         prev = flux%gs
+      end do
+      call check(jump < 0.05_wp * gs_top, 'lwp sweep: no step larger than 5% of gs at psi_tlp')
+      env%psi = 2.1_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+      call check(flux%gs < 1.0e-9_wp .and. flux%transpiration < 1.0e-12_wp,                         &
+                 'lwp past 2*psi_tlp: no conductance, no transpiration')
+      call check(abs(flux%A_net) < 1.0e-3_wp, 'lwp past 2*psi_tlp: no net CO2 exchange by day')
+      env%par = 0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+      call check(flux%gs == 0.0_wp .and. flux%transpiration == 0.0_wp, 'lwp past 2*psi_tlp at night: shut')
+      call check_close(flux%A_net, -flux%rd, 1.0e-12_wp, 'lwp past 2*psi_tlp at night: the leaf respires')
+   end do
+   cfg%stomatal_model = SM_MEDLYN
+   cfg%pft%wstress_sref_stomata(1) = sref0
 
    !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
    env = std_env() ; env%par = 0.0_wp

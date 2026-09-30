@@ -16,6 +16,13 @@ README that shows how to reproduce it (run from the repository root):
   leaf and canopy-air temperatures that the meteorological forcing never contained. This is the one
   example that drives the **full coupled model from Python** (`meds.model.Run`), with the time loop
   on the Python side — so it also plots a spin-up trajectory sampled from the running model.
+- **[`example_flux_tower_bci/`](example_flux_tower_bci/)** — forcing built from a flux tower's own
+  meteorology at Barro Colorado Island, Panama: a site TOML declares the data, the tool checks it
+  against the sun and the data, fills gaps with a flag on every value, and states the tower's 41 m
+  heights so MEDS moves each sample to every patch's canopy-air top. Also scores its longwave gap
+  fill on hidden observations. The run starts from the 2010 census of the BCI 50-ha plot, with no
+  spin-up, and is compared with the tower's carbon, water and energy fluxes. The data are
+  downloaded or read in place, never committed.
 - **[`example_phenology/`](example_phenology/)** — the leaf-phenology kernel driven over four synthetic
   climates, reproducing the four strategies (temperate deciduous / evergreen, tropical drought-deciduous
   / light-driven leaf-exchanging): relative LAI + the flush and shed rate tendencies for each.

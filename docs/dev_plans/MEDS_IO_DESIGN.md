@@ -823,7 +823,8 @@ The performance argument is layered, cheapest first; the recommended default nee
      opened with `nc_create_par`, which is neither in `meds_netcdf_c` nor meaningful single-process. So
      "netCDF's own async" is **scoped to a hypothetical future PnetCDF/MPI build**, not this one, and is
      dropped from the HDF5 design.
-   - **The default ifx+netCDF build enables no host OpenMP runtime.** The `-mp` flag is `PUBLIC` only on
+   - **The default ifx+netCDF build enables no host OpenMP runtime.** (True when this was written;
+     the default build now has OpenMP, see `docs/building.md`.) The `-mp` flag is `PUBLIC` only on
      the **nvfortran** demography target; on the flagship ifx build the `!$omp` lines are inert comments,
      so an `!$omp task` writer would run **inline/serially** and hide nothing. Async therefore requires
      an OpenMP-enabled host runtime — i.e. the **nvfortran `-mp` builds** — *or* a dedicated

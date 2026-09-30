@@ -301,25 +301,60 @@ ED2 has no equivalent of.
 > paths, and unset cohorts are seeded from the surface-layer soil potential. See the #95 note in
 > §4.2 for what it was worth — $`\beta_s \equiv 1`$, i.e. no stomatal water stress at all.
 
-### Arrestors: stopping a plant that has run out of water
+### Low-water-potential control: stopping a plant that has run out of water
 
 $`\beta_s`$ scales $`g_1`$ only, so as it goes to zero the conductance falls to the residual
 $`g_0`$ and never reaches it. Measured: ~2.6 mm day⁻¹ still leaving a plant whose wood store was
-empty. An *arrestor* is therefore needed on top of the $`\beta_s`$ ramp. `[run].leaf_stress_arrestor`
-selects it.
+empty (#95). A control on top of the $`\beta_s`$ ramp is therefore needed.
+`[leaf_physiology].low_water_potential_control` selects it; `"linear_decline"` is the only option and
+the default.
 
-**`ARREST_GS_CLAMP` (default).** Below twice the turgor-loss point
-$`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ — the same PV curve the hydraulics solver uses —
-the stomata shut completely: $`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$. It latches on the
-*daily-max* potential, so it is a once-a-day decision on a slow integrated measure rather than a
-per-step switch on a noisy sub-daily $`\psi`$.
+**`"linear_decline"` (#332).** The conductance the stomatal model calculates, $`g_0`$ included, is
+multiplied by
+
+```math
+f_{lwp}(\psi) = \min\!\left(1,\ \max\!\left(0,\ \frac{\psi - 2\psi_{tlp}}{-\psi_{tlp}}\right)\right),
+```
+
+which is 1 at the turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ and above, falls
+linearly, and is 0 at $`2\psi_{tlp}`$ and below. $`\psi_{tlp}`$ comes from the same PV curve the
+hydraulics solver uses, from each PFT's own `leaf_pi0` and `leaf_elastic_mod` (a PFT that sets neither
+takes the `[hydraulics]` values). $`\psi`$ is the *daily-max* leaf potential of the previous day, so the
+factor is set once a day on a slow, integrated measure, not per step on a noisy sub-daily $`\psi`$.
+
+- **The solve stays coupled.** For Leuning and Medlyn the factor multiplies the model's $`g_s(A, C_s,
+  D)`$ inside the $`C_i`$ solve, so $`A`$, $`C_i`$ and $`E`$ are those of the reduced conductance. For
+  Katul the optimum is solved first and the solve is repeated with $`g_s`$ pinned at $`f_{lwp}`$ times
+  it.
+- **A shut leaf** ($`f_{lwp}=0`$) exchanges neither water nor CO₂: by day its net assimilation is 0,
+  its respiration refixed at the compensation point; at night it respires, $`A_n=-R_d`$.
+- **What this does to the carbon budget.** $`R_d`$ is unchanged and charged in full as leaf
+  respiration; the factor changes *gross* assimilation. The solve ties net assimilation to the
+  stomata, $`A_n = g_s (C_s - C_i)/1.6`$, so as $`g_s \to 0`$, $`A_n \to 0`$ and the leaf photosynthesises
+  at its internal compensation point on the CO₂ it respires: $`A_g \to R_d`$. The canopy sums $`A_g`$ as
+  GPP and $`R_d`$ as leaf respiration, so a fully closed leaf is carbon-neutral by day (credited
+  $`R_d`$ of GPP, charged $`R_d`$). The former hard shutdown set $`A_g = 0`$ and lost $`R_d`$. At night
+  $`A_g = 0`$ and the leaf loses $`R_d`$, as before. This is the standard coupled leaf model, and the
+  same refixation already happens whenever $`g_s`$ is small. A tower's GPP, partitioned from NEE,
+  cannot see refixed CO₂, so where cohorts are shut the model's GPP includes CO₂ the tower's cannot
+  count.
+- **It replaced a hard shutdown.** Until #332 the stomata shut completely below $`2\psi_{tlp}`$
+  ($`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$) and were untouched above it. That all-or-nothing step
+  made every flux jump as a parameter moved $`\psi_{tlp}`$ or the predawn potential across it, which
+  no gradient-based calibration could see past (the BCI calibration, #330). The linear decline
+  closes from $`\psi_{tlp}`$ on, so it acts earlier than the clamp did, and is continuous.
+- **A thermodynamic limit** on transpiration, the substomatal air held at its Kelvin humidity (issue
+  #96), would make this control matter less.
+
+The measurements below were taken with the former hard shutdown (then `ARREST_GS_CLAMP`, against
+`ARREST_NONE`, no control); the linear decline shuts at the same $`2\psi_{tlp}`$.
 
 Measured on the 8-day dry case ($`\theta=0.12`$, no rain), converged over six cadences:
 
 | | wood store, day 8 | cumulative ET | error at $`dt_{fast}`$ = 900 s |
 |---|---|---|---|
-| `ARREST_NONE` | 1.229 kg plant⁻¹ | 27.5 mm | **54.9 %** |
-| `ARREST_GS_CLAMP` | 1.940 kg plant⁻¹ | 15.8 mm | **2.3 %** |
+| no control | 1.229 kg plant⁻¹ | 27.5 mm | **54.9 %** |
+| hard shutdown at $`2\psi_{tlp}`$ | 1.940 kg plant⁻¹ | 15.8 mm | **2.3 %** |
 
 The last column is the load-bearing one. Without an arrestor the drought trajectory converges only
 *slowly*, because nothing bounds the drawdown until the state reaches a numerical floor — so the

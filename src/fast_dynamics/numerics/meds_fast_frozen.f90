@@ -145,6 +145,7 @@ contains
       allocate(frozen%tissue%leaf_hcap_per_dt(n), frozen%tissue%wood_hcap_per_dt(n),                &
                frozen%tissue%t_leaf0(n), frozen%tissue%t_wood0(n))
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
+      allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
       !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
       !      surface_derivs evaluations ABOVE that point already read them as veg_energy_balance's    !
@@ -298,6 +299,8 @@ contains
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
          frozen%plant%pft(i)      = col_cohort%pft(i)          ! #179: per-PFT hydraulics selector
+         frozen%tissue%leaf_emiss(i) = cfg%pft%leaf_emissivity(col_cohort%pft(i))
+         frozen%tissue%wood_emiss(i) = cfg%pft%wood_emissivity(col_cohort%pft(i))
          frozen%plant%nplant(i)   = col_cohort%nplant(i)
          frozen%plant%bleaf(i)    = col_cohort%bleaf(i)
          frozen%plant%bsap(i) = col_cohort%bsap(i)
@@ -317,7 +320,6 @@ contains
 
       !----- the rest of the frozen surface inputs: CAS caps/conductances from column_prepass + atm     !
       !      state + NEE. ---------------------------------------------------------------------------!
-      frozen%tissue%leaf_emiss = col_config%veg_thermal%leaf_emiss
       frozen%cas%cas_mass_capacity = cas_mass_capacity ; frozen%cas%cas_molar_capacity = cas_molar_capacity
       frozen%cas%g_atm_heat  = g_atm_heat  ; frozen%cas%g_atm_vapour  = g_atm_vapour ; frozen%cas%g_atm_co2 = g_atm_co2
       !----- Everything refresh_cas_conductances needs that is NOT the live CAS state. The         !

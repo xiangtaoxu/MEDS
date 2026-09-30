@@ -25,11 +25,12 @@ module meds_driver
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_site_state_types,       only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_init,                   only : init_bare_ground, init_from_census
-   use meds_vegetation_dynamics,    only : advance_plant_traits
+   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
+   use meds_demography_cohort_fusefiss, only : max_cohort_count
+   use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_forcing_types,          only : met_source_t
    use meds_met_driver,             only : met_open, met_close, met_prefetch
-   use meds_forcing_config,         only : MET_BACKEND_ERA5LAND
+   use meds_forcing_config,         only : MET_BACKEND_ED_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            polygon_report, DRIVER_OK, DRIVER_FINISHED,           &
@@ -42,7 +43,7 @@ module meds_driver
                                            apply_variable_override, parse_stream_mask,          &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_manager,         only : output_serialize_pending, output_manager_close
-   use meds_toml,                   only : toml_table_t, toml_parse_file
+   use meds_toml,                   only : toml_table_t, toml_parse_file, toml_write_record
    implicit none
    private
 
@@ -92,6 +93,7 @@ contains
       logical, optional, intent(in)    :: verbose
       type(meds_time_t) :: restart_time
       logical           :: init_ok, fast_state_found
+      type(output_buffers_t) :: fresh_bufs      !< default-initialised, never written: the reset value
 
       ok = .false.
       if (present(verbose)) run%verbose = verbose
@@ -111,7 +113,10 @@ contains
       run%iyear = 0_ik
       !----- The run before's output: its files are closed, but a run with [output] off would still  !
       !      see them enabled and tick their buffers (manager_setup rebuilds both when output is on). !
-      run%out_files%enabled = .false. ; run%out_bufs = output_buffers_t()
+      !      The reset copies a default-initialised local rather than `output_buffers_t()`: nvfortran  !
+      !      25.11 miscompiles that constructor (a garbage-sized ALLOCATE) because the type has fixed- !
+      !      size array components whose own type has allocatable components.                        !
+      run%out_files%enabled = .false. ; run%out_bufs = fresh_bufs
       !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
       !      none unless the restart below says so. ---------------------------------------------!
       run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
@@ -152,12 +157,22 @@ contains
          if (run%verbose) then
             if (init_ok) then
                write(*,'(2a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file)
+               write(*,'(a,i0,a,i0,a)') '         read ', run%poly%site%patch%n, ' patches, ',      &
+                                        run%poly%site%cohort%n, ' cohorts'
             else
                write(*,'(3a)') ' init  : census (mode 1) ', trim(run%cfg%init_census_file),     &
                                ' not usable -- falling back to bare ground'
             end if
          end if
       end select
+      !----- A census stand is restructured by the slow step's own operators before the first step: !
+      !      it arrives with a cohort per measured size and a patch per plot cell.  ------------------!
+      if (run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
+         call restructure_census_stand(run%poly%site, run%cfg)
+         if (run%verbose) write(*,'(a,i0,a,i0,a,i0,a)') '         restructured to ',              &
+               run%poly%site%patch%n, ' patches, ', run%poly%site%cohort%n, ' cohorts (at most ',  &
+               max_cohort_count(run%poly%site), ' in a patch)'
+      end if
       if (.not. init_ok) then
          call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
@@ -166,10 +181,16 @@ contains
       !----- 2a. Census restart with plasticity ON: census cohorts sit in an established stand but !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
       !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately !
-      !          starts at top-of-canopy; a state restart already read the plastic traits from file. !
+      !          starts at top-of-canopy; a state restart already read the plastic traits from file, !
+      !          unless [init].reacclimate_traits asks for this run's PFT file instead (a calibration   !
+      !          trial that restarts from a shared state with changed traits).                       !
       if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
          call update_overtopping_lai(run%poly%site)
          call advance_plant_traits(run%poly%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
+      end if
+      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART .and. init_ok) then
+         call reacclimate_plant_traits(run%poly%site, run%cfg)
+         if (run%verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
 
       !----- 2b. The forcing source (opt-in), then the site as a polygon: fast context and          !
@@ -178,7 +199,7 @@ contains
          call met_open(run%met_src, run%cfg%forcing, run_start=run%cfg%start_time,                &
                        run_end=run%cfg%end_time)
          if (run%verbose) then
-            if (run%cfg%forcing%backend == MET_BACKEND_ERA5LAND) then
+            if (run%cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
                write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(run%cfg%forcing%data_path), ')'
             else
                write(*,'(3a)') ' force : met forcing ON (', trim(run%cfg%forcing%path), ')'
@@ -186,8 +207,7 @@ contains
          end if
       end if
       call polygon_prepare(run%cfg, run%met_src, run%poly, run%cfg%forcing%latitude_deg,          &
-                           run%cfg%forcing%longitude_deg, run%cfg%forcing%utc_offset_h,           &
-                           run%cfg%forcing%elevation_m,                                           &
+                           run%cfg%forcing%longitude_deg, run%cfg%forcing%elevation_m,            &
                            keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
                                            fast_state_found,                                     &
                            keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
@@ -227,6 +247,16 @@ contains
          call activate_site_diag(run%out_files, run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
+
+      !----- 3c. The PARAMETER RECORD: every setting the loader read, from which file, whether it  !
+      !          was set there or defaulted, and the value used -- beside the output and beside the !
+      !          state, whichever the run writes. A caller that set a key finds it here or learns   !
+      !          that the key was never read.                                                     !
+      if (run%cfg%output%enabled)                                                                &
+         call toml_write_record(trim(run%cfg%output%dir)//'/'//trim(run%cfg%output%prefix)//'_parameters.csv')
+      if (run%cfg%state_write_state)                                                             &
+         call toml_write_record(trim(run%cfg%state_output_dir)//'/'//trim(run%cfg%state_output_prefix)// &
+                                '_parameters.csv')
 
       if (run%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'

@@ -13,9 +13,9 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
                                # cell of [region].box_nwse as its own polygon (see [region] at the end
                                # of this file, and docs/configuration.md "Regional runs").
 # n_threads = 1                # host threads over the fast loop's PATCH axis (plan section 7).
-                               # Default 1 = serial. Requires a build configured with
-                               # -DMEDS_OPENMP=ON; without it the directives are comments and this
-                               # is ignored. Output is byte-identical at any thread count (the
+                               # Default 1 = serial. The default build has OpenMP; one configured
+                               # with -DMEDS_OPENMP=OFF (or on a compiler without it) ignores this.
+                               # Output is byte-identical at any thread count (the
                                # site-level reductions are folded in patch order), so this is a
                                # pure wall-clock knob. Bounded by the patch count and by per-patch
                                # cost imbalance -- each patch runs its own adaptive march.
@@ -73,12 +73,15 @@ wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
 wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
 wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
 wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
-k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance
-wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity (segment mode)
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
-# ---- multi-layer root distribution (MEDS_MULTILAYER_ROOTS_DESIGN; used once per-layer soil state ----
-#      is coupled; the single-layer path above ignores these) ----
-root_beta          = 0.96  # [-]      ED2 root-profile decay (0,1); smaller = shallower rooting
+conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "segment": the sapwood's
+k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
+wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
+# ---- the root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the soil ----
+#      column; layers below root_depth hold no roots. It sets the per-layer water uptake and rhizosphere
+#      conductance, the root-zone temperature of root respiration and the root-weighted soil state.
+#      exp(-4) with a 2 m depth is the exponential exp(-2 * depth [m]).
+root_beta          = 0.01831563888873418   # [-]  ED2 root-profile decay (0,1); smaller = shallower rooting
 root_depth         = 2.0   # [m]      maximum rooting depth
 specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
 
@@ -130,7 +133,6 @@ theta_res   = 0.078        # [m3/m3]  residual water content
 ksat        = 2.89e-6      # [m/s]    saturated hydraulic conductivity
 curve_par_a = 3.6          # [1/m] van Genuchten alpha  OR  [m] Campbell psi_sat (negative)
 curve_par_n = 1.56         # [-]   van Genuchten n (>1)  OR  [-] Campbell b
-root_beta   = 2.0          # [-]      exponential root-profile decay
 psi_fc      = -3.37        # [m]      field-capacity matric head (derives theta_fc)
 solid_conductivity = 3.0   # [W/m/K]  mineral-solid thermal conductivity
 dry_conductivity   = 0.15  # [W/m/K]  dry-matrix thermal conductivity
@@ -231,9 +233,10 @@ negligible_nplant         = 1.0e-8   # [plant/m2] absolute density floor
 split_eps                 = 1.0e-4   # symmetric DBH perturbation on split
 enable_cohort_fission     = true
 n_height_layers           = 16       # vertical layers for the patch-fusion light profile
-max_patch                 = 12       # patch-count target
+max_patch                 = 12       # patch-count target; patch_light_tol_max can keep more
 n_patch_fusion_iter       = 6
-patch_light_tol           = 0.10     # mean light-profile distance to fuse two patches
+patch_light_tol           = 0.10     # mean light-profile distance to fuse two patches (first pass)
+patch_light_tol_max       = 0.15     # ceiling of that tolerance: no fusion beyond it, even above max_patch
 patch_light_maxdev_factor = 1.5      # max single-layer deviation multiplier
 patch_diff_age_tol        = 1.0      # [yr] same-age phase window
 min_patch_area            = 1.0e-4   # cull patches below this area fraction
@@ -340,15 +343,11 @@ override_derived = false   # if true, a [derived] block in the PFT file pins mor
 gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
 
 # ------------------------------------------------------------------------------------------
-# Leaf phenology (OPT-IN). Absent or phenology_on=false -> the carbon leaf-flush gate is hard-wired
-# ON (bit-identical to before; the empirical path ignores phenology entirely). When ON, the slow-loop
-# driver advances each cohort's cue memory (GDD / chilling) from the daily-mean air temperature and
-# the carbon leaf-flush gate obeys the resulting ON/OFF/DORMANT status -- so phenology only CHANGES a
-# run under [carbon].growth_source="carbon". The daily temperature comes from the fast loop, so this
-# REQUIRES [fast].fast_biophysics_on = true AND [forcing].forcing_on = true. Per-PFT cue parameters
-# live in the PFT config file's [phenology] block. v1 wires the TEMP (bit 1) + PHOTO (bit 8) cues.
-# [phenology]
-# phenology_on = true
+# Leaf phenology runs in every run's slow loop; there is no switch. The slow-loop driver advances
+# each cohort's cue memory (GDD / chilling) from the daily-mean air temperature, and the carbon
+# leaf-flush gate obeys the resulting ON/OFF/DORMANT status, so phenology only CHANGES a run under
+# [carbon].growth_source = "carbon". The daily temperature comes from the fast loop. Per-PFT cue
+# parameters live in the PFT config file's [phenology] block.
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
@@ -364,6 +363,10 @@ wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) wate
                                    # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
                                    # psi error into a 33% GPP shift at dt_fast = 900 s). The
                                    # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
+low_water_potential_control = "linear_decline"  # #332: the conductance the stomatal model calculates
+                                   # (g0 included) times a factor falling linearly from 1 at the leaf
+                                   # turgor-loss point to 0 at twice it, on the previous day's predawn
+                                   # leaf potential. The only option; optional (this is the default).
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
@@ -389,38 +392,41 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
 # constant-forcing MVP (unchanged). Turn on together with [fast].fast_biophysics_on. Two sources:
-#   format = "era5land"  the global ED_ERA5land archive (per-variable monthly files, built with
+#   format = "ED_ERA5land"  the global ED_ERA5land archive (per-variable monthly files, built with
 #                        scripts/prepare_era5/). The reader finds the site's cell itself, takes its
 #                        elevation from the archive's static file, converts dewpoint to specific
 #                        humidity with the model's own saturation curve, and carries the wind vector.
 #                        Keys: data_path and max_distance_km; NOT path, grid_index, grid_match or
 #                        [site].grid_elevation (rejected if present).
-#   format = "netcdf"    one MEDS multi-grid forcing NetCDF; make one with
-#                        scripts/prepare_era5/make_forcing_file.py, from an ED_ERA5land archive or from
-#                        a small download (download_era5land_cds.py, then postprocess_era5land.py
-#                        --split none). Keys: path, grid_index, grid_match and [site].grid_elevation.
-# When forcing_on=true, every other key below is required.
+#   format = "ED_default"   one multi-grid forcing NetCDF: from ERA5-Land with
+#                        scripts/prepare_era5/make_forcing_file.py (from an ED_ERA5land archive or a
+#                        small download), or from flux-tower data with
+#                        scripts/prepare_flux_tower/make_tower_forcing.py. Keys: path, grid_index,
+#                        grid_match. The file carries the humidity its source measured (RHair, Tdew
+#                        or Qair, exactly one), and MEDS converts it with its own saturation curve.
+# Every forcing clock is UTC: a file must say time_zone = "UTC", and local time is a matter for
+# the post-processing of the output. When forcing_on=true, every other key below is required.
 # [site]
 # latitude              = 42.44          # [deg +N] Ithaca NY
-# longitude             = -76.50         # [deg +E] drives local solar time
-# utc_offset            = 0.0            # [h] ERA5-Land is UTC -> 0
+# longitude             = -76.50         # [deg +E] with the UTC clock, gives local solar time
 # elevation             = 320.0          # [m] site elevation (used by elevation lapse)
-# apply_solar_longitude = true           # UTC file -> longitude gives local solar time
 #   ---- TERRAIN lapse, from the forcing cell's elevation to the site's (docs/science/forcing.md §8):
 #   T by the lapse rate, P hydrostatically, q at constant relative humidity, file LWdown by the
 #   clear-sky eps*T^4 ratio. Region polygons sit at their cell's elevation, so it is a no-op there.
+#   lapse_rate_tair and grid_elevation are read only when the lapse is on (refused when it is off);
+#   a flux tower measures at the site, so it runs with the lapse off.
 # apply_elevation_lapse = true
 # lapse_rate_tair       = 0.0065         # [K/m] one rate, or twelve (January .. December), e.g. the
 #                                        # N. Hemisphere monthly rates of Kunkel (1989), as tabulated by
 #                                        # Liston & Elder (2006, MicroMet, Table 1):
 #                                        # [0.0044, 0.0059, 0.0071, 0.0078, 0.0081, 0.0082,
 #                                        #  0.0081, 0.0081, 0.0077, 0.0068, 0.0055, 0.0047]
-# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "netcdf" only; the
-#                                        # archive reads it from its static file)
+# grid_elevation        = 367.5          # [m] the forcing cell's elevation (format = "ED_default" only;
+#                                        # the archive reads it from its static file)
 # [forcing]
 # forcing_on            = true
-# format                = "netcdf"       # "era5land" | "netcdf" | "const"
-#   ---- format = "era5land" --------------------------------------------------------------------
+# format                = "ED_default"   # "ED_ERA5land" | "ED_default" | "const"
+#   ---- format = "ED_ERA5land" -----------------------------------------------------------------
 # data_path             = "/path/to/ED_ERA5land"   # the archive folder (installation-specific)
 # max_distance_km       = 15.0           # a site on a no-data cell (coast, lake edge) takes the nearest
 #                                        # valid cell within this distance; farther is an error
@@ -429,9 +435,9 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #   The months read are the recycle window when recycle = true, else the run period; every file
 #   they need must exist when the run starts. A run starting at 00:00 on the 1st also reads the
 #   previous month's file, which holds that record (the archive stamps the END of each hour).
-#   The reader loads one month (plus that record) before each step, so format = "era5land" needs
+#   The reader loads one month (plus that record) before each step, so format = "ED_ERA5land" needs
 #   [run].dt_slow = "1d" and a start_time at 00:00:00.
-#   ---- format = "netcdf" ----------------------------------------------------------------------
+#   ---- format = "ED_default" ------------------------------------------------------------------
 # path                  = "ithaca_forcing.nc"
 # grid_index            = 1              # which (time,grid) location this polygon reads (grid_match="explicit")
 # grid_match            = "explicit"     # "explicit" (use grid_index) | "nearest" ([site] lat/lon -> nearest cell)
@@ -439,7 +445,8 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 #   ---- The forcing's own heights (docs/science/forcing.md §8). Every sample is moved from them to
 #   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
 #   potential temperature and humidity are conserved, and the wind follows the patch's own log
-#   profile. There is no fixed reference height any more. Values below are ERA5-Land's.
+#   profile. Values below are ERA5-Land's; a flux tower gives its sensor heights above the ground,
+#   height_above = "ground" and wind_exposure = "local" (examples/example_flux_tower_bci).
 # tq_height             = 2.0            # [m] height of air temperature and humidity
 # wind_height           = 10.0           # [m] height of the wind
 # height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement
@@ -450,7 +457,8 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # wind_blending_height  = 40.0           # [m] "open_terrain" only: the height it came down from
 #   --------------------------------------------------------------------------------------------
 # timestep              = "3600s"        # native forcing interval (ERA5-Land hourly)
-# avg_convention        = "end"          # flux vars mean over the hour ENDING at the stamp
+# avg_convention        = "end"          # flux vars mean over the interval ENDING at the stamp;
+#                                        # "begin" for one BEGINNING there (AmeriFlux TIMESTAMP_START)
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
 # lwdown_source         = "file"         # ERA5-Land has strd
 #   ---- CO2: never from the met file (one that carries CO2air is rejected) ----------------------
@@ -491,9 +499,9 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 
 #-------------------------------------------------------------------------------------------------#
 # [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
-# Every valid cell of the box with enough land becomes a polygon at its cell centre, orography     #
-# and UTC; so [site].latitude/longitude/utc_offset/elevation and [forcing].max_distance_km are      #
-# refused in region mode. Needs format = "era5land", init_mode = 0 and write_state = false.         #
+# Every valid cell of the box with enough land becomes a polygon at its cell centre and orography, #
+# so [site].latitude/longitude/elevation and [forcing].max_distance_km are refused in region mode.  #
+# Needs format = "ED_ERA5land", init_mode = 0 and write_state = false.                              #
 #-------------------------------------------------------------------------------------------------#
 # [region]
 # box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180

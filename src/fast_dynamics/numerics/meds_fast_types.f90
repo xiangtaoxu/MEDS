@@ -403,7 +403,7 @@ module meds_fast_types
       real(wp) :: mo_zref       = 0.0_wp      !< [m]    reference height
       real(wp) :: mo_displace   = 0.0_wp      !< [m]    displacement height  (canopy geometry, frozen)
       real(wp) :: mo_rough      = 0.0_wp      !< [m]    roughness length     (canopy geometry, frozen)
-      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature at zref
+      real(wp) :: mo_theta_atm  = 0.0_wp      !< [K]    potential temperature referenced to zref (= the air temperature there)
       real(wp) :: mo_shv_atm    = 0.0_wp      !< [kg/kg] specific humidity at zref (the AERO reference,
                                               !<        which need not equal shv_atm below)
       real(wp) :: mo_rho        = 0.0_wp      !< [kg/m3] air density
@@ -443,7 +443,12 @@ module meds_fast_types
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
-      real(wp) :: leaf_emiss    = 0.95_wp     !< [-]       leaf LW emissivity
+      !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
+      !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
+      !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
+      !      with the longwave it was given. ----------------------------------------------------------!
+      real(wp), allocatable :: leaf_emiss(:)  !< [-]       leaf LW emissivity
+      real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
       !----- heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt: a_* = (dry hcap + water mass*cp_liq)/dt. !
       real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
       real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass

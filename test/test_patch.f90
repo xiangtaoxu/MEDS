@@ -2,17 +2,19 @@
 !----- Patch fusion conserves site_t plant number & area; termination renormalizes area. -----!
 program test_patch
    use meds_kinds,          only : wp, ik
-   use meds_config,         only : meds_config_t
+   use meds_config,         only : meds_config_t, derive_parameters
    use meds_site_state_types,          only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
-   use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches
+   use meds_demography_patch_fusefiss, only : new_fuse_patches, terminate_patches, sort_patches,  &
+                                              patch_light_profile
    use meds_diagnostic_reduce, only : total_nplant, total_area
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
    type(meds_config_t) :: cfg
    type(site_t)     :: site
-   real(wp)            :: n0, w_before, w_after, cas_before, cas_after
+   real(wp)            :: n0, w_before, w_after, cas_before, cas_after, davg
+   real(wp), allocatable :: light1(:), light2(:)
    integer(ik)         :: ip
 
    call banner('patch fusion & termination conservation')
@@ -107,5 +109,41 @@ program test_patch
    call check_close(site%patch%age(1), 5.0_wp, 1.0e-12_wp, 'sort did not put the older patch first')
    call check_close(site%patch%soil_w(1)%theta(1), 0.55_wp, 1.0e-12_wp, 'reservoir did not follow its patch through sort')
 
+   !=== The tolerance ceiling: dissimilar patches stay apart even above max_patch. ===========!
+   !    A closed stand and a sparse understory, and max_patch = 1 asking for one patch. Under the !
+   !    shipped ceiling (0.15) they stay two; under the old schedule, 0.10 x 1.5 per pass with no  !
+   !    ceiling (0.76 by the sixth pass), they fuse.                                               !
+   cfg = build_test_config()
+   cfg%max_patch = 1_ik
+   call check_close(cfg%patch_light_tol * cfg%patch_light_tol_mult**(cfg%n_patch_fusion_iter - 1_ik),  &
+                    cfg%patch_light_tol_max, 1.0e-12_wp, 'the last pass must use exactly the ceiling')
+   call two_unlike_patches()
+   allocate(light1(cfg%n_height_layers), light2(cfg%n_height_layers))
+   call patch_light_profile(site, cfg, 1_ik, light1)
+   call patch_light_profile(site, cfg, 2_ik, light2)
+   davg = sum(abs(light1 - light2), mask=(light1 < 1.0_wp - 1.0e-7_wp .or. light2 < 1.0_wp - 1.0e-7_wp)) &
+        / real(count(light1 < 1.0_wp - 1.0e-7_wp .or. light2 < 1.0_wp - 1.0e-7_wp), wp)
+   call check(davg > 0.3_wp .and. davg < 0.7_wp,                                                  &
+              'fixture: the two light profiles must differ by between 0.3 and 0.7 on average')
+   call new_fuse_patches(site, cfg)
+   call check(site%patch%n == 2_ik, 'patches more different than the ceiling must stay apart above max_patch')
+   !----- The old schedule, spelled as a ceiling: 0.10 * 1.5**5 over six passes is a step of 1.5. --!
+   cfg%patch_light_tol_max = 0.10_wp * 1.5_wp**5
+   call derive_parameters(cfg)
+   call check_close(cfg%patch_light_tol_mult, 1.5_wp, 1.0e-12_wp, 'ceiling 0.759375 must give the old 1.5 step')
+   call two_unlike_patches()
+   call new_fuse_patches(site, cfg)
+   call check(site%patch%n == 1_ik, 'without the ceiling the same two patches fuse down to max_patch')
+
    write(*,'(a)') '   PASS'
+
+contains
+
+   !----- Two equal-area patches: a closed stand of 30 cm trees, and 5 cm saplings alone. ------!
+   subroutine two_unlike_patches()
+      call init_bare_ground(site, cfg, 2_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.012_wp, 30.0_wp)
+      call add_cohort(site, cfg, 2_ik, 1_ik, 0.050_wp,  5.0_wp)
+      call finalize_init(site)
+   end subroutine two_unlike_patches
 end program test_patch

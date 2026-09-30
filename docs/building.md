@@ -42,8 +42,8 @@ identically under all three compilers.
 | GNU `gfortran` | Supported; ED2's reference toolchain. | usually already on `PATH` |
 
 **A green ifx run is not sufficient.** Build the nvfortran multicore back end on new modules too,
-and gfortran, which on most machines is the second compiler at hand. Four portability traps have
-each bitten once, and each was invisible to ifx:
+and gfortran, which on most machines is the second compiler at hand. Seven portability traps have
+each bitten at least once, and each was invisible to ifx:
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's whole-program
   optimizer miscompiles the temporary descriptor — silently wrong values at `-O2`, a segfault at
@@ -58,6 +58,19 @@ each bitten once, and each was invisible to ifx:
   copy-out leaves the originals' allocatable components dangling: a segfault a step later, with
   nothing reported by `-fcheck=all`. Keep such objects in a contiguous array of their own, as the
   region keeps its polygons' output buffers.
+- **Never nest an implied-do inside a `pack` inside an array constructor**, as in
+  `[pack([(i, i = 0, n - 1)], m1), pack([(i, i = 0, n - 1)], m2)]`. nvfortran 25.11 returns wrong
+  elements at `-O2` and segfaults at `-O0`. Bind the implied-do to a named array and pack that.
+- **Keep `findloc` off LOGICAL arrays, and never search a character array for a shorter value.**
+  nvfortran 25.11's runtime aborts with "FINDLOC: unimplemented for data type" on a LOGICAL
+  array; search an integer mask instead, `findloc(merge(1, 0, mask), 1)`. On a character array it
+  returns 0 for a value shorter than the elements, such as `findloc(names, trim(s))`, where the
+  standard compares blank-padded; pass the untrimmed value.
+- **Never reset with an empty structure constructor, `x = t()`, when `t` has a fixed-size array
+  component whose own type has allocatable components.** nvfortran 25.11 compiles it to an
+  ALLOCATE of a garbage size, and a small program using the same pattern is an internal compiler
+  error. Assign a default-initialised local that is never written, or reset through an
+  `intent(out)` dummy.
 
 ## Build types
 
@@ -77,21 +90,56 @@ function in `CMakeLists.txt`.
 
 ## Parallel builds
 
-**Host threading over the patch axis** — opt in at both build and run time:
+**Host threading over the patch axis** is compiled in by default; a run asks for it:
 
 ```bash
-cmake -S . -B build-omp -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
-      -DMEDS_OPENMP=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-# then set [run].n_threads in the TOML (default 1).
+cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
+# then set [run].n_threads in the TOML (default 1), and give the job that many cores.
 ```
 
 Output is **byte-identical at any thread count**, and the test suite asserts it.
 
-`-DMEDS_OPENMP=ON` does two things, and the second is load-bearing: it puts the OpenMP flag on the
+- `-DMEDS_OPENMP=OFF` builds serial. A compiler with no Fortran OpenMP falls back to serial with a
+  CMake warning.
+- A build directory configured while the default was serial keeps its cached `MEDS_OPENMP=OFF`.
+  Pass `-DMEDS_OPENMP=ON` or configure a fresh directory.
+- The Python wheel builds serial (`python/pyproject.toml`), so `libmeds.so` never brings a second
+  OpenMP runtime into a Python process.
+- gfortran with a conda netCDF prefix warns that the prefix's `libgomp.so.1` may hide the
+  compiler's. That is harmless when the conda copy is the newer one, as it is in the `meds`
+  environment (GCC 16 against the system's GCC 11), and the test suite passes that way.
+
+**An OpenMP build does not reproduce a serial build bit for bit.** Compiling the patch loop as a
+parallel region changes its rounding. On the BCI census example the two builds agree for 62 hours,
+then differ in the 13th significant digit, and the drift reaches about 2% of the largest hourly flux
+after five years. The tower statistics and the stand agree to every printed digit. The stack flag
+below is not the cause: a serial build with only `-auto` reproduces the serial build exactly.
+
+`MEDS_OPENMP` does two things, and the second is load-bearing: it puts the OpenMP flag on the
 fast-loop target, **and it adds the per-compiler "all locals on the stack" flag** (`-auto`,
 `-frecursive`, `-Mrecursive`) to *every* target. Intel Fortran defaults to `-auto-scalar`, which
 places local arrays and derived types in static storage shared by every thread; without that flag
 the kernels race and return plausible, silently thread-count-dependent numbers.
+
+**What threads buy today.** The five-year BCI census example, 25 patches falling to 15, ifx Release,
+each run alone on a 40-core node:
+
+| build | `n_threads` | wall time |
+|---|---|---|
+| serial | 1 | 7 min 11 s |
+| OpenMP | 1 | 7 min 17 s |
+| OpenMP | 4 | 5 min 44 s |
+| OpenMP | 8 | 13 min 15 s |
+| OpenMP | 16 | 20 min 10 s |
+
+One thread costs 1.5%. **More than four threads make this run slower.** Sampled stacks put most of
+the threads' time in ifx's `__intel_alloc_bpv` and `__intel_free_bpv`. ifx allocates a "bound
+procedure value" on entry to any routine that passes one of its internal procedures as an actual
+argument, and those allocations serialize the threads. Two such routines sit in the fast loop:
+`flux_potential` in `meds_hydr_lib`, which hands `kirchhoff_integrand` to `gauss_legendre_7` even
+when it takes the closed form, and `solve_leaf_gas_exchange`, which hands its residuals to
+`bisect_root`. Until they stop doing so, use at most four threads.
 
 **OpenMP `target` offload** (NVHPC only):
 

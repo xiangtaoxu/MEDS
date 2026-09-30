@@ -17,12 +17,11 @@
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
+   use meds_config,      only : meds_config_t, pft_leaf_psi_tlp, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
    use meds_temp_response, only : kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_hydr_lib,    only : pv_psi_tlp
    use meds_fast_types,  only : tol_set_t, error_control_t, integrator_opts_t,                     &
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
                                 GRP_THETA, N_TOL_GROUP
@@ -66,10 +65,10 @@ contains
          p%psi_close      = t%wstress_psi_close(ipft)
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
-         p%psi_tlp        = pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod)
+         p%psi_tlp        = pft_leaf_psi_tlp(cfg, ipft)   ! the PFT's own pressure-volume curve
       end associate
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
-      p%stress_arrestor     = cfg%leaf_stress_arrestor
+      p%low_psi_control     = cfg%low_water_potential_control
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
       p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar

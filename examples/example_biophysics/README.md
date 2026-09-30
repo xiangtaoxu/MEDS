@@ -1,5 +1,10 @@
 # example_biophysics — the fast loop, at hourly resolution
 
+> **The figures and numbers below are v0.3.0's.** v0.3.1 changed the rain timing on end-stamped
+> forcing and the soil-water faces (#320), and the allometry (#321), and this example has not been
+> re-run since. It is to be retired in favour of
+> [`example_flux_tower_bci`](../example_flux_tower_bci/README.md).
+
 What MEDS does with a meteorological forcing file: solve a coupled canopy energy balance every
 15 minutes and hand back leaf, canopy-air and soil temperatures that a met file never contained.
 
@@ -184,7 +189,7 @@ Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithac
 1. **`meds_config_spinup.toml`** — 50 years from bare ground, 2024-07-01 → 2074-07-01. Writes no
    diagnostics at all; its only product is the restart checkpoint `spinup-S-20740701000000.nc`.
    **About 4½ minutes** for both stages on one core of a 2026 compute node (ifx Release);
-   `-DMEDS_OPENMP=ON` with `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
+   `[run].n_threads` threads the patches. This stage runs the **900 s production default**: `dt_fast` is no
    longer a stability requirement (the per-stage Monin–Obukhov refresh removed that bound), so the
    spin-up takes the long step. Because `dt_fast` perturbs growth it changes *which* cohorts fuse or
    are culled, which is a discrete difference rather than a shrinking truncation error — so runs at
@@ -331,7 +336,7 @@ grid_elevation        = 367.5          # [m] the orography of the cell the file 
 76.50 °W). The site sits 47.5 m below it, which the lapse turns into +0.31 K of air temperature,
 +2.2 W m⁻² of longwave and +0.56 kPa of pressure; the move to the canopy-air top raises the friction
 velocity over an established stand by about a third (`CHANGELOG.md`, #305). With the archive
-(`format = "era5land"`) the reader takes the grid elevation from the archive itself.
+(`format = "ED_ERA5land"`) the reader takes the grid elevation from the archive itself.
 
 **Forcing recycling.** One calendar year of ERA5-Land drives all 50 years. The recycle window is
 *declared*, never inferred:

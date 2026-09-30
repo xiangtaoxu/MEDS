@@ -9,8 +9,11 @@
 ! `-D-` filename prefix.                                                                         !
 !                                                                                          !
 ! The restart stream stays deliberately orthogonal to the diagnostic streams: a checkpoint must  !
-! be the raw prognostic state at an INSTANT, never a time-average. Cached geometry is re-derived  !
-! from dbh on read, and no diagnostic is stored.                                                  !
+! be the raw prognostic state at an INSTANT, never a time-average, and a run resumed from it     !
+! must continue exactly as the run that wrote it would have. So the cohort carbon pools and the   !
+! geometry the running model carries are stored as they are, not re-derived from dbh: fusion      !
+! leaves a cohort off the allometry, and re-deriving it moved the leaf area and reset the fine-   !
+! root carbon. Only the wood geometry that is a pure function of the stored fields is re-derived. !
 !==========================================================================================!
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
@@ -19,7 +22,9 @@ module meds_io
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_site_state_types, only : site_t
-   use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr
+   use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
+                                           set_cohort_wood_geometry
+   use meds_demography_update,      only : update_overtopping_lai
    use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts
@@ -44,9 +49,8 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Write the full INSTANTANEOUS prognostic state to a self-contained, timestamped file     !
-   ! <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc -- everything needed to restart, and NO diagnostics.  !
-   ! Cached geometry (height/basal_area/agb/leaf_area) is omitted: it is re-derived from dbh  !
-   ! on restart. Scalars travel in a small meta_int/meta_real vector.                         !
+   ! <dir>/<prefix>-S-YYYYMMDDHHMMSS.nc -- everything needed to restart exactly, and NO        !
+   ! diagnostics. Scalars travel in a small meta_int/meta_real vector.                         !
    !---------------------------------------------------------------------------------------!
    subroutine state_write_state(site, cfg, dir, prefix, now, restructure_pending, restructure_new_year)
       type(site_t),        intent(in) :: site
@@ -66,6 +70,11 @@ contains
       integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pchl           ! #150: the phenology governor + thermal memory
       integer(c_int) :: vc_pwat, vc_plow, vc_phigh, vc_plit        ! #150: the four cue sub-accumulators
       integer(c_int) :: vs_tgrow                                   ! #176: growth-temperature running mean
+      integer(c_int) :: vc_hgt, vc_ba, vc_agb, vc_la, vc_lc, vc_fc, vc_wc, vc_nc, vc_olai   ! pools + geometry
+      integer(c_int) :: vc_lsw, vc_wsw                             ! canopy interception film
+      integer(c_int) :: vc_gacc, vc_gcnt, vc_ghist, vs_gpos, d_gwin    ! the growth-rate ring buffer
+      integer(c_int) :: vp_sco2                                    ! the slow loop's CO2 hand-off
+      integer(ik)    :: ic, nwin
       integer(c_int) :: vp_area, vp_age, vp_dist, vp_gid, vp_rec
       integer(c_int) :: vp_sc1, vp_sc2, vp_sc3, vp_sc4, vp_sc5, vp_sc6, vp_sc7, vp_lig1, vp_lig2
       !----- FAST reservoirs (P5 restart-completeness fix, MEDS_ED2_RK45_DESIGN.md): persisted so a  !
@@ -93,6 +102,8 @@ contains
       call nc_check(nc_def_dim_f(ncid, 'nmeta_real',  2_c_size_t, d_mr), 'state dim mr')
       call nc_check(nc_def_dim_f(ncid, 'soil_layer', int(n_soil_layer_max, c_size_t), d_soill), 'state dim soill')
       call nc_check(nc_def_dim_f(ncid, 'snow_layer', int(n_snow_layer_max, c_size_t), d_snowl), 'state dim snowl')
+      nwin = int(size(site%cohort%growth_hist, 1), ik)
+      call nc_check(nc_def_dim_f(ncid, 'growth_window', int(max(nwin,1_ik), c_size_t), d_gwin), 'state dim gwin')
 
       call dv(vmi,    'meta_int',         NC_INT,    [d_mi],                                   &
               '[n_cohort,n_patch,n_pft,next_cohort_id,next_patch_id,year,month,day,hour,minute,second]')
@@ -112,8 +123,8 @@ contains
       !      re-seeds leaf_water_mass to near-saturated (lazy-init) and leaf/wood_temp to LEAF_TEMP_INIT, !
       !      whose psi/temperature discontinuity makes the plant-hydraulics sub-stepper grind for a few   !
       !      days on a healthy high-LAI restart. OPTIONAL on read (gv_dbl_opt), so an older-format state   !
-      !      file still restarts (re-seeding as before). Leaf-surface (interception) water stays          !
-      !      unpersisted on purpose: 0 (bone-dry) is a real, discontinuity-free initial condition. -------!
+      !      file still restarts (re-seeding as before). The leaf-surface (interception) film is stored   !
+      !      below with the pools. ------------------------------------------------------------------------!
       call dv(vc_lwm, 'leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv(vc_wwm, 'wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
       call dv(vc_lt,  'leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
@@ -155,6 +166,31 @@ contains
       call dv(vc_plow, 'pheno_low_psi_days', NC_DOUBLE, [d_cohort], 'consecutive days below turgor loss [day]')
       call dv(vc_phigh,'pheno_high_psi_days',NC_DOUBLE, [d_cohort], 'consecutive wet days [day]')
       call dv(vc_plit, 'pheno_light_avg',    NC_DOUBLE, [d_cohort], 'running-mean incident shortwave [W/m2]')
+      !----- The carbon pools and geometry as the running model holds them. Cohort fusion keeps the   !
+      !      pools and derives the geometry from them, so a fused cohort sits off the allometry for   !
+      !      its dbh; re-deriving them from dbh on read moved the leaf area (BCI: LAI 5.6380 written,  !
+      !      5.6389 read) and reset the fine-root carbon to the allometric value. overtopping_lai is  !
+      !      what the plastic traits were acclimated to. OPTIONAL on read (older files re-derive).  -!
+      call dv(vc_hgt,  'height',               NC_DOUBLE, [d_cohort], 'height [m]')
+      call dv(vc_ba,   'basal_area',           NC_DOUBLE, [d_cohort], 'basal area per plant [cm2]')
+      call dv(vc_agb,  'agb',                  NC_DOUBLE, [d_cohort], 'aboveground biomass per plant [kgC]')
+      call dv(vc_la,   'leaf_area',            NC_DOUBLE, [d_cohort], 'leaf area per plant [m2]')
+      call dv(vc_lc,   'leaf_carbon',          NC_DOUBLE, [d_cohort], 'leaf carbon per plant [kgC]')
+      call dv(vc_fc,   'fineroot_carbon',      NC_DOUBLE, [d_cohort], 'fine-root carbon per plant [kgC]')
+      call dv(vc_wc,   'wood_carbon',          NC_DOUBLE, [d_cohort], 'wood carbon per plant [kgC]')
+      call dv(vc_nc,   'nonstructural_carbon', NC_DOUBLE, [d_cohort], 'nonstructural carbon per plant [kgC]')
+      call dv(vc_olai, 'overtopping_lai',      NC_DOUBLE, [d_cohort], 'LAI of the taller cohorts in the patch [m2/m2]')
+      !----- The canopy interception film ([fast].canopy_water_on). A dry canopy is a valid start,   !
+      !      but not the state the writing run was in. OPTIONAL on read (older files start dry). ---!
+      call dv(vc_lsw,  'leaf_surf_water',      NC_DOUBLE, [d_cohort], 'leaf interception film [kg/m2 ground]')
+      call dv(vc_wsw,  'wood_surf_water',      NC_DOUBLE, [d_cohort], 'wood interception film [kg/m2 ground]')
+      !----- The growth-rate ring buffer behind growth_avg (the mortality predictor) and its site-wide !
+      !      write slot. OPTIONAL on read: an older file, or one written with another window length,    !
+      !      reseeds the buffer from growth_avg as before. ------------------------------------------!
+      call dv(vc_gacc, 'growth_accum',         NC_DOUBLE, [d_cohort], 'running sum of the growth window [cm/yr]')
+      call dv(vc_gcnt, 'growth_count',         NC_INT,    [d_cohort], 'samples in the growth window')
+      call dv(vc_ghist,'growth_hist',          NC_DOUBLE, [d_cohort, d_gwin], 'growth-rate ring buffer [cm/yr]')
+      call dv(vs_gpos, 'growth_hist_pos',      NC_INT,    [d_mr], 'ring-buffer write slot (element 1)')
       !----- THERMAL ACCLIMATION (#176). A SITE scalar, but written as its own variable rather      !
       !      than appended to meta_real, because meta_real is read at a fixed length of 2 and        !
       !      growing it would stop older state files loading. Optional on read like everything       !
@@ -166,6 +202,7 @@ contains
       call dv(vp_dist,'dist_type',        NC_INT,    [d_patch],  'disturbance type (1=primary,2=treefall)')
       call dv(vp_gid, 'global_patch_id',  NC_INT,    [d_patch],  'persistent patch id')
       call dv(vp_rec, 'recruit_pool',     NC_DOUBLE, [d_patch, d_pft], 'carry-forward recruit pool [plant/m2]')
+      call dv(vp_sco2,'slow_co2_rate',    NC_DOUBLE, [d_patch], 'slow-loop CO2 flux the fast NEE adds [umol/m2/s]')
       !----- FAST reservoirs (P5, MEDS_ED2_RK45_DESIGN.md): the true evolved CAS/soil/snow state, not    !
       !      just its cached geometry -- a restart that reset these to a generic seed (the ONLY prior      !
       !      behavior) handed an already-mature canopy a discontinuous jump on day 1, which RK45's fully   !
@@ -263,14 +300,38 @@ contains
             call put_coh(vc_plow, c%pheno_low_psi_days(1:ncoh),  'pheno_low_psi_days')
             call put_coh(vc_phigh,c%pheno_high_psi_days(1:ncoh), 'pheno_high_psi_days')
             call put_coh(vc_plit, c%pheno_light_avg(1:ncoh),     'pheno_light_avg')
+            call put_coh(vc_hgt,  c%height(1:ncoh),               'height')
+            call put_coh(vc_ba,   c%basal_area(1:ncoh),           'basal_area')
+            call put_coh(vc_agb,  c%agb(1:ncoh),                  'agb')
+            call put_coh(vc_la,   c%leaf_area(1:ncoh),            'leaf_area')
+            call put_coh(vc_lc,   c%leaf_carbon(1:ncoh),          'leaf_carbon')
+            call put_coh(vc_fc,   c%fineroot_carbon(1:ncoh),      'fineroot_carbon')
+            call put_coh(vc_wc,   c%wood_carbon(1:ncoh),          'wood_carbon')
+            call put_coh(vc_nc,   c%nonstructural_carbon(1:ncoh), 'nonstructural_carbon')
+            call put_coh(vc_olai, c%overtopping_lai(1:ncoh),      'overtopping_lai')
+            call put_coh(vc_lsw,  c%leaf_surf_water(1:ncoh),      'leaf_surf_water')
+            call put_coh(vc_wsw,  c%wood_surf_water(1:ncoh),      'wood_surf_water')
+            call put_coh(vc_gacc, c%growth_accum(1:ncoh),         'growth_accum')
+            call nc_check(nc_put_vara_int(ncid, vc_gcnt, [0_c_size_t], [int(ncoh,c_size_t)], c%growth_count(1:ncoh)), &
+                          'put growth_count')
+            if (nwin > 0_ik) then
+               do ic = 1_ik, ncoh
+                  call nc_check(nc_put_vara_double(ncid, vc_ghist, [int(ic-1_ik,c_size_t), 0_c_size_t],   &
+                                [1_c_size_t, int(nwin,c_size_t)], c%growth_hist(1:nwin, ic)), 'put growth_hist')
+               end do
+            end if
          end associate
       end if
+      call nc_check(nc_put_vara_int(ncid, vs_gpos, [0_c_size_t], [1_c_size_t], [site%growth_hist_pos]), &
+                    'put growth_hist_pos')
       if (npat > 0_ik) then
          associate (p => site%patch)
             call nc_check(nc_put_vara_double(ncid, vp_area, [0_c_size_t], [int(npat,c_size_t)], p%area(1:npat)),      'put area')
             call nc_check(nc_put_vara_double(ncid, vp_age,  [0_c_size_t], [int(npat,c_size_t)], p%age(1:npat)),       'put age')
             call nc_check(nc_put_vara_int   (ncid, vp_dist, [0_c_size_t], [int(npat,c_size_t)], p%dist_type(1:npat)), 'put dist')
             call nc_check(nc_put_vara_int   (ncid, vp_gid,  [0_c_size_t], [int(npat,c_size_t)], p%global_id(1:npat)), 'put pgid')
+            call nc_check(nc_put_vara_double(ncid, vp_sco2, [0_c_size_t], [int(npat,c_size_t)], p%slow_co2_rate(1:npat)), &
+                          'put slow_co2_rate')
             do ip = 1_ik, npat
                call nc_check(nc_put_vara_double(ncid, vp_rec, [int(ip-1_ik,c_size_t), 0_c_size_t],    &
                              [1_c_size_t, int(npft,c_size_t)], p%recruit_pool(1:npft, ip)), 'put recruit_pool')
@@ -413,7 +474,8 @@ contains
       integer(c_int) :: ncid, vid, vrec, st
       integer(ik)    :: ncoh, npat, npft, ip, i, nwin, meta_i(11)
       real(wp)       :: meta_r(2)
-      logical        :: fast_ok
+      logical        :: fast_ok, pools_ok, olai_ok, ghist_ok
+      integer(c_size_t) :: nwin_file
 
       found = .false. ; restart_time = meds_time_t()
       if (present(fast_found)) fast_found = .false.
@@ -492,21 +554,63 @@ contains
             call gv_dbl_opt(ncid, 'pheno_low_psi_days', ncoh, c%pheno_low_psi_days(1:ncoh))
             call gv_dbl_opt(ncid, 'pheno_high_psi_days',ncoh, c%pheno_high_psi_days(1:ncoh))
             call gv_dbl_opt(ncid, 'pheno_light_avg',    ncoh, c%pheno_light_avg(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
+            call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
-         do i = 1_ik, ncoh
-            call set_cohort_size(site%cohort, i)             ! height/basal_area/agb/leaf_area from dbh
-         end do
-         !----- Seed the moving-average ring buffer as if it were full of the saved growth_avg !
-         !       (the per-step history itself is not stored); it is overwritten within a window.!
+         !----- The pools and geometry the writing run held (see the writer). A file without them   !
+         !      re-derives them on the allometry from dbh, as every file did before. ---------------!
+         pools_ok = nc_inq_varid_f(ncid, 'leaf_carbon', vid) == NC_NOERR
+         if (pools_ok) then
+            associate (c => site%cohort)
+               call gv_dbl(ncid, 'height',               ncoh, c%height(1:ncoh))
+               call gv_dbl(ncid, 'basal_area',           ncoh, c%basal_area(1:ncoh))
+               call gv_dbl(ncid, 'agb',                  ncoh, c%agb(1:ncoh))
+               call gv_dbl(ncid, 'leaf_area',            ncoh, c%leaf_area(1:ncoh))
+               call gv_dbl(ncid, 'leaf_carbon',          ncoh, c%leaf_carbon(1:ncoh))
+               call gv_dbl(ncid, 'fineroot_carbon',      ncoh, c%fineroot_carbon(1:ncoh))
+               call gv_dbl(ncid, 'wood_carbon',          ncoh, c%wood_carbon(1:ncoh))
+               call gv_dbl(ncid, 'nonstructural_carbon', ncoh, c%nonstructural_carbon(1:ncoh))
+            end associate
+            do i = 1_ik, ncoh
+               call set_cohort_wood_geometry(site%cohort, i)  ! wood area + sapwood: functions of the above
+            end do
+         else
+            do i = 1_ik, ncoh
+               call set_cohort_size(site%cohort, i)          ! height/basal_area/agb/leaf_area from dbh
+            end do
+         end if
+         olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR
+         if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, site%cohort%overtopping_lai(1:ncoh))
+         !----- The growth-rate ring buffer, when the file has one of this run's window length.  !
+         !      Otherwise seed it as if it were full of the saved growth_avg; it is overwritten     !
+         !      within a window. -----------------------------------------------------------------!
          nwin = growth_window_steps(cfg)
-         do i = 1_ik, ncoh
-            if (site%cohort%growth_avg(i) >= 0.0_wp) then
-               site%cohort%growth_count(i)   = nwin
-               site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
-               site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)
-            end if
-         end do
+         ghist_ok = nc_inq_varid_f(ncid, 'growth_hist', vid) == NC_NOERR
+         if (ghist_ok) then
+            call nc_check(nc_inq_dimlen_f(ncid, 'growth_window', nwin_file), 'inq growth_window')
+            ghist_ok = int(nwin_file, ik) == nwin .and. int(size(site%cohort%growth_hist, 1), ik) == nwin
+         end if
+         if (ghist_ok) then
+            call gv_dbl(ncid, 'growth_accum', ncoh, site%cohort%growth_accum(1:ncoh))
+            call gv_int(ncid, 'growth_count', ncoh, site%cohort%growth_count(1:ncoh))
+            do i = 1_ik, ncoh
+               call gv_dbl2_row(ncid, 'growth_hist', i, nwin, site%cohort%growth_hist(1:nwin, i))
+            end do
+            block
+               integer(ik) :: gpos(1)
+               call gv_int(ncid, 'growth_hist_pos', 1_ik, gpos)
+               site%growth_hist_pos = gpos(1)
+            end block
+         else
+            do i = 1_ik, ncoh
+               if (site%cohort%growth_avg(i) >= 0.0_wp) then
+                  site%cohort%growth_count(i)   = nwin
+                  site%cohort%growth_accum(i)   = site%cohort%growth_avg(i) * real(nwin, wp)
+                  site%cohort%growth_hist(:, i) = site%cohort%growth_avg(i)
+               end if
+            end do
+         end if
       end if
       if (npat > 0_ik) then
          associate (p => site%patch)
@@ -514,6 +618,7 @@ contains
             call gv_dbl (ncid, 'patch_age',       npat, p%age(1:npat))
             call gv_int (ncid, 'dist_type',       npat, p%dist_type(1:npat))
             call gv_int (ncid, 'global_patch_id', npat, p%global_id(1:npat))
+            call gv_dbl_opt(ncid, 'slow_co2_rate', npat, p%slow_co2_rate(1:npat))
             call nc_check(nc_inq_varid_f(ncid, 'recruit_pool', vrec), 'inq recruit_pool')
             do ip = 1_ik, npat
                call nc_check(nc_get_vara_double(ncid, vrec, [int(ip-1_ik,c_size_t), 0_c_size_t],  &
@@ -621,6 +726,9 @@ contains
 
       call rebuild_csr(site)
       call sort_cohorts(site)
+      !----- A file without overtopping_lai: compute it from the stand as read, so the traits'     !
+      !      light environment is the stand's from the first step rather than an open sky. --------!
+      if (ncoh > 0_ik .and. .not. olai_ok) call update_overtopping_lai(site)
       found = .true.
 
    contains

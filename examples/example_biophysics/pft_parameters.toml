@@ -76,7 +76,7 @@ wood_transmit_nir  = [0.001]   # [--] wood/bark NIR transmittance
 wood_emissivity    = [0.90]    # [--] wood thermal emissivity
 leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
-leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (45 = spherical)
+leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
@@ -102,11 +102,11 @@ mort_beta_exp  = 0.2792
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899
-agb_c1     = 0.06080334
-agb_c2     = 1.0044785
+agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
+agb_c2     = 0.976          # Chave et al. (2014) eq. 4
 ca_b1      = 0.370
 ca_b2      = 0.464
-lai_b1     = 0.46769540
+lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5
 

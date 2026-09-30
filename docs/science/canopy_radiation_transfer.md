@@ -205,8 +205,8 @@ albedo is the ground's alone.
 | $`\rho_{leaf},\tau_{leaf}`$ | per-PFT leaf spectra | leaf reflectance / transmittance per band |
 | $`\rho_{wood},\tau_{wood}`$ | per-PFT wood spectra | wood reflectance / transmittance per band |
 | $`\Omega_{leaf},\Omega_{wood}`$ | `clumping_leaf`, `clumping_wood` | clumping factors $\in(0,1]$ |
-| $`\varepsilon_{soil}`$ | `soil_emiss` | ground thermal emissivity |
-| — | `soil_albedo(band)` | per-band bare-soil shortwave albedo |
+| $`\varepsilon_{soil}`$ | `[soil].ground_emissivity` (0.95) | ground thermal emissivity |
+| — | `[soil].ground_albedo_vis`, `ground_albedo_nir` (0.15, 0.30) | per-band bare-soil shortwave albedo |
 | $`\alpha_{leaf}`$ | `leaf_absorptance` (leaf kernel) | leaf VIS absorptance (PAR re-normalization) |
 
 ## References

@@ -14,7 +14,7 @@ program test_met_driver
                                     time_advance_seconds
    use meds_therm_lib,          only : sat_vapor_pressure, air_density
    use meds_forcing_config,  only : LW_CLEAR_BRUTSAERT, LW_CLEAR_IDSO
-   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_NETCDF,    &
+   use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,    &
                                     SWPART_CLEARIDX, SWPART_WEISS_NORMAN, INTERP_LINEAR,        &
                                     INTERP_STEP, METAVG_END, METAVG_BEGIN, SWPART_PASSTHROUGH,  &
                                     CLAMP_HOLD, CLAMP_ERROR,                                   &
@@ -71,7 +71,7 @@ contains
       type(met_source_t),     intent(in)  :: src
       type(met_cursor_t),     intent(out) :: cur
       type(forcing_config_t), intent(in)  :: fc
-      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%utc_offset_h,  &
+      call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg,                   &
                            fc%elevation_m)
    end subroutine site_cursor
 
@@ -217,12 +217,12 @@ contains
       ! this is where ED2's <sec z> mistake is worst (design §9). Solar noon is ~17 UTC here.
       f_avg = 500.0_wp ; win_start = 10.0_wp*3600.0_wp ; dt_win = 3600.0_wp
       n = 12_ik ; dt_sub = dt_win / real(n, wp)
-      factor = cosz_reconstruct_factor(t, win_start, dt_sub, dt_win, LAT, LON, 0.0_wp, .true.)  ! = 1/<cosz>
+      factor = cosz_reconstruct_factor(t, win_start, dt_sub, dt_win, LAT, LON)  ! = 1/<cosz>
       ! (a) the CORRECT 1/<cosz> factor conserves the interval mean EXACTLY over the same subsamples:
       fsum = 0.0_wp ; secz_sum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON, 0.0_wp, .true.)
+         cosz = met_solar_cosz(t, sec, LAT, LON)
          fsum = fsum + disaggregate_sw(f_avg, cosz, factor)
          secz_sum = secz_sum + 1.0_wp/max(cosz, 0.03_wp)          ! <sec z> = <1/cosz> (ED2 mean_daysecz, clamped)
       end do
@@ -232,13 +232,13 @@ contains
       fsum = 0.0_wp
       do i = 1_ik, n
          sec  = win_start + (real(i,wp)-0.5_wp)*dt_sub
-         cosz = met_solar_cosz(t, sec, LAT, LON, 0.0_wp, .true.)
+         cosz = met_solar_cosz(t, sec, LAT, LON)
          fsum = fsum + f_avg*cosz*(secz_sum/real(n,wp))
       end do
       mean_secz = fsum/real(n,wp)
       call check_true('<sec z> form is BIASED HIGH (does NOT conserve)', mean_secz > f_avg + 1.0_wp, mean_secz - f_avg)
       ! (c) a fully-night window -> factor 0 -> all SW routes to 0
-      factor = cosz_reconstruct_factor(t, 4.0_wp*3600.0_wp, dt_sub, dt_win, LAT, LON, 0.0_wp, .true.) ! 04-05 UTC = night
+      factor = cosz_reconstruct_factor(t, 4.0_wp*3600.0_wp, dt_sub, dt_win, LAT, LON) ! 04-05 UTC = night
       call check('night window -> factor 0', factor, 0.0_wp, 1.0e-30_wp)
    end subroutine test_cosz_reconstruction
 
@@ -273,10 +273,10 @@ contains
       base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
       call write_synthetic_forcing(NCFILE, base)
 
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp ; fc%utc_offset_h = 0.0_wp
-      fc%apply_solar_longitude = .true. ; fc%recycle = .false.
+      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%recycle = .false.
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
       call check_true('opened file: nrec=25', src%nrec == 25_ik, real(src%nrec, wp))
       call check_true('opened file: ngrid=2', src%ngrid == 2_ik, real(src%ngrid, wp))
@@ -335,10 +335,10 @@ contains
       base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
       call write_synthetic_forcing(NCFILE, base)
 
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp ; fc%utc_offset_h = 0.0_wp
-      fc%apply_solar_longitude = .true. ; fc%recycle = .false.
+      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
+      fc%recycle = .false.
 
       !----- the honest config opens cleanly. A validator that rejects the good case is useless. --!
       call met_open(src, fc, stat=st)
@@ -382,9 +382,9 @@ contains
       integer(ik) :: st
       real(wp) :: tair0, tair1, expect_hold
       print '(a)', '-- test 8: edge paths (start-hold + recycle) --'
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp ; fc%apply_solar_longitude = .true.
+      fc%latitude_deg = 42.44_wp ; fc%longitude_deg = -76.50_wp
       ! synthetic Tair(hh) = 288 + 8 sin(2 pi (hh-15)/24)  -- reproduce the file's values for the checks:
       tair0 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(0.0_wp-15.0_wp)/24.0_wp)
       tair1 = 288.0_wp + 8.0_wp*sin(2.0_wp*3.14159265_wp*(1.0_wp-15.0_wp)/24.0_wp)
@@ -444,9 +444,9 @@ contains
       integer(ik) :: st
       print '(a)', '-- test: recycle anchor + sub-daily phase --'
       call write_yearfile(YF, 2021_ik)                       ! 365 daily records from 2021-01-01 00:00
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
       fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+      fc%recycle = .true.
 
       !----- A MID-YEAR window: 2021-03-01 .. 2022-03-01. Plain year substitution would map a
       !      January instant to 2021-01, which is OUTSIDE this window; the anchored form sends it
@@ -525,6 +525,7 @@ contains
       call nc_check(st, 'write: avg_convention')
       st = nc_put_att_text_f(ncid, NC_GLOBAL, 'sw_input_kind', int(len_trim('total'), c_size_t), 'total')
       call nc_check(st, 'write: sw_input_kind')
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'time_zone', 3_c_size_t, 'UTC') ; call nc_check(st, 'write: time_zone')
       st = nc_enddef(ncid) ; call nc_check(st, 'write: enddef')
 
       do it = 1, NT
@@ -589,7 +590,7 @@ contains
       call check('great-circle 1 deg lat ~ 111 km', great_circle_distance(0.0_wp,0.0_wp,0.0_wp,1.0_wp), 111195.0_wp, 500.0_wp)
       !----- reader override: the 2-grid file has lon/lat cells (-76.6,42.5) and (-76.5,42.4). ---!
       call write_synthetic_forcing(NCFILE, meds_time_t(2020_ik,7_ik,1_ik))
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%dt_forcing = 3600.0_wp
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%dt_forcing = 3600.0_wp
       fc%grid_match = GRIDMATCH_NEAREST ; fc%grid_index = 1_ik      ! grid_index deliberately WRONG for cell 2
       fc%latitude_deg = 42.41_wp ; fc%longitude_deg = -76.49_wp     ! nearest to cell 2
       call met_open(src, fc) ; call site_cursor(src, cur, fc)
@@ -699,9 +700,9 @@ contains
       type(met_forcing_t)    :: m_ref, m_map
       print '(a)', '-- test: multi-year cycling + Feb-29 --'
       call write_yearfile(YF, 2021_ik)                             ! 365 daily records, Jan-1 2021 aligned
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
       fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+      fc%recycle = .true.
       !----- The cycle is DECLARED, never inferred from the file. --------------------------------!
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik)
       fc%recycle_end   = meds_time_t(2022_ik, 1_ik, 1_ik)
@@ -832,28 +833,30 @@ contains
       call write_text(CF, [character(len=48) :: 'timestep 1 year', 'units umol/mol', '2021 400',    &
                            '2022 410', '2023 420', '2024 430'])
       fc = forcing_config_t()
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = YF ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = YF ; fc%grid_index = 1_ik
       fc%dt_forcing = 86400.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
-      fc%recycle = .true. ; fc%apply_solar_longitude = .false.
+      fc%recycle = .true.
       fc%recycle_start = meds_time_t(2021_ik, 1_ik, 1_ik) ; fc%recycle_end = meds_time_t(2022_ik, 1_ik, 1_ik)
       fc%co2_source = CO2_SOURCE_FILE ; fc%co2_file = CF
       call met_open(src, fc, stat=st, run_start=meds_time_t(2021_ik,1_ik,1_ik),                      &
                     run_end=meds_time_t(2025_ik,1_ik,1_ik))
       call check_true('recycle: opens with a CO2 file', st == MET_OK, real(st, wp))
-      call site_cursor(src, cur, fc)
-      call met_advance(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
-      m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
-      call met_advance(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
-      m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
-      call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
-      call check('recycle: 2021 CO2', m_ref%co2, 400.0_wp, 1.0e-9_wp)
-      call check('recycle: the CO2 does not repeat (2023 CO2)', m_map%co2, 420.0_wp, 1.0e-9_wp)
-      call met_close(src)
+      if (st == MET_OK) then
+         call site_cursor(src, cur, fc)
+         call met_advance(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
+         m_ref = met_instant(src, cur, meds_time_t(2021_ik,7_ik,2_ik,12_ik))
+         call met_advance(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
+         m_map = met_instant(src, cur, meds_time_t(2023_ik,7_ik,2_ik,12_ik))
+         call check('recycle: the met repeats (2023 reads the 2021 record)', m_map%tair_k, m_ref%tair_k, 1.0e-9_wp)
+         call check('recycle: 2021 CO2', m_ref%co2, 400.0_wp, 1.0e-9_wp)
+         call check('recycle: the CO2 does not repeat (2023 CO2)', m_map%co2, 420.0_wp, 1.0e-9_wp)
+         call met_close(src)
+      end if
 
       !----- A met file that carries CO2air is rejected: nothing would read it. ---------------!
       call write_synthetic_forcing(NCFILE, meds_time_t(year=2020_ik, month=7_ik, day=1_ik), with_co2air=.true.)
       fc = forcing_config_t()
-      fc%backend = MET_BACKEND_NETCDF ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%recycle = .false.
       call met_open(src, fc, stat=st)
@@ -899,6 +902,12 @@ contains
       type(met_cursor_t), intent(in) :: cur
       type(meds_time_t),  intent(in) :: t
       type(met_forcing_t) :: met
+      !----- A series that failed to open has no rows. -1 fails every check that follows, where    !
+      !      met_instant would read its unallocated arrays and the segfault would swallow the       !
+      !      buffered output that says why the open failed. ---------------------------------------!
+      if (src%co2%n < 2_ik) then
+         co2 = -1.0_wp ; return
+      end if
       met = met_instant(src, cur, t)
       co2 = met%co2
    end function co2_now
@@ -949,6 +958,7 @@ contains
       st = nc_def_var_f(ncid, 'longitude', NC_DOUBLE, 1, dims1, vlo) ; call nc_check(st, 'yf: lon var')
       dims2(1) = td ; dims2(2) = gd
       do k = 1, 7 ; st = nc_def_var_f(ncid, trim(vnames(k)), NC_DOUBLE, 2, dims2, vv(k)) ; call nc_check(st, 'yf: var') ; end do
+      st = nc_put_att_text_f(ncid, NC_GLOBAL, 'time_zone', 3_c_size_t, 'UTC') ; call nc_check(st, 'yf: time_zone')
       st = nc_enddef(ncid) ; call nc_check(st, 'yf: enddef')
       do it = 1, NT ; tsec(it) = real(it-1, c_double) * 86400.0_c_double ; end do
       la = 42.44_c_double ; lo = -76.50_c_double

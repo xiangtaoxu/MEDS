@@ -28,10 +28,19 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_hydr_lib`). Interface conductivity is **upstream-weighted** by the
-total-head gradient; the linearization is either a single **frozen-coefficient** solve or a **Celia
-(1990) modified-Picard** iterate (`opts%linearize`), and the step is sub-cycled by adaptive
-step-doubling (`soil_water_advance`) — BE is L-stable, so sub-stepping only buys accuracy.
+retention curves (`meds_hydr_lib`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
+interpolated linearly between the two nodes to the face, a thickness-weighted geometric mean,
+
+```math
+K_{k+1/2} = K_k^{\,1-w}\,K_{k+1}^{\,w}, \qquad w = \frac{\Delta z_k}{\Delta z_k+\Delta z_{k+1}} \qquad(1a)
+```
+
+since the face lies $`\Delta z_k/2`$ below node $k$ and $`\Delta z_{k+1}/2`$ above node $k+1$; equal layers
+give the plain geometric mean. Across a wet layer over a dry one the face conductivity is small, so a
+wetting front, or capillary rise into a dry profile, advances more slowly than it would under an
+upstream pick. The linearization is either a single **frozen-coefficient** solve or a **Celia (1990)
+modified-Picard** iterate (`opts%linearize`), and the step is sub-cycled by adaptive step-doubling
+(`soil_water_advance`) — BE is L-stable, so sub-stepping only buys accuracy.
 
 The **root sink** is the transpiration demand distributed **per layer** — tracking the realized uptake
 the plant-hydraulics solve returns, unconditionally (the `multilayer_roots` switch is deleted; there is
@@ -44,7 +53,20 @@ the ground energy balance's LE, so no double-count).
 
 ### Boundary conditions, and what the aquifer option actually means
 
-The **top boundary** is a conductivity-limited infiltration flux with ponding overflow.
+The **top boundary** is a conductivity-limited infiltration flux with ponding overflow. Rain and the
+pond's water enter the top layer at up to
+
+```math
+q_{inf,max} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{-\psi_1}{-z_1}\Big) \qquad(1b)
+```
+
+the Darcy flux from the pond, treated as a saturated layer as thick as the top one, to the top node
+at depth $`z_1`$: (1a) with $w = 1/2$. What the top layer cannot take ponds, up to `w_pond_max`, and
+the rest runs off. The top layer's own $`K(\theta_1)`$ alone would seal a dried surface: near
+residual water content it is about $10^{-15}$ of $`K_{sat}`$ for a van Genuchten loam, so after a dry
+season the pond overflows and the soil never re-wets. With the geometric mean the capacity at that
+state is about 0.1 mm/h, and it rises by an order of magnitude with the first millimetre taken up,
+so the 5 mm pond buffers a storm and the top layer re-wets within hours.
 
 The **bottom** (`[soil].bottom_bc`) is one of three, and the third was rebuilt rather than tuned:
 

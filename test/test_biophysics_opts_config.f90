@@ -12,7 +12,7 @@ program test_biophysics_opts_config
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
                                     SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE,       &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
-   use meds_toml,            only : toml_table_t, toml_parse_file
+   use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
    implicit none
 
@@ -34,6 +34,7 @@ program test_biophysics_opts_config
    write(u,'(a)') 'rtol       = 2.5e-4'
    write(u,'(a)') 'max_picard = 9'
    write(u,'(a)') 'psi_wilt   = -160.0'
+   write(u,'(a)') 'ground_albedo_nir = 0.25'
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
    write(u,'(a)') 'atol         = 0.05'
@@ -47,6 +48,7 @@ program test_biophysics_opts_config
    write(u,'(a)') '[aerodynamics]'
    write(u,'(a)') 'z0m_ratio = 0.10'
    write(u,'(a)') 'n_iter_mo = 6'
+   write(u,'(a)') 'z0m_ration = 0.20'             ! a misspelling: the parameter record must not list it
    close(u)
 
    call toml_parse_file(TOMLFILE, tm, ok)
@@ -65,6 +67,9 @@ program test_biophysics_opts_config
    call check('soil.rtol overridden',       s%rtol,     2.5e-4_wp, 1.0e-12_wp)
    call check('soil.max_picard overridden', real(s%max_picard, wp), 9.0_wp, 0.0_wp)
    call check('soil.psi_wilt overridden',   s%psi_wilt, -160.0_wp, 1.0e-9_wp)
+   call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
+   call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
+   call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)
    call check_true('soil.substep absent -> default ADAPTIVE', s%substep == SOIL_SUBSTEP_ADAPTIVE, real(s%substep, wp))
    call check('soil.h_init absent -> default 900', s%h_init, 900.0_wp, 1.0e-9_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
@@ -116,6 +121,35 @@ program test_biophysics_opts_config
                       e2%bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%bottom_bc, wp))
       open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
       close(u, status='delete')
+   end block
+
+   !----- The parameter record: every key the loaders read, set or defaulted, and no key they did   !
+   !      not read. A calibration trial checks the keys it set against it. ------------------------!
+   block
+      character(len=*), parameter :: RECFILE = 'test_parameter_record_tmp.csv'
+      character(len=1024) :: line, z0m_line
+      integer :: ios
+      logical :: set_seen, default_seen, typo_seen, header_ok
+      call toml_write_record(RECFILE)
+      set_seen = .false. ; default_seen = .false. ; typo_seen = .false. ; z0m_line = '(none)'
+      open(newunit=u, file=RECFILE, status='old', action='read')
+      read(u, '(a)') line
+      header_ok = trim(line) == 'source,key,index,present,value'
+      do
+         read(u, '(a)', iostat=ios) line
+         if (ios /= 0) exit
+         if (index(line, ',aerodynamics.z0m_ratio,') > 0) z0m_line = line
+         if (index(line, ',aerodynamics.z0m_ratio,0,true,') > 0 .and. index(line, '1.0000000000000001E-001') > 0) &
+            set_seen = .true.
+         if (index(line, ',aerodynamics.d_ratio,0,false,') > 0) default_seen = .true.
+         if (index(line, 'z0m_ration') > 0) typo_seen = .true.
+      end do
+      close(u, status='delete')
+      call check_true('record: header', header_ok, 0.0_wp)
+      if (.not. set_seen) write(*,'(2a)') '   z0m_ratio row: ', trim(z0m_line)
+      call check_true('record: a key set in the file, with the value used to the last digit', set_seen, 0.0_wp)
+      call check_true('record: a key left to its default is listed as a default', default_seen, 0.0_wp)
+      call check_true('record: a misspelt key that nothing reads is absent', .not. typo_seen, 0.0_wp)
    end block
 
    !----- Clean up the fixture. ----------------------------------------------------------------!

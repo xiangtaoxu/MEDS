@@ -70,6 +70,7 @@ module meds_output_integrate
              SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the live fast_sample_t.  !
    public :: SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET, SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP
+   public :: SRC_F_SW_UP, SRC_F_LW_UP
    public :: SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_NEE, SRC_F_NPP_RATE, SRC_F_RECO, SRC_F_CAS_CO2, SRC_F_ATM_CO2
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
@@ -211,6 +212,8 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_RECO          = 5014_ik
    integer(ik), parameter :: SRC_F_CAS_CO2       = 5015_ik
    integer(ik), parameter :: SRC_F_ATM_CO2       = 5016_ik
+   integer(ik), parameter :: SRC_F_SW_UP         = 5017_ik
+   integer(ik), parameter :: SRC_F_LW_UP         = 5018_ik
    !----- The FORCING echo (MEDS_FORCING_DESIGN.md §6.7). ---------------------------------------!
    integer(ik), parameter :: SRC_F_QAIR          = 5030_ik
    integer(ik), parameter :: SRC_F_PSURF         = 5031_ik
@@ -395,6 +398,10 @@ contains
       integer(ik) :: i
       real(wp)    :: mean_i
       n_out = buf%n_slab
+      !----- A record row per live slot. A shorter record means the slab was sized before the      !
+      !      registry was final, and the loop below would write past this column into the next. --!
+      if (n_out > size(out, kind=ik))                                                            &
+         error stop 'meds_output_integrate: a slab is longer than its record (max_slab sized too early)'
       out(:)   = MISSING_VALUE
       valid(:) = .false.
       do i = 1_ik, n_out
@@ -936,6 +943,8 @@ contains
       case (SRC_F_H)            ; val = s%h_flux
       case (SRC_F_RNET)         ; val = s%rnet
       case (SRC_F_SW_IN)        ; val = s%sw_in
+      case (SRC_F_SW_UP)        ; val = s%sw_up
+      case (SRC_F_LW_UP)        ; val = s%lw_up
       case (SRC_F_USTAR)        ; val = s%ustar
       case (SRC_F_AIR_TEMP)     ; val = s%air_temp
       case (SRC_F_NEE)          ; val = s%nee_rate

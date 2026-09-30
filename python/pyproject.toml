@@ -13,7 +13,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "meds"
-version = "0.3.0"
+version = "0.3.1"
 description = "Modular Ecosystem Dynamics Simulator — Python interface"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -52,6 +52,10 @@ wheel.packages = ["meds"]
 cmake.define.MEDS_BUILD_PYLIB = "ON"
 cmake.define.MEDS_BUILD_TESTS = "OFF"
 cmake.define.CMAKE_BUILD_TYPE = "Release"
+#      Serial, although the top-level default is OpenMP. The wheel exposes kernels to Python, where
+#      threads over patches buy nothing, and an OpenMP runtime linked into libmeds.so could meet a
+#      second one already loaded by numpy or another extension in the same process.
+cmake.define.MEDS_OPENMP = "OFF"
 #      Install ONLY the library, and place it inside the package so `meds._libmeds` finds it as a
 #      sibling of __init__.py — the first candidate in its search order.
 build.targets = ["meds_py"]

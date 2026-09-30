@@ -12,7 +12,7 @@
 module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
-   use meds_forcing_config, only : MET_BACKEND_ERA5LAND
+   use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
    use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
@@ -52,6 +52,7 @@ module meds_output_registry
         SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS,                  &
         SRC_S_WORK_CLAMP_ENERGY,                                                                 &
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
+        SRC_F_SW_UP, SRC_F_LW_UP,                                                                &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
         FLD_PY_DIAG0,                                                                            &
@@ -774,6 +775,10 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_RNET)
       call add_variable(reg, 'sw_in_fast', 'incident shortwave at canopy top', 'W/m2',           &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_IN)
+      call add_variable(reg, 'sw_up_fast', 'shortwave leaving the canopy top (VIS + NIR)', 'W/m2', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_UP)
+      call add_variable(reg, 'lw_up_fast', 'longwave leaving the canopy top (emission included)', 'W/m2', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_LW_UP)
       call add_variable(reg, 'ustar_fast', 'friction velocity', 'm/s',                           &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
       call add_variable(reg, 'air_temp_fast', 'reference-level forcing air temperature', 'K',    &
@@ -1082,7 +1087,7 @@ contains
       files%file_chunk = cfg%output%file_chunk
       files%sync_every = cfg%output%sync_every
       files%fast_interval_steps = cfg%output%fast_interval_steps
-      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ERA5LAND)                &
+      if (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND)                &
          files%forcing_qair = 'computed by MEDS from the ED_ERA5land 2 m dewpoint Td and surface '//         &
                             'pressure P: q = 0.622 e / (P - 0.378 e), e = e_sat(Td), the Bolton (1980) '// &
                             'liquid-water saturation vapour pressure of meds_therm_lib'
@@ -1109,22 +1114,14 @@ contains
       !      .false. and the psi/wetness diagnostics emit _FillValue rather than a plausible        !
       !      wrong number from an assumed texture.                                                  !
       files%diag%soil_ready = .false.
-
-      !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
-      !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
-      !      variables the pending records are the dominant memory term, and a run with            !
-      !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
-      !      axis it switched off. Computed AFTER the registry is finalized, for exactly that       !
-      !      reason.                                                                                !
-      files%max_slab = live_max_slab(files)
    end subroutine manager_setup
 
    !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
    !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
    !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
    !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
-   !      Called after manager_setup and the overrides, before manager_finalize: the slab size drops   !
-   !      with the cohort axis, and so does every polygon's buffers.  --------------------------------!
+   !      Called after manager_setup and the overrides, before manager_finalize, so the slab size      !
+   !      manager_finalize computes drops with the cohort axis, and so does every polygon's buffers. --!
    subroutine manager_restrict_region(files)
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: k
@@ -1135,10 +1132,9 @@ contains
          files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
       end do
       call build_freq_index(files%reg)
-      files%max_slab = live_max_slab(files)
    end subroutine manager_restrict_region
 
-   !----- Largest slab length any LIVE variable can produce (see the sizing note above). ------!
+   !----- Largest slab length any LIVE variable can produce (see manager_finalize). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
       integer(ik) :: k
@@ -1199,7 +1195,7 @@ contains
    end subroutine check_dbh_edges
 
    !----- Finish the file set once the registry is FINALIZED (after manager_setup and any          !
-   !      per-variable overrides): the per-tier stream handles. -------------------------------------!
+   !      per-variable overrides): the per-tier stream handles and the slab size. -------------------!
    subroutine manager_finalize(files)
       type(output_files_t),  intent(inout) :: files
       integer(ik) :: t
@@ -1207,6 +1203,14 @@ contains
          files%stream(t)%freq  = freq_bit(t)
          allocate(files%stream(t)%vid(files%reg%nvar)) ; files%stream(t)%vid = -1_ik
       end do
+      !----- SLAB SIZING. Size the shared pending-record slab to the largest axis that is        !
+      !      ACTUALLY LIVE, not to the largest axis that exists. With ~55 cohort-dimensioned        !
+      !      variables the pending records are the dominant memory term, and a run with            !
+      !      axes_cohort = false (or the 2-D soil axis off, the default) should not pay for the     !
+      !      axis it switched off. It is computed HERE, after every override: an [output].io_config  !
+      !      can switch on a slab variable that manager_setup left off, and a slab sized before     !
+      !      that is too short for it. ---------------------------------------------------------!
+      files%max_slab = live_max_slab(files)
    end subroutine manager_finalize
 
    !----- Allocate one polygon's buffers for a finalized file set: the integrator buffers of       !

@@ -16,7 +16,7 @@ module meds_forcing_config
    private
 
    public :: forcing_config_t
-   public :: MET_BACKEND_CONST, MET_BACKEND_NETCDF, MET_BACKEND_ERA5LAND
+   public :: MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT, MET_BACKEND_ED_ERA5LAND
    public :: MET_PATH_LEN
    public :: METAVG_INSTANT, METAVG_END, METAVG_BEGIN, METAVG_CENTER
    public :: SWPART_PASSTHROUGH, SWPART_WEISS_NORMAN, SWPART_CLEARIDX
@@ -27,11 +27,11 @@ module meds_forcing_config
    public :: CO2_SOURCE_CONST, CO2_SOURCE_FILE
    public :: HEIGHT_ABOVE_ZERO_PLANE, HEIGHT_ABOVE_GROUND, WIND_EXPOSURE_OPEN_TERRAIN, WIND_EXPOSURE_LOCAL
 
-   !----- Reader backend ([forcing].format): a MEDS forcing NetCDF, the global ED_ERA5land       !
+   !----- Reader backend ([forcing].format): the single MEDS forcing file, the global ED_ERA5land  !
    !      archive, or a no-file reference-climate box. ------------------------------------------!
-   integer(ik), parameter :: MET_BACKEND_CONST    = 0_ik   !< no file: met_forcing_t defaults (reference climate)
-   integer(ik), parameter :: MET_BACKEND_NETCDF   = 1_ik   !< the MEDS multi-grid forcing NetCDF (format = "netcdf", §7.1)
-   integer(ik), parameter :: MET_BACKEND_ERA5LAND = 2_ik   !< the per-variable monthly ED_ERA5land archive (§14, §15)
+   integer(ik), parameter :: MET_BACKEND_CONST       = 0_ik  !< no file: met_forcing_t defaults (reference climate)
+   integer(ik), parameter :: MET_BACKEND_ED_DEFAULT  = 1_ik  !< the multi-grid forcing NetCDF (format = "ED_default")
+   integer(ik), parameter :: MET_BACKEND_ED_ERA5LAND = 2_ik  !< the monthly ED_ERA5land archive (format = "ED_ERA5land")
 
    integer, parameter :: MET_PATH_LEN = 1024                !< length of every forcing path field (§15.2)
 
@@ -91,9 +91,9 @@ module meds_forcing_config
    !==========================================================================================!
    type :: forcing_config_t
       logical            :: forcing_on   = .false.               !< master gate (indep. of fast_biophysics_on)
-      integer(ik)        :: backend      = MET_BACKEND_NETCDF    !< format: "era5land" | "netcdf" | "const"
-      character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "netcdf")
-      !----- The ED_ERA5land archive (format = "era5land", MEDS_FORCING_DESIGN.md §15.2). The file   !
+      integer(ik)        :: backend      = MET_BACKEND_ED_DEFAULT !< format: "ED_default" | "ED_ERA5land" | "const"
+      character(len=MET_PATH_LEN) :: path = ''                   !< forcing NetCDF path (format = "ED_default")
+      !----- The ED_ERA5land archive (format = "ED_ERA5land", MEDS_FORCING_DESIGN.md §15.2). The file !
       !      template and static file are derived from data_path when left empty, which is what the  !
       !      archive's own layout needs; override them only for an archive laid out differently.    !
       !      Template tokens: {data_path}, {var}, {yyyy}, {mm}.                                        !
@@ -140,11 +140,10 @@ module meds_forcing_config
       type(meds_time_t)  :: recycle_end                          !< first instant AFTER the cycle (exclusive)
       integer(ik)        :: start_clamp  = CLAMP_ERROR           !< model start < base_time: error | hold record #1
       integer(ik)        :: grid_match   = GRIDMATCH_EXPLICIT    !< explicit grid_index | nearest [site] lat/lon (§4.1)
-      !----- site geolocation ([site]) -- solar geometry + lapse. ----------------------------!
+      !----- site geolocation ([site]) -- solar geometry + lapse. Every forcing clock is UTC       !
+      !      (MEDS_FLUX_TOWER_FORCING_PLAN.md D1), so the longitude alone gives local solar time. ----!
       real(wp)           :: latitude_deg  = 42.44_wp             !< [deg +N] Ithaca NY
       real(wp)           :: longitude_deg = -76.50_wp            !< [deg +E] Ithaca NY (solar time, §5.1)
-      real(wp)           :: utc_offset_h  = 0.0_wp               !< [h] ERA5-Land is UTC -> offset 0
-      logical            :: apply_solar_longitude = .true.       !< UTC file -> longitude gives local solar time
       real(wp)           :: elevation_m   = 320.0_wp             !< [m] site elevation (Ithaca ~320 m; elevation lapse)
       !----- The forcing's own heights ([forcing]; defaults are ERA5-Land's). Every sample is moved  !
       !      from them to the top of each patch's canopy air space, per patch (meds_lapse_rate).     !
@@ -154,7 +153,8 @@ module meds_forcing_config
       integer(ik)        :: wind_exposure        = WIND_EXPOSURE_OPEN_TERRAIN !< open-terrain diagnostic | local
       real(wp)           :: wind_exposure_z0     = 0.03_wp      !< [m] roughness the open-terrain wind was made for
       real(wp)           :: wind_blending_height = 40.0_wp      !< [m] height it was brought down from
-      !----- The terrain lapse, from the forcing cell's elevation to the site's ([site]). --------!
+      !----- The terrain lapse, from the forcing cell's elevation to the site's ([site]). The two  !
+      !      keys below are read only when the lapse is on. --------------------------------------!
       logical            :: apply_elevation_lapse = .false.      !< lapse T, P, q, LW from the grid-cell elevation to the site
       real(wp)           :: lapse_rate_tair(12) = 0.0065_wp      !< [K/m] environmental lapse, January .. December
                                                                  !<       (positive = cooling upward)

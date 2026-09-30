@@ -201,6 +201,12 @@ contains
       integer(ik)          :: np
       real(wp)             :: dt_try, dt_warm
       logical              :: clamped
+      !----- The tissue-water floor's mass, PER ATTEMPT: ark2_column_step accumulates into it, and only  !
+      !      an ACCEPTED sub-step's water reaches the committed state, so only that is handed to the    !
+      !      caller -- the ledger declares it as created water (#333). A rejected attempt's floor was    !
+      !      never committed; counting it would credit water the column never received. ---------------!
+      real(wp)             :: fmass_try
+      integer(ik)          :: fn_try
 
       np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
       if (present(acc)) call bflux_zero(acc, n)
@@ -221,8 +227,9 @@ contains
          dt_try = dt
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
+         fmass_try = 0.0_wp ; fn_try = 0_ik
          call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
-                               clamp_n=clamp_n, floor_mass=floor_mass, floor_n=floor_n)
+                               clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
          !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
          !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
@@ -239,7 +246,10 @@ contains
          !      has_nan check reports it cleanly instead of the march hanging.                              !
          if (err /= err .or. dt /= dt) then
             if (dt <= dt_floor) then
-               call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik ; exit
+               call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik
+               if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! committed: declare it
+               if (present(floor_n))    floor_n    = floor_n    + fn_try
+               exit
             end if
             nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
          end if
@@ -252,6 +262,8 @@ contains
                error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
             call state_init(y_new, n, nsl, y)
             if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
+            if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! ...and their floor water
+            if (present(floor_n))    floor_n    = floor_n    + fn_try
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err                                        ! remember for the PI controller
             !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
@@ -587,12 +599,19 @@ contains
       !----- frozen%hydrology%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
       !      boundary INPUT, exactly as its enthalpy (e_floor -> acc%whole_enth_in) already did; the      !
       !      mass half was missing (2026-09 review, item 1A #5). -------------------------------------!
+      !----- budget%clamp_mass: the TISSUE-water floor (advance_water_mass_full, #148) creates water the !
+      !      same way -- when one step's transpiration debit would take a cohort's leaf or wood store    !
+      !      below zero -- and on this path it is the only commit clamp, summed over ACCEPTED sub-steps  !
+      !      only. It was reported but not declared, so every firing breached this ledger by exactly    !
+      !      the water it made (#333: 91 breaches in five BCI years under a calibrated set, all on the   !
+      !      three days the floor fired, residual = the floor's mass). Its energy needs no term: the    !
+      !      tissue store is cap*T with the step's FROZEN capacity at both ends. -----------------------!
       call budget_check(budget%whole_water,                                                                &
                         w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
                         w_soil1 + cas_mass_capacity*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 &
                         + frozen%snow%swe1, &
                         acc%whole_wat_in + (forc%rainfall + forc%snowfall + biophys%shed_water_rate                &
-                                            + frozen%hydrology%floor_mass)*dt_fast,                                    &
+                                            + frozen%hydrology%floor_mass)*dt_fast + budget%clamp_mass,                &
                         acc%whole_wat_out                                                                   &
                         + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast                &
                                           + surf_overflow - surf_deficit,                                 &

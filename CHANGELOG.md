@@ -14,6 +14,649 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-29
+
+A **flux-tower** release. MEDS now runs from a tower's own meteorology, starts from a forest census,
+and calibrates its fast parameters against the tower's fluxes, with Barro Colorado Island as the
+worked example throughout.
+- **Forcing from towers.** `scripts/prepare_flux_tower/` declares, validates and builds a forcing
+  file from tower data, and the reader is UTC-only (#320). The longwave gap fill is the model's own
+  synthesis regressed onto the tower, and BCI's swapped longwave columns are read the right way
+  round (#326).
+- **A census start.** The BCI example starts from the 2010 census of the 50-ha plot, restructured
+  before the first step (#323), with a ceiling on the patch-fusion tolerance (#322).
+- **Calibration.** `scripts/calibrate_fast/` fits the sub-daily parameters to a tower with the stand
+  held fixed, and the BCI example ships a calibration scored on windows the fit never saw (#330). It
+  needed exact restarts, trait re-acclimation at restart, a parameter record and hourly upwelling
+  radiation (#329).
+
+**Physics fixes, several of which move results:**
+- The reported sensible heat was about 100 W m⁻² too low (#328).
+- The fast loop's emissivity, wood temperature, hydraulics keys, turgor-loss point and ground
+  optics are now per PFT or live (#327).
+- Allometry works in carbon throughout (#321).
+- Soil-water faces take ED2's geometric rule, so a dried surface re-wets (#320).
+- Stomata close linearly from the turgor-loss point to twice it, instead of shutting in one step
+  (#335).
+
+**Water budgets.** The calibration's parameter sets exposed three water-budget faults, all fixed:
+- the per-face soil check subtracted the requested root uptake instead of the uptake the solver
+  removed (#334);
+- the ARK water ledger did not declare the water the tissue-water floor creates;
+- interception discarded film water above capacity (both #336).
+
+**Portability and output:** nvfortran works again (#317), slab output is sized after the
+`io_config` overrides (#318), and OpenMP is compiled in by default (#324).
+
+**Upgrading.** Forcing configs change in four ways (#320, `MEDS_FLUX_TOWER_FORCING_PLAN.md` §5):
+- rename `[forcing].format = "netcdf"` to `"ED_default"` and `"era5land"` to `"ED_ERA5land"`;
+- delete `[site].utc_offset` and `[site].apply_solar_longitude`, and build every forcing file on a
+  UTC clock with `time_zone = "UTC"` (`make_forcing_file.py` always has);
+- with `[site].apply_elevation_lapse = false`, delete `lapse_rate_tair` and `grid_elevation`;
+- a file that states `wind_meas_height_m` (every `make_forcing_file.py` file does, as 10 m) must agree
+  with `[forcing].wind_height`.
+
+Each old form stops at startup with a message naming the fix.
+
+The root profile moves to `[hydraulics]` (#327). `[soil_column].root_beta`, an exponential decay per
+metre, is refused; `[hydraulics].root_beta = exp(−b · root_depth)` gives the same decay b, and a config
+that sets neither keeps the default profile. A `[hydraulics].root_beta` copied from the old
+`meds_config_main.toml` (0.96) used to be ignored and now takes effect: it puts 19% of the roots in
+the top 0.37 m instead of 53%. Delete it to keep the default.
+
+### Changed
+
+- **Stomata close gradually at low leaf water potential, not in one step** (#335, #332).
+  `[leaf_physiology].low_water_potential_control = "linear_decline"` is optional, and the only option.
+  - **What it does.** The conductance the stomatal model calculates, g0 included, is multiplied by a
+    factor that falls linearly from 1 at the leaf's turgor-loss point, ψ_tlp, to 0 at twice it. The
+    factor is set from the previous day's predawn leaf potential.
+  - **The solve stays coupled.** Leuning and Medlyn apply the factor inside the Ci solve. Katul
+    re-solves with gs pinned at the factor times its optimum.
+  - **A fully closed leaf** exchanges no CO₂ or water by day (net assimilation 0, its respiration
+    refixed), and respires at night.
+  - **The carbon consequence.** Rd is unchanged and still charged in full. As gs goes to 0 the
+    coupled solve drives net assimilation to 0, so gross assimilation, which the canopy counts as
+    GPP, tends to Rd. A fully closed leaf is therefore carbon-neutral by day (GPP = Rd, respiration
+    Rd), where the former shutdown gave it GPP 0 and a loss of Rd. At night it loses Rd, as before.
+    A tower's GPP, partitioned from NEE, cannot see refixed CO₂.
+  - **It replaces a hard shutdown at 2·ψ_tlp** (`ARREST_GS_CLAMP`), which no config could change. That
+    shut a cohort completely below the threshold and left it untouched above. The step made the
+    fluxes jump as a parameter moved the threshold or the predawn potential across it, and no
+    gradient-based calibration could see past it (the BCI calibration, #330).
+  - **What changes.** A run whose cohorts stay above ψ_tlp is bit-identical. Between ψ_tlp and 2·ψ_tlp
+    the conductance now falls. Below 2·ψ_tlp a leaf's daytime net assimilation is 0, where it was −Rd.
+    A thermodynamic limit on transpiration (#96) would make this control matter less.
+  - **On the BCI example, five years:**
+    - The default run changes only in the fifth digit (GPP 10.7023 → 10.7022 µmol m⁻² s⁻¹).
+    - With the calibrated set (#330), closing from ψ_tlp keeps the plants from drying out. The
+      lowest predawn potential goes from −21.6 to −6.8 MPa, and cohort-days below 2·ψ_tlp from
+      2.1 % to 0.12 %.
+    - April GPP in 2014, 2016 and 2017 rises from 4.3, 2.9 and 4.8 to 5.2, 3.9 and 5.3 (the tower:
+      6.9, 6.3 and 7.0).
+    - Both runs close their budgets.
+  - **Tests:** `leaf_physiology` checks:
+    - the factor itself: 1 at ψ_tlp, linear, 0 at 2·ψ_tlp;
+    - half way through the band, gs is half the Medlyn conductance of the solved leaf;
+    - for Leuning, Medlyn and Katul, gs is continuous, never rises as ψ falls, and stays consistent
+      with A through diffusion;
+    - past 2·ψ_tlp, a leaf exchanges nothing by day and respires at night.
+
+    The old shutdown fails it. `test_region` refuses any other value of the key.
+
+- **The BCI example's leaf traits follow the canopy's light gradient**
+  (#330; `[trait_dynamics].trait_plasticity_on = true`; `MEDS_FAST_CALIBRATION_PLAN.md` D6). Each cohort's
+  Vcmax25, Rd25, SLA and leaf lifespan are its PFT's top-of-canopy values scaled by the leaf area
+  above it.
+  - **The stand.** Over the five tower years LAI now holds at 5.6 where it fell to 4.8, and AGB
+    rises from 16.1 to 18.1 kgC m⁻² where it reached 17.6.
+  - **The fluxes.** GPP is 10.70 µmol m⁻² s⁻¹ where it was 11.11, and NEE is −4.17 where it was
+    −4.07. LE, H and net radiation move by 0.1 W m⁻² or less.
+  - The README and `evaluation.png` are regenerated.
+
+- **The flux-tower tool fills the longwave by the synthesis regression only; its ERA5-Land fill is
+  removed** (#326). Filling from ERA5-Land or another source is the user's to do in the tower file before
+  the build. `make_tower_forcing.py` loses `--lw-fill`, `--states-fill` and `--era5-file`, and a
+  site TOML's `gapfill.longwave`, `gapfill.states` or `gapfill.era5_file` stops the build with that
+  message. A rain gap now stops the build instead of taking ERA5-Land's rain, the V5 report no
+  longer gives the barometer height ERA5-Land implied, and qc code 2 is unused.
+  `compare_longwave_fill.py` scores the synthesis regression beside a monthly climatology and the
+  synthesis as MEDS computes it. Scored against the ED_ERA5land archive before its removal, the
+  ERA5-Land fill tied with the synthesis at BCI (RMSE 14.8 against 14.5 W m⁻² on 7,200 hidden half
+  hours). The BCI example builds one forcing file, `data/bci_forcing.nc`. Tests: two ERA5-Land
+  cases removed, and one added for a refused `gapfill` key.
+
+- **OpenMP is compiled in by default: `MEDS_OPENMP` is now `ON`** (#324). The thread count stays a
+  run-time setting, `[run].n_threads`, default 1, so a default build runs serially until a config asks for
+  threads. `-DMEDS_OPENMP=OFF` builds serial, and a compiler with no Fortran OpenMP now falls back to
+  serial with a CMake warning where it used to stop the configure. The Python wheel stays serial
+  (`python/pyproject.toml`). An existing build directory keeps its cached value. In a default build
+  `test_fast_loop`'s 4-thread check now runs threaded; in a serial build the directives are comments
+  and it passes trivially.
+  - **Numbers move at rounding level.** An OpenMP build gives the same bytes at every thread count,
+    but not the bytes of a serial build: compiling the patch loop as a parallel region changes its
+    rounding. On the BCI census example the two builds part in the 13th significant digit after 62
+    hours, and single hourly fluxes differ by up to 2% of their largest value after five years. The
+    tower statistics and the stand agree to every printed digit, and the test suite passes
+    unchanged.
+  - Measured on the five-year BCI census example, each run alone on a 40-core node: serial 7 min
+    11 s; OpenMP at 1 thread 7 min 17 s, 4 threads 5 min 44 s, 8 threads 13 min 15 s, 16 threads
+    20 min 10 s. More than four threads are slower because ifx's bound-procedure-value allocations in
+    `flux_potential` and `solve_leaf_gas_exchange` serialize the threads (`docs/building.md`,
+    "Parallel builds").
+  - Tests: ifx Release, ifx Debug, gfortran Release and a serial ifx build, 60/60 each; the ifx
+    OpenMP suite also under an 8 MB stack.
+
+- **The BCI flux-tower example starts from the 2010 census of the BCI 50-ha plot, with no spin-up**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md`). `meds_config_spinup.toml` and its 50-year run are gone.
+  `bci_census.toml` declares the census; `run_example.py` builds the census file with
+  `scripts/prepare_census` and runs the five tower years from it, with the soil at 298.65 K and soil
+  carbon in steady state with the stand's litter. MEDS fuses the 1,250 quadrat patches and 84,937
+  rows to 25 patches and 419 cohorts before the first step. `plot_evaluation.py` now shows the mean
+  diurnal and seasonal cycles of GPP, NEE, latent and sensible heat and net radiation against the
+  tower, and writes their statistics. The README and `evaluation.png` are regenerated from this run.
+
+- **A census stand is restructured before the first step** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.4).
+  After `init_from_census`, the driver applies the slow step's own monthly cohort block (fusion, cull,
+  fission, sort) and yearly patch block (fusion, cull, cohort fusion), without recruitment or
+  disturbance and under the same switches. A census used to run its first month with every row a
+  cohort and its first year with every cell a patch. The run log prints the patch and cohort counts
+  before and after. Test: `init_census` fuses 20 identical cells to one patch with one cohort per
+  size, conserving the site's stems and biomass, and does nothing with the switches off.
+
+- **The census reader matches columns by name and reads `patch_area`**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.3). `init_from_census` takes its columns from the header line
+  in any order: `patch_id`, `dbh`, `pft` and `nplant` required, `patch_area`, `site_id`,
+  `cohort_id` and `height` optional. With `patch_area` the patches take their areas normalized to
+  the site, where every census patch used to get an equal share. A header-less file of seven
+  numbers per row still reads positionally, so existing census files load unchanged. An unknown or
+  repeated column, a missing required one, and a patch whose rows disagree on `patch_area` stop
+  the run with the name. Tests: `init_census` (reordered columns and areas),
+  `init_census_refuses_area`, `init_census_refuses_column`.
+
+- **The initial soil state is configurable** (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §5.1).
+  `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³] set every soil layer of every patch at the
+  start of a run that does not restore the soil from a state file. They default to the constants the
+  fast context carried, 288 K and 0.30, so no existing config changes. The loader refuses a
+  temperature outside 233–333 K and a water content outside (`theta_res`, `theta_sat`]. Test:
+  `init_soil_state`.
+
+- **Patch fusion's tolerance has a ceiling, `[demography].patch_light_tol_max`, default 0.15** (#322).
+  The light-profile tolerance steps geometrically from `patch_light_tol` to the ceiling over
+  `n_patch_fusion_iter` passes, as the cohort tolerance does, and goes no further. Patches more
+  different than the ceiling stay apart even when the count is still above `max_patch`, which is
+  now a target. Before, the tolerance grew by a fixed 1.5 per pass with no bound, from 0.10 to 0.76
+  over six passes, and the last pass's largest-difference limit, 1.14, could never bind. So
+  `max_patch` acted as a hard limit, paid for with heterogeneity.
+  - The key is optional. Absent, it is 0.15, or `patch_light_tol` if that is larger. A ceiling of
+    0.759375 reproduces the old schedule exactly: a 50-year biophysics spin-up is identical to the
+    build before this change.
+  - **No shipped example moves.** Their patch counts stay within `max_patch`, so fusion never gets
+    past the first pass, which uses `patch_light_tol` under both schedules. The biophysics spin-up
+    (50 years, with the allometry before #321) and the demography golden are identical under both.
+  - **Where it binds:** a stand more heterogeneous than `max_patch` patches can hold. Simulated on
+    the Barro Colorado Island 2010 census with one patch per 20 m quadrat, six passes leave 24
+    patches, where the old schedule went down to 9.
+  - A run whose restructuring left more than `max_patch` patches, or more than `max_cohort`
+    cohorts in a patch, says so at the end, for example
+    `NOTE: patch fusion left 24 patches on ... (max_patch = 12)`.
+  - `test_patch` gains the case: two unlike patches under `max_patch = 1` stay two under the
+    ceiling and fuse under the old schedule. It fails with the ceiling removed.
+  - Documented in `docs/configuration.md`, "Cohort and patch fusion".
+
+- **The demography example's golden is recaptured for #321** (#322). #321 moved
+  `test/golden/empirical_spinup_golden.csv` without recapturing it, so `empirical_spinup.py`
+  reported a maximum relative error of 4.9e-1 in `total_agb` and 1.7e-1 in `total_nplant`; it
+  reports 0 again. At year 40 the stand's AGB goes from 10.45 to 8.48 kgC m⁻² and its LAI from
+  6.62 to 5.97. The example README records the table.
+
+- **The default biomass law is Chave et al. (2014), and both it and the leaf-area scale are in
+  carbon** (#321). In `meds_config_pft.toml`, every example's PFT file and the `meds_allometry`
+  initializers:
+  - `[allometry].agb_c1` goes from 0.06080334 to 0.03365 and `agb_c2` from 1.0044785 to 0.976:
+    Chave's eq. 4, AGB = 0.0673 (ρD²H)^0.976 kg dry mass, divided by `C2B = 2`. The MEDS form
+    `agb_c1·ρ^agb_c2·(D²H)^agb_c2` is Chave's exactly. The old values were ED2's `IALLOM = 3` refit
+    of Chave (`c14f15_bs_tf`), in dry mass but read as carbon.
+  - `lai_b1` goes from 0.46769540 to 0.23384770, with `lai_b2` unchanged. It is ED2's BAAD leaf fit
+    `c14f15_bl_xx` as ED2 applies it (`size2bl` divides by `C2B`); MEDS used it undivided, so leaf area
+    was twice ED2's.
+  - **Per tree**, at a given diameter and the default heights: a 100 cm, 42 m tree goes from 16,261
+    to 6,315 kgC of AGB and from 1,887 to 944 m² of leaf; a 10 cm tree from 43 to 20 kgC. Wood,
+    leaf, fine-root and storage carbon follow. The recruit unit carbon falls by about half too, so a
+    given reproduction flux makes about twice the recruits.
+  - **Per stand**, on the Barro Colorado Island 2010 census (207,259 trees) the stand's AGB goes
+    from 39.8 to 16.1 kgC m⁻² against the census's own 15.1, and its LAI from 11.2 to 5.6.
+  - **Upgrading:** a PFT file copied from an earlier `meds_config_pft.toml` keeps the old values;
+    copy the three new ones into it. A file with its own fitted values needs nothing.
+  - **Every example's figures and quoted numbers predate this change** and are regenerated with the
+    next release.
+  - The new test `allometry_defaults` checks that the shipped `[allometry]` block equals the
+    `meds_allometry` initializers, that the biomass law is Chave's in carbon, and that the leaf
+    scale is ED2's over `C2B`. It fails on the old values.
+
+- **Forcing files carry the humidity their source measured, and MEDS converts it** (#320,
+  `MEDS_FLUX_TOWER_FORCING_PLAN.md` D2). An `ED_default` file carries exactly one of `RHair`
+  (a fraction; a flux tower), `Tdew` (a reanalysis) or `Qair`, and the reader turns it into specific
+  humidity at each stamp with the model's own Bolton curve, as it always did for the ED_ERA5land
+  archive's dewpoint. A file with none, with two, or with `RHair` above 1.5 (a percentage) is
+  refused. The point is the saturation curve: a tower's `vpd` column, or a `q` made from it
+  offline, carries the provider's curve, and Barro Colorado Island's is Alduchov–Eskridge, whose
+  saturation pressure is 5.7 Pa below Bolton's at 25 °C. With `RHair` in the file, the model's
+  relative humidity at the forcing temperature is the tower's to 4e-15, and a saturated record reads
+  back as VPD = 0. Qair files still load unchanged; `make_forcing_file.py` now writes `Tdew`.
+- **Every forcing clock is UTC** (#320, D1). `[site].utc_offset` and `apply_solar_longitude` are refused,
+  and an `ED_default` file whose `time_zone` attribute is missing or not `"UTC"` stops at open,
+  because a local-time file read as UTC keeps its daily totals and moves its sun. Solar time is the
+  UTC clock plus the longitude and the equation of time.
+- **The two file formats are named `"ED_default"` and `"ED_ERA5land"`** (#320, D3). The old names stop
+  with the name that replaced them.
+- **A file's stated heights are checked against `[forcing]`** (#320). `tq_height_m`, `wind_height_m`,
+  `wind_meas_height_m` (within 0.01 m) and `height_above`, when present, must match
+  `tq_height`, `wind_height` and `height_above`, because a disagreement moves every sample to the
+  canopy-air top from the wrong height.
+- **The terrain-lapse keys are read only with the lapse on** (#320). `[site].lapse_rate_tair` and
+  `grid_elevation` are required with `apply_elevation_lapse = true` and refused with it off; they
+  used to be required either way and did nothing.
+- **`specific_humidity_to_vpd` is the exact inverse of the forcing conversions** (#320). It used the
+  molar-mass ratio 0.621987 where every forward conversion and `sat_specific_humidity` use 0.622,
+  so a humidity round trip was off by 2e-5 in relative humidity (0.06 Pa of vapour pressure at
+  3 kPa). It is used only by output diagnostics (`cas_vpd_site` and `cas_vpd_var_site`), which move by
+  that much; nothing in the model state changes.
+
+- **Soil-water faces take ED2's geometric rule** (#320, `MEDS_FLUX_TOWER_FORCING_PLAN.md` §13).
+  - **Between layers:** conductivity is ln K interpolated linearly between the two nodes to the face,
+    the thickness-weighted geometric mean of `rk4_derivs`. It replaces the upstream pick.
+  - **At the surface:** the infiltration capacity is the geometric mean of K_sat and the top layer's
+    K, times the gradient to the top node, where it was the top layer's own K. That rule sealed a
+    dried surface: near residual water content K is 3×10⁻¹⁵ of K_sat for the default loam, so after
+    a dry season the pond overflowed and the soil never re-wet.
+  - **The aquifer bottom boundary** stays upstream-weighted.
+  - **Barro Colorado Island** is where it showed. Before, the top layer sat at θ = 0.081 through
+    the 1963 wet season, 3-year ET was 16 % of rain, and the 50-year spin-up from bare ground ended
+    at LAI 0.009. Now the top layer re-wets to θ = 0.25–0.33, ET is 26 % of rain, and the stand
+    reaches LAI 4.8 and AGB 15.3 kgC m⁻².
+  - **Ithaca** is barely moved: its 50-year spin-up ends at AGB 9.956 against 9.936 kgC m⁻², with
+    the same stem density and LAI.
+  - **Capillary rise into a dry profile is slower.** In `test_column_hydrology`'s aquifer case, the
+    residual bottom flux passes 10⁻⁵ kg m⁻² s⁻¹ at about 1,000 h instead of about 450 h, so that
+    test's relaxation window is now 1,200 h.
+  - **New tests:** the face flux against the known log-linear answer, and a dried top layer
+    re-wetting under 12 h of 2 mm/h rain. Both are mutation-checked: with the old surface rule, 79 %
+    of the rain runs off.
+
+### Added
+
+- **`scripts/calibrate_fast`: calibration of the fast parameters against a flux tower**
+  (#330; `MEDS_FAST_CALIBRATION_PLAN.md` P1, P3). It fits the sub-daily parameters (radiation,
+  photosynthesis and stomata, aerodynamics, water stress, respiration) to a tower's albedo,
+  upwelling longwave, net radiation, LE and H corrected for closure with the Bowen ratio kept,
+  daily evaporative fraction, daytime GPP, night NEE and u\*, with the stand held fixed. Every
+  trial is a 10-day `slow_on = false` restart with `reacclimate_traits`, from the state that a chain
+  of frozen runs wrote at its window's start.
+  - **The method.** Levenberg–Marquardt with Gaussian priors on logit-transformed parameters, a
+    central-difference Jacobian whose trials all run at once, three damping values tried at once,
+    and three starts. A screening step keeps the keys the tower can inform. The covariance is a
+    Laplace approximation weighted by each target's effective sample size, and a linearity check
+    tests it.
+  - **Every trial proves what it ran.** Its parameter record must list every key the trial set,
+    and a whole-site budget breach fails the trial.
+  - **Running it.** Trials run on a local pool or, on a cluster, on a directory queue served by one
+    worker per node inside one allocation. The commands are `select-windows`, `growth-resp`, `check`
+    (gates G1 and G2), `fit`, `analyze` and `write-calibrated`.
+  - **Tests:** 17 unit tests, and a smoke test through `meds_main` on the demography census with a
+    synthetic tower (ctest `calibrate_fast`).
+- **The BCI example has a calibration** (#330; `MEDS_FAST_CALIBRATION_PLAN.md` P2). `calibration.toml`
+  sets it up, and `calibration/` ships the fit and the calibrated configs. The fit used 8 ten-day
+  windows from 2015–17 and was scored on 8 it never saw, with interception off and on.
+  - **What the shipped set does.** It is interception off, with 20 fitted keys. It lowers the
+    validation objective from 68,018 to 29,790 and every target's error, by 7 % (upwelling
+    longwave) to 70 % (albedo).
+  - **Over the five tower years:** GPP 6.75 against the tower's 7.46 µmol m⁻² s⁻¹ (default 10.70),
+    LE 82.4 against 75.5 W m⁻² (56.4), net radiation 135.3 against 136.3 (120.6), albedo 0.17
+    against 0.13 (0.26), and night u\* 0.50 against 0.41 m s⁻¹ (0.86). H is still 36 W m⁻² high.
+  - **A structural limit.** Eight keys end at a bound of their range, among them `vcmax25`,
+    `stomatal_g1` and `z0m_ratio`, so part of the misfit is not in the parameters.
+  - **Gates.** G1–G7 pass. The five-year run closes its energy and water budgets and its slow ledger.
+    The interception-on fit scores the same but fails G7's water budget (#333).
+  - **Known limits.** The late dry season is too stressed: April GPP is 3.9 against the tower's 6.3
+    in 2016 (2.9 before the stomata closed gradually, #335). The fit held the two hydraulic keys at
+    their defaults because the former whole-day shutdown made them rough.
+  - **Running it.** `run_example.py` runs the calibrated five years beside the default, and
+    `evaluation.png` and `calibration.png` draw both. `run_example.py --calibrate` redoes the fit,
+    about 100 core-hours.
+
+- **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#329; default false,
+  restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
+  run's PFT file as a census start sets them: acclimated to each cohort's LAI above it, as the state
+  holds it, with plasticity on, and the PFT's top-of-canopy values with it off. Leaf area stays as
+  read, and leaf carbon scales by the SLA's change, storage taking the difference, so unchanged traits
+  change nothing. Without it a restart
+  keeps the state's traits, so a changed `vcmax25` never reached the cohorts. This is what lets a
+  calibration trial restart from a shared state (`MEDS_FAST_CALIBRATION_PLAN.md` P0b). Tests:
+  `restart_exact` checks that a restart with `vcmax25` × 1.3 carries the traits a census start with
+  × 1.3 gives, with and without plasticity, and keeps the leaf area.
+- **The parameter record, `<prefix>_parameters.csv`** (#329), beside the diagnostic output and
+  beside the state: one row per key the loader read from any file, `source,key,index,present,value`,
+  with `present` saying whether it was set in the file or defaulted and `value` the value used, to
+  17 digits. A key nothing reads is absent, which is how a misspelt key in an optional block, until
+  now silently ignored, can be caught. The BCI example's record has 375 rows. Tests:
+  `test_biophysics_opts_config` checks a set key, a defaulted key and a misspelt one.
+- **Hourly `sw_up_fast` and `lw_up_fast`** (#329): the shortwave (VIS + NIR) and the longwave,
+  emission included, leaving the canopy top, beside `rnet_fast`. Until now they were daily only.
+
+- **`[soil]` sets the bare ground's optics** (#327): `ground_albedo_vis` (0.15), `ground_albedo_nir`
+  (0.30) and `ground_emissivity` (0.95), the values the code had fixed. The canopy radiation solver
+  reads them, and snow still covers them by its fraction. The albedos must lie in [0, 1) and the
+  emissivity in (0, 1]. Tests: `test_biophysics_opts_config` reads them and `test_pft_optics_config`
+  checks that they reach the fast loop.
+
+- **`scripts/prepare_census/make_census.py`: a ForestGEO tree table to a MEDS census**
+  (#323; `MEDS_BCI_CENSUS_INIT_PLAN.md` §6). It only maps trees to patches: one patch per square plot cell
+  at its true area, one row per distinct (cell, diameter), `nplant` the count over the area. It
+  keeps live trees with a diameter of at least the declared minimum, and counts every exclusion. Given
+  a PFT file and an earlier census, its summary also carries the stand's steady-state litter input for
+  `[soil_carbon].spinup_steady`. On the Barro Colorado Island 2010 census at 20 m it writes 84,937
+  rows in 1,250 patches, conserving all 207,259 stems. Tests: `prepare_census` (pytest, run by CTest
+  when the Python it finds has numpy, pandas and pytest). `environment.yml` gains pandas and pytest,
+  which this tool and the flux-tower tool need.
+
+- **`scripts/prepare_flux_tower/`: MEDS forcing from flux-tower data** (#320; AmeriFlux BASE,
+  FLUXNET/ONEFlux or any CSV). The tool works from a site TOML that declares the file, location,
+  clock, stamp convention, sensor heights and every column's units.
+  - **Checks (V1–V5).** It validates each declaration and stops on a disagreement: a uniform axis
+    (V1); the clock against the model's own sun, within 10 min (V2); a provider VPD against RH
+    under the declared saturation curve, naming the curve that fits (V3); physical bounds (V4). V5
+    is a JSON report.
+  - **What it writes.** An `ED_default` file on a UTC clock with the measured `RHair`, pressure
+    brought down to the ground, states re-centred to the stamps, and the tower's heights stated.
+  - **Gap filling** is explicit, with a `<Var>_qc` flag on every value: short gaps interpolated,
+    long ones by the mean diurnal variation. Longwave is filled from the model's synthesis,
+    regressed onto the tower in its clear-sky and cloud parts. (An ERA5-Land fill added here was
+    removed before release, #326; see Changed.)
+  - **`compare_longwave_fill.py`** scores the fills on held-out observations. `tests/` has 24
+    pytest cases on synthetic towers, run by CTest as `prepare_flux_tower` when the Python it finds
+    has the dependencies; two mutations of the tool (the UTC sign, the re-centring) fail 15 and 2
+    of them.
+- **`scripts/forcing_common/meds_forcing_file.py`** (#320), the one writer of an `ED_default` file and the
+  Python copy of the model's conversions (humidity, hypsometric pressure, solar geometry, window-mean
+  cos z, clearness index, longwave synthesis). `make_forcing_file.py` now writes through it and
+  stores ERA5-Land's dewpoint as `Tdew`, with `tq_height_m = 2` and `height_above = "zero_plane"`.
+- **`examples/example_flux_tower_bci/`** (#320): the worked example at Barro Colorado Island (AmeriFlux
+  PA-Bar, a 41 m tower).
+  - **Data.** It downloads the CC0 data from Zenodo and checks the md5; nothing is committed.
+  - **The build.** It passes V2 5 min from the declared UTC−5 begin-stamped clock, and V3 to
+    0.000 Pa under the Alduchov–Eskridge curve.
+  - **Longwave.** The observed longwave is 61 % missing. The synthesis regression fills it with
+    RMSE 9.1 W m⁻² on hidden records, where the model's `lwdown_source = "synthesize"` would be
+    36.3 (bias −22.5). Those numbers were measured on the upwelling column, which the file labels
+    as downwelling; the correction is under Fixed (#326).
+  - **The model stages.** A 50-year spin-up and a five-year evaluation compare MEDS with the tower in
+    local time. They needed the soil-water fix above: before it, rain did not infiltrate a dried
+    top layer and no stand grew.
+- **`test_met_tower`** (#320), the flux-tower contract of an `ED_default` file: the three humidity forms
+  and their rejections, the UTC requirement, stated heights, rain and shortwave from the interval
+  containing the instant on end- and begin-stamped files, and the tower round trip (relative
+  humidity, VPD = 0 at saturation, the move from a 41 m tower to a canopy-air top). Each fix above
+  was mutation-checked: restoring the old rain read fails the three end-stamped rain checks, and
+  restoring the old ratio fails the humidity round trip by 1.9e-5.
+- **`test_region` refusals** (#320) for the old format names, `utc_offset`, `apply_solar_longitude` and the
+  lapse keys with the lapse off, each run through `meds_main`.
+
+### Fixed
+
+- **Canopy interception discarded film water above capacity** (#336, #333). A cohort can start a step
+  holding more film water than its capacity, `dewmx·(LAI + WAI)`, when it loses leaf area under a full
+  film (the daily slow step sheds leaves). `intercept_canopy_layer` clipped the film to capacity, and
+  the clipped water reached neither the ground nor any flux.
+  - **The fix.** The excess now drips to the layer below with the rest of the drip.
+  - **Where it showed.** With interception on, in five BCI years under the calibrated set, 25 `whole_water
+    (ark)` breaches in heavy rain lost 1e-6 to 4e-5 kg m⁻² each. At every one, rain minus the film's
+    interception minus the throughfall equalled the residual. With the fix: 0 breaches.
+  - **What does not change.** Runs with interception off (the default) are unaffected, and a film
+    within capacity behaves as before.
+  - **Test:** `column_hydrology` starts a film 0.05 kg m⁻² above capacity. The storage is capped, and
+    throughfall plus the storage change equals the rain. The old kernel fails it.
+- **The ARK water ledger did not declare the water the tissue-water floor creates** (#336, #333). When one
+  step's transpiration debit would take a cohort's leaf or wood water below zero,
+  `advance_water_mass_full` floors the store and creates water (#148). The mass was reported
+  (`work_clamp_mass_site`) but not entered in `whole_water (ark)`, so every firing breached the ledger
+  by exactly the water made.
+  - **The fix.** The ledger now takes it as an input, as it already takes the soil's θ_res floor. The
+    adaptive march used to add the floor's mass on every attempted sub-step, rejected ones included,
+    and now counts accepted sub-steps only, so the declared mass is what the committed state received.
+    `work_clamp_mass_site` therefore now reports committed water only.
+  - **Where it showed.** In five BCI years under the calibrated set with `dsl_dmax` = 0.015, all 91
+    breaches fell on the three days the floor fired (April 2016). The daily residual equalled the
+    floor's mass. With the fix: 0 breaches, worst residual 5e-13 kg m⁻².
+  - **What is left.** Only the ledger changes: the floor still creates water where the plant
+    hydraulics collapse (#104).
+  - **Test:** `test_column_derivs` checks that on a floored step the plant water changes by its fluxes
+    plus the reported floor mass, exactly.
+
+- **The soil column's per-face check reported a wilting-limited root sink as a face error** (#334).
+  `advance_soil_water_column` checks each layer's change of water against its face fluxes and its
+  root sink. It subtracted the plant's requested uptake, `forcing%root_uptake(k)·dt`. In a layer
+  drier than `psi_open` the solver removes less than that, because the wilting ramp cuts the sink,
+  and the check reported the difference as a face inconsistency. With `[energy].debug_error` that
+  stopped the run.
+  - **The fix.** `soil_water_advance` now returns the sink it removed from each layer, summed over
+    the accepted sub-steps, and the check subtracts that.
+  - **Only the diagnostic changes.** A 31-day run of the BCI census example matches the previous
+    build on every output variable.
+  - **Under the BCI calibration's parameter sets.** Over five years, `faces[soil_layer_mass]` had
+    read 1.1–2.6 kg m⁻², against 0.0011 with the defaults. For the shipped calibrated set it now
+    reads 4.6e-13. A `debug_error` run of the set with the most water-budget breaches now gets past
+    October 2012 and stops at the first real breach, in March 2016.
+  - **Test:** `column_hydrology` puts a top layer at θ = 0.10, where the ramp passes 74 % of the
+    demand, and the face residual reads 1.9e-14. The previous check fails it with 2.4e-2.
+
+- **The slow ledger missed the tissue heat that trait plasticity moves** (#330). With plasticity on,
+  `advance_plant_traits` moves leaf carbon above the new SLA's allometric target into storage, and
+  the leaves' heat content changes with it. The allocate phase then left an undeclared energy
+  residual: −5,903 J m⁻² over the BCI example's five years. `vegetation_dynamics` now declares the
+  change, and the ledger closes. The fluxes are unchanged.
+
+- **A restart did not continue the run that wrote the state** (#329). The state file kept each
+  cohort's dbh but not its carbon pools or geometry, and the reader rebuilt them on the allometry.
+  Cohort fusion keeps the pools and leaves a fused cohort below the allometry for its dbh, so the
+  restart moved the leaf area (BCI: LAI 5.6380 written, 5.6389 read) and, with plasticity on, reset
+  the fine-root carbon, which sets root respiration and rhizosphere conductance, by up to 2× in the
+  most shaded cohorts. The file also lacked the LAI above each cohort (so the traits' light
+  environment restarted as an open sky), the canopy's interception film, the growth-rate buffer
+  behind the mortality predictor, and the slow loop's CO₂ hand-off to the fast NEE. All are stored
+  now, optional on read, so an older state file still restarts as before.
+  - Tests: `restart_exact` checks that a run split at a restart matches the unsplit run on every
+    state variable, bit for bit, with the slow loop off (interception on) and on. The previous
+    binary fails it in 13 and 28 variables.
+  - The BCI example, which starts from a census, is unchanged: a 31-day run matches `beta` on every
+    output variable.
+
+- **The reported sensible heat was about 100 W m⁻² too low, and every surface-layer solve too
+  stable** (#328). The reference air's potential temperature was referenced to the ground,
+  `T + (g/cp)·zref`, and the canopy air's was not, while the canopy air's energy budget exchanged heat
+  on the two actual temperatures. So the reported H, `g_ah·cp·(T_cas − θ_atm)`, sat
+  `g_ah·g·zref` below the flux the budget booked, and the Monin–Obukhov solve saw `(g/cp)·zref`
+  (0.37 K at a 38 m canopy-air top) of stable stratification that was not there. Both potential
+  temperatures are now referenced to `zref`, the canopy-air top the forcing is moved to, so each is
+  its actual temperature there (`set_aero_env_atm`; `canopy_aerodynamics.md` §2). The budgets closed
+  before and still do. Every H MEDS reported before this fix is low by `g_ah·g·zref`, with zref the
+  fixed reference height (30 m by default) before 774d040 moved the forcing to each patch's
+  canopy-air top, and that top since.
+  - On the five-year BCI census example:
+
+    | | before | after | tower |
+    |---|---|---|---|
+    | sensible heat, mean [W m⁻²] | −39.1 | 77.3 | 32.4 |
+    | sensible heat, night (19–05 h) | −95.5 | −0.1 | −23.6 |
+    | sensible heat, midday (10–14 h) | 89.7 | 244.2 | 163.0 |
+    | sensible heat, r hourly / r seasonal | 0.86 / −0.59 | 0.93 / 0.95 | |
+    | Rnet − H − LE, all hours, five-year mean | +104.6 | −11.4 | |
+    | friction velocity, night [m s⁻¹] | 0.78 | 0.87 | 0.41 |
+
+    GPP, NEE, latent heat and net radiation move by less than 1%. The miss the example shows is now
+    the partition, not the sign: a midday Bowen ratio of 1.5 against the tower's 0.69, and the
+    README says so.
+  - Tests: `test_column_dynamics` RUN 5b checks that canopy air at the reference air's temperature
+    and humidity is a neutral surface layer with no temperature scale, and that a dark isothermal
+    column reports |H| under 5% of `g_ah·g·zref` under both integrators (−0.4 against 26 W m⁻²).
+    With the old line restored all four checks fail, at H = −16.9 W m⁻².
+
+- **The tissue energy balance gave every leaf and all wood an emissivity of 0.95** (#327). The
+  radiation solver takes each PFT's `leaf_emissivity` (0.97 by default) and `wood_emissivity` (0.90) and
+  emits at the canopy-air temperature. The energy balance then adds the change in emission for the
+  tissue's departure from that temperature, 4εσT³ per unit leaf or wood area, and took ε from a fixed
+  `leaf_emiss = 0.95` for both. It now takes the cohort's PFT values, so the two halves of the longwave
+  agree, and `veg_thermal_params_t` loses `leaf_emiss`. Tests: `test_column_ark` checks that the frozen
+  tissue carries each cohort's own emissivities.
+  - Together with the next three fixes, on the five-year BCI census example: sensible heat moves
+    from −39.01 to −39.08 W m⁻², and its midday mean from 90.3 to 89.7. GPP, NEE, latent heat, net
+    radiation, the albedo and the stand agree to the digits the README prints. At BCI only this fix,
+    the wood temperature and the root profile apply: it has one PFT with no pressure–volume traits of
+    its own, the default ground optics, and whole-plant conductance.
+- **The wood's boundary layer took its free convection from the leaf temperature** (#327).
+  `boundary_gbh_mos` adds free convection driven by an element's difference from the canopy-air
+  temperature, and `aero_bottom_to_top` passed the leaf's temperature for the wood too. The wood now
+  gets its own. Tests: `test_column_dynamics` checks that the wood conductance ignores the leaf
+  temperature and rises with the wood's.
+- **Four `[hydraulics]` settings did nothing** (#327). `root_beta` and `root_depth` were read and
+  never used, because the root profile came from `[soil_column].root_beta`. `wood_kmax` and
+  `vessel_curl` feed the segment conductance, which no key could select.
+  - The root profile is now ED2's β^(d/D) from `[hydraulics]`, integrated over each layer and
+    renormalized over the column; a layer below `root_depth` holds no roots (Upgrading above;
+    `plant_hydraulics.md` §4). The default β = e⁻⁴ with D = 2 m is the old e^(−2d) decay, integrated
+    over each layer instead of sampled at its centre. On the default ten-layer grid that moves 0.4% of
+    the roots, and no layer by more than 0.15 percentage points. ED2's own default, β = 0.001, would
+    put 72% of them in the top 0.37 m.
+  - `[hydraulics].conductance = "whole_plant"` (default) or `"segment"` selects the conductance form.
+  - `validate_config` refuses `root_beta` outside (0, 1), `root_depth` ≤ 0 and, in segment mode, a
+    non-positive `wood_kmax` or `vessel_curl`, shared or per PFT.
+  - Tests: `test_plant_hydraulics` checks the segment conductance; `test_soil_column_config` checks
+    that the profile sums to one, that the default is the integrated e^(−2d), and that a shallow
+    `root_depth` leaves the deeper layers empty; `test_region` refuses `[soil_column].root_beta` and an
+    unknown `conductance`.
+- **Stomatal closure and the drought-phenology cue used one turgor-loss point for every PFT**
+  (#327). Both took ψ_tlp from the shared `[hydraulics]` `leaf_pi0` and `leaf_elastic_mod`, while the
+  plant-water solver used a PFT's own values where the PFT file sets them. `pft_leaf_psi_tlp` now
+  gives both the PFT's own curve by the solver's rule. With the default traits ψ_tlp stays −1.71 MPa.
+  Tests: `test_pft_optics_config` checks a PFT with its own `leaf_pi0` against one without.
+- **Stale config text** (#327). The PFT files said a mean leaf inclination of 45° is spherical; a
+  spherical distribution has mean 57.3° and standard deviation 21.6°, and the comment in
+  `meds_config_pft.toml` and the three example PFT files now says so. Three example configs set
+  `[phenology].phenology_on`, which nothing has read since phenology became unconditional; it is
+  removed, with the opt-in comment in `meds_config_main.toml`.
+
+- **The BCI flux-tower example forced MEDS with the canopy's upwelling longwave** (#326). `BCI_v5.1.csv`
+  labels its downwelling longwave `Rl_up` and its upwelling `Rl_dn`, and `bci_site.toml` took the
+  label at its word. Three independent checks agree: the provider's `Rnet` equals
+  Rs − Rs_dn + Rl_up − Rl_dn (RMS residual 1.7 W m⁻² after the bounds screen, 87.6 as labelled); at
+  night `Rl_dn` averages 1.022 times the air's blackbody emission σT⁴ and `Rl_up` 0.948; and
+  ERA5-Land's daily longwave follows `Rl_up` (r 0.86) and not `Rl_dn` (0.12). `LWdown` now reads
+  `Rl_up`, and both the site TOML and the example README say why. The observed longwave the
+  forcing carries averages 429 W m⁻² instead of 466, and the synthesis regression is re-fitted to
+  it. The five-year census run against the tower, before and after:
+
+  | | before | after | tower |
+  |---|---|---|---|
+  | net radiation, mean [W m⁻²] | 153.0 | 120.4 | 136.3 |
+  | net radiation, night (20–05 h local) | +6.4 | −21.8 | −33.5 |
+  | sensible heat, mean | −14.0 | −39.0 | 32.4 |
+  | latent heat, mean | 59.0 | 56.5 | 75.5 |
+  | GPP, mean [µmol m⁻² s⁻¹] | 10.86 | 11.07 | 7.46 |
+
+  The mislabelled forcing had hidden an albedo error: the model's canopy reflects 0.26 of the
+  shortwave against the tower's 0.13, and net radiation now falls short by day. The story the
+  example told about BCI's longwave, that it fell with daytime cloudiness so the synthesis's cloud
+  term had the wrong sign, came from the same mislabelling and is gone: the fitted cloud coefficient
+  is +0.10.
+
+- **Rain arrived one forcing record late on end-stamped files, including every ED_ERA5land run**
+  (#320).
+  `met_instant` held `rec_prev%rainf` over each interval whatever the stamp convention, while it
+  took shortwave from the record whose interval contains the instant (`rec_next` on an `"end"`
+  file). On ERA5-Land, whose records are means over the hour ending at the stamp, each hour's rain
+  fell in the following hour; totals were unchanged, and a begin-stamped file was read correctly.
+  Rain now comes from the same record as shortwave. No test caught it because every fixture's rain
+  was zero.
+- **The longwave synthesis held the wrong interval's clearness on begin-stamped files** (#320). With
+  `lwdown_source = "synthesize"`, `met_advance` remembered the clearness of `rec_next` whatever the
+  stamp convention. On a `"begin"` file that is the next interval, dark after the last daylight
+  one, so `kt_last_day` was 0 every night and every night took the full cloud term, about +40 W m⁻²
+  of longwave at a humid tropical site. Rain, shortwave and the remembered clearness now take their
+  record from one function, `interval_mean_record`.
+
+- **Under nvfortran, v0.3.0 could not open a site run, and four tests failed** (#317). v0.3.0
+  was verified on ifx and gfortran only. Under nvfortran 25.11, with `MEDS_GPU=multicore` and
+  `MEDS_GPU=gpu` alike, 49 of 53 tests passed, and `meds_main` stopped in `driver_open` on any
+  config, because code new in v0.3.0 uses four constructs that nvfortran gets wrong. Each
+  reproduces in a small standalone program, and each is invisible to ifx. They are now in the
+  portability traps of `docs/building.md` and `CLAUDE.md`.
+  - `driver_open` reset the run's output buffers with `output_buffers_t()`. nvfortran compiles that
+    constructor to an ALLOCATE of a garbage size, for example 72,340,172,838,076,672 bytes, because
+    the type has fixed-size array components whose own type has allocatable components. Every
+    site run, through `meds_main` or the C API, stopped there. The reset now copies a
+    default-initialised local.
+  - The CO₂ file reader matched the `timestep` unit with `findloc(UNIT_NAME, trim(unit))`. nvfortran
+    returns 0 for a value shorter than the names, so every CO₂ file was refused on its `timestep`
+    line. The reader now passes the untrimmed token.
+  - `era5land_select_box` built the columns of a box that crosses 180° as
+    `[pack([(i, …)], m1), pack([(i, …)], m2)]`. nvfortran returns wrong elements, and the vector
+    subscript that follows segfaulted, so a region across 180° could not open. The column indices
+    are now a named array.
+  - The NaN scan of a loaded ERA5-Land month called `findloc` on a LOGICAL array. The nvfortran
+    runtime does not implement that and aborts, so a NaN in the archive stopped the run with
+    "FINDLOC: unimplemented for data type" instead of a message naming the variable, hour and
+    cell. The scan now searches an integer mask.
+  - `test_met_driver` no longer segfaults when a CO₂ file fails to open. It segfaulted because it
+    read the unloaded series, and the crash discarded the buffered output that said why the open
+    failed. The test now reports FAIL lines instead. With the `trim()` restored, the test reports
+    `15 FAILED` and exits instead of crashing.
+  - **Checked:** 53/53 on ifx Release and Debug, nvfortran multicore and nvfortran gpu. With
+    `OMP_TARGET_OFFLOAD=MANDATORY`, the gpu suite launches the offloaded cohort-update kernel 201
+    times. ifx output is unchanged, compared on a 13-month coupled run from bare ground: all
+    50,330 values of the variables whose output repeats between two runs of the unmodified
+    binary are identical, bit for bit. Four variables in that run do not repeat between two runs
+    of the unmodified binary (`soil_temp_site_fast`, `soil_water_site_fast`, `area_patch`,
+    `lai_patch`), so they cannot be compared this way. That is a separate defect.
+
+- **Slab output variables switched on by an `[output].io_config` were written from unwritten
+  memory, and they corrupted their neighbours** (#318). `manager_setup` sized the shared
+  pending-record slab (`max_slab`) from the variables live at that point, and the `io_config`
+  overrides ran after it. A config that switches tiers, groups or axes off and picks its variables
+  through `io_config` (the file's stated purpose) therefore got a slab too short for them. On the
+  example spin-up config with output on, every tier is off, so `max_slab` was 1 while the soil
+  slabs need 20 rows and the patch slabs 6.
+  - At every period close, `normalize_slab` wrote each slab past its own column of the scratch
+    record, into the columns of the variables registered after it. A long enough slab near the
+    end of the registry, such as a per-cohort fast variable in a stand with many cohorts, would
+    write past the end of the array. The ifx Debug build stops at the first such write:
+    "Subscript #1 of the array OUT has value 2 which is greater than the upper bound of 1".
+  - The v0.3.0 output queue then kept one row per variable, and the writer read the full slab
+    length from it. So `soil_temp_site_fast` layer *i* held `soil_water_site_fast` layer *i* − 1
+    and then unwritten memory, up to 1e270 K. `area_patch` and `lai_patch` held denormals, and
+    `cohort_count` and `cohort_offset` held the fill value or another patch's value in place of
+    their own. The first four differed between two runs of the same binary on the same config.
+  - `max_slab` is now computed in `manager_finalize`, the one step every caller (site, region, and
+    a region's detail polygons) runs after the overrides and before any buffer is sized.
+    `normalize_slab` stops the run if a slab is longer than its record, instead of writing past
+    it.
+  - The fast tier's soil slabs also folded all `n_soil_layer_max` layers, so the inactive tail read
+    back as 0 K and 0 m³/m³. It now folds the active layers only, and the tail is the fill value,
+    as on the coarse tiers since #246.
+  - `test_output_integrate` runs the driver's order (setup, an override that switches a soil slab
+    on, finalize, allocate) and checks every layer in the queued record that the writer reads.
+    `test_fast_loop` checks that the fast tier folds only the active layers. Both tests fail with
+    their fix reverted, and with the `max_slab` fix reverted the new guard stops the run.
+  - **Checked** on a 13-month coupled run from bare ground: the example spin-up config with output
+    on and `output_variables.toml`, 411 netCDF files.
+    - Two runs are now byte-identical in every file. Before, 409 of 412 files differed.
+    - The soil output is physical, 268–325 K and 0.23–0.41 m³/m³, and patch areas sum to 1 in
+      every record.
+    - Only the six variables named above differ from v0.3.0.
+    - 53/53 on ifx Release and Debug.
+  - **Not affected:** the example's July stage. With the daily and fast tiers on, its setup
+    already sizes the slab to `cohort_max`, and it runs without error even with the fix reverted.
+    Its fast-tier soil tail was the 0 described above.
+
 ## [0.3.0] — 2026-09-28
 
 A **regional simulation** release. `[run].mode = "region"` runs every ED_ERA5land cell of a
@@ -2089,7 +2732,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...beta
+[0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.0...v0.2.1

@@ -14,7 +14,7 @@
 # See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md. (#194)                                    #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.3.0 LANGUAGES Fortran
+project(MEDS VERSION 0.3.1 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -77,12 +77,33 @@ include_directories(${CMAKE_Fortran_MODULE_DIRECTORY})
 #  Corollary: more goes on the stack, so the OMP_STACKSIZE note above applies with more force.
 #-----------------------------------------------------------------------------------------#
 option(MEDS_HEAP_ARRAYS "Put large automatic arrays on the heap (see the note above)" OFF)
-option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7)" OFF)
+option(MEDS_OPENMP "Compile the fast-loop patch parallelism (plan section 7); serial if the compiler has none" ON)
+#      ON BY DEFAULT. The thread count is a RUNTIME setting ([run].n_threads, default 1), so an OpenMP
+#      build still runs serially until a config asks for threads, and its output is byte-identical at
+#      any thread count. Only an OpenMP build lets test_fast_loop's 4-thread check test anything: in a
+#      serial build the directives are comments and it passes trivially. The price is the automatic-
+#      locals flag on every target, measured in docs/building.md "Parallel builds". -DMEDS_OPENMP=OFF
+#      builds serial; a compiler with no Fortran OpenMP falls back to serial with a warning.
+set(MEDS_OPENMP_ACTIVE OFF)
+if(MEDS_OPENMP)
+   if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
+      set(MEDS_OPENMP_ACTIVE ON)                  # -mp is already PUBLIC on meds_demography (below)
+   else()
+      find_package(OpenMP COMPONENTS Fortran)
+      if(OpenMP_Fortran_FOUND)
+         set(MEDS_OPENMP_ACTIVE ON)
+      else()
+         message(WARNING "MEDS: ${CMAKE_Fortran_COMPILER_ID} offers no Fortran OpenMP, so this build is "
+                         "SERIAL and [run].n_threads has no effect. Configure with -DMEDS_OPENMP=OFF "
+                         "to ask for that and silence this warning.")
+      endif()
+   endif()
+endif()
 #      Any build that can run host threads needs automatic locals -- which includes NVHPC with
 #      MEDS_GPU != none, because that puts -mp PUBLIC on meds_demography and meds_fast inherits it, so
 #      patch-loop directives are live there whether or not MEDS_OPENMP was asked for.
 set(MEDS_AUTO_LOCALS OFF)
-if(MEDS_OPENMP OR NOT MEDS_GPU STREQUAL "none")
+if(MEDS_OPENMP_ACTIVE OR NOT MEDS_GPU STREQUAL "none")
    set(MEDS_AUTO_LOCALS ON)
 endif()
 function(meds_fortran_flags tgt)
@@ -317,23 +338,25 @@ add_library(meds_model INTERFACE)
 target_link_libraries(meds_model INTERFACE meds_stepper meds_fast meds_slow meds_init)
 
 #----- Section 7 C4: HOST OpenMP over the fast-loop PATCH axis (src/driver/meds_fast_dynamics).  #
-#      OFF by default, so no existing build changes. Applied to meds_fast -- the target that owns  #
-#      the fast loop -- and PUBLIC so meds_main and the tests inherit the link flags.               #
-#      find_package resolves the per-compiler flag (-qopenmp IntelLLVM, -fopenmp GNU, -mp NVHPC).   #
+#      ON by default (the option, beside meds_fortran_flags, says why). Applied to meds_fast -- the #
+#      target that owns the fast loop -- and PUBLIC so meds_main and the tests inherit the link     #
+#      flags. find_package, run with the option, resolves the per-compiler flag (-qopenmp         #
+#      IntelLLVM, -fopenmp GNU, -mp NVHPC).                                                         #
 #      NVHPC with MEDS_GPU != none ALREADY carries -mp PUBLIC on meds_demography, inherited here,   #
 #      so adding it again would fight -mp=gpu; that case is left alone. Note the consequence: such a #
 #      build compiles the patch-loop directives whether or not MEDS_OPENMP is set, which is exactly  #
 #      why the thread count is a RUNTIME knob ([run].n_threads, default 1) and not a build-time one. #
 #      The option itself is declared beside meds_fortran_flags(), which is where its OTHER (and more #
 #      important) half lives: the automatic-locals flag on every target.                             #
-if(MEDS_OPENMP)
+if(MEDS_OPENMP_ACTIVE)
    if(NOT MEDS_GPU STREQUAL "none" AND CMAKE_Fortran_COMPILER_ID STREQUAL "NVHPC")
       message(STATUS "MEDS: fast-loop OpenMP inherited from MEDS_GPU=${MEDS_GPU} (-mp is already PUBLIC on meds_demography)")
    else()
-      find_package(OpenMP REQUIRED COMPONENTS Fortran)
       target_link_libraries(meds_fast PUBLIC OpenMP::OpenMP_Fortran)
       message(STATUS "MEDS: fast-loop OpenMP -> ${OpenMP_Fortran_FLAGS} (patch axis; [run].n_threads)")
    endif()
+else()
+   message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
 
 #----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
@@ -465,12 +488,25 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_slow_ledger)
    add_test(NAME slow_ledger COMMAND test_slow_ledger)
 
-   foreach(t containers fusion_cohort patch allometry disturbance init_census time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways)
+   foreach(t containers fusion_cohort patch allometry disturbance init_census init_soil_state time carbon_growth fast_loop phenology_driver biogeochem_dynamics slow_diag_units mortality_pathways)
       add_executable(test_${t} test/test_${t}.f90)
       target_link_libraries(test_${t} PRIVATE meds_testsupport meds_model)
       meds_fortran_flags(test_${t})
       add_test(NAME ${t} COMMAND test_${t})
    endforeach()
+
+   #----- Census files the reader must refuse: each passes only on its refusal's message. --#
+   add_executable(test_init_census_refuses test/test_init_census_refuses.f90)
+   target_link_libraries(test_init_census_refuses PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_init_census_refuses)
+   add_test(NAME init_census_refuses_area COMMAND test_init_census_refuses area)
+   set_tests_properties(init_census_refuses_area PROPERTIES
+                        PASS_REGULAR_EXPRESSION "two different patch_area values"
+                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
+   add_test(NAME init_census_refuses_column COMMAND test_init_census_refuses column)
+   set_tests_properties(init_census_refuses_column PROPERTIES
+                        PASS_REGULAR_EXPRESSION "column \"basal\" is unknown"
+                        FAIL_REGULAR_EXPRESSION "NOT REFUSED")
 
    #----- Leaf-physiology test links the flat plant library + test support (assertions). ---#
    add_executable(test_leaf_physiology test/test_leaf_physiology.f90)
@@ -596,6 +632,55 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
    add_test(NAME met_era5land COMMAND test_met_era5land)
+   #      The flux-tower contract of an ED_default file (MEDS_FLUX_TOWER_FORCING_PLAN.md §9 V6).
+   add_executable(test_met_tower test/test_met_tower.f90)
+   target_link_libraries(test_met_tower PRIVATE meds_forcing meds_testassert)
+   meds_fortran_flags(test_met_tower)
+   add_test(NAME met_tower COMMAND test_met_tower)
+   #      The flux-tower forcing tool's own tests (scripts/prepare_flux_tower/tests), when the Python
+   #      CMake finds has what the tool needs; otherwise they are left out, and configure says so.
+   find_package(Python3 COMPONENTS Interpreter QUIET)
+   if (Python3_Interpreter_FOUND)
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, pandas, netCDF4, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_tower_tool_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_tower_tool_deps EQUAL 0)
+         add_test(NAME prepare_flux_tower
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_flux_tower/tests)
+         set_tests_properties(prepare_flux_tower PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+         #----- A restart continues exactly, and re-acclimates its traits on request                #
+         #      (test/python/test_restart_exact.py; meds_main on the constant reference climate).  #
+         add_test(NAME restart_exact
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
+         set_tests_properties(restart_exact PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests, #
+         #      and a smoke test that drives meds_main through a chain, a trial and a Jacobian column. #
+         add_test(NAME calibrate_fast
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/calibrate_fast/tests)
+         set_tests_properties(calibrate_fast PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+      else()
+         message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
+                        "netCDF4, pytest or tomli)")
+      endif()
+      #----- The census preparation tool's tests (scripts/prepare_census/tests), on the same terms. -#
+      execute_process(COMMAND ${Python3_EXECUTABLE} -c
+                      "import sys, numpy, pandas, pytest; sys.version_info >= (3, 11) or __import__('tomli')"
+                      RESULT_VARIABLE meds_census_tool_deps OUTPUT_QUIET ERROR_QUIET)
+      if (meds_census_tool_deps EQUAL 0)
+         add_test(NAME prepare_census
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_census/tests)
+         set_tests_properties(prepare_census PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+      else()
+         message(STATUS "MEDS: prepare_census tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
+                        "pytest or tomli)")
+      endif()
+   endif()
 
    #----- Fast-loop biophysics run-config TOML wiring ([soil]/[energy]/[snow]/[aerodynamics]). #
    add_executable(test_biophysics_opts_config test/test_biophysics_opts_config.f90)
@@ -638,6 +723,14 @@ if(MEDS_BUILD_TESTS)
    #----- The shipped per-variable override EXAMPLE is a generated file that is also tracked, so  #
    #      it can drift silently from the registry -- it did, by twenty variables (#241). The source #
    #      tree path is passed in because ctest runs from the build tree.                            #
+   #----- The shipped [allometry] block must equal the meds_allometry initializers (the Python  #
+   #      library's config-free values); biomass must be Chave 2014 in carbon, leaf ED2's over C2B. #
+   add_executable(test_allometry_defaults test/test_allometry_defaults.f90)
+   target_link_libraries(test_allometry_defaults PRIVATE meds_testsupport meds_model)
+   meds_fortran_flags(test_allometry_defaults)
+   add_test(NAME allometry_defaults COMMAND test_allometry_defaults
+            ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
+
    add_executable(test_io_config_example test/test_io_config_example.f90)
    target_link_libraries(test_io_config_example PRIVATE meds_io_prep meds_testsupport)
    meds_fortran_flags(test_io_config_example)

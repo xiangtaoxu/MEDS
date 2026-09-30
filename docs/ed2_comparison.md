@@ -107,7 +107,7 @@ Read the notes column — that is where the qualifications live.
 |---|---|---|---|
 | **State hierarchy** | polygon → site → patch → cohort, one site per polygon | grid → polygon → site → patch → cohort | MEDS drops the grid level: a region is N polygons on the ERA5-Land grid, each stepped on its own, and a site run is one. State is a flat site-wide Structure-of-Arrays with a CSR patch map, not nested ragged arrays. |
 | **PFTs** | Run-time count; every trait supplied from a TOML file. No built-in table. | 17 hard-coded PFTs with defaults in `ed_params.f90`, overridable by XML. | MEDS has **no PFT defaults at all** — a missing key is a hard error. That is a deliberate trade: no hidden parameterisation, but no curated ED2 PFT set to inherit either. The shipped example uses three PFTs contrasted along wood density. |
-| **Allometry** | Pan-tropical, ED2 `IALLOM = 3` | `IALLOM` 0–4, default 3 | Same family. MEDS additionally inverts AGB→DBH for fusion. |
+| **Allometry** | Pan-tropical, ED2 `IALLOM = 3` | `IALLOM` 0–4, default 3 | Same family. Biomass is Chave et al. (2014) eq. 4 in carbon, where ED2 uses its own refit of it; leaf area is ED2's BAAD fit divided by `C2B`, as ED2 applies it. MEDS additionally inverts AGB→DBH for fusion. |
 | **Cohort fusion / fission** | Keys on height similarity + an LAI cap; conserves per-plant AGB (DBH re-derived, never averaged) and plant number | `fuse_fiss_utils.f90`, `MAXCOHORT` target with tolerance relaxation | Same idea, different similarity metric. MEDS asserts the conservation invariants at 1% and `error stop`s otherwise. |
 | **Patch fusion** | ED2-style cumulative-LAI light profile over height layers, same disturbance class only | `IFUSION` 0/1, `MAXPATCH` | MEDS ports the light-profile criterion. |
 | **Treefall disturbance** | Annual; a fraction of every patch peels into one age-0 gap; tall die, short understory survives | `TREEFALL_DISTURBANCE_RATE`, plus small-tree background mortality | Directly ported, including the tall/short split. |
@@ -262,7 +262,7 @@ analysis code:
 
 ### 3.5 Parallelism and determinism
 
-MEDS threads the patch axis with OpenMP (opt-in at both build and run time), and **the output is
+MEDS threads the patch axis with OpenMP (compiled in by default, asked for at run time), and **the output is
 byte-identical at any thread count** — site accumulators are staged per (sub-step, patch) and folded
 back in patch order rather than by `reduction(+:)`, so the last bits do not drift with thread
 scheduling. The hot demographic kernel carries OpenMP `target` regions and runs on GPU under

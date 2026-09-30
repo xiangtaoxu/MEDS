@@ -1,0 +1,317 @@
+# SPDX-License-Identifier: Apache-2.0
+# The fast-parameter calibration at Barro Colorado Island (scripts/calibrate_fast;
+# docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md). run_example.py --calibrate runs it.
+# Paths are relative to this file.
+
+[base]
+main        = "meds_config_eval.toml"
+pft         = "pft_parameters.toml"
+registry    = "../../scripts/calibrate_fast/parameters.toml"
+growth_resp = "calibration/growth_resp_monthly.csv"   # calibrate_fast.py growth-resp, from the five-year run
+
+# Applied to every trial and every state chain.
+[overrides]
+"trait_dynamics.trait_plasticity_on" = true   # D6: the traits follow the canopy light gradient
+
+# Canopy interception both ways (D9).
+[variants.interception_off]
+"fast.canopy_water_on" = false
+
+[variants.interception_on]
+"fast.canopy_water_on" = true
+
+[tower]
+path         = "data/BCI_v5.1.csv"
+time_column  = "date"          # local time (UTC-5), the start of each half hour
+flag_column  = "FLAG"          # 1 = measured; the turbulent fluxes are used only there
+flag_good    = 1
+utc_offset_h = -5.0
+forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
+forcing_qc   = ["LWdown_qc", "Wind_qc"]
+forcing_grid = 1
+closure_days = 31              # the closure correction's sliding window, centred
+daytime_sw   = 10.0            # [W m-2]
+
+[tower.columns]
+sw_in = "Rs"
+sw_up = "Rs_dn"
+lw_up = "Rl_dn"                # the file labels the upwelling longwave Rl_dn (README, "Longwave")
+rnet  = "Rnet"
+le    = "LE"
+h     = "H"
+nee   = "NEE"
+gpp   = "gpp"
+ustar = "ustar"
+
+[targets.albedo]
+sigma = 0.01
+min_sw = 200.0
+
+[targets.lw_up]
+sigma = 5.0
+
+[targets.rnet]
+sigma_abs = 10.0
+sigma_rel = 0.05
+
+[targets.le]
+sigma_abs = 10.0
+sigma_rel = 0.15
+closure = true
+
+[targets.h]
+sigma_abs = 10.0
+sigma_rel = 0.15
+closure = true
+
+[targets.ef]
+sigma = 0.05
+min_hours = 6
+
+[targets.gpp]
+sigma_abs = 1.5
+sigma_rel = 0.15
+
+[targets.nee_night]
+sigma = 2.0
+ustar_min = 0.2
+night_sw = 5.0
+
+[targets.ustar]
+sigma_abs = 0.1
+sigma_rel = 0.2
+
+[fit]
+max_free     = 20
+max_iter     = 15
+rtol         = 1.0e-3
+starts       = 3
+seed         = 20260929
+refresh_iter = 5
+rough_keys   = "default"       # a key the screening finds rough stays at its default ("line_search" to move it)
+timeout      = 300          # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
+
+[windows]
+days       = 10
+skip_hours = 3                 # the first hours after a restart with changed traits are not scored
+
+# Each chain is a frozen run from the census at this date, passing its windows' starts in order.
+[windows.chains]
+cal   = "2015-04-01"
+early = "2013-04-01"
+
+# The seasons `calibrate_fast.py select-windows` searches for the best-covered 10-day span. BCI's dry
+# season is January to April. Calibration windows need the tower's longwave, observed from 2015.
+[[windows.seasons]]
+name = "wet15"
+from = "2015-08-15"
+to = "2015-10-15"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "wetdry15"
+from = "2015-12-01"
+to = "2016-01-31"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "dry16"                  # the 2016 El Nino drought
+from = "2016-02-01"
+to = "2016-04-10"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "drywet16"
+from = "2016-04-11"
+to = "2016-06-15"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "wet16"
+from = "2016-08-15"
+to = "2016-10-15"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "wetdry16"
+from = "2016-12-01"
+to = "2017-01-31"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "dry17"
+from = "2017-02-01"
+to = "2017-04-10"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "drywet17"
+from = "2017-04-11"
+to = "2017-06-15"
+role = "cal"
+chain = "cal"
+
+[[windows.seasons]]
+name = "val_wet13"
+from = "2013-08-15"
+to = "2013-11-30"
+role = "val"
+chain = "early"
+
+[[windows.seasons]]
+name = "val_wetdry13"
+from = "2013-12-01"
+to = "2014-01-31"
+role = "val"
+chain = "early"
+
+[[windows.seasons]]
+name = "val_dry14"
+from = "2014-02-01"
+to = "2014-04-10"
+role = "val"
+chain = "early"
+
+[[windows.seasons]]
+name = "val_drywet14"
+from = "2014-04-11"
+to = "2014-06-15"
+role = "val"
+chain = "early"
+
+[[windows.seasons]]
+name = "val_wet15b"
+from = "2015-10-16"
+to = "2015-11-30"
+role = "val"
+chain = "cal"
+
+[[windows.seasons]]
+name = "val_mid16"
+from = "2016-06-16"
+to = "2016-08-14"
+role = "val"
+chain = "cal"
+
+[[windows.seasons]]
+name = "val_wet16b"
+from = "2016-10-16"
+to = "2016-11-30"
+role = "val"
+chain = "cal"
+
+[[windows.seasons]]
+name = "val_mid17"
+from = "2017-06-16"
+to = "2017-07-21"
+role = "val"
+chain = "cal"
+
+# The windows themselves, as select-windows chose them (dates are the runs' UTC start).
+[[windows.list]]
+name = "wet15"
+start = "2015-09-11"
+role = "cal"
+chain = "cal"   # coverage score 0.90
+
+[[windows.list]]
+name = "wetdry15"
+start = "2015-12-20"
+role = "cal"
+chain = "cal"   # coverage score 0.98
+
+[[windows.list]]
+name = "dry16"
+start = "2016-03-05"
+role = "cal"
+chain = "cal"   # coverage score 0.98
+
+[[windows.list]]
+name = "drywet16"
+start = "2016-04-13"
+role = "cal"
+chain = "cal"   # coverage score 0.97
+
+[[windows.list]]
+name = "wet16"
+start = "2016-08-26"
+role = "cal"
+chain = "cal"   # coverage score 0.81
+
+[[windows.list]]
+name = "wetdry16"
+start = "2017-01-11"
+role = "cal"
+chain = "cal"   # coverage score 0.96
+
+[[windows.list]]
+name = "dry17"
+start = "2017-02-01"
+role = "cal"
+chain = "cal"   # coverage score 0.96
+
+[[windows.list]]
+name = "drywet17"
+start = "2017-04-20"
+role = "cal"
+chain = "cal"   # coverage score 0.90
+
+[[windows.list]]
+name = "val_wet13"
+start = "2013-09-07"
+role = "val"
+chain = "early"   # coverage score 0.90
+
+[[windows.list]]
+name = "val_wetdry13"
+start = "2014-01-10"
+role = "val"
+chain = "early"   # coverage score 0.98
+
+[[windows.list]]
+name = "val_dry14"
+start = "2014-02-05"
+role = "val"
+chain = "early"   # coverage score 0.98
+
+[[windows.list]]
+name = "val_drywet14"
+start = "2014-04-14"
+role = "val"
+chain = "early"   # coverage score 0.95
+
+[[windows.list]]
+name = "val_wet15b"
+start = "2015-10-17"
+role = "val"
+chain = "cal"   # coverage score 0.85
+
+[[windows.list]]
+name = "val_mid16"
+start = "2016-08-03"
+role = "val"
+chain = "cal"   # coverage score 0.81
+
+[[windows.list]]
+name = "val_wet16b"
+start = "2016-10-16"
+role = "val"
+chain = "cal"   # coverage score 0.80
+
+[[windows.list]]
+name = "val_mid17"
+start = "2017-06-17"
+role = "val"
+chain = "cal"   # coverage score 0.78
+
+# Set in the calibrated main config the fit writes (meds_config_calibrated.toml), beside the MAP.
+[calibrated]
+"init.pft_config" = "calibration/pft_parameters_calibrated.toml"
+"output.prefix"   = "cal"
