@@ -37,8 +37,9 @@ module meds_fast_time_derivs
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
    use meds_plant_biophysics, only : veg_energy_balance, lw_emission_slope
    use meds_column_state_ops, only : assemble_soil_energy_forcing
-   use meds_fast_types, only : snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t, tissue_coefficients_t, &
-                               canopy_film_capacity_t, ground_boundary_t, column_state_t, column_frozen_t, column_tend_t, &
+   use meds_fast_types, only : column_config_t, snow_stage_t, surface_state_t, surface_tend_t, cas_boundary_t, &
+                               tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t, column_state_t, &
+                               column_frozen_t, column_tend_t, &
                                stage_bflux_t, column_bflux_t
    implicit none
    private
@@ -294,9 +295,10 @@ contains
    ! constant across the whole macro-step); only the per-plant transpiration demand is REFRESHED each    !
    ! stage, from the CURRENT surface_derivs evaluation -- exactly the sec 6 stability argument (mass     !
    ! adds no stiff mode because its inflow is frozen and its outflow moves at the CAS timescale). ------!
-   pure subroutine column_derivs(y, frozen, n, nsl, f, sf_out)
+   pure subroutine column_derivs(y, frozen, col_config, n, nsl, f, sf_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n      !< number of cohorts
       integer(ik),           intent(in)  :: nsl    !< number of active soil layers
       type(column_tend_t),   intent(out) :: f
@@ -320,7 +322,7 @@ contains
       !----- Diagnose the soil-top temperature from the current state so the ground skin sees the   !
       !      prognostic soil-top energy (the coupling the surface block needs). ---------------------!
       wmass1   = y%theta(1) * rho_h2o
-      call internal_energy_to_temp(y%soil_energy(1), wmass1, frozen%params%therm%soil_dry_heat_capacity(1), t_ground, fliq1)
+      call internal_energy_to_temp(y%soil_energy(1), wmass1, col_config%soil_thermal%soil_dry_heat_capacity(1), t_ground, fliq1)
 
       !----- 1. Surface block (leaf + ground + CAS twins). ------------------------------------!
       y_stage%cas_enthalpy = y%cas_enthalpy ; y_stage%cas_shv = y%cas_shv ; y_stage%cas_co2 = y%cas_co2
@@ -342,7 +344,7 @@ contains
       do k = 1_ik, nsl
          root_uptake(k) = frozen%roots%uptake * frozen%roots%root_share(k)
       end do
-      call soil_water_time_deriv(y%theta, frozen%params%soil, frozen%params%hydro_opts, nsl,                 &
+      call soil_water_time_deriv(y%theta, col_config%soil, col_config%soil_water_opts, nsl,                 &
                                  frozen%hydrology%q_top,                                                    &
                                root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own, &
                                apply_wilt_limit=.false.)
@@ -371,7 +373,7 @@ contains
       !      -- rather than from qface_own, so that swapping the argument above to some other array    !
       !      changes this too and the check keeps its meaning instead of becoming a tautology. --------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
-      call soil_energy_time_deriv(soil_e, eforc, frozen%params%therm, frozen%params%soil, frozen%params%energy_opts, &
+      call soil_energy_time_deriv(soil_e, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
                                   f%dedt, bottom_face=f%g_bottom)
 
       !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !

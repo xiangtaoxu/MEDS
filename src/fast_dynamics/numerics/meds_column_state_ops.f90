@@ -22,7 +22,7 @@ module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num
    use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
-   use meds_fast_types,       only : column_state_t, column_tend_t, column_frozen_t,                     &
+   use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,                     &
                                      stage_bflux_t, column_bflux_t, process_mask_t
    use meds_soil_types, only : energy_forcing_t
    use meds_fast_types, only : patch_biophys_t
@@ -242,9 +242,9 @@ contains
    !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain).       !
    !      dmass (optional) accumulates |water| moved, in kg/m2 of GROUND -- the mass this clamp   !
    !      creates or destroys with no ledger entry. -----------------------------------------!
-   pure subroutine clamp_theta(s, frozen, nsl, nfire, dmass)
+   pure subroutine clamp_theta(s, col_config, nsl, nfire, dmass)
       type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: frozen
+      type(column_config_t), intent(in)    :: col_config
       integer(ik),           intent(in)    :: nsl
       integer(ik), optional, intent(inout) :: nfire
       real(wp),    optional, intent(inout) :: dmass
@@ -252,10 +252,10 @@ contains
       real(wp)    :: th_in
       do k = 1_ik, nsl
          th_in      = s%theta(k)
-         s%theta(k) = min(max(s%theta(k), frozen%params%soil%theta_res(k)), frozen%params%soil%theta_sat(k))
+         s%theta(k) = min(max(s%theta(k), col_config%soil%theta_res(k)), col_config%soil%theta_sat(k))
          if (s%theta(k) /= th_in) then
             if (present(nfire)) nfire = nfire + 1_ik
-            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * frozen%params%soil%dz(k) * rho_h2o
+            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * col_config%soil%dz(k) * rho_h2o
          end if
       end do
    end subroutine clamp_theta
@@ -270,9 +270,9 @@ contains
    !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
    !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
    !      creates or destroys with no ledger entry. -------------------------------------------------!
-   pure subroutine clamp_soil_energy(s, frozen, nsl, nfire, denergy)
+   pure subroutine clamp_soil_energy(s, col_config, nsl, nfire, denergy)
       type(column_state_t),  intent(inout) :: s
-      type(column_frozen_t), intent(in)    :: frozen
+      type(column_config_t), intent(in)    :: col_config
       integer(ik),           intent(in)    :: nsl
       integer(ik), optional, intent(inout) :: nfire
       real(wp),    optional, intent(inout) :: denergy
@@ -282,16 +282,16 @@ contains
       do k = 1_ik, nsl
          wmass = s%theta(k) * rho_h2o
          e_in  = s%soil_energy(k)
-         call internal_energy_to_temp(s%soil_energy(k), wmass, frozen%params%therm%soil_dry_heat_capacity(k), temp, fliq)
+         call internal_energy_to_temp(s%soil_energy(k), wmass, col_config%soil_thermal%soil_dry_heat_capacity(k), temp, fliq)
          fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
          temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_internal_energy(frozen%params%therm%soil_dry_heat_capacity(k), wmass, temp, fliq)
+         s%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k), wmass, temp, fliq)
          !----- compare against the INPUT, not the T bounds: the internal_energy_to_temp/temp_to_internal_energy round trip   !
          !      is the identity only for an in-range state, so this also catches a clamp that bit       !
          !      through the liquid-fraction bound rather than the temperature bound. -------------------!
          if (s%soil_energy(k) /= e_in) then
             if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * frozen%params%soil%dz(k)
+            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * col_config%soil%dz(k)
          end if
       end do
    end subroutine clamp_soil_energy

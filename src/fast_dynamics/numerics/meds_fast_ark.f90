@@ -75,10 +75,11 @@ contains
    ! adaptive controller (2 solves/step vs step-doubling's 3). The mass update re-solves the plant      !
    ! hydraulics once per step (the transpiration corrector), and that solve's work is added to the      !
    ! hydraulics WORK counters (section 5.3) on top of the pre-pass's. -----------------------------------!
-   subroutine ark2_column_step(y, frozen, n, nsl, dt, y_out, y_err, niter, bf, clamp_n,      &
+   subroutine ark2_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, niter, bf, clamp_n,      &
                                floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
@@ -113,7 +114,7 @@ contains
       np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
 
       !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
-      call column_be_stage(y, frozen, n, nsl, GAMMA*dt, Y2, niter=np, bf=bf2, sf_out=sf2)
+      call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, niter=np, bf=bf2, sf_out=sf2)
       !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
       !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
       !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
@@ -121,16 +122,16 @@ contains
       !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
       !      with NaN. --------------------------------------------------------------------------------!
       call state_extrap(y, BETA, Y2, n, nsl, base3)
-      call clamp_theta(base3, frozen, nsl, nfire=clamp_n)
+      call clamp_theta(base3, col_config, nsl, nfire=clamp_n)
       call clamp_cas(base3, nfire=clamp_n)
-      call column_be_stage(base3, frozen, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3, sf_out=sf3)
+      call column_be_stage(base3, frozen, col_config, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3, sf_out=sf3)
       call state_init(Y3, n, nsl, y_out)
       !----- operator-split mass: closed-form Euler over the FULL dt from y_n, using the SAME b-weighted !
       !      (1-gamma, gamma) per-cohort transp the CAS's own vapour balance used (bf2/bf3's ledger is    !
       !      b-weighted identically, sec 1/3/4/5) -- NOT a separate endpoint evaluation, so the mass       !
       !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
       transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
-      call advance_water_mass_full(y, frozen, n, nsl, dt, transp_bw, y_out,                          &
+      call advance_water_mass_full(y, frozen, col_config, n, nsl, dt, transp_bw, y_out,                          &
                                    floor_mass=fmass_i, floor_n=fcount_i,                              &
                                    hydro_nsub=hnsub_i, hydro_nonconv=hnonconv_i)
       if (present(floor_mass))    floor_mass    = floor_mass    + fmass_i
@@ -176,10 +177,11 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
+   subroutine adaptive_ark_march(y0, frozen, col_config, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
                                  dt_warm_out, clamp_n, floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
@@ -236,7 +238,7 @@ contains
          dt = min(dt, t_end - t)
          clamped = dt < dt_try - tiny_num
          fmass_try = 0.0_wp ; fn_try = 0_ik
-         call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
+         call ark2_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
                                clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try,             &
                                hydro_nsub=hydro_nsub, hydro_nonconv=hydro_nonconv)
          call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
@@ -386,7 +388,7 @@ contains
          !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
          ec = col_config%integrator%error_control
-         call adaptive_ark_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
+         call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n,                                  &
@@ -396,7 +398,7 @@ contains
       else
          nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
-            call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
+            call ark2_column_step(ycur, frozen, col_config, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n,                                 &
                                   floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,  &

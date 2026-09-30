@@ -46,7 +46,7 @@ module meds_fast_types
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t, column_params_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
 
@@ -621,19 +621,6 @@ module meds_fast_types
       integer(ik), allocatable :: pft(:)
    end type plant_water_t
 
-   !----- Parameter records the stages read, COPIED from column_config_t once per dt_fast. They are  !
-   !      here only because the march signatures (both schemes and the RK4 oracle) carry the frozen  !
-   !      record and not the column configuration; passing them instead of copying them is the       !
-   !      remaining step of the decomposition (2026-09 review, decisions after items 4-6). ----------!
-   type :: column_params_t
-      type(soil_params_t)         :: soil         !< soil geometry + texture (dz, root_frac, ...)
-      type(soil_thermal_params_t) :: therm        !< soil thermal texture
-      type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
-      type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_table_t)  :: hydraulics_table       !< PER-PFT PV curves + vulnerability (#179)
-      type(hydro_opts_t)          :: hydraulics_opts      !< hydraulics kernel solver options (for the corrector)
-   end type column_params_t
-
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
    !----- The frozen outcome of one pre-column snow advance. Every field is 0/.false. when snow is  !
    !      off or no pack exists, and the consumers are written so that those values reduce their     !
@@ -674,7 +661,6 @@ module meds_fast_types
       type(soil_hydrology_t)       :: hydrology    !< the scratch soil-water solve's outcome
       type(root_zone_t)            :: roots        !< realized uptake, its placement, the rhizosphere boundary
       type(plant_water_t)          :: plant        !< frozen sapflow/uptake + cohort geometry for the corrector
-      type(column_params_t)        :: params       !< parameter copies (see column_params_t)
    end type column_frozen_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!

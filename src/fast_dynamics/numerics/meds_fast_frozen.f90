@@ -309,9 +309,6 @@ contains
       frozen%ground%ggnet = aero%ggnet ; frozen%cas%rho = rho ; frozen%cas%press = press
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
-      frozen%params%soil = col_config%soil ; frozen%params%therm = col_config%soil_thermal
-      frozen%params%energy_opts = col_config%energy
-      frozen%params%hydro_opts = col_config%soil_water_opts
       frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! §8g scheme-asymmetry guard
       frozen%hydrology%geothermal = 0.0_wp
 
@@ -368,8 +365,6 @@ contains
       !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
       frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
       frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      frozen%params%hydraulics_table                     = col_config%hydraulics_table
-      frozen%params%hydraulics_opts                    = col_config%hydraulics_opts
       !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
       !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
       do ih = 1_ik, n

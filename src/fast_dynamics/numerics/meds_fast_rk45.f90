@@ -140,12 +140,13 @@ contains
    ! no-op on any well-resolved step); the resulting k_i is then a legitimate derivative at a physical      !
    ! (if boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and shrinks dt     !
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
-   pure subroutine rk45_column_step(y, frozen, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
+   pure subroutine rk45_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out, &
                                     tissue_leaf_int, tissue_wood_int, cond_enth_out,                   &
                                     atm_heat_out, atm_vap_out, face_resid_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out, y_err
@@ -182,44 +183,44 @@ contains
       real(wp) :: bw_face(n_soil_layer_max), f_in, f_out, uptk, face_resid
       integer(ik) :: kf
 
-      call column_derivs(y, frozen, n, nsl, k1, sf_out=surf_tend)
+      call column_derivs(y, frozen, col_config, n, nsl, k1, sf_out=surf_tend)
       call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
       tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,1) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage) ; call state_accum(y_stage, dt*A21, k1, n, nsl)
-      call clamp_theta(y_stage, frozen, nsl, nfire=clamp_stage_n)
+      call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, n, nsl, k2, sf_out=surf_tend)
+      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k2, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,2) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A31, k1, n, nsl) ; call state_accum(y_stage, dt*A32, k2, n, nsl)
-      call clamp_theta(y_stage, frozen, nsl, nfire=clamp_stage_n)
+      call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, n, nsl, k3, sf_out=surf_tend)
+      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k3, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,3) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A41, k1, n, nsl) ; call state_accum(y_stage, dt*A42, k2, n, nsl)
       call state_accum(y_stage, dt*A43, k3, n, nsl)
-      call clamp_theta(y_stage, frozen, nsl, nfire=clamp_stage_n)
+      call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, n, nsl, k4, sf_out=surf_tend)
+      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k4, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,4) = surf_tend%wood_temp(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A51, k1, n, nsl) ; call state_accum(y_stage, dt*A52, k2, n, nsl)
       call state_accum(y_stage, dt*A53, k3, n, nsl) ; call state_accum(y_stage, dt*A54, k4, n, nsl)
-      call clamp_theta(y_stage, frozen, nsl, nfire=clamp_stage_n)
+      call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, n, nsl, k5, sf_out=surf_tend)
+      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k5, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,5) = surf_tend%wood_temp(1:n)
 
@@ -227,10 +228,10 @@ contains
       call state_accum(y_stage, dt*A61, k1, n, nsl) ; call state_accum(y_stage, dt*A62, k2, n, nsl)
       call state_accum(y_stage, dt*A63, k3, n, nsl) ; call state_accum(y_stage, dt*A64, k4, n, nsl)
       call state_accum(y_stage, dt*A65, k5, n, nsl)
-      call clamp_theta(y_stage, frozen, nsl, nfire=clamp_stage_n)
+      call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, frozen, nsl, nfire=clamp_stage_n)
-      call column_derivs(y_stage, frozen, n, nsl, k6, sf_out=surf_tend)
+      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k6, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,6) = surf_tend%wood_temp(1:n)
 
@@ -262,7 +263,7 @@ contains
             f_out = bw_face(kf)      * rho_h2o * dt
             uptk  = frozen%roots%uptake * frozen%roots%root_share(kf) * dt
             face_resid = face_resid                                                                &
-               + abs((y_out%theta(kf) - y%theta(kf)) * frozen%params%soil%dz(kf) * rho_h2o         &
+               + abs((y_out%theta(kf) - y%theta(kf)) * col_config%soil%dz(kf) * rho_h2o         &
                      - (f_in - f_out - uptk))
          end do
          face_resid_out = face_resid
@@ -368,13 +369,14 @@ contains
    ! over rk45_column_step instead of ark2_column_step. with_mass=.true. (the default): RK45 has no   !
    ! operator split at all, so mass genuinely differs between the 5th/4th solutions -- a live error    !
    ! signal, unlike ARK where it is structurally zero. -----------------------------------------------!
-   subroutine adaptive_rk45_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
+   subroutine adaptive_rk45_march(y0, frozen, col_config, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej,       &
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
                                   cond_enth_acc, atm_heat_acc, atm_vap_acc, face_resid_acc,           &
                                   ood_max, tissue_leaf_acc, tissue_wood_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),            intent(in)  :: n, nsl
       real(wp),               intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec
@@ -432,11 +434,11 @@ contains
          !      place a constitutive kernel sees theta outside its domain. Record how far. -------------!
          if (present(ood_max)) then
             do kood = 1_ik, nsl
-               ood_max = max(ood_max, y%theta(kood) - frozen%params%soil%theta_sat(kood),                       &
-                             frozen%params%soil%theta_res(kood) - y%theta(kood))
+               ood_max = max(ood_max, y%theta(kood) - col_config%soil%theta_sat(kood),                       &
+                             col_config%soil%theta_res(kood) - y%theta(kood))
             end do
          end if
-         call rk45_column_step(y, frozen, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
+         call rk45_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i,       &
                                tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i,                &
@@ -572,7 +574,7 @@ contains
       ec = col_config%integrator%error_control
       ec%p_order = RK45_P_ORDER
       tl_int_acc(1:n) = 0.0_wp ; tw_int_acc(1:n) = 0.0_wp
-      call adaptive_rk45_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
+      call adaptive_rk45_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budget%clamp_stage_n, clamp_commit_n=budget%clamp_commit_n, &
                               clamp_mass=budget%clamp_mass, clamp_energy=budget%clamp_energy,          &

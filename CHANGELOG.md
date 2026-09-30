@@ -58,6 +58,15 @@ before and after.
   - **Removed:** `TISSUE_STORE_SCALE`, a source switch fixed at 1 whose banner still explained why the
     tissue heat store was "not on yet". The store is simply always on; outputs are bit-identical.
 
+- **The fast loop's parameters are no longer copied into the frozen record every step** (#188).
+  `column_frozen_t` carried `column_params_t`, a copy of the column's soil, thermal and hydraulics
+  parameters taken from `column_config_t` once per `dt_fast` and patch: about 3.5 KB of fixed data
+  plus a heap copy of the per-PFT hydraulics table (n_pft × 4.2 KB). The routines that read it
+  (`column_be_stage`, `advance_water_mass_full`, `column_derivs`, both marches and both steps, the
+  RK4 oracle) now take `col_config` beside the frozen record, the two clamps take it in its place,
+  and `column_params_t` is gone. The frozen record now holds only what freezes each step.
+  Bit-identical on every r1 case.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
