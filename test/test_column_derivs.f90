@@ -25,12 +25,12 @@ program test_column_derivs
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t, build_soil_hydr_params, &
                                   build_soil_therm_params
    use meds_column_state_types, only : soil_energy_column_t
-   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
    use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
-   use meds_hydr_lib,         only : water_content
+   use meds_water_retention,  only : water_content, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
@@ -1109,9 +1109,9 @@ contains
            2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
       col_config%soil_water_opts = soil_opts_t()
-      hp%leaf_pi0 = -1.5_wp ; hp%leaf_elastic_mod = 12.0_wp ; hp%leaf_apoplast_frac = 0.30_wp
-      hp%leaf_water_sat = 2.0_wp ; hp%wood_pi0 = -1.0_wp ; hp%wood_elastic_mod = 8.0_wp
-      hp%wood_apoplast_frac = 0.20_wp ; hp%wood_water_sat = 1.0_wp ; hp%wood_psi50 = -2.0_wp
+      hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
+      hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
+      hp%wood_psi50 = -2.0_wp
       hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
@@ -1176,10 +1176,8 @@ contains
       !----- seed mass at the SAME representative (leaf psi=-1.0, wood psi=-0.5 MPa) point the old   !
       !      psi-based fixture used, via the forward water_content map (hp above). -------------------!
       do i = 1_ik, n
-         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_pi0, hp%leaf_elastic_mod,          &
-              hp%leaf_apoplast_frac, hp%leaf_water_sat, frozen%plant%bleaf(i))
-         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_pi0, hp%wood_elastic_mod,          &
-              hp%wood_apoplast_frac, hp%wood_water_sat, frozen%plant%bsap(i) + frozen%plant%broot(i))
+         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_curve, frozen%plant%bleaf(i))
+         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_curve, frozen%plant%bsap(i) + frozen%plant%broot(i))
       end do
    end subroutine make_column
 

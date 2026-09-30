@@ -53,7 +53,7 @@ module meds_fast_dynamics
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
                                  set_aero_env_atm, set_aero_env_canopy
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, ark_workspace_t
-   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
    use meds_optics_lib,       only : beta_params_from_mean
    use meds_canopy_types, only : ground_optics_state_t
@@ -64,7 +64,7 @@ module meds_fast_dynamics
                                      column_budget_t,                                             &
                                      ensure_column_cohort_capacity, apply_hydraulics_config
    use meds_fast_step,       only : column_fast_step
-   use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
+   use meds_water_retention,  only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
    implicit none
    private

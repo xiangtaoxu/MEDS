@@ -17,7 +17,7 @@ module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
    use meds_plant_hydraulics, only : solve_plant_water_batch
-   use meds_hydr_lib, only : psi_from_water_content, water_content
+   use meds_water_retention, only : psi_from_water_content, water_content
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
@@ -427,11 +427,9 @@ contains
          !      are now selected by the cohort's PFT.  --------------------------------------------!
          do i = 1_ik, n
             associate (hp => col_config%hydraulics_table%pft(frozen%plant%pft(i)))
-               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_pi0,       &
-                    hp%leaf_elastic_mod, hp%leaf_apoplast_frac, hp%leaf_water_sat, frozen%plant%bleaf(i))
-               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_pi0,       &
-                    hp%wood_elastic_mod, hp%wood_apoplast_frac, hp%wood_water_sat,                   &
-                    frozen%plant%bsap(i) + frozen%plant%broot(i))
+               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_curve, frozen%plant%bleaf(i))
+               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_curve, &
+                     frozen%plant%bsap(i) + frozen%plant%broot(i))
             end associate
          end do
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &

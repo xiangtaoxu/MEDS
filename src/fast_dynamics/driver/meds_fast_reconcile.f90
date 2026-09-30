@@ -39,7 +39,7 @@ module meds_fast_reconcile
    use meds_site_state_types, only : site_t
    use meds_config,           only : meds_config_t
    use meds_column_params, only : PSI_INIT
-   use meds_hydr_lib,         only : water_content, clamp_water_to_capacity
+   use meds_water_retention,  only : water_curve_t, water_content, clamp_water_to_capacity
    implicit none
    private
 
@@ -65,27 +65,28 @@ contains
       real(wp), optional,  intent(out)   :: discarded   !< [kg/m2] water DESTROYED by the clamp
       real(wp)    :: w_new, w_seed, w_lost, wood_c
       integer(ik) :: i
+      type(water_curve_t) :: leaf_curve, wood_curve
       w_seed = 0.0_wp ; w_lost = 0.0_wp
       associate (c => site%cohort, h => cfg%hydraulics)
+         leaf_curve = water_curve_t(h%leaf_pi0, h%leaf_elastic_mod, h%leaf_apoplast_frac, h%leaf_water_sat)
+         wood_curve = water_curve_t(h%wood_pi0, h%wood_elastic_mod, h%wood_apoplast_frac, h%wood_water_sat)
          do i = 1_ik, c%n
             !----- WOOD: the sapwood ring plus the fine roots share one store. ---------------!
             wood_c = c%sapwood_carbon(i) + c%fineroot_carbon(i)
             if (c%wood_water_mass(i) <= 0.0_wp) then
-               w_new = water_content(PSI_INIT, h%wood_pi0, h%wood_elastic_mod,                  &
-                                     h%wood_apoplast_frac, h%wood_water_sat, wood_c)
+               w_new = water_content(PSI_INIT, wood_curve, wood_c)
                w_seed = w_seed + c%nplant(i) * w_new
             else
-               w_new = clamp_water_to_capacity(c%wood_water_mass(i), h%wood_water_sat, wood_c)
+               w_new = clamp_water_to_capacity(c%wood_water_mass(i), wood_curve, wood_c)
                w_lost = w_lost + c%nplant(i) * (c%wood_water_mass(i) - w_new)
             end if
             c%wood_water_mass(i) = w_new
             !----- LEAF: tested independently of wood, see the module header. ----------------!
             if (c%leaf_water_mass(i) <= 0.0_wp) then
-               w_new = water_content(PSI_INIT, h%leaf_pi0, h%leaf_elastic_mod,                  &
-                                     h%leaf_apoplast_frac, h%leaf_water_sat, c%leaf_carbon(i))
+               w_new = water_content(PSI_INIT, leaf_curve, c%leaf_carbon(i))
                w_seed = w_seed + c%nplant(i) * w_new
             else
-               w_new = clamp_water_to_capacity(c%leaf_water_mass(i), h%leaf_water_sat, c%leaf_carbon(i))
+               w_new = clamp_water_to_capacity(c%leaf_water_mass(i), leaf_curve, c%leaf_carbon(i))
                w_lost = w_lost + c%nplant(i) * (c%leaf_water_mass(i) - w_new)
             end if
             c%leaf_water_mass(i) = w_new

@@ -102,6 +102,21 @@ before and after.
   otherwise, with the same order on ties. Bit-identical on every r1 case; no measurable change at
   BCI. **Test:** `numerics` checks both paths and the tie rule.
 
+- **A tissue's pressure-volume traits travel as one record, and the storage curves have their own
+  module** (plan Phase 3, step 2). About a dozen calls passed `water_content`, `capacitance` and
+  `psi_from_water_content` the same four loose traits (π₀, ε, apoplastic fraction, saturated water)
+  plus the biomass.
+  - **The record.** `water_curve_t` holds the four traits, and `hydro_params_t` carries one per
+    tissue (`leaf_curve`, `wood_curve`) instead of eight loose fields. The curve routines and
+    `clamp_water_to_capacity` take the record and the biomass.
+  - **The module split.** `meds_hydr_lib` held four jobs. The storage curves, tissue and soil
+    (with the soil conductivity that follows from the retention curve), move to
+    `shared/functions/meds_water_retention.f90`. The vulnerability curve, the Kirchhoff flux, its
+    lookup table and the root profile stay in `meds_hydr_lib`.
+  - **Removed:** `pv_water_cap_from_traits`, which nothing called.
+  - Bit-identical on every r1 case. The science pages' code maps now name the new module, and a
+    stale row that still pointed at `gauss_legendre_7` and `bisect_root` (deleted in #325) is fixed.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

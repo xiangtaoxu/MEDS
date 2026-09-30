@@ -32,6 +32,7 @@ module meds_fast_types
    use meds_budget_check, only : budget_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table
+   use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
@@ -890,12 +891,12 @@ contains
    subroutine fill_hydro_params(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydraulics_params
-      hydraulics_params%leaf_pi0       = hcfg%leaf_pi0       ; hydraulics_params%leaf_elastic_mod       = hcfg%leaf_elastic_mod
-      hydraulics_params%leaf_apoplast_frac = hcfg%leaf_apoplast_frac
-      hydraulics_params%leaf_water_sat     = hcfg%leaf_water_sat
-      hydraulics_params%wood_pi0       = hcfg%wood_pi0       ; hydraulics_params%wood_elastic_mod       = hcfg%wood_elastic_mod
-      hydraulics_params%wood_apoplast_frac = hcfg%wood_apoplast_frac
-      hydraulics_params%wood_water_sat     = hcfg%wood_water_sat
+      hydraulics_params%leaf_curve = water_curve_t(pi0 = hcfg%leaf_pi0, elastic_mod = hcfg%leaf_elastic_mod,         &
+                                                   apoplast_frac = hcfg%leaf_apoplast_frac,                          &
+                                                   water_sat = hcfg%leaf_water_sat)
+      hydraulics_params%wood_curve = water_curve_t(pi0 = hcfg%wood_pi0, elastic_mod = hcfg%wood_elastic_mod,         &
+                                                   apoplast_frac = hcfg%wood_apoplast_frac,                          &
+                                                   water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
       hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
@@ -920,14 +921,14 @@ contains
       allocate(table%pft(max(pft%n, 1_ik)))
       do i = 1_ik, pft%n
          call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
-         call ovr(table%pft(i)%leaf_pi0,           pft%hyd_leaf_pi0(i))
-         call ovr(table%pft(i)%leaf_elastic_mod,   pft%hyd_leaf_elastic_mod(i))
-         call ovr(table%pft(i)%leaf_apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
-         call ovr(table%pft(i)%leaf_water_sat,     pft%hyd_leaf_water_sat(i))
-         call ovr(table%pft(i)%wood_pi0,           pft%hyd_wood_pi0(i))
-         call ovr(table%pft(i)%wood_elastic_mod,   pft%hyd_wood_elastic_mod(i))
-         call ovr(table%pft(i)%wood_apoplast_frac, pft%hyd_wood_apoplast_frac(i))
-         call ovr(table%pft(i)%wood_water_sat,     pft%hyd_wood_water_sat(i))
+         call ovr(table%pft(i)%leaf_curve%pi0,           pft%hyd_leaf_pi0(i))
+         call ovr(table%pft(i)%leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod(i))
+         call ovr(table%pft(i)%leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
+         call ovr(table%pft(i)%leaf_curve%water_sat,     pft%hyd_leaf_water_sat(i))
+         call ovr(table%pft(i)%wood_curve%pi0,           pft%hyd_wood_pi0(i))
+         call ovr(table%pft(i)%wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod(i))
+         call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
+         call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
          call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))

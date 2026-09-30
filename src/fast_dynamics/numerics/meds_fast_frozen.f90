@@ -17,7 +17,7 @@ module meds_fast_frozen
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
-   use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
+   use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config, only : meds_config_t, CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t, snow_melt_t
@@ -368,19 +368,12 @@ contains
       !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
       !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
       do ih = 1_ik, n
-         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih),            &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_pi0,                          &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_elastic_mod,                  &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_apoplast_frac,                &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_water_sat, col_cohort%bleaf(ih))
+         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_curve, col_cohort%bleaf(ih))
       end do
       do ih = 1_ik, n
-         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih),            &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_pi0,                          &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_elastic_mod,                  &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_apoplast_frac,                &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_water_sat,                    &
-              col_cohort%bsap(ih) + col_cohort%broot(ih))
+         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_curve, col_cohort%bsap(ih) + col_cohort%broot(ih))
       end do
       transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
       call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &

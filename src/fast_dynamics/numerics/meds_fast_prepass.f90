@@ -22,7 +22,7 @@ module meds_fast_prepass
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
-   use meds_hydr_lib,         only : soil_psi_from_theta, psi_from_water_content
+   use meds_water_retention,  only : soil_psi_from_theta, psi_from_water_content
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
@@ -226,11 +226,8 @@ contains
          par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i),                          &
-              hyd_table%pft(col_cohort%pft(i))%leaf_pi0,                                                 &
-              hyd_table%pft(col_cohort%pft(i))%leaf_elastic_mod,                                         &
-              hyd_table%pft(col_cohort%pft(i))%leaf_apoplast_frac,                                       &
-              hyd_table%pft(col_cohort%pft(i))%leaf_water_sat, col_cohort%bleaf(i))
+         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hyd_table%pft(col_cohort%pft(i))%leaf_curve, &
+               col_cohort%bleaf(i))
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
                     soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))

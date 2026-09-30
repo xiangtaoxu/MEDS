@@ -44,7 +44,7 @@ program test_output_roundtrip
    use meds_output_manager,   only : output_serialize_pending, output_manager_close
    use meds_netcdf_c
    use meds_column_params,    only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
-   use meds_hydr_lib,         only : SOIL_RETENTION_VG
+   use meds_water_retention,  only : SOIL_RETENTION_VG
    use meds_output_registry,  only : manager_set_soil_params
    use meds_output_types,     only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close

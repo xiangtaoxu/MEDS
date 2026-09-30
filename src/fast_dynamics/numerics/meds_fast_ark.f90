@@ -24,7 +24,7 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_hydr_lib, only : water_content
+   use meds_water_retention, only : water_content
    use meds_config, only : meds_config_t, INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
