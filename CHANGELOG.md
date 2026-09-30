@@ -32,7 +32,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Changed
 
-- **Stomata close gradually at low leaf water potential, not in one step** (#332).
+- **Stomata close gradually at low leaf water potential, not in one step** (#335, #332).
   `[leaf_physiology].low_water_potential_control = "linear_decline"` is optional, and the only option.
   - **What it does.** The conductance the stomatal model calculates, g0 included, is multiplied by a
     factor that falls linearly from 1 at the leaf's turgor-loss point, ψ_tlp, to 0 at twice it. The
@@ -280,7 +280,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
   - **Gates.** G1–G7 pass. The five-year run closes its energy and water budgets and its slow ledger.
     The interception-on fit scores the same but fails G7's water budget (#333).
   - **Known limits.** The late dry season is too stressed: April GPP is 3.9 against the tower's 6.3
-    in 2016 (2.9 before the stomata closed gradually, #332). The fit held the two hydraulic keys at
+    in 2016 (2.9 before the stomata closed gradually, #335). The fit held the two hydraulic keys at
     their defaults because the former whole-day shutdown made them rough.
   - **Running it.** `run_example.py` runs the calibrated five years beside the default, and
     `evaluation.png` and `calibration.png` draw both. `run_example.py --calibrate` redoes the fit,
