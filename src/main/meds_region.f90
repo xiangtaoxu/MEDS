@@ -36,14 +36,11 @@ module meds_region
                                            ERA_OK, ERA_ERR_NO_CELL
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
+                                           open_output_files, attach_output, ensure_output_dir,   &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_AREA, N_PATCH_INIT
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers,  &
-                                           manager_set_soil_params, manager_restrict_region,      &
-                                           activate_site_diag
    use meds_output_manager,         only : output_serialize_pending, output_manager_close,        &
                                            output_serialize_region, output_region_close
-   use meds_driver,                 only : apply_io_overrides, ensure_output_dir
    implicit none
    private
 
@@ -150,32 +147,17 @@ contains
       !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call manager_setup(reg%out_files, cfg)
-         call manager_set_soil_params(reg%out_files, reg%poly(1)%fast_ctx%col_config%soil)
-         if (len_trim(cfg%output%io_config) > 0)                                                   &
-            call apply_io_overrides(reg%out_files, trim(cfg%output%io_config), reg%verbose)
-         call manager_restrict_region(reg%out_files)
-         reg%out_files%n_polygon = n
-         reg%out_files%polygon_id  = reg%poly(:)%id
-         reg%out_files%polygon_row = cells%row ; reg%out_files%polygon_col = cells%col
-         reg%out_files%polygon_lat = cells%lat ; reg%out_files%polygon_lon = cells%lon
-         call manager_finalize(reg%out_files)
+         call open_output_files(cfg, reg%poly(1)%fast_ctx%col_config%soil, reg%out_files, reg%verbose, &
+                                cells=cells, polygon_id=ids)
          do p = 1_ik, n
             associate (poly => reg%poly(p))
-               call manager_alloc_buffers(reg%out_files, reg%out_bufs(p))
+               call attach_output(reg%out_files, reg%out_bufs(p), poly%site)
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
                   allocate(poly%detail_files, poly%detail_bufs)
-                  call manager_setup(poly%detail_files, cfg)
                   write(idstr,'(i0)') poly%id
-                  poly%detail_files%prefix = trim(cfg%output%prefix)//'-p'//trim(idstr)
-                  call manager_set_soil_params(poly%detail_files, poly%fast_ctx%col_config%soil)
-                  if (len_trim(cfg%output%io_config) > 0)                                          &
-                     call apply_io_overrides(poly%detail_files, trim(cfg%output%io_config), .false.)
-                  call manager_finalize(poly%detail_files)
-                  call manager_alloc_buffers(poly%detail_files, poly%detail_bufs)
-                  call activate_site_diag(poly%detail_files, poly%site)
-               else
-                  call activate_site_diag(reg%out_files, poly%site)
+                  call open_output_files(cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
+                                         prefix=trim(cfg%output%prefix)//'-p'//trim(idstr))
+                  call attach_output(poly%detail_files, poly%detail_bufs, poly%site)
                end if
             end associate
          end do

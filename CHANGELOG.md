@@ -134,6 +134,22 @@ before and after.
   - **A month's steps are listed once** (R5), instead of once for a forcing check and again for the
     polygons. The region's write-only step counters are gone (R12).
 
+- **One output set-up, and one call into the stepper** (#310 R2, R6, R9, R11). Bit-identical on
+  every r1 case.
+  - **R2.** The six-call sequence that lays out an output file set was written three times (the
+    site run, the region's files, a detail polygon's files). It is now `open_output_files`, and
+    each polygon joins a set with `attach_output`. Both sit beside `polygon_prepare`, with
+    `apply_io_overrides` and `ensure_output_dir`, which the region no longer borrows from the site
+    driver.
+  - **R11.** `activate_site_diag` adds to what a site already accumulates, so a detail polygon keeps
+    the blocks both of its file sets need, not only the last one's.
+  - **R6.** `advance_one_step` hands every optional argument on instead of branching on which are
+    present (six calls down to three), and the polygon's step makes one call instead of two. The
+    branch that dropped the latitude is gone. `advance_slow_dynamics` takes the step's start and
+    reads its day of year itself.
+  - **R9.** The polygon carries its location; the forcing cursor and the leaf phenology read it
+    from there, not from the cursor.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

@@ -1292,6 +1292,10 @@ contains
             end do
          end do
       end if
+      !----- Additive: a site that writes into two file sets (a region's detail polygon) keeps every  !
+      !      block either set needs. ------------------------------------------------------------------!
+      need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
+      need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
       call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)
       call cohort_diag_alloc(site%cohort%sdiag, max(site%cohort%cap, 1_ik), need_s, nfield=N_CSDIAG)
       call patch_diag_alloc (site%patch%diag,   max(site%patch%cap,  1_ik), need_p)
