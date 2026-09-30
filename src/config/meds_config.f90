@@ -335,6 +335,10 @@ module meds_config
       !      constants the fast context carried before they were keys.  -------------------------!
       real(wp)           :: init_soil_temp  = 288.0_wp   !< [K]
       real(wp)           :: init_soil_theta = 0.30_wp    !< [m3/m3]
+      !----- A restart's plastic leaf traits from THIS run's PFT file rather than the state file's   !
+      !      (reacclimate_plant_traits): each cohort re-acclimated to the LAI above it with          !
+      !      plasticity on, the PFT's top-of-canopy values with it off. Restart only. --------------!
+      logical            :: init_reacclimate_traits = .false.
 
       !----- netCDF output. ---------------------------------------------------------------!
       character(len=256) :: state_output_dir, state_output_prefix
@@ -949,6 +953,8 @@ contains
       if (cfg%patch_light_tol <= 0.0_wp)                    error stop tag//'patch_light_tol <= 0'
       if (cfg%init_soil_temp < 233.0_wp .or. cfg%init_soil_temp > 333.0_wp)                          &
          error stop tag//'init.soil_temp outside 233-333 K'
+      if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                          &
+         error stop tag//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
       if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'

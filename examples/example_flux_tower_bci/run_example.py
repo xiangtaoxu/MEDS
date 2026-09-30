@@ -10,13 +10,19 @@ Steps (each skipped when its product already exists, unless --force):
   4. draw the forcing's fill flags (plot_forcing.py)
   5. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
   6. run the five tower years from the census, with hourly output (meds_config_eval.toml)
-  7. compare with the tower in local time: mean diurnal and seasonal cycles (plot_evaluation.py)
+  7. with --calibrate: fit the fast parameters to the tower (calibration.toml, scripts/calibrate_fast):
+     the stand's growth respiration from step 6, the fit, and the calibrated configs in calibration/
+  8. run the five years again with the calibrated parameters (calibration/meds_config_calibrated.toml),
+     when those configs exist -- they ship with the example, so --calibrate is only to redo the fit
+  9. compare with the tower in local time: mean diurnal and seasonal cycles, the default and the
+     calibrated run side by side (plot_evaluation.py), and the calibration's summary (plot_calibration.py)
 
 Usage:
   python run_example.py                          # everything
   python run_example.py --copy-from ~/BCI_flux   # take the data from a local copy
   python run_example.py --forcing-only           # steps 1-4: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
+  python run_example.py --calibrate --workers 40 # redo the fit: ~100 core-hours (scripts/calibrate_fast)
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
@@ -32,6 +38,8 @@ CENSUS_TOOL = os.path.join(ROOT, "scripts", "prepare_census", "make_census.py")
 DATA = os.path.join(HERE, "data")
 OUTPUT = os.path.join(HERE, "output")
 CENSUS = os.path.join(DATA, "bci_census2010_meds.csv")
+CALIB = os.path.join(HERE, "calibration")
+CALIBRATE_FAST = os.path.join(ROOT, "scripts", "calibrate_fast", "calibrate_fast.py")
 
 
 def run(cmd, log=None):
@@ -51,6 +59,9 @@ def main(argv=None):
     ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
     ap.add_argument("--forcing-only", action="store_true", help="stop after the forcing and its figures")
     ap.add_argument("--force", action="store_true", help="redo every step")
+    ap.add_argument("--calibrate", action="store_true", help="redo the fast-parameter fit (step 7)")
+    ap.add_argument("--variant", default="interception_off", help="the calibration's variant (calibration.toml)")
+    ap.add_argument("--workers", type=int, default=os.cpu_count(), help="trials at once for --calibrate")
     args = ap.parse_args(argv)
     py = sys.executable
     os.makedirs(DATA, exist_ok=True)
@@ -71,7 +82,24 @@ def main(argv=None):
     if args.force or not os.path.exists(CENSUS):
         run([py, CENSUS_TOOL, "--declaration", "bci_census.toml", "--out", CENSUS])
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
-    run([py, "plot_evaluation.py"])
+    if args.calibrate:
+        run([py, CALIBRATE_FAST, "growth-resp", "--daily", os.path.join(OUTPUT, "eval-D-*.nc"),
+             "--out", os.path.join(CALIB, "growth_resp_monthly.csv")])
+        work = os.path.join(CALIB, f"run_{args.variant}")
+        run([py, CALIBRATE_FAST, "fit", "--site", "calibration.toml", "--variant", args.variant, "--work", work,
+             "--meds-main", args.meds_main, "--pool", "local", "--workers", str(args.workers)])
+        run([py, CALIBRATE_FAST, "write-calibrated", "--site", "calibration.toml", "--variant", args.variant,
+             "--fit", os.path.join(work, "fit.json"), "--out", CALIB])
+        with open(os.path.join(work, "fit.json")) as src, \
+                open(os.path.join(CALIB, f"fit_{args.variant}.json"), "w") as dst:
+            dst.write(src.read())
+    calibrated = os.path.join(CALIB, "meds_config_calibrated.toml")
+    if os.path.exists(calibrated):
+        run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))
+        run([py, "plot_evaluation.py", "--calibrated", os.path.join(OUTPUT, "cal-F-*.nc")])
+        run([py, "plot_calibration.py"])
+    else:
+        run([py, "plot_evaluation.py"])
 
 
 if __name__ == "__main__":

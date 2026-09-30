@@ -51,6 +51,7 @@ module meds_vegetation_dynamics
    private
 
    public :: vegetation_dynamics, restructure_stand, advance_leaf_phenology, advance_plant_traits
+   public :: reacclimate_plant_traits
    public :: update_biomass_turnover
    public :: shed_turnover_water, accumulate_recruit_pool
 
@@ -84,7 +85,7 @@ contains
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
       real(wp)                 :: mort_water
-      real(wp)                 :: tissue_heat0, tissue_heat1, handover
+      real(wp)                 :: tissue_heat0, tissue_heat1, handover, plastic_heat0
       real(wp), allocatable    :: nplant_before(:)
       real(wp)                 :: seed_rain_carbon
       integer(ik)              :: ip
@@ -103,7 +104,14 @@ contains
       !----- 0b. Light trait plasticity (opt-in): acclimate the per-cohort leaf traits toward     !
       !          their shaded targets from last step's overtopping LAI, BEFORE compute_carbon_allocation reads  !
       !          cohort%sla / cohort%llspan. OFF => traits stay at top-of-canopy (bit-identical). --!
-      if (cfg%trait_plasticity_on) call advance_plant_traits(site, cfg, cfg%dt_years)
+      !          A rising SLA resorbs leaf carbon into storage, which has no heat capacity, so the  !
+      !          tissue's heat content changes at unchanged temperature: declared to the ledger,  !
+      !          as the cohort and patch phases declare theirs. ----------------------------------!
+      if (cfg%trait_plasticity_on) then
+         if (present(ledger)) plastic_heat0 = slow_tissue_heat(site)
+         call advance_plant_traits(site, cfg, cfg%dt_years)
+         if (present(ledger)) call slow_ledger_declare(ledger, energy_in = slow_tissue_heat(site) - plastic_heat0)
+      end if
 
       !----- 1. Carbon NPP from the plant seam (the ONLY plant call). Also accumulates this step's !
       !         leaf/fine-root TURNOVER litter (leaf_shed_c/fineroot_shed_c) into the per-patch      !
@@ -1145,6 +1153,48 @@ contains
          end do
       end associate
    end subroutine advance_plant_traits
+
+   !---------------------------------------------------------------------------------------!
+   ! reacclimate_plant_traits -- a restart's plastic leaf traits from THIS run's PFT file      !
+   ! ([init].reacclimate_traits). A state file carries the traits the writing run's PFT file   !
+   ! gave, so without this a restart with a changed vcmax25 would run on the old one. With      !
+   ! plasticity on, each cohort takes the census start's instant acclimation to the LAI above   !
+   ! it as the file holds it; with plasticity off, the PFT's top-of-canopy values, as a census   !
+   ! start gives. The stand's STRUCTURE is kept: leaf area stays as read, and leaf carbon scales   !
+   ! by the SLA's change (old / new), storage taking or giving the difference (never below       !
+   ! zero), so a trial that changes a trait changes the leaf physiology and not the LAI -- and    !
+   ! a restart whose PFT file gives the traits it already has changes nothing.                   !
+   !---------------------------------------------------------------------------------------!
+   subroutine reacclimate_plant_traits(site, cfg)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      integer(ik) :: j, pf
+      real(wp)    :: sla_t, vcmax_t, rd_t, llspan_t, leaf_carbon_new, sla_old
+      associate (cohort => site%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            if (cfg%trait_plasticity_on) then
+               call light_plastic_traits(cohort%overtopping_lai(j),                              &
+                        pft%sla(pf), pft%vcmax25(pf), pft%rd25(pf), pft%leaf_lifespan_toc(pf),    &
+                        pft%kplastic_sla(pf), pft%kplastic_vm0(pf), pft%kplastic_rd(pf),          &
+                        pft%kplastic_llspan(pf), sla_t, vcmax_t, rd_t, llspan_t)
+            else
+               sla_t = pft%sla(pf) ; vcmax_t = pft%vcmax25(pf) ; rd_t = pft%rd25(pf)
+               llspan_t = pft%leaf_lifespan_toc(pf)
+            end if
+            sla_old           = cohort%sla(j)
+            cohort%sla(j)     = sla_t
+            cohort%vcmax25(j) = vcmax_t
+            cohort%rd25(j)    = rd_t
+            cohort%llspan(j)  = llspan_t
+            if (cohort%sla(j) == sla_old) cycle
+            leaf_carbon_new = cohort%leaf_carbon(j) * sla_old / max(cohort%sla(j), tiny_num)
+            cohort%nonstructural_carbon(j) = max(0.0_wp, cohort%nonstructural_carbon(j)              &
+                                                         + cohort%leaf_carbon(j) - leaf_carbon_new)
+            cohort%leaf_carbon(j) = leaf_carbon_new
+         end do
+      end associate
+   end subroutine reacclimate_plant_traits
 
    !---------------------------------------------------------------------------------------!
    ! Flatten the per-PFT phenology traits (cfg%pft%pheno_*) into the self-contained kernel param  !

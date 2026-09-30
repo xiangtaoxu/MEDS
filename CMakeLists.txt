@@ -649,6 +649,20 @@ if(MEDS_BUILD_TESTS)
                   COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/prepare_flux_tower/tests)
          set_tests_properties(prepare_flux_tower PROPERTIES ENVIRONMENT PYTHONDONTWRITEBYTECODE=1)
+         #----- A restart continues exactly, and re-acclimates its traits on request                #
+         #      (test/python/test_restart_exact.py; meds_main on the constant reference climate).  #
+         add_test(NAME restart_exact
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
+         set_tests_properties(restart_exact PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests, #
+         #      and a smoke test that drives meds_main through a chain, a trial and a Jacobian column. #
+         add_test(NAME calibrate_fast
+                  COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/calibrate_fast/tests)
+         set_tests_properties(calibrate_fast PROPERTIES
+                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
       else()
          message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "netCDF4, pytest or tomli)")

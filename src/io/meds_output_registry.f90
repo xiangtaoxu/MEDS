@@ -52,6 +52,7 @@ module meds_output_registry
         SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS,                  &
         SRC_S_WORK_CLAMP_ENERGY,                                                                 &
         SRC_F_CAS_TEMP, SRC_F_SOIL_TEMP_TOP, SRC_F_GPP_RATE, SRC_F_LE, SRC_F_H, SRC_F_RNET,      &
+        SRC_F_SW_UP, SRC_F_LW_UP,                                                                &
         SRC_F_SW_IN, SRC_F_USTAR, SRC_F_AIR_TEMP, SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER,             &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, FLD_C_DIAG0, FLD_P_DIAG0,          &
         FLD_PY_DIAG0,                                                                            &
@@ -774,6 +775,10 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_RNET)
       call add_variable(reg, 'sw_in_fast', 'incident shortwave at canopy top', 'W/m2',           &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_IN)
+      call add_variable(reg, 'sw_up_fast', 'shortwave leaving the canopy top (VIS + NIR)', 'W/m2', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_SW_UP)
+      call add_variable(reg, 'lw_up_fast', 'longwave leaving the canopy top (emission included)', 'W/m2', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_LW_UP)
       call add_variable(reg, 'ustar_fast', 'friction velocity', 'm/s',                           &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, FAST_ONLY, SRC_F_USTAR)
       call add_variable(reg, 'air_temp_fast', 'reference-level forcing air temperature', 'K',    &

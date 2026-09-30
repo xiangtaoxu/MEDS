@@ -27,7 +27,7 @@ module meds_driver
    use meds_demography_update,      only : update_overtopping_lai
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_demography_cohort_fusefiss, only : max_cohort_count
-   use meds_vegetation_dynamics,    only : advance_plant_traits
+   use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_forcing_types,          only : met_source_t
    use meds_met_driver,             only : met_open, met_close, met_prefetch
    use meds_forcing_config,         only : MET_BACKEND_ED_ERA5LAND
@@ -43,7 +43,7 @@ module meds_driver
                                            apply_variable_override, parse_stream_mask,          &
                                            build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    use meds_output_manager,         only : output_serialize_pending, output_manager_close
-   use meds_toml,                   only : toml_table_t, toml_parse_file
+   use meds_toml,                   only : toml_table_t, toml_parse_file, toml_write_record
    implicit none
    private
 
@@ -181,10 +181,16 @@ contains
       !----- 2a. Census restart with plasticity ON: census cohorts sit in an established stand but !
       !          carry NO trait history, so acclimate their leaf traits to the current light        !
       !          environment INSTANTANEOUSLY (after the competition sweep). Bare ground legitimately !
-      !          starts at top-of-canopy; a state restart already read the plastic traits from file. !
+      !          starts at top-of-canopy; a state restart already read the plastic traits from file, !
+      !          unless [init].reacclimate_traits asks for this run's PFT file instead (a calibration   !
+      !          trial that restarts from a shared state with changed traits).                       !
       if (run%cfg%trait_plasticity_on .and. run%cfg%init_mode == INIT_CENSUS .and. init_ok) then
          call update_overtopping_lai(run%poly%site)
          call advance_plant_traits(run%poly%site, run%cfg, run%cfg%dt_years, instantaneous=.true.)
+      end if
+      if (run%cfg%init_reacclimate_traits .and. run%cfg%init_mode == INIT_RESTART .and. init_ok) then
+         call reacclimate_plant_traits(run%poly%site, run%cfg)
+         if (run%verbose) write(*,'(a)') ' init  : plastic traits re-acclimated to this run''s PFT file'
       end if
 
       !----- 2b. The forcing source (opt-in), then the site as a polygon: fast context and          !
@@ -241,6 +247,16 @@ contains
          call activate_site_diag(run%out_files, run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
+
+      !----- 3c. The PARAMETER RECORD: every setting the loader read, from which file, whether it  !
+      !          was set there or defaulted, and the value used -- beside the output and beside the !
+      !          state, whichever the run writes. A caller that set a key finds it here or learns   !
+      !          that the key was never read.                                                     !
+      if (run%cfg%output%enabled)                                                                &
+         call toml_write_record(trim(run%cfg%output%dir)//'/'//trim(run%cfg%output%prefix)//'_parameters.csv')
+      if (run%cfg%state_write_state)                                                             &
+         call toml_write_record(trim(run%cfg%state_output_dir)//'/'//trim(run%cfg%state_output_prefix)// &
+                                '_parameters.csv')
 
       if (run%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'

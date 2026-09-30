@@ -49,6 +49,7 @@ compile_commands.json
 !examples/example_flux_tower_bci/forcing_qc.png
 !examples/example_flux_tower_bci/lw_comparison.png
 !examples/example_flux_tower_bci/evaluation.png
+!examples/example_flux_tower_bci/calibration.png
 # The list was short of five of these. Four were tracked anyway -- they predate the *.png rule, and
 # .gitignore does not apply to a file already in the index -- so the gap was invisible until a NEW
 # figure appeared: examples/example_phenology/phenology_patterns.png was silently never added, and
@@ -82,6 +83,8 @@ python/build/
 # committed (MEDS_FLUX_TOWER_FORCING_PLAN.md D7), and so are the forcing files and runs it makes.
 examples/example_flux_tower_bci/data/
 examples/example_flux_tower_bci/output/
+# The calibration's trials and states (calibrate_fast.py --work); its results are committed.
+examples/example_flux_tower_bci/calibration/run_*/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md

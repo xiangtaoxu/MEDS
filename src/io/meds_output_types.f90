@@ -183,6 +183,8 @@ module meds_output_types
       real(wp) :: h_flux        = 0.0_wp   !< [W/m2]      sensible-heat flux
       real(wp) :: rnet          = 0.0_wp   !< [W/m2]      net all-wave radiation absorbed by the column
       real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
+      real(wp) :: sw_up         = 0.0_wp   !< [W/m2]      shortwave leaving the canopy top (VIS + NIR)
+      real(wp) :: lw_up         = 0.0_wp   !< [W/m2]      longwave leaving the canopy top (emission included)
       real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
       real(wp) :: air_temp      = 0.0_wp   !< [K]         reference-level forcing air temperature
       !----- CARBON. The sub-daily carbon cycle needs more than GPP to be readable: NEE is what a   !
