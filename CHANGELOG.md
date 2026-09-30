@@ -370,7 +370,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
-- **Canopy interception discarded film water above capacity** (#333). A cohort can start a step
+- **Canopy interception discarded film water above capacity** (#336, #333). A cohort can start a step
   holding more film water than its capacity, `dewmx·(LAI + WAI)`, when it loses leaf area under a full
   film (the daily slow step sheds leaves). `intercept_canopy_layer` clipped the film to capacity, and
   the clipped water reached neither the ground nor any flux.
@@ -382,7 +382,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     within capacity behaves as before.
   - **Test:** `column_hydrology` starts a film 0.05 kg m⁻² above capacity. The storage is capped, and
     throughfall plus the storage change equals the rain. The old kernel fails it.
-- **The ARK water ledger did not declare the water the tissue-water floor creates** (#333). When one
+- **The ARK water ledger did not declare the water the tissue-water floor creates** (#336, #333). When one
   step's transpiration debit would take a cohort's leaf or wood water below zero,
   `advance_water_mass_full` floors the store and creates water (#148). The mass was reported
   (`work_clamp_mass_site`) but not entered in `whole_water (ark)`, so every firing breached the ledger
