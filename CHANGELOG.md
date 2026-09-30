@@ -264,7 +264,7 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Fixed
 
-- **The soil column's per-face check reported a wilting-limited root sink as a face error.**
+- **The soil column's per-face check reported a wilting-limited root sink as a face error** (#334).
   `advance_soil_water_column` checks each layer's change of water against its face fluxes and its
   root sink. It subtracted the plant's requested uptake, `forcing%root_uptake(k)·dt`. In a layer
   drier than `psi_open` the solver removes less than that, because the wilting ramp cuts the sink,
