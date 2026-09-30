@@ -94,6 +94,14 @@ before and after.
     scalars, and reusing it would need a reset that lists them all.
   - Outputs are bit-identical on every r1 case.
 
+- **The canopy radiation lists the cohorts bottom-up without sorting them** (plan item N-4).
+  `apply_rt_forcing` ordered the cohorts by height with a selection sort every sub-step (cost ∝
+  cohorts²), although the cohort block is kept tallest first; the canopy aerodynamics already took
+  the reverse in O(n) and kept the sort as a fallback. Both now call one routine,
+  `ascending_order` (`meds_numerics`): the reverse when the heights do not increase, the sort
+  otherwise, with the same order on ties. Bit-identical on every r1 case; no measurable change at
+  BCI. **Test:** `numerics` checks both paths and the tie rule.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

@@ -17,6 +17,7 @@
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std
+   use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
    use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
    use meds_budget_check,     only : budget_t, budget_merge
@@ -1101,11 +1102,10 @@ contains
       type(rad_pft_optics_t),  intent(in)    :: rad_opt          !< per-PFT canopy optics (two-stream)
       type(met_forcing_t),     intent(in)    :: met
       real(wp),                intent(in)    :: leaf_absorptance !< [-] leaf PAR absorptance (incident-PAR conversion)
-      integer(ik) :: j, k, ig, imin
+      integer(ik) :: j, i, ig
       integer(ik) :: perm(ncoh), pft_bt(ncoh)
       real(wp)    :: lai_bt(ncoh), wai_bt(ncoh), tcan_bt(ncoh), hgt_bt(ncoh)
-      logical     :: used(ncoh)
-      real(wp)    :: hmin, lf_bt
+      real(wp)    :: lf_bt
       type(rad_forcing_t)   :: rf
       type(rad_flux_t)      :: flux
       type(ground_optics_state_t) :: surf
@@ -1116,16 +1116,12 @@ contains
       !      through and canopy_radiation's own empty-canopy branch returns the correct NET ground SW  !
       !      (incident * (1 - soil albedo)), so a patch shedding its last cohort stays continuous.     !
 
-      !----- perm: gather-indices in ASCENDING height (bottom -> top). Selection sort (ncoh small). !
-      used = .false.
+      !----- perm: gather indices in ASCENDING height (bottom -> top). ------------------------------!
+      call ascending_order(height, ncoh, perm)
       do j = 1_ik, ncoh
-         imin = 0_ik ; hmin = huge(1.0_wp)
-         do k = 1_ik, ncoh
-            if (.not. used(k) .and. height(k) <= hmin) then ; hmin = height(k) ; imin = k ; end if
-         end do
-         perm(j) = imin ; used(imin) = .true.
-         pft_bt(j) = pft(imin) ; lai_bt(j) = lai(imin) ; hgt_bt(j) = height(imin)
-         wai_bt(j) = wai(imin)
+         i = perm(j)
+         pft_bt(j) = pft(i) ; lai_bt(j) = lai(i) ; hgt_bt(j) = height(i)
+         wai_bt(j) = wai(i)
          !----- LW emission temperature (P1): the cohort's AREA-WEIGHTED effective radiative temperature  !
          !      so it emits at leaf_temp over its LAI and wood_temp over its WAI (T^4 weights telescope    !
          !      with leaf_frac) -- so the RT FIELD (inter-cohort/sky/ground LW) reflects both tissue temps !
@@ -1133,9 +1129,9 @@ contains
          !      balances keep their LOCAL emission base at tcas (split)/leaf_temp (picard); re-basing the  !
          !      single-pass split on the lagged element temp is a positive-feedback instability, so the    !
          !      per-element "counted once" base is a documented residual (design §8/P1).                    !
-         lf_bt      = lai(imin) / max(lai(imin) + wai(imin), tiny_num)
-         tcan_bt(j) = (lf_bt * leaf_temp(imin) ** 4                                             &
-                       + (1.0_wp - lf_bt) * wood_temp(imin) ** 4) ** 0.25_wp
+         lf_bt      = lai(i) / max(lai(i) + wai(i), tiny_num)
+         tcan_bt(j) = (lf_bt * leaf_temp(i) ** 4                                             &
+                       + (1.0_wp - lf_bt) * wood_temp(i) ** 4) ** 0.25_wp
       end do
 
       !----- rad_forcing_t from met (§6.3 mapping table; all W/m2, direct assignment). -----------!

@@ -8,11 +8,13 @@
 !   3. adaptive_step_update: grow-capped (fmax), shrink-floored (fmin), identity-ish at err = 1.  !
 !   4. meds_budget_check: closure predicate, imbalance algebra, accumulator fail-count, and the    !
 !      no-op behaviour of the Debug hard-stop when debug = .false.                                 !
+!   5. ascending_order: the reverse on a non-increasing input, ties included; the sort otherwise,  !
+!      with the same tie rule (the larger index first).                                          !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
-   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update
+   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  budget_rtol_flux, last_check_closed
@@ -22,6 +24,7 @@ program test_numerics
    call test_quadratic()
    call test_step_update()
    call test_budget()
+   call test_ascending_order()
 
    call test_report('test_numerics')
 
@@ -126,5 +129,24 @@ contains
          call budget_report(r, 'unit-test', 'J/m2', 'W/m2')
       end block
    end subroutine test_budget
+
+   !----- 5. ascending_order. A tallest-first canopy with a tie (the model's case), a shuffled one  !
+   !      with the same heights, and the empty and one-cohort canopies. ---------------------------!
+   subroutine test_ascending_order()
+      real(wp)    :: tall_first(5), shuffled(5)
+      integer(ik) :: ord(5), ord0(0), ord1(1)
+      tall_first = [30.0_wp, 20.0_wp, 20.0_wp, 10.0_wp, 5.0_wp]
+      call ascending_order(tall_first, 5_ik, ord)
+      call check_true('ascending_order: tallest-first input gives the reverse, ties included',     &
+                      all(ord == [5_ik, 4_ik, 3_ik, 2_ik, 1_ik]), real(ord(1), wp))
+      shuffled = [20.0_wp, 5.0_wp, 30.0_wp, 20.0_wp, 10.0_wp]
+      call ascending_order(shuffled, 5_ik, ord)
+      call check_true('ascending_order: shuffled input is sorted, the larger index first on a tie', &
+                      all(ord == [2_ik, 5_ik, 4_ik, 1_ik, 3_ik]), real(ord(3), wp))
+      call ascending_order(shuffled, 0_ik, ord0)
+      call check_true('ascending_order: an empty canopy', size(ord0) == 0, 0.0_wp)
+      call ascending_order(shuffled, 1_ik, ord1)
+      call check_true('ascending_order: one cohort', ord1(1) == 1_ik, real(ord1(1), wp))
+   end subroutine test_ascending_order
 
 end program test_numerics

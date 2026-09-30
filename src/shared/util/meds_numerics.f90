@@ -21,7 +21,7 @@ module meds_numerics
 
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update
    public :: logistic, clamp01, clamp, weighted_mean
-   public :: matrix_exp, matrix_exp_fixed, matmul_sq
+   public :: matrix_exp, matrix_exp_fixed, matmul_sq, ascending_order
 
 contains
 
@@ -62,6 +62,38 @@ contains
          x(k) = dp(k) - cp(k) * x(k+1)
       end do
    end subroutine thomas_solve
+
+   !---------------------------------------------------------------------------------------!
+   ! ascending_order -- ord(k) is the index of the k-th smallest of x(1:n); among equal values the  !
+   ! larger index comes first. The canopy aerodynamics and radiation use it to list the cohorts     !
+   ! from the canopy bottom up.                                                                !
+   !                                                                                          !
+   ! The cohort block is kept tallest first (sort_cohorts), so in the model x does not increase    !
+   ! and the order is simply the reverse, found in O(n). Any other input (a unit test's cohorts,   !
+   ! say) takes a selection sort, O(n^2), which gives the same order on a non-increasing input:    !
+   ! its `<=` keeps the last index that reaches the running minimum, and in a non-increasing array !
+   ! that is always the largest remaining index.                                               !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine ascending_order(x, n, ord)
+      integer(ik), intent(in)  :: n
+      real(wp),    intent(in)  :: x(n)
+      integer(ik), intent(out) :: ord(n)
+      logical     :: used(n)
+      real(wp)    :: xmin
+      integer(ik) :: j, k, imin
+      if (.not. any(x(1:n-1) < x(2:n))) then
+         ord = [(n - k + 1_ik, k = 1_ik, n)]
+         return
+      end if
+      used = .false.
+      do k = 1_ik, n
+         imin = 0_ik ; xmin = huge(1.0_wp)
+         do j = 1_ik, n
+            if (.not. used(j) .and. x(j) <= xmin) then ; xmin = x(j) ; imin = j ; end if
+         end do
+         ord(k) = imin ; used(imin) = .true.
+      end do
+   end subroutine ascending_order
 
    !---------------------------------------------------------------------------------------!
    ! Smaller root of the co-limitation quadratic  theta*x^2 - (a+b)*x + a*b = 0. The smaller   !
