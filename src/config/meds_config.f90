@@ -358,10 +358,10 @@ module meds_config
       !      the term is rarely measured directly, its two parameters (wstress_psi_open/_close) are !
       !      weakly constrained, and it acts as a LINEAR AMPLIFIER on psi_leaf -- with the ramp of  !
       !      the shipped PFT file, slope 0.5 per MPa, so a 1 MPa error in psi_leaf becomes a 50%    !
-      !      error in Vcmax. Measured consequence: psi_leaf is not converged in dt_fast (daytime    !
-      !      mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb turned that into a 33%  !
-      !      GPP shift; with it off, daily GPP is dt_fast-independent to 0.05%. The stomatal limb   !
-      !      (beta_stomata, driven by psi_SOIL) is unaffected and stays on.                         !
+      !      error in Vcmax. Before the transpiration corrector (#91), psi_leaf was not converged   !
+      !      in dt_fast (daytime mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb     !
+      !      turned that into a 33% GPP shift; with it off, daily GPP is dt_fast-independent to     !
+      !      0.05%. The stomatal limb (beta_stomata, driven by psi_SOIL) is unaffected and stays on. !
       logical     :: leaf_wstress_nonstomatal  !< if .true., apply the psi_leaf capacity limb
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
       real(wp) :: kc25, ko25, gstar25                   !< [Pa]    Michaelis constants + CO2 compensation point
@@ -718,24 +718,23 @@ contains
          !----- ...and the size of that bias depends ENTIRELY on whether the non-stomatal        !
          !      (capacity) water-stress limb is active. It is a linear ramp on Vcmax/Jmax/TPU in    !
          !      psi_leaf, so it AMPLIFIES the psi error into a carbon error. With it off (the        !
-         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%.        !
-         !      psi_leaf itself is still wrong -- it is simply no longer wired into carbon. --------!
+         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%. The     !
+         !      table below predates the transpiration corrector (#91), which removed most of the    !
+         !      psi error it amplifies; it has not been re-measured (numerical_scheme.md 5a). ------!
          if (cfg%dt_fast > 225.0_wp .and. cfg%leaf_wstress_nonstomatal) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 225 s WITH the non-stomatal water-stress'
             print '(a)', '  limb on ([leaf_physiology].wstress_nonstomatal) biases the CARBON budget.'
-            print '(a)', '  psi_leaf is not converged in dt_fast, and that limb is a linear amplifier'
-            print '(a)', '  on it. Measured on a high-LAI sunlit stand vs a 12.5 s reference:'
+            print '(a)', '  That limb is a linear amplifier on any psi_leaf error. Measured on a high-LAI'
+            print '(a)', '  sunlit stand vs a 12.5 s reference, before the transpiration corrector (#91):'
             print '(a)', '    dt_fast    150 s   300 s   450 s   900 s'
             print '(a)', '    GPP       -3.8%  -12.6%  -19.8%  -33.1%'
             print '(a)', '    ET        -2.6%   -8.7%  -14.5%  -23.8%'
             print '(a)', '  With the limb off those become -0.0% / -1.2% at 900 s. No conservation'
             print '(a)', '  budget detects either. Prefer dt_fast <= 225 s, or leave the limb off.'
          else if (cfg%dt_fast > 900.0_wp) then
-            print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. The'
-            print '(a)', '  canopy air is stable, and carbon is insensitive with the non-stomatal'
-            print '(a)', '  water-stress limb off, but psi_leaf itself is NOT converged in dt_fast'
-            print '(a)', '  (daytime mean -0.23 MPa at 12.5 s vs -1.6 MPa at 900 s). Anything keyed'
-            print '(a)', '  to leaf water potential inherits that.'
+            print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
+            print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
+            print '(a)', '  converge; above it neither has been measured.'
          end if
          if (cfg%dt_fast > 1800.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 1800 s is outside the measured range entirely.'
@@ -763,9 +762,9 @@ contains
          !      dt_fast therefore gets a psi_leaf the default scheme would not produce, silently.    !
          !      WARN rather than stop: rk45 is the deliberate accuracy baseline and is exactly what  !
          !      you want at a fine dt_fast, where the uncorrected error is small. The threshold is   !
-         !      the cadence at which psi_leaf is known not to converge (docs/science/               !
-         !      numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s against       !
-         !      -1.19 MPa at 900 s).                                                                 !
+         !      the cadence at which psi_leaf WITHOUT the corrector is known not to converge          !
+         !      (docs/science/numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s  !
+         !      against -1.19 MPa at 900 s, measured before #91).                                                                 !
          if (cfg%time_integrator == INTEG_RK45 .and. cfg%dt_fast > RK45_UNCORRECTED_DT_WARN) then
             write(*,'(a)')    ' meds_config: WARNING -- time_integrator = "rk45" at dt_fast > 300 s.'
             write(*,'(a,f8.1,a)') '   dt_fast = ', cfg%dt_fast, ' s.'

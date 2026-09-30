@@ -42,6 +42,22 @@ before and after.
   2,460 sub-steps a day: about 2.4 step attempts per `dt_fast`, each re-solving every cohort.
   `work_hydro_thrash_site` still tests the pre-pass solve, and the physics is unchanged.
 
+- **Leaf water potential converges at `dt_fast` = 900 s, and the documentation says so** (#162, plan
+  item N-3). Four places still quoted the figure measured the day before the transpiration corrector
+  (#91): "daytime mean −0.23 MPa at 12.5 s against −1.19 MPa at 900 s, not converged".
+  - **Re-measured** on the established Ithaca stand over July at 12.5, 75 and 900 s: daily-mean leaf
+    water potential at 900 s matches 12.5 s to within 0.001 MPa on every day after the first, each
+    cohort's daily maximum to 0.008 MPa, and July GPP and ET to 0.1%. The first day after a restart
+    carries a start-up transient (−1.83 against −0.28 MPa).
+  - **Corrected:** `numerical_scheme.md` §5a, §6 and §7, the `dt_fast > 900 s` warning and the
+    comments in `meds_config`, `examples/example_biophysics/meds_config_july.toml`, and ROADMAP §4.
+    The capacity-limb table and the RK45 warning keep their figures, now labelled as measured before
+    the corrector: that limb's table has not been re-measured, and RK45 has no corrector.
+  - **ROADMAP §4–§5** mark #158, #159 and #167 closed, to revisit with the numerical scheme, and #104
+    as planned (`MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3).
+  - **Removed:** `TISSUE_STORE_SCALE`, a source switch fixed at 1 whose banner still explained why the
+    tissue heat store was "not on yet". The store is simply always on; outputs are bit-identical.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

@@ -13,11 +13,17 @@
 > written, E2, N1 and N6. This plan is unusual in recording what it disproved, and those sections
 > should be read as findings.
 >
-> **Still open** (refreshed 2026-09-28): N5, the adaptive freeze cadence (#158); folding soil water
-> into the ARK tableau (#159); the `rwc_floor` clamp artefact (#104); E5, the RK45 rescue snapshot
-> (never filed); and `psi_leaf` as the one state that does not converge at 900 s — #162, which was
-> closed on 2026-09-14 without a comment while the limitation stands. The RK45 production-cadence
-> warning shipped (#160). All in `docs/ROADMAP.md` §4.
+> **Status** (refreshed 2026-09-30):
+> - **Closed on 2026-09-30, to revisit with the numerical scheme:** N5, the adaptive freeze cadence
+>   (#158), and folding soil water into the ARK tableau (#159).
+> - **Decided:** the `rwc_floor` clamp artefact (#104) is being built as
+>   `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3.
+> - **Re-measured:** `psi_leaf` converges at 900 s since the transpiration corrector, apart from a
+>   restart's first day (`science/numerical_scheme.md` §5a; #162).
+> - **Still open:** E5, the RK45 rescue snapshot (never filed).
+> - The RK45 production-cadence warning shipped (#160).
+>
+> All in `docs/ROADMAP.md` §4.
 >
 > **§9 "Where the code is" is entirely stale** — every path in it predates the 2026-09
 > reorganization. The integrators are in `src/fast_dynamics/numerics/`.

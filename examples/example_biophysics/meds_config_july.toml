@@ -38,12 +38,12 @@ dt_fast             = "900s"   # the production default, same as stage 1. dt_fas
                                # report agrees to 0.03 K, and dmax_psi_leaf to 0.0003 MPa. The
                                # smearing is not there, so the example runs what a user would run.
                                #
-                               # What 900 s IS wrong for is the sub-daily leaf water potential
-                               # EXCURSION (#162): daytime mean -0.23 MPa at 12.5 s against -1.19 MPa
-                               # at 900 s. MEDS emits no diagnostic for it -- dmax_psi_leaf is the
-                               # daily maximum, which converges -- so if you are studying hydraulic
-                               # stress, shorten the step and measure it yourself rather than
-                               # trusting that this example's insensitivity carries over.
+                               # The leaf water potential excursion that once made 900 s wrong for
+                               # hydraulic studies (#162: daytime mean -0.23 MPa at 12.5 s against
+                               # -1.19 MPa at 900 s) went with the transpiration corrector (#91):
+                               # daily means at 900 s now match 12.5 s after a restart's first day.
+                               # MEDS emits no sub-daily psi diagnostic, so if you study hydraulic
+                               # stress within the day, shorten the step and measure it yourself.
 time_integrator     = "ark"    # ESDIRK2 (NOT IMEX: f_E == 0). Phase D (MEDS_INTEGRATOR_PARITY.md 3d) measured this
                                # as ~21x more accurate than the split at this dt_fast, for ~1.3x
                                # wall time -- the best accuracy-per-cost point of the three.

@@ -77,24 +77,33 @@ Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science pag
 Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science page:
 [`science/numerical_scheme.md`](science/numerical_scheme.md).
 
-- **N5 — an adaptive freeze cadence with a real error estimator.** *Planned.* [#158](https://github.com/xiangtaoxu/MEDS/issues/158) The last
-  remaining efficiency item in the plan: decide per step how long the frozen coefficients stay
-  valid, rather than freezing for exactly one `dt_fast`.
-- **Fold soil water into the ARK tableau.** *Planned.* [#159](https://github.com/xiangtaoxu/MEDS/issues/159) — successor to
-  #93, now closed; the pond is already on the state vector (Phase 0). Measured cost of in-stage soil water is +14–26 %, not
-  the +5 % first estimated.
-- **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Open question.* A floored relative water
-  content maps to a potential of about −10⁴ MPa, which is not a pressure any tissue reaches.
-  The detector ships; whether to clamp the potential, arrest the solve, or kill the cohort is a
-  physics decision, not taken for v0.3.0. Note that *arresting* is not the free
+- **N5 — an adaptive freeze cadence with a real error estimator.** *Closed 2026-09-30; revisit with
+  the numerical scheme.* [#158](https://github.com/xiangtaoxu/MEDS/issues/158) It was proposed when the
+  stability limit forced `dt_fast = 150 s` for the whole day. N2a removed that limit and the shipped
+  `dt_fast` is 900 s, so what is left is a bounded efficiency gain: the coefficient pre-pass is
+  4.4–11 % of a step. Any cadence would have to stay site-wide, because the threaded patch loop shares
+  the sub-step's forcing samples and output staging.
+- **Fold soil water into the ARK tableau.** *Closed 2026-09-30; revisit with the numerical scheme.*
+  [#159](https://github.com/xiangtaoxu/MEDS/issues/159) — successor to #93. In-stage soil water costs
+  +14–26 % and removes a split error of 0.011–0.018 % of column water. On ARK the committed soil state
+  and the fluxes its soil-heat stages use come from one solve, so the borrowed-flux defect class is
+  absent there. The drought result behind closing #93 (2.3 % at 900 s) was measured under
+  `ARREST_GS_CLAMP`, which #335 replaced; re-measure it in that round.
+- **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Planned* (decided 2026-09-30,
+  `dev_plans/MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3 and Appendix A): the wood's apoplastic water drains
+  as its conduits embolise, as TFS-Hydro and SurEau treat it, so every wood mass has a finite
+  potential. A floored relative water content maps today to a potential of about −10⁴ MPa, which is
+  not a pressure any tissue reaches. Note that *arresting* is not the free
   option it looks: the collapsed store diagnoses ψ at about −1.5×10⁴ MPa against a soil at perhaps
   −2 MPa, so the cohort recovers today — that enormous artificial gradient IS the 13× cost — and
   removing uptake would make a transiently desiccated cohort permanently dead.
-- **`psi_leaf` is the one state that does not converge at 900 s.** *Known limitation.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) Its
-  error is inherited from the canopy air and amplified roughly 4×; the residual relocates to
-  `psi_wood` through the frozen uptake seam. Every other state and flux converges. The issue was
-  closed on 2026-09-14 without a comment; the limitation stands, and
-  `examples/example_biophysics/meds_config_july.toml` states it where a user will read it.
+- **`psi_wood` at 900 s, and a restart's first day.** *Known limitation; revisit with the numerical
+  scheme.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) `psi_leaf` converges at 900 s on ARK since the
+  transpiration corrector (#91): re-measured 2026-09-30 over July on the established Ithaca stand,
+  daily means at 900 s match a 12.5 s run to 0.001 MPa on every day after the first
+  (`science/numerical_scheme.md` §5a). The first day after a restart still carries a start-up
+  transient (−1.83 against −0.28 MPa), and `psi_wood` keeps 0.17 MPa at 900 s on the 3-hour midday
+  probe through the frozen uptake seam.
 
 ---
 
@@ -105,7 +114,7 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
   has no independent thermal state and cannot freeze.
-- **The free-convection slope.** *Deferred, premise re-measured.*
+- **The free-convection slope.** *Closed 2026-09-30; revisit with the numerical scheme.*
   [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The design note says the true sensible-heat
   slope is `1.25·h` and the solved `ΔT_leaf` is overstated ~20 % in calm conditions. Measured, it is
   not. `1.25` is the **pure free-convection** limit: `H ∝ ΔT^{1+m}` holds only for the Grashof part
