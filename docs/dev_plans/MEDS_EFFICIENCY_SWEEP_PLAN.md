@@ -702,6 +702,27 @@ lock that slows patch threads today.
 
 ### Phase 6 — Output, forcing and state-layout cleanup
 
+**Phase 6 status (2026-09-30).**
+
+- **Done.** Every r1 case is bit-identical unless noted.
+  - O7+O8, one serializer (`6519ef5`).
+  - O9: `strict_caps` retired, and the caps are checked at the step (`14a6550`).
+  - O10, O12, F9, F11, F12 (`27e1245`).
+  - F7+F8 (`06a6b2c`).
+  - F10 (`e77bf62`, with Phase 5).
+  - The #299 fix (`385344d`): a slow-only run reports its slow rates and reads its fast-loop
+    variables as missing. It moves `demography_30yr` only.
+  - A stale-value read found on the way (`11e00bf`).
+- **Not started, and why:**
+  - **O6 + #270:** one forcing-echo table and a patch axis on the FAST tier. #270 is a new
+    output feature, and it touches the same staging lines as the fast loop.
+  - **#275:** the skin temperature, a science-output change.
+  - **F6:** splitting the 1,250-line reader into sources.
+
+  Each is a PR of its own size; this one is large enough to review as it stands.
+- **#299 caveat:** litterfall stays 0 in a run with soil carbon off, which does not accumulate
+  litter at all. Whether it should (it relates to #316) is a separate decision.
+
 - **#312.**
   - O7+O8: one serializer for site and region files. It can go at any time.
   - Then O6 + #270 together: one table of forcing echoes, and a patch axis on the FAST tier.
