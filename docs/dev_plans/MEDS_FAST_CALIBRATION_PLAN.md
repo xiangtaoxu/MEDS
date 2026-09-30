@@ -1,8 +1,9 @@
 # MEDS fast-parameter calibration plan
 
 **Status:** written 2026-09-29 against `beta` at `522def6`, and revised the same day after the
-owner's decisions (§12). P0d (#327) and P0h (#328) are merged. P0a, P0b, P0c and P0g are one pull
-request, `feat/fast-calibration-p0`; P1–P3 follow it (§7).
+owner's decisions (§12). P0d (#327) and P0h (#328) are merged. P0a, P0b, P0c and P0g are #329
+(`feat/fast-calibration-p0`). P1–P3 are implemented on `feat/fast-calibration-tool`, stacked on
+it, and the BCI fit is done. §13 records what the first fit showed and what to change next.
 
 **Goal:** a crude, fast, repeatable refinement of the parameters that govern MEDS's sub-daily
 physics, against eddy-covariance data, with the vegetation structure held at its initial state. It
@@ -414,7 +415,7 @@ The calibrated set is accepted only if it passes the gates of §8.
 - **P0h — #328, stacked on #327:** the reported sensible heat and the stability solve on the budget's temperature basis (§3.5, §3.6).
 - **P0g (done: the state stores the pools, geometry, LAI above, film water, growth buffer and `slow_co2_rate`):** a restart reproduces the state it was written from. Explain or remove the LAI mismatch of §3.1, with a test that a run split at a restart matches the unsplit run.
 
-**P1 — `scripts/calibrate_fast/`**, modelled on `scripts/numerics_sweep.py` and kept small:
+**P1 (done) — `scripts/calibrate_fast/`**, modelled on `scripts/numerics_sweep.py` and kept small:
 - **registry:** a parameter registry (TOML) giving each key's file, section, default, range, transform and source.
 - **site declaration:** windows, targets, σ and the tower file. It lives in the example (`examples/example_flux_tower_bci/calibration.toml`).
 - **states:** the state chain of §5.1.
@@ -423,13 +424,13 @@ The calibrated set is accepted only if it passes the gates of §8.
 - **fit:** Levenberg–Marquardt with the parallel Jacobian, the screening report, the covariance and the linearity check.
 - **workers:** one Slurm allocation holds a pool of single-thread workers for the whole fit, and the driver dispatches trials to them, so no trial waits in the queue. On a workstation the same pool is local processes.
 
-**P2 — BCI** (D9, D10):
+**P2 (done; §13) — BCI** (D9, D10):
 - the fit with interception off and on;
 - the validation;
 - `pft_parameters_calibrated.toml` and the calibrated main-TOML blocks in the example;
 - `run_example.py --calibrate` to repeat the fit, and the default and calibrated runs side by side in the README and figures.
 
-**P3 — tests:**
+**P3 (done: 17 unit tests and ctest `calibrate_fast`) — tests:**
 - pytest for the registry and transforms, the trial writer (keys land where the loader reads them), the closure correction, the residuals, and the fit on a synthetic linear model with a known answer and covariance;
 - a CTest smoke test: one Jacobian column on a 3-day window that moves the output, and a repeated trial that reproduces it byte for byte.
 
@@ -495,3 +496,88 @@ would come later:
 | 9 | u* as a target | yes, with σ = 0.1 + 0.2·u* m s⁻¹ for the roughness-sublayer caveat (§3.6, §5.2) |
 | 10 | order of the remaining P0 work | all of P0a, P0b, P0c and P0g in one pull request, then the tool and the fit |
 | — | method | gradient-based, with covariance (D8, §6, §11) |
+
+## 13. What the first fit showed (2026-09-29)
+
+The BCI fit ran on the calib-tool build, with trait plasticity on in the example
+(`examples/example_flux_tower_bci/README.md`, "Calibrating the fast parameters", has the tables).
+
+### 13.1 Results
+
+| | interception off (shipped) | interception on |
+|---|---|---|
+| keys screened / fitted / rough | 28 / 20 / 2 (`wood_psi50`, `leaf_pi0`) | 30 / 20 / 0 |
+| trials, failed | 19,096, 2 | 14,800, 2 |
+| wall time, cores | 37 min on 320 (8 × 40) | 56 min on 256 |
+| median trial, loaded node | 18.6 s (8.5 s on an idle node) | 47 s |
+| objective, calibration windows | 70,094 → 25,971 | 69,732 → 25,925 |
+| objective, validation windows | 68,018 → 29,790 | 66,985 → 30,093 |
+| start spread (G6) | 0.3 % | 0.3 % |
+| keys at a bound (G5) | 8 | 8 |
+| G7, five years with the slow loop | pass | fails: 53 water-budget breaches |
+
+- **G1–G6 pass for both variants.** G1 first failed on `leaf_carbon`: re-acclimation rebuilt leaf
+  carbon from leaf area and SLA. It now scales the carbon by the SLA's change (#329).
+- **Every validation target improves**, by 7 % (upwelling longwave) to 70 % (albedo).
+- **Over five years the calibrated set fixes the level of GPP (6.75 against the tower's 7.46),
+  net radiation and u\*.** LE lands on the tower's closure-corrected value.
+- **Structure shows at the bounds.** The eight at-bound keys are `vcmax25`, `jmax_vcmax_ratio`,
+  `rd_vcmax_ratio`, `stomatal_g1`, `leaf_clumping`, `canopy_freeboard`, `z0m_ratio` and
+  `leaf_transmit_vis`. H stays 36 W m⁻² high with `g1` at its ceiling, so the gap is the
+  energy-partition structure (§3.6), not a parameter.
+
+### 13.2 What went wrong, and the rule each gave
+
+- **Rough keys: default, not line search.** The line search set `wood_psi50` = −1.24 and
+  `leaf_pi0` = −2.43. Those values fit the windows better but broke the five-year water budget:
+  659 breaches. Bisection found that reverting the two keys closes it.
+  - Rule: `[fit].rough_keys = "default"`.
+  - The cost: the late dry season is too stressed (13.3).
+- **A trial fails on any whole-site budget breach**, not only on a crash. A breach means the
+  candidate is off the model's valid domain.
+- **The timeout floor is the configured timeout, and the median counts only completed trials.**
+  The first interception-on fit timed out every trial. Its timeout was set from the first trials,
+  which ran on an idle node 2–3× faster than a full one.
+- **HDF5 is not thread-safe.** The driver reads trial output from threads, which segfaulted until
+  every netCDF read took one lock.
+- **The trial and chain digests must be canonical and must include the base configs.** The chain
+  key lacked them, so a changed base config reused stale states.
+- **Validation windows need their own forcing mask.** The 2013–14 windows had no hour with observed
+  longwave, so the validation mask requires observed wind only.
+- **Trait plasticity exposed an undeclared tissue heat change** in the slow ledger's allocate
+  phase: −5,903 J m⁻² over five years. It is now declared.
+- **The per-layer soil-water face check** (`faces[soil_layer_mass]`) worsens under every calibrated
+  set. The worst residual is 1.1–2.6 kg m⁻², against 0.0011 at the default, while the whole-site
+  water budget closes. With `debug_error`, `advance_soil_water_column` stops in October 2012 on
+  "per-face mass budget did not close". This is a solver issue to fix in the model, not the
+  calibration's.
+
+### 13.3 The late dry season
+
+In the five-year run with the shipped set, April GPP collapses in 2014, 2016 and 2017. In April
+2016 it is 2.9 against the tower's 6.3 µmol m⁻² s⁻¹. The fit's 2016-04-13 window shows the same:
+daytime GPP 6.4 at the MAP against the tower's 14.3.
+
+- **Every Jacobian neighbour of the MAP gives 6.3–6.4.** Only the rough keys at their line-searched
+  values give 9.5.
+- **The chain states are not the cause.** The MAP chain's soil water at the window start matches
+  the five-year run's: 0.054 against 0.053 m³ m⁻³ averaged over the rooted layers.
+- **The dry-season response is carried by the two keys the method cannot use.** A fixed-state
+  Jacobian also never sees that more transpiration in January dries April.
+
+So the next fit needs two things:
+- **A smooth hydraulic response,** or a derivative-free step for the hydraulic keys under a budget
+  constraint.
+- **Windows long enough, or chained, for the dry-season drawdown to enter the gradient.**
+
+### 13.4 Efficiency, measured
+
+- **Utilization was about 50 %.** The three starts converged to the same point, so two of them were
+  wasted work.
+- **The serial chains took about 32 % of the wall time.** Each chain is one long run, and each
+  refresh reruns it.
+- **A trial on a full node runs 2.2× slower** than on an idle one, for a cause not yet measured.
+  Fewer slots per node may give more trials per hour.
+- **The LM hit its iteration cap (15)** while still improving by 0.02–1 % per iteration.
+- **Eight of the 20 keys sat at a bound** yet were differenced every iteration: 16 of the 41 trials
+  per window per Jacobian.

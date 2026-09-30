@@ -32,6 +32,16 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
 
 ### Changed
 
+- **The BCI example's leaf traits follow the canopy's light gradient**
+  (`[trait_dynamics].trait_plasticity_on = true`; `MEDS_FAST_CALIBRATION_PLAN.md` D6). Each cohort's
+  Vcmax25, Rd25, SLA and leaf lifespan are its PFT's top-of-canopy values scaled by the leaf area
+  above it.
+  - **The stand.** Over the five tower years LAI now holds at 5.6 where it fell to 4.8, and AGB
+    rises from 16.1 to 18.1 kgC m⁻² where it reached 17.6.
+  - **The fluxes.** GPP is 10.70 µmol m⁻² s⁻¹ where it was 11.11, and NEE is −4.17 where it was
+    −4.07. LE, H and net radiation move by 0.1 W m⁻² or less.
+  - The README and `evaluation.png` are regenerated.
+
 - **The flux-tower tool fills the longwave by the synthesis regression only; its ERA5-Land fill is
   removed** (#326). Filling from ERA5-Land or another source is the user's to do in the tower file before
   the build. `make_tower_forcing.py` loses `--lw-fill`, `--states-fill` and `--era5-file`, and a
@@ -223,6 +233,22 @@ the top 0.37 m instead of 53%. Delete it to keep the default.
     (gates G1 and G2), `fit`, `analyze` and `write-calibrated`.
   - **Tests:** 17 unit tests, and a smoke test through `meds_main` on the demography census with a
     synthetic tower (ctest `calibrate_fast`).
+- **The BCI example has a calibration** (`MEDS_FAST_CALIBRATION_PLAN.md` P2). `calibration.toml`
+  sets it up, and `calibration/` ships the fit and the calibrated configs. The fit used 8 ten-day
+  windows from 2015–17 and was scored on 8 it never saw, with interception off and on.
+  - **What the shipped set does.** It is interception off, with 20 fitted keys. It lowers the
+    validation objective from 68,018 to 29,790 and every target's error, by 7 % (upwelling
+    longwave) to 70 % (albedo).
+  - **Over the five tower years:** GPP 6.75 against the tower's 7.46 µmol m⁻² s⁻¹ (default 10.70),
+    LE 82.4 against 75.5 W m⁻² (56.4), net radiation 135.3 against 136.3 (120.6), albedo 0.17
+    against 0.13 (0.26), and night u\* 0.50 against 0.41 m s⁻¹ (0.86). H is still 36 W m⁻² high.
+  - **A structural limit.** Eight keys end at a bound of their range, among them `vcmax25`,
+    `stomatal_g1` and `z0m_ratio`, so part of the misfit is not in the parameters.
+  - **Gates.** G1–G7 pass. The five-year run closes its energy and water budgets and its slow ledger.
+    The interception-on fit scores the same but fails G7's water budget.
+  - **Running it.** `run_example.py` runs the calibrated five years beside the default, and
+    `evaluation.png` and `calibration.png` draw both. `run_example.py --calibrate` redoes the fit,
+    about 100 core-hours.
 
 - **A restart can take this run's leaf traits: `[init].reacclimate_traits`** (#329; default false,
   restart only). The plastic traits (`sla`, `vcmax25`, `rd25`, leaf lifespan) are then set from this
