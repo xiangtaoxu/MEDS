@@ -11,6 +11,9 @@
   - #146/#190 by option B (Phase 2).
 
   Every decision in §5 is now taken.
+- **Phase 3 finding, 2026-09-30 (during implementation).** Steps 1 and 2 of Phase 3 are done. Step
+  3, the physiology change, is **paused for the owner**: the instrument and a closer reading of the
+  sources change the case for option (b). See "Phase 3 status" under Phase 3.
 
 **Against:** `beta` = `main` = v0.3.1 (`eea42ec`). **Status:** being implemented on branch
 `dev/efficiency-sweep` (§0.1). Every number in §2 was measured on an unmodified `git archive eea42ec`
@@ -470,6 +473,57 @@ contends. **Gate:** allocations per patch-step close to 0 in steady state.
 **Decided (owner, 2026-09-30): option (b), in this sweep.** The wood's apoplastic water drains as
 its conduits embolise. This is a physiology change, so it goes in its own PR.
 
+**Phase 3 status (2026-09-30): steps 1 and 2 done; step 3 paused for the owner.**
+
+- **Step 2 is in** (`7c7b481`): `water_curve_t` and the split into `meds_water_retention.f90`,
+  bit-identical. A related fix came out of it (N-7, `10d6482`): the daily tissue-water reconcile now
+  uses each PFT's own curve.
+- **Step 1, the instrument** (a temporary build, not committed). Per patch-step it recorded the
+  soil-throttle scale, and per cohort whether the committed wood water ended below the curve's
+  apoplastic floor (`apoplast_frac × W_sat`), and whether it had been above it at the step's start:
+
+  | run | patch-steps | throttled | wood below the floor (cohort-steps) | entries | on a throttled step | emptied to 0 |
+  |---|---|---|---|---|---|---|
+  | BCI five years, calibrated | 3.05 M | 18% (scale down to 0.11) | 0 | 0 | – | 0 |
+  | BCI five years, line-searched (`wood_psi50` −1.24, `leaf_pi0` −2.43) | 3.05 M | 18% (to 0.085) | 173 of 55 M | 7 | 7 | 0 (lowest 0.49 × floor) |
+  | Ithaca stand, 400 days, no rain (constant forcing) | 0.10 M | 17% (to 0) | 1,047 | 64 | 64 | 25 |
+
+  - **The drain path in Appendix A is confirmed.** Every one of the 71 entries below the floor
+    happened on a step whose uptake the soil throttled; the leaf never went below its floor.
+  - **The cost has mostly gone.** Since #335's stomatal closure, the calibrated BCI stand never
+    reaches the floor, and the line-searched set does so 3 times in a million cohort-steps. On those
+    patch-steps the hydraulics take 47 sub-steps per cohort, against 3.1 otherwise, so the total cost
+    is negligible. Only a stand with no water at all collapses.
+- **The literature, read more closely, does not support the bound fraction step 3 planned:**
+  - **TFS-Hydro's sapwood residual fraction is not a small bound part.** Christoffersen et al.
+    (2016) count the water released by embolised conduits in the drainage *above* the residual
+    fraction, which is where the potential reaches −∞, exactly as MEDS's curve does at its
+    apoplastic fraction. Their Table 2 formulas give that residual as about 0.30 of saturated water
+    at wood density 0.4 and 0.45 at 0.6, larger than MEDS's whole 0.20. It cannot be the bound part
+    of MEDS's apoplastic water.
+  - **Wood science puts more water in the bound part, not less.** Cell-wall water at fibre
+    saturation is about 0.28 g per g of dry wood. MEDS's saturated wood water, 1.0 kg per kg of
+    carbon, is about 0.48 g per g of dry wood. So cell-wall water is roughly 58% of MEDS's
+    saturated wood water, more than the 20% MEDS already holds fixed.
+  - **What that means.** MEDS's "fixed" 20% is not conduit water waiting to drain. The conduit water
+    is already in the part of the curve that drains. Appendix A's point 4 ("the wood's 20% lumps
+    drainable conduit and capillary water with the small amount that is truly bound") was wrong
+    for MEDS's parameters.
+  - **Only SurEau** (Cochard et al. 2021) drains all of the apoplastic water with embolism, a bound
+    fraction of 0.
+- **Options for the owner:**
+  - **(b) as decided,** with a bound fraction of 0 (SurEau). This releases water that wood science
+    counts as bound, and it moves ordinary drought behaviour, including the calibrated BCI runs,
+    which never reach the floor today.
+  - **(c) stop the drain where it starts.** The instrument points at the throttle, which cuts the
+    wood's uptake but not its sap flow. This is the only option that fixes the cause.
+  - **(a) bound the potential.** A finite floor in place of the −10⁴ MPa marker. It is small and
+    changes no run that stays off the floor, which is now every realistic run seen.
+  - **Close #104 as resolved by #335,** with this table, and file nothing new.
+- **Recommendation.** Do not change the wood's physiology for #104: the evidence for (b) is weak,
+  and the cost it was meant to remove is gone. Either close #104 with the table above, or take (a)
+  now as a guard for dry runs and leave (c) to the later numerics round (Phase 4's list).
+
 1. **Instrument first** (state unchanged). Use #189 item 2's water half: per-cohort committed mass
    against the kernel's endpoint. Log per step the wood water against its apoplastic minimum and the
    soil-throttle scale, on the calibrated and the line-searched sets. This records the before
@@ -759,7 +813,9 @@ Three layouts are possible:
    **Wood science draws the same line.** Water bound in the cell walls, up to the fibre-saturation
    point of about 30% of dry mass, is held; the free water in the cell cavities is not
    ([Oregon State Extension EM 8600](https://extension.oregonstate.edu/catalog/pub/em-8600-wood-moisture-relationships)).
-4. **For MEDS:**
+4. **For MEDS** (*points 2 and 3 of this list were corrected on 2026-09-30, during Phase 3: with
+   MEDS's saturated wood water, the cell-wall water alone exceeds the 20% held fixed, and TFS-Hydro's
+   residual is larger still. See "Phase 3 status".*):
    - The leaf's 30% fixed water is well founded.
    - The wood's 20% is not: it lumps drainable conduit and capillary water with the small amount
      that is truly bound.
