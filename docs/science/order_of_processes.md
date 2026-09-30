@@ -232,5 +232,5 @@ Three consequences:
 | the calendar boundary | `advance_boundary` → `advance_boundary_dynamics` → `restructure_stand` | `meds_stepper`, `meds_slow_dynamics`, `meds_vegetation_dynamics` |
 | the output tick | `output_integrate`, `output_integrate_fast`, `close_tier` | `meds_output_integrate` |
 | zeroing the step diagnostics | `reset_step_diagnostics` | `meds_site_state_types` |
-| writing records | `output_serialize_pending`, `output_serialize_region` | `meds_output_manager` |
+| writing records | `output_serialize` (a site's file set and a region's) | `meds_output_manager` |
 | checkpoints | `state_write_state`, `io_read_state` | `meds_io` |

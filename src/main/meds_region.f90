@@ -39,8 +39,7 @@ module meds_region
                                            open_output_files, attach_output, ensure_output_dir,   &
                                            DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_AREA, N_PATCH_INIT
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_manager,         only : output_serialize_pending, output_manager_close,        &
-                                           output_serialize_region, output_region_close
+   use meds_output_manager,         only : output_serialize, output_close
    implicit none
    private
 
@@ -153,11 +152,11 @@ contains
             associate (poly => reg%poly(p))
                call attach_output(reg%out_files, reg%out_bufs(p), poly%site)
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
-                  allocate(poly%detail_files, poly%detail_bufs)
+                  allocate(poly%detail_files, poly%detail_bufs(1))
                   write(idstr,'(i0)') poly%id
                   call open_output_files(cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
                                          prefix=trim(cfg%output%prefix)//'-p'//trim(idstr))
-                  call attach_output(poly%detail_files, poly%detail_bufs, poly%site)
+                  call attach_output(poly%detail_files, poly%detail_bufs(1), poly%site)
                end if
             end associate
          end do
@@ -264,10 +263,10 @@ contains
       type(meds_region_t), intent(inout) :: reg
       integer(ik) :: p
       if (.not. reg%cfg%output%enabled) return
-      call output_serialize_region(reg%out_files, reg%out_bufs)
+      call output_serialize(reg%out_files, reg%out_bufs)
       do p = 1_ik, size(reg%poly, kind=ik)
          if (allocated(reg%poly(p)%detail_bufs))                                                  &
-            call output_serialize_pending(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
+            call output_serialize(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
       end do
    end subroutine io_phase
 
@@ -317,10 +316,10 @@ contains
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
 
       if (reg%cfg%output%enabled) then
-         call output_region_close(reg%out_files, reg%out_bufs)
+         call output_close(reg%out_files, reg%out_bufs)
          do p = 1_ik, size(reg%poly, kind=ik)
             if (allocated(reg%poly(p)%detail_bufs))                                               &
-               call output_manager_close(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs, .true.)
+               call output_close(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
          end do
       end if
       call met_close(reg%met_src)

@@ -152,6 +152,19 @@ before and after.
   - **R9.** The polygon carries its location; the forcing cursor and the leaf phenology read it
     from there, not from the cursor.
 
+- **One serializer for site and region files** (#312 O7, O8). The region writer was a copy of the
+  site writer, about 130 lines: the dimensions, the calendar and axis coordinates, the variable
+  definitions and the record writer. One `write_record` now writes every file set. A site's (or a
+  detail polygon's) set has one polygon's buffers and no polygon axis; a region's has every
+  polygon's, packed into one hyperslab per variable.
+  - **The entry points.** The manager's four entry points become two, `output_serialize` and
+    `output_close`, which take the file set whole instead of nine of its fields. A site run and a
+    detail polygon hold their buffers as an array of one, as a region already did.
+  - **What a reader sees is unchanged.** A site file now writes the fill value into the slab
+    entries past a record's live length, where it used to leave them unwritten; netCDF returned
+    the fill value for them either way.
+  - Every r1 case and `test_region`'s region-against-site comparison are bit-identical.
+
 ### Fixed
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of

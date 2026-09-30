@@ -39,7 +39,7 @@ module meds_driver
                                            N_PATCH_INIT
    use meds_io,                     only : state_write_state, io_read_state
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_manager,         only : output_serialize_pending, output_manager_close
+   use meds_output_manager,         only : output_serialize, output_close
    use meds_toml,                   only : toml_write_record
    implicit none
    private
@@ -58,7 +58,7 @@ module meds_driver
       type(meds_config_t)    :: cfg
       type(meds_polygon_t)   :: poly            !< the site
       type(output_files_t)   :: out_files          !< the run's output files (built only if output.enabled)
-      type(output_buffers_t) :: out_bufs           !< the site's share of them
+      type(output_buffers_t) :: out_bufs(1)        !< the site's share of them (an array of one, as a region's)
       type(met_source_t)     :: met_src         !< opened only if forcing_on
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik
@@ -112,7 +112,7 @@ contains
       !      The reset copies a default-initialised local rather than `output_buffers_t()`: nvfortran  !
       !      25.11 miscompiles that constructor (a garbage-sized ALLOCATE) because the type has fixed- !
       !      size array components whose own type has allocatable components.                        !
-      run%out_files%enabled = .false. ; run%out_bufs = fresh_bufs
+      run%out_files%enabled = .false. ; run%out_bufs(1) = fresh_bufs
       !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
       !      none unless the restart below says so. ---------------------------------------------!
       run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
@@ -233,7 +233,7 @@ contains
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
          call open_output_files(run%cfg, run%poly%fast_ctx%col_config%soil, run%out_files, run%verbose)
-         call attach_output(run%out_files, run%out_bufs, run%poly%site)
+         call attach_output(run%out_files, run%out_bufs(1), run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
@@ -282,7 +282,7 @@ contains
       !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs, run%poly, run%prev,      &
+      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
                         run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
@@ -294,7 +294,7 @@ contains
       end if
       !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
       if (status /= DRIVER_OK) then
-         if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
+         if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
          return
       end if
 
@@ -310,7 +310,7 @@ contains
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run
       logical,          intent(in)    :: is_new_year
-      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
+      if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                  &
@@ -346,7 +346,7 @@ contains
 
       if (run%verbose) call polygon_report(run%cfg, run%poly)
 
-      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%out_bufs, .true.)
+      if (run%cfg%output%enabled) call output_close(run%out_files, run%out_bufs)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st

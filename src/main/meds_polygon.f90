@@ -74,7 +74,7 @@ module meds_polygon
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
       !----- A region's detail polygon also writes a full single-site file set of its own. ---------!
       type(output_files_t),  allocatable :: detail_files
-      type(output_buffers_t), allocatable :: detail_bufs
+      type(output_buffers_t), allocatable :: detail_bufs(:)   !< one polygon's: an array of one, as a site run's
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
@@ -214,7 +214,7 @@ contains
       !----- The fast loop stages sub-daily samples into the buffers that write the FAST tier: a    !
       !      detail polygon's own files, else the polygon's share of the run's files.  ----------------!
       if (allocated(poly%detail_bufs)) then
-         call stepper(poly%detail_bufs)
+         call stepper(poly%detail_bufs(1))
       else
          call stepper(out_bufs)
       end if
@@ -233,7 +233,7 @@ contains
       !      hold `prev`, closing each period `now` has left and queueing it for the I/O phase. ----!
       is_new_day = is_new_month .or. (now%day /= prev%day)
       if (out_files%enabled) call tick_output(out_files, out_bufs)
-      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
+      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs(1))
 
       !----- The step's diagnostics are read: zero them for the next window. If the step ended on a  !
       !      month boundary, the stand's restructuring is owed: it runs at the start of the next     !
