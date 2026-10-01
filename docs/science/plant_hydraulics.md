@@ -200,9 +200,9 @@ machine-precision water budget from the converged storage change $\Delta W$.
 
 | Concept | Routine |
 |---|---|
-| PV curves / capacitance | `meds_hydr_lib`: `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi`, `water_content`, `capacitance` |
-| vulnerability + Kirchhoff | `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
-| quadrature / root-find | `meds_numerics`: `gauss_legendre_7`, `bisect_root` |
+| PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
+| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
+| Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre, written out) |
 | multi-layer root boundary | `meds_plant_hydraulics`: `rhizosphere_cond`, `root_fraction_profile`, `effective_root_boundary` |
 | network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`) |
 | config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

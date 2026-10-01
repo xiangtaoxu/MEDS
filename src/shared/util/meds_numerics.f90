@@ -19,30 +19,9 @@ module meds_numerics
    implicit none
    private
 
-   public :: thomas_solve, quadratic_smaller_root, adaptive_step_update, bisect_root
-   public :: gauss_legendre_7
+   public :: thomas_solve, quadratic_smaller_root, adaptive_step_update
    public :: logistic, clamp01, clamp, weighted_mean
-   public :: matrix_exp, matrix_exp_fixed, matmul_sq
-
-   !----- Interface of a pure scalar function f(x) passed to bisect_root / gauss_legendre_7. -!
-   abstract interface
-      pure function scalar_fn(x) result(y)
-         import :: wp
-         real(wp), intent(in) :: x
-         real(wp)             :: y
-      end function scalar_fn
-   end interface
-
-   !----- 7-point Gauss-Legendre nodes/weights on [-1,1] (fixed-order quadrature). ----------!
-   integer(ik), parameter :: NG_GL7 = 7_ik
-   real(wp), parameter :: gl7_x(NG_GL7) = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
-                                            -0.4058451513773972_wp,  0.0000000000000000_wp,     &
-                                             0.4058451513773972_wp,  0.7415311855993945_wp,     &
-                                             0.9491079123427585_wp ]
-   real(wp), parameter :: gl7_w(NG_GL7) = [  0.1294849661688697_wp,  0.2797053914892766_wp,     &
-                                             0.3818300505051189_wp,  0.4179591836734694_wp,     &
-                                             0.3818300505051189_wp,  0.2797053914892766_wp,     &
-                                             0.1294849661688697_wp ]
+   public :: matrix_exp, matrix_exp_fixed, matmul_sq, ascending_order
 
 contains
 
@@ -83,6 +62,38 @@ contains
          x(k) = dp(k) - cp(k) * x(k+1)
       end do
    end subroutine thomas_solve
+
+   !---------------------------------------------------------------------------------------!
+   ! ascending_order -- ord(k) is the index of the k-th smallest of x(1:n); among equal values the  !
+   ! larger index comes first. The canopy aerodynamics and radiation use it to list the cohorts     !
+   ! from the canopy bottom up.                                                                !
+   !                                                                                          !
+   ! The cohort block is kept tallest first (sort_cohorts), so in the model x does not increase    !
+   ! and the order is simply the reverse, found in O(n). Any other input (a unit test's cohorts,   !
+   ! say) takes a selection sort, O(n^2), which gives the same order on a non-increasing input:    !
+   ! its `<=` keeps the last index that reaches the running minimum, and in a non-increasing array !
+   ! that is always the largest remaining index.                                               !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine ascending_order(x, n, ord)
+      integer(ik), intent(in)  :: n
+      real(wp),    intent(in)  :: x(n)
+      integer(ik), intent(out) :: ord(n)
+      logical     :: used(n)
+      real(wp)    :: xmin
+      integer(ik) :: j, k, imin
+      if (.not. any(x(1:n-1) < x(2:n))) then
+         ord = [(n - k + 1_ik, k = 1_ik, n)]
+         return
+      end if
+      used = .false.
+      do k = 1_ik, n
+         imin = 0_ik ; xmin = huge(1.0_wp)
+         do j = 1_ik, n
+            if (.not. used(j) .and. x(j) <= xmin) then ; xmin = x(j) ; imin = j ; end if
+         end do
+         ord(k) = imin ; used(imin) = .true.
+      end do
+   end subroutine ascending_order
 
    !---------------------------------------------------------------------------------------!
    ! Smaller root of the co-limitation quadratic  theta*x^2 - (a+b)*x + a*b = 0. The smaller   !
@@ -126,55 +137,6 @@ contains
       !      -fpe0. Callers already floor err, but keep the shared primitive self-safe. -----------!
       factor = min(fmax, max(fmin, safety * max(err, tiny(err)) ** expo))
    end function adaptive_step_update
-
-   !---------------------------------------------------------------------------------------!
-   ! Bracket-and-bisect root finder for a pure scalar residual f. Evaluates f at the two     !
-   ! endpoints; on a SAME-SIGN bracket it returns converged = .false. and root = the bracket  !
-   ! midpoint (so a caller can switch residual providers and retry). Otherwise it bisects,    !
-   ! keeping the sign change, until the bracket width falls below tol or max_iter is hit;      !
-   ! root is the final bracket midpoint either way. #7-safe: scalar out-args, no array temps.  !
-   !---------------------------------------------------------------------------------------!
-   pure subroutine bisect_root(f, lo, hi, tol, max_iter, root, converged)
-      procedure(scalar_fn)     :: f
-      real(wp),    intent(in)  :: lo, hi, tol
-      integer(ik), intent(in)  :: max_iter
-      real(wp),    intent(out) :: root
-      logical,     intent(out) :: converged
-      real(wp)    :: a, b, flo, fhi, mid, fmid
-      integer(ik) :: it
-      a = lo ; b = hi
-      flo = f(a) ; fhi = f(b)
-      converged = .false. ; root = 0.5_wp * (a + b)
-      if (flo * fhi <= 0.0_wp) then
-         do it = 1_ik, max_iter
-            mid = 0.5_wp * (a + b) ; fmid = f(mid)
-            if (flo * fmid <= 0.0_wp) then ; b = mid ; else ; a = mid ; flo = fmid ; end if
-            if (b - a < tol) exit
-         end do
-         root = 0.5_wp * (a + b) ; converged = (b - a < tol)
-      end if
-   end subroutine bisect_root
-
-   !---------------------------------------------------------------------------------------!
-   ! Fixed 7-point Gauss-Legendre quadrature of a pure scalar integrand f over [a,b]. Exact    !
-   ! for polynomials up to degree 2*7-1 = 13; for the smooth integrands here (e.g. the           !
-   ! Kirchhoff matric-flux integrand 1/(1+u^a)) it is far below any modeling tolerance. The       !
-   ! [-1,1] nodes are affine-mapped to [a,b]. Pure + callback (mirrors bisect_root); intended for  !
-   ! off-hot-path use (BUILD lookup tables / oracle), not a per-step kernel.                        !
-   !---------------------------------------------------------------------------------------!
-   pure function gauss_legendre_7(f, a, b) result(integral)
-      procedure(scalar_fn) :: f
-      real(wp), intent(in) :: a, b
-      real(wp)    :: integral, mid, half, acc
-      integer(ik) :: g
-      mid  = 0.5_wp * (a + b)
-      half = 0.5_wp * (b - a)
-      acc  = 0.0_wp
-      do g = 1_ik, NG_GL7
-         acc = acc + gl7_w(g) * f(mid + half * gl7_x(g))
-      end do
-      integral = half * acc
-   end function gauss_legendre_7
 
    !---------------------------------------------------------------------------------------!
    ! Numerically-safe logistic (smooth 0->1 step) -- the shared home of the 1/(1+exp(-z))     !

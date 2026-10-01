@@ -27,7 +27,7 @@ module meds_fast_rk4_oracle
    !      IMEX-Euler tier (#198) is what let meds_fast_be_stage leave this list.                        !
    use meds_kinds,            only : wp, ik
    use meds_fast_time_derivs, only : column_derivs
-   use meds_fast_types,       only : column_state_t, column_frozen_t, column_tend_t
+   use meds_fast_types,       only : column_config_t, column_state_t, column_frozen_t, column_tend_t
    use meds_column_state_ops, only : state_init, state_axpy, state_accum
    implicit none
    private
@@ -41,9 +41,10 @@ contains
    ! pure RHS column_derivs, with the frozen forcing `frozen` held constant across the four stages (the  !
    ! explicit part of the additive split). Commits into y_out; y is unchanged.                        !
    !---------------------------------------------------------------------------------------!
-   subroutine rk4_column_step(y, frozen, n, nsl, dt, y_out, freeze_theta)
+   subroutine rk4_column_step(y, frozen, col_config, n, nsl, dt, y_out, freeze_theta)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
       type(column_state_t),  intent(out) :: y_out
@@ -57,15 +58,15 @@ contains
 
       frz = .false. ; if (present(freeze_theta)) frz = freeze_theta
 
-      call column_derivs(y, frozen, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
+      call column_derivs(y, frozen, col_config, n, nsl, k1) ; if (frz) k1%dtheta_dt = 0.0_wp
       call state_axpy(y, 0.5_wp * dt, k1, n, nsl, y_stage)
-      call column_derivs(y_stage, frozen, n, nsl, k2)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k2)
       if (frz) k2%dtheta_dt = 0.0_wp
       call state_axpy(y, 0.5_wp * dt, k2, n, nsl, y_stage)
-      call column_derivs(y_stage, frozen, n, nsl, k3)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k3)
       if (frz) k3%dtheta_dt = 0.0_wp
       call state_axpy(y,          dt, k3, n, nsl, y_stage)
-      call column_derivs(y_stage, frozen, n, nsl, k4)
+      call column_derivs(y_stage, frozen, col_config, n, nsl, k4)
       if (frz) k4%dtheta_dt = 0.0_wp
 
       !----- y_out = y + dt/6 (k1 + 2 k2 + 2 k3 + k4). -------------------------------------!

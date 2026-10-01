@@ -998,13 +998,11 @@ contains
    !      the headings below are the declaration: INTENSIVE (weighted by the capacity that carries  !
    !      the quantity), EXTENSIVE (nplant-weighted), GROUND (added, never weighted).                !
    !                                                                                          !
-   !      It is centralised but not ENFORCED. Adding a per-cohort fast field and forgetting it here  !
-   !      compiles clean and is silently wrong at the next fusion -- a table the blend ITERATED      !
-   !      could not omit a field that is in the type, which two hand-written routines can. That is   !
-   !      the one benefit left in #190, and it is #146's silent-omission class, so the two are       !
-   !      paired: one packed, policy-carrying layout should serve the fast state vector and the      !
-   !      cohort slice together. Until then, a new field here needs a line in BOTH this routine and  !
-   !      scale_cohort_ground_fields. ---------------------------------------------------------------!
+   !      It is centralised but not enforced: a per-cohort fast field left out of this routine       !
+   !      compiles clean and is silently wrong at the next fusion. A new field needs a line here, a   !
+   !      line in scale_cohort_ground_fields if it is per m2 of ground, and a witness in             !
+   !      test_fusion_cohort. A table the blend iterated would be no safer (the compiler cannot      !
+   !      check that a table lists every field either) and would be longer than these lines. -------!
    pure subroutine fuse_cohort_fast_state(cohort, recc, donc, np_r, np_d)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor

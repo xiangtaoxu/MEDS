@@ -15,10 +15,10 @@ module meds_fast_step
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_fast_types, only : patch_biophys_t
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,          &
-                                     column_budget_t
+                                     column_budget_t, ark_workspace_t
    use meds_fast_ark,         only : column_fast_step_ark
-   use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed
-   use meds_hydr_lib,        only : psi_from_water_content
+   use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
+   use meds_water_retention, only : psi_from_water_content
    implicit none
    private
 
@@ -38,8 +38,8 @@ contains
    !   time_integrator = "rk45"           -- the fully explicit adaptive Cash-Karp march, kept as    !
    !                                        the ACCURACY BASELINE. Deliberately not optimised.       !
    !---------------------------------------------------------------------------------------!
-   subroutine column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, gpp_coh, &
-                               leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters,        &
+   subroutine column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, &
+                               gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
                                le_flux, h_flux, psi_leaf_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg          !< PFT traits for leaf gas exchange
@@ -51,6 +51,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero         !< preallocated (alloc_aero_out)
       type(column_budget_t),   intent(inout) :: budget
+      type(ark_workspace_t),   intent(inout) :: ws           !< this thread's ARK step storage, reused step to step
       real(wp), optional,      intent(out)   :: gpp_coh(:)   !< [umol CO2/plant/s] per-cohort GROSS GPP (fast->slow)
       real(wp), optional,      intent(out)   :: psi_leaf_coh(:) !< [MPa] this step's per-cohort psi_leaf (daily-max accumulator)
       real(wp), optional,      intent(out)   :: leaf_resp_coh(:) !< [umol CO2/plant/s] leaf dark respiration
@@ -77,12 +78,8 @@ contains
       !      buffer with the previous patch's (or uninitialised) values under time_integrator=rk45. -!
       if (present(psi_leaf_coh)) then
          do jcoh = 1_ik, col_cohort%n
-            psi_leaf_coh(jcoh) = psi_from_water_content(biophys%leaf_water_mass(jcoh),                  &
-                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_pi0,                          &
-                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_elastic_mod,                  &
-                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_apoplast_frac,                &
-                 col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_water_sat,                    &
-                 col_cohort%bleaf(jcoh))
+            psi_leaf_coh(jcoh) = psi_from_water_content(biophys%leaf_water_mass(jcoh), &
+                  col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_curve, col_cohort%bleaf(jcoh))
          end do
       end if
 
@@ -113,6 +110,7 @@ contains
                                        gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh,        &
                                        converged, iters, stiff_bail=rk45_stiff, cdiag=cdiag)
             if (.not. rk45_stiff .and. .not. rk45_state_railed(biophys, col_config%soil%n_active)) then
+               call rk45_ledgers_stop(budget, dt_fast, col_config)   ! kept, so a breach may now stop the run
                call atm_fluxes(budget, dt_fast, le_flux, h_flux)
                return
             end if
@@ -137,7 +135,7 @@ contains
       end if
 
       !----- ARK (ESDIRK2): the default, and the RK45 rescue target. ----------------------------!
-      call column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,      &
+      call column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,  &
                                 gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged,   &
                                 iters, cdiag)
       call atm_fluxes(budget, dt_fast, le_flux, h_flux)

@@ -87,12 +87,11 @@ prefix        = "spinup"
 io_config     = "output_variables.toml"
 cohort_max    = 4096
 patch_max     = 256
-strict_caps   = false
 sync_every    = "flush"
 structure     = true
-carbon_fluxes = false
-water_fluxes  = false
-energy_fluxes = false
+carbon        = false
+water         = false
+energy        = false
 fast_interval_steps = 24
 [output.fast]
 enabled    = false
@@ -111,7 +110,6 @@ file_chunk = "run"
 override_derived = false
 
 [carbon]
-growth_source = "carbon"
 gpp_ref       = 0.3
 
 [leaf_physiology]

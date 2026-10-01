@@ -33,22 +33,18 @@ module meds_driver
    use meds_forcing_config,         only : MET_BACKEND_ED_ERA5LAND
    use meds_diagnostic_reduce,      only : print_summary, total_area
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
-                                           polygon_report, DRIVER_OK, DRIVER_FINISHED,           &
+                                           polygon_report, open_output_files, attach_output,      &
+                                           ensure_output_dir, DRIVER_OK, DRIVER_FINISHED,         &
                                            DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC,      &
                                            N_PATCH_INIT
    use meds_io,                     only : state_write_state, io_read_state
    use meds_output_types,           only : output_files_t, output_buffers_t
-   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_soil_params, activate_site_diag,         &
-                                           apply_variable_override, parse_stream_mask,          &
-                                           build_freq_index, OVR_TRUE, OVR_FALSE, OVR_MASK
-   use meds_output_manager,         only : output_serialize_pending, output_manager_close
-   use meds_toml,                   only : toml_table_t, toml_parse_file, toml_write_record
+   use meds_output_manager,         only : output_serialize, output_close
+   use meds_toml,                   only : toml_write_record
    implicit none
    private
 
    public :: meds_run_t, driver_open, driver_step, driver_finalize, driver_free, driver_done
-   public :: apply_io_overrides, ensure_output_dir
    !----- The status codes live with the step (meds_polygon); re-exported for the driver's callers. !
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
 
@@ -62,7 +58,7 @@ module meds_driver
       type(meds_config_t)    :: cfg
       type(meds_polygon_t)   :: poly            !< the site
       type(output_files_t)   :: out_files          !< the run's output files (built only if output.enabled)
-      type(output_buffers_t) :: out_bufs           !< the site's share of them
+      type(output_buffers_t) :: out_bufs(1)        !< the site's share of them (an array of one, as a region's)
       type(met_source_t)     :: met_src         !< opened only if forcing_on
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik
@@ -116,7 +112,7 @@ contains
       !      The reset copies a default-initialised local rather than `output_buffers_t()`: nvfortran  !
       !      25.11 miscompiles that constructor (a garbage-sized ALLOCATE) because the type has fixed- !
       !      size array components whose own type has allocatable components.                        !
-      run%out_files%enabled = .false. ; run%out_bufs = fresh_bufs
+      run%out_files%enabled = .false. ; run%out_bufs(1) = fresh_bufs
       !----- A run ending on the 1st leaves its boundary's restructuring owed; the new stand owes   !
       !      none unless the restart below says so. ---------------------------------------------!
       run%poly%restructure_pending = .false. ; run%poly%restructure_new_year = .false.
@@ -211,7 +207,7 @@ contains
                            keep_fast_state=run%cfg%init_mode == INIT_RESTART .and. init_ok .and.  &
                                            fast_state_found,                                     &
                            keep_soil_carbon=run%cfg%init_mode == INIT_RESTART .and. init_ok,      &
-                           verbose=run%verbose)
+                           patch_threads=run%cfg%n_threads, verbose=run%verbose)
 
       run%step_days      = max(1_ik, nint(run%cfg%dt_slow / day_sec, ik))
       run%steps_per_year = max(1_ik, nint(yr_day / real(run%step_days, wp), ik))
@@ -236,15 +232,8 @@ contains
       !          writes them.                                                                      !
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
-         call manager_setup(run%out_files, run%cfg)
-         !----- Give the DERIVED soil diagnostics the SAME retention curve the fast loop           !
-         !      integrates on, rather than a second derivation from the TOML.  --------------------!
-         if (run%cfg%fast_biophysics_on) call manager_set_soil_params(run%out_files, run%poly%fast_ctx%col_config%soil)
-         if (len_trim(run%cfg%output%io_config) > 0)                                             &
-            call apply_io_overrides(run%out_files, trim(run%cfg%output%io_config), run%verbose)
-         call manager_finalize(run%out_files)
-         call manager_alloc_buffers(run%out_files, run%out_bufs)
-         call activate_site_diag(run%out_files, run%poly%site)
+         call open_output_files(run%cfg, run%poly%fast_ctx%col_config%soil, run%out_files, run%verbose)
+         call attach_output(run%out_files, run%out_bufs(1), run%poly%site)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
@@ -293,7 +282,7 @@ contains
       !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs, run%poly, run%prev,      &
+      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
                         run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
@@ -305,7 +294,7 @@ contains
       end if
       !----- A failed step (NaN, impossible soil carbon) still writes the output up to it. ---------!
       if (status /= DRIVER_OK) then
-         if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
+         if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
          return
       end if
 
@@ -321,7 +310,7 @@ contains
    subroutine driver_io_phase(run, is_new_year)
       type(meds_run_t), intent(inout) :: run
       logical,          intent(in)    :: is_new_year
-      if (run%cfg%output%enabled) call output_serialize_pending(run%out_files, run%out_bufs)
+      if (run%cfg%output%enabled) call output_serialize(run%out_files, run%out_bufs)
       if (is_new_year) then
          if (run%cfg%state_write_state .and. mod(run%iyear, run%cfg%state_interval_years_cfg) == 0_ik) &
             call state_write_state(run%poly%site, run%cfg, trim(run%cfg%state_output_dir),                  &
@@ -357,7 +346,7 @@ contains
 
       if (run%verbose) call polygon_report(run%cfg, run%poly)
 
-      if (run%cfg%output%enabled) call output_manager_close(run%out_files, run%out_bufs, .true.)
+      if (run%cfg%output%enabled) call output_close(run%out_files, run%out_bufs)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
       run%is_open = .false.
       if (present(status)) status = st
@@ -369,62 +358,5 @@ contains
       type(meds_run_t), intent(inout) :: run
       call site_free(run%poly%site)
    end subroutine driver_free
-
-   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's     !
-   !      registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`      !
-   !      entry: a bool force-enables / disables everywhere; a quoted "F D M Y" string replaces     !
-   !      the stream mask. A name matching no registry variable is a hard error.                    !
-   subroutine apply_io_overrides(files, tomlpath, verbose)
-      type(output_files_t),   intent(inout) :: files
-      character(len=*),       intent(in)    :: tomlpath
-      logical,                intent(in)    :: verbose
-      type(toml_table_t) :: tt
-      logical            :: ok, found
-      integer(ik)        :: i, mask, status
-      character(len=256) :: raw, sval
-      character(len=64)  :: name
-      character(len=8)   :: bad
-      call toml_parse_file(tomlpath, tt, ok)
-      if (.not. ok) error stop 'meds_driver: cannot read [output].io_config = '//trim(tomlpath)
-      do i = 1_ik, tt%n
-         if (len_trim(tt%key(i)) <= 10) cycle
-         if (tt%key(i)(1:10) /= 'variables.') cycle
-         name = trim(tt%key(i)(11:))
-         raw  = adjustl(tt%val(i))
-         select case (trim(raw))
-         case ('true', '.true.', 'True', 'TRUE')
-            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
-         case ('false', '.false.', 'False', 'FALSE')
-            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
-         case default
-            if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
-               sval = raw(2:index(raw(2:), '"'))
-               call parse_stream_mask(trim(sval), mask, status, bad)
-               if (status /= 0_ik)                                                               &
-                  error stop 'meds_driver: io_config unknown stream token "'//trim(bad)//        &
-                             '" for variable '//trim(name)
-               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
-            else
-               error stop 'meds_driver: io_config bad value for '//trim(name)//                  &
-                          ' (expected true|false or a quoted "F D M Y" string)'
-            end if
-         end select
-         if (.not. found)                                                                        &
-            error stop 'meds_driver: io_config variable "'//trim(name)//                         &
-                       '" matches no registry variable (typo?)'
-      end do
-      call build_freq_index(files%reg)
-      if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
-   end subroutine apply_io_overrides
-
-   !----- Create the output directory if it does not exist (driver-level convenience).           !
-   !      Filesystem access stays in the driver; the engine/library never touches it.            !
-   subroutine ensure_output_dir(dir)
-      character(len=*), intent(in) :: dir
-      integer :: stat
-      if (len_trim(dir) == 0 .or. trim(dir) == '.') return
-      call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
-      if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
-   end subroutine ensure_output_dir
 
 end module meds_driver

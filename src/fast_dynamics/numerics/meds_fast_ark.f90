@@ -24,7 +24,7 @@
 module meds_fast_ark
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, rho_h2o
-   use meds_hydr_lib, only : water_content
+   use meds_water_retention, only : water_content
    use meds_config, only : meds_config_t, INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : state_wrms_grouped, step_control_factor
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
@@ -40,7 +40,8 @@ module meds_fast_ark
    use meds_fast_frozen, only : build_column_frozen
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
-                               stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full
+                               stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
+                               ark_stages_t, ark_workspace_t
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
@@ -72,16 +73,18 @@ contains
    ! the full dt (advance_water_mass_full -- now a trivial closed-form Euler step, no iteration, since   !
    ! the frozen sapflow/uptake pre-pass already absorbed the only stiff physics), and excluded from the  !
    ! embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free embedded 1st-order estimate for the         !
-   ! adaptive controller (2 solves/step vs step-doubling's 3). Hydraulics WORK counters (section 5.3)     !
-   ! now come from the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen), not from       !
-   ! this per-stage endpoint update -- there is no more per-stage hydraulics solve to count. -------------!
-   subroutine ark2_column_step(y, frozen, n, nsl, dt, y_out, y_err, niter, bf, clamp_n,      &
-                               floor_mass, floor_n)
+   ! adaptive controller (2 solves/step vs step-doubling's 3). The mass update re-solves the plant      !
+   ! hydraulics once per step (the transpiration corrector), and that solve's work is added to the      !
+   ! hydraulics WORK counters (section 5.3) on top of the pre-pass's. -----------------------------------!
+   subroutine ark2_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n, &
+                               floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: dt
-      type(column_state_t),  intent(out) :: y_out, y_err
+      type(column_state_t),  intent(inout) :: y_out, y_err   !< filled in place
+      type(ark_stages_t),    intent(inout) :: stages    !< this thread's stage storage, filled in place
       integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- STAGE-clamp activations (see column_budget_t%clamp_stage_n). The ARK clamps its ARS       !
@@ -97,59 +100,65 @@ contains
       !      because a march calls this many times per dt_fast; the caller zeroes once per step.      !
       real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
       integer(ik), optional, intent(inout) :: floor_n
+      !----- The corrector's hydraulics work (sub-steps, unconverged cohorts), ACCUMULATED like      !
+      !      clamp_n: work done on a rejected attempt was still done. ----------------------------!
+      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
       real(wp)    :: fmass_i
-      integer(ik) :: fcount_i
+      integer(ik) :: fcount_i, hnsub_i, hnonconv_i
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
-      type(column_state_t)  :: Y2, base3, Y3
       type(stage_bflux_t)   :: bf2, bf3
-      type(surface_tend_t)  :: sf2, sf3
       real(wp)              :: transp_bw(n)
       real(wp)              :: film_evap_leaf_bw(n), film_evap_wood_bw(n)
       integer(ik) :: np
-      np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
+      associate (Y2 => stages%y2, base3 => stages%base3, Y3 => stages%y3, sf2 => stages%sf2, sf3 => stages%sf3)
+         np = 1_ik ; if (present(niter)) np = max(1_ik, niter)
 
-      !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
-      call column_be_stage(y, frozen, n, nsl, GAMMA*dt, Y2, niter=np, bf=bf2, sf_out=sf2)
-      !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
-      !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
-      !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
-      !      step (which the adaptive controller then rejects and shrinks normally) -- in range it is an  !
-      !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
-      !      with NaN. --------------------------------------------------------------------------------!
-      call state_extrap(y, BETA, Y2, n, nsl, base3)
-      call clamp_theta(base3, frozen, nsl, nfire=clamp_n)
-      call clamp_cas(base3, nfire=clamp_n)
-      call column_be_stage(base3, frozen, n, nsl, GAMMA*dt, Y3, niter=np, bf=bf3, sf_out=sf3)
-      call state_init(Y3, n, nsl, y_out)
-      !----- operator-split mass: closed-form Euler over the FULL dt from y_n, using the SAME b-weighted !
-      !      (1-gamma, gamma) per-cohort transp the CAS's own vapour balance used (bf2/bf3's ledger is    !
-      !      b-weighted identically, sec 1/3/4/5) -- NOT a separate endpoint evaluation, so the mass       !
-      !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
-      transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
-      call advance_water_mass_full(y, frozen, n, nsl, dt, transp_bw, y_out,                          &
-                                   floor_mass=fmass_i, floor_n=fcount_i)
-      if (present(floor_mass)) floor_mass = floor_mass + fmass_i
-      if (present(floor_n))    floor_n    = floor_n    + fcount_i
-      !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
-      !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
-      !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
-      film_evap_leaf_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_leaf(1:n) + GAMMA*sf3%film_evap_leaf(1:n)
-      film_evap_wood_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_wood(1:n) + GAMMA*sf3%film_evap_wood(1:n)
-      call advance_surf_water_full(y, frozen, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
-      !----- embedded 1st-order error estimate (mass is split out -> zeroed). -------------------------!
-      call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
-      !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
-      !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
-      if (present(bf)) then
-         call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
-         !----- b-weighted TIME INTEGRAL of the tissue temperatures, same b^I = (0, 1-gamma, gamma)   !
-         !      weights and the same telescoping argument as every other amount in bf. This is what    !
-         !      the store's energy is set from -- see column_bflux_t's own note. --------------------!
-         allocate(bf%tissue_leaf_int(n), bf%tissue_wood_int(n))
-         bf%tissue_leaf_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%leaf_temp(1:n) + GAMMA*sf3%leaf_temp(1:n))
-         bf%tissue_wood_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%wood_temp(1:n) + GAMMA*sf3%wood_temp(1:n))
-      end if
+         !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
+         call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
+         !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
+         !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
+         !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
+         !      step (which the adaptive controller then rejects and shrinks normally) -- in range it is an  !
+         !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
+         !      with NaN. --------------------------------------------------------------------------------!
+         call state_extrap(y, BETA, Y2, n, nsl, base3)
+         call clamp_theta(base3, col_config, nsl, nfire=clamp_n)
+         call clamp_cas(base3, nfire=clamp_n)
+         call column_be_stage(base3, frozen, col_config, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
+         call state_init(Y3, n, nsl, y_out)
+         !----- operator-split mass: closed-form Euler over the FULL dt from y_n, using the SAME b-weighted !
+         !      (1-gamma, gamma) per-cohort transp the CAS's own vapour balance used (bf2/bf3's ledger is    !
+         !      b-weighted identically, sec 1/3/4/5) -- NOT a separate endpoint evaluation, so the mass       !
+         !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
+         transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
+         call advance_water_mass_full(y, frozen, col_config, n, nsl, dt, transp_bw, y_out,                          &
+                                      floor_mass=fmass_i, floor_n=fcount_i,                              &
+                                      hydro_nsub=hnsub_i, hydro_nonconv=hnonconv_i)
+         if (present(floor_mass))    floor_mass    = floor_mass    + fmass_i
+         if (present(floor_n))       floor_n       = floor_n       + fcount_i
+         if (present(hydro_nsub))    hydro_nsub    = hydro_nsub    + hnsub_i
+         if (present(hydro_nonconv)) hydro_nonconv = hydro_nonconv + hnonconv_i
+         !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
+         !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
+         !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
+         film_evap_leaf_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_leaf(1:n) + GAMMA*sf3%film_evap_leaf(1:n)
+         film_evap_wood_bw(1:n) = (1.0_wp - GAMMA)*sf2%film_evap_wood(1:n) + GAMMA*sf3%film_evap_wood(1:n)
+         call advance_surf_water_full(y, frozen, n, dt, film_evap_leaf_bw, film_evap_wood_bw, y_out)
+         !----- embedded 1st-order error estimate (mass is split out -> zeroed). -------------------------!
+         call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
+         !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
+         !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
+         if (present(bf)) then
+            call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
+            !----- b-weighted TIME INTEGRAL of the tissue temperatures, same b^I = (0, 1-gamma, gamma)   !
+            !      weights and the same telescoping argument as every other amount in bf. This is what    !
+            !      the store's energy is set from -- see column_bflux_t's own note. --------------------!
+            allocate(bf%tissue_leaf_int(n), bf%tissue_wood_int(n))
+            bf%tissue_leaf_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%leaf_temp(1:n) + GAMMA*sf3%leaf_temp(1:n))
+            bf%tissue_wood_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%wood_temp(1:n) + GAMMA*sf3%wood_temp(1:n))
+         end if
+      end associate
    end subroutine ark2_column_step
 
 
@@ -170,14 +179,16 @@ contains
    ! is the local error; the WRMS of it vs tolerance drives accept/reject via adaptive_step_update     !
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
-   subroutine adaptive_ark_march(y0, frozen, n, nsl, t_end, ec, dt_init, y_out, nsteps, nrej, niter, acc, &
-                                 dt_warm_out, clamp_n, floor_mass, floor_n)
+   subroutine adaptive_ark_march(y0, frozen, col_config, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, niter, acc, &
+                                 dt_warm_out, clamp_n, floor_mass, floor_n, hydro_nsub, hydro_nonconv)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
+      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
       integer(ik),           intent(in)  :: n, nsl
       real(wp),              intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
-      type(column_state_t),  intent(out) :: y_out
+      type(column_state_t),  intent(inout) :: y_out  !< filled in place
+      type(ark_workspace_t), intent(inout) :: ws     !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
       !----- section 8e WARM START: the controller proposal to seed the NEXT call with. Only steps that  !
@@ -194,8 +205,9 @@ contains
       !      discipline (#148). -------------------------------------------------------------------!
       real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
       integer(ik), optional, intent(inout) :: floor_n
+      !----- The corrector's hydraulics work over the whole march, rejected trials included. ---!
+      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
 
-      type(column_state_t) :: y, y_new, y_err, y_lo
       type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
       integer(ik)          :: np
@@ -208,79 +220,82 @@ contains
       real(wp)             :: fmass_try
       integer(ik)          :: fn_try
 
-      np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
-      if (present(acc)) call bflux_zero(acc, n)
-      !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
-      !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
-      !      -- e.g. a stiff transient the tolerance can't resolve. A tiny absolute floor (the old 1e-2s) !
-      !      let a pathological step balloon to ~1.8e5 sub-steps and stall the march; t_end/64 caps it at !
-      !      64 and degrades gracefully. (Also surfaces a genuine non-finite state promptly rather than   !
-      !      grinding at the floor forever.) -----------------------------------------------------------!
-      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
+      associate (y => ws%y_march, y_new => ws%y_new, y_err => ws%y_err, y_lo => ws%y_lo)
+         np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
+         if (present(acc)) call bflux_zero(acc, n)
+         !----- substep FLOOR: bound the worst case to ~t_end/DT_FLOOR sub-steps. The ARK2 BE stages are    !
+         !      L-stable, so a floor step is STABLE (bounded) even when the embedded error stays above tol   !
+         !      -- e.g. a stiff transient the tolerance can't resolve. A tiny absolute floor (the old 1e-2s) !
+         !      let a pathological step balloon to ~1.8e5 sub-steps and stall the march; t_end/64 caps it at !
+         !      64 and degrades gracefully. (Also surfaces a genuine non-finite state promptly rather than   !
+         !      grinding at the floor forever.) -----------------------------------------------------------!
+         dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
 
-      call state_init(y0, n, nsl, y)
-      t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
-      err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
-      dt_warm = dt                                                ! fallback if every step is end-clamped
-      do
-         if (t >= t_end - tiny_num) exit
-         dt_try = dt
-         dt = min(dt, t_end - t)
-         clamped = dt < dt_try - tiny_num
-         fmass_try = 0.0_wp ; fn_try = 0_ik
-         call ark2_column_step(y, frozen, n, nsl, dt, y_new, y_err, niter=np, bf=bfsub,          &
-                               clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try)
-         call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
-         !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
-         !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
-         !      outside the ESDIRK tableau -- so they dilute rather than inform. That is accepted          !
-         !      deliberately: one norm, no per-scheme opt-outs, and the measured cost is 0-1% in accuracy  !
-         !      against a 9-15% FALL in sub-steps (MEDS_INTEGRATOR_PARITY.md [RETIRED] §3f). --------------------!
-         err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols)
-         !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
-         !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
-         !      is simply TOO BIG: REJECT it and shrink dt deterministically (the NaN poisons the adaptive !
-         !      fac, so use fmin directly). At a smaller dt, Y2 ~ y and base3 no longer overshoots, so the !
-         !      step becomes finite and the march recovers -- the correct adaptive response, not a force-  !
-         !      accept. Only if even a floor-sized step is non-finite do we commit + bail so meds_main's    !
-         !      has_nan check reports it cleanly instead of the march hanging.                              !
-         if (err /= err .or. dt /= dt) then
-            if (dt <= dt_floor) then
-               call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik
-               if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! committed: declare it
-               if (present(floor_n))    floor_n    = floor_n    + fn_try
-               exit
+         call state_init(y0, n, nsl, y)
+         t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
+         err_prev = -1.0_wp                                          ! < 0 => first step uses the I-controller
+         dt_warm = dt                                                ! fallback if every step is end-clamped
+         do
+            if (t >= t_end - tiny_num) exit
+            dt_try = dt
+            dt = min(dt, t_end - t)
+            clamped = dt < dt_try - tiny_num
+            fmass_try = 0.0_wp ; fn_try = 0_ik
+            call ark2_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, ws%stages, niter=np, bf=bfsub,          &
+                                  clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try,             &
+                                  hydro_nsub=hydro_nsub, hydro_nonconv=hydro_nonconv)
+            call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
+            !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
+            !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
+            !      outside the ESDIRK tableau -- so they dilute rather than inform. That is accepted          !
+            !      deliberately: one norm, no per-scheme opt-outs, and the measured cost is 0-1% in accuracy  !
+            !      against a 9-15% FALL in sub-steps (MEDS_INTEGRATOR_PARITY.md [RETIRED] §3f). --------------------!
+            err = state_wrms_grouped(y_new, y_lo, y, n, nsl, ec%tols)
+            !----- ROBUSTNESS: a non-finite err (a stage -- typically the BETA=2.414 stage-3 extrapolation    !
+            !      base3 -- overshot the CAS enthalpy into a region where qsat(T) overflows) is a step that   !
+            !      is simply TOO BIG: REJECT it and shrink dt deterministically (the NaN poisons the adaptive !
+            !      fac, so use fmin directly). At a smaller dt, Y2 ~ y and base3 no longer overshoots, so the !
+            !      step becomes finite and the march recovers -- the correct adaptive response, not a force-  !
+            !      accept. Only if even a floor-sized step is non-finite do we commit + bail so meds_main's    !
+            !      has_nan check reports it cleanly instead of the march hanging.                              !
+            if (err /= err .or. dt /= dt) then
+               if (dt <= dt_floor) then
+                  call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik
+                  if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! committed: declare it
+                  if (present(floor_n))    floor_n    = floor_n    + fn_try
+                  exit
+               end if
+               nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
             end if
-            nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
-         end if
-         fac = step_control_factor(err, err_prev, ec)             ! I (default) or PI (Gustafsson) controller
-         if (err <= 1.0_wp .or. dt <= dt_floor) then
-            !----- L2 STRICT: a floor-forced accept that still breaches tolerance is a FAILURE to meet the  !
-            !      requested accuracy -- fail hard rather than silently commit an under-resolved step (L1    !
-            !      degrades gracefully; L2 is the faithful/validation mode). -------------------------------!
-            if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
-               error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
-            call state_init(y_new, n, nsl, y)
-            if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
-            if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! ...and their floor water
-            if (present(floor_n))    floor_n    = floor_n    + fn_try
-            t = t + dt ; nsteps = nsteps + 1_ik
-            err_prev = err                                        ! remember for the PI controller
-            !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
-            !      growth factor is applied. Seeding the next call with the GROWN proposal (dt*fac, fac    !
-            !      up to fmax=5) re-imports the very over-estimate that gets rejected -- measured, it left !
-            !      the rejection rate at 26-29% instead of collapsing it. The last accepted size is the    !
-            !      one with evidence behind it. ---------------------------------------------------------!
-            if (.not. clamped) dt_warm = dt
-            dt = dt * fac
-         else
-            nrej = nrej + 1_ik
-            dt = dt * fac
-         end if
-         if (nsteps + nrej > 4096_ik) exit                        ! hard backstop (should never trigger)
-      end do
-      call state_init(y, n, nsl, y_out)
-      if (present(dt_warm_out)) dt_warm_out = dt_warm
+            fac = step_control_factor(err, err_prev, ec)             ! I (default) or PI (Gustafsson) controller
+            if (err <= 1.0_wp .or. dt <= dt_floor) then
+               !----- L2 STRICT: a floor-forced accept that still breaches tolerance is a FAILURE to meet the  !
+               !      requested accuracy -- fail hard rather than silently commit an under-resolved step (L1    !
+               !      degrades gracefully; L2 is the faithful/validation mode). -------------------------------!
+               if (ec%level == CTRL_L2_STRICT .and. err > 1.0_wp) &
+                  error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
+               call state_init(y_new, n, nsl, y)
+               if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
+               if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! ...and their floor water
+               if (present(floor_n))    floor_n    = floor_n    + fn_try
+               t = t + dt ; nsteps = nsteps + 1_ik
+               err_prev = err                                        ! remember for the PI controller
+               !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
+               !      growth factor is applied. Seeding the next call with the GROWN proposal (dt*fac, fac    !
+               !      up to fmax=5) re-imports the very over-estimate that gets rejected -- measured, it left !
+               !      the rejection rate at 26-29% instead of collapsing it. The last accepted size is the    !
+               !      one with evidence behind it. ---------------------------------------------------------!
+               if (.not. clamped) dt_warm = dt
+               dt = dt * fac
+            else
+               nrej = nrej + 1_ik
+               dt = dt * fac
+            end if
+            if (nsteps + nrej > 4096_ik) exit                        ! hard backstop (should never trigger)
+         end do
+         call state_init(y, n, nsl, y_out)
+         if (present(dt_warm_out)) dt_warm_out = dt_warm
+      end associate
    end subroutine adaptive_ark_march
    !=======================================================================================!
    !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
@@ -293,7 +308,7 @@ contains
    !  free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the state vector.  !
    !=======================================================================================!
    subroutine column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
-                                   gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
+                                   ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
@@ -304,6 +319,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
+      type(ark_workspace_t),   intent(inout) :: ws    !< this thread's reusable step storage (#195)
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
       logical,     optional,   intent(out)   :: converged
@@ -377,27 +393,29 @@ contains
          !      dial), plus the controller + strictness. Defaults (CTRL_I, CTRL_L1, rtol_all unset)       !
          !      reproduce the legacy march byte-for-byte. ------------------------------------------------!
          ec = col_config%integrator%error_control
-         call adaptive_ark_march(y, frozen, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
+         call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
                                  clamp_n=budget%clamp_stage_n,                                  &
-                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
+                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,   &
+                                 hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
          biophys%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
-            call ark2_column_step(ycur, frozen, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr,          &
+            call ark2_column_step(ycur, frozen, col_config, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
                                   clamp_n=budget%clamp_stage_n,                                 &
-                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n)
+                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,  &
+                                  hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
          y_out = ycur ; nsteps = nsub
       end if
       !----- section 5.3 WORK counters: record what the march actually cost. hydro_nsub/hydro_nonconv  !
-      !      are set ONCE by the Act-1 pre-pass's solve_plant_water_batch call (build_column_frozen),     !
-      !      NOT here -- there is no more per-stage hydraulics solve to accumulate over sub-steps. -------!
+      !      start from the pre-pass's solve (build_column_frozen) and the march adds the corrector's   !
+      !      solve on every ARK attempt. --------------------------------------------------------------!
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
       !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !

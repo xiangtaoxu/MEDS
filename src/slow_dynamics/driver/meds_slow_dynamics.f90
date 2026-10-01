@@ -9,6 +9,7 @@
 module meds_slow_dynamics
    use meds_kinds,                 only : wp, ik
    use meds_config,                only : meds_config_t
+   use meds_time,                  only : meds_time_t, day_of_year
    use meds_site_state_types, only : site_t
    use meds_demography_update, only : update_patch_states
    use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand
@@ -30,12 +31,13 @@ contains
    ! Advance one slow step: vegetation dynamics (demographic rates + apply-primitives; returns  !
    ! this step's litter accumulator), the shared patch-ageing applier, then -- when soil_carbon_  !
    ! on -- the daily soil-carbon matrix step consuming that litter + the fast loop's day-          !
-   ! integrated environmental scalar. Same signature as vegetation_dynamics (doy optional).        !
+   ! integrated environmental scalar. `step_start` gives leaf phenology its day of year; without  !
+   ! it (a bare test call) the phenology is not advanced.                                         !
    !---------------------------------------------------------------------------------------!
-   subroutine advance_slow_dynamics(site, cfg, doy, seam, ledger, rho_air, latitude_deg)
+   subroutine advance_slow_dynamics(site, cfg, step_start, seam, ledger, rho_air, latitude_deg)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
-      integer(ik),         intent(in), optional :: doy
+      type(meds_time_t),   intent(in), optional :: step_start   !< the slow step's start (its day of year)
       type(soilc_seam_t),  intent(inout), optional :: seam   !< per-run seam diagnostics (see the biogeochem driver)
       !----- The site conservation ledger (plan §10.2). Optional so a test, a probe or the C-API   !
       !      can advance a slow step without one; every entry point is a no-op when it is absent   !
@@ -46,8 +48,8 @@ contains
 
       if (present(ledger)) call slow_ledger_open(ledger, site, cfg, rho_air)
 
-      if (present(doy)) then
-         call vegetation_dynamics(site, cfg, doy, ledger, latitude_deg)
+      if (present(step_start)) then
+         call vegetation_dynamics(site, cfg, day_of_year(step_start), ledger, latitude_deg)
       else
          call vegetation_dynamics(site, cfg, ledger=ledger, latitude_deg=latitude_deg)
       end if

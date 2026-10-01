@@ -1,8 +1,11 @@
 # MEDS MAIN run configuration -- all NON-PFT parameters. Read by meds_main (the CLI argument,
 # default ./meds_config_main.toml). It names the PFT config file via [init].pft_config.
 #
-# PHILOSOPHY: no model parameter is hard-coded; EVERY key below is REQUIRED (a missing key, or
-# a missing file, is a hard error). PFT-specific parameters live in the separate PFT file.
+# PHILOSOPHY: no model parameter is hard-coded. This file lists EVERY key MEDS reads from a main
+# config: a key that is set below is a model parameter or a choice the run must state, and a
+# missing one is a hard error; a commented-out key is optional and shows its default. A key that
+# is not listed here is not a MEDS key -- a run that sets one stops and names it (a misspelling
+# would otherwise run silently on the default). PFT-specific parameters live in the PFT file.
 # Relative paths resolve against the directory you RUN meds_main from (the working directory).
 
 [run]
@@ -22,6 +25,10 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
                                # Incompatible with [fast].fast_probe (one shared, order-significant
                                # CSV); that combination is a hard config error.
 
+# slow_on = true               # false skips the whole slow tier (growth, mortality, phenology,
+                               # traits, demography, soil carbon) every step, holding the stand
+                               # static while the fast loop still runs. Broader than
+                               # [demography].demography_on, which freezes only restructuring.
 # slow_ledger_on = true        # SITE conservation ledger across each slow step (plan section 10.2).
                                # Snapshots the site's carbon / water / energy stores either side of
                                # every slow-step operator -- allocation, growth+mortality, recruitment,
@@ -51,10 +58,37 @@ dt_fast             = "900s"   # fast biophysics timestep. No longer stability-l
                                # 0.05% and ET to ~1%; with it ON, 900 s costs -33% GPP / -24% ET,
                                # because psi_leaf is not converged in dt_fast and that limb amplifies
                                # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
-# ---- inner-solve knobs + option selectors (ARK Newton iteration cap etc.;                        ----
-#      all DEFAULTED, so this whole block may be omitted) ----
-# soil_water_coupling = "lagged"      # "lagged" | "coupled"; RESERVED for a future optimization (P3f) --
-#                                      # no behavioral effect yet, both re-solve soil water each pass today
+# ---- The time integrator and its error control (docs/science/numerical_scheme.md). Every key
+#      is optional, at the default shown. ----
+# time_integrator     = "ark"        # "ark" (ESDIRK2) | "rk45" (explicit, for comparison)
+# ark_adaptive        = true         # adaptive substeps under the error control; false = a fixed number
+# ark_fixed_substep   = 4            # [-]  substeps per dt_fast when ark_adaptive = false
+# ark_dt_init         = 0.0          # [s]  first adaptive substep (0 = dt_fast)
+# ark_rtol            = 1.0e-3       # [-]  relative tolerance, for every tolerance group
+# rtol_all            = 0.0          # [-]  > 0: one accuracy target for every group (0 = unset)
+# atol_scale          = 1.0          # [-]  multiplier on every group's absolute tolerance
+# error_level         = "adaptive"   # "fixed" | "adaptive" | "strict" (adaptive, and a substep that
+#                                    #   cannot meet the tolerance at the floor step is an error)
+# step_controller     = "i"          # "i" (integral) | "pi" (proportional-integral: damps step-size hunting)
+# ark_coupled         = true         # the leaf <-> canopy-air surface solve: true = coupled Newton,
+#                                    #   false = one uncoupled backward-Euler pass
+# ---- Process switches and initial seeds. ----
+# forcing_sample_frac = 0.5          # [-]  where in each sub-step the forcing is sampled, in [0, 1]
+# cas_condensation    = true         # condense canopy-air supersaturation
+# canopy_water_on     = false        # canopy interception film, its evaporation, and dew
+# snow_init_swe       = 0.0          # [kg/m2] snow water equivalent seeded at the run start
+# snow_init_temp      = 270.0        # [K]  temperature of that seeded pack
+# fast_probe          = false        # one CSV row per (patch, sub-step), for debugging; needs n_threads = 1
+# fast_probe_file     = "fast_probe.csv"
+# ---- The process mask: switch one prognostic store off to isolate a process (all on = the full
+#      column). ----
+# mask.veg_energy     = true         # leaf and wood energy
+# mask.cas_energy     = true         # canopy-air enthalpy
+# mask.cas_vapour     = true         # canopy-air humidity
+# mask.cas_co2        = true         # canopy-air CO2
+# mask.soil_heat      = true         # soil heat
+# mask.soil_water     = true         # soil water
+# mask.hydraulics     = true         # plant hydraulics
 
 [hydraulics]
 # Plant-hydraulics parameters (PFT-uniform MVP), consumed ONLY when [fast].fast_biophysics_on = true.
@@ -105,6 +139,9 @@ dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil e
 dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
 psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
 psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
+ground_albedo_vis = 0.15      # [-]      bare-soil albedo, visible
+ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
+ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
 
 # ------------------------------------------------------------------------------------------
 # [soil_column] -- the PHYSICAL soil column the Richards solver above is solved OVER.
@@ -144,6 +181,8 @@ dry_heat_capacity  = 2.0e6 # [J/m3/K] dry-matrix volumetric heat capacity
 # of the integrated soil energy is controlled by the outer adaptive march (GRP_SE), not by this
 # block. The adaptive-substep keys (rtol, h_init, max_substep) were removed as unread (#163).
 atol           = 1.0e-2       # [K]  budget-closure threshold for the debug halt (NOT a step tolerance)
+# debug_error    = false        # true: a budget breach above atol STOPS the run (for bisecting one);
+                              #   false: it is reported and the run goes on
 
 #----- THERMAL bottom boundary. NOTE this is [energy].bottom_bc, NOT [soil].bottom_bc -- the latter
 #      is the WATER boundary (free_drain | bedrock | aquifer). Two different keys, two different
@@ -193,7 +232,7 @@ z0_snow            = 0.001    # [m]     snow surface roughness (aerodynamic buri
 
 [aerodynamics]
 # Canopy-aerodynamics run constants (CLM5 Monin-Obukhov + ED2 boundary layers). Every key OPTIONAL;
-# defaults = ED2/CLM5 reference values. (The von Karman constant lives in meds_constants; the Nusselt
+# the defaults are ED2/CLM5 reference values. (The von Karman constant lives in meds_constants; the Nusselt
 # leaf/wood coefficient tables keep their literature defaults and are not exposed here.)
 z0m_ratio        = 0.13       # [-]   z0m / canopy height (ED2 vh2vr)
 d_ratio          = 0.63       # [-]   displacement / canopy height (ED2 vh2dh)
@@ -257,6 +296,10 @@ init_mode    = 0                              # 0 = near-bare ground | 1 = cohor
 restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
 census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (init_mode = 1)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
+# soil_temp          = 288.0      # [K]      initial soil temperature, every layer (init_mode 0 and 1)
+# soil_theta         = 0.30       # [m3/m3]  initial soil moisture, every layer (init_mode 0 and 1)
+# reacclimate_traits = false      # restart only: re-derive the plastic leaf traits from THIS run's PFT
+#                                 #   file rather than keep the state file's
 
 [state]
 # The STATE (restart) stream + the run's PFT provenance table. The legacy annual DIAGNOSTIC
@@ -285,7 +328,7 @@ prefix        = "meds"          # filename stem
 io_config     = ""              # OPTIONAL meds_io_config.toml with per-variable overrides
 cohort_max    = 4096            # fixed cohort netCDF dim (live n must not exceed it)
 patch_max     = 256             # fixed patch netCDF dim
-strict_caps   = false           # false: warn+truncate on n>cap; true: error stop
+fast_interval_steps = 4         # a FAST record spans this many dt_fast sub-steps (4 x 900 s = hourly)
 sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed records are written at
                                 #   month boundaries (the I/O phase), so a crash loses at most the
                                 #   current month's output; the checkpoint bounds the rerun
@@ -322,7 +365,6 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
   #     hard-errors the moment [output].enabled turns on (it parsed the whole tail as the value).
   [output.fast]
   enabled = false
-  interval_steps = 4
   file_chunk = "day"
   [output.daily]
   enabled = true
@@ -338,16 +380,17 @@ sync_every    = "flush"         # nc_sync durability: "flush" | "never". Closed 
 override_derived = false   # if true, a [derived] block in the PFT file pins mort_gamma/alpha/beta
 
 [carbon]
-# Carbon-driven growth (opt-in). "empirical" keeps the phenomenological path (default, bit-identical);
-# "carbon" makes wood_carbon the prognostic size anchor, growth driven by NPP (stub GPP until canopy RT).
-gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area (carbon mode only)
+gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, used when the fast loop is off
 
 # ------------------------------------------------------------------------------------------
 # Leaf phenology runs in every run's slow loop; there is no switch. The slow-loop driver advances
 # each cohort's cue memory (GDD / chilling) from the daily-mean air temperature, and the carbon
-# leaf-flush gate obeys the resulting ON/OFF/DORMANT status, so phenology only CHANGES a run under
-# [carbon].growth_source = "carbon". The daily temperature comes from the fast loop. Per-PFT cue
-# parameters live in the PFT config file's [phenology] block.
+# leaf-flush gate obeys the resulting ON/OFF/DORMANT status. The daily temperature comes from the
+# fast loop. Per-PFT cue parameters live in the PFT config file's [phenology] block.
+
+[trait_dynamics]
+# trait_plasticity_on = false     # acclimate each cohort's leaf traits (sla, vcmax25, rd25, llspan)
+                                  #   to the leaf area above it; false keeps the PFT's top-of-canopy values
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
@@ -388,6 +431,63 @@ ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+# Thermal acclimation (#176, Kattge & Knorr 2007): ds_vcmax, ds_jmax and Jmax/Vcmax follow the
+# running-mean growth temperature Tg [degC]: ds = a - b*Tg, Jmax/Vcmax = a - b*Tg. Only with
+# temp_response_form = "peaked". Every key optional, at the published values shown.
+# thermal_acclimation = false
+# acclim_ds_vcmax_a   = 668.39     # [J/mol/K]
+# acclim_ds_vcmax_b   = 1.07       # [J/mol/K2]
+# acclim_ds_jmax_a    = 659.70     # [J/mol/K]
+# acclim_ds_jmax_b    = 0.75       # [J/mol/K2]
+# acclim_jv_a         = 2.59       # [-]
+# acclim_jv_b         = 0.035      # [1/K]
+# acclim_window_days  = 30.0       # [day] growth-temperature running-mean window
+
+[soil_carbon]
+# The CENTURY soil-carbon matrix (docs/science/soil_carbon.md). Every key optional; the defaults
+# shown are ED2's, so the block may be omitted. Rates are per year.
+# soil_carbon_on      = true       # master switch: false is NO soil carbon, not a coarser one
+# decomp_scheme       = "ed2"      # "ed2" | "century5" (the texture-controlled scheme 5)
+# step_solver         = "euler"    # "euler" | "expm" (matrix exponential)
+# k_fast              = 11.0       # [1/yr] baseline decay rates
+# k_struct            = 4.5
+# k_micr              = 0.0        #   0 = inert (scheme 5: 6.0)
+# k_slow              = 0.2
+# k_pass              = 0.0        #   0 = inert (scheme 5: 0.012)
+# er_fast             = 1.0        # [-]  fractions respired on decay
+# er_struct_nonlig    = 0.3
+# er_struct_lig       = 0.3
+# er_slow             = 1.0
+# er_pass             = 1.0
+# e_lignin            = 3.0        # [-]  lignin brake: decay x exp(-e_lignin * lignin fraction)
+# er_micr_int         = 0.0        # [-]  scheme 5: microbial respired fraction = int + slp * xsand
+# er_micr_slp         = 0.0
+# xsand               = 0.35       # [-]  sand fraction
+# xclay               = 0.25       # [-]  clay fraction
+# fx_micr_pass_int    = 0.003      # [-]  scheme 5: microbial -> passive routing = int + slp * xclay
+# fx_micr_pass_slp    = 0.032
+# fx_slow_pass_int    = 0.003      # [-]  scheme 5: slow -> passive routing = int + slp * xclay
+# fx_slow_pass_slp    = 0.009
+# agf_fast            = 0.5        # [-]  above-ground share of the fast litter input
+# agf_struct          = 0.7        # [-]  above-ground share of the structural litter input
+# rh_q10              = 1.5        # [-]  Q10 of decomposition (scheme 5)
+# rh_t_ref            = 288.15     # [K]  its reference temperature
+# resp_temp_increase  = 0.0757     # [1/K] ED2 temperature response: slope
+# resp_temp_ref       = 318.15     # [K]  and its saturation temperature
+# resp_opt_water      = 0.8938     # [-]  ED2 water response: optimum relative moisture
+# resp_water_below_opt = 5.0786    # [-]  and its shape below and above the optimum
+# resp_water_above_opt = 4.5139
+# n_cycle_on          = false      # nitrogen (shaped in, inert)
+# c2n_structural      = 150.0      # [kgC/kgN]
+# c2n_slow            = 10.0
+# c2n_fast            = 30.0
+# n_immobil_supply_scale = 0.0     # [1/yr] (ED2: 40)
+# spinup_steady       = false      # start from the semi-analytic steady state (SASU), not from zero
+# spinup_xi           = 1.0        # [-]  its climatological mean environmental scalar
+# spinup_labile_grnd  = 0.0        # [kgC/m2/day] its constant litter estimate, per input pool
+# spinup_labile_soil  = 0.0
+# spinup_struct_grnd  = 0.0
+# spinup_struct_soil  = 0.0
 
 # ------------------------------------------------------------------------------------------
 # Meteorological forcing (OPT-IN). Absent or forcing_on=false -> the fast loop uses the
@@ -460,7 +560,10 @@ phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # avg_convention        = "end"          # flux vars mean over the interval ENDING at the stamp;
 #                                        # "begin" for one BEGINNING there (AmeriFlux TIMESTAMP_START)
 # sw_partition          = "clearidx"     # total SW -> streams: "clearidx" (Erbs) | "weiss_norman" | "passthrough"
-# lwdown_source         = "file"         # ERA5-Land has strd
+# lwdown_source         = "file"         # ERA5-Land has strd; "synthesize" builds it from T, q and cloudiness
+# lw_clear_form         = "brutsaert"    # lwdown_source = "synthesize" only: clear-sky emissivity, "brutsaert"
+#                                        # (screen-level vapour pressure) | "idso" (temperature alone)
+# lw_cloud_a            = 0.22           # [-] lwdown_source = "synthesize" only: cloud term (1 + a(1-kt))
 #   ---- CO2: never from the met file (one that carries CO2air is rejected) ----------------------
 # co2_source            = "const"        # "const" (default) | "file": the CO2 on MODEL time, every backend
 # co2_const             = 420.0          # [umol/mol] co2_source = "const" only

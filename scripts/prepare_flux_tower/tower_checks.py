@@ -89,7 +89,7 @@ def check_sun(stamps_utc, sw, site, shifts_min=range(-60, 61, 5)):
     envelope = frame.groupby(["month", "slot"])["sw"].quantile(0.95)
 
     def rmse(shift_min):
-        cz = ti.mff.window_mean_cosz(start[ok] + np.timedelta64(int(shift_min * 60), "s"), site.timestep,
+        cz = ti.conv.window_mean_cosz(start[ok] + np.timedelta64(int(shift_min * 60), "s"), site.timestep,
                                      site.latitude, site.longitude)
         model = pd.Series(cz, index=frame.index).groupby([frame["month"], frame["slot"]]).mean()
         k = float((envelope * model).sum() / max((model ** 2).sum(), 1e-30))
@@ -97,9 +97,9 @@ def check_sun(stamps_utc, sw, site, shifts_min=range(-60, 61, 5)):
 
     scores = {s: rmse(s) for s in shifts_min}
     best = min(scores, key=scores.get)
-    cz0 = ti.mff.window_mean_cosz(start, site.timestep, site.latitude, site.longitude)
+    cz0 = ti.conv.window_mean_cosz(start, site.timestep, site.latitude, site.longitude)
     total = float(np.nansum(np.maximum(sw, 0.0)))
-    night = float(np.nansum(np.where(cz0 <= ti.mff.COSZ_BAR_MIN, np.maximum(sw, 0.0), 0.0)))
+    night = float(np.nansum(np.where(cz0 <= ti.conv.COSZ_BAR_MIN, np.maximum(sw, 0.0), 0.0)))
     night_fraction = night / total if total > 0 else 0.0
     result = dict(best_shift_min=float(best), rmse_at_declared=scores[0], rmse_at_best=scores[best],
                   night_shortwave_fraction=night_fraction)

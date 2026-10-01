@@ -32,6 +32,7 @@ module meds_fast_types
    use meds_budget_check, only : budget_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table
+   use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
@@ -46,7 +47,7 @@ module meds_fast_types
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t, column_params_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, ark_workspace_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
 
@@ -621,19 +622,6 @@ module meds_fast_types
       integer(ik), allocatable :: pft(:)
    end type plant_water_t
 
-   !----- Parameter records the stages read, COPIED from column_config_t once per dt_fast. They are  !
-   !      here only because the march signatures (both schemes and the RK4 oracle) carry the frozen  !
-   !      record and not the column configuration; passing them instead of copying them is the       !
-   !      remaining step of the decomposition (2026-09 review, decisions after items 4-6). ----------!
-   type :: column_params_t
-      type(soil_params_t)         :: soil         !< soil geometry + texture (dz, root_frac, ...)
-      type(soil_thermal_params_t) :: therm        !< soil thermal texture
-      type(energy_opts_t)         :: energy_opts  !< soil-thermal options (phase change)
-      type(soil_opts_t)           :: hydro_opts   !< soil-water (Richards) options
-      type(hydro_params_table_t)  :: hydraulics_table       !< PER-PFT PV curves + vulnerability (#179)
-      type(hydro_opts_t)          :: hydraulics_opts      !< hydraulics kernel solver options (for the corrector)
-   end type column_params_t
-
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
    !----- The frozen outcome of one pre-column snow advance. Every field is 0/.false. when snow is  !
    !      off or no pack exists, and the consumers are written so that those values reduce their     !
@@ -674,8 +662,22 @@ module meds_fast_types
       type(soil_hydrology_t)       :: hydrology    !< the scratch soil-water solve's outcome
       type(root_zone_t)            :: roots        !< realized uptake, its placement, the rhizosphere boundary
       type(plant_water_t)          :: plant        !< frozen sapflow/uptake + cohort geometry for the corrector
-      type(column_params_t)        :: params       !< parameter copies (see column_params_t)
    end type column_frozen_t
+
+   !----- Storage the ARK march reuses from step to step on one thread (#195). Every routine that      !
+   !      writes into it fills its fields in place, so the arrays are allocated again only when the    !
+   !      cohort count changes (when the thread moves to a patch with a different number of cohorts). !
+   !      The step's stages are a record of their own so that the march can hand them to the step      !
+   !      beside its own states without passing any storage twice.                                     !
+   type :: ark_stages_t
+      type(column_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
+      type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
+   end type ark_stages_t
+
+   type :: ark_workspace_t
+      type(column_state_t) :: y_march, y_new, y_err, y_lo   !< the adaptive march's state and trial step
+      type(ark_stages_t)   :: stages                        !< the step's stages
+   end type ark_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
    type :: column_tend_t
@@ -889,12 +891,12 @@ contains
    subroutine fill_hydro_params(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydraulics_params
-      hydraulics_params%leaf_pi0       = hcfg%leaf_pi0       ; hydraulics_params%leaf_elastic_mod       = hcfg%leaf_elastic_mod
-      hydraulics_params%leaf_apoplast_frac = hcfg%leaf_apoplast_frac
-      hydraulics_params%leaf_water_sat     = hcfg%leaf_water_sat
-      hydraulics_params%wood_pi0       = hcfg%wood_pi0       ; hydraulics_params%wood_elastic_mod       = hcfg%wood_elastic_mod
-      hydraulics_params%wood_apoplast_frac = hcfg%wood_apoplast_frac
-      hydraulics_params%wood_water_sat     = hcfg%wood_water_sat
+      hydraulics_params%leaf_curve = water_curve_t(pi0 = hcfg%leaf_pi0, elastic_mod = hcfg%leaf_elastic_mod,         &
+                                                   apoplast_frac = hcfg%leaf_apoplast_frac,                          &
+                                                   water_sat = hcfg%leaf_water_sat)
+      hydraulics_params%wood_curve = water_curve_t(pi0 = hcfg%wood_pi0, elastic_mod = hcfg%wood_elastic_mod,         &
+                                                   apoplast_frac = hcfg%wood_apoplast_frac,                          &
+                                                   water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
       hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
@@ -919,14 +921,14 @@ contains
       allocate(table%pft(max(pft%n, 1_ik)))
       do i = 1_ik, pft%n
          call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
-         call ovr(table%pft(i)%leaf_pi0,           pft%hyd_leaf_pi0(i))
-         call ovr(table%pft(i)%leaf_elastic_mod,   pft%hyd_leaf_elastic_mod(i))
-         call ovr(table%pft(i)%leaf_apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
-         call ovr(table%pft(i)%leaf_water_sat,     pft%hyd_leaf_water_sat(i))
-         call ovr(table%pft(i)%wood_pi0,           pft%hyd_wood_pi0(i))
-         call ovr(table%pft(i)%wood_elastic_mod,   pft%hyd_wood_elastic_mod(i))
-         call ovr(table%pft(i)%wood_apoplast_frac, pft%hyd_wood_apoplast_frac(i))
-         call ovr(table%pft(i)%wood_water_sat,     pft%hyd_wood_water_sat(i))
+         call ovr(table%pft(i)%leaf_curve%pi0,           pft%hyd_leaf_pi0(i))
+         call ovr(table%pft(i)%leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod(i))
+         call ovr(table%pft(i)%leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
+         call ovr(table%pft(i)%leaf_curve%water_sat,     pft%hyd_leaf_water_sat(i))
+         call ovr(table%pft(i)%wood_curve%pi0,           pft%hyd_wood_pi0(i))
+         call ovr(table%pft(i)%wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod(i))
+         call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
+         call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
          call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))

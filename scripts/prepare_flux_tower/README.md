@@ -119,4 +119,5 @@ such as ERA5-Land or a nearby station, is the user's to do in the tower file bef
 | `tower_gapfill.py` | the fills, the longwave predictors, re-centring |
 | `compare_longwave_fill.py` | the longwave comparison |
 | `tests/test_tower_forcing.py` | synthetic towers from a known sun and known humidity |
-| `../forcing_common/meds_forcing_file.py` | the shared writer, and the Python copy of the model's conversions |
+| `tower_conversions.py` | the Python copy of the model's conversions (humidity, pressure, sun, longwave synthesis) |
+| `../meds_forcing_file.py` | the writer of the forcing file, shared with `prepare_era5/make_forcing_file.py` |

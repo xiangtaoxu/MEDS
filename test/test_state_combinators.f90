@@ -19,7 +19,8 @@ program test_state_combinators
    use meds_kinds,            only : wp, ik
    use meds_fast_types,       only : column_state_t, column_tend_t, patch_biophys_t
    use meds_column_state_ops, only : state_init, state_axpy, state_sub, state_err_diff, zero_like,  &
-                                     state_accum, state_extrap, unpack_column_state
+                                     state_accum, state_extrap, unpack_column_state,                  &
+                                     state_size, state_to_array, array_to_state, state_entry_rules
    use meds_therm_lib,        only : cas_temp_of_enthalpy
    use meds_test_support, only : banner, check, check_close
    implicit none
@@ -180,6 +181,30 @@ program test_state_combinators
       !      would be asserting that the synthetic fill happens to be physical, which it is not.  ---!
       call check_close(bio%cas%can_temp, cas_temp_of_enthalpy(a%cas_enthalpy, a%cas_shv),          &
                        1.0e-12_wp, 'unpack: can_temp re-diagnosed from the COMMITTED enthalpy')
+   end block
+
+   !=== 9. The field list itself: state_to_array and array_to_state are inverses over every      !
+   !       field, and the rules count exactly the canopy air, the soil and the plant water in the !
+   !       step-size norm (3 + 2*NSL + 2*N terms). A state reused as an output keeps its arrays. ==!
+   block
+      real(wp)    :: v(state_size(N, NSL))
+      integer(ik) :: j, grp, n_norm, n_err
+      logical     :: counted
+      call state_to_array(a, N, NSL, v)
+      call array_to_state(v, N, NSL, out)
+      call same(out, a, 'state_to_array -> array_to_state')
+      n_norm = 0_ik ; n_err = 0_ik
+      do j = 1_ik, state_size(N, NSL)
+         call state_entry_rules(j, N, NSL, grp, counted)
+         if (grp /= 0_ik) n_norm = n_norm + 1_ik
+         if (counted)     n_err  = n_err  + 1_ik
+      end do
+      call check('rules: the norm counts canopy air, soil and plant water',                          &
+                 real(n_norm, wp), real(3_ik + 2_ik*NSL + 2_ik*N, wp), 0.0_wp)
+      call check('rules: the embedded error counts canopy air and soil only',                        &
+                 real(n_err, wp), real(3_ik + 2_ik*NSL, wp), 0.0_wp)
+      call state_init(b, N, NSL, out)
+      call same(out, b, 'state_init into a reused output')
    end block
 
 contains

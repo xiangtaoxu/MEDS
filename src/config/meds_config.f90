@@ -16,11 +16,11 @@ module meds_config
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_hydr_lib,      only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
-                                   WIND_EXPOSURE_OPEN_TERRAIN
+                                   WIND_EXPOSURE_OPEN_TERRAIN, ARCHIVE_DT_SEC
    use meds_output_config,  only : output_config_t
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
@@ -207,11 +207,12 @@ module meds_config
       !      state and changes no answer -- only an end-of-run table -- so the only cost of leaving  !
       !      it on is a handful of reductions per simulated day.  ---------------------------------!
       logical     :: slow_ledger_on = .true.
-      !----- §7 C2 host THREADS over the fast-loop PATCH axis ([run].n_threads, DEFAULTED 1).       !
-      !      Patch columns are independent within a dt_fast, so this is the one lever that costs no  !
-      !      accuracy -- PROVIDED the answer does not move with the thread count, which is why the   !
-      !      site-level reductions are staged per (sub-step, patch) and folded back in patch order    !
-      !      (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
+      !----- Host THREADS ([run].n_threads, DEFAULTED 1). A site run puts them on the fast loop's    !
+      !      PATCH axis (§7 C2); a region run puts them on its POLYGONS, each polygon's patch loop   !
+      !      then running on one (#183 R3). Patches, and polygons, are independent within a step, so !
+      !      this is the one lever that costs no accuracy -- PROVIDED the answer does not move with  !
+      !      the thread count, which is why the site-level reductions are staged per (sub-step,       !
+      !      patch) and folded back in patch order (§7 C3). Default 1 so no existing result moves without opt-in, and so a build that       !
       !      happens to carry OpenMP flags (NVHPC MEDS_GPU=multicore puts -mp PUBLIC on               !
       !      meds_demography, which its dependents inherit) stays serial until asked. Has effect only !
       !      in an OpenMP build, which is the default; with -DMEDS_OPENMP=OFF the directives are      !
@@ -287,9 +288,9 @@ module meds_config
       !      Newton -- there is nothing in between. `ark_niter` was typed as an iteration cap but is    !
       !      only ever tested as `np <= 1` (column_be_stage), so every value > 1 behaved identically    !
       !      and the real cap is the NEWT_MAX = 4 parameter. It is a boolean, so it is spelled as one   !
-      !      now (plan E4). `fast.ark_niter` is still ACCEPTED and mapped (<=1 => .false.) so existing  !
-      !      TOMLs keep working; `fast.ark_coupled` is the honest name. `ark_relax` was deleted -- it   !
-      !      was vestigial on the Newton branch and read by nothing. ---------------------------------!
+      !      now (plan E4): `fast.ark_coupled`. The old `fast.ark_niter` is refused as retired         !
+      !      (meds_config_keys), naming it. `ark_relax` was deleted -- it was vestigial on the Newton     !
+      !      branch and read by nothing. --------------------------------------------------------------!
       logical     :: ark_coupled          = .true.      !< .false. = uncoupled single BE pass; .true. = 2x2 Newton
       !----- Sub-daily fast-loop diagnostic PROBE (opt-in; for the integrator/dt_fast evaluation): dumps !
       !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!
@@ -358,10 +359,10 @@ module meds_config
       !      the term is rarely measured directly, its two parameters (wstress_psi_open/_close) are !
       !      weakly constrained, and it acts as a LINEAR AMPLIFIER on psi_leaf -- with the ramp of  !
       !      the shipped PFT file, slope 0.5 per MPa, so a 1 MPa error in psi_leaf becomes a 50%    !
-      !      error in Vcmax. Measured consequence: psi_leaf is not converged in dt_fast (daytime    !
-      !      mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb turned that into a 33%  !
-      !      GPP shift; with it off, daily GPP is dt_fast-independent to 0.05%. The stomatal limb   !
-      !      (beta_stomata, driven by psi_SOIL) is unaffected and stays on.                         !
+      !      error in Vcmax. Before the transpiration corrector (#91), psi_leaf was not converged   !
+      !      in dt_fast (daytime mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb     !
+      !      turned that into a 33% GPP shift; with it off, daily GPP is dt_fast-independent to     !
+      !      0.05%. The stomatal limb (beta_stomata, driven by psi_SOIL) is unaffected and stays on. !
       logical     :: leaf_wstress_nonstomatal  !< if .true., apply the psi_leaf capacity limb
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
       real(wp) :: kc25, ko25, gstar25                   !< [Pa]    Michaelis constants + CO2 compensation point
@@ -718,24 +719,23 @@ contains
          !----- ...and the size of that bias depends ENTIRELY on whether the non-stomatal        !
          !      (capacity) water-stress limb is active. It is a linear ramp on Vcmax/Jmax/TPU in    !
          !      psi_leaf, so it AMPLIFIES the psi error into a carbon error. With it off (the        !
-         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%.        !
-         !      psi_leaf itself is still wrong -- it is simply no longer wired into carbon. --------!
+         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%. The     !
+         !      table below predates the transpiration corrector (#91), which removed most of the    !
+         !      psi error it amplifies; it has not been re-measured (numerical_scheme.md 5a). ------!
          if (cfg%dt_fast > 225.0_wp .and. cfg%leaf_wstress_nonstomatal) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 225 s WITH the non-stomatal water-stress'
             print '(a)', '  limb on ([leaf_physiology].wstress_nonstomatal) biases the CARBON budget.'
-            print '(a)', '  psi_leaf is not converged in dt_fast, and that limb is a linear amplifier'
-            print '(a)', '  on it. Measured on a high-LAI sunlit stand vs a 12.5 s reference:'
+            print '(a)', '  That limb is a linear amplifier on any psi_leaf error. Measured on a high-LAI'
+            print '(a)', '  sunlit stand vs a 12.5 s reference, before the transpiration corrector (#91):'
             print '(a)', '    dt_fast    150 s   300 s   450 s   900 s'
             print '(a)', '    GPP       -3.8%  -12.6%  -19.8%  -33.1%'
             print '(a)', '    ET        -2.6%   -8.7%  -14.5%  -23.8%'
             print '(a)', '  With the limb off those become -0.0% / -1.2% at 900 s. No conservation'
             print '(a)', '  budget detects either. Prefer dt_fast <= 225 s, or leave the limb off.'
          else if (cfg%dt_fast > 900.0_wp) then
-            print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. The'
-            print '(a)', '  canopy air is stable, and carbon is insensitive with the non-stomatal'
-            print '(a)', '  water-stress limb off, but psi_leaf itself is NOT converged in dt_fast'
-            print '(a)', '  (daytime mean -0.23 MPa at 12.5 s vs -1.6 MPa at 900 s). Anything keyed'
-            print '(a)', '  to leaf water potential inherits that.'
+            print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
+            print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
+            print '(a)', '  converge; above it neither has been measured.'
          end if
          if (cfg%dt_fast > 1800.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 1800 s is outside the measured range entirely.'
@@ -763,9 +763,9 @@ contains
          !      dt_fast therefore gets a psi_leaf the default scheme would not produce, silently.    !
          !      WARN rather than stop: rk45 is the deliberate accuracy baseline and is exactly what  !
          !      you want at a fine dt_fast, where the uncorrected error is small. The threshold is   !
-         !      the cadence at which psi_leaf is known not to converge (docs/science/               !
-         !      numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s against       !
-         !      -1.19 MPa at 900 s).                                                                 !
+         !      the cadence at which psi_leaf WITHOUT the corrector is known not to converge          !
+         !      (docs/science/numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s  !
+         !      against -1.19 MPa at 900 s, measured before #91).                                                                 !
          if (cfg%time_integrator == INTEG_RK45 .and. cfg%dt_fast > RK45_UNCORRECTED_DT_WARN) then
             write(*,'(a)')    ' meds_config: WARNING -- time_integrator = "rk45" at dt_fast > 300 s.'
             write(*,'(a,f8.1,a)') '   dt_fast = ', cfg%dt_fast, ' s.'
@@ -785,18 +785,25 @@ contains
                            &order-significant CSV; see plan sec 7 C3)'
       end if
       if (cfg%n_threads < 1_ik)               error stop tag//'n_threads < 1'
+      !----- The FAST output tier closes a window every fast_interval_steps sub-steps, counted over   !
+      !      the run. A window must not straddle two slow steps: the stand can be restructured between !
+      !      them, and a window's cohort and patch slots are fixed when it opens (#312 O10).  ---------!
+      if (cfg%fast_biophysics_on .and. cfg%output%enabled) then
+         if (cfg%output%fast_interval_steps < 1_ik)                                                &
+            error stop tag//'output.fast_interval_steps < 1'
+         if (mod(cfg%n_fast_per_slow, cfg%output%fast_interval_steps) /= 0_ik)                    &
+            error stop tag//'output.fast_interval_steps must divide the fast steps in a slow step '// &
+                            '(dt_slow / dt_fast), so no fast-tier window straddles two slow steps'
+      end if
       !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
       !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
       !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
-      !      checkpoints; until polygon threads exist (R3) the patch threads and the one-file probe    !
-      !      stay off.  ---------------------------------------------------------------------------!
+      !      checkpoints, and the one-file probe stays off (every polygon would write into it). ------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
          if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                       &
             error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
-         if (cfg%n_threads /= 1_ik)                                                                &
-            error stop tag//'[run].mode = "region" needs run.n_threads = 1 (polygon threads come in R3)'
          if (cfg%fast_probe)                                                                       &
             error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
          if (cfg%init_mode /= INIT_BARE)                                                           &
@@ -865,7 +872,7 @@ contains
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
                error stop tag//'forcing.max_distance_km must be > 0'
-            if (abs(cfg%forcing%dt_forcing - 3600.0_wp) > 0.5_wp)                                  &
+            if (abs(cfg%forcing%dt_forcing - ARCHIVE_DT_SEC) > 0.5_wp)                             &
                error stop tag//'forcing.timestep must be 1 hour for format = "ED_ERA5land"'
             if (cfg%forcing%avg_convention /= METAVG_END)                                          &
                error stop tag//'forcing.avg_convention must be "end" for format = "ED_ERA5land"'

@@ -77,11 +77,24 @@ Patch area `a_p` enters **only** at the patch → site step, never inside the we
 serves every scale. A patch-axis value therefore carries no area factor: it is per m² of *that
 patch's own* ground, which is what makes a gap-versus-closed-canopy comparison meaningful.
 
-**Empty sets.** A patch with no cohorts, or a **mean** over a PFT or size class with no members,
-emits `_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement.
-A **sum** over an empty PFT or size class is a true `0`, because reporting fill there would break
-the closure identity below the moment a PFT went locally extinct. The two conventions differ on
-purpose.
+**Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
+`_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement. "Nothing
+to average" covers a PFT or size class with no members, and a whole site, as on bare ground. A
+**sum** over an empty PFT or size class is a true `0`, because reporting fill there would break the
+closure identity below the moment a PFT went locally extinct. The two conventions differ on purpose.
+
+**A cohort with no samples.** A cohort recruited in the slow step has no fast-loop samples yet at
+that step's output tick. It is fill on the cohort axis, and it is left out of every reduction:
+- a mean is that of the cohorts that were sampled;
+- a sum gains nothing from it.
+
+Before this rule, it read 0, which pulled a canopy temperature towards 0 K.
+
+**What a run does not simulate.** A run without the fast loop (`fast_biophysics_on = false`)
+reports every fast-loop variable as `_FillValue`: the fluxes, the canopy air, the ground, the
+forcing echo and the per-cohort fast diagnostics. The slow operators' own rates (disturbed area,
+recruitment, mortality carbon, and litterfall when soil carbon is on) are weighted by the slow step
+instead, and report their values (#299).
 
 **Closure identities** (asserted in `test_diagnostic_reduce`, and true to roundoff on real output):
 
@@ -110,9 +123,10 @@ never dropped; a `dbh` below the first edge clamps into bin 1 for the same reaso
 preserve the closure identity, which is what makes `nplant_size` a genuine stem-density
 distribution comparable to a forest inventory.
 
-**Cohort and patch axes may not appear on the annual stream.** A window longer than a month would
-straddle the annual disturbance restructuring, so the slot set that was averaged would not be the
-slot set present at flush. The registry rejects it at start-up.
+**Cohort and patch axes may not appear on the annual stream**, and neither may the `(patch, soil)`
+profiles. A window longer than a month would straddle the annual disturbance restructuring, so the
+slot set that was averaged would not be the slot set present at flush. The registry rejects it at
+start-up.
 
 ---
 
@@ -126,7 +140,6 @@ slot set present at flush. The registry rejects it at start-up.
 | `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index) |
 | `AGG_MIN` / `AGG_MAX` | `time: minimum` / `maximum` | period extremum |
 | `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
-| `AGG_VARIANCE` | `time: variance` | dt-weighted variance over the period |
 
 #### Which steps a record holds
 
@@ -158,39 +171,52 @@ resumed from the checkpoint performs it first, so its first record holds the sam
 continuous run's. A state file without the attribute was written after its boundary's
 restructuring, and owes none.
 
-#### Variance companions
+#### The skin temperature
 
-`AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$ over the samples the tick hands it,
-dt-weighted like its `AGG_TMEAN` partner. The four that ship read their partner's **end-of-step
-state**, once per slow step, so each is the variance of those samples across the period. With a daily
-step that is the **day-to-day spread of the state at one fixed hour**, the step's end. It is not the
-diurnal cycle, which needs a sum of squares accumulated inside the step (#275), and the long names say
-so: "variance of end-of-step samples of ...".
+`skin_temp_site` is the skin temperature in the land-model sense, as in CLM's `TSKIN`. It also comes
+per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both (`skin_temp_patch_fast`).
 
-It is registered as an **ordinary variable sharing its partner's source id** — `cas_temp_var_site`
-beside `cas_temp_site` — rather than as a companion slot bolted to the mean. Two consequences, both
-deliberate: the existing per-variable buffer / normalize / serialize path carries it with no new
-machinery, and each variance is **independently switchable** through the `[variables]` override,
-exactly like every other output. A bolted-on slot would have been neither.
-
-Four ship: `cas_temp_var_site`, `leaf_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site`,
-monthly and annual only. The units are the partner's **squared**, because that is what a variance is;
-take the square root for a standard deviation. Emitting the standard deviation directly would have
-lost the additivity that lets a variance be combined across periods.
-
-Measured on a spun-up Ithaca stand, the canopy-air standard deviation of these samples runs 2.3 K in
-July against 5.4 K in December, which the monthly mean alone cannot show.
+- **What it is.** The black-body temperature of the longwave leaving the canopy top, $`(L^\uparrow /
+  \sigma)^{1/4}`$, taken per patch and sub-step and then averaged. It is what an infrared thermometer
+  or a satellite land-surface temperature sees, and over a forest it is mostly the canopy.
+- **What it is not.** It is not the soil. MEDS has no skin layer of its own: snow-free, the ground
+  surface is the top soil layer, `soil_temp_top_site`. That layer's node sits 1.8 cm down, so its
+  diurnal swing is damped and lagged against the air's.
+- **Why it is formed inside the step.** Because of the fourth root, the skin temperature of the mean
+  longwave is not the mean skin temperature.
+- **The emissivity.** It is taken as 1, so the reflected sky longwave counts as emission. Under a sky
+  colder than the surface, that puts the value a few tenths of a kelvin below the surface's own
+  temperature, for an emissivity of 0.98.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators
 that is identical to chaining.
+
+### The FAST tier by patch
+
+A site mean over a closed canopy and a gap can describe neither. In the biophysics example stand,
+the gap's surface soil ran 13 K above the air at midday while the closed patch's ran 0.7 K below it
+(#270). So each FAST quantity of the patch block also has a per-patch twin:
+
+- It is named after its coarse patch variable, plus `_fast`: `cas_temp_patch_fast`,
+  `soil_temp_top_patch_fast`, `skin_temp_patch_fast`, `le_patch_fast`, `h_patch_fast`,
+  `rnet_patch_fast`, `nee_patch_fast`.
+- A quantity with no coarse patch variable keeps its site stem: `gpp_rate_patch_fast`,
+  `sw_up_patch_fast`, `lw_up_patch_fast`, `ustar_patch_fast`, `npp_rate_patch_fast`,
+  `reco_patch_fast`, `cas_co2_patch_fast`.
+- The soil columns by layer and patch are `soil_temp_layer_patch_fast` and
+  `soil_water_layer_patch_fast`.
+
+The site `*_fast` value is the area-weighted sum of the patch values, taken in patch order, so the
+two always agree. The twins follow `axes_patch` (on by default) and `axes_soil_patch` (off), as the
+coarse patch variables do. Like every patch variable, they are not written for a region.
 
 ### A caveat worth stating plainly
 
 **A FAST-tier per-cohort variable is a mean over the fast output window, not an instantaneous
 sub-step value.** The per-cohort capture is one dt-weighted accumulator per cohort per slow step,
 not a per-sub-step array (which would be `n_cohort × n_sub × n_var`). At
-`[output.fast].interval_steps = 1` the two coincide; at the default `4` a FAST record is a
+`[output].fast_interval_steps = 1` the two coincide; at the default `4` a FAST record is a
 four-sub-step mean. This matters when comparing against a flux tower at sub-hourly resolution.
 
 ---
@@ -314,7 +340,9 @@ registry line each**, with no new extraction code.
 
 For a quantity the fast loop computes and drops, add a row to `cohort_diag_block` or
 `patch_diag_block` (`meds_site_diag_types`): a new index parameter, one fill line in the capture,
-and its fusion kind. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
+and its fusion kind. The patch block's row is also the FAST tier's sample (`patch_diag_row`), so a
+patch row reaches the sub-daily tier with one more registry line (`SRC_F_PD0 + PD_*`), per patch
+or as a site mean. **Zero edits to the lockstep machinery** — the fields are rows of one 2-D
 array, so every permutation is a single whole-array statement that cannot omit a field.
 
 ### The one trap

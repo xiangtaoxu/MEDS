@@ -104,7 +104,9 @@ comparison aggregates the tower on UTC days.
 
 ## 6. P1 — one Python module for the forcing file
 
-`scripts/forcing_common/meds_forcing_file.py`, imported by both preparation tools:
+`scripts/forcing_common/meds_forcing_file.py`, imported by both preparation tools (since 2026-09-30 the
+writer is `scripts/meds_forcing_file.py` and the conversions are
+`scripts/prepare_flux_tower/tower_conversions.py`; `MEDS_EFFICIENCY_SWEEP_PLAN.md` §5.1):
 
 - the writer: a variable list, `<Var>_qc` int8 flags, the global attributes of §5;
 - the model's math, mirrored where a tool needs it: Bolton over liquid, the humidity conversions,

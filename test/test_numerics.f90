@@ -8,22 +8,23 @@
 !   3. adaptive_step_update: grow-capped (fmax), shrink-floored (fmin), identity-ish at err = 1.  !
 !   4. meds_budget_check: closure predicate, imbalance algebra, accumulator fail-count, and the    !
 !      no-op behaviour of the Debug hard-stop when debug = .false.                                 !
+!   5. ascending_order: the reverse on a non-increasing input, ties included; the sort otherwise,  !
+!      with the same tie rule (the larger index first).                                          !
 !==========================================================================================!
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
-   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update,    &
-                                 bisect_root
+   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
-                                 budget_rtol_flux
+                                 budget_rtol_flux, last_check_closed
    implicit none
 
    call test_thomas()
    call test_quadratic()
    call test_step_update()
-   call test_bisect()
    call test_budget()
+   call test_ascending_order()
 
    call test_report('test_numerics')
 
@@ -73,25 +74,6 @@ contains
       call check('step shrink floored', f_shrink, 0.25_wp, 1.0e-12_wp)
    end subroutine test_step_update
 
-   !----- 5. bisect_root: recover a known root; a same-sign bracket returns converged=.false. -!
-   subroutine test_bisect()
-      real(wp) :: root
-      logical  :: conv
-      call bisect_root(quad_resid, 0.0_wp, 5.0_wp, 1.0e-10_wp, 100_ik, root, conv)
-      call check_true('bisect converged', conv, 1.0_wp)
-      call check('bisect root of x^2-4', root, 2.0_wp, 1.0e-8_wp)
-      !----- Same-sign bracket: midpoint returned, converged = .false. -----------------------!
-      call bisect_root(quad_resid, 3.0_wp, 5.0_wp, 1.0e-10_wp, 100_ik, root, conv)
-      call check_true('bisect same-sign not converged', .not. conv, 0.0_wp)
-      call check('bisect same-sign midpoint', root, 4.0_wp, 1.0e-14_wp)
-   end subroutine test_bisect
-
-   pure function quad_resid(x) result(y)
-      real(wp), intent(in) :: x
-      real(wp)             :: y
-      y = x * x - 4.0_wp                 ! isolated root at x = 2 on [0, 5]
-   end function quad_resid
-
    !----- 4. Conservation checker. -----------------------------------------------------------!
    subroutine test_budget()
       type(budget_t) :: b
@@ -130,6 +112,12 @@ contains
                'large flux', .false.)
          call check_true('budget_check: same leak on a gross flux of 1e4 passes', d%n_fail == 0_ik, real(d%n_fail, wp))
          call check('budget_check records elapsed', c%elapsed, 900.0_wp, 1.0e-12_wp)
+         !----- last_check_closed re-applies the same tolerance to the recorded amounts, so a caller  !
+         !      can check with halt = .false. and decide later whether the breach counts (RK45). ---!
+         call check_true('last_check_closed: the small-flux breach is open',                          &
+                         .not. last_check_closed(c, 900.0_wp, 1.0e-12_wp), 0.0_wp)
+         call check_true('last_check_closed: the large-flux check is closed',                         &
+                         last_check_closed(d, 900.0_wp, 1.0e-12_wp), 1.0_wp)
          !----- merge: two "patches" of area 0.25 and 0.75 with residuals +1e-5 each -> site +1e-5;   !
          !      elapsed is the common window (weights sum to 1), counts add. ----------------------!
          r = budget_t()
@@ -141,5 +129,24 @@ contains
          call budget_report(r, 'unit-test', 'J/m2', 'W/m2')
       end block
    end subroutine test_budget
+
+   !----- 5. ascending_order. A tallest-first canopy with a tie (the model's case), a shuffled one  !
+   !      with the same heights, and the empty and one-cohort canopies. ---------------------------!
+   subroutine test_ascending_order()
+      real(wp)    :: tall_first(5), shuffled(5)
+      integer(ik) :: ord(5), ord0(0), ord1(1)
+      tall_first = [30.0_wp, 20.0_wp, 20.0_wp, 10.0_wp, 5.0_wp]
+      call ascending_order(tall_first, 5_ik, ord)
+      call check_true('ascending_order: tallest-first input gives the reverse, ties included',     &
+                      all(ord == [5_ik, 4_ik, 3_ik, 2_ik, 1_ik]), real(ord(1), wp))
+      shuffled = [20.0_wp, 5.0_wp, 30.0_wp, 20.0_wp, 10.0_wp]
+      call ascending_order(shuffled, 5_ik, ord)
+      call check_true('ascending_order: shuffled input is sorted, the larger index first on a tie', &
+                      all(ord == [2_ik, 5_ik, 4_ik, 1_ik, 3_ik]), real(ord(3), wp))
+      call ascending_order(shuffled, 0_ik, ord0)
+      call check_true('ascending_order: an empty canopy', size(ord0) == 0, 0.0_wp)
+      call ascending_order(shuffled, 1_ik, ord1)
+      call check_true('ascending_order: one cohort', ord1(1) == 1_ik, real(ord1(1), wp))
+   end subroutine test_ascending_order
 
 end program test_numerics

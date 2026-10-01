@@ -25,8 +25,9 @@ try:
 except ModuleNotFoundError:          # Python < 3.11
     import tomli as tomllib
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forcing_common"))
-import meds_forcing_file as mff  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import meds_forcing_file as mff  # noqa: E402  (the writer, in scripts/)
+import tower_conversions as conv  # noqa: E402  (the model's conversions, this folder)
 
 FORMAT_DEFAULTS = {
     "csv":            dict(timestamp=None, timestamp_format=None, missing=[], comment=None),
@@ -221,4 +222,4 @@ def to_utc(stamps_local, utc_offset):
 def mean_cosz_of_intervals(stamps_utc, site):
     """The model's window-mean cos z over each record's interval."""
     start, _ = interval_bounds(stamps_utc, site.stamp, site.timestep)
-    return mff.window_mean_cosz(start, site.timestep, site.latitude, site.longitude)
+    return conv.window_mean_cosz(start, site.timestep, site.latitude, site.longitude)

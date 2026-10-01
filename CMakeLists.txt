@@ -14,7 +14,7 @@
 # See docs/dev_plans/archive/MEDS_GPU_EVALUATION.md. (#194)                                    #
 #==========================================================================================#
 cmake_minimum_required(VERSION 3.20)
-project(MEDS VERSION 0.3.1 LANGUAGES Fortran
+project(MEDS VERSION 0.3.2 LANGUAGES Fortran
         DESCRIPTION "Modular Ecosystem Dynamics Simulator (Modern Ecosystem Demography Simulator)")
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -156,6 +156,15 @@ meds_fortran_flags(meds_shared)
 #      state or a kernel.                                                                          #
 file(GLOB CONFIG_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/config/*.f90)
 add_library(meds_config STATIC ${CONFIG_SOURCES})
+#      The keys a config may hold are the ones the two reference configs list (meds_config_keys):  #
+#      written into an include at configure time, and re-written when either reference changes.   #
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/meds_config_keys.cmake)
+meds_write_config_keys(${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml
+                       ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml
+                       ${CMAKE_CURRENT_BINARY_DIR}/generated/meds_config_keys.inc)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml ${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml)
+target_include_directories(meds_config PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 #      meds_state_column: meds_config takes `n_soil_layer_max` from meds_column_params for the
 #      [soil_column] block's bounds check. The edge is acyclic (state/column links meds_shared
 #      only) and was MISSING until a Ninja build exposed it -- the Makefile generator happened to
@@ -463,6 +472,29 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_numerics PRIVATE meds_shared meds_testassert)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
+
+   #----- No procedure is passed as an argument anywhere in src/ (#325): the ifx cost of doing  #
+   #      so serialises threads. The script explains the rule it checks.                       #
+   add_test(NAME no_procedure_arguments
+            COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_no_procedure_arguments.cmake)
+
+   #----- The two reference configs list exactly the keys the loader reads (N-10): a run stops on #
+   #      any key its reference does not list. The script explains the rule it checks.          #
+   add_test(NAME config_keys_listed
+            COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}/src
+                    -DMAIN_TOML=${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml
+                    -DPFT_TOML=${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_keys.cmake)
+   add_executable(test_config_keys test/test_config_keys.f90)
+   target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
+   meds_fortran_flags(test_config_keys)
+   add_test(NAME config_keys COMMAND test_config_keys)
+   add_test(NAME config_unknown_keys_refused
+            COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
+                    -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
 
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
    add_executable(test_pft_optics_config test/test_pft_optics_config.f90)

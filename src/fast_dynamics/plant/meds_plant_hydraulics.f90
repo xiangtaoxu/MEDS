@@ -17,8 +17,8 @@ module meds_plant_hydraulics
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_params_table_t, hydro_opts_t,  &
                                hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
-   use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, capacitance,           &
-                                     water_content, plc_retained
+   use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, plc_retained
+   use meds_water_retention, only : capacitance, water_content
    use meds_numerics,         only : adaptive_step_update
    implicit none
    private
@@ -209,10 +209,8 @@ contains
       end if
 
       !----- Mass-closing boundary fluxes from the converged storage change. ---------------!
-      dw_l = water_content(psi_l, p%leaf_pi0, p%leaf_elastic_mod, p%leaf_apoplast_frac, p%leaf_water_sat, env%bleaf) &
-           - water_content(psi_l0,p%leaf_pi0, p%leaf_elastic_mod, p%leaf_apoplast_frac, p%leaf_water_sat, env%bleaf)
-      dw_w = water_content(psi_w, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, p%wood_water_sat, bwood)      &
-           - water_content(psi_w0,p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, p%wood_water_sat, bwood)
+      dw_l = water_content(psi_l, p%leaf_curve, env%bleaf) - water_content(psi_l0, p%leaf_curve, env%bleaf)
+      dw_w = water_content(psi_w, p%wood_curve, bwood) - water_content(psi_w0, p%wood_curve, bwood)
 
       flux%sapflow     = dw_l/dt + e_transp
       flux%root_uptake = (dw_l + dw_w)/dt + e_transp
@@ -267,8 +265,8 @@ contains
          real(wp), intent(in)  :: pl, pw
          real(wp), intent(out) :: m11, m12, m21, m22, ps_l, ps_w
          real(wp) :: cl, cw, keff, c1, c2, detm
-         cl   = max(capacitance(pl, p%leaf_pi0, p%leaf_elastic_mod, p%leaf_apoplast_frac, p%leaf_water_sat, env%bleaf), c_floor)
-         cw   = max(capacitance(pw, p%wood_pi0, p%wood_elastic_mod, p%wood_apoplast_frac, p%wood_water_sat, bwood),     c_floor)
+         cl = max(capacitance(pl, p%leaf_curve, env%bleaf), c_floor)
+         cw = max(capacitance(pw, p%wood_curve, bwood), c_floor)
          keff = max(edge_cond(pw, pl, k_cond, p), k_floor)
          !----- Linear system psi' = M psi + c. -------------------------------------------!
          m11 = -keff/cl        ; m12 =  keff/cl

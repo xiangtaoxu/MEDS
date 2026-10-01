@@ -25,7 +25,7 @@ module meds_budget_check
    private
 
    public :: budget_t, closure_ok, budget_imbalance, budget_accumulate, budget_assert, budget_check_stop
-   public :: budget_check, budget_merge, budget_report
+   public :: budget_check, budget_merge, budget_report, last_check_closed
    public :: budget_rtol_flux, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
 
    !----- Closure tolerances shared by every ledger (see the header). -------------------------!
@@ -150,6 +150,18 @@ contains
                              elapsed=dt_window)
       call budget_check_stop(b%resid, scale, budget_rtol_flux, atol, label, halt)
    end subroutine budget_check
+
+   !---------------------------------------------------------------------------------------!
+   ! Did the last budget_check on `b` close? The same tolerance budget_check applied, recomputed   !
+   ! from the amounts it recorded. It lets a caller check a ledger with halt = .false. and decide   !
+   ! later whether the breach counts: RK45 does, because a step it hands to the ARK rescue is        !
+   ! discarded, and a discarded step must not stop the run.                                          !
+   !---------------------------------------------------------------------------------------!
+   pure logical function last_check_closed(b, dt_window, rate_floor) result(ok)
+      type(budget_t), intent(in) :: b
+      real(wp),       intent(in) :: dt_window, rate_floor
+      ok = closure_ok(b%resid, abs(b%influx) + abs(b%outflux), budget_rtol_flux, rate_floor * dt_window)
+   end function last_check_closed
 
    !---------------------------------------------------------------------------------------!
    ! Fold accumulator `c` into `b` with weight `w` (an area fraction when reducing patches to a   !

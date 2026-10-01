@@ -27,7 +27,7 @@ program test_met_driver
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,   &
                                     great_circle_distance, nearest_grid_index,                   &
                                     clearness_index, clear_sky_emissivity, synthesize_lwdown
-   use meds_lapse_rate,      only : wind_log_profile, lapse_air_temperature, lapse_pressure,        &
+   use meds_lapse_rate,      only : lapse_air_temperature, lapse_pressure,        &
                                     monthly_lapse_rate, lapse_specific_humidity, lapse_longwave,    &
                                     cas_top_wind_factor, cas_top_air_temperature, met_to_cas_top
    use meds_constants,       only : grav, cp_air
@@ -51,7 +51,7 @@ program test_met_driver
    call test_const_backend()
    call test_netcdf_roundtrip()
    call test_nearest_grid()
-   call test_wind_lapse()
+   call test_lapse()
    call test_terrain_lapse()
    call test_cas_top()
    call test_multiyear_cycling()
@@ -602,15 +602,11 @@ contains
       call met_close(src)
    end subroutine test_nearest_grid
 
-   !----- Wind log-profile + elevation lapse (pure kernels). --------------------------------------!
-   subroutine test_wind_lapse()
-      real(wp) :: u, t, p
+   !----- Elevation lapse (pure kernels). --------------------------------------------------------!
+   subroutine test_lapse()
+      real(wp) :: t, p
       real(wp), parameter :: DZ = 500.0_wp, G = 0.0065_wp
-      print '(a)', '-- test: wind-height + elevation lapse --'
-      u = wind_log_profile(3.0_wp, 10.0_wp, 40.0_wp, 0.1_wp)
-      call check('wind log-profile value', u, 3.0_wp*log(40.0_wp/0.1_wp)/log(10.0_wp/0.1_wp), 1.0e-9_wp)
-      call check_true('wind lifts to a higher reference height', u > 3.0_wp, u-3.0_wp)
-      call check('degenerate z0 -> wind unchanged', wind_log_profile(3.0_wp,10.0_wp,40.0_wp,0.0_wp), 3.0_wp, 1.0e-30_wp)
+      print '(a)', '-- test: elevation lapse --'
       t = lapse_air_temperature(290.0_wp, DZ, G)
       call check('lapse cools a higher site', t, 290.0_wp - G*DZ, 1.0e-9_wp)
       call check('lapse dz=0 -> T unchanged', lapse_air_temperature(290.0_wp,0.0_wp,G), 290.0_wp, 1.0e-30_wp)
@@ -619,7 +615,7 @@ contains
       call check('lapse dz=0 -> P unchanged', lapse_pressure(101325.0_wp,290.0_wp,0.0_wp,G), 101325.0_wp, 1.0e-6_wp)
       call check('isothermal (gamma=0) = barometric', lapse_pressure(101325.0_wp,290.0_wp,DZ,0.0_wp), &
                  101325.0_wp*exp(-9.80665_wp*DZ/(287.04_wp*290.0_wp)), 1.0e-2_wp)
-   end subroutine test_wind_lapse
+   end subroutine test_lapse
 
    !----- The terrain lapse's humidity, longwave and monthly rate (docs/science/forcing.md §8). ---!
    subroutine test_terrain_lapse()

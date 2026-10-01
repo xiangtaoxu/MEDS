@@ -27,9 +27,22 @@ Two exceptions, both explicit:
 - **Derived quantities** are computed from the primary ones — the step in years, the height class
   edges, the mortality-hazard coefficients from wood density. Set `[options].override_derived =
   true` and supply a `[derived]` block to pin them instead.
-- **Defaulted blocks.** A few late-added blocks (`[soil_column]`, `[snow]`, `[soil_carbon]`) read
-  each key with a fallback to its in-type default, so the feature needs no TOML edits. Where this
-  applies, the block's comment says so.
+- **Optional keys.** Solver settings, process switches and a few late-added blocks (`[soil_column]`,
+  `[snow]`, `[soil_carbon]`) read each key with a fallback to its default, so a feature needs no
+  TOML edits. The reference file lists each one commented out at that default.
+
+**Every key MEDS reads is listed in the two reference configs**, `meds_config_main.toml` and
+`meds_config_pft.toml`, set or commented out at its default. They are the complete list. A key that
+is not listed in its file's reference stops the run before it starts: the error names every such key
+at once, together with any missing required ones. Each line gives a suggestion:
+- a retired key gets what replaced it;
+- a key that moved section gets its new home (`state.cohort_max` → `output.cohort_max`);
+- a misspelling gets the key it most likely meant.
+
+A key that parses and does nothing is worse than one that is absent: `[forcing] dt_forcing = 7200`
+(the key is `timestep`) used to run silently at the file's own spacing. The test
+`config_keys_listed` holds the two references equal to the keys the loader reads, so a new key is
+listed when it is added.
 
 Every run that writes a state writes `<output_dir>/<prefix>_pft_parameters.csv` — one row per PFT
 with every per-PFT trait actually used. It is a provenance record: what the run really did, not what
@@ -40,8 +53,7 @@ output (`[output].dir`, `[output].prefix`) and beside its state (`[state]`), whi
 has one row for every key the loader read, from every file it read (the main file, the PFT file,
 the output list): `source,key,index,present,value`. `index` is 0 for a scalar and the element for an
 array; `present` says whether the key was in the file or took its compiled default; `value` is what
-the run used, to the last digit. A key nothing reads is absent, so a misspelt key, which the
-optional blocks otherwise ignore silently, can be caught by looking for it here.
+the run used, to the last digit.
 
 ## The two files
 
@@ -304,12 +316,18 @@ detail_polygons   = [1714634]                        # optional: these also writ
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
   rates, still applies. Until restarts of regions exist, a region starts from bare ground
-  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs one patch
-  thread without the fast probe. A region loads each month's forcing once, before the month, so a
-  recycle window must start at 00:00 or 01:00 on the 1st of a month.
+  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs without
+  the fast probe. A region loads each month's forcing once, before the month, so a recycle window
+  must start at 00:00 or 01:00 on the 1st of a month.
+- **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
+  single-threaded patch loop; the results are the same at any thread count. A polygon that fails
+  (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
-  crash loses at most the current month. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` for the
-  measured cost per polygon-month and the roadmap to threads, restarts and tiles.
+  crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
+  year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
+  hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
+  same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
+  for the roadmap to restarts and tiles.
 
 ## Worked examples
 

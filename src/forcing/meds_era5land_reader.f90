@@ -12,11 +12,13 @@ module meds_era5land_reader
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use iso_c_binding,        only : c_int, c_size_t, c_double, c_float
    use meds_kinds,           only : wp, sp, ik
-   use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_from_string
-   use meds_forcing_config,  only : MET_PATH_LEN
+   use meds_constants,       only : day_sec
+   use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_units_base
+   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC
    use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
+                                    nc_get_att_double_f, &
                                     nc_get_vara_double, nc_get_vara_float, nc_close, NC_NOERR, NC_NOWRITE
    implicit none
    private
@@ -26,6 +28,7 @@ module meds_era5land_reader
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN
    public :: ERA_VAR_NAME, ERA_VAR_UNITS, ERA_EPOCH
    public :: ERA_OK, ERA_ERR_OPEN, ERA_ERR_GRID, ERA_ERR_TIME, ERA_ERR_UNITS, ERA_ERR_NAN, ERA_ERR_NO_CELL
+   public :: ERA_ERR_FILL
 
    !----- The archive's eight variables, their file names and the units the builder writes. -----!
    integer(ik), parameter :: ERA_NVAR = 8_ik
@@ -51,6 +54,7 @@ module meds_era5land_reader
    integer(ik), parameter :: ERA_ERR_UNITS   = 4_ik   !< a variable's units attribute is not the expected one
    integer(ik), parameter :: ERA_ERR_NAN     = 5_ik   !< a selected cell has a missing value
    integer(ik), parameter :: ERA_ERR_NO_CELL = 6_ik   !< no valid cell within the distance limit / in the box
+   integer(ik), parameter :: ERA_ERR_FILL    = 7_ik   !< a variable's _FillValue is a number, not NaN
 
 contains
 
@@ -100,10 +104,10 @@ contains
       out = out // s(pos:)
    end function replace_all
 
-   !----- Hours in an archive month file: 01:00 on the 1st .. 00:00 on the 1st of the next month. --!
+   !----- Records in an archive month file: 01:00 on the 1st .. 00:00 on the 1st of the next month. !
    elemental integer(ik) function era5land_month_hours(year, month) result(nt)
       integer(ik), intent(in) :: year, month
-      nt = 24_ik * days_in_month(year, month)
+      nt = nint(day_sec / ARCHIVE_DT_SEC, ik) * days_in_month(year, month)
    end function era5land_month_hours
 
    !=======================================================================================!
@@ -290,6 +294,7 @@ contains
       integer(c_int)     :: ncid, vid, st
       integer(c_size_t)  :: start3(3), count3(3)
       real(c_float), allocatable :: block(:,:,:)
+      real(c_double)     :: fill
       integer(ik) :: nt, v, k, m, c, nr, nc
       integer(ik) :: bad(3)
 
@@ -317,6 +322,17 @@ contains
             st = nc_close(ncid) ; stat = ERA_ERR_UNITS
             message = trim(path)//': units "'//trim(units)//'", expected "'//trim(ERA_VAR_UNITS(v))//'"'
             return
+         end if
+         !----- The reader recognises a missing value as NaN and nothing else (below). A file whose   !
+         !      _FillValue is a number would slip that number into the forcing as data, so it is     !
+         !      refused. The archive stores NaN, and a file without the attribute has no fill.  -----!
+         st = nc_get_att_double_f(ncid, vid, '_FillValue', fill)
+         if (st == NC_NOERR) then
+            if (.not. ieee_is_nan(fill)) then
+               st = nc_close(ncid) ; stat = ERA_ERR_FILL
+               write(message, '(2a,es12.4,a)') trim(path), ': _FillValue is ', fill, ', not NaN'
+               return
+            end if
          end if
          do k = 1_ik, dom%nchunk
             nr = dom%chunk_nrow(k) ; nc = dom%chunk_ncol(k)
@@ -373,14 +389,13 @@ contains
       st = nc_inq_dimlen_f(ncid, 'time', n) ; if (st /= NC_NOERR .or. int(n, ik) /= nt) return
       st = nc_inq_varid_f(ncid, 'time', vid) ; if (st /= NC_NOERR) return
       st = nc_get_att_text_f(ncid, vid, 'units', units) ; if (st /= NC_NOERR) return
-      k = int(index(units, 'since'), ik) ; if (k == 0_ik) return
-      call time_from_string(adjustl(units(k + 5_ik:)), base, ok) ; if (.not. ok) return
+      call time_units_base(units, base, ok) ; if (.not. ok) return
       allocate(tsec(nt))
       start1 = 0_c_size_t ; count1 = int(nt, c_size_t)
       st = nc_get_vara_double(ncid, vid, start1, count1, tsec) ; if (st /= NC_NOERR) return
       first = seconds_between(base, meds_time_t(year, month, 1_ik, 1_ik, 0_ik, 0_ik))
       do k = 1_ik, nt
-         if (abs(tsec(k) - (first + 3600.0_wp * real(k - 1_ik, wp))) > STAMP_TOL) return
+         if (abs(tsec(k) - (first + ARCHIVE_DT_SEC * real(k - 1_ik, wp))) > STAMP_TOL) return
       end do
       stat = ERA_OK
    end subroutine check_month_file

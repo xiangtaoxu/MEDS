@@ -8,11 +8,6 @@
 wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis (pioneer/mid/climax)
 dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
 hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
-# Intrinsic growth: a capped log-linear function of dbh (max rate falls pioneer -> climax).
-growth_dbh_slope   = [0.25, 0.25, 0.25]    # [--]    ln-growth slope vs (ln cap - ln dbh)
-growth_dbh_cap     = [100.0, 100.0, 100.0] # [cm]    dbh above which intrinsic growth floors
-growth_dbh_max     = [1.5, 1.0, 0.5]       # [cm/yr] intrinsic growth at/above the cap
-growth_lai_slope   = [-0.8, -0.7, -0.6]    # [(m2/m2)^-1] competition suppression (less neg = more shade-tolerant)
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain

@@ -36,10 +36,19 @@ module meds_polygon
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
+   use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
+                                           manager_set_soil_params, manager_restrict_region,      &
+                                           activate_site_diag, apply_variable_override,          &
+                                           parse_stream_mask, build_freq_index, OVR_TRUE,         &
+                                           OVR_FALSE, OVR_MASK
+   use meds_column_params,          only : soil_params_t
+   use meds_forcing_types,          only : met_cells_t
+   use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
    private
 
    public :: meds_polygon_t, polygon_prepare, polygon_step, polygon_report
+   public :: open_output_files, attach_output, ensure_output_dir
    public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
    public :: N_PATCH_INIT
 
@@ -57,12 +66,15 @@ module meds_polygon
       integer(ik)            :: id = 0_ik         !< global id: the cell's row-major index (0 for a site run)
       integer(ik)            :: cell = 1_ik       !< the cell in the forcing source's cell list
       character(len=40)      :: label = ''        !< how messages name it ('' for a site run)
+      !----- Where it is: the cell centre and orography of a region's polygon, the [site] of a site   !
+      !      run. The forcing cursor, the leaf phenology's day length and the output all read it. ---!
+      real(wp)               :: latitude_deg = 0.0_wp, longitude_deg = 0.0_wp, elevation_m = 0.0_wp
       type(site_t)           :: site
       type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
       !----- A region's detail polygon also writes a full single-site file set of its own. ---------!
       type(output_files_t),  allocatable :: detail_files
-      type(output_buffers_t), allocatable :: detail_bufs
+      type(output_buffers_t), allocatable :: detail_bufs(:)   !< one polygon's: an array of one, as a site run's
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
@@ -104,12 +116,15 @@ contains
    ! restart already restored those states, which re-seeding would silently discard.                !
    !---------------------------------------------------------------------------------------!
    subroutine polygon_prepare(cfg, met_src, poly, latitude_deg, longitude_deg, elevation_m,       &
-                              keep_fast_state, keep_soil_carbon, verbose)
+                              keep_fast_state, keep_soil_carbon, patch_threads, verbose)
       type(meds_config_t),  intent(in)    :: cfg
       type(met_source_t),   intent(in)    :: met_src
       type(meds_polygon_t), intent(inout) :: poly
       real(wp),             intent(in)    :: latitude_deg, longitude_deg, elevation_m
       logical,              intent(in)    :: keep_fast_state, keep_soil_carbon, verbose
+      !----- Threads for the polygon's patch loop: a site run gives it [run].n_threads, a region, whose  !
+      !      threads go to the polygons, gives each polygon one. ----------------------------------!
+      integer(ik),          intent(in)    :: patch_threads
 
       poly%energy_budget = budget_t() ; poly%water_budget = budget_t() ; poly%face_budget = budget_t()
       poly%slow_ledger   = slow_ledger_t()
@@ -119,12 +134,14 @@ contains
       poly%most_patches_when = '' ; poly%most_cohorts_when = ''
       poly%fast_step_total = 0_ik ; poly%status = DRIVER_OK
       poly%area_start = total_area(poly%site)
+      poly%latitude_deg = latitude_deg ; poly%longitude_deg = longitude_deg ; poly%elevation_m = elevation_m
 
       if (cfg%fast_biophysics_on) then
          call build_fast_context(cfg, poly%fast_ctx)
+         poly%fast_ctx%patch_threads = patch_threads
          if (cfg%forcing%forcing_on) then
-            call met_cursor_init(met_src, poly%met_cur, poly%cell, latitude_deg, longitude_deg,     &
-                                 elevation_m)
+            call met_cursor_init(met_src, poly%met_cur, poly%cell, poly%latitude_deg,               &
+                                 poly%longitude_deg, poly%elevation_m)
          end if
          !----- Skip the generic re-seed when a restart already restored the true evolved CAS/soil/ !
          !      snow state (P5, MEDS_ED2_RK45_DESIGN.md): overwriting it here would silently discard !
@@ -197,7 +214,7 @@ contains
       !----- The fast loop stages sub-daily samples into the buffers that write the FAST tier: a    !
       !      detail polygon's own files, else the polygon's share of the run's files.  ----------------!
       if (allocated(poly%detail_bufs)) then
-         call stepper(poly%detail_bufs)
+         call stepper(poly%detail_bufs(1))
       else
          call stepper(out_bufs)
       end if
@@ -216,7 +233,7 @@ contains
       !      hold `prev`, closing each period `now` has left and queueing it for the I/O phase. ----!
       is_new_day = is_new_month .or. (now%day /= prev%day)
       if (out_files%enabled) call tick_output(out_files, out_bufs)
-      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs)
+      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs(1))
 
       !----- The step's diagnostics are read: zero them for the next window. If the step ended on a  !
       !      month boundary, the stand's restructuring is owed: it runs at the start of the next     !
@@ -266,26 +283,17 @@ contains
 
    contains
 
-      !----- step_start is passed UNCONDITIONALLY (leaf phenology needs day-of-year every step);  !
-      !      the met source/cursor, the output buffers and the polygon's latitude go with forcing_on. !
+      !----- Everything is handed on; the fast loop uses the forcing only when forcing_on, and     !
+      !      stages the fast output tier only then. -------------------------------------------------!
       subroutine stepper(fast_bufs)
          type(output_buffers_t), intent(inout) :: fast_bufs
-         if (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on) then
-            call advance_one_step(poly%site, cfg, poly%fast_ctx,                                   &
-                                  met_src=met_src, met_cur=poly%met_cur, step_start=prev,       &
-                                  out_bufs=fast_bufs,                                           &
-                                  run_energy_budget=poly%energy_budget,                         &
-                                  run_water_budget=poly%water_budget,                           &
-                                  run_face_budget=poly%face_budget,                             &
-                                  slow_ledger=poly%slow_ledger, seam=poly%seam,                 &
-                                  latitude_deg=poly%met_cur%latitude_deg)
-         else
-            call advance_one_step(poly%site, cfg, poly%fast_ctx,                                   &
-                                  step_start=prev, run_energy_budget=poly%energy_budget,        &
-                                  run_water_budget=poly%water_budget,                           &
-                                  run_face_budget=poly%face_budget,                             &
-                                  slow_ledger=poly%slow_ledger, seam=poly%seam)
-         end if
+         call advance_one_step(poly%site, cfg, poly%fast_ctx, met_src=met_src, met_cur=poly%met_cur,  &
+                               step_start=prev, out_bufs=fast_bufs,                                 &
+                               run_energy_budget=poly%energy_budget,                                &
+                               run_water_budget=poly%water_budget,                                  &
+                               run_face_budget=poly%face_budget,                                    &
+                               slow_ledger=poly%slow_ledger, seam=poly%seam,                        &
+                               latitude_deg=poly%latitude_deg)
       end subroutine stepper
 
       !----- FAST tier: replay the sub-step samples the fast loop staged in bufs%fast(:), closing   !
@@ -439,5 +447,103 @@ contains
          pools_ss%struct_soil_carbon + pools_ss%microbial_carbon + pools_ss%slow_carbon +        &
          pools_ss%passive_carbon, ' kgC/m2'
    end subroutine soil_carbon_steady
+
+   !---------------------------------------------------------------------------------------!
+   ! open_output_files -- lay out one output file set: the registry from the config, the soil      !
+   ! curve the derived soil diagnostics use (the one the fast loop integrates on), the              !
+   ! per-variable overrides of [output].io_config and, for a region's files, the region's           !
+   ! restrictions and polygon axis. A site run's files, a region's files and a detail polygon's own !
+   ! files all come through here; each polygon that writes into the set then calls attach_output.   !
+   !---------------------------------------------------------------------------------------!
+   subroutine open_output_files(cfg, soil, files, verbose, prefix, cells, polygon_id)
+      type(meds_config_t),  intent(in)    :: cfg
+      type(soil_params_t),  intent(in)    :: soil       !< the polygon's soil column (its fast context)
+      type(output_files_t), intent(inout) :: files
+      logical,              intent(in)    :: verbose
+      character(len=*),  optional, intent(in) :: prefix          !< a detail polygon's own file prefix
+      type(met_cells_t), optional, intent(in) :: cells           !< a region's cells ...
+      integer(ik),       optional, intent(in) :: polygon_id(:)   !< ... and their polygon ids
+      call manager_setup(files, cfg)
+      if (present(prefix)) files%prefix = prefix
+      if (cfg%fast_biophysics_on) call manager_set_soil_params(files, soil)
+      if (len_trim(cfg%output%io_config) > 0)                                                     &
+         call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
+      if (present(cells)) then
+         call manager_restrict_region(files)
+         files%n_polygon   = cells%ncell
+         files%polygon_id  = polygon_id
+         files%polygon_row = cells%row ; files%polygon_col = cells%col
+         files%polygon_lat = cells%lat ; files%polygon_lon = cells%lon
+      end if
+      call manager_finalize(files)
+   end subroutine open_output_files
+
+   !----- A polygon's share of an output file set: its buffers, and the diagnostic blocks its site  !
+   !      must accumulate for the set's variables. A site may write into two sets (a region's        !
+   !      detail polygon); it then accumulates what either needs. -----------------------------------!
+   subroutine attach_output(files, bufs, site)
+      type(output_files_t),   intent(in)    :: files
+      type(output_buffers_t), intent(inout) :: bufs
+      type(site_t),           intent(inout) :: site
+      call manager_alloc_buffers(files, bufs)
+      call activate_site_diag(files, site)
+   end subroutine attach_output
+
+   !----- Apply the optional meds_io_config.toml per-variable override table to the manager's     !
+   !      registry (§6.1 value grammar + unknown-key trap). Each `variables.<name> = <value>`      !
+   !      entry: a bool force-enables / disables everywhere; a quoted "F D M Y" string replaces     !
+   !      the stream mask. A name matching no registry variable is a hard error.                    !
+   subroutine apply_io_overrides(files, tomlpath, verbose)
+      type(output_files_t),   intent(inout) :: files
+      character(len=*),       intent(in)    :: tomlpath
+      logical,                intent(in)    :: verbose
+      type(toml_table_t) :: tt
+      logical            :: ok, found
+      integer(ik)        :: i, mask, status
+      character(len=256) :: raw, sval
+      character(len=64)  :: name
+      character(len=8)   :: bad
+      call toml_parse_file(tomlpath, tt, ok)
+      if (.not. ok) error stop 'meds_polygon: cannot read [output].io_config = '//trim(tomlpath)
+      do i = 1_ik, tt%n
+         if (len_trim(tt%key(i)) <= 10) cycle
+         if (tt%key(i)(1:10) /= 'variables.') cycle
+         name = trim(tt%key(i)(11:))
+         raw  = adjustl(tt%val(i))
+         select case (trim(raw))
+         case ('true', '.true.', 'True', 'TRUE')
+            call apply_variable_override(files%reg, trim(name), OVR_TRUE, 0_ik, found)
+         case ('false', '.false.', 'False', 'FALSE')
+            call apply_variable_override(files%reg, trim(name), OVR_FALSE, 0_ik, found)
+         case default
+            if (raw(1:1) == '"') then                    ! quoted stream string "F D M Y"
+               sval = raw(2:index(raw(2:), '"'))
+               call parse_stream_mask(trim(sval), mask, status, bad)
+               if (status /= 0_ik)                                                               &
+                  error stop 'meds_polygon: io_config unknown stream token "'//trim(bad)//        &
+                             '" for variable '//trim(name)
+               call apply_variable_override(files%reg, trim(name), OVR_MASK, mask, found)
+            else
+               error stop 'meds_polygon: io_config bad value for '//trim(name)//                  &
+                          ' (expected true|false or a quoted "F D M Y" string)'
+            end if
+         end select
+         if (.not. found)                                                                        &
+            error stop 'meds_polygon: io_config variable "'//trim(name)//                         &
+                       '" matches no registry variable (typo?)'
+      end do
+      call build_freq_index(files%reg)
+      if (verbose) write(*,'(3a)') ' output: applied per-variable overrides from ', trim(tomlpath), ''
+   end subroutine apply_io_overrides
+
+   !----- Create the output directory if it does not exist (a run-level convenience). The engine   !
+   !      and the kernel libraries never touch the filesystem.                                      !
+   subroutine ensure_output_dir(dir)
+      character(len=*), intent(in) :: dir
+      integer :: stat
+      if (len_trim(dir) == 0 .or. trim(dir) == '.') return
+      call execute_command_line('mkdir -p "'//trim(dir)//'"', wait=.true., exitstat=stat)
+      if (stat /= 0) write(*,'(3a)') ' warning: could not create output dir "', trim(dir), '"'
+   end subroutine ensure_output_dir
 
 end module meds_polygon

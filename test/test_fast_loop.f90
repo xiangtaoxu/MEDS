@@ -16,7 +16,7 @@ program test_fast_loop
    use meds_site_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
-   use meds_hydr_lib, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config
@@ -28,7 +28,10 @@ program test_fast_loop
    use meds_forcing_types,       only : met_source_t, met_cursor_t, met_forcing_t
    use meds_met_driver,          only : met_open, met_cursor_init, met_close, met_advance, met_instant
    use meds_output_types,        only : output_buffers_t
-   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN
+   use meds_site_diag_types,     only : PY_TAIR, PY_QAIR, PY_PAR_BEAM, PY_COSZ, PY_SW_IN, PY_LWDOWN, &
+                                        PY_PAR_DIFFUSE, PY_RHO_AIR, PY_WIND, PD_CAS_TEMP,           &
+                                        PD_SKIN_TEMP, PD_LW_UP
+   use meds_constants,           only : stefan
    use meds_netcdf_c
    use iso_c_binding,            only : c_int, c_size_t, c_double
    implicit none
@@ -220,7 +223,7 @@ program test_fast_loop
          logical     :: exact
          t0 = meds_time_t(2020_ik,7_ik,1_ik,15_ik)
          site%diag%active = .true.
-         ob%fast_on = .true. ; ob%fast_cohort_cap = 8_ik
+         ob%fast_on = .true.
          call init_fast_reservoirs(site, ctx)
          call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=t0, out_bufs=ob)
          call met_cursor_init(drv, cur2, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg, &
@@ -233,9 +236,12 @@ program test_fast_loop
             sum_t = sum_t + m%tair_k * cfg%dt_fast ; sum_q = sum_q + m%qair * cfg%dt_fast
             sum_pb = sum_pb + m%par_beam * cfg%dt_fast ; sum_cz = sum_cz + m%cosz * cfg%dt_fast
             sum_sw = sum_sw + m%swdown() * cfg%dt_fast
-            exact = exact .and. ob%fast(isub)%qair == m%qair .and. ob%fast(isub)%lwdown == m%lwdown  &
-                    .and. ob%fast(isub)%par_diffuse == m%par_diffuse .and. ob%fast(isub)%cosz == m%cosz &
-                    .and. ob%fast(isub)%rho_air == m%rho_air .and. ob%fast(isub)%wind == m%wind
+            associate (f => ob%fast_forcing(:, isub))
+               exact = exact .and. f(PY_QAIR) == m%qair .and. f(PY_LWDOWN) == m%lwdown               &
+                       .and. f(PY_PAR_DIFFUSE) == m%par_diffuse .and. f(PY_COSZ) == m%cosz           &
+                       .and. f(PY_RHO_AIR) == m%rho_air .and. f(PY_WIND) == m%wind                   &
+                       .and. f(PY_TAIR) == m%tair_k .and. f(PY_SW_IN) == m%swdown()
+            end associate
          end do
          w = site%diag%w
          call check(ob%n_fast_sub == cfg%n_fast_per_slow .and. exact,                              &
@@ -246,6 +252,30 @@ program test_fast_loop
                     'fixture has an inactive soil tail to be worth anything')
          call check(ob%fast_n_soil == ctx%col_config%soil%n_active,                                &
                     'the fast tier folds only the active soil layers')
+         !----- The patch axis (#270): each patch's staged row is its own, unweighted -- the last     !
+         !      sub-step's is the state the step wrote back -- and the site mean is their area-      !
+         !      weighted sum, in patch order. -------------------------------------------------------!
+         block
+            integer(ik) :: ip, nsub, na, kb
+            real(wp)    :: site_cas
+            logical     :: own, folded, skin
+            nsub = cfg%n_fast_per_slow ; na = ctx%col_config%soil%n_active
+            own = ob%fast_n_patch == site%patch%n ; site_cas = 0.0_wp ; skin = .true.
+            do ip = 1_ik, site%patch%n
+               kb = (ip - 1_ik) * n_soil_layer_max
+               own = own .and. ob%fast_patch(PD_CAS_TEMP, ip, nsub) == site%patch%cas(ip)%can_temp     &
+                         .and. all(ob%fast_soil_temp_patch(kb+1_ik:kb+na, nsub)                        &
+                                   == site%patch%soil_e(ip)%soil_temp(1:na))
+               site_cas = site_cas + site%patch%area(ip) * ob%fast_patch(PD_CAS_TEMP, ip, nsub)
+               !----- The skin temperature is the black-body temperature of the longwave up (#275). -!
+               skin = skin .and. abs(stefan * ob%fast_patch(PD_SKIN_TEMP, ip, nsub)**4                  &
+                                     - ob%fast_patch(PD_LW_UP, ip, nsub)) <= 1.0e-9_wp * ob%fast_patch(PD_LW_UP, ip, nsub)
+            end do
+            call check(skin, 'the skin temperature radiates the patch''s longwave up as a black body')
+            folded = ob%fast_site(PD_CAS_TEMP, nsub) == site_cas
+            call check(own, 'the fast tier stages each patch''s own sample and soil column')
+            call check(folded, 'the fast tier''s site mean is the area-weighted sum of the patch rows')
+         end block
          call check_close(w, cfg%n_fast_per_slow * cfg%dt_fast, 1.0e-9_wp,                         &
                           'the polygon block weighs each sub-step once (not once per patch)')
          call check_close(site%diag%v(PY_TAIR) / w, sum_t / w, 1.0e-12_wp,                         &
@@ -324,9 +354,8 @@ program test_fast_loop
       block
          type(met_source_t)  :: drv4
          type(met_cursor_t)  :: cur4
-         type(meds_config_t) :: cfg_mt
+         type(fast_context_t) :: ctx_mt
          real(wp) :: h1, h2, h3
-         cfg_mt = cfg ; cfg_mt%n_threads = 4_ik
          call init_bare_ground(site, cfg, 3_ik)
          call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 16.0_wp)
          call add_cohort(site, cfg, 2_ik, 1_ik, 0.3_wp, 16.0_wp)
@@ -337,7 +366,8 @@ program test_fast_loop
                               cfg%forcing%longitude_deg,                            &
                               cfg%forcing%elevation_m)
          call init_fast_reservoirs(site, ctx)
-         call fast_dynamics(site, ctx, cfg_mt, met_src=drv4, met_cur=cur4,             &
+         ctx_mt = ctx ; ctx_mt%patch_threads = 4_ik
+         call fast_dynamics(site, ctx_mt, cfg, met_src=drv4, met_cur=cur4,             &
                             step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))
          call met_close(drv4)
          h1 = site%cohort%gpp_accum(site%patch%cohort_offset(1))

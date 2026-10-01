@@ -28,7 +28,7 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_hydr_lib`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
+retention curves (`meds_water_retention`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
 interpolated linearly between the two nodes to the face, a thickness-weighted geometric mean,
 
 ```math
@@ -242,7 +242,7 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | explicit water tendency (ARK) | `meds_soil_water`: `soil_water_time_deriv` |
-| retention curves (vG / Campbell) | `meds_hydr_lib` |
+| retention curves (vG / Campbell) | `meds_water_retention` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |

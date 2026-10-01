@@ -17,7 +17,7 @@ module meds_fast_frozen
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
    use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
-   use meds_hydr_lib, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
+   use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config, only : meds_config_t, CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t, snow_melt_t
@@ -47,42 +47,10 @@ module meds_fast_frozen
 
    public :: build_column_frozen
 
-
-   !----- Per-cohort plant-hydraulics sub-step count above which the solve is judged pathological     !
-   !      rather than merely stiff (issue #104). Measured band: 1.0-1.2 ordinary, ~136 collapsed. ----!
-
-
-   !=========================================================================================!
-   ! TISSUE HEAT STORE -- ACTIVATION SWITCH. 0 = zero-inertia tissue; 1 = the store live.          !
-   ! Currently 1: the store is ON.                                                              !
-   !                                                                                          !
-   ! Everything the store needs is BUILT AND VERIFIED: the exact exponential relaxation, real WAI + !
-   ! sapwood allometry, the dry-wood/sapwood-water capacity split, and -- the hard part -- EXACT    !
-   ! conservation on both schemes via the b-weighted tissue-temperature time integrals in           !
-   ! column_bflux_t. With this scale at 0 every path reproduces the pre-store answers bit for bit,  !
-   ! which is the property the whole design was built around ("diagnostic is the store_hcap_per_dt -> 0 limit !
-   ! of one formula, not a separate mode") and it is checked by the full suite passing at 0.        !
-   !                                                                                          !
-   ! WHY IT IS NOT ON YET. Turning it on flips four PHYSICS assertions on ARK that had only ever    !
-   ! been exercised on the retired split path: daytime NEE goes net-release, and the leaf water     !
-   ! potential comes out POSITIVE (+0.72 MPa) instead of under tension, i.e. transpiration is being !
-   ! suppressed and leaf water accumulates. That is not a conservation failure -- every budget still !
-   ! closes -- but it is unexplained, and the leaf store is far too small to explain it directly     !
-   ! (cap_leaf = 2205 J/m2/K against h_coeff = 100 W/m2/K, so tau <~ 22 s and w_avg <~ 0.012).       !
-   ! Turning the LEAF store on alone is measurably WORSE than both together, which is non-monotonic  !
-   ! in the store size and therefore points at something other than the store's own inertia.         !
-   !                                                                                          !
-   ! Deliberately a source constant, not a TOML knob: this is an unfinished feature, not a supported !
-   ! configuration choice, and it must not look like one. Flip to 1.0 to resume the investigation.   !
-   !=========================================================================================!
-
-
-   !----- Prognostic-wood constants (retained; the split twin that these mirrored is retired). --------!
-   !      build the same store from the same biomass. ----------------------------------------------!
-   real(wp), parameter :: TISSUE_STORE_SCALE  = 1.0_wp  !< tissue heat store ON (see the banner above)
    !----- Per-cohort plant-hydraulics sub-step count above which the solve is judged pathological   !
    !      rather than merely stiff (issue #104). Measured band: 1.0-1.2 ordinary, ~136 collapsed. --!
    integer(ik), parameter :: HYDRO_NSUB_THRASH  = 16_ik
+   !----- Prognostic-wood constants. ----------------------------------------------------------------!
    real(wp), parameter :: C2B_WOOD            = 2.0_wp  !< carbon -> biomass (carbon fraction 0.5)
    real(wp), parameter :: WOOD_MOIST_FRAC_ARK = 1.0_wp  !< [kg water/kg dry] fresh-sapwood moisture (MVP)
 
@@ -288,14 +256,14 @@ contains
          frozen%tissue%h_coeff_w(i)   = sensible_heat_coeff(pi * col_cohort%wai(i), aero%wood_gbh(i), rho, cp_air)
          frozen%tissue%abs_sw_wood(i) = forc%abs_sw_wood(i)
          frozen%tissue%abs_lw_wood(i) = forc%abs_lw_wood(i)
-         !----- TISSUE STORE, frozen for the whole dt_fast. a = cap/dt_fast; the relaxation origin is  !
-         !      the START-of-step tissue temperature. Every stage evaluation therefore returns the      !
-         !      same dt_fast-averaged flux and dt_fast-endpoint temperature -- the store is an algebraic !
-         !      closure, not a tableau DOF. --------------------------------------------------------------!
-         frozen%tissue%leaf_hcap_per_dt(i)  = TISSUE_STORE_SCALE                                                   &
-                               * (frozen%tissue%leaf_dry_hcap(i) + frozen%tissue%leaf_wmass(i) * cp_liq) / dt_fast
-         frozen%tissue%wood_hcap_per_dt(i)  = TISSUE_STORE_SCALE                                                   &
-                               * (frozen%tissue%wood_dry_hcap(i) + frozen%tissue%wood_wmass(i) * cp_liq) / dt_fast
+         !----- TISSUE HEAT STORE, frozen for the whole dt_fast (docs/science/vegetation_energy_dynamics.md). !
+         !      a = cap/dt_fast; the relaxation origin is the START-of-step tissue temperature. Every     !
+         !      stage evaluation therefore returns the same dt_fast-averaged flux and dt_fast-endpoint    !
+         !      temperature -- the store is an algebraic closure, not a tableau DOF. -------------------!
+         frozen%tissue%leaf_hcap_per_dt(i)  = (frozen%tissue%leaf_dry_hcap(i) + frozen%tissue%leaf_wmass(i) * cp_liq) &
+                                              / dt_fast
+         frozen%tissue%wood_hcap_per_dt(i)  = (frozen%tissue%wood_dry_hcap(i) + frozen%tissue%wood_wmass(i) * cp_liq) &
+                                              / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
          frozen%plant%pft(i)      = col_cohort%pft(i)          ! #179: per-PFT hydraulics selector
@@ -341,9 +309,6 @@ contains
       frozen%ground%ggnet = aero%ggnet ; frozen%cas%rho = rho ; frozen%cas%press = press
 
       !----- params + hydraulics BCs. -----------------------------------------------------------!
-      frozen%params%soil = col_config%soil ; frozen%params%therm = col_config%soil_thermal
-      frozen%params%energy_opts = col_config%energy
-      frozen%params%hydro_opts = col_config%soil_water_opts
       frozen%cas%cas_condensation = col_config%integrator%cas_condensation      ! §8g scheme-asymmetry guard
       frozen%hydrology%geothermal = 0.0_wp
 
@@ -400,24 +365,15 @@ contains
       !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
       frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
       frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      frozen%params%hydraulics_table                     = col_config%hydraulics_table
-      frozen%params%hydraulics_opts                    = col_config%hydraulics_opts
       !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
       !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
       do ih = 1_ik, n
-         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih),            &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_pi0,                          &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_elastic_mod,                  &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_apoplast_frac,                &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_water_sat, col_cohort%bleaf(ih))
+         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_curve, col_cohort%bleaf(ih))
       end do
       do ih = 1_ik, n
-         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih),            &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_pi0,                          &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_elastic_mod,                  &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_apoplast_frac,                &
-              col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_water_sat,                    &
-              col_cohort%bsap(ih) + col_cohort%broot(ih))
+         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_curve, col_cohort%bsap(ih) + col_cohort%broot(ih))
       end do
       transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
       call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &

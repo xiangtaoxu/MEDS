@@ -20,7 +20,7 @@ import make_tower_forcing as mt   # noqa: E402
 import tower_gapfill as tg        # noqa: E402
 import tower_inputs as ti         # noqa: E402
 
-mff = ti.mff
+conv = ti.conv
 LAT, LON, OFFSET = 9.15, -79.85, -5.0
 DT = 1800.0
 DAYS = 45
@@ -32,7 +32,7 @@ def synthetic_tower(start="2014-02-01 00:00", days=DAYS):
     Alduchov-Eskridge curve."""
     local = pd.date_range(start, periods=int(days * 86400 / DT), freq="30min")
     utc = local.values.astype("datetime64[s]") - np.timedelta64(int(OFFSET * 3600), "s")
-    cz = mff.window_mean_cosz(utc, DT, LAT, LON)
+    cz = conv.window_mean_cosz(utc, DT, LAT, LON)
     hour = local.hour + local.minute / 60.0
     tc = 25.0 + 3.0 * np.sin(2 * np.pi * (hour - 9.0) / 24.0)
     rh = 0.85 - 0.12 * np.sin(2 * np.pi * (hour - 9.0) / 24.0)
@@ -168,7 +168,7 @@ def test_pressure_is_brought_down_to_the_ground(tmp_path):
     ds, _ = build(tmp_path, write_site(tmp_path, synthetic_tower()))
     p = ds["PSurf"][:, 0].astype(float)
     t = ds["Tair"][:, 0].astype(float)
-    assert np.allclose(p, 98800.0 * np.exp(mff.GRAV * 30.0 / (mff.R_DRY * t)), rtol=2e-6)
+    assert np.allclose(p, 98800.0 * np.exp(conv.GRAV * 30.0 / (conv.R_DRY * t)), rtol=2e-6)
 
 
 def test_rain_and_shortwave_stay_interval_means(tmp_path):
@@ -365,25 +365,25 @@ def test_humidity_round_trip_is_exact():
     t = np.array([280.0, 299.0, 305.0])
     p = np.array([95000.0, 98800.0, 101325.0])
     rh = np.array([0.3, 0.9, 1.0])
-    q = mff.rh_to_specific_humidity(rh, t, p)
-    assert np.allclose(mff.specific_humidity_to_vapor_pressure(q, p) / mff.sat_vapor_pressure(t), rh, atol=1e-13)
+    q = conv.rh_to_specific_humidity(rh, t, p)
+    assert np.allclose(conv.specific_humidity_to_vapor_pressure(q, p) / conv.sat_vapor_pressure(t), rh, atol=1e-13)
 
 
 def test_solar_noon_follows_the_longitude_and_the_equation_of_time():
     day = np.datetime64("2014-03-21T00:00:00")
     stamps = day + np.arange(0, 86400, 60).astype("timedelta64[s]")
-    cz = mff.solar_cosz(stamps, 0.0, -75.0)
+    cz = conv.solar_cosz(stamps, 0.0, -75.0)
     noon = stamps[np.argmax(cz)]
     doy = 80
-    expected = 43200.0 + 75.0 * 240.0 - mff.equation_of_time(doy)       # 17:00 UTC minus EoT
+    expected = 43200.0 + 75.0 * 240.0 - conv.equation_of_time(doy)       # 17:00 UTC minus EoT
     got = (noon - day).astype("timedelta64[s]").astype(float)
     assert abs(got - expected) <= 60.0
 
 
 def test_window_mean_cosz_matches_a_fine_integral_by_day():
     start = np.array(["2014-06-01T16:00:00"], dtype="datetime64[s]")
-    coarse = mff.window_mean_cosz(start, 3600.0, 9.15, -79.85)[0]
-    fine = mff.window_mean_cosz(start, 3600.0, 9.15, -79.85, nsub=3600)[0]
+    coarse = conv.window_mean_cosz(start, 3600.0, 9.15, -79.85)[0]
+    fine = conv.window_mean_cosz(start, 3600.0, 9.15, -79.85, nsub=3600)[0]
     assert abs(coarse - fine) < 1e-3
 
 

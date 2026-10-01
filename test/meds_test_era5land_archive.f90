@@ -19,7 +19,7 @@ module meds_test_era5land_archive
    private
 
    public :: NLAT, NLON, LAT0, DLAT, LON0, DLON, T0
-   public :: is_valid, field, air_temperature, hour_index, write_archive, write_static
+   public :: is_valid, field, air_temperature, hour_index, write_archive, write_static, write_month
 
    integer(ik), parameter :: NLAT = 4_ik, NLON = 18_ik
    real(wp),    parameter :: LAT0 = 45.0_wp, DLAT = -10.0_wp, LON0 = -180.0_wp, DLON = 20.0_wp
@@ -140,9 +140,10 @@ contains
       st = nc_close(ncid) ; call nc_check(st, 'close static')
    end subroutine write_static
 
-   subroutine write_month(dir, v, y, m)
+   subroutine write_month(dir, v, y, m, fill)
       character(len=*), intent(in) :: dir
       integer(ik),      intent(in) :: v, y, m
+      real(c_double), optional, intent(in) :: fill   !< a numeric _FillValue to declare (a bad file)
       character(len=:), allocatable :: path
       integer(c_int)    :: st, ncid, dt, dla, dlo, vt, vx, dims1(1), dims3(3)
       integer(c_size_t) :: start1(1), count1(1), start3(3), count3(3)
@@ -164,6 +165,9 @@ contains
       st = nc_def_var_f(ncid, trim(ERA_VAR_NAME(v)), NC_FLOAT, 3, dims3, vx) ; call nc_check(st, 'def var')
       st = nc_put_att_text_f(ncid, vx, 'units', int(len_trim(ERA_VAR_UNITS(v)), c_size_t), trim(ERA_VAR_UNITS(v)))
       call nc_check(st, 'var units')
+      if (present(fill)) then
+         st = nc_put_att_double_f(ncid, vx, '_FillValue', NC_FLOAT, fill) ; call nc_check(st, 'var fill')
+      end if
       st = nc_put_att_text_f(ncid, NC_GLOBAL, 'avg_convention', 3_c_size_t, 'end') ; call nc_check(st, 'avg_convention')
       st = nc_enddef(ncid) ; call nc_check(st, 'enddef month')
       call put_grid(ncid)

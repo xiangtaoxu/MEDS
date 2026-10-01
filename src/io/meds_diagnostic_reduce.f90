@@ -37,6 +37,7 @@ module meds_diagnostic_reduce
    use meds_site_state_types,   only : site_t
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : dbh_class_index
+   use meds_output_types,       only : MISSING_VALUE
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
    private
@@ -80,10 +81,13 @@ contains
    !  Weights                                                                               !
    !=======================================================================================!
 
-   !----- Fill w(1:n) with the per-cohort weight of `wkind` over the WHOLE site SoA. --------!
-   pure subroutine cohort_weight(site, wkind, w, n)
+   !----- Fill w(1:n) with the per-cohort weight of `wkind` over the WHOLE site SoA. A cohort   !
+   !      whose x is missing -- one recruited after the fast loop has no fast-loop samples yet --  !
+   !      carries no weight, so it is left out of a sum and out of both halves of a mean. ------!
+   pure subroutine cohort_weight(site, wkind, x, w, n)
       type(site_t), intent(in)  :: site
       integer(ik),  intent(in)  :: wkind
+      real(wp),     intent(in)  :: x(:)
       real(wp),     intent(out) :: w(:)
       integer(ik),  intent(out) :: n
       n = site%cohort%n
@@ -95,6 +99,7 @@ contains
       case (W_AGB)        ; w(1:n) = site%cohort%nplant(1:n) * site%cohort%agb(1:n)
       case default        ; w(1:n) = 1.0_wp                       ! W_NONE
       end select
+      where (x(1:n) == MISSING_VALUE) w(1:n) = 0.0_wp
    end subroutine cohort_weight
 
    !=======================================================================================!
@@ -117,7 +122,7 @@ contains
       real(wp)    :: w(max(site%cohort%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, w, nw)
+      call cohort_weight(site, wkind, x, w, nw)
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, site%patch%n
          i0 = site%patch%cohort_offset(ip) ; i1 = i0 + site%patch%cohort_count(ip) - 1_ik
@@ -151,7 +156,7 @@ contains
       real(wp)    :: w(max(site%cohort%n, 1_ik)), num, den, sc
       integer(ik) :: ip, i0, i1, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, w, nw)
+      call cohort_weight(site, wkind, x, w, nw)
       n_out = site%patch%n
       out(1:max(n_out,1_ik)) = 0.0_wp ; valid(1:max(n_out,1_ik)) = .false.
       do ip = 1_ik, n_out
@@ -186,7 +191,7 @@ contains
       real(wp)    :: num(max(n_pft,1_ik)), den(max(n_pft,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, w, nw)
+      call cohort_weight(site, wkind, x, w, nw)
       n_out = n_pft
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, site%patch%n
@@ -234,7 +239,7 @@ contains
       real(wp)    :: num(max(n_class,1_ik)), den(max(n_class,1_ik))
       integer(ik) :: ip, i0, i1, i, k, nw
       sc = 1.0_wp ; if (present(scale)) sc = scale
-      call cohort_weight(site, wkind, w, nw)
+      call cohort_weight(site, wkind, x, w, nw)
       n_out = n_class
       num = 0.0_wp ; den = 0.0_wp
       do ip = 1_ik, site%patch%n

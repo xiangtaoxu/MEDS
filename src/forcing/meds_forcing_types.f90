@@ -21,11 +21,26 @@ module meds_forcing_types
    public :: met_forcing_t, met_record_t, met_source_t, met_cursor_t, met_cells_t, met_month_t
    public :: co2_series_t
    public :: HUMIDITY_QAIR, HUMIDITY_RHAIR, HUMIDITY_TDEW
+   public :: N_MEDS_FIELD, MEDS_FIELD, FLD_TAIR, FLD_QAIR, FLD_RHAIR, FLD_TDEW, FLD_PSURF, FLD_WIND
+   public :: FLD_U10, FLD_V10, FLD_RAINF, FLD_LWDOWN, FLD_SWDOWN, FLD_PAR_BEAM, FLD_PAR_DIFFUSE
+   public :: FLD_NIR_BEAM, FLD_NIR_DIFFUSE
 
    !----- The humidity a source carries (MEDS_FLUX_TOWER_FORCING_PLAN.md D2). A file stores the     !
    !      quantity its source measured -- relative humidity for a tower, dewpoint for ERA5-Land --   !
    !      and the reader converts it with the model's own saturation curve, so a tower's 100 % is   !
    !      saturation in the model whatever curve the provider used. Qair is for a model-made source. !
+   !----- The fields a MEDS forcing file may carry, listed once. met_open finds each one's column   !
+   !      in the series it reads (met_source_t%series_col); read_record looks them up by index. -----!
+   integer(ik), parameter :: N_MEDS_FIELD = 15_ik
+   integer(ik), parameter :: FLD_TAIR = 1_ik, FLD_QAIR = 2_ik, FLD_RHAIR = 3_ik, FLD_TDEW = 4_ik,     &
+                             FLD_PSURF = 5_ik, FLD_WIND = 6_ik, FLD_U10 = 7_ik, FLD_V10 = 8_ik,        &
+                             FLD_RAINF = 9_ik, FLD_LWDOWN = 10_ik, FLD_SWDOWN = 11_ik,                 &
+                             FLD_PAR_BEAM = 12_ik, FLD_PAR_DIFFUSE = 13_ik, FLD_NIR_BEAM = 14_ik,      &
+                             FLD_NIR_DIFFUSE = 15_ik
+   character(len=24), parameter :: MEDS_FIELD(N_MEDS_FIELD) = [character(len=24) ::                   &
+      'Tair', 'Qair', 'RHair', 'Tdew', 'PSurf', 'Wind', 'u10', 'v10', 'Rainf', 'LWdown', 'SWdown',     &
+      'SWdown_par_beam', 'SWdown_par_diffuse', 'SWdown_nir_beam', 'SWdown_nir_diffuse']
+
    integer(ik), parameter :: HUMIDITY_QAIR  = 0_ik          !< specific humidity [kg/kg], used as is
    integer(ik), parameter :: HUMIDITY_RHAIR = 1_ik          !< relative humidity over liquid water [1]
    integer(ik), parameter :: HUMIDITY_TDEW  = 2_ik          !< dewpoint temperature [K]
@@ -167,8 +182,8 @@ module meds_forcing_types
       real(sp),    allocatable :: head(:,:,:)               !< (record, cell, variable) from irec_cycle_first on
       integer(ik) :: n_head    = 0_ik                       !< records in head (0 = none)
       integer(ik) :: n_loads   = 0_ik                       !< archive month loads so far (tests: none inside a step)
-      real(wp),    allocatable :: series(:,:)               !< (record, field) MEDS forcing file at grid_index
-      character(len=24), allocatable :: series_name(:)      !< the fields present in that file
+      real(wp),    allocatable :: series(:,:)               !< (record, column) MEDS forcing file at grid_index
+      integer(ik) :: series_col(N_MEDS_FIELD) = 0_ik        !< each MEDS_FIELD's column in series (0 = absent)
       !----- The prescribed CO2 (co2_source = "file"), read at open. One global series for every   !
       !      polygon, looked up on model time, so it is shared read-only like the rest. ------------!
       type(co2_series_t) :: co2

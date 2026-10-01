@@ -84,9 +84,9 @@ program test_containers
    !----- ...and independently, the extractor must never write past the caller's array, however  !
    !      the counts got out of step. `xshort` is deliberately smaller than the live cohort       !
    !      count: the reader has to report what it actually wrote, not what the block holds. ------!
-   call cohort_diag_value(site%cohort%diag, 1_ik, xbuf, nread)
+   call cohort_diag_value(site%cohort%diag, 1_ik, xbuf, nread, 0.0_wp)
    call check(nread == site%cohort%n, 'extractor did not report the live cohort count')
-   call cohort_diag_value(site%cohort%diag, 1_ik, xshort, nread)
+   call cohort_diag_value(site%cohort%diag, 1_ik, xshort, nread, 0.0_wp)
    call check(nread <= int(size(xshort), ik), 'extractor reported more than the caller''s array holds')
 
    write(*,'(a)') '   PASS'

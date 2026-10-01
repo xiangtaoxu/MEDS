@@ -81,7 +81,7 @@ def main(argv=None):
     obs_all = base["source"]["LWdown"].to_numpy()
     rpd = int(round(86400.0 / site.timestep))
     hidden = holdout_blocks(observed, rpd, args.holdout, args.block_days, args.seed)
-    day = base["mean_cosz"] > ti.mff.COSZ_BAR_MIN
+    day = base["mean_cosz"] > ti.conv.COSZ_BAR_MIN
     stamps_local = pd.DatetimeIndex(base["stamps"] + np.timedelta64(int(site.utc_offset * 3600), "s"))
     months = pd.DatetimeIndex(base["stamps"]).month.to_numpy()
 

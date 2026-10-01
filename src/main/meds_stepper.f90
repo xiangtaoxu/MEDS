@@ -16,7 +16,7 @@ module meds_stepper
    use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
-   use meds_time,                 only : meds_time_t, day_of_year
+   use meds_time,                 only : meds_time_t
    use meds_forcing_types,        only : met_source_t, met_cursor_t
    use meds_output_types,         only : output_buffers_t
    use meds_budget_check,         only : budget_t
@@ -60,51 +60,31 @@ contains
       !----- Fast loop: sub-daily biophysics over the state-hub reservoirs. When fast biophysics   !
       !      is ON a fast context MUST be supplied: the old `.and. present(fast_ctx)` SILENTLY       !
       !      skipped the loop, leaving gpp_accum=0 so carbon-mode growth ran on zero GPP (BUG1).     !
-      !      Fail loud instead of silently wrong. The met source, cursor and step_start are          !
-      !      forwarded only when present (forcing_on); absent -> the constant-forcing MVP.           !
+      !      Fail loud instead of silently wrong. Every optional is handed straight on: the fast     !
+      !      loop takes the forcing only when forcing_on and the source, cursor and step_start are   !
+      !      all present, and otherwise runs the constant-forcing MVP.                              !
       if (cfg%fast_biophysics_on) then
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
-         if (present(met_src) .and. present(met_cur) .and. present(step_start)) then
-            call fast_dynamics(site, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,              &
-                               step_start=step_start, out_bufs=out_bufs,                         &
-                               run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
-                               run_face_budget=run_face_budget)
-         else
-            call fast_dynamics(site, fast_ctx, cfg, run_energy_budget=run_energy_budget,           &
-                               run_water_budget=run_water_budget, run_face_budget=run_face_budget)
-         end if
+         call fast_dynamics(site, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,                  &
+                            step_start=step_start, out_bufs=out_bufs,                             &
+                            run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &
+                            run_face_budget=run_face_budget)
       end if
 
       !----- Slow loop: vegetation dynamics (rate assembly + demographic application), gated on the   !
       !      master slow_on freeze (holds cohort/patch state static while the fast loop still runs;   !
-      !      docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST step      !
-      !      INSIDE vegetation_dynamics (the folded phenology driver) and runs UNCONDITIONALLY          !
-      !      whenever a step-start day-of-year is available -- pass doy whenever step_start is          !
-      !      supplied; vegetation_dynamics itself no-ops the phenology advance when doy is absent        !
-      !      (no calendar context, e.g. a bare test call). -----------------------------------------!
+      !      docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I). Leaf phenology is the FIRST  !
+      !      step INSIDE vegetation_dynamics and advances whenever step_start is supplied.            !
+      !      `rho_air` values the canopy-air store. It lives on the fast context (site-uniform, from  !
+      !      the forcing), so the ledger never needs state of its own to carry it; without a fast     !
+      !      context there is no canopy air worth valuing and the term stays at zero. ---------------!
       if (cfg%slow_on) then
-         !----- `rho_air` values the canopy-air store. It lives on the fast context (site-uniform,   !
-         !      from the forcing), so the ledger never needs state of its own to carry it; without  !
-         !      a fast context there is no canopy air worth valuing and the term stays at zero.     !
-         if (present(step_start)) then
-            if (present(fast_ctx)) then
-               call advance_slow_dynamics(site, cfg, doy=day_of_year(step_start), &
-                                          ledger=slow_ledger, rho_air=fast_ctx%rho_air,                  &
-                                          seam=seam, latitude_deg=latitude_deg)
-            else
-               call advance_slow_dynamics(site, cfg, doy=day_of_year(step_start), &
-                                          ledger=slow_ledger, seam=seam)
-            end if
+         if (present(fast_ctx)) then
+            call advance_slow_dynamics(site, cfg, step_start, seam, slow_ledger, fast_ctx%rho_air,     &
+                                       latitude_deg)
          else
-            if (present(fast_ctx)) then
-               call advance_slow_dynamics(site, cfg, ledger=slow_ledger,                            &
-                                          rho_air=fast_ctx%rho_air,                                  &
-                                          seam=seam, latitude_deg=latitude_deg)
-            else
-               call advance_slow_dynamics(site, cfg, ledger=slow_ledger,                            &
-                                          seam=seam, latitude_deg=latitude_deg)
-            end if
+            call advance_slow_dynamics(site, cfg, step_start, seam, slow_ledger, latitude_deg=latitude_deg)
          end if
       end if
    end subroutine advance_one_step
