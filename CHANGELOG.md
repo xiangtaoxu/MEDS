@@ -14,6 +14,16 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+- **`meds.config`**, the Python API's view of a run's configuration: it reads the main TOML and the
+  PFT (plant trait) TOML that `[init].pft_config` names, sets keys (one PFT's element of a trait
+  array included), writes the pair for a run, and reads back the run's parameter record. It needs no
+  compiled library.
+- **`meds.model.run(config)` and `python -m meds.model CONFIG`** run a config to its end through the
+  Python API, in place of `meds_main CONFIG`: the same output files and the same closing line.
+- **ctest `python_api`** (with `MEDS_BUILD_PYLIB`): the package's tests, among them a run through
+  `meds.model` compared with the same run of `meds_main`, bit for bit, and two runs in one process.
+
 ### Fixed
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
   `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's

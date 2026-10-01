@@ -16,6 +16,24 @@ place for it to break.
 site, and step the carbon slow loop or feed it externally computed rates (`apply_rates`). This is the
 same Fortran engine `meds_main` runs, driven through an opaque handle.
 
+**`meds.model`** — [`Run` and `run`](meds/model/_run.py): the whole coupled model, as `meds_main` runs
+it, with the time loop in Python. `run(config)` runs a config to its end, and
+`python -m meds.model CONFIG` does that from the shell; the output is `meds_main`'s, bit for bit.
+
+**`meds.config`** — [`RunConfig`](meds/config.py): a run's main TOML and the PFT (plant trait) TOML it
+names. Read both, change keys (one PFT's element of a trait array included), write the pair for a
+run, and read back the run's parameter record to check what the model read. It needs no compiled
+library. `scripts/calibrate_fast` builds every trial with it.
+
+```python
+from meds.config import RunConfig
+from meds.model import run
+cfg = RunConfig.load("examples/example_flux_tower_bci/meds_config_eval.toml")
+cfg.set("pft.vcmax25", 50.0, file="pft", pft=1)              # the first PFT's top-of-canopy Vcmax25
+cfg.set("run.end_time", "2012-09-01 00:00:00")
+run(cfg.write("trial"))                                       # trial/main.toml + trial/pft.toml
+```
+
 Future submodules (`meds.plant.hydraulics`, `meds.fast`, …) attach as their Fortran C-APIs land.
 
 ```python

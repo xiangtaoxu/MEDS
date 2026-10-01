@@ -706,6 +706,15 @@ if(MEDS_BUILD_TESTS)
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/calibrate_fast/tests)
          set_tests_properties(calibrate_fast PROPERTIES
                               ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         #----- The Python package's own tests (python/tests): the leaf and phenology kernels,     #
+         #      meds.config, and meds.model against meds_main, bit for bit.                         #
+         if (MEDS_BUILD_PYLIB)
+            add_test(NAME python_api
+                     COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                             ${CMAKE_CURRENT_SOURCE_DIR}/python/tests)
+            set_tests_properties(python_api PROPERTIES ENVIRONMENT
+                                 "PYTHONDONTWRITEBYTECODE=1;PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python;MEDS_LIB=$<TARGET_FILE:meds_py>;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         endif()
       else()
          message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "netCDF4, pytest or tomli)")
