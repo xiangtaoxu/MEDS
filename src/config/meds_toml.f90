@@ -19,7 +19,7 @@ module meds_toml
 
    public :: toml_table_t, toml_parse_file
    public :: toml_has, toml_has_section, toml_int, toml_real, toml_logical, toml_string, toml_real_array
-   public :: toml_write_record
+   public :: toml_write_record, toml_record_reset
 
    !----- VALLEN is also the line buffer, so it bounds a whole `key = value` line. 1024 holds the   !
    !      forcing path fields (MET_PATH_LEN, MEDS_FORCING_DESIGN.md §15.2) with room for the key.     !
@@ -36,7 +36,9 @@ module meds_toml
    !      it came from and whether the key was in that file or took the caller's default, so a run !
    !      can write down every setting it actually read (toml_write_record). A key the loader never !
    !      reads -- a misspelling, or a block that is not consulted -- is absent, which is how a     !
-   !      caller that set a key checks that it landed. A re-read replaces the earlier row. --------!
+   !      caller that set a key checks that it landed. A re-read replaces the earlier row. Loading  !
+   !      a run's config starts a new record (toml_record_reset), so a process that runs several    !
+   !      configs in turn, as the Python API can, writes each run's own settings. --------------------!
    integer, parameter :: MAXREC = 4096, RECVAL = 512
    integer(ik), save :: rec_n = 0_ik
    character(len=256),    save :: rec_source(MAXREC)
@@ -297,6 +299,11 @@ contains
       rec_source(slot) = t%source ; rec_key(slot) = key ; rec_index(slot) = index
       rec_present(slot) = present ; rec_value(slot) = adjustl(text)
    end subroutine record_value
+
+   !----- Empty the record: what a run reads from here on is the whole of its record. -------!
+   subroutine toml_record_reset()
+      rec_n = 0_ik
+   end subroutine toml_record_reset
 
    !----- 17 significant digits: the value the run used, to the last bit of a double. -------!
    function real_text(x) result(s)

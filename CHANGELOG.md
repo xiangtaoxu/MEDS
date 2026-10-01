@@ -15,6 +15,8 @@ before and after.
 ## [Unreleased]
 
 ### Fixed
+- **A second run in one process wrote the first run's settings into its parameter record**, and the
+  record would have stopped growing after 4,096 rows. Loading a config now starts a new record.
 - **24 optional per-PFT keys could not be set since v0.3.2** (N-10): the per-PFT plant-hydraulics
   overrides (`pft.leaf_pi0`, `pft.wood_psi50`, `pft.k_plant_max` and ten more),
   `pft.storage_turnover_rate`, `pft.retained_carbon_fraction`, and the nine optional WATER, HYDRO and

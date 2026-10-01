@@ -50,7 +50,7 @@ module meds_config_io
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real,                                          &
-                               toml_logical, toml_string, toml_real_array
+                               toml_logical, toml_string, toml_real_array, toml_record_reset
    use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS
    implicit none
    private
@@ -901,6 +901,10 @@ contains
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
       character(len=64)  :: integrator_str
+
+      !----- The parameter record is this config's alone: rows from a config loaded earlier in    !
+      !      the same process (the Python API runs one after another) would otherwise stay in it. !
+      call toml_record_reset()
 
       !----- MAIN file. Every key it holds must be one its reference lists (meds_config_keys);   !
       !      the unknown and retired ones are reported with the missing required keys below. ---!
