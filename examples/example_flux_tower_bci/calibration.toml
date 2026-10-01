@@ -4,8 +4,7 @@
 # Paths are relative to this file.
 
 [base]
-main        = "meds_config_eval.toml"
-pft         = "pft_parameters.toml"
+main        = "meds_config_eval.toml"                # with the PFT file it names, pft_parameters.toml
 registry    = "../../scripts/calibrate_fast/parameters.toml"
 growth_resp = "calibration/growth_resp_monthly.csv"   # calibrate_fast.py growth-resp, from the five-year run
 

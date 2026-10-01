@@ -700,12 +700,16 @@ if(MEDS_BUILD_TESTS)
          set_tests_properties(restart_exact PROPERTIES
                               ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
          #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests, #
-         #      and a smoke test that drives meds_main through a chain, a trial and a Jacobian column. #
+         #      and a smoke test that runs a chain, a trial and a Jacobian column through meds_main  #
+         #      and, when libmeds.so is built, through the Python API as well.                      #
+         set(meds_calib_env "PYTHONDONTWRITEBYTECODE=1" "MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         if (MEDS_BUILD_PYLIB)
+            list(APPEND meds_calib_env "MEDS_LIB=$<TARGET_FILE:meds_py>")
+         endif()
          add_test(NAME calibrate_fast
                   COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/calibrate_fast/tests)
-         set_tests_properties(calibrate_fast PROPERTIES
-                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         set_tests_properties(calibrate_fast PROPERTIES ENVIRONMENT "${meds_calib_env}")
          #----- The Python package's own tests (python/tests): the leaf and phenology kernels,     #
          #      meds.config, and meds.model against meds_main, bit for bit.                         #
          if (MEDS_BUILD_PYLIB)

@@ -12,8 +12,8 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-import tomlio
-from trials import stamp, set_param, TrialError
+from pool import Task
+from trials import TrialError, command, digest, stamp, with_params
 
 PREFIX = "c"
 
@@ -30,43 +30,35 @@ def chain_segments(chain_start: dt.datetime, starts: list) -> list[tuple]:
     return out
 
 
-def run_chain(name, chain_start, windows, base_main, base_pft, params, theta, root: Path, pool, exe,
+def run_chain(name, chain_start, windows, base, params, theta, root: Path, pool, runner,
               overrides=None, timeout=7200) -> dict:
     """Run one chain; return {window name: state file}. A chain already run with the same
     parameters is reused."""
     starts = [w.start for w in windows]
-    key = tomlio.digest(name, str(chain_start), [str(s) for s in sorted(set(starts))],
-                        [(p.name, float(v)) for p, v in zip(params, theta)], overrides or {},
-                        base_main, base_pft)
+    key = digest(name, str(chain_start), [str(s) for s in sorted(set(starts))],
+                 [(p.name, float(v)) for p, v in zip(params, theta)], overrides or {},
+                 base.main, base.pft)
     cdir = root / f"chain-{name}-{key[:12]}"
     cdir.mkdir(parents=True, exist_ok=True)
-    npft = len(tomlio.deep_get(base_pft, "pft.vcmax25", [0]))
     state_at = {}
     prev_state = None
     for i, (t0, t1) in enumerate(chain_segments(chain_start, starts)):
         sdir = cdir / f"seg{i:02d}"
         state = sdir / "out" / f"{PREFIX}-S-{t1.strftime('%Y%m%d%H%M%S')}.nc"
         if not state.exists():
-            main, pft = tomlio.clone(base_main), tomlio.clone(base_pft)
-            for p, v in zip(params, theta):
-                set_param(main, pft, p, v, npft)
-            for k, v in (overrides or {}).items():
-                tomlio.deep_set(main, k, v)
-            sdir.mkdir(parents=True, exist_ok=True)
-            (sdir / "out").mkdir(exist_ok=True)
-            (sdir / "pft.toml").write_text(tomlio.dumps(pft))
+            cfg = with_params(base, params, theta, overrides)
             settings = {"run.start_time": stamp(t0), "run.end_time": stamp(t1), "run.slow_on": False,
                         "run.n_threads": 1, "init.init_mode": 1 if prev_state is None else 2,
                         "init.restart_file": "none" if prev_state is None else str(prev_state),
-                        "init.pft_config": str(sdir / "pft.toml"), "state.write_state": True,
-                        "state.output_dir": str(sdir / "out"), "state.output_prefix": PREFIX,
-                        "state.interval_years": 1000, "output.enabled": False}
+                        "state.write_state": True, "state.output_dir": str(sdir / "out"),
+                        "state.output_prefix": PREFIX, "state.interval_years": 1000,
+                        "output.enabled": False}
             for k, v in settings.items():
-                tomlio.deep_set(main, k, v)
-            tomlio.write(sdir / "main.toml", main)
-            from pool import Task
-            res = pool.run([Task(f"{name}-{i}", [exe, str(sdir / "main.toml")], str(sdir),
-                                 str(sdir / "run.log"), timeout)])
+                cfg.set(k, v)
+            (sdir / "out").mkdir(parents=True, exist_ok=True)
+            main = cfg.write(sdir)
+            res = pool.run([Task(f"{name}-{i}", command(runner, main), str(sdir), str(sdir / "run.log"),
+                                 timeout)])
             status = next(iter(res.values()))[0]
             if status != "ok" or not state.exists():
                 tail = "\n".join((sdir / "run.log").read_text(errors="replace").splitlines()[-15:])

@@ -24,6 +24,14 @@ before and after.
 - **ctest `python_api`** (with `MEDS_BUILD_PYLIB`): the package's tests, among them a run through
   `meds.model` compared with the same run of `meds_main`, bit for bit, and two runs in one process.
 
+### Changed
+- **The fast calibration runs through the Python API** (`scripts/calibrate_fast`). Every trial,
+  state chain and base record is built with `meds.config` and run by `python -m meds.model`;
+  `--runner <meds_main>` runs the executable instead, and replaces `--meds-main`. The tool's own TOML
+  module (`tomlio.py`) is gone, and the site declaration's `[base].pft` is refused: the PFT file is
+  the one the main file names. `test/python/test_restart_exact.py` builds its configs with
+  `meds.config` too, in place of its own TOML writer.
+
 ### Fixed
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
   `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's

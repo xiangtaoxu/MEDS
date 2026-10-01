@@ -12,12 +12,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import calibrate_fast as CF   # noqa: E402
+import calibrate_fast as CF   # noqa: E402  (puts the source tree's meds package on the path)
 import fit as F               # noqa: E402
 import residuals as R         # noqa: E402
-import tomlio                 # noqa: E402
 import tower as TW            # noqa: E402
 import trials as T            # noqa: E402
+from meds.config import RunConfig, load_toml                     # noqa: E402
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # py3.10 and older
+    import tomli as tomllib
 from registry import H_U, SIGMA_U, Param, load_registry, resolve_defaults   # noqa: E402
 
 REGISTRY = Path(__file__).resolve().parents[1] / "parameters.toml"
@@ -65,22 +70,23 @@ def test_defaults_come_from_base_then_record():
         if p.file == "pft":
             p.pft = 1
     record = {("main", "aerodynamics.z0m_ratio", 0): (False, 0.13)}
-    resolve_defaults(ps, {}, {"pft": {"stomatal_g1": [3.0]}}, record)
+    resolve_defaults(ps, RunConfig({}, {"pft": {"stomatal_g1": [3.0]}}), record)
     assert ps[0].default == 3.0 and ps[1].default == 0.13
     with pytest.raises(KeyError):
-        resolve_defaults([Param("x", "main", "nowhere.key", 0.0, 1.0)], {}, {}, record)
+        resolve_defaults([Param("x", "main", "nowhere.key", 0.0, 1.0)], RunConfig({}, {}), record)
 
 
 # ----- the trial writer ------------------------------------------------------------------------
 def test_build_trial_sets_keys(tmp_path):
     main = {"run": {"start_time": "2012-08-01"}, "init": {"init_mode": 1}, "output": {"fast": {}}}
-    pft = {"pft": {"stomatal_g1": [3.0, 4.0], "vcmax25": [45.0, 50.0]}}
+    pft = {"pft": {"stomatal_g1": [3.0, 4.0], "vcmax25": [45.0, 50.0], "wood_density": [0.6, 0.7]}}
+    base = RunConfig(main, pft)
     ps = [Param("g1", "pft", "pft.stomatal_g1", 1.5, 6.0, "log", pft=2),
           Param("z0", "main", "aerodynamics.z0m_ratio", 0.05, 0.2)]
     w = T.Window("w1", dt.datetime(2016, 3, 5), 10, "cal", "cal")
-    tdir = T.build_trial(main, pft, ps, [5.0, 0.1], w, "/x/state.nc", tmp_path)
-    m = tomlio.load(tdir / "main.toml")
-    q = tomlio.load(tdir / "pft.toml")
+    tdir = T.build_trial(base, ps, [5.0, 0.1], w, "/x/state.nc", tmp_path)
+    m = load_toml(tdir / "main.toml")
+    q = load_toml(tdir / "pft.toml")
     assert q["pft"]["stomatal_g1"] == [3.0, 5.0]
     assert m["aerodynamics"]["z0m_ratio"] == 0.1
     assert m["run"]["start_time"] == "2016-03-05 00:00:00" and m["run"]["end_time"] == "2016-03-15 00:00:00"
@@ -88,8 +94,14 @@ def test_build_trial_sets_keys(tmp_path):
     assert m["init"]["reacclimate_traits"] is True and m["run"]["slow_on"] is False
     assert m["init"]["pft_config"] == str(tdir / "pft.toml")
     # the same candidate is the same trial; another is another
-    assert T.build_trial(main, pft, ps, [5.0, 0.1], w, "/x/state.nc", tmp_path) == tdir
-    assert T.build_trial(main, pft, ps, [5.0, 0.11], w, "/x/state.nc", tmp_path) != tdir
+    assert T.build_trial(base, ps, [5.0, 0.1], w, "/x/state.nc", tmp_path) == tdir
+    assert T.build_trial(base, ps, [5.0, 0.11], w, "/x/state.nc", tmp_path) != tdir
+    assert base.get("pft.stomatal_g1", file="pft") == [3.0, 4.0]      # the base is not changed
+
+
+def test_command_runs_the_python_api_or_an_executable():
+    assert T.command("python", Path("/t/main.toml")) == [sys.executable, "-m", "meds.model", "/t/main.toml"]
+    assert T.command("/b/meds_main", Path("/t/main.toml")) == ["/b/meds_main", "/t/main.toml"]
 
 
 def test_record_check(tmp_path):
@@ -202,9 +214,9 @@ def test_set_toml_text_keeps_comments():
     t = CF.set_toml_text(text, "pft.stomatal_g1", 4.25, index=0)
     assert "stomatal_g1 = [4.25]   # Medlyn" in t
     t = CF.set_toml_text(t, "pft.leaf_pi0", -1.8, index=0)
-    assert tomlio.tomllib.loads(t)["pft"]["leaf_pi0"] == [-1.8]
+    assert tomllib.loads(t)["pft"]["leaf_pi0"] == [-1.8]
     t = CF.set_toml_text(t, "aerodynamics.z0m_ratio", 0.1)
-    d = tomlio.tomllib.loads(t)
+    d = tomllib.loads(t)
     assert d["aerodynamics"]["z0m_ratio"] == 0.1 and d["camac"]["x"] == 1 and d["pft"]["vcmax25"] == [45.0]
 
 

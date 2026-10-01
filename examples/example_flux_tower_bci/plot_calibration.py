@@ -24,6 +24,7 @@ import numpy as np  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "calibrate_fast"))
+sys.path.insert(0, os.path.join(HERE, "..", "..", "python"))   # the registry reads TOML with meds.config
 from registry import SIGMA_U, load_registry  # noqa: E402
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"

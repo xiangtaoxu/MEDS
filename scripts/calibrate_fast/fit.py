@@ -34,10 +34,9 @@ class Model:
     windows: list                    # trials.Window
     specs: dict                      # window name -> residuals.WindowSpec
     states: dict                     # window name -> state file
-    base_main: dict
-    base_pft: dict
+    base: object                     # meds.config.RunConfig: the base main and PFT files
     overrides: dict
-    exe: str
+    runner: str                      # "python" (the Python API) or the meds_main executable
     pool: object
     root: Path
     utc_offset_h: float
@@ -64,16 +63,16 @@ class Model:
         """One stacked data-residual vector per parameter set (theta over self.params), or None
         where any of its trials failed."""
         windows = self.windows if windows is None else windows
-        dirs = [[trials.build_trial(self.base_main, self.base_pft, self.params, th, w,
-                                    self.states[w.name], self.root, self.overrides)
+        dirs = [[trials.build_trial(self.base, self.params, th, w, self.states[w.name], self.root,
+                                    self.overrides)
                  for w in windows] for th in thetas]
         todo, seen = [], set()
         for tds in dirs:
             for td in tds:
                 if td not in seen and not (td / "series.npz").exists():
                     seen.add(td)
-                    todo.append(Task(td.name, trials.command(self.exe, td), str(td), str(td / "run.log"),
-                                     self._timeout()))
+                    todo.append(Task(td.name, trials.command(self.runner, td / "main.toml"), str(td),
+                                     str(td / "run.log"), self._timeout()))
         status = self.pool.run(todo) if todo else {}
         for t in todo:
             self.seconds.append(status[t.id][1])

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from tomlio import load
+from meds.config import load_toml
 
 SIGMA_U = math.log(0.975 / 0.025) / 2.0     # 1.832: logit(0.975) / 2
 H_U = 0.04                                   # the central-difference step in u (~1 % of the range)
@@ -73,7 +73,7 @@ class Param:
 def load_registry(path, variant: str | None = None) -> list[Param]:
     """Read a registry TOML: one table per parameter. Entries restricted to other variants are
     dropped."""
-    raw = load(path)
+    raw = load_toml(path)
     out = []
     for name, e in raw.items():
         if not isinstance(e, dict):
@@ -101,18 +101,15 @@ def load_registry(path, variant: str | None = None) -> list[Param]:
     return out
 
 
-def resolve_defaults(params: list[Param], base_main: dict, base_pft: dict, record: dict | None = None):
-    """Give every parameter its default: the registry's, else the base TOML's, else the value the
-    base run's parameter record says the model read (a key the base TOML leaves to its compiled
-    default). A key the model never read is an error: a misspelling, or a dead key."""
-    from tomlio import deep_get
+def resolve_defaults(params: list[Param], base, record: dict | None = None):
+    """Give every parameter its default: the registry's, else the base configuration's (a
+    meds.config.RunConfig), else the value the base run's parameter record says the model read (a
+    key the base TOML leaves to its compiled default). A key the model never read is an error: a
+    misspelling, or a dead key."""
     for p in params:
         if p.default is not None:
             continue
-        table = base_pft if p.file == "pft" else base_main
-        v = deep_get(table, p.key)
-        if isinstance(v, list):
-            v = v[p.pft - 1]
+        v = base.get(p.key, file=p.file, pft=p.pft if p.file == "pft" else None)
         if v is None and record is not None:
             v = record_value(record, p)
         if v is None:
@@ -125,7 +122,7 @@ def resolve_defaults(params: list[Param], base_main: dict, base_pft: dict, recor
 
 
 def record_value(record: dict, p: Param):
-    """The value a parameter record (trials.read_record) holds for p, or None."""
+    """The value a parameter record (meds.config.read_record) holds for p, or None."""
     idx = p.pft if (p.file == "pft" and p.pft is not None) else 0
     hit = record.get((p.file, p.key, idx))
     if hit is None and p.file == "pft":

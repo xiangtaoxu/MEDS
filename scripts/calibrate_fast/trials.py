@@ -2,21 +2,23 @@
 """One trial: a frozen MEDS run over one window, restarted from that window's shared state with
 a candidate parameter set (MEDS_FAST_CALIBRATION_PLAN.md §5.1, §7 P1 "trials").
 
-A trial is a directory holding its own main and PFT TOML, made by parsing the base configs and
-setting keys. Its name is a hash of the two files, so a repeated candidate reuses the finished
-run. After the run the trial's parameter record (<prefix>_parameters.csv, written by meds_main)
-must show every key the trial set, marked as set in the file, with the value written: a key that
-is missing or defaulted means a misspelling or a key the model does not read, and the trial fails
-rather than silently running the default.
+A trial is a directory holding its own main and PFT TOML, made from the base configuration with
+meds.config by setting keys. Its name is a hash of the two, so a repeated candidate reuses the
+finished run. A trial runs through the Python API (`python -m meds.model`) or the meds_main
+executable, whichever the fit's runner names; both write the same files. After the run the trial's
+parameter record (<prefix>_parameters.csv) must show every key the trial set, marked as set in the
+file, with the value written: a key that is missing or defaulted means a misspelling or a key the
+model does not read, and the trial fails rather than silently running the default.
 """
 from __future__ import annotations
 
-import csv
-import re
 import datetime as dt
+import hashlib
+import json
 import math
-import os
+import re
 import shutil
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,17 +27,18 @@ import numpy as np
 import pandas as pd
 from netCDF4 import Dataset
 
-import tomlio
+from meds.config import RunConfig, read_record
 
 #: the hourly variables a trial writes: every target's model side (residuals.py)
 TRIAL_VARIABLES = ("sw_in_fast", "sw_up_fast", "lw_up_fast", "rnet_fast", "le_flux_fast",
                    "h_flux_fast", "gpp_rate_fast", "nee_fast", "ustar_fast")
 PREFIX = "t"
+#: the runner that runs a config through the Python API instead of an executable
+PYTHON_RUNNER = "python"
+#: the line meds_main and meds.model print when a run ends well (meds.model.COMPLETED)
+COMPLETED = "OK: simulation completed"
 #: netCDF4 and HDF5 are not thread-safe, and the fit's starts run in threads: every read takes this
 NC_LOCK = threading.RLock()
-#: main-TOML keys holding paths, resolved against the base config's directory
-PATH_KEYS = ("init.census_file", "init.pft_config", "forcing.path", "forcing.co2_file",
-             "output.io_config")
 
 
 class TrialError(RuntimeError):
@@ -59,41 +62,32 @@ def stamp(t: dt.datetime) -> str:
     return t.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def absolutize(main: dict, base_dir: Path) -> dict:
-    """Resolve the base config's relative paths against its own directory."""
-    for key in PATH_KEYS:
-        v = tomlio.deep_get(main, key)
-        if isinstance(v, str) and v not in ("", "none") and not os.path.isabs(v):
-            tomlio.deep_set(main, key, str((base_dir / v).resolve()))
-    return main
+def digest(*objs) -> str:
+    """A content hash that ignores key order: the same settings give the same digest however the
+    tables were assembled."""
+    text = json.dumps(objs, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha1(text.encode()).hexdigest()
 
 
-def set_param(main: dict, pft: dict, p, value: float, npft: int) -> None:
-    """Deep-set one registry parameter in the parsed configs."""
-    if p.file == "main":
-        tomlio.deep_set(main, p.key, float(value))
-        return
-    arr = tomlio.deep_get(pft, p.key)
-    if arr is None:
-        if npft != 1:
-            raise TrialError(f"{p.name}: '{p.key}' is not in the base PFT file, and with {npft} PFTs "
-                             "the other PFTs' values are unknown -- add it to the base PFT file")
-        arr = [float(value)]
-    else:
-        arr = [float(x) for x in arr]
-        arr[p.pft - 1] = float(value)
-    tomlio.deep_set(pft, p.key, arr)
+def set_param(cfg: RunConfig, p, value: float) -> None:
+    """Set one registry parameter in a run's configuration."""
+    cfg.set(p.key, float(value), file=p.file, pft=p.pft if p.file == "pft" else None)
 
 
-def build_trial(base_main: dict, base_pft: dict, params, theta, window: Window, state_file: str,
-                root: Path, overrides: dict | None = None, write_state: bool = False) -> Path:
-    """Write a trial directory (or find the finished one) and return its path."""
-    main, pft = tomlio.clone(base_main), tomlio.clone(base_pft)
-    npft = len(tomlio.deep_get(pft, "pft.vcmax25", [0]))
+def with_params(base: RunConfig, params, theta, overrides: dict | None = None) -> RunConfig:
+    """A copy of the base configuration with a parameter set and the calibration's overrides."""
+    cfg = base.copy()
     for p, v in zip(params, theta):
-        set_param(main, pft, p, v, npft)
+        set_param(cfg, p, v)
     for k, v in (overrides or {}).items():
-        tomlio.deep_set(main, k, v)
+        cfg.set(k, v)
+    return cfg
+
+
+def build_trial(base: RunConfig, params, theta, window: Window, state_file: str, root: Path,
+                overrides: dict | None = None, write_state: bool = False) -> Path:
+    """Write a trial directory (or find the finished one) and return its path."""
+    cfg = with_params(base, params, theta, overrides)
     run = {"run.start_time": stamp(window.start), "run.end_time": stamp(window.end),
            "run.slow_on": False, "run.n_threads": 1,
            "init.init_mode": 2, "init.restart_file": str(state_file), "init.reacclimate_traits": True,
@@ -103,46 +97,32 @@ def build_trial(base_main: dict, base_pft: dict, params, theta, window: Window, 
            "output.daily.enabled": False, "output.monthly.enabled": False,
            "output.annual.enabled": False}
     for k, v in run.items():
-        tomlio.deep_set(main, k, v)
-    pft_text = tomlio.dumps(pft)
-    tdir = root / f"{window.name}-{tomlio.digest(main, pft)[:16]}"
+        cfg.set(k, v)
+    tdir = root / f"{window.name}-{digest(cfg.main, cfg.pft)[:16]}"
     if (tdir / "series.npz").exists():
         return tdir
-    tdir.mkdir(parents=True, exist_ok=True)
-    (tdir / "pft.toml").write_text(pft_text)
+    (tdir / "out").mkdir(parents=True, exist_ok=True)
     (tdir / "output_variables.toml").write_text(
         "[variables]\n" + "".join(f'{v} = "F"\n' for v in TRIAL_VARIABLES))
-    for k, v in {"init.pft_config": str(tdir / "pft.toml"), "output.dir": str(tdir / "out"),
-                 "state.output_dir": str(tdir / "out"),
+    for k, v in {"output.dir": str(tdir / "out"), "state.output_dir": str(tdir / "out"),
                  "output.io_config": str(tdir / "output_variables.toml")}.items():
-        tomlio.deep_set(main, k, v)
-    tomlio.write(tdir / "main.toml", main)
-    (tdir / "out").mkdir(exist_ok=True)
+        cfg.set(k, v)
+    cfg.write(tdir)
     return tdir
 
 
-def command(exe: str, tdir: Path) -> list[str]:
-    return [exe, str(tdir / "main.toml")]
+def command(runner: str, config: Path) -> list[str]:
+    """The command that runs a config: through the Python API when the runner is "python", else
+    the meds_main executable the runner names."""
+    if runner == PYTHON_RUNNER:
+        return [sys.executable, "-m", "meds.model", str(config)]
+    return [runner, str(config)]
 
 
 # ----- the parameter record ---------------------------------------------------------------------
-def read_record(path: Path, main_path: Path, pft_path: Path) -> dict:
-    """{(file, key, index): (present, value)} with file = "main" | "pft" | the source path."""
-    out = {}
-    names = {str(main_path): "main", str(pft_path): "pft"}
-    with open(path, newline="") as fh:
-        for row in csv.DictReader(fh):
-            src = names.get(row["source"], row["source"])
-            try:
-                val = float(row["value"])
-            except ValueError:
-                val = row["value"]
-            out[(src, row["key"], int(row["index"]))] = (row["present"] == "true", val)
-    return out
-
-
 def check_record(tdir: Path, params, theta) -> None:
-    rec = read_record(tdir / "out" / f"{PREFIX}_parameters.csv", tdir / "main.toml", tdir / "pft.toml")
+    rec = read_record(tdir / "out" / f"{PREFIX}_parameters.csv",
+                      {tdir / "main.toml": "main", tdir / "pft.toml": "pft"})
     bad = []
     for p, v in zip(params, theta):
         idx = p.pft if p.file == "pft" else 0
@@ -177,7 +157,7 @@ def finish(tdir: Path, params, theta, utc_offset_h: float, keep_netcdf: bool = F
     """Check a completed trial and cache its hourly series (series.npz); raise TrialError if it
     failed."""
     log = (tdir / "run.log").read_text(errors="replace") if (tdir / "run.log").exists() else ""
-    if "OK: simulation completed" not in log:
+    if COMPLETED not in log:
         tail = "\n".join(log.splitlines()[-15:])
         raise TrialError(f"{tdir.name}: the run did not complete\n{tail}")
     #----- a set that breaks conservation is not a good run, however well it fits
