@@ -14,6 +14,16 @@ before and after.
 
 ## [Unreleased]
 
+### Fixed
+- **24 optional per-PFT keys could not be set since v0.3.2** (N-10): the per-PFT plant-hydraulics
+  overrides (`pft.leaf_pi0`, `pft.wood_psi50`, `pft.k_plant_max` and ten more),
+  `pft.storage_turnover_rate`, `pft.retained_carbon_fraction`, and the nine optional WATER, HYDRO and
+  LIGHT phenology-cue keys. The loader reads them, but `meds_config_pft.toml` did not list them, so a
+  config that set one stopped at the start. They are listed now, and the check that the references
+  match the loader (`config_keys_listed`) reads the `opt_*` readers too; it had matched only
+  `toml_*` and `req_*` calls. The calibration registry's `pft.leaf_pi0` is one of them, so the BCI
+  calibration as shipped could not start on v0.3.2.
+
 ## [0.3.2] — 2026-10-01
 
 An **efficiency and consolidation** release. The fast loop no longer slows down past four
