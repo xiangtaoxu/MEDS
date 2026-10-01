@@ -37,7 +37,7 @@ module meds_output_registry
         FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN,         &
         FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
-        FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP, FLD_C_SDIAG0,                                          &
+        FLD_C_SDIAG0,                                                                            &
         FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
         FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,                           &
         FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,                   &
@@ -56,7 +56,7 @@ module meds_output_registry
                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_VPD,       &
                                     CD_PSI_LEAF, CD_PSI_WOOD, CD_PLC, CD_SAPFLOW,                &
                                     CD_ROOT_UPTAKE, CD_ABS_PAR, CD_ABS_SW, CD_ABS_LW, CD_WIND,   &
-                                    CD_LEAF_WATER, CD_WOOD_WATER,                                &
+                                    CD_LEAF_WATER, CD_WOOD_WATER, CD_LEAF_TEMP, CD_WOOD_TEMP,    &
                                     PD_LE, PD_H, PD_RNET, PD_SW_GROUND, PD_LW_GROUND,            &
                                     PD_SW_IN_VIS, PD_SW_IN_NIR, PD_SW_UP_VIS, PD_SW_UP_NIR,      &
                                     PD_LW_UP,                                                    &
@@ -416,15 +416,15 @@ contains
       !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
       !      not pull the canopy mean as hard as a closed overstory).  --------------------------!
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_LEAF_TEMP,         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_DIAG0 + CD_LEAF_TEMP, &
                         w=W_LEAF_AREA, mn=.true.)
       call add_variable(reg, 'wood_temp_site', 'leaf-area-weighted wood temperature', 'K',       &
-                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_WOOD_TEMP,         &
+                        DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_DIAG0 + CD_WOOD_TEMP, &
                         w=W_LEAF_AREA, mn=.true.)
       call add_variable(reg, 'leaf_temp_cohort', 'per-cohort leaf temperature', 'K',             &
-                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_LEAF_TEMP)
+                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_DIAG0 + CD_LEAF_TEMP)
       call add_variable(reg, 'wood_temp_cohort', 'per-cohort wood temperature', 'K',             &
-                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_WOOD_TEMP)
+                        DIM_COHORT, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_C_DIAG0 + CD_WOOD_TEMP)
       call add_variable(reg, 'cas_temp_patch', 'patch canopy-air-space temperature', 'K',        &
                         DIM_PATCH, AGG_TMEAN, GRP_ENERGY, DAY_MON, FLD_P_DIAG0 + PD_CAS_TEMP)
       call add_variable(reg, 'soil_temp_top_patch', 'patch soil-top temperature', 'K',           &

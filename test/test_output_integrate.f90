@@ -37,15 +37,16 @@ program test_output_integrate
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
                                      extract_variable, output_integrate_fast, close_tier,        &
-                                     extract_fast_scalar, FLD_C_AGB, SRC_F_PD0, SRC_F_PY0,       &
+                                     extract_fast_scalar, FLD_C_AGB, FLD_C_DIAG0, SRC_F_PD0, SRC_F_PY0, &
                                      output_integrate
-   use meds_site_diag_types,  only : N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, PD_H, &
+   use meds_site_diag_types,  only : cohort_diag_alloc, CD_LEAF_TEMP,                             &
+                                     N_PYDIAG, PY_TAIR, PY_CO2, N_PDIAG, PD_CAS_TEMP, PD_LE, PD_H, &
                                      PD_GPP, PD_SW_UP, PD_LW_UP
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_output_registry,  only : manager_alloc, manager_alloc_buffers, find_var_index,        &
                                      manager_setup, manager_finalize, build_freq_index,          &
                                      apply_variable_override, OVR_MASK
-   use meds_diagnostic_reduce, only : W_NPLANT
+   use meds_diagnostic_reduce, only : W_NPLANT, W_LEAF_AREA
    use meds_output_config,    only : FREQ_MONTHLY, FREQ_FAST, FREQ_NONE
    use meds_column_params,    only : n_soil_layer_max
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -127,7 +128,7 @@ contains
 
    subroutine test_slab_and_extract()
       type(site_t)         :: site
-      type(var_desc_t)     :: v_agb_c, v_agb_s
+      type(var_desc_t)     :: v_agb_c, v_agb_s, v_lt
       type(integ_buffer_t) :: buf
       real(wp)             :: slab(64), out(64), scal
       logical              :: valid(64), vslab(64)
@@ -180,6 +181,26 @@ contains
       call extract_variable(site, dp, v_agb_s, scal, slab, vslab, n_out)
       call check(n_out == 0_ik, 'scalar extract n_out=0')
       call check_close(scal, 6.0_wp, 1.0e-12_wp, 'extract site agb')
+
+      !----- Leaf temperature is the cohort block's within-step mean (N-11). A cohort with no   !
+      !      samples -- recruited after the fast loop -- is fill on the cohort axis and out of the !
+      !      leaf-area-weighted site mean; a mean over nothing is missing, not 0 K. -------------!
+      call cohort_diag_alloc(site%cohort%diag, 64_ik, .true.)
+      site%cohort%diag%n = 3_ik
+      site%cohort%leaf_area(1:3) = 1.0_wp
+      site%cohort%diag%v(CD_LEAF_TEMP, 1:2) = [300.0_wp, 310.0_wp] * 900.0_wp
+      site%cohort%diag%w(1:2) = 900.0_wp ; site%cohort%diag%w(3) = 0.0_wp
+      v_lt%name = 'leaf_temp_cohort' ; v_lt%dim = DIM_COHORT ; v_lt%agg = AGG_TMEAN
+      v_lt%source_id = FLD_C_DIAG0 + CD_LEAF_TEMP
+      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      call check(n_out == 3_ik .and. vslab(1) .and. vslab(2) .and. .not. vslab(3),               &
+                 'a cohort with no samples is fill on the cohort axis')
+      v_lt%name = 'leaf_temp_site' ; v_lt%dim = DIM_SCALAR ; v_lt%weight = W_LEAF_AREA ; v_lt%mean = .true.
+      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      call check_close(scal, 305.0_wp, 1.0e-12_wp, 'the site leaf temperature leaves it out')
+      site%cohort%diag%w(1:2) = 0.0_wp
+      call extract_variable(site, dp, v_lt, scal, slab, vslab, n_out)
+      call check(scal == MISSING_VALUE, 'a mean over no sampled cohort is missing, not 0 K')
 
       call site_free(site)
       if (.false.) i = 0_ik   ! silence unused

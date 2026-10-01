@@ -291,6 +291,22 @@ before and after.
 
 ### Fixed
 
+- **Leaf and wood temperatures are within-step means** (plan item N-11). `leaf_temp_site`,
+  `wood_temp_site`, `leaf_temp_cohort` and `wood_temp_cohort` averaged the end-of-step temperature:
+  one sample per slow step, taken at the boundary's local hour. That is the bias #264 removed from
+  the canopy air and the soil.
+  - **The new source.** They now read the cohort block's rows (`CD_LEAF_TEMP`, `CD_WOOD_TEMP`),
+    sampled every sub-step. Water output already keeps that block on, so default runs do no extra
+    work.
+  - **Slow-only runs.** As for the other fast-loop variables, a run without the fast loop reads
+    these as fill.
+  - **A cohort with no samples is left out.** That is a cohort recruited in the slow step, after the
+    fast loop. It is fill on the cohort axis and out of every mean and sum. It used to read 0, so a
+    recruit pulled every leaf-area-weighted cohort mean towards 0 (0 K for a temperature).
+  - **A mean over nothing is fill.** A site mean with no weight (bare ground, say) reported 0, and
+    `leaf_temp_site` read 0 K on bare ground. It is now fill, as the empty-set rule says; sums are
+    unchanged.
+
 - **A soil-by-patch variable is handled like the other patch variables** (plan item N-9). Three rules
   named the cohort and patch axes and missed the soil-by-patch profiles:
   - **The record's patch count.** A tier whose only patch output was a `*_layer_patch` variable

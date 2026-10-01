@@ -77,11 +77,18 @@ Patch area `a_p` enters **only** at the patch → site step, never inside the we
 serves every scale. A patch-axis value therefore carries no area factor: it is per m² of *that
 patch's own* ground, which is what makes a gap-versus-closed-canopy comparison meaningful.
 
-**Empty sets.** A patch with no cohorts, or a **mean** over a PFT or size class with no members,
-emits `_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement.
-A **sum** over an empty PFT or size class is a true `0`, because reporting fill there would break
-the closure identity below the moment a PFT went locally extinct. The two conventions differ on
-purpose.
+**Empty sets.** A patch with no cohorts, or a **mean** with nothing to average, emits
+`_FillValue` — never `0/0`, and never a bare 0 that a reader would take for a measurement. "Nothing
+to average" covers a PFT or size class with no members, and a whole site, as on bare ground. A
+**sum** over an empty PFT or size class is a true `0`, because reporting fill there would break the
+closure identity below the moment a PFT went locally extinct. The two conventions differ on purpose.
+
+**A cohort with no samples.** A cohort recruited in the slow step has no fast-loop samples yet at
+that step's output tick. It is fill on the cohort axis, and it is left out of every reduction:
+- a mean is that of the cohorts that were sampled;
+- a sum gains nothing from it.
+
+Before this rule, it read 0, which pulled a canopy temperature towards 0 K.
 
 **What a run does not simulate.** A run without the fast loop (`fast_biophysics_on = false`)
 reports every fast-loop variable as `_FillValue`: the fluxes, the canopy air, the ground, the

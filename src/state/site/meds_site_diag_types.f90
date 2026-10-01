@@ -414,19 +414,19 @@ contains
    !      costs nothing on the once-per-step diagnostic path. With the lockstep fix above the    !
    !      clamp never bites; it is what turns the next instance of that class into a short read  !
    !      instead of memory corruption.  ------------------------------------------------------!
-   pure subroutine cohort_diag_value(d, field, x, n)
+   pure subroutine cohort_diag_value(d, field, x, n, empty)
       type(cohort_diag_block), intent(in)  :: d
       integer(ik),             intent(in)  :: field
       real(wp),                intent(out) :: x(:)
       integer(ik),             intent(out) :: n
+      real(wp),                intent(in)  :: empty   !< what a slot with no samples reads
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      !----- A slot the block holds no entry for reads 0, as one with no weight does. Callers reduce  !
-      !      over the site's live cohorts, which the block has none of when the fast loop never ran    !
-      !      (a slow-only run): without this they read the array unset (#299 is to report those as    !
-      !      missing instead). -----------------------------------------------------------------!
-      x = 0.0_wp
+      !----- A cohort with no samples reads `empty`: one recruited in the slow step, after the fast  !
+      !      loop, or a slot past the block's count. Reading 0 instead made a recruit's leaf         !
+      !      temperature 0 K and pulled every canopy mean towards 0. -------------------------------!
+      x = empty
       n = min(d%n, int(size(x), ik))
       do i = 1_ik, n
          if (d%w(i) > tiny_num) x(i) = d%v(field, i) / d%w(i)

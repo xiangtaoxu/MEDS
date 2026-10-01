@@ -49,7 +49,6 @@ module meds_output_integrate
    public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN, FLD_C_OVERTOP_LAI
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
-   public :: FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
@@ -117,8 +116,9 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_DMAX_PSI_LEAF   = 1024_ik
    integer(ik), parameter :: FLD_C_PHENO_FLUSH     = 1025_ik
    integer(ik), parameter :: FLD_C_PHENO_SHED      = 1026_ik
-   integer(ik), parameter :: FLD_C_LEAF_TEMP       = 1027_ik
-   integer(ik), parameter :: FLD_C_WOOD_TEMP       = 1028_ik
+   !----- Leaf and wood temperature are not read here at the output tick: one sample per window,  !
+   !      at the boundary's local hour, biases them (#264). Their time means are rows of the      !
+   !      cohort block (FLD_C_DIAG0 + CD_LEAF_TEMP, CD_WOOD_TEMP), sampled every sub-step. ------!
    !----- DERIVED cohort fields (computed by meds_diagnostic_kernels / from the deriv bundle). --!
    integer(ik), parameter :: FLD_C_ONE             = 1050_ik !< constant 1 (stem counts on any axis)
    integer(ik), parameter :: FLD_C_LAI             = 1051_ik !< nplant*leaf_area [m2/m2]
@@ -441,8 +441,6 @@ contains
       case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = site%cohort%dmax_psi_leaf(1:n)
       case (FLD_C_PHENO_FLUSH)     ; x(1:n) = site%cohort%pheno_flush_drive(1:n)
       case (FLD_C_PHENO_SHED)      ; x(1:n) = site%cohort%pheno_shed_drive(1:n)
-      case (FLD_C_LEAF_TEMP)       ; x(1:n) = site%cohort%leaf_temp(1:n)
-      case (FLD_C_WOOD_TEMP)       ; x(1:n) = site%cohort%wood_temp(1:n)
       !----- derived ------------------------------------------------------------------------!
       case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
       case (FLD_C_LAI)             ; x(1:n) = cohort_lai(site%cohort%nplant(1:n),               &
@@ -462,9 +460,9 @@ contains
          !----- Diagnostic-block rows (FLD_C_DIAG0 + CD_*, FLD_C_SDIAG0 + CS_*): read the dt-weighted   !
          !      accumulator and normalize. A block that is off never reaches here (not_simulated). ---!
          if (src > FLD_C_DIAG0 .and. src <= FLD_C_DIAG0 + N_CDIAG) then
-            call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n)
+            call cohort_diag_value(site%cohort%diag, src - FLD_C_DIAG0, x, n, MISSING_VALUE)
          else if (src > FLD_C_SDIAG0 .and. src <= FLD_C_SDIAG0 + N_CSDIAG) then
-            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_SDIAG0, x, n)
+            call cohort_diag_value(site%cohort%sdiag, src - FLD_C_SDIAG0, x, n, MISSING_VALUE)
          else
             x(1:n) = MISSING_VALUE
          end if
@@ -626,7 +624,8 @@ contains
       !----- RAW cohort slab: the field itself, no reduction. -------------------------------!
       case (DIM_COHORT)
          call cohort_source_field(site, v%source_id, slab_out, n_out)
-         valid_out(1:max(n_out,1_ik)) = .true.
+         valid_out(1:max(n_out,1_ik)) = .false.
+         valid_out(1:n_out) = slab_out(1:n_out) /= MISSING_VALUE   ! a cohort with no samples: fill
 
       !----- Patch axis: either a per-patch field verbatim, or a cohort field reduced to it. -!
       case (DIM_PATCH)
@@ -681,8 +680,11 @@ contains
             call reduce_patch_to_site(site, x, v%mean, scalar_out, ok)
             scalar_out = scalar_out * v%scale
          case default
-            scalar_out = extract_scalar_source(site, v%source_id)
+            scalar_out = extract_scalar_source(site, v%source_id) ; ok = .true.
          end select
+         !----- A mean over nothing (bare ground, or only cohorts with no samples) has nothing to  !
+         !      report this step: missing, which integrate_scalar skips, not a 0 it would average. !
+         if (.not. ok) scalar_out = MISSING_VALUE
       end select
    end subroutine extract_variable
 
