@@ -36,16 +36,20 @@ Barro Colorado Island is the worked example: [`examples/example_flux_tower_bci/c
   positive scale). The Jacobian comes from central differences, and all 2k·W trials of a Jacobian run
   at once. Each iteration tries three damping values at once. There are three starts, and a failed
   or timed-out trial rejects its step. `fit.py` has the details.
+- **The keys.** The registry (`parameters.toml`) holds only keys a ten-day window can set: 11, and
+  two more for canopy interception. Its header lists the keys left at their defaults and why (plan
+  §14): the tower cannot inform them, they act through soil water a ten-day window does not draw
+  down, they repeat another key, they are a numerical floor, or they are leaf biochemistry the
+  tower's GPP cannot tell apart from `vcmax25`.
 - **Screening.** The first Jacobian, at the default, gives each key's sensitivity per target, its
   posterior-to-prior σ ratio, the collinear pairs, dead columns (a harness bug) and rough keys. Keys
   the tower cannot inform are fixed at their default.
 - **Rough keys stay at their default** (`[fit].rough_keys = "default"`). A rough key is one whose
-  response over the finite-difference step is not smooth, so a Jacobian cannot steer it. At BCI
-  these were `wood_psi50` and `leaf_pi0`. `rough_keys = "line_search"` sets each by a 1-D search at
-  the MAP instead. At BCI that search found values that fit the 10-day windows better but broke the
-  five-year run's water budget (gate G7, #333), which is why it is not the default. Both BCI keys were
-  rough because they moved the threshold of MEDS's former whole-day stomatal shutdown, since replaced
-  by a linear decline (#332).
+  response over the finite-difference step is not smooth, so a Jacobian cannot steer it; at BCI,
+  `leaf_pi0` is one, which is one reason it is not in the registry. `rough_keys = "line_search"` sets
+  each by a 1-D search at the MAP instead. At BCI that search found values that fit the 10-day
+  windows better but broke the five-year run's water budget (gate G7, #333), which is why it is not
+  the default.
 - **The covariance.** At the MAP, the Laplace covariance weights each target by its effective sample
   size, from the lag-1 autocorrelation of its residuals. A linearity check along the three leading
   directions compares the actual change in the objective at ±1σ with the quadratic prediction.
@@ -86,7 +90,7 @@ touch runs/off/queue/STOP      # the driver writes it too, when the fit ends
 
 Ask Slurm for the memory with `--mem=0` (the whole node). A trial takes up to ~1 GB, and a cluster
 whose default is 1 GB per job kills the workers. A node running a trial on every core runs each
-trial about 2× slower than an idle node does: 18.6 s against 8.5 s at BCI.
+trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 
 ## What `fit` writes (in `--work`)
 

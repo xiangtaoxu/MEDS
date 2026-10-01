@@ -31,6 +31,19 @@ before and after.
   module (`tomlio.py`) is gone, and the site declaration's `[base].pft` is refused: the PFT file is
   the one the main file names. `test/python/test_restart_exact.py` builds its configs with
   `meds.config` too, in place of its own TOML writer.
+- **The fast-calibration registry holds the 11 keys a ten-day window can set** (13 with canopy
+  interception), down from 28 (plan §14). Left at their defaults: the eight keys the tower cannot
+  inform, the three that act through soil water a ten-day window does not draw down
+  (`wstress_sref_stomata`, `root_beta`, `leaf_pi0`), `d_ratio` (it repeats `z0m_ratio`), the
+  numerical `ustmin` and `canopy_freeboard`, and the leaf biochemistry `jmax_vcmax_ratio`,
+  `theta_j` and `ds_vcmax`.
+- **The BCI example's calibration is refitted** on v0.3.2 with the 11 keys, through the Python API.
+  Against the 28-key registry refitted on v0.3.2: half the trials (9,824 against 18,504), 66
+  core-hours against 151, and a validation objective 4 % higher (30,969 against 29,862), the loss in
+  GPP and the evaporative fraction. Over the five years the new set does as well or better: GPP
+  7.56 against the tower's 7.46 (the 28-key set's 6.77; v0.3.1's shipped set 6.83), NEE −3.63
+  (−3.31; −3.14), LE 80.5 (81.9), and April 2016 GPP 4.1 (3.9) against the tower's 6.3. The
+  interception-on set now passes the five-year water budget (v0.3.1's had 53 breaches).
 
 ### Fixed
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
