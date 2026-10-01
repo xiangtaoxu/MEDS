@@ -561,4 +561,3 @@ than a convergence proof.
 | tolerances, error norm, step controller | `src/fast_dynamics/numerics/meds_fast_control.f90` |
 | shared snow stage | `src/fast_dynamics/numerics/meds_fast_snow.f90` |
 | patch loop, per-thread scratch pool, order-preserving reductions (§6a) | `src/fast_dynamics/driver/meds_fast_dynamics.f90` (`fast_dynamics`) |
-| benchmark harness | `scripts/numerics_sweep.py`, `scripts/parity_fidelity.py` |

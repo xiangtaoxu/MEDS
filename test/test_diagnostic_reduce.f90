@@ -27,6 +27,7 @@ program test_diagnostic_reduce
                                        cohort_diag_copy_slot, cohort_diag_fuse,                  &
                                        cohort_diag_clear_slot, cohort_diag_value,                &
                                        CDIAG_FUSE, N_CDIAG, CD_LEAF_TEMP, CD_SAPFLOW, CD_ABS_SW
+   use meds_output_types,       only : MISSING_VALUE
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -34,6 +35,7 @@ program test_diagnostic_reduce
    call test_extensive_vs_intensive()
    call test_pft_and_size_closure()
    call test_empty_sets()
+   call test_unsampled_cohorts()
    call test_class_edges()
    call test_soil_columns()
    call test_kernels()
@@ -201,6 +203,34 @@ contains
    end subroutine test_empty_sets
 
    !=======================================================================================!
+   !  A cohort with NO SAMPLES (missing x: recruited after the fast loop) is left out: of a   !
+   !  mean's numerator AND denominator, so the mean is that of the sampled cohorts, and of a    !
+   !  sum, which it would only have added 0 to. A patch whose cohorts are all unsampled has     !
+   !  nothing to report (N-11). Counting it as 0 pulled a canopy temperature towards 0 K.       !
+   !=======================================================================================!
+   subroutine test_unsampled_cohorts()
+      type(site_t) :: site
+      real(wp) :: x(3), out(8), v
+      logical  :: vld(8), ok
+      integer(ik) :: n
+      call build_fixture(site)
+      x = [300.0_wp, 310.0_wp, MISSING_VALUE]          ! cohort 3, alone in patch 2, has no samples
+      !----- Leaf-area weights nplant*leaf_area = 2, 3 (patch 1, area 0.75): (600 + 930) / 5. ---!
+      call reduce_cohort_to_site(site, x, W_LEAF_AREA, .true., v, ok)
+      call check(ok, 'mean over the sampled cohorts is valid')
+      call check_close(v, 306.0_wp, 1.0e-12_wp, 'an unsampled cohort is out of the mean, not a 0')
+      call reduce_cohort_to_patch(site, x, W_LEAF_AREA, .true., out, vld, n)
+      call check(vld(1) .and. .not. vld(2), 'a patch of only unsampled cohorts reads fill')
+      x = [1.0_wp, 2.0_wp, MISSING_VALUE]
+      call reduce_cohort_to_site(site, x, W_NONE, .false., v, ok)
+      call check_close(v, 2.25_wp, 1.0e-12_wp, 'an unsampled cohort adds nothing to a sum')
+      x = MISSING_VALUE
+      call reduce_cohort_to_site(site, x, W_LEAF_AREA, .true., v, ok)
+      call check(.not. ok, 'a mean over only unsampled cohorts is invalid')
+      call site_free(site)
+   end subroutine test_unsampled_cohorts
+
+   !=======================================================================================!
    !  SIZE-CLASS EDGES. Half-open [lo, hi) except the last class, which is CLOSED at the top    !
    !  so the largest tree in the stand is never dropped; below the first edge clamps into bin 1  !
    !  for the same reason. Both are closure-preserving choices, so both are pinned.              !
@@ -304,12 +334,12 @@ contains
       !----- REORDER: one statement must permute EVERY field, not the ones someone remembered. !
       perm = [4_ik, 3_ik, 2_ik, 1_ik]
       call cohort_diag_reorder(d, perm, 4_ik)
-      call cohort_diag_value(d, CD_LEAF_TEMP, x, n)
+      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, 0.0_wp)
       call check(n == 4_ik, 'reorder keeps the live count')
       call check_close(x(1), 320.0_wp, 1.0e-12_wp, 'reorder permuted leaf_temp')
-      call cohort_diag_value(d, CD_SAPFLOW, x, n)
+      call cohort_diag_value(d, CD_SAPFLOW, x, n, 0.0_wp)
       call check_close(x(1), 4.0_wp, 1.0e-12_wp, 'reorder permuted sapflow in lockstep')
-      call cohort_diag_value(d, CD_ABS_SW, x, n)
+      call cohort_diag_value(d, CD_ABS_SW, x, n, 0.0_wp)
       call check_close(x(1), 40.0_wp, 1.0e-12_wp, 'reorder permuted abs_sw in lockstep')
 
       !----- COPY SLOT (a cohort split): the daughter is a full copy. -----!
@@ -321,6 +351,11 @@ contains
       call cohort_diag_clear_slot(d, 5_ik)
       call check(d%v(CD_SAPFLOW, 5_ik) == 0.0_wp, 'clear_slot zeroes a reused slot')
       call check(d%w(5_ik) == 0.0_wp,             'clear_slot zeroes the weight')
+      !----- ...and reads as the caller's "no samples" value, not as 0 K (N-11). -----!
+      d%n = 5_ik
+      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, -1.0_wp)
+      call check(x(5) == -1.0_wp .and. x(1) == 320.0_wp, 'a slot with no samples reads the empty value')
+      d%n = 4_ik
 
       !----- FUSE slot 2 into slot 1 with leaf-area weights (3, 1) and nplant weights (2, 6).   !
       !      After the reorder above: slot1 = (320, 4, 40), slot2 = (310, 3, 30).                !
@@ -328,11 +363,11 @@ contains
       !        EXTENSIVE  sapflow   = (2*4   + 6*3  )/8      = 3.25                               !
       !        GROUND     abs_sw    =  40 + 30                = 70                                 !
       call cohort_diag_fuse(d, 1_ik, 2_ik, 3.0_wp, 1.0_wp, 2.0_wp, 6.0_wp, CDIAG_FUSE)
-      call cohort_diag_value(d, CD_LEAF_TEMP, x, n)
+      call cohort_diag_value(d, CD_LEAF_TEMP, x, n, 0.0_wp)
       call check_close(x(1), 317.5_wp, 1.0e-12_wp, 'INTENSIVE field fuses leaf-area-weighted')
-      call cohort_diag_value(d, CD_SAPFLOW, x, n)
+      call cohort_diag_value(d, CD_SAPFLOW, x, n, 0.0_wp)
       call check_close(x(1), 3.25_wp, 1.0e-12_wp, 'EXTENSIVE field fuses nplant-weighted')
-      call cohort_diag_value(d, CD_ABS_SW, x, n)
+      call cohort_diag_value(d, CD_ABS_SW, x, n, 0.0_wp)
       call check_close(x(1), 70.0_wp, 1.0e-12_wp, 'GROUND-referenced field fuses by SUM')
       !----- The three answers are mutually distinct, so a blend that applied one rule to all    !
       !      of them would fail at least two of the assertions above.  -----------------------!
@@ -342,7 +377,7 @@ contains
          type(cohort_diag_block) :: dead
          call cohort_diag_alloc(dead, 8_ik, .false.)
          call cohort_diag_reorder(dead, perm, 4_ik)      ! must not touch anything
-         call cohort_diag_value(dead, CD_SAPFLOW, x, n)
+         call cohort_diag_value(dead, CD_SAPFLOW, x, n, 0.0_wp)
          call check(n == 0_ik, 'inactive block reports no data and does not crash')
       end block
    end subroutine test_diag_lockstep

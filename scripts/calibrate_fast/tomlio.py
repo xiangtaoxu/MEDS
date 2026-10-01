@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """TOML in and out for trial configs.
 
-A trial's configs are made by PARSING the base TOML and re-serializing it, never by patching text
-(scripts/numerics_sweep.py does the same, and says why: an appended block that repeats a table
-re-parents the keys after it). MEDS reads a small TOML subset -- `key = value` lines under
+A trial's configs are made by PARSING the base TOML and re-serializing it, never by patching text:
+an appended block that repeats a table re-parents the keys after it. MEDS reads a small TOML subset -- `key = value` lines under
 `[section]` or `[section.sub]` headers, with scalars, strings and flat arrays -- and this writes
 exactly that.
 """

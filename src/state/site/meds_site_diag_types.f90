@@ -143,7 +143,9 @@ module meds_site_diag_types
         FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE ]
 
    !==========================================================================================!
-   !  PER-PATCH diagnostic fields.                                                              !
+   !  PER-PATCH diagnostic fields. The fast loop fills the fast rows once per (patch, sub-step)  !
+   !  (patch_diag_row): the coarse tiers accumulate that row, and the FAST tier stages it as it  !
+   !  is, so the two read one list.                                                             !
    !==========================================================================================!
    integer(ik), parameter, public :: PD_LE            =  1_ik  !< [W/m2] latent heat (CAS -> atm)
    integer(ik), parameter, public :: PD_H             =  2_ik  !< [W/m2] sensible heat (CAS -> atm)
@@ -160,30 +162,29 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PD_GPP           = 13_ik  !< [umol CO2/m2/s] patch GPP rate
    integer(ik), parameter, public :: PD_NEE           = 14_ik  !< [umol CO2/m2/s] net ecosystem exchange
    integer(ik), parameter, public :: PD_TRANSP        = 15_ik  !< [kg/m2/s] canopy transpiration
-   integer(ik), parameter, public :: PD_ROOT_UPTAKE   = 16_ik  !< [kg/m2/s] realized root uptake
-   integer(ik), parameter, public :: PD_INFILTRATION  = 17_ik  !< [kg/m2/s]
-   integer(ik), parameter, public :: PD_DRAINAGE      = 18_ik  !< [kg/m2/s] bottom-face drainage
-   integer(ik), parameter, public :: PD_RUNOFF        = 19_ik  !< [kg/m2/s] surface runoff
-   integer(ik), parameter, public :: PD_GROUND_TEMP   = 20_ik  !< [K] ground/skin temperature
-   integer(ik), parameter, public :: PD_RESID_ENERGY  = 21_ik  !< [W/m2] whole-column energy residual
-   integer(ik), parameter, public :: PD_RESID_WATER   = 22_ik  !< [kg/m2/s] whole-column water residual
+   integer(ik), parameter, public :: PD_NPP           = 16_ik  !< [umol CO2/m2/s] GPP net of maintenance respiration
+   integer(ik), parameter, public :: PD_RECO          = 17_ik  !< [umol CO2/m2/s] ecosystem respiration, NEE + GPP
+   integer(ik), parameter, public :: PD_SOIL_TEMP_TOP = 18_ik  !< [K] top soil layer (the ground surface when snow-free)
+   integer(ik), parameter, public :: PD_RESID_ENERGY  = 19_ik  !< [W/m2] whole-column energy residual
+   integer(ik), parameter, public :: PD_RESID_WATER   = 20_ik  !< [kg/m2/s] whole-column water residual
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
    !      above because the reader normalizes by w either way, and the slow driver writes them as   !
    !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
-   integer(ik), parameter, public :: PD_LITTER_LEAF     = 23_ik !< [kgC/m2/yr] leaf litterfall
-   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 24_ik !< [kgC/m2/yr] fine-root litter
-   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 25_ik !< [kgC/m2/yr] structural litter + CWD
-   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 26_ik !< [plant/m2/yr] recruitment density flux
-   integer(ik), parameter, public :: PD_DISTURB_AREA    = 27_ik !< [1/yr] area fraction disturbed
+   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter
+   integer(ik), parameter, public :: PD_LITTER_STRUCT   = 23_ik !< [kgC/m2/yr] structural litter + CWD
+   integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 24_ik !< [plant/m2/yr] recruitment density flux
+   integer(ik), parameter, public :: PD_DISTURB_AREA    = 25_ik !< [1/yr] area fraction disturbed
    !----- TOP-OF-CANOPY radiative fluxes (#171). Kept as FLUXES, not as a time-averaged albedo:    !
    !      a period-mean albedo is the mean of a RATIO, which is not the ratio of the means, and at  !
    !      night the shortwave ratio is 0/0. The albedo a reader wants is sum(up)/sum(down) over the  !
    !      period, which these four make computable -- and which is what a satellite product is.      !
-   integer(ik), parameter, public :: PD_SW_IN_VIS       = 28_ik !< [W/m2] incident VIS at canopy top
-   integer(ik), parameter, public :: PD_SW_IN_NIR       = 29_ik !< [W/m2] incident NIR at canopy top
-   integer(ik), parameter, public :: PD_SW_UP_VIS       = 30_ik !< [W/m2] upwelling VIS leaving the canopy top
-   integer(ik), parameter, public :: PD_SW_UP_NIR       = 31_ik !< [W/m2] upwelling NIR leaving the canopy top
-   integer(ik), parameter, public :: PD_LW_UP           = 32_ik !< [W/m2] upwelling LW (surface emission included)
+   integer(ik), parameter, public :: PD_SW_IN_VIS       = 26_ik !< [W/m2] incident VIS at canopy top
+   integer(ik), parameter, public :: PD_SW_IN_NIR       = 27_ik !< [W/m2] incident NIR at canopy top
+   integer(ik), parameter, public :: PD_SW_UP_VIS       = 28_ik !< [W/m2] upwelling VIS leaving the canopy top
+   integer(ik), parameter, public :: PD_SW_UP_NIR       = 29_ik !< [W/m2] upwelling NIR leaving the canopy top
+   integer(ik), parameter, public :: PD_LW_UP           = 30_ik !< [W/m2] upwelling LW (surface emission included)
+   integer(ik), parameter, public :: PD_SW_UP           = 31_ik !< [W/m2] upwelling shortwave, both bands (VIS + NIR)
    !----- MORTALITY CARBON BY PATHWAY (#169). The output already carried mortality RATES and the    !
    !      total litter flux, but nothing separated the three ways a MEDS plant can die, so a user   !
    !      could not tell a stand thinning continuously from one being knocked over. The three are    !
@@ -196,20 +197,26 @@ module meds_site_diag_types
    !      DEMOGRAPHIC question that does not stop being asked when the soil pools are switched off.  !
    !      Whole-individual death carries every pool (leaf + fine root + wood + storage), as the      !
    !      litter partitioning does.                                                                  !
-   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 33_ik !< [kgC/m2/yr] continuous hazard mortality
-   integer(ik), parameter, public :: PD_MORT_C_CULL       = 34_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
-   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 35_ik !< [kgC/m2/yr] canopy killed by patch disturbance
+   integer(ik), parameter, public :: PD_MORT_C_BACKGROUND = 32_ik !< [kgC/m2/yr] continuous hazard mortality
+   integer(ik), parameter, public :: PD_MORT_C_CULL       = 33_ik !< [kgC/m2/yr] cohorts culled below the tracking floor
+   integer(ik), parameter, public :: PD_MORT_C_DISTURB    = 34_ik !< [kgC/m2/yr] canopy killed by patch disturbance
    !----- Fast-varying CAS / surface state, accumulated dt-weighted rather than read at the    !
    !      output tick (#264). A state read at the tick is ONE instantaneous sample per output    !
    !      window, taken at whatever local time the boundary falls on, so its bias is a function  !
    !      of the site's longitude -- measured at +1.4 K for the top soil layer at Ithaca.        !
-   integer(ik), parameter, public :: PD_CAS_VPD       = 36_ik  !< [Pa]
-   integer(ik), parameter, public :: PD_W_SURFACE     = 37_ik  !< [kg/m2] ponded surface water
+   integer(ik), parameter, public :: PD_CAS_VPD       = 35_ik  !< [Pa]
+   integer(ik), parameter, public :: PD_W_SURFACE     = 36_ik  !< [kg/m2] ponded surface water
    !----- The patch's own forcing: the sample moved to its canopy-air top (docs/science/forcing.md  !
    !      §8). Only the wind and the air temperature differ between patches.                       !
-   integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 38_ik  !< [m/s] wind speed at the canopy-air top
-   integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 39_ik  !< [K]   air temperature at the canopy-air top
-   integer(ik), parameter, public :: PD_Z_CAS_TOP     = 40_ik  !< [m]   that top: the canopy-air depth the fast loop used
+   integer(ik), parameter, public :: PD_WIND_CAS_TOP  = 37_ik  !< [m/s] wind speed at the canopy-air top
+   integer(ik), parameter, public :: PD_TAIR_CAS_TOP  = 38_ik  !< [K]   air temperature at the canopy-air top
+   integer(ik), parameter, public :: PD_Z_CAS_TOP     = 39_ik  !< [m]   that top: the canopy-air depth the fast loop used
+   !----- The SKIN temperature (#275), in the land-model sense (CLM's TSKIN): the black-body       !
+   !      temperature of the longwave leaving the canopy top, what an infrared thermometer or a     !
+   !      satellite land-surface temperature sees. MEDS has no skin layer of its own -- snow-free,   !
+   !      the ground surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is   !
+   !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. -------!
+   integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
    integer(ik), parameter, public :: N_PDIAG            = 40_ik
 
    !==========================================================================================!
@@ -234,7 +241,8 @@ module meds_site_diag_types
    integer(ik), parameter, public :: PY_CO2            = 13_ik !< [umol/mol] free-atmosphere CO2
    integer(ik), parameter, public :: PY_COSZ           = 14_ik !< [-] cosine of the solar zenith angle (0 with the sun down)
    integer(ik), parameter, public :: PY_RHO_AIR        = 15_ik !< [kg/m3] air density
-   integer(ik), parameter, public :: N_PYDIAG          = 15_ik
+   integer(ik), parameter, public :: PY_RAINF          = 16_ik !< [kg/m2/s] liquid precipitation
+   integer(ik), parameter, public :: N_PYDIAG          = 16_ik
 
    !==========================================================================================!
    !  The blocks themselves. `v` is (field, slot): field-major so a lockstep permutation of the  !
@@ -406,19 +414,19 @@ contains
    !      costs nothing on the once-per-step diagnostic path. With the lockstep fix above the    !
    !      clamp never bites; it is what turns the next instance of that class into a short read  !
    !      instead of memory corruption.  ------------------------------------------------------!
-   pure subroutine cohort_diag_value(d, field, x, n)
+   pure subroutine cohort_diag_value(d, field, x, n, empty)
       type(cohort_diag_block), intent(in)  :: d
       integer(ik),             intent(in)  :: field
       real(wp),                intent(out) :: x(:)
       integer(ik),             intent(out) :: n
+      real(wp),                intent(in)  :: empty   !< what a slot with no samples reads
       integer(ik) :: i
       n = 0_ik
       if (.not. d%active) return
-      !----- A slot the block holds no entry for reads 0, as one with no weight does. Callers reduce  !
-      !      over the site's live cohorts, which the block has none of when the fast loop never ran    !
-      !      (a slow-only run): without this they read the array unset (#299 is to report those as    !
-      !      missing instead). -----------------------------------------------------------------!
-      x = 0.0_wp
+      !----- A cohort with no samples reads `empty`: one recruited in the slow step, after the fast  !
+      !      loop, or a slot past the block's count. Reading 0 instead made a recruit's leaf         !
+      !      temperature 0 K and pulled every canopy mean towards 0. -------------------------------!
+      x = empty
       n = min(d%n, int(size(x), ik))
       do i = 1_ik, n
          if (d%w(i) > tiny_num) x(i) = d%v(field, i) / d%w(i)

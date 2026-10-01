@@ -108,7 +108,6 @@ override_derived = false
 trait_plasticity_on = true
 
 [carbon]
-growth_source = "carbon"
 gpp_ref       = 0.3
 
 [leaf_physiology]

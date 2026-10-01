@@ -346,7 +346,7 @@ This is the part v0.1 rebuilt, and the largest usability difference.
 | | MEDS | ED2 |
 |---|---|---|
 | Format | netCDF, written through the C library (no netCDF-Fortran dependency, so it builds under ifx and nvfortran) | HDF5 |
-| Statistics | Time **mean**, sum, min, max, last, and **variance** — the last emitted as its own variables (`cas_temp_var_site`, `leaf_temp_var_site`, …) rather than as a companion slot | Means; `IQOUTPUT` adds a mean diurnal cycle |
+| Statistics | Time **mean**, sum, min, max and last | Means; `IQOUTPUT` adds a mean diurnal cycle |
 | Variable selection | **~200 variables, each switchable individually, per timescale.** Resolution order: registry defaults → axis toggles → group toggles → per-tier → per-variable overrides | A fixed schema per file type; the controls are the frequency flags (`IFOUTPUT`, `IDOUTPUT`, `IMOUTPUT`, `IQOUTPUT`, `IYOUTPUT`, `ITOUTPUT`, `IOOUTPUT`) and `IADD_{SITE,PATCH,COHORT}_MEANS` |
 | Timescales | Four tiers: sub-daily (F), daily (D), monthly (M), annual (Y), each independently enabled and chunked | Per-file-type frequencies plus `FRQFAST` / `FRQSTATE` |
 | Axes | scalar, cohort, patch, soil layer, **PFT**, **DBH size class**, and 2-D (patch × soil layer) | polygon / site / patch / cohort levels |

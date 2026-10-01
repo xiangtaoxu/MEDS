@@ -29,7 +29,6 @@ end_time   = "2250-01-01"      # 250-year spin-up
 [fast]
 fast_biophysics_on  = false    # demographics only: no sub-daily biophysics
 dt_fast             = "900s"
-integration_scheme  = "split"
 
 [demography]
 demography_on             = true
@@ -72,12 +71,8 @@ census_file  = "examples/example_demography/census_example.csv"
 pft_config   = "examples/example_demography/example_config_pft.toml"
 
 [state]
-write_output          = true
 output_dir            = "examples/example_demography/example_output"   # relative to the repo root (run dir)
 output_prefix         = "example_output"
-output_interval_years = 1
-cohort_max            = 2048
-patch_max             = 64
 write_state           = false
 interval_years  = 50
 

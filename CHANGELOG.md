@@ -16,6 +16,88 @@ before and after.
 
 ### Changed
 
+- **A config key MEDS does not read stops the run** (plan item N-10). Unknown keys used to be
+  ignored in silence. `[forcing] dt_forcing = 7200` (the key is `timestep`) ran at the file's own
+  spacing, and every shipped example, and the reference itself, carried keys nothing read.
+  - **The rule.** Every key MEDS reads is listed in `meds_config_main.toml` or
+    `meds_config_pft.toml`, set or commented out at its default. A key a config holds that its
+    reference does not list is an error. The report names every such key at once, together with
+    any missing required ones, before the run starts.
+  - **The suggestions.** A retired key is named with what replaced it. A key that moved section is
+    named with its new home (`state.cohort_max` → `output.cohort_max`). A misspelling is named with
+    the key it most likely meant.
+  - **The list cannot drift.** The build reads the list from the two references, and a new test
+    (`config_keys_listed`) holds the references equal to the keys the loader reads, in both
+    directions.
+  - **The reference is complete.** `meds_config_main.toml` gains the 86 keys it lacked, at their
+    defaults: a `[soil_carbon]` block, `[trait_dynamics]`, the `[fast]` solver settings and process
+    mask, the thermal-acclimation keys, the soil optics, `[run].slow_on`, the `[init]` soil seeds,
+    `[output].fast_interval_steps` and two longwave-synthesis keys.
+  - **The reference was wrong in places.**
+    - It documented `[output.fast] interval_steps`, which nothing read; the key is
+      `[output].fast_interval_steps`.
+    - Its reserved `fast.soil_water_coupling` did nothing.
+    - The PFT reference listed four growth keys nothing read.
+  - **Retired, with a message.**
+    - The `[output]` aliases `carbon_fluxes`, `water_fluxes` and `energy_fluxes` (use `carbon`,
+      `water`, `energy`).
+    - `[fast].ark_niter` (use `ark_coupled`).
+    - `[carbon].growth_source` and `[phenology].phenology_on`.
+    - The PFT growth curve `growth_dbh_slope`, `growth_dbh_cap`, `growth_dbh_max` and
+      `growth_lai_slope`.
+  - **One table.** The refusals that were scattered through the loader are now entries in the
+    retired-key table (`meds_config_keys`), with their messages.
+  - **Migrating.** Delete or rename each key the error names. The shipped examples are cleaned.
+
+- **The met reader is split into its sources** (#311 F6). `meds_met_driver` was 1,415 lines, with
+  three backends behind ten branches. It is now four modules:
+  - `meds_met_file_source`: a MEDS forcing file. It holds the open and one record's values as
+    stored.
+  - `meds_met_archive_source`: the ED_ERA5land archive. It holds the open, the month prefetch and
+    one record's values.
+  - `meds_met_source_common`: what the two share. That is the status codes, the time axis with its
+    recycle window, and the check of a file against its config.
+  - `meds_met_driver`: what is the same for every backend. That is opening, the cursor, the stepping,
+    and the one ingest (`read_record`) that checks, converts, lapses and partitions a record.
+
+  The routines moved unchanged, and every r1 output is bit-identical. A forcing that `met_open`
+  rejects now prints its reason and then stops with one fixed message, because ifx garbles a stop
+  code that is not a constant.
+
+- **The FAST tier reads the patch block's own row** (#270). The fast sample was a list of its own
+  (13 fields, 13 source ids, a 13-line fold) beside the patch block's table (`PD_*`) of the same
+  quantities.
+  - **One row.** `patch_diag_row` now fills that row once per patch and sub-step. The patch
+    diagnostics accumulate it, the FAST tier stages it per patch, and the FAST site variables read
+    its area-weighted sum (`SRC_F_PD0 + PD_*`).
+  - **New rows.** The block gains NPP, Reco and the two-band upwelling shortwave, which the FAST tier
+    needs. Its four water-flux rows (root uptake, infiltration, drainage, runoff) were never written
+    or registered, and are gone.
+  - **The residuals are rates in the row.** They become rates there (the step's residual over dt),
+    so the whole row is dt-weighted alike.
+  - **Staging follows the stand.** It grows with the live patch and cohort counts. The per-cohort
+    slabs were `output.cohort_max` long, about 4.7 MB a polygon at the defaults.
+  - **The caps are checked in the output layer.** The FAST tier checks both caps there, by the
+    coarse tiers' rule: only when a cohort or patch variable is live. A run with the FAST tier on
+    used to stop past `cohort_max` even when it wrote nothing per cohort.
+  - **Rounding.** On the r1 cases every value is bit-identical except `et_rate_site`, at 4e-16.
+    Before, its expression was one line that the compiler could reassociate.
+  - **The listing.** `meds_io_config.toml` is regenerated. That also brings in the five forcing
+    echoes that O6 moved to the `forcing` group.
+
+- **The forcing echo is listed once** (#312 O6). The forcing each fast sub-step used was listed three
+  times over: 15 fields of the fast sample, their copies in the fast loop, and 15 source ids with
+  their cases in the output layer, beside the polygon block's own table (`PY_*`).
+  - **One routine.** `forcing_echo` fills the polygon block's table once per sub-step; the coarse
+    tiers accumulate it, and the FAST tier stages it as it is (`fast_forcing`). The FAST tier's
+    forcing variables read their row of that table (`SRC_F_PY0 + PY_*`).
+  - **One more row.** The table gains the liquid rain (`PY_RAINF`), which `rainf_fast` needs.
+  - **Exact echoes.** `sw_in_fast`, `air_temp_fast` and `atm_co2_fast` were area-summed over the
+    patches although they are the same everywhere. They are now the sample itself (a 1e-16 change).
+  - **Group.** They, `sw_in_site` and `precip_site` join the `forcing` group. A config with
+    `[output].forcing = false` that wants them lists them in its `io_config`, as both examples do.
+  - Every other r1 value is bit-identical.
+
 - **Forcing files are written in one contiguous block per variable, and read about 3 s faster**
   (MEDS_EFFICIENCY_SWEEP_PLAN.md, item N-1). The shared writer made the time dimension unlimited
   and took netCDF's default chunking: one record per chunk. The model reads a site's whole series at
@@ -199,7 +281,81 @@ before and after.
   for the fast tier, the cohort cap), with a message naming the cap. Removed from the shipped
   configs; bit-identical on every r1 case. **Test:** `test_region` checks the refusal.
 
+### Added
+
+- **A skin temperature** (#275). `skin_temp_site` is the skin temperature as land models define it
+  (CLM's `TSKIN`). It also comes per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both
+  (`skin_temp_patch_fast`).
+  - **What it is.** The black-body temperature of the longwave leaving the canopy top, what an
+    infrared thermometer or a satellite land-surface temperature sees.
+  - **Why it is a row.** It is a fourth root, so it is formed per patch and sub-step, in the patch
+    block, like the VPD.
+  - **What it is not.** MEDS has no separate ground skin, although #275 assumed one: snow-free, the
+    ground surface is the top soil layer (`soil_temp_top_site`). The patch row that holds it, which
+    was labelled "ground/skin temperature", is now `PD_SOIL_TEMP_TOP`.
+
+- **The FAST tier has a patch axis** (#270). A site mean over a closed canopy and a gap can describe
+  neither: in the biophysics example the gap's surface soil ran 13 K above the air at midday and the
+  closed patch's 0.7 K below it.
+  - **Fifteen variables.** Each FAST quantity of the patch block has a per-patch twin, named after
+    its coarse patch variable plus `_fast`: `cas_temp_patch_fast`, `soil_temp_top_patch_fast`,
+    `le_patch_fast`, `h_patch_fast`, `rnet_patch_fast` and `nee_patch_fast`.
+  - A quantity with no coarse patch variable keeps its site stem: `gpp_rate_`, `sw_up_`, `lw_up_`,
+    `ustar_`, `npp_rate_`, `reco_` and `cas_co2_patch_fast`.
+  - The soil columns are `soil_temp_layer_patch_fast` and `soil_water_layer_patch_fast`.
+  - They follow `[output].axes_patch` (on) and `axes_soil_patch` (off), as the coarse patch
+    variables do; a region writes none of them. The site `*_fast` value is their area-weighted sum.
+
+### Removed
+
+- **The integrator-study scripts** `scripts/numerics_sweep.py`, `scripts/parity_scenarios.py` and
+  `scripts/parity_fidelity.py`. They served the integrator selection and parity studies, which are
+  finished: ARK is the production integrator, and the parity plan is retired.
+  - `parity_scenarios.py` no longer ran. It wrote the `[io]` block refused since v0.3.0, and
+    started from restarts spun up on the retired `split` scheme.
+  - `parity_fidelity.py` only scored `numerics_sweep.py` output. Nothing else (no test, example
+    or script) used either.
+  - They stay in git history; `scripts/calibrate_fast/` covers driving trial configs.
+
+- **The four variance outputs and their operator** (#275). `cas_temp_var_site`,
+  `soil_temp_top_var_site`, `cas_vpd_var_site` and `leaf_temp_var_site` are gone, and so is
+  `AGG_VARIANCE` (`cell_methods = "time: variance"`).
+  - **Why.** Nothing used them. They squared one end-of-step sample per slow step, which is the
+    day-to-day spread of the state at one hour, not the within-step spread their names suggested.
+  - **Migrating.** An `[output].io_config` that still lists one of them is refused, as for any
+    name the registry does not have. Delete the line.
+  - **Gone with them.** The six end-of-step accessors only they read: canopy-air temperature,
+    humidity, CO2 and VPD, soil-top temperature and surface water. Their time means were already
+    rows of the patch block (#264), so the registry test that kept time means off those accessors
+    goes too.
+  - **Adding one back** needs a sum of squares inside the step, and first a choice of definition
+    (`docs/ROADMAP.md`).
+
 ### Fixed
+
+- **Leaf and wood temperatures are within-step means** (plan item N-11). `leaf_temp_site`,
+  `wood_temp_site`, `leaf_temp_cohort` and `wood_temp_cohort` averaged the end-of-step temperature:
+  one sample per slow step, taken at the boundary's local hour. That is the bias #264 removed from
+  the canopy air and the soil.
+  - **The new source.** They now read the cohort block's rows (`CD_LEAF_TEMP`, `CD_WOOD_TEMP`),
+    sampled every sub-step. Water output already keeps that block on, so default runs do no extra
+    work.
+  - **Slow-only runs.** As for the other fast-loop variables, a run without the fast loop reads
+    these as fill.
+  - **A cohort with no samples is left out.** That is a cohort recruited in the slow step, after the
+    fast loop. It is fill on the cohort axis and out of every mean and sum. It used to read 0, so a
+    recruit pulled every leaf-area-weighted cohort mean towards 0 (0 K for a temperature).
+  - **A mean over nothing is fill.** A site mean with no weight (bare ground, say) reported 0, and
+    `leaf_temp_site` read 0 K on bare ground. It is now fill, as the empty-set rule says; sums are
+    unchanged.
+
+- **A soil-by-patch variable is handled like the other patch variables** (plan item N-9). Three rules
+  named the cohort and patch axes and missed the soil-by-patch profiles:
+  - **The record's patch count.** A tier whose only patch output was a `*_layer_patch` variable
+    wrote one patch, with every value as fill.
+  - **The file cap.** Such a tier's files were not capped at a month.
+  - **The annual guard.** An `[output].io_config` could put one on the annual stream.
+  - **One rule now.** All three use one test for these axes (`ragged_dim`).
 
 - **More than four threads no longer slow the fast loop** (#325). Two fast-loop routines handed one of
   their contained functions to another routine: `flux_potential` passed its Kirchhoff integrand to the

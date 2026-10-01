@@ -20,13 +20,13 @@ module meds_output_types
    private
 
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
-   public :: pending_record_t, record_queue_t, stream_file_t, fast_sample_t
+   public :: pending_record_t, record_queue_t, stream_file_t
    public :: output_files_t, output_buffers_t
-   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
+   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
-   public :: agg_is_slabwise
+   public :: agg_is_slabwise, ragged_dim
 
    !----- Temporal reduction operators (the `agg` of a variable). -----------------------------!
    integer(ik), parameter :: AGG_MEAN    = 1_ik  !< equal-weight arithmetic mean
@@ -34,15 +34,8 @@ module meds_output_types
    integer(ik), parameter :: AGG_MIN     = 3_ik  !< period minimum
    integer(ik), parameter :: AGG_MAX     = 4_ik  !< period maximum
    integer(ik), parameter :: AGG_LAST    = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
-   !----- dt-weighted VARIANCE of a state over the period (#174). It accumulates the first AND
-   !      second moments and emits  <x^2> - <x>^2 , so it is registered as its OWN variable beside
-   !      the mean rather than as a companion slot bolted to one: that way the existing per-variable
-   !      buffer / normalize / serialize path carries it with no new machinery, and -- the part that
-   !      matters to a user -- each variance is independently switchable through the [variables]
-   !      override, exactly like every other output.
-   integer(ik), parameter :: AGG_VARIANCE = 6_ik  !< dt-weighted variance over the period
-   integer(ik), parameter :: AGG_TMEAN   = 7_ik  !< dt-weighted state mean (the physical-stock default)
-   integer(ik), parameter :: AGG_FLUXSUM = 8_ik  !< dt-weighted integral of a rate (period total)
+   integer(ik), parameter :: AGG_TMEAN   = 6_ik  !< dt-weighted state mean (the physical-stock default)
+   integer(ik), parameter :: AGG_FLUXSUM = 7_ik  !< dt-weighted integral of a rate (period total)
 
    !----- Trailing (per-record) axis of a variable. DIM_COHORT/DIM_PATCH are fixed WITHIN a       !
    !      window (§4.4), so all non-scalar dims fold by direct slot index -- no id-keying.         !
@@ -157,67 +150,15 @@ module meds_output_types
       logical     :: active = .false.       !< allocated + participating (this var is on in this tier)
       !----- scalar accumulators (DIM_SCALAR). -------------------------------------------------!
       real(wp)    :: scal  = 0.0_wp         !< running reduction
-      real(wp)    :: scal2 = 0.0_wp         !< second moment (AGG_VARIANCE)
-      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM/MEANSQ)
+      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM)
       integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (MEAN/SUM/MIN/MAX/LAST)
       real(wp)    :: seed  = 0.0_wp         !< re-seed value (MIN=+huge, MAX=-huge, else 0)
       !----- per-index accumulators (DIM_COHORT/PATCH/SOIL/PFT), sized to the relevant cap. ------!
       real(wp),    allocatable :: slab(:)
-      real(wp),    allocatable :: slab2(:)
       real(wp),    allocatable :: wsum_slab(:)
       integer(ik), allocatable :: hits(:)
       integer(ik) :: n_slab = 0_ik          !< live index count this window (the [1:n] cohort/patch count)
    end type integ_buffer_t
-
-   !==========================================================================================!
-   ! One per-(patch,sub-step) LIVE sample of the site-scalar fast-loop diagnostics, assembled     !
-   ! inside fast_dynamics and area-weighted-accumulated into the manager's fast(:) staging          !
-   ! (§FAST tier). Pure scalars -- the DIM_SOIL / DIM_COHORT fast slabs live as 2-D arrays on the   !
-   ! manager, not here, so this type stays allocatable-free and trivially default-constructs to 0.  !
-   !==========================================================================================!
-   type :: fast_sample_t
-      real(wp) :: cas_temp      = 0.0_wp   !< [K]         area-weighted CAS temperature
-      real(wp) :: soil_temp_top = 0.0_wp   !< [K]         area-weighted top-soil temperature
-      real(wp) :: gpp_rate      = 0.0_wp   !< [umol/m2/s] instantaneous site GPP rate
-      real(wp) :: le_flux       = 0.0_wp   !< [W/m2]      latent-heat (ET) flux
-      real(wp) :: h_flux        = 0.0_wp   !< [W/m2]      sensible-heat flux
-      real(wp) :: rnet          = 0.0_wp   !< [W/m2]      net all-wave radiation absorbed by the column
-      real(wp) :: sw_in         = 0.0_wp   !< [W/m2]      incident shortwave at canopy top
-      real(wp) :: sw_up         = 0.0_wp   !< [W/m2]      shortwave leaving the canopy top (VIS + NIR)
-      real(wp) :: lw_up         = 0.0_wp   !< [W/m2]      longwave leaving the canopy top (emission included)
-      real(wp) :: ustar         = 0.0_wp   !< [m/s]       friction velocity
-      real(wp) :: air_temp      = 0.0_wp   !< [K]         reference-level forcing air temperature
-      !----- CARBON. The sub-daily carbon cycle needs more than GPP to be readable: NEE is what a   !
-      !      flux tower measures, NPP is GPP net of autotrophic maintenance respiration, and the     !
-      !      canopy-air CO2 drawdown is the state those two fluxes act on. All three are computed    !
-      !      every dt_fast already.  ------------------------------------------------------------!
-      real(wp) :: nee_rate      = 0.0_wp   !< [umol/m2/s] net ecosystem exchange (+ to atmosphere)
-      real(wp) :: npp_rate      = 0.0_wp   !< [umol/m2/s] GPP - autotrophic maintenance respiration
-      real(wp) :: reco_rate     = 0.0_wp   !< [umol/m2/s] ecosystem respiration (autotrophic + Rh)
-      real(wp) :: cas_co2       = 0.0_wp   !< [umol/mol]  canopy-air CO2 mixing ratio
-      !----- The FORCING's free-atmosphere CO2, echoed into the output. Not redundant: the canopy-  !
-      !      air CO2 above is only interpretable against the ambient it is being vented toward, and  !
-      !      a reader who has to look that up in the run config will eventually look up the wrong    !
-      !      one -- which is exactly what happened when this figure was first drawn against a         !
-      !      hard-coded 400 ppm while the run used 420, turning a +1 ppm daytime canopy into an        !
-      !      apparent +21 ppm ventilation problem.  ------------------------------------------------!
-      real(wp) :: atm_co2       = 0.0_wp   !< [umol/mol]  free-atmosphere CO2 (the forcing)
-      !----- The rest of the FORCING the sub-step used (MEDS_FORCING_DESIGN.md §6.7), staged from   !
-      !      the site-uniform sample itself rather than area-summed. With the fluxes above, these    !
-      !      are what shows whether the reconstructed shortwave peaks at the right local time.      !
-      real(wp) :: qair          = 0.0_wp   !< [kg/kg]     specific humidity
-      real(wp) :: psurf         = 0.0_wp   !< [Pa]        surface pressure
-      real(wp) :: wind          = 0.0_wp   !< [m/s]       wind speed at the reference height
-      real(wp) :: lwdown        = 0.0_wp   !< [W/m2]      downward longwave
-      real(wp) :: par_beam      = 0.0_wp   !< [W/m2]      direct-beam PAR
-      real(wp) :: par_diffuse   = 0.0_wp   !< [W/m2]      diffuse PAR
-      real(wp) :: nir_beam      = 0.0_wp   !< [W/m2]      direct-beam NIR
-      real(wp) :: nir_diffuse   = 0.0_wp   !< [W/m2]      diffuse NIR
-      real(wp) :: rainf         = 0.0_wp   !< [kg/m2/s]   liquid precipitation
-      real(wp) :: snowfall      = 0.0_wp   !< [kg/m2/s]   frozen precipitation
-      real(wp) :: cosz          = 0.0_wp   !< [-]         cosine of the solar zenith angle
-      real(wp) :: rho_air       = 0.0_wp   !< [kg/m3]     air density
-   end type fast_sample_t
 
    !==========================================================================================!
    ! The immutable registration list + the precomputed per-tier live-variable index (§3.2).       !
@@ -331,25 +272,32 @@ module meds_output_types
       type(meds_time_t) :: t_open(N_FREQ)             !< period-start of each tier's current window
       type(pending_record_t) :: pending(N_FREQ)          !< per-tier scratch that close_tier normalizes into
       type(record_queue_t)   :: queue(N_FREQ)            !< closed records awaiting the I/O phase
-      !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch,sub-step) by the fast     !
-      !      loop, replayed into buf(:,1) by main via output_integrate_fast. Site scalars in fast(:);  !
-      !      the area-weighted soil column + per-cohort slabs in 2-D [slot, sub-step] arrays. The     !
-      !      fast loop sees only the buffers, so they say whether to stage (fast_on) and how many     !
-      !      cohort slots to size (fast_cohort_cap).  -------------------------------------------------!
+      !----- FAST (sub-daily) tier staging (netCDF-free): filled per (patch, sub-step) by the fast   !
+      !      loop, replayed into buf(:,1) by main via output_integrate_fast. Each patch's sub-step    !
+      !      is the patch block's own row (PD_*) and its soil column; the site means are their        !
+      !      area-weighted sums, and the forcing is the polygon block's row (PY_*). The per-cohort   !
+      !      slabs are indexed by the site's cohort slot. The buffers follow the live patch and       !
+      !      cohort counts; the output layer checks those against output.patch_max and cohort_max.   !
       logical              :: fast_on = .false.                !< output on and the FAST tier has live variables
-      integer(ik)          :: fast_cohort_cap = 0_ik           !< cohort slots of the fast cohort slabs
-      type(fast_sample_t), allocatable :: fast(:)              !< (n_fast_sub) site-scalar samples
       type(meds_time_t),   allocatable :: fast_time(:)         !< (n_fast_sub) each sub-step's start
+      real(wp),            allocatable :: fast_forcing(:,:)     !< (PY_*, n_fast_sub) the sub-step's forcing
+      real(wp),            allocatable :: fast_patch(:,:,:)     !< (PD_*, patch, n_fast_sub) each patch's row
+      real(wp),            allocatable :: fast_site(:,:)        !< (PD_*, n_fast_sub) their area-weighted sum
+      !----- The soil columns, per patch in the soil-by-patch slab's layout, (ip-1)*n_soil_layer_max  !
+      !      + k (DIM_SOIL_PATCH), and area-weighted over the patches. ------------------------------!
+      real(wp),            allocatable :: fast_soil_temp_patch(:,:)   !< (layer x patch, n_fast_sub) [K]
+      real(wp),            allocatable :: fast_soil_water_patch(:,:)  !< (layer x patch, n_fast_sub) [m3/m3]
       real(wp),            allocatable :: fast_soil_temp(:,:)   !< (n_soil, n_fast_sub)  area-weighted [K]
       real(wp),            allocatable :: fast_soil_water(:,:)  !< (n_soil, n_fast_sub)  area-weighted [m3/m3]
-      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort cap, n_fast_sub) per-cohort leaf temp [K]
-      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort cap, n_fast_sub) per-cohort GPP [umol/plant/s]
-      !< (cohort cap, n_fast_sub) per-cohort height [m] (tallest post-proc)
+      real(wp),            allocatable :: fast_coh_ltemp(:,:)   !< (cohort, n_fast_sub) per-cohort leaf temp [K]
+      real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
+      !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_coh_height(:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
-      logical              :: fast_ready   = .false.           !< fast(:) filled + awaiting replay
+      integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
+      logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
    end type output_buffers_t
 
 contains
@@ -366,5 +314,13 @@ contains
       integer(ik), intent(in) :: dim
       yes = (dim /= DIM_SCALAR)
    end function agg_is_slabwise
+
+   !----- The axes whose length and slots follow the stand: cohort, patch, and soil by patch. They  !
+   !      are fixed only within a month (§4.4), so a file of them spans at most a month, the annual  !
+   !      stream refuses them, and a region file, whose polygons differ, cannot hold them. --------!
+   pure logical function ragged_dim(dim) result(yes)
+      integer(ik), intent(in) :: dim
+      yes = dim == DIM_COHORT .or. dim == DIM_PATCH .or. dim == DIM_SOIL_PATCH
+   end function ragged_dim
 
 end module meds_output_types
