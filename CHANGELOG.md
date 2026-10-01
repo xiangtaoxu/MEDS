@@ -14,6 +14,36 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-01
+
+An **efficiency and consolidation** release. The fast loop no longer slows down past four
+threads, a region's polygons run on threads, and much of the code that listed the same thing in
+two or three places now lists it once. The sub-daily output gains a patch axis and a skin
+temperature, and a config key MEDS does not read now stops the run instead of being ignored.
+- **Speed.** The BCI example's five years take 6 min 43 s on one thread and 1 min 25 s on 16; at
+  4 threads, 2 min 23 s against v0.3.1's 5 min 26 s (#325). A region's 100 cells for a year take
+  81 s on 40 threads, against 1,012 s serial in v0.3.1 (#183, #310).
+- **Consolidation.** The fast-loop state's fields, the ARK storage, the tissue water curves, the
+  forcing echo, the region and site serializers, the output set-up, and the fast tier's sample are
+  each listed once (#146, #188, #195, #310, #311, #312). The met reader is split into its two
+  sources (#311).
+- **Output.** A patch axis on the FAST tier (#270) and a skin temperature (#275). Leaf and wood
+  temperatures are within-step means, and a cohort recruited in the slow step, which has no
+  samples yet, no longer reads 0 K (N-11).
+
+**Upgrading from v0.3.1:**
+- **Unknown config keys stop the run** (N-10). Every key MEDS reads is listed in
+  `meds_config_main.toml` or `meds_config_pft.toml`. The error names every other key a config
+  holds, with what replaced a retired one or the key a misspelling most likely meant: delete or
+  rename each. Retired here are the `[output]` aliases `carbon_fluxes`, `water_fluxes` and
+  `energy_fluxes` (use `carbon`, `water`, `energy`), `[fast].ark_niter` (use `ark_coupled`),
+  `output.strict_caps`, and the PFT growth curve keys.
+- **Removed outputs.** The four `*_var_site` variances are gone (#275); an `[output].io_config`
+  that lists one is refused.
+- **Outputs that move.** Leaf and wood temperatures change by up to several kelvin (the end-of-step
+  sample is now a within-step mean). Cohort means read fill, not 0, on bare ground. Elsewhere, the
+  thread and code-generation changes move results at rounding level.
+
 ### Changed
 
 - **A config key MEDS does not read stops the run** (plan item N-10). Unknown keys used to be
@@ -3142,7 +3172,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...beta
+[0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.1...v0.2.2
