@@ -308,6 +308,15 @@ before and after.
 
 ### Removed
 
+- **The integrator-study scripts** `scripts/numerics_sweep.py`, `scripts/parity_scenarios.py` and
+  `scripts/parity_fidelity.py`. They served the integrator selection and parity studies, which are
+  finished: ARK is the production integrator, and the parity plan is retired.
+  - `parity_scenarios.py` no longer ran. It wrote the `[io]` block refused since v0.3.0, and
+    started from restarts spun up on the retired `split` scheme.
+  - `parity_fidelity.py` only scored `numerics_sweep.py` output. Nothing else (no test, example
+    or script) used either.
+  - They stay in git history; `scripts/calibrate_fast/` covers driving trial configs.
+
 - **The four variance outputs and their operator** (#275). `cas_temp_var_site`,
   `soil_temp_top_var_site`, `cas_vpd_var_site` and `leaf_temp_var_site` are gone, and so is
   `AGG_VARIANCE` (`cell_methods = "time: variance"`).
