@@ -15,6 +15,13 @@ before and after.
 ## [Unreleased]
 
 ### Fixed
+- **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
+  `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's
+  versions, which Python had loaded first, instead of Intel's. A ten-day BCI trial differed by up to
+  7e-4 W m⁻² in LE and 2e-5 µmol m⁻² s⁻¹ in GPP; the two-day test case differs in 38 output
+  variables. `libmeds.so` now links Intel's runtime into itself and keeps its names inside
+  (`-static-intel`, `--exclude-libs,ALL`), and both runs are bit-identical. The library grows from
+  2.5 to 4.0 MB.
 - **A second run in one process wrote the first run's settings into its parameter record**, and the
   record would have stopped growing after 4,096 rows. Loading a config now starts a new record.
 - **24 optional per-PFT keys could not be set since v0.3.2** (N-10): the per-PFT plant-hydraulics

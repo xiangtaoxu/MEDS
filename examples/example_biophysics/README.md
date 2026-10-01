@@ -179,9 +179,9 @@ with Run("meds_config_spinup.toml") as run:
 `Run.step` calls the identical `driver_step` the executable calls — no physics is re-implemented
 on the Python side. `meds_main` is now a 71-line shell over the same `meds_driver` module, so the
 binary and the Python driver are two callers of one implementation rather than two code paths that
-have to be kept in agreement. They are not bit-identical — `libm` interposes on Intel's
-`libimf` inside a `dlopen`ed library, so transcendentals differ in the last ulp; compare long runs
-through site aggregates, not cohort by cohort.
+have to be kept in agreement. They give the same output, bit for bit: an Intel build links its
+math library into `libmeds.so`, so `exp`, `sin` and the rest are the functions `meds_main` calls,
+not the glibc versions Python has already loaded.
 
 Two stages, both driven by the same recycled year of ERA5-Land forcing for Ithaca NY (42.44 °N,
 76.50 °W):

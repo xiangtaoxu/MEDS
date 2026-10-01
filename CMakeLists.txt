@@ -416,6 +416,16 @@ if(MEDS_BUILD_PYLIB)
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
    target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
+   #----- The same numbers as meds_main, in any process. An Intel build calls `exp`, `sin`, `pow`  #
+   #      and the rest by their C names, and meds_main finds them in Intel's math library. A       #
+   #      library loaded into Python would find glibc's first, because Python has already loaded  #
+   #      it, so a run through `meds.model` differed from the same run of meds_main in the last    #
+   #      digits (BCI: up to 7e-4 W m-2 in LE over ten days). Linking Intel's runtime into the      #
+   #      library and keeping its names inside it makes every call land where meds_main's does.    #
+   #      gfortran builds use glibc's math in both, so they need nothing here.                    #
+   if(CMAKE_Fortran_COMPILER_ID MATCHES "^Intel")
+      target_link_options(meds_py PRIVATE -static-intel LINKER:--exclude-libs,ALL)
+   endif()
    #----- RPATH so the INSTALLED library resolves its own dependencies.                         #
    #                                                                                            #
    #      libmeds.so links netCDF, HDF5 and the Fortran runtime. Decision #11 says declare       #
@@ -433,9 +443,10 @@ if(MEDS_BUILD_PYLIB)
    #      checkout, which is how MEDS is used; it is NOT a redistributable manylinux wheel, and    #
    #      building one would mean auditwheel plus the vendoring §7.3 rejected.                     #
    #      USE_LINK_PATH alone is NOT enough: it captures the directories of libraries CMake was  #
-   #      told to link (netCDF, HDF5), but the Fortran runtime -- libimf, libifport, libsvml --   #
-   #      is added implicitly by the compiler driver, so it is absent from the RPATH and the      #
-   #      library still fails to dlopen outside a `source setvars.sh` shell. CMAKE_Fortran_       #
+   #      told to link (netCDF, HDF5), but the compiler's own shared runtime (the OpenMP runtime  #
+   #      in an Intel build, which stays shared; libgfortran in a GNU one) is added implicitly by #
+   #      the compiler driver, so it is absent from the RPATH and the library still fails to       #
+   #      dlopen outside a `source setvars.sh` shell. CMAKE_Fortran_                               #
    #      IMPLICIT_LINK_DIRECTORIES is exactly that set. (`ldd` will NOT show this: run from a    #
    #      sourced shell it inherits LD_LIBRARY_PATH and reports everything resolved. Check with   #
    #      `env -u LD_LIBRARY_PATH ldd`, or by importing.)                                          #
