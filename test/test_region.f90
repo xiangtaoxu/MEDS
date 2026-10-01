@@ -214,7 +214,7 @@ program test_region
                 'output.fast_interval_steps must divide')
    call refused('output.strict_caps is refused: the caps always stop the run',                     &
                 '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
-                'output.strict_caps is gone')
+                'is retired: a run always stops at the step')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')
@@ -230,7 +230,7 @@ program test_region
    !----- The root profile is a plant trait: the old [soil_column] key is refused, naming [hydraulics]. -!
    call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
                 '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
-                'soil_column.root_beta is gone')
+                'is retired: the root profile is a plant trait: set [hydraulics].root_beta')
    call refused('hydraulics.conductance is whole_plant or segment',                                 &
                 '[hydraulics]'//nl()//'conductance = "xylem"'//nl()//site_block(1_ik), .false., .false., &
                 'hydraulics.conductance must be')
@@ -247,10 +247,10 @@ program test_region
                 'is now "ED_ERA5land"')
    call refused('site.utc_offset is refused: every clock is UTC',                                   &
                 '[site]'//nl()//'utc_offset = -5.0'//nl()//site_block(1_ik), .false., .false.,         &
-                'utc_offset and apply_solar_longitude are gone')
+                'is retired: every forcing file is in UTC')
    call refused('site.apply_solar_longitude is refused',                                            &
                 '[site]'//nl()//'apply_solar_longitude = true'//nl()//site_block(1_ik), .false., .false., &
-                'utc_offset and apply_solar_longitude are gone')
+                'is retired: every forcing file is in UTC')
    call refused('the lapse keys are refused with the lapse off',                                    &
                 '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
                 'apply only with site.apply_elevation_lapse = true')

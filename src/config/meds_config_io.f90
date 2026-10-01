@@ -51,6 +51,7 @@ module meds_config_io
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
                               toml_int, toml_real,                                          &
                                toml_logical, toml_string, toml_real_array
+   use meds_config_keys, only : key_report_t, check_config_keys, MAIN_KEYS, PFT_KEYS
    implicit none
    private
 
@@ -200,12 +201,6 @@ contains
       c%ksat        = toml_real(tm, 'soil_column.ksat',        c%ksat)
       c%curve_par_a = toml_real(tm, 'soil_column.curve_par_a', c%curve_par_a)
       c%curve_par_n = toml_real(tm, 'soil_column.curve_par_n', c%curve_par_n)
-      !----- The root profile is a plant hydraulic trait, [hydraulics].root_beta and root_depth. A   !
-      !      [soil_column].root_beta would parse and do nothing, so it is refused, naming the keys.  !
-      if (toml_has(tm, 'soil_column.root_beta'))                                                    &
-         error stop 'load_meds_config: soil_column.root_beta is gone; the root profile is a plant '// &
-                    'trait: set [hydraulics].root_beta (0 < beta < 1) and root_depth. '//            &
-                    'root_beta = exp(-b*root_depth) gives the old exponential decay b per metre'
       c%psi_fc      = toml_real(tm, 'soil_column.psi_fc',      c%psi_fc)
       c%solid_conductivity = toml_real(tm, 'soil_column.solid_conductivity', c%solid_conductivity)
       c%dry_conductivity   = toml_real(tm, 'soil_column.dry_conductivity',   c%dry_conductivity)
@@ -274,16 +269,6 @@ contains
       e%deep_temp   = toml_real(tm, 'energy.deep_temp',   e%deep_temp)
       e%deep_depth  = toml_real(tm, 'energy.deep_depth',  e%deep_depth)
       e%atol        = toml_real(tm, 'energy.atol',        e%atol)
-      !----- RETIRED KEY. `energy.phase_change` gated ice-aware conductivity and heat capacity and    !
-      !      was a P1 staging leftover, never a science option -- the freeze/thaw plateau itself was   !
-      !      never gated, because the column is prognostic in internal energy and temperature is a     !
-      !      read-off of internal_energy_to_temp. Ice-aware properties are unconditional now. A config !
-      !      still carrying the key would otherwise be SILENTLY ignored, and the whole point of        !
-      !      retiring it is that the branch it selected was wrong physics.  --------------------------!
-      if (toml_has(tm, 'energy.phase_change'))                                                      &
-         error stop 'load_meds_config: energy.phase_change has been RETIRED -- ice-aware soil '//    &
-                    'conductivity/heat capacity are always on now (the freeze/thaw plateau always '//&
-                    'was). Delete the key.'
       !----- HARD-STOP on a non-closing budget. Gates budget_check_stop after all seven budgets in    !
       !      meds_fast_ark / meds_fast_rk45. Default .false., so a production run reports a breach      !
       !      rather than halting on it; set it to halt when you are bisecting one.                     !
@@ -583,13 +568,6 @@ contains
       case default
          error stop 'load_meds_config: forcing.co2_source must be "const" or "file"'
       end select
-      !----- Every forcing clock is UTC (MEDS_FLUX_TOWER_FORCING_PLAN.md D1): the solar geometry takes  !
-      !      local solar time from the longitude alone, and a shift to local time belongs to the       !
-      !      post-processing of the output. The two keys that described another clock are refused.     !
-      if (toml_has(t, 'site.utc_offset') .or. toml_has(t, 'site.apply_solar_longitude'))            &
-         error stop 'load_meds_config: [site].utc_offset and apply_solar_longitude are gone -- every '// &
-                    'forcing file is in UTC (its time_zone attribute says so); convert a local-time '// &
-                    'source to UTC when you build the file, and remove both keys'
       !----- The location. A region's polygons each take theirs from their cell (the centre, the   !
       !      static orography), so the [site] location keys would parse and do nothing there:      !
       !      they are rejected, like forcing.max_distance_km (MEDS_POLYGON_RUNTIME_PLAN.md §9). -----!
@@ -604,16 +582,6 @@ contains
          call req_r         (t, 'site.longitude',         cfg%forcing%longitude_deg,         m)
          call req_r         (t, 'site.elevation',         cfg%forcing%elevation_m,           m)
       end if
-      !----- The forcing is moved to the top of each patch's canopy air space (meds_lapse_rate), so  !
-      !      the old fixed reference height and its ingest-time wind profile are gone. They would     !
-      !      parse and do nothing, so they are rejected, naming what replaced them. ------------------!
-      if (toml_has(t, 'site.reference_height') .or. toml_has(t, 'site.wind_meas_height') .or.     &
-          toml_has(t, 'site.apply_wind_profile') .or. toml_has(t, 'site.wind_roughness_z0'))      &
-         error stop 'load_meds_config: [site].reference_height, wind_meas_height, '//              &
-                    'apply_wind_profile and wind_roughness_z0 are gone -- the forcing is now moved '// &
-                    'to each patch''s canopy-air top. Declare the forcing''s own heights in '//     &
-                    '[forcing]: tq_height, wind_height, height_above, wind_exposure '//              &
-                    '(see meds_config_main.toml)'
       !----- The forcing's own vertical frame (docs/science/forcing.md §8). ---------------------!
       call req_r            (t, 'forcing.tq_height',      cfg%forcing%tq_height,             m)
       call req_r            (t, 'forcing.wind_height',    cfg%forcing%wind_height,           m)
@@ -728,26 +696,16 @@ contains
       cfg%output%io_config           = toml_string (t, 'output.io_config',           '')
       cfg%output%cohort_max          = toml_int    (t, 'output.cohort_max',          4096_ik)
       cfg%output%patch_max           = toml_int    (t, 'output.patch_max',           256_ik)
-      !----- strict_caps promised a warn-and-truncate mode that was never built; a run always stops at !
-      !      the step its stand outgrows cohort_max or patch_max. It parsed and did nothing, so it is    !
-      !      refused, naming what to do instead. -------------------------------------------------------!
-      if (toml_has(t, 'output.strict_caps'))                                                        &
-         error stop 'load_meds_config: output.strict_caps is gone; a run always stops at the step '// &
-                    'its live cohort or patch count exceeds output.cohort_max or patch_max: raise the cap'
       cfg%output%fast_interval_steps = toml_int    (t, 'output.fast_interval_steps', 4_ik)
       cfg%output%sync_every = merge(SYNC_NEVER, SYNC_FLUSH,                                        &
                                     trim(toml_string(t, 'output.sync_every', 'flush')) == 'never')
       !----- high-level flux-group toggles (§6). ---!
       !----- Variable-GROUP toggles. The v0.1 defaults (section 8 D6) turn on the six groups that   !
-      !      make a run judgeable and leave the two heavy evaluation groups off. The legacy
-      !      `*_fluxes` spellings are accepted as aliases so existing configs keep working.  -------!
+      !      make a run judgeable and leave the two heavy evaluation groups off. ------------------!
       cfg%output%grp_on(GRP_STRUCTURE)  = toml_logical(t, 'output.structure',  .true.)
-      cfg%output%grp_on(GRP_CARBON)     = toml_logical(t, 'output.carbon',                        &
-                                          toml_logical(t, 'output.carbon_fluxes', .true.))
-      cfg%output%grp_on(GRP_WATER)      = toml_logical(t, 'output.water',                         &
-                                          toml_logical(t, 'output.water_fluxes',  .true.))
-      cfg%output%grp_on(GRP_ENERGY)     = toml_logical(t, 'output.energy',                        &
-                                          toml_logical(t, 'output.energy_fluxes', .true.))
+      cfg%output%grp_on(GRP_CARBON)     = toml_logical(t, 'output.carbon',     .true.)
+      cfg%output%grp_on(GRP_WATER)      = toml_logical(t, 'output.water',      .true.)
+      cfg%output%grp_on(GRP_ENERGY)     = toml_logical(t, 'output.energy',     .true.)
       cfg%output%grp_on(GRP_RADIATION)  = toml_logical(t, 'output.radiation',  .false.)
       cfg%output%grp_on(GRP_ECOPHYS)    = toml_logical(t, 'output.ecophys',    .false.)
       cfg%output%grp_on(GRP_BIOGEOCHEM) = toml_logical(t, 'output.biogeochem', .true.)
@@ -800,21 +758,6 @@ contains
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
       if (.not. toml_has_section(t, 'phenology')) return
-      !----- The retired spelling is REJECTED, not ignored. `cue_mask` was one bitmask for both      !
-      !      sides; the flush and shed cues are selected independently now. A config carrying it     !
-      !      was written against documentation that no longer matches the model, and the only        !
-      !      outcome worse than stopping is running a PFT with a leaf habit its author did not ask   !
-      !      for. (config.md: "a config value that parses but does nothing is worse than one that    !
-      !      is absent".)  --------------------------------------------------------------------------!
-      if (toml_has(t, 'phenology.cue_mask')) then
-         write(*,'(a)') ' meds_config: [phenology].cue_mask is RETIRED -- the flush and shed cues are'
-         write(*,'(a)') '   selected independently now. Replace it with BOTH of:'
-         write(*,'(a)') '       flush_cue_mask = [...]     # cues that permit flushing (combined by MIN)'
-         write(*,'(a)') '       shed_cue_mask  = [...]     # cues that force shedding  (combined by MAX)'
-         write(*,'(a)') '   Bits: 0 = none | 1 = TEMP | 2 = WATER | 4 = HYDRO | 8 = PHOTO | 16 = LIGHT.'
-         write(*,'(a)') '   A cold-deciduous PFT is flush_cue_mask = [1], shed_cue_mask = [1].'
-         error stop 'meds_config: retired key [phenology].cue_mask'
-      end if
       call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
       call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
       call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
@@ -953,14 +896,17 @@ contains
       type(meds_config_t), intent(out) :: cfg
       type(toml_table_t) :: tm, tp
       type(keymiss_t)    :: miss
+      type(key_report_t) :: unknown
       logical            :: found
       integer(ik)        :: npft, nout, i
       real(wp)           :: buf(MAXPFT)
       character(len=64)  :: integrator_str
 
-      !----- MAIN file. -------------------------------------------------------------------!
+      !----- MAIN file. Every key it holds must be one its reference lists (meds_config_keys);   !
+      !      the unknown and retired ones are reported with the missing required keys below. ---!
       call toml_parse_file(path, tm, found)
       if (.not. found) error stop 'meds_config: main config file not found: '//trim(path)
+      call check_config_keys(tm, MAIN_KEYS, unknown)
       cfg%backend = BK_SERIAL                        ! reporting only, not a config parameter
 
       call req_dur (tm, 'run.dt_slow',    cfg%dt_slow,    miss)
@@ -1022,12 +968,7 @@ contains
       end select
       cfg%ark_dt_init       = toml_real   (tm, 'fast.ark_dt_init',       0.0_wp)
       cfg%ark_fixed_substep = toml_int    (tm, 'fast.ark_fixed_substep', 4_ik)
-      !----- ark_coupled, with BACK-COMPATIBLE acceptance of the old integer fast.ark_niter. The old  !
-      !      key only ever selected coupled (>1) vs uncoupled (<=1), so the mapping is exact and no     !
-      !      existing TOML changes behaviour. Read ark_niter FIRST, then let an explicit ark_coupled    !
-      !      override it. -----------------------------------------------------------------------------!
-      cfg%ark_coupled       = toml_int    (tm, 'fast.ark_niter',         8_ik) > 1_ik
-      cfg%ark_coupled       = toml_logical(tm, 'fast.ark_coupled',       cfg%ark_coupled)
+      cfg%ark_coupled       = toml_logical(tm, 'fast.ark_coupled',       .true.)
       cfg%fast_probe        = toml_logical(tm, 'fast.fast_probe',        .false.)
       cfg%fast_probe_file   = toml_string (tm, 'fast.fast_probe_file',   'fast_probe.csv')
 
@@ -1213,6 +1154,7 @@ contains
       !----- PFT file (named in the main file). -------------------------------------------!
       call toml_parse_file(trim(cfg%pft_config), tp, found)
       if (.not. found) error stop 'meds_config: PFT config file not found: '//trim(cfg%pft_config)
+      call check_config_keys(tp, PFT_KEYS, unknown)
 
       !----- PFT count comes from the length of the wood_density array. -------------------!
       call toml_real_array(tp, 'pft.wood_density', buf, nout)
@@ -1335,14 +1277,23 @@ contains
       call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
       call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
 
-      !----- Presence check: abort with the full list of any missing required keys. -------!
+      !----- Key check: abort with the full list of the missing required keys and of the keys    !
+      !      MEDS does not read (unknown or retired), from both files at once. -----------------!
       if (miss%n > 0_ik) then
          write(*,'(a,i0,a)') ' meds_config: ', miss%n, ' required parameter(s) missing:'
          do i = 1_ik, miss%n
             write(*,'(3a)') '   - ', trim(miss%key(i)), ''
          end do
-         error stop 'meds_config: incomplete configuration (see missing keys above)'
       end if
+      if (unknown%n > 0_ik) then
+         write(*,'(a,i0,a)') ' meds_config: ', unknown%n, ' key(s) MEDS does not read:'
+         do i = 1_ik, unknown%n
+            write(*,'(2a)') '   - ', trim(unknown%line(i))
+         end do
+         write(*,'(a)') '   Every key MEDS reads is listed in meds_config_main.toml and meds_config_pft.toml.'
+      end if
+      if (miss%n > 0_ik .or. unknown%n > 0_ik)                                                     &
+         error stop 'meds_config: the configuration has missing, unknown or retired keys (see above)'
 
       !----- Install allometry + compute every derived quantity (one consolidation point). -----!
       call derive_parameters(cfg)

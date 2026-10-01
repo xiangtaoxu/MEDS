@@ -372,7 +372,7 @@ stages: 4×10⁻¹⁵ kgC m⁻² over the July stage and 6×10⁻¹⁵ over the 
 8×10⁻⁴ on a year rollover, when the annual patch restructuring ran inside the step, between the fast
 window and the slow step; the restructuring now runs between steps, #297.)
 
-**`energy_fluxes = true`** in `[output]` is required — every temperature plotted here belongs to
+**`energy = true`** in `[output]` is required — every temperature plotted here belongs to
 the `GRP_ENERGY` output group and is silently absent without it.
 
 **Surface temperature** is `soil_temp_top_site`, the top soil layer. MEDS does not currently

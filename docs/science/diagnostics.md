@@ -216,7 +216,7 @@ coarse patch variables do. Like every patch variable, they are not written for a
 **A FAST-tier per-cohort variable is a mean over the fast output window, not an instantaneous
 sub-step value.** The per-cohort capture is one dt-weighted accumulator per cohort per slow step,
 not a per-sub-step array (which would be `n_cohort × n_sub × n_var`). At
-`[output.fast].interval_steps = 1` the two coincide; at the default `4` a FAST record is a
+`[output].fast_interval_steps = 1` the two coincide; at the default `4` a FAST record is a
 four-sub-step mean. This matters when comparing against a flux tower at sub-hourly resolution.
 
 ---

@@ -288,9 +288,9 @@ module meds_config
       !      Newton -- there is nothing in between. `ark_niter` was typed as an iteration cap but is    !
       !      only ever tested as `np <= 1` (column_be_stage), so every value > 1 behaved identically    !
       !      and the real cap is the NEWT_MAX = 4 parameter. It is a boolean, so it is spelled as one   !
-      !      now (plan E4). `fast.ark_niter` is still ACCEPTED and mapped (<=1 => .false.) so existing  !
-      !      TOMLs keep working; `fast.ark_coupled` is the honest name. `ark_relax` was deleted -- it   !
-      !      was vestigial on the Newton branch and read by nothing. ---------------------------------!
+      !      now (plan E4): `fast.ark_coupled`. The old `fast.ark_niter` is refused as retired         !
+      !      (meds_config_keys), naming it. `ark_relax` was deleted -- it was vestigial on the Newton     !
+      !      branch and read by nothing. --------------------------------------------------------------!
       logical     :: ark_coupled          = .true.      !< .false. = uncoupled single BE pass; .true. = 2x2 Newton
       !----- Sub-daily fast-loop diagnostic PROBE (opt-in; for the integrator/dt_fast evaluation): dumps !
       !      per-(patch,sub-step) CAS temp / GPP / ET / soil-top temp / leaf temp to a CSV. -------------!

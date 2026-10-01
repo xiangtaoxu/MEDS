@@ -762,6 +762,8 @@ Per D6 these are not filed as issues; each is named in the commit and PR message
 | N-7 | The daily tissue-water reconcile ignores a PFT's own curve | `meds_fast_reconcile` | 3 (fixed, `10d6482`) |
 | N-8 | A diagnostic reader leaves its slots unset when its block has no entries, so a slow-only run read stale values | `meds_site_diag_types` | 6 (fixed, `11e00bf`) |
 | N-9 | The soil-by-patch axis was missed by three rules: the record's patch count, the file-chunk cap and the annual guard | `close_tier`, `tier_has_cohort_or_patch`, the annual guards | 6 (fixed, `dc92a7d`) |
+| N-10 | A config key nothing reads was ignored in silence; the reference lacked 86 keys and listed dead ones | `meds_config_io`, the reference configs | 6 (fixed: a run stops on any key its reference does not list) |
+| N-11 | Leaf and wood temperatures averaged the end-of-step state; a recruit with no samples read 0 | the output registry, `cohort_diag_value` | 6 (fixed, `a92d1ff`) |
 | N-9 | A detail polygon (hourly files, per-cohort diagnostics) costs about four times an ordinary one and sets a threaded region's pace | `meds_region` | 5 (measured; the lever is noted in the Phase 5 status) |
 
 ---

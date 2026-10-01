@@ -269,8 +269,8 @@ def build_config(base: dict, cell: Cell, out_dir: Path) -> dict:
     deep_set(cfg, "output.daily.enabled", True)
     deep_set(cfg, "output.monthly.enabled", False)
     deep_set(cfg, "output.annual.enabled", False)
-    deep_set(cfg, "output.water_fluxes", True)
-    deep_set(cfg, "output.energy_fluxes", True)
+    deep_set(cfg, "output.water", True)
+    deep_set(cfg, "output.energy", True)
     deep_set(cfg, "output.numerics", True)          # section 5.3 work counters = the cost axis
     # FAST tier: hold the record cadence at ONE HOUR regardless of dt_fast.  fast_interval_steps
     # counts dt_fast SUB-STEPS per record, so leaving it fixed makes a dt=150 cell emit records 12x

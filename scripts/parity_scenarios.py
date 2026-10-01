@@ -82,8 +82,8 @@ def build(base: dict, name: str, spec: dict, out_dir: Path) -> dict:
     # Every diagnostic Phase B scores, plus the Phase-A health counters.  numerics_sweep sets these
     # too, but the base config must carry them so a scenario is runnable on its own.
     deep_set(cfg, "output.enabled", True)
-    deep_set(cfg, "output.energy_fluxes", True)
-    deep_set(cfg, "output.water_fluxes", True)
+    deep_set(cfg, "output.energy", True)
+    deep_set(cfg, "output.water", True)
     deep_set(cfg, "output.numerics", True)
     deep_set(cfg, "output.daily.enabled", True)
     deep_set(cfg, "output.monthly.enabled", False)

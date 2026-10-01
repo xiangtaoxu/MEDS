@@ -16,6 +16,39 @@ before and after.
 
 ### Changed
 
+- **A config key MEDS does not read stops the run** (plan item N-10). Unknown keys used to be
+  ignored in silence. `[forcing] dt_forcing = 7200` (the key is `timestep`) ran at the file's own
+  spacing, and every shipped example, and the reference itself, carried keys nothing read.
+  - **The rule.** Every key MEDS reads is listed in `meds_config_main.toml` or
+    `meds_config_pft.toml`, set or commented out at its default. A key a config holds that its
+    reference does not list is an error. The report names every such key at once, together with
+    any missing required ones, before the run starts.
+  - **The suggestions.** A retired key is named with what replaced it. A key that moved section is
+    named with its new home (`state.cohort_max` → `output.cohort_max`). A misspelling is named with
+    the key it most likely meant.
+  - **The list cannot drift.** The build reads the list from the two references, and a new test
+    (`config_keys_listed`) holds the references equal to the keys the loader reads, in both
+    directions.
+  - **The reference is complete.** `meds_config_main.toml` gains the 86 keys it lacked, at their
+    defaults: a `[soil_carbon]` block, `[trait_dynamics]`, the `[fast]` solver settings and process
+    mask, the thermal-acclimation keys, the soil optics, `[run].slow_on`, the `[init]` soil seeds,
+    `[output].fast_interval_steps` and two longwave-synthesis keys.
+  - **The reference was wrong in places.**
+    - It documented `[output.fast] interval_steps`, which nothing read; the key is
+      `[output].fast_interval_steps`.
+    - Its reserved `fast.soil_water_coupling` did nothing.
+    - The PFT reference listed four growth keys nothing read.
+  - **Retired, with a message.**
+    - The `[output]` aliases `carbon_fluxes`, `water_fluxes` and `energy_fluxes` (use `carbon`,
+      `water`, `energy`).
+    - `[fast].ark_niter` (use `ark_coupled`).
+    - `[carbon].growth_source` and `[phenology].phenology_on`.
+    - The PFT growth curve `growth_dbh_slope`, `growth_dbh_cap`, `growth_dbh_max` and
+      `growth_lai_slope`.
+  - **One table.** The refusals that were scattered through the loader are now entries in the
+    retired-key table (`meds_config_keys`), with their messages.
+  - **Migrating.** Delete or rename each key the error names. The shipped examples are cleaned.
+
 - **The met reader is split into its sources** (#311 F6). `meds_met_driver` was 1,415 lines, with
   three backends behind ten branches. It is now four modules:
   - `meds_met_file_source`: a MEDS forcing file. It holds the open and one record's values as
