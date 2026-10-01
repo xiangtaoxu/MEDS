@@ -11,18 +11,16 @@
 ! P0 SIMPLIFICATION (honest, and exact for the P0 operators): each ACTIVE tier integrates raw state    !
 ! independently every step; there is NO inter-tier chaining/feeder map. For AGG_MEAN/TMEAN/SUM/MIN/    !
 ! MAX/LAST a direct dt-weighted reduction over the coarse period equals the chained roll-up            !
-! (§4.1 "chaining exactness"), so the result is identical. Chaining is needed only for AGG_MEANSQ      !
-! (variance) and for a sub-dt_fast fast tier feeding daily -- both DEFERRED to P1 (§9). Design §3-§4.    !
+! (§4.1 "chaining exactness"), so the result is identical. Design §3-§4.                               !
 !==========================================================================================!
 module meds_output_integrate
    use meds_kinds,          only : wp, ik
-   use meds_constants,      only : p_std
    use meds_time,           only : meds_time_t
    use meds_output_config,  only : N_FREQ
    use meds_output_types,   only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,   &
                                    diag_params_t, pending_record_t, record_queue_t,                &
                                    slab_col,                                                     &
-                                   AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
+                                   AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                    AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT, DIM_PATCH,     &
                                    DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, MISSING_VALUE
    use meds_site_state_types,   only : site_t
@@ -30,7 +28,7 @@ module meds_output_integrate
                                        patch_diag_value, patch_diag_slow_row, polygon_diag_value
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : cohort_lai, cohort_npp_per_plant, soil_wetness,            &
-                                       soil_matric_potential, specific_humidity_to_vpd
+                                       soil_matric_potential
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,             &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,               &
                                        reduce_patch_to_site, reduce_patch_column_to_site,         &
@@ -55,8 +53,7 @@ module meds_output_integrate
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
    !----- Patch FIELDS (2000-2999). ----------------------------------------------------------!
    public :: FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT
-   public :: FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD
-   public :: FLD_P_CAS_DEPTH, FLD_P_SOIL_TEMP_TOP, FLD_P_SWE, FLD_P_SNOW_DEPTH, FLD_P_W_SURFACE
+   public :: FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH
    public :: FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND
    public :: FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW
    public :: FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH
@@ -148,15 +145,12 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_P_COHORT_OFFSET   = 2004_ik
    integer(ik), parameter :: FLD_P_COHORT_COUNT    = 2005_ik
    integer(ik), parameter :: FLD_P_GLOBAL_ID       = 2006_ik
-   integer(ik), parameter :: FLD_P_CAS_TEMP        = 2010_ik
-   integer(ik), parameter :: FLD_P_CAS_SHV         = 2011_ik
-   integer(ik), parameter :: FLD_P_CAS_CO2         = 2012_ik
-   integer(ik), parameter :: FLD_P_CAS_VPD         = 2013_ik
+   !----- The canopy-air, soil-top and surface-water STATES are not read here at the output tick:  !
+   !      one sample per window, at the boundary's local hour, biases them (#264). Their time means  !
+   !      are rows of the patch block (FLD_P_DIAG0 + PD_*), accumulated through the step. ---------!
    integer(ik), parameter :: FLD_P_CAS_DEPTH       = 2014_ik
-   integer(ik), parameter :: FLD_P_SOIL_TEMP_TOP   = 2015_ik
    integer(ik), parameter :: FLD_P_SWE             = 2016_ik
    integer(ik), parameter :: FLD_P_SNOW_DEPTH      = 2017_ik
-   integer(ik), parameter :: FLD_P_W_SURFACE       = 2018_ik
    integer(ik), parameter :: FLD_P_SOILC_FAST_GRND   = 2020_ik
    integer(ik), parameter :: FLD_P_SOILC_FAST_SOIL   = 2021_ik
    integer(ik), parameter :: FLD_P_SOILC_STRUCT_GRND = 2022_ik
@@ -204,12 +198,6 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
 
-   !----- Reference pressure [Pa] for the DIAGNOSTIC canopy-air VPD read-off. The CAS box       !
-   !      carries no prognostic pressure, so a VPD from its two twins needs one supplied. Using   !
-   !      the standard atmosphere makes this a diagnostic-grade signal (right shape, right         !
-   !      magnitude for canopy coupling) rather than a thermodynamic state variable, and that      !
-   !      limitation is stated here rather than left for a reader to discover from the numbers.    !
-
 contains
 
    !=======================================================================================!
@@ -239,7 +227,7 @@ contains
       buf%active = .true.
       buf%seed   = seed_of(v%agg)
       if (v%dim /= DIM_SCALAR) then
-         allocate(buf%slab(cap), buf%slab2(cap), buf%wsum_slab(cap), buf%hits(cap))
+         allocate(buf%slab(cap), buf%wsum_slab(cap), buf%hits(cap))
       end if
       call reset_buffer(buf)
    end subroutine alloc_integ_buffer
@@ -248,13 +236,11 @@ contains
    subroutine reset_buffer(buf)
       type(integ_buffer_t), intent(inout) :: buf
       buf%scal  = buf%seed
-      buf%scal2 = 0.0_wp
       buf%wsum  = 0.0_wp
       buf%nsamp = 0_ik
       buf%n_slab = 0_ik
       if (allocated(buf%slab)) then
          buf%slab(:)      = buf%seed
-         buf%slab2(:)     = 0.0_wp
          buf%wsum_slab(:) = 0.0_wp
          buf%hits(:)      = 0_ik
       end if
@@ -282,7 +268,6 @@ contains
       case (AGG_LAST)   ; buf%scal = x                  ; buf%nsamp = buf%nsamp + 1_ik
       case (AGG_TMEAN)  ; buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt
       case (AGG_FLUXSUM); buf%scal = buf%scal + x*dt    ; buf%wsum  = buf%wsum + dt ; buf%nsamp = buf%nsamp + 1_ik
-      case (AGG_VARIANCE) ; buf%scal = buf%scal + x*dt  ; buf%scal2 = buf%scal2 + x*x*dt ; buf%wsum = buf%wsum + dt
       end select
    end subroutine integrate_scalar
 
@@ -320,10 +305,6 @@ contains
          case (AGG_TMEAN, AGG_FLUXSUM)
             buf%slab(i) = buf%slab(i) + x(i)*dt ; buf%wsum_slab(i) = buf%wsum_slab(i) + dt
             buf%hits(i) = buf%hits(i) + 1_ik
-         case (AGG_VARIANCE)
-            buf%slab(i)  = buf%slab(i)  + x(i)*dt
-            buf%slab2(i) = buf%slab2(i) + x(i)*x(i)*dt
-            buf%wsum_slab(i) = buf%wsum_slab(i) + dt ; buf%hits(i) = buf%hits(i) + 1_ik
          end select
       end do
    end subroutine integrate_slab
@@ -335,7 +316,6 @@ contains
       type(integ_buffer_t), intent(in)  :: buf
       real(wp),             intent(out) :: out
       logical,              intent(out) :: valid
-      real(wp) :: mean
       valid = .true. ; out = MISSING_VALUE
       select case (buf%agg)
       case (AGG_MEAN)
@@ -348,16 +328,6 @@ contains
          if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
       case (AGG_MIN, AGG_MAX, AGG_LAST)
          if (buf%nsamp > 0_ik) then ; out = buf%scal ; else ; valid = .false. ; end if
-      case (AGG_VARIANCE)
-         !----- <x^2> - <x>^2, floored at 0: the two moments are accumulated independently, so    !
-         !      round-off can put the difference a hair below zero for a near-constant series, and !
-         !      a negative variance in an output file is worse than a zero.  ----------------------!
-         if (buf%wsum > 0.0_wp) then
-            mean = buf%scal / buf%wsum
-            out  = max(0.0_wp, buf%scal2 / buf%wsum - mean*mean)
-         else
-            valid = .false.
-         end if
       end select
    end subroutine normalize_scalar
 
@@ -368,7 +338,6 @@ contains
       logical,              intent(out) :: valid(:)
       integer(ik),          intent(out) :: n_out
       integer(ik) :: i
-      real(wp)    :: mean_i
       n_out = buf%n_slab
       !----- A record row per live slot. A shorter record means the slab was sized before the      !
       !      registry was final, and the loop below would write past this column into the next. --!
@@ -384,12 +353,6 @@ contains
             if (buf%wsum_slab(i) > 0.0_wp) then ; out(i) = buf%slab(i) / buf%wsum_slab(i) ; valid(i) = .true. ; end if
          case (AGG_FLUXSUM, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST)
             if (buf%hits(i) > 0_ik) then ; out(i) = buf%slab(i) ; valid(i) = .true. ; end if
-         case (AGG_VARIANCE)
-            if (buf%wsum_slab(i) > 0.0_wp) then
-               mean_i = buf%slab(i) / buf%wsum_slab(i)
-               out(i) = max(0.0_wp, buf%slab2(i) / buf%wsum_slab(i) - mean_i*mean_i)
-               valid(i) = .true.
-            end if
          end select
       end do
    end subroutine normalize_slab
@@ -524,25 +487,11 @@ contains
       case (FLD_P_COHORT_OFFSET) ; x(1:n) = real(site%patch%cohort_offset(1:n), wp)
       case (FLD_P_COHORT_COUNT)  ; x(1:n) = real(site%patch%cohort_count(1:n), wp)
       case (FLD_P_GLOBAL_ID)     ; x(1:n) = real(site%patch%global_id(1:n), wp)
-      case (FLD_P_CAS_TEMP)      ; do ip = 1_ik, n ; x(ip) = site%patch%cas(ip)%can_temp     ; end do
-      case (FLD_P_CAS_SHV)       ; do ip = 1_ik, n ; x(ip) = site%patch%cas(ip)%can_shv      ; end do
-      case (FLD_P_CAS_CO2)       ; do ip = 1_ik, n ; x(ip) = site%patch%cas(ip)%can_co2      ; end do
       case (FLD_P_CAS_DEPTH)     ; do ip = 1_ik, n ; x(ip) = site%patch%cas(ip)%can_depth    ; end do
-      case (FLD_P_SOIL_TEMP_TOP) ; do ip = 1_ik, n ; x(ip) = site%patch%soil_e(ip)%soil_temp(1) ; end do
-      case (FLD_P_W_SURFACE)     ; do ip = 1_ik, n ; x(ip) = site%patch%soil_w(ip)%w_surface ; end do
       case (FLD_P_SWE)
          do ip = 1_ik, n ; x(ip) = sum(site%patch%snow(ip)%swe(:))        ; end do
       case (FLD_P_SNOW_DEPTH)
          do ip = 1_ik, n ; x(ip) = sum(site%patch%snow(ip)%snow_depth(:)) ; end do
-      !----- CAS vapour-pressure deficit: a DERIVED read-off of the two prognostic twins.      !
-      !      Pressure is the standard-atmosphere reference (the CAS box carries no prognostic   !
-      !      pressure), so this is a diagnostic-grade VPD, adequate for the canopy-coupling       !
-      !      signal it exists to show and not to be mistaken for a thermodynamic state variable.  !
-      case (FLD_P_CAS_VPD)
-         do ip = 1_ik, n
-            x(ip) = specific_humidity_to_vpd(site%patch%cas(ip)%can_temp,                      &
-                                             site%patch%cas(ip)%can_shv, p_std)
-         end do
       case (FLD_P_SOILC_FAST_GRND)
          do ip = 1_ik, n ; x(ip) = site%patch%soil_carbon(ip)%fast_grnd_carbon   ; end do
       case (FLD_P_SOILC_FAST_SOIL)

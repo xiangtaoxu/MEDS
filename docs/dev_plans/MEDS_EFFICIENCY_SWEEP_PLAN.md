@@ -722,8 +722,9 @@ lock that slows patch threads today.
   - #270: the FAST tier reads the patch block's own row and has a patch axis (`dc92a7d`). It also
     fixes N-9. `et_rate_site` moves by 4e-16.
   - #275: the skin temperature (`ebeb875`), bit-identical. MEDS has no separate ground skin, so
-    it is the black-body temperature of the longwave up (CLM's `TSKIN`). The within-step variances
-    wait on a choice of definition (`docs/ROADMAP.md`).
+    it is the black-body temperature of the longwave up (CLM's `TSKIN`). The owner then had the
+    four end-of-step variances removed, since nothing used them; adding one back needs a
+    definition first (`docs/ROADMAP.md`).
   - F6: the reader is split into its sources, bit-identical.
 - **#299 caveat:** litterfall stays 0 in a run with soil carbon off, which does not accumulate
   litter at all. Whether it should (it relates to #316) is a separate decision.

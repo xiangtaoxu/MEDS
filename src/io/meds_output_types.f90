@@ -22,7 +22,7 @@ module meds_output_types
    public :: var_desc_t, integ_buffer_t, output_registry_t, diag_params_t
    public :: pending_record_t, record_queue_t, stream_file_t
    public :: output_files_t, output_buffers_t
-   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE, AGG_TMEAN, AGG_FLUXSUM
+   public :: AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_TMEAN, AGG_FLUXSUM
    public :: DIM_SCALAR, DIM_COHORT, DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH
    public :: XTYPE_DOUBLE, XTYPE_INT
    public :: MISSING_VALUE, MISSING_INT, MAX_OUTPUT_VARS, MAX_DBH_CLASS
@@ -34,15 +34,8 @@ module meds_output_types
    integer(ik), parameter :: AGG_MIN     = 3_ik  !< period minimum
    integer(ik), parameter :: AGG_MAX     = 4_ik  !< period maximum
    integer(ik), parameter :: AGG_LAST    = 5_ik  !< end-of-period snapshot (ids / CSR / instantaneous)
-   !----- dt-weighted VARIANCE of a state over the period (#174). It accumulates the first AND
-   !      second moments and emits  <x^2> - <x>^2 , so it is registered as its OWN variable beside
-   !      the mean rather than as a companion slot bolted to one: that way the existing per-variable
-   !      buffer / normalize / serialize path carries it with no new machinery, and -- the part that
-   !      matters to a user -- each variance is independently switchable through the [variables]
-   !      override, exactly like every other output.
-   integer(ik), parameter :: AGG_VARIANCE = 6_ik  !< dt-weighted variance over the period
-   integer(ik), parameter :: AGG_TMEAN   = 7_ik  !< dt-weighted state mean (the physical-stock default)
-   integer(ik), parameter :: AGG_FLUXSUM = 8_ik  !< dt-weighted integral of a rate (period total)
+   integer(ik), parameter :: AGG_TMEAN   = 6_ik  !< dt-weighted state mean (the physical-stock default)
+   integer(ik), parameter :: AGG_FLUXSUM = 7_ik  !< dt-weighted integral of a rate (period total)
 
    !----- Trailing (per-record) axis of a variable. DIM_COHORT/DIM_PATCH are fixed WITHIN a       !
    !      window (§4.4), so all non-scalar dims fold by direct slot index -- no id-keying.         !
@@ -157,13 +150,11 @@ module meds_output_types
       logical     :: active = .false.       !< allocated + participating (this var is on in this tier)
       !----- scalar accumulators (DIM_SCALAR). -------------------------------------------------!
       real(wp)    :: scal  = 0.0_wp         !< running reduction
-      real(wp)    :: scal2 = 0.0_wp         !< second moment (AGG_VARIANCE)
-      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM/MEANSQ)
+      real(wp)    :: wsum  = 0.0_wp         !< Sum(dt) weight (AGG_TMEAN/FLUXSUM)
       integer(ik) :: nsamp = 0_ik           !< equal-weight sample count (MEAN/SUM/MIN/MAX/LAST)
       real(wp)    :: seed  = 0.0_wp         !< re-seed value (MIN=+huge, MAX=-huge, else 0)
       !----- per-index accumulators (DIM_COHORT/PATCH/SOIL/PFT), sized to the relevant cap. ------!
       real(wp),    allocatable :: slab(:)
-      real(wp),    allocatable :: slab2(:)
       real(wp),    allocatable :: wsum_slab(:)
       integer(ik), allocatable :: hits(:)
       integer(ik) :: n_slab = 0_ik          !< live index count this window (the [1:n] cohort/patch count)

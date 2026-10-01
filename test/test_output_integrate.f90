@@ -32,7 +32,7 @@ program test_output_integrate
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
                                      MISSING_VALUE,                                               &
-                                     AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST, AGG_VARIANCE,   &
+                                     AGG_MEAN, AGG_SUM, AGG_MIN, AGG_MAX, AGG_LAST,                 &
                                      AGG_TMEAN, AGG_FLUXSUM, DIM_SCALAR, DIM_COHORT
    use meds_output_integrate, only : alloc_integ_buffer, reset_buffer, integrate_scalar,         &
                                      integrate_slab, normalize_scalar, normalize_slab,           &
@@ -104,19 +104,6 @@ contains
       !----- LAST. -----!
       call run_scalar(AGG_LAST, [7.0_wp,8.0_wp,9.0_wp], [1.0_wp,1.0_wp,1.0_wp], out, valid)
       call check_close(out, 9.0_wp, 1.0e-12_wp, 'AGG_LAST')
-      !----- VARIANCE (#174). x = [2,4] at equal dt -> mean 3, variance 1. The operator emits the !
-      !      VARIANCE itself, not the mean: the mean is already available from the AGG_TMEAN       !
-      !      partner registered beside it, so emitting it twice would be redundant.  --------------!
-      call run_scalar(AGG_VARIANCE, [2.0_wp,4.0_wp], [1.0_wp,1.0_wp], out, valid)
-      call check(valid, 'VARIANCE valid'); call check_close(out, 1.0_wp, 1.0e-12_wp, 'AGG_VARIANCE')
-      !----- dt-WEIGHTED, like its TMEAN partner: x = [10,20] at dt = [1,3] has mean 17.5 and     !
-      !      variance 0.25*(10-17.5)^2 + 0.75*(20-17.5)^2 = 18.75, NOT the equal-weight 25. ------!
-      call run_scalar(AGG_VARIANCE, [10.0_wp,20.0_wp], [1.0_wp,3.0_wp], out, valid)
-      call check_close(out, 18.75_wp, 1.0e-12_wp, 'AGG_VARIANCE is dt-weighted')
-      !----- A CONSTANT series has zero variance and must not go negative through round-off. -----!
-      call run_scalar(AGG_VARIANCE, [7.0_wp,7.0_wp,7.0_wp], [1.0_wp,2.0_wp,3.0_wp], out, valid)
-      call check(out >= 0.0_wp, 'AGG_VARIANCE never emits a negative variance')
-      call check_close(out, 0.0_wp, 1.0e-12_wp, 'AGG_VARIANCE of a constant series is 0')
    end subroutine test_scalar_operators
 
    subroutine test_zero_sample_guard()

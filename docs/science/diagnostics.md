@@ -133,7 +133,6 @@ start-up.
 | `AGG_LAST` | `time: point` | end-of-period snapshot (ids, CSR, PFT index) |
 | `AGG_MIN` / `AGG_MAX` | `time: minimum` / `maximum` | period extremum |
 | `AGG_FLUXSUM` | `time: sum` | dt-weighted integral of a rate (period total) |
-| `AGG_VARIANCE` | `time: variance` | dt-weighted variance over the period |
 
 #### Which steps a record holds
 
@@ -181,29 +180,6 @@ per patch (`skin_temp_patch`), sub-daily (`skin_temp_fast`) and both (`skin_temp
 - **The emissivity.** It is taken as 1, so the reflected sky longwave counts as emission. Under a sky
   colder than the surface, that puts the value a few tenths of a kelvin below the surface's own
   temperature, for an emissivity of 0.98.
-
-#### Variance companions
-
-`AGG_VARIANCE` emits $`\langle x^2\rangle - \langle x\rangle^2`$ over the samples the tick hands it,
-dt-weighted like its `AGG_TMEAN` partner. The four that ship read their partner's **end-of-step
-state**, once per slow step, so each is the variance of those samples across the period. With a daily
-step that is the **day-to-day spread of the state at one fixed hour**, the step's end. It is not the
-diurnal cycle, which needs a sum of squares accumulated inside the step (#275), and the long names say
-so: "variance of end-of-step samples of ...".
-
-It is registered as an **ordinary variable sharing its partner's source id** — `cas_temp_var_site`
-beside `cas_temp_site` — rather than as a companion slot bolted to the mean. Two consequences, both
-deliberate: the existing per-variable buffer / normalize / serialize path carries it with no new
-machinery, and each variance is **independently switchable** through the `[variables]` override,
-exactly like every other output. A bolted-on slot would have been neither.
-
-Four ship: `cas_temp_var_site`, `leaf_temp_var_site`, `soil_temp_top_var_site`, `cas_vpd_var_site`,
-monthly and annual only. The units are the partner's **squared**, because that is what a variance is;
-take the square root for a standard deviation. Emitting the standard deviation directly would have
-lost the additivity that lets a variance be combined across periods.
-
-Measured on a spun-up Ithaca stand, the canopy-air standard deviation of these samples runs 2.3 K in
-July against 5.4 K in December, which the monthly mean alone cannot show.
 
 Four tiers — `F` fast, `D` daily, `M` monthly, `Y` annual — each writing its own file family
 `<prefix>-<letter>[-<stamp>].nc`. Each tier integrates raw state independently; for these operators

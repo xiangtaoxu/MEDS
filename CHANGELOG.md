@@ -260,7 +260,6 @@ before and after.
   - **What it is not.** MEDS has no separate ground skin, although #275 assumed one: snow-free, the
     ground surface is the top soil layer (`soil_temp_top_site`). The patch row that holds it, which
     was labelled "ground/skin temperature", is now `PD_SOIL_TEMP_TOP`.
-  - **Still open.** The within-step variances wait on a choice of definition (`docs/ROADMAP.md`).
 
 - **The FAST tier has a patch axis** (#270). A site mean over a closed canopy and a gap can describe
   neither: in the biophysics example the gap's surface soil ran 13 K above the air at midday and the
@@ -273,6 +272,22 @@ before and after.
   - The soil columns are `soil_temp_layer_patch_fast` and `soil_water_layer_patch_fast`.
   - They follow `[output].axes_patch` (on) and `axes_soil_patch` (off), as the coarse patch
     variables do; a region writes none of them. The site `*_fast` value is their area-weighted sum.
+
+### Removed
+
+- **The four variance outputs and their operator** (#275). `cas_temp_var_site`,
+  `soil_temp_top_var_site`, `cas_vpd_var_site` and `leaf_temp_var_site` are gone, and so is
+  `AGG_VARIANCE` (`cell_methods = "time: variance"`).
+  - **Why.** Nothing used them. They squared one end-of-step sample per slow step, which is the
+    day-to-day spread of the state at one hour, not the within-step spread their names suggested.
+  - **Migrating.** An `[output].io_config` that still lists one of them is refused, as for any
+    name the registry does not have. Delete the line.
+  - **Gone with them.** The six end-of-step accessors only they read: canopy-air temperature,
+    humidity, CO2 and VPD, soil-top temperature and surface water. Their time means were already
+    rows of the patch block (#264), so the registry test that kept time means off those accessors
+    goes too.
+  - **Adding one back** needs a sum of squares inside the step, and first a choice of definition
+    (`docs/ROADMAP.md`).
 
 ### Fixed
 

@@ -23,7 +23,6 @@ module meds_output_registry
                                    GRP_STRUCTURE, GRP_CARBON, GRP_WATER, GRP_ENERGY,              &
                                    GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
                                    GRP_FORCING
-   use meds_output_types,   only : AGG_VARIANCE
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
@@ -40,8 +39,7 @@ module meds_output_registry
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
         FLD_C_LEAF_TEMP, FLD_C_WOOD_TEMP, FLD_C_SDIAG0,                                          &
         FLD_P_AREA, FLD_P_AGE, FLD_P_DIST_TYPE, FLD_P_COHORT_OFFSET, FLD_P_COHORT_COUNT,         &
-        FLD_P_GLOBAL_ID, FLD_P_CAS_TEMP, FLD_P_CAS_SHV, FLD_P_CAS_CO2, FLD_P_CAS_VPD,            &
-        FLD_P_CAS_DEPTH, FLD_P_SOIL_TEMP_TOP, FLD_P_SWE, FLD_P_SNOW_DEPTH, FLD_P_W_SURFACE,      &
+        FLD_P_GLOBAL_ID, FLD_P_CAS_DEPTH, FLD_P_SWE, FLD_P_SNOW_DEPTH,                           &
         FLD_P_SOILC_FAST_GRND, FLD_P_SOILC_FAST_SOIL, FLD_P_SOILC_STRUCT_GRND,                   &
         FLD_P_SOILC_STRUCT_SOIL, FLD_P_SOILC_MICROBIAL, FLD_P_SOILC_SLOW,                        &
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
@@ -414,35 +412,11 @@ contains
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_TEMP)
       call add_variable(reg, 'soil_fliq_site', 'area-weighted soil liquid fraction', '-',        &
                         DIM_SOIL, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_L_SOIL_FLIQ)
-      !----- VARIANCE COMPANIONS (#174). Each squares its partner's end-of-step state, read once per !
-      !      slow step, so it is the variance of those samples across the window: with a daily step,  !
-      !      the day-to-day spread of the state at one fixed hour. That is not the diurnal cycle,      !
-      !      which needs a within-step sum of squares (#275), and the long names say so. Registered as !
-      !      ordinary variables sharing their partner's source id, so each is switchable on its own    !
-      !      through the [variables] override and costs nothing when off. OFF by default (MON_YR only, !
-      !      and the group toggles still gate them).                                                   !
-      !                                                                                          !
-      !      The units are the partner's SQUARED, which is what a variance is; a reader wanting a    !
-      !      standard deviation takes the square root. Emitting sd instead would have lost the        !
-      !      additivity that makes a variance combinable across periods.                              !
-      call add_variable(reg, 'cas_temp_var_site',                                                &
-                        'variance of end-of-step samples of canopy-air-space temperature', 'K2',   &
-                        DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_TEMP)
-      call add_variable(reg, 'soil_temp_top_var_site',                                           &
-                        'variance of end-of-step samples of soil-top temperature', 'K2',           &
-                        DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_SOIL_TEMP_TOP)
-      call add_variable(reg, 'cas_vpd_var_site',                                                 &
-                        'variance of end-of-step samples of canopy-air vapour-pressure deficit',   &
-                        'Pa2', DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_P_CAS_VPD)
 
       !----- Canopy temperatures, LEAF-AREA-weighted (the intensive rule: a bare sapling must    !
       !      not pull the canopy mean as hard as a closed overstory).  --------------------------!
       call add_variable(reg, 'leaf_temp_site', 'leaf-area-weighted canopy leaf temperature', 'K', &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_LEAF_TEMP,         &
-                        w=W_LEAF_AREA, mn=.true.)
-      call add_variable(reg, 'leaf_temp_var_site',                                               &
-                        'variance of end-of-step samples of canopy leaf temperature', 'K2',        &
-                        DIM_SCALAR, AGG_VARIANCE, GRP_ENERGY, MON_YR, FLD_C_LEAF_TEMP,          &
                         w=W_LEAF_AREA, mn=.true.)
       call add_variable(reg, 'wood_temp_site', 'leaf-area-weighted wood temperature', 'K',       &
                         DIM_SCALAR, AGG_TMEAN, GRP_ENERGY, DAY_MON_YR, FLD_C_WOOD_TEMP,         &

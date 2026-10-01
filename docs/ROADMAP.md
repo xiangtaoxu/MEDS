@@ -150,18 +150,22 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   shipped in v0.2.0 on the VIS/NIR/LW three-band grid the two-stream solves. Comparing against a
   multispectral product (MODIS bands, Sentinel-2) needs finer bands, which is a change to the RT's
   band structure rather than to its output.
-- **A patch axis on the FAST tier.** *Candidate.* [#270](https://github.com/xiangtaoxu/MEDS/issues/270) Sub-daily output is site-mean only,
-  although the fast staging already carries the patch dimension.
-- **Within-step variances.** *Candidate.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275)
-  - **Done.** v0.3.0 dropped `ground_temp_site` and relabelled the four variances as what they are:
-    variances of end-of-step samples. The skin temperature ships as `skin_temp_*`, the black-body
-    temperature of the longwave up. MEDS has no separate ground skin to plumb: snow-free, its ground
-    surface is the top soil layer.
-  - **What remains** is a within-step variance, which first needs its definition chosen.
-    - **The variance of the site-mean series**, which is what a tower sees. It needs each sub-step's
-      site mean, which the FAST staging forms only when that tier is on.
-    - **The variance pooled over patches and time.** A sum-of-squares row in the patch block gives
-      it directly.
+- **A patch axis on the FAST tier.** *Done in beta.* [#270](https://github.com/xiangtaoxu/MEDS/issues/270) Each FAST quantity of the patch
+  block has a `*_patch_fast` twin, staged from the patch block's own row.
+- **Variances.** *Removed; add back if needed.* [#275](https://github.com/xiangtaoxu/MEDS/issues/275)
+  - **Done.** The skin temperature ships as `skin_temp_*`, the black-body temperature of the
+    longwave up. MEDS has no separate ground skin to plumb: snow-free, its ground surface is the top
+    soil layer.
+  - **Removed.** The four variances (`cas_temp_var_site`, `soil_temp_top_var_site`,
+    `cas_vpd_var_site`, `leaf_temp_var_site`) and their operator are gone. Nothing used them, and
+    they squared one end-of-step sample a day, which is not the within-step spread their names
+    suggested.
+  - **To add one back**, first choose its definition, then accumulate a sum of squares inside the
+    step.
+    - **The variance of the site-mean series** is what a tower sees. It needs each sub-step's site
+      mean, which the FAST staging forms only when that tier is on.
+    - **The variance pooled over patches and time** comes directly from a sum-of-squares row in the
+      patch block.
 - **Fast-only rows in a slow-only run read 0.** *Candidate.* [#299](https://github.com/xiangtaoxu/MEDS/issues/299) v0.3.0 weights the patch block
   with the slow step when the fast loop is off, so the slow rows report their rates. The rows only
   the fast loop fills (fluxes, the forcing echo) still read 0 there, where `_FillValue` would say
