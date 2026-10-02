@@ -30,7 +30,7 @@ from . import _ffi
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
     "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
-    "gas_exchange", "assimilation_demand_c3", "electron_transport_j",
+    "gas_exchange", "gas_exchange_batch", "assimilation_demand_c3", "electron_transport_j",
     "peaked", "arrhenius", "self_test",
 ]
 
@@ -183,6 +183,24 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
                         int(colimitation), boundary_layer)
     result["limitation"] = Limitation(result["limitation"])
     return Flux(**result)
+
+
+def gas_exchange_batch(par, leaf_temp, vpd, ca, params, *,
+                       pressure=101325.0, psi_leaf=0.0, gb=0.0, psi=0.0,
+                       stomata=Stomata.MEDLYN, temp_response=TempResponse.PEAKED,
+                       colimitation=Colimitation.QUADRATIC, boundary_layer=False) -> dict:
+    """`gas_exchange` for many leaves sharing one Params, in one library call: the drivers are
+    arrays (or scalars) that broadcast together. Returns a dict of numpy arrays with the Flux
+    fields (limitation as integer codes of Limitation, converged as booleans)."""
+    import numpy as np
+    cols = np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in
+                                 (par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi)))
+    shape = cols[0].shape
+    env = dict(zip(("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb", "psi"),
+                   (c.ravel() for c in cols)))
+    result = _ffi.solve_batch(env, asdict(params), int(stomata), int(temp_response),
+                              int(colimitation), boundary_layer)
+    return {k: np.asarray(v).reshape(shape) for k, v in result.items()}
 
 
 def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,

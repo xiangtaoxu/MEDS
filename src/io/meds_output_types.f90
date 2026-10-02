@@ -293,6 +293,8 @@ module meds_output_types
       real(wp),            allocatable :: fast_coh_gpp(:,:)     !< (cohort, n_fast_sub) per-cohort GPP [umol/plant/s]
       !< (cohort, n_fast_sub) per-cohort height [m] (tallest post-proc)
       real(wp),            allocatable :: fast_coh_height(:,:)
+      !< (cohort, CD_*, n_fast_sub) the per-cohort diagnostic block's rows, staged while it is on
+      real(wp),            allocatable :: fast_coh_cdiag(:,:,:)
       integer(ik)          :: n_fast_sub   = 0_ik              !< sub-steps staged this slow step
       integer(ik)          :: fast_n_soil  = 0_ik              !< live soil layers in the fast slabs
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs

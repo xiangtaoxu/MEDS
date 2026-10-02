@@ -13,6 +13,8 @@ that needs no library:
                        both conservation ledgers, with the time loop handed to Python.
     meds.config      — a run's main TOML and the PFT (plant trait) TOML it names: read them,
                        change keys, write them for a run, and read back the parameter record.
+    meds.canopy      — the canopy's kernels over a frozen stand (the leaf solve over many leaves,
+                       the two-stream), parameterized by a run's own configuration.
 
 ``meds.model`` is the whole model; the other two are pieces of it exposed for their own sake.
 
@@ -20,4 +22,4 @@ Importing `meds` is cheap and does NOT load any compiled library; each sub-modul
 shared library lazily on first import, so `import meds` works even without it built.
 """
 __version__ = "0.3.2"
-__all__ = ["plant", "demography", "model", "config"]
+__all__ = ["plant", "demography", "model", "config", "canopy"]

@@ -25,7 +25,7 @@ module meds_fast_dynamics
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
                                        specific_humidity_to_vpd
-   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
+   use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_column_view, only : copy_column_cohort
    use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
@@ -56,9 +56,8 @@ module meds_fast_dynamics
    use meds_fast_types, only : patch_biophys_t, ensure_patch_biophys_capacity, ark_workspace_t
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : snow_params_t
-   use meds_optics_lib,       only : beta_params_from_mean
    use meds_canopy_types, only : ground_optics_state_t
-   use meds_canopy_radiation, only : canopy_radiation, derive_rad_optics, ground_optics
+   use meds_canopy_radiation, only : canopy_radiation, ground_optics
    use meds_ground_biophysics, only : snow_cover_fraction
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      GRP_THETA,                                                   &
@@ -226,41 +225,9 @@ contains
       ctx%col_config%mask%soil_water = cfg%mask_soil_water
       ctx%col_config%mask%hydraulics = cfg%mask_hydraulics
 
-      !----- Canopy-RT optics table, built ONCE from the [pft] trait table and read-only          !
-      !      downstream. Per-PFT, so two PFTs can differ in how they intercept light.               !
-      block
-         integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
-         integer(ik) :: np, ipf
-         real(wp), allocatable :: rl(:,:), tl(:,:), rw(:,:), tw(:,:), cl(:), cw(:), bp(:), bq(:)
-         logical  :: hb(NB), he(NB)
-         real(wp) :: bpp, bqq
-         np = cfg%pft%n
-         allocate(rl(NB,np), tl(NB,np), rw(NB,np), tw(NB,np), cl(np), cw(np), bp(np), bq(np))
-         !----- PER-PFT now, from the [pft] table. Shortwave arrives as reflectance and           !
-         !      transmittance; LONGWAVE arrives as emissivity, and the band's reflectance is       !
-         !      1 - emissivity with zero transmittance, because a leaf is opaque at thermal        !
-         !      wavelengths. That is physics, so it is derived here rather than offered as two     !
-         !      more knobs a user could set inconsistently. ---------------------------------------!
-         associate (t => cfg%pft)
-            rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np) ; tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
-            rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np) ; tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
-            rl(RAD_LW ,1:np) = 1.0_wp - t%leaf_emissivity(1:np) ; tl(RAD_LW,1:np) = 0.0_wp
-            rw(RAD_VIS,1:np) = t%wood_reflect_vis(1:np) ; tw(RAD_VIS,1:np) = t%wood_transmit_vis(1:np)
-            rw(RAD_NIR,1:np) = t%wood_reflect_nir(1:np) ; tw(RAD_NIR,1:np) = t%wood_transmit_nir(1:np)
-            rw(RAD_LW ,1:np) = 1.0_wp - t%wood_emissivity(1:np) ; tw(RAD_LW,1:np) = 0.0_wp
-            cl(1:np) = t%leaf_clumping(1:np) ; cw(1:np) = t%wood_clumping(1:np)
-            !----- The Beta leaf-angle shape is a TRANSFORM of (mean, std), so it is derived per  !
-            !      PFT rather than configured: the two shape parameters are not quantities anyone  !
-            !      measures, and an inconsistent pair has no leaf-angle distribution behind it. ---!
-            do ipf = 1_ik, np
-               call beta_params_from_mean(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
-               bp(ipf) = bpp ; bq(ipf) = bqq
-            end do
-         end associate
-         hb = [.true.,  .true.,  .false.]                         ! VIS/NIR have a beam; LW does not
-         he = [.false., .false., .true. ]                         ! only LW emits
-         call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, ctx%rad_opt)
-      end block
+      !----- Canopy-RT optics table, built ONCE from the [pft] trait table and read-only           !
+      !      downstream (meds_fast_config, which the calibration's canopy C API also calls). --------!
+      call build_rad_optics(cfg, ctx%rad_opt)
    end subroutine build_fast_context
 
    !----- Seed every patch's fast reservoirs to a horizontally-uniform equilibrium. Called once !
@@ -440,7 +407,7 @@ contains
       end if
       nl = n_soil_layer_max
       if (do_fast) then
-         call size_fast_staging(out_bufs, nsub, npatch, site%cohort%n)
+         call size_fast_staging(out_bufs, nsub, npatch, site%cohort%n, do_cdiag)
          out_bufs%n_fast_sub    = nsub
          !----- The slabs are sized to the ceiling, but only the ACTIVE layers are data: the layers  !
          !      past n_active stay unwritten and read back as the fill value, as on the coarse tiers  !
@@ -451,6 +418,7 @@ contains
          out_bufs%fast_site = 0.0_wp
          out_bufs%fast_soil_temp = 0.0_wp ; out_bufs%fast_soil_water = 0.0_wp
          out_bufs%fast_coh_ltemp = 0.0_wp ; out_bufs%fast_coh_gpp = 0.0_wp ; out_bufs%fast_coh_height = 0.0_wp
+         if (do_cdiag) out_bufs%fast_coh_cdiag = 0.0_wp
       end if
 
       !----- BB1 phase 1 (MEDS_NUMERICS_SCOPING.md sec 7/10.2): size the per-patch fast-loop        !
@@ -797,6 +765,7 @@ contains
                   out_bufs%fast_coh_ltemp(i,isub)  = biophys%leaf_temp(j)
                   out_bufs%fast_coh_gpp(i,isub)    = gpp_coh(j)
                   out_bufs%fast_coh_height(i,isub) = col_cohort%height(j)
+                  if (do_cdiag) out_bufs%fast_coh_cdiag(i, :, isub) = cdiag_buf(:, j)
                end do
             end if
             !----- FOLD the per-(cohort, sub-step) and per-patch DIAGNOSTICS into the site's        !
@@ -1255,9 +1224,10 @@ contains
    !      patch and cohort counts are this step's, and the buffers only grow (to at least twice    !
    !      their size, so a growing stand reallocates rarely). The output layer checks the live      !
    !      counts against output.patch_max and cohort_max, as it does for the coarse tiers. --------!
-   subroutine size_fast_staging(b, nsub, npatch, ncohort)
+   subroutine size_fast_staging(b, nsub, npatch, ncohort, with_cdiag)
       type(output_buffers_t), intent(inout) :: b
       integer(ik),            intent(in)    :: nsub, npatch, ncohort
+      logical,                intent(in)    :: with_cdiag   !< the per-cohort diagnostic block is on
       integer(ik) :: nl, np, nc
       nl = n_soil_layer_max
       if (.not. allocated(b%fast_time))                                                            &
@@ -1282,6 +1252,15 @@ contains
       end if
       if (.not. allocated(b%fast_coh_ltemp))                                                       &
          allocate(b%fast_coh_ltemp(nc, nsub), b%fast_coh_gpp(nc, nsub), b%fast_coh_height(nc, nsub))
+      !----- The diagnostic block's rows, staged only while the block is on: its FAST-tier variables  !
+      !      (SRC_F_CD0 + CD_*) are what turn it on, so a run that reports none allocates nothing. ----!
+      if (with_cdiag) then
+         nc = size(b%fast_coh_ltemp, 1, kind=ik)
+         if (allocated(b%fast_coh_cdiag)) then
+            if (size(b%fast_coh_cdiag, 1, kind=ik) < nc) deallocate(b%fast_coh_cdiag)
+         end if
+         if (.not. allocated(b%fast_coh_cdiag)) allocate(b%fast_coh_cdiag(nc, N_CDIAG, nsub))
+      end if
    end subroutine size_fast_staging
 
    !----- The polygon's forcing for one sub-step (MEDS_FORCING_DESIGN.md §6.7), as the fast loop  !

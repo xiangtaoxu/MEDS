@@ -36,7 +36,7 @@ module meds_leaf_gas_exchange
    !----- from meds_leaf_solver.f90 ------------------------------------------------------!
 
    public :: solve_leaf_gas_exchange
-   public :: leaf_gas_exchange_batch
+   public :: leaf_gas_exchange_batch, leaf_params_at_capacity
 
    real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
@@ -596,6 +596,21 @@ contains
    ! are mandatory; the remaining leaf_flux_t fields are OPTIONAL outputs for DIAGNOSTICS only --    !
    ! absent means the caller does not report per-cohort ecophysiology, and nothing extra is copied.  !
    !---------------------------------------------------------------------------------------!
+   !----- leaf_params_at_capacity -- a PFT's table entry with one leaf's plastic capacities on top:   !
+   !      Jmax25 and TPU25 scale with the overriding Vcmax25. The one place a cohort's capacities meet !
+   !      the table: leaf_gas_exchange_batch and the canopy C API (meds_c_api_canopy) both take it. --!
+   pure function leaf_params_at_capacity(table, ipft, vcmax25, rd25) result(p)
+      type(leaf_photo_table_t), intent(in) :: table
+      integer(ik),              intent(in) :: ipft
+      real(wp),                 intent(in) :: vcmax25, rd25
+      type(leaf_photo_params_t)            :: p
+      p         = table%pft(ipft)
+      p%vcmax25 = vcmax25
+      p%jmax25  = table%jmax_vcmax_ratio(ipft) * vcmax25
+      p%tpu25   = table%tpu_vcmax_ratio(ipft)  * vcmax25
+      p%rd25    = rd25
+   end function leaf_params_at_capacity
+
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
                                       table, pft, vcmax25, rd25, a_gross, gs, rd, psi,        &
                                       a_net, ci, cs, transp, limitation, beta_stom, beta_nonstom)
@@ -619,13 +634,7 @@ contains
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
          env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
          if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
-         !----- the PFT's table entry with this leaf's plastic capacities on top (Jmax25/TPU25 scale   !
-         !      with the overriding Vcmax25) -- the same record leaf_gas_exchange builds per call. ----!
-         p         = table%pft(pft(i))
-         p%vcmax25 = vcmax25(i)
-         p%jmax25  = table%jmax_vcmax_ratio(pft(i)) * vcmax25(i)
-         p%tpu25   = table%tpu_vcmax_ratio(pft(i))  * vcmax25(i)
-         p%rd25    = rd25(i)
+         p = leaf_params_at_capacity(table, pft(i), vcmax25(i), rd25(i))
          call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
                                       table%colimitation, table%use_boundary_layer, flux)
          a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd
