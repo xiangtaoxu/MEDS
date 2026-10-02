@@ -30,45 +30,42 @@ before and after.
 - **The fast calibration runs through the Python API** (`scripts/calibrate_fast`). Every trial,
   state chain and base record is built with `meds.config` and run by `python -m meds.model`;
   `--runner <meds_main>` runs the executable instead, and replaces `--meds-main`. The tool's own
-  TOML
-  module (`tomlio.py`) is gone, and the site declaration's `[base].pft` is refused: the PFT file is
-  the one the main file names. `test/python/test_restart_exact.py` builds its configs with
+  TOML module (`tomlio.py`) is gone, and the site declaration's `[base].pft` is refused: the PFT
+  file is the one the main file names. `test/python/test_restart_exact.py` builds its configs with
   `meds.config` too, in place of its own TOML writer (#340).
 - **The fast-calibration registry holds the 11 keys a ten-day window can set** (13 with canopy
   interception), down from 28 (plan §14). Left at their defaults: the eight keys the tower cannot
   inform, the three that act through soil water a ten-day window does not draw down
   (`wstress_sref_stomata`, `root_beta`, `leaf_pi0`), `d_ratio` (it repeats `z0m_ratio`), the
-  numerical `ustmin` and `canopy_freeboard`, and the leaf biochemistry `jmax_vcmax_ratio`,
-  `theta_j` and `ds_vcmax` (#340).
+  numerical `ustmin` and `canopy_freeboard`, and the leaf biochemistry `jmax_vcmax_ratio`, `theta_j`
+  and `ds_vcmax` (#340).
 - **The BCI example's calibration is refitted** on v0.3.2 with the 11 keys, through the Python API.
   Against the 28-key registry refitted on v0.3.2: half the trials (9,824 against 18,504), 66
   core-hours against 151, and a validation objective 4 % higher (30,969 against 29,862), the loss in
-  GPP and the evaporative fraction. Over the five years the new set does as well or better: GPP
-  7.56 against the tower's 7.46 (the 28-key set's 6.77; v0.3.1's shipped set 6.83), NEE −3.63
-  (−3.31; −3.14), LE 80.5 (81.9), and April 2016 GPP 4.1 (3.9) against the tower's 6.3. The
-  interception-on set now passes the five-year water budget (v0.3.1's had 53 breaches) (#340).
+  GPP and the evaporative fraction. Over the five years the new set does as well or better: GPP 7.56
+  against the tower's 7.46 (the 28-key set's 6.77; v0.3.1's shipped set 6.83), NEE −3.63 (−3.31;
+  −3.14), LE 80.5 (81.9), and April 2016 GPP 4.1 (3.9) against the tower's 6.3. The interception-on
+  set now passes the five-year water budget (v0.3.1's had 53 breaches) (#340).
 
 ### Fixed
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
-  `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's
-  versions, which Python had loaded first, instead of Intel's. A ten-day BCI trial differed by up to
-  7e-4 W m⁻² in LE and 2e-5 µmol m⁻² s⁻¹ in GPP; the two-day test case differs in 38 output
-  variables. `libmeds.so` now links Intel's runtime into itself and keeps its names inside
-  (`-static-intel`, `--exclude-libs,ALL`), and both runs are bit-identical. The library grows from
-  2.5 to 4.0 MB (#340).
+  `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's versions,
+  which Python had loaded first, instead of Intel's. A ten-day BCI trial differed by up to 7e-4 W
+  m⁻² in LE and 2e-5 µmol m⁻² s⁻¹ in GPP; the two-day test case differs in 38 output variables.
+  `libmeds.so` now links Intel's runtime into itself and keeps its names inside (`-static-intel`,
+  `--exclude-libs,ALL`), and both runs are bit-identical. The library grows from 2.5 to 4.0 MB
+  (#340).
 - **A second run in one process wrote the first run's settings into its parameter record**, and the
   record would have stopped growing after 4,096 rows. Loading a config now starts a new record
   (#340).
 - **24 optional per-PFT keys could not be set since v0.3.2** (N-10): the per-PFT plant-hydraulics
   overrides (`pft.leaf_pi0`, `pft.wood_psi50`, `pft.k_plant_max` and ten more),
   `pft.storage_turnover_rate`, `pft.retained_carbon_fraction`, and the nine optional WATER, HYDRO
-  and
-  LIGHT phenology-cue keys. The loader reads them, but `meds_config_pft.toml` did not list them, so
-  a
-  config that set one stopped at the start. They are listed now, and the check that the references
-  match the loader (`config_keys_listed`) reads the `opt_*` readers too; it had matched only
-  `toml_*` and `req_*` calls. The calibration registry's `pft.leaf_pi0` is one of them, so the BCI
-  calibration as shipped could not start on v0.3.2 (#340).
+  and LIGHT phenology-cue keys. The loader reads them, but `meds_config_pft.toml` did not list them,
+  so a config that set one stopped at the start. They are listed now, and the check that the
+  references match the loader (`config_keys_listed`) reads the `opt_*` readers too; it had matched
+  only `toml_*` and `req_*` calls. The calibration registry's `pft.leaf_pi0` is one of them, so the
+  BCI calibration as shipped could not start on v0.3.2 (#340).
 
 ## [0.3.2] — 2026-10-01
 
