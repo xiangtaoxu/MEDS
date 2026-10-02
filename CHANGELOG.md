@@ -37,7 +37,8 @@ before and after.
   middle at 0.67, the understory at 0.76; all three are now 1. On the BCI five-year run with the
   default parameters: LE 56.4 → 71.8 W m⁻² (tower 75.5; RMSE 50.1 → 38.9), H 77.3 → 66.8 (tower
   32.4), GPP 10.70 → 11.61 µmol m⁻² s⁻¹ (tower 7.46), April 2016 GPP 9.7 → 7.3 (tower 6.3); the
-  budgets still close. The calibrated set shipped with the example was fitted without the onset.
+  budgets still close. The calibrated set shipped with the example was fitted without the onset
+  (#341).
 - **The fast calibration runs through the Python API** (`scripts/calibrate_fast`). Every trial,
   state chain and base record is built with `meds.config` and run by `python -m meds.model`;
   `--runner <meds_main>` runs the executable instead, and replaces `--meds-main`. The tool's own
