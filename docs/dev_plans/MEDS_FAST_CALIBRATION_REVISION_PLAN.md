@@ -1,7 +1,8 @@
 # MEDS fast calibration, revision 2: user-defined filters and keys, and a staged fit
 
-**Status:** approved by the owner on 2026-10-02 (rev 3, after two rounds of decisions, §0). Not yet
-implemented. It builds on `MEDS_FAST_CALIBRATION_PLAN.md` (§1–14, the method and the fits up to the
+**Status:** approved by the owner on 2026-10-02 (rev 3, after two rounds of decisions, §0).
+R1–R5 implemented on 2026-10-02 (#345); R6 has run once at BCI, and its findings await the owner
+(§13). It builds on `MEDS_FAST_CALIBRATION_PLAN.md` (§1–14, the method and the fits up to the
 shipped 11-key set B) and on the BCI GPP diagnosis of 2026-10-01/02 (§1). Section numbers below are
 this document's own.
 
@@ -417,9 +418,149 @@ Estimated from the measured trial times: 6.6 s on an idle core and ~17 s on a lo
 
 ## 12. Next
 
-The order of the phases is the owner's call. R1 (filters) and R2 (keys and priors) are small and
-independent of the model work in R3, so they can start at once. The BCI refit (R6) runs only when
-the owner asks.
+The owner's decisions on §13.3: the optics stage's keys, the water stage's targets, the polish's
+cost, and whether the BCI example ships the staged fit's set. Then the `vcmax25` prior (Kattge et
+al. 2009), and the model bug of §13.3 item 5.
+
+## 13. Implementation (2026-10-02)
+
+R1–R5 are implemented (#345), and R6 has run at BCI. The example's shipped calibrated set is not
+replaced: the findings in §13.3 need the owner's decisions first.
+
+### 13.1 Where the implementation differs from this plan
+
+1. **Stages 1 and 2 score the calibration windows' hours, not the whole record.** The kernels need
+   each hour's per-cohort drivers from a full run. The windows' driver trials provide them from the
+   same state chains; the whole record would need a five-year run with hourly per-cohort output.
+   After the filters, stage 2 has 745 GPP hours in the 8 windows.
+2. **The `vcmax25` prior is not entered.** Kattge et al. (2009)'s PFT table could not be read here.
+   Until it is, the prior is the range (its ±2 sd band). For reference, CLM4.5 uses 55 for tropical
+   broadleaf evergreen trees, set above Kattge's value on purpose (Bonan et al. 2012).
+3. **`--stages a,b` (a list) and `--resume`**, in place of `--stage`.
+4. **The u\* plateau test runs within four PAR classes.** Pooled over PAR, the calm hours are the
+   dim ones, whose GPP/PAR is high, and the test returned 0. Within PAR classes BCI's threshold is
+   0.5 (0.35 in the dimmest class), as §3.3 found hour by hour.
+5. **The polish runs up to 10 iterations** (`rtol` ends it sooner), not 2–3. At BCI, 3 iterations
+   left it still falling 4 % per iteration, a Gauss–Newton step of up to 19 posterior sd short of
+   its optimum; 9 more iterations converged it (step left ≤ 1.2 sd).
+6. **The uncertainty diagnostics** (§8):
+   - The filter sensitivity subtracts the fit's own Gauss–Newton step at the MAP; §8.5's formula
+     assumes a converged fit.
+   - Every fit reports that step, per key in posterior sd, as its convergence.
+   - The linearity check judges the mean of its two sides (the curvature) and reports half their
+     difference (the slope left).
+7. **The model's existing outputs do not move:** with the new outputs off, a 60-day BCI run with
+   FAST output is bit-identical to the parent commit's.
+
+### 13.2 R6: the BCI run
+
+Setup:
+- variant `interception_on`, on the onset build (#341);
+- 8 calibration and 8 validation windows, plus the 2016 and 2017 dry seasons (120 days each);
+- 2 nodes.
+
+It ran twice. The first run stopped the polish at the plan's 3 iterations; a `--resume` continued
+it to convergence. Fit D is the last joint fit (13 keys, the v0.3.2 build, before the onset),
+shipped with #340.
+
+**Keys** (start = the prior centres):
+
+| key | stage | start | after its stage | MAP | 95 % interval | sd ratio | fit D |
+|---|---|---|---|---|---|---|---|
+| `leaf_reflect_nir` | optics | 0.45 | 0.332 | 0.308 | 0.304 to 0.317 | 0.20 | 0.349 |
+| `leaf_clumping` | optics | 0.8 | 0.518 | 0.997 | 0.923 to 1 | 0.93 | 1 |
+| `leaf_angle_mean` | optics | 45 | 63.6 | 62.5 | 59.2 to 64 | 0.27 | 59.5 |
+| `vcmax25` | photosynthesis | 45 | 25.1 | 25.1 | 25 to 25.5 | 0.55 | 25 |
+| `stomatal_g1` | energy | 3.77 | 3.77 | 5.06 | 4.32 to 5.77 | 0.27 | 5.97 |
+| `stomatal_g0` | energy | 0.01 | 0.0201 | 0.0105 | 0.00877 to 0.0125 | 0.05 | 0.0336 |
+| `z0m_ratio` | energy | 0.13 | 0.0522 | 0.0522 | 0.0504 to 0.0624 | 0.51 | 0.0561 |
+| `leaf_width` | energy | 0.04 | 0.087 | 0.132 | 0.0742 to 0.147 | 0.58 | 0.0474 |
+| `dsl_dmax` | energy | 0.015 | 0.0067 | 0.0406 | 0.0138 to 0.0491 | 0.71 | 0.0479 |
+| `dewmx` | energy | 0.1 | 0.0687 | 0.0536 | 0.0504 to 0.0826 | 0.63 | 0.0754 |
+| `wstress_sref_stomata` | water | 2 | 4.55 | 0.514 | 0.5 to 0.898 | 0.94 | — |
+| `stomata_psi_onset` | water | -0.857 | -0.0719 | -0.114 | -1.05 to -0.00913 | 0.71 | — |
+
+**Fit, on the calibration windows** (normalized RMSE per target, start → MAP; fit D's σ for GPP
+was 1.5 + 0.15 GPP, so its GPP column is not comparable):
+
+| target | staged fit | fit D |
+|---|---|---|
+| albedo | 5.99 → 1.29 | 5.99 → 1.39 |
+| upwelling longwave | 2.19 → 1.81 | 2.02 → 1.87 |
+| net radiation | 1.53 → 1.12 | 1.56 → 1.09 |
+| LE | 1.70 → 1.52 | 1.74 → 1.76 |
+| H | 2.28 → 2.50 | 2.43 → 2.01 |
+| evaporative fraction | 3.10 → 2.39 | 3.75 → 2.90 |
+| GPP | 2.21 → 0.98 | 2.61 → 1.43 |
+| u\* | 1.99 → 0.66 | 1.99 → 0.65 |
+
+**Validation:** Φ 59,067 at the default → 29,687 at the MAP. G4 passes: every target is better
+except H (+6.1 %) and the evaporative fraction (+7.3 %), both under the 10 % limit.
+
+**Gates:**
+- **G3, G5, G8, G11 pass.** G8 is the kernel against the model's GPP: median 0.43 % over 745
+  hours, mean bias +2.0 %.
+- **G10 fails.** With GPP u\* ≥ 0.3 in place of 0.4, the linear update moves `stomatal_g0`
+  +20 sd, `leaf_clumping` +19 sd (toward its bound) and `stomatal_g1` +4 sd. A shift this large is
+  outside the linear regime (below), so it needs the full refit with 0.3 that §8.5 calls for.
+- **The covariance is "local only".** Along the three leading directions, the objective's curvature
+  is 3–9× the Gauss–Newton quadratic's. The reported intervals are therefore wider than the curvature
+  along those directions implies.
+
+**Five years** (the converged MAP, `cal` run of the example):
+
+| five years | default (onset build) | fit D (the #340 build, before the onset) | staged fit | tower |
+|---|---|---|---|---|
+| GPP mean (RMSE), µmol m⁻² s⁻¹ | 11.61 (7.24) | 7.49 (3.56) | 7.52 (3.35) | 7.46 |
+| LE mean (RMSE), W m⁻² | 71.79 (38.91) | 81.86 (43.33) | 71.37 (38.95) | 75.47 |
+| H mean (RMSE), W m⁻² | 66.79 (50.41) | 67.77 (52.27) | 69.84 (52.43) | 32.43 |
+| net radiation mean (RMSE), W m⁻² | 121.28 (44.68) | 135.52 (22.71) | 133.49 (24.60) | 136.32 |
+| April 2014 GPP | 9.73 | 5.11 | 6.62 | 6.93 |
+| April 2016 GPP | 7.29 | 3.66 | 4.98 | 6.26 |
+| April 2017 GPP | 10.20 | 5.26 | 6.96 | 7.03 |
+| albedo (days with sw_in > 200) | 0.179 | 0.121 | 0.123 | 0.129 |
+| whole-site budget breaches (energy, water) | 0, 0 | 0, 0 | 0, 0 | |
+
+**Cost:**
+- 4,804 trials over the two runs, against fit D's 10,224.
+- 31.8 core-hours of trials: 4,264 ten-day trials at 15 s, and 858 seasonal ones at 57 s. Fit D's
+  were about 43.
+- Wall time: 71 min on 2 nodes, against 36. The chains, the refresh and the seasonal runs are
+  serial, and each polish iteration waits for its 120-day trials.
+- §11's estimate of 7–8 core-hours was wrong. The stages cost under 10 minutes in all; the cost
+  is the polish, which moves all 12 keys over 10 windows for 12 iterations.
+
+### 13.3 Findings for the owner
+
+1. **The albedo alone cannot place clumping or leaf angle.**
+   - Stage 1 sent clumping to its floor (0.52) and the leaf angle to 63.6°; the polish then moved
+     clumping to its ceiling (0.997), where fit D also put it.
+   - At the stage-1 result, clumping's Jacobian column correlates 0.986 with the NIR reflectance's.
+   - The model's albedo at the start is 0.186 against the tower's 0.128 on the same hours. The NIR
+     reflectance alone, at its floor (0.30), still leaves the model too bright.
+
+   Options:
+   - fit only `leaf_reflect_nir` in stage 1, and move clumping and angle to the energy stage;
+   - or give clumping a prior (e.g. 0.9 ± 0.05, from the understory light of §1).
+2. **Every key that lowers GPP ends at a bound.** `vcmax25` sits at its floor (25.1; fit D 25.0).
+   The water stage first pushed the stress to its strongest (`wstress_sref_stomata` 4.55,
+   `stomata_psi_onset` −0.07 MPa); the polish then moved the sensitivity to its floor (0.51), with
+   the onset at −0.11 MPa. Seven of the 12 keys end at or within a few percent of a bound. The GPP
+   gap of §1 (model 1.5× the tower at the defaults) is still the dominant signal; the larger σ and
+   the u\* filter did not remove it.
+3. **The water stage scores GPP.** Its keys then answer to GPP's level as much as to the drought.
+   Option: score the seasonal runs on LE and the evaporative fraction only.
+4. **The polish is the cost.** Options:
+   - polish without the seasonal runs (`include_water = false`), with the water keys held at their
+     stage values;
+   - or polish only the keys whose stage the coupling affects.
+5. **A model bug, found by three failed trials.** In the 2017 dry season, near the MAP
+   (`stomata_psi_onset` −0.09 to −0.15, `dsl_dmax` ~0.04, interception on), the fast loop blew up
+   at a mid-afternoon drop in shortwave (2017-04-17 18 UTC): H rose to 631 W m⁻² under 12 W m⁻² of
+   incoming shortwave. Then u\* (until the run's end) and GPP (30 hours) were NaN. The run still
+   ended "no NaNs", and only the whole-site budget check (a NaN cumulative residual) caught it.
+   Not yet filed.
+
 
 ## Sources
 
@@ -429,6 +570,7 @@ the owner asks.
 - Björkman & Demmig (1987), Planta 170, 489–504 (PSII photon yield)
 - Chazdon & Fetcher (1984), Journal of Ecology 72, 553–564 (understory light)
 - Ehleringer & Björkman (1977), Plant Physiology 59, 86–90 (C3 quantum yield)
+- Bonan et al. (2012), Journal of Geophysical Research 117, G02026 (CLM4.5's tropical Vcmax25)
 - Kattge et al. (2009), Global Change Biology 15, 976–991 (Vcmax by PFT)
 - LeBauer et al. (2013), Ecological Monographs 83, 133–154 (PEcAn trait meta-analysis)
 - Lin et al. (2015), Nature Climate Change 5, 459–464 (g1 by PFT; Fig. 2e)

@@ -205,6 +205,14 @@ velocity from 0.78 to 0.87 m s⁻¹ and moved GPP, NEE, latent heat and net radi
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md). The design and its decisions are
 in [`MEDS_FAST_CALIBRATION_PLAN.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md).
 
+**This section describes the shipped set, not `calibration.toml` as it now stands.**
+- The set in [`calibration/`](calibration) was fitted with the joint method, before the
+  revision ([`MEDS_FAST_CALIBRATION_REVISION_PLAN.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_REVISION_PLAN.md)).
+- `calibration.toml` now declares the revision's staged fit. Its targets also differ from the
+  table below: GPP σ 2.5 + 0.15 GPP with u\* ≥ 0.4, and no night NEE.
+- `--calibrate` runs the staged fit. Its first BCI run, and the decisions it raises, are in the
+  revision plan's §13.
+
 - **The stand is held fixed.** Each trial is a 10-day run with `slow_on = false`, restarted from a
   state at its window's start, so a parameter changes the fluxes and not the forest. On restart the
   leaf traits are re-derived from the trial's PFT file (`[init].reacclimate_traits`).
