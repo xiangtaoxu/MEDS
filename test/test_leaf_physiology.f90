@@ -4,7 +4,8 @@
 program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
-   use meds_config,             only : meds_config_t, pft_leaf_psi_tlp
+   use meds_config,             only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset
+   use meds_pft_params,         only : HYD_UNSET
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
                                  kattge_knorr_entropy, kattge_knorr_jv_ratio
@@ -260,7 +261,8 @@ program test_leaf_physiology
    env = std_env() ; env%psi_leaf = 0.0_wp ; env%psi = 1.5_wp * psi_tlp
    call leaf_gas_exchange(env, cfg, 1_ik, flux)
    gs_model = stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd, cfg%pft%stomatal_g0(1),              &
-                                cfg%pft%stomatal_g1(1) * min(1.0_wp, exp(0.3_wp * env%psi)))
+                                cfg%pft%stomatal_g1(1) * min(1.0_wp, exp(0.3_wp * (env%psi                    &
+                                - pft_stomata_psi_onset(cfg, 1_ik)))))
    call check(flux%converged, 'lwp mid-band: the solve converges')
    call check_close(flux%gs, 0.5_wp * gs_model, 1.0e-4_wp * gs_model,                              &
                     'lwp mid-band: gs is 0.5 x the Medlyn conductance at the solved A and Cs')
@@ -296,6 +298,26 @@ program test_leaf_physiology
    end do
    cfg%stomatal_model = SM_MEDLYN
    cfg%pft%wstress_sref_stomata(1) = sref0
+
+   !=== 7f. The stomatal stress begins at an onset: half the turgor-loss point unless the PFT     !
+   !     file sets stomata_psi_onset. Above it beta_stomata is 1, so the gravity head a tall tree   !
+   !     has in wet soil does not close its stomata; below it beta = exp(sref*(psi - onset)). =====!
+   psi_tlp = pft_leaf_psi_tlp(cfg, 1_ik)
+   call check_close(pft_stomata_psi_onset(cfg, 1_ik), 0.5_wp * psi_tlp, 1.0e-14_wp,                 &
+                    'onset defaults to half the turgor-loss point')
+   env = std_env() ; env%psi_leaf = 0.0_wp
+   env%psi = 0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; gs_top = flux%gs
+   env%psi = 0.99_wp * pft_stomata_psi_onset(cfg, 1_ik) ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check(flux%beta_stomata == 1.0_wp .and. flux%gs == gs_top, 'onset: no stress just above it')
+   env%psi = pft_stomata_psi_onset(cfg, 1_ik) - 0.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check_close(flux%beta_stomata, exp(-0.5_wp * cfg%pft%wstress_sref_stomata(1)), 1.0e-14_wp,     &
+                    'onset: beta = exp(sref*(psi - onset)) below it')
+   cfg%pft%stomata_psi_onset(1) = -0.3_wp
+   call check_close(pft_stomata_psi_onset(cfg, 1_ik), -0.3_wp, 0.0_wp, 'onset: a set value is used')
+   env%psi = -0.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check_close(flux%beta_stomata, exp(-0.2_wp * cfg%pft%wstress_sref_stomata(1)), 1.0e-14_wp,     &
+                    'onset: a set value moves the threshold')
+   cfg%pft%stomata_psi_onset(1) = HYD_UNSET
 
    !=== 8. PAR sweep: night/closed branch at PAR=0, monotone rise, no NaNs, all converge. ===!
    env = std_env() ; env%par = 0.0_wp

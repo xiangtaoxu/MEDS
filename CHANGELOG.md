@@ -27,6 +27,17 @@ before and after.
   (#340).
 
 ### Changed
+- **The stomatal water stress begins at an onset** (`pft.stomata_psi_onset`, new and optional).
+  β_stomata is 1 while the predawn leaf potential stays above the onset and
+  exp(sref · (ψ − onset)) below it; before, it fell from any negative potential. Without the key the
+  onset is half the PFT's leaf turgor-loss point (−0.857 MPa at the reference leaf traits), the
+  recommended value. Sabot et al. (2022, Eq. 5) apply no stress while the soil is at field
+  capacity, and MEDS's predawn leaf potential carries a tree's gravity head even in wet soil: at
+  BCI the top of the canopy sat at β = 0.51 in the wet season (predawn −0.34 MPa at 35 m), the
+  middle at 0.67, the understory at 0.76; all three are now 1. On the BCI five-year run with the
+  default parameters: LE 56.4 → 71.8 W m⁻² (tower 75.5; RMSE 50.1 → 38.9), H 77.3 → 66.8 (tower
+  32.4), GPP 10.70 → 11.61 µmol m⁻² s⁻¹ (tower 7.46), April 2016 GPP 9.7 → 7.3 (tower 6.3); the
+  budgets still close. The calibrated set shipped with the example was fitted without the onset.
 - **The fast calibration runs through the Python API** (`scripts/calibrate_fast`). Every trial,
   state chain and base record is built with `meds.config` and run by `python -m meds.model`;
   `--runner <meds_main>` runs the executable instead, and replaces `--meds-main`. The tool's own

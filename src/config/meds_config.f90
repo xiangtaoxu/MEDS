@@ -33,7 +33,7 @@ module meds_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
-   public :: pft_leaf_psi_tlp
+   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -543,6 +543,19 @@ contains
       psi_tlp = pv_psi_tlp(pi0, elastic_mod)
    end function pft_leaf_psi_tlp
 
+   !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !
+   !      stomata_psi_onset where given, else half the PFT's turgor-loss point. Above the onset the    !
+   !      stomata feel no stress, so the predawn potential a tall tree has in wet soil -- its height's  !
+   !      gravity head, -0.34 MPa at 35 m -- does not read as drought. -------------------------------!
+   pure real(wp) function pft_stomata_psi_onset(cfg, ipft) result(psi_onset)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_onset = 0.5_wp * pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%stomata_psi_onset)) then
+         if (cfg%pft%stomata_psi_onset(ipft) > HYD_UNSET) psi_onset = cfg%pft%stomata_psi_onset(ipft)
+      end if
+   end function pft_stomata_psi_onset
+
    !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
    !---------------------------------------------------------------------------------------!
@@ -1006,7 +1019,9 @@ contains
       if (any(cfg%pft%wstress_psi_close >= cfg%pft%wstress_psi_open))                      &
          error stop tag//'wstress_psi_close must be below wstress_psi_open'
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
-         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*psi))'
+         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
+      if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &
+         error stop tag//'stomata_psi_onset must be <= 0 (a predawn leaf water potential)'
       !----- C3 uses theta_j (the J hyperbola / co-limitation curvature); C4 does not. -----!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C3 .and.                              &
               (cfg%pft%theta_j <= 0.0_wp .or. cfg%pft%theta_j >= 1.0_wp)))                 &

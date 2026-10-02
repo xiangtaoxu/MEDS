@@ -272,7 +272,8 @@ contains
       !----- Water stress, split into two independently-tunable limbs (Sabot 2022 / Zhou 2013): !
       !   beta_nonstomata -- capacity limb: a linear psi_LEAF ramp downregulating Vcmax/Jmax/TPU, !
       !     applied to ALL stomatal models (a leaf-biochemistry effect, scheme-independent).      !
-      !   beta_stomata    -- stomatal limb: min(1, exp(sref*psi_SOIL)) downregulating the         !
+      !   beta_stomata    -- stomatal limb: 1 above the onset potential psi_onset and             !
+      !     exp(sref*(psi - psi_onset)) below it, downregulating the                               !
       !     Leuning/Medlyn slope g1 and the Katul marginal WUE lambda (lambda ~                   !
       !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
       !----- The capacity limb is OFF by default (issue #47): rarely measured directly, weakly  !
@@ -286,7 +287,10 @@ contains
          jmax  = jmax  * beta_nonstomata
          tpu   = tpu   * beta_nonstomata
       end if
-      beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi))
+      !----- No stress above the onset (Sabot et al. 2022 Eq. 5 has none while the soil is at field     !
+      !      capacity), so a tall tree in wet soil, whose predawn potential is its gravity head, keeps   !
+      !      its full g1. Below the onset the decline is exponential, at the rate sref. ---------------!
+      beta_stomata = min(1.0_wp, exp(p%sref_stomata * (env%psi - p%psi_onset)))
       !----- LOW-WATER-POTENTIAL CONTROL (#332). The Sabot beta above scales g1 only, so as it goes to  !
       !      0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured at ~2.6       !
       !      mm/day of transpiration still leaving a plant whose wood store was empty and whose predawn  !

@@ -176,7 +176,7 @@ contains
    ! psi_leaf for gs stays FROZEN (Category-0, ED2-faithful): diagnosed ONCE per dt_fast from the   !
    ! prognostic leaf_water_mass^n -- never refreshed per stage.                                     !
    !                                                                                                !
-   ! STOMATAL WATER STRESS (issue #95): beta_stomata = min(1, exp(sref*psi)) is driven by           !
+   ! STOMATAL WATER STRESS (issue #95): beta_stomata = min(1, exp(sref*(psi - psi_onset))) is driven by !
    ! YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential.               !
    ! DMAX_PSI_LEAF_UNSET (positive, so unmistakable) means the cohort has no history yet: a recruit, !
    ! or the first step of a run. It is seeded from the SURFACE-LAYER soil potential so it starts at  !
