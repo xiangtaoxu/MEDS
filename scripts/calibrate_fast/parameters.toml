@@ -1,100 +1,181 @@
 # SPDX-License-Identifier: Apache-2.0
-# The fast-parameter registry (docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md §4, §14): the keys a
-# flux-tower fit of ten-day windows may move, for a closed tropical evergreen canopy. One table per
-# key:
+# The fast-parameter registry (docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md §4, §14, and its revision
+# MEDS_FAST_CALIBRATION_REVISION_PLAN.md §4): the MENU of keys a flux-tower fit may move, for a closed
+# tropical evergreen canopy. One table per key:
 #
 #   file      = "pft" (the PFT TOML) or "main"
 #   key       = the dotted TOML key as MEDS reads it
 #   pft       = the element of a per-PFT array (1-based; default 1)
-#   range     = [lo, hi]: the prior's +-2 sigma band and a hard bound (§6.1)
+#   range     = [lo, hi]: a hard bound, through the transform (§6.1)
 #   transform = "linear" (logit on the range) or "log" (log, then logit): a positive scale is "log"
+#   state     = "fit" (in the default set), "optional" (fitted when the site asks: [fit].add or keys),
+#               "fixed" (left at the base value; `reason` says why; a site may still name it)
+#   stage     = "optics", "photosynthesis", "energy" or "water": the stage of the staged fit that sets it
+#   prior     = { centre, sd | log_sd, source }: the prior's centre (default: the base value) and sd
+#               (theta units; log_sd in log theta for a log key). Without an sd the prior's +-2 sd
+#               band is the range. A site overrides any of it in [priors.<key>].
 #   default   = only where neither the base TOML nor the model's parameter record gives one
 #   variants  = only in these variants of the site declaration
 #
-# Ranges are the plan's. The leaf angle's lower bound is 30 degrees, not the plan's 45, because
-# the transform needs the default (45) strictly inside; the NIR transmittance stops at 0.40 so
-# that reflectance plus transmittance stays below 1 at the corner of the box.
-#
-# A key is here only if a ten-day window can set it (plan §14). These are left at their defaults:
-#   - the tower cannot inform them (the screening's posterior/prior sigma ratio is 0.9 or more):
-#     leaf_reflect_vis, leaf_transmit_vis, k_plant_max, wood_psi50, psi_wilt, stem_resp_factor25,
-#     root_resp_factor25, resp_temp_increase;
-#   - they act through the soil water a ten-day window does not draw down, so a frozen window rewards
-#     a value that dries the soil months later: wstress_sref_stomata, root_beta, and leaf_pi0, whose
-#     response is also a step (the screening finds it rough);
-#   - they repeat another key: d_ratio moves the fluxes as z0m_ratio does (correlation -0.996);
-#   - they are a floor or a constant of the numerical scheme, not a property of the canopy: ustmin,
-#     canopy_freeboard;
-#   - they are leaf biochemistry that the tower's GPP cannot tell apart from vcmax25:
-#     jmax_vcmax_ratio, theta_j, ds_vcmax.
-
-# ----- radiation (§4.1) --------------------------------------------------------------------------
+# The defaults are PFT-level values from global syntheses where there is one (the `source`), so that
+# a site needs no data of its own; a site with leaf or canopy data narrows them in [priors].
+# ----- 1 OPTICS (§4.1): the two-stream alone, against the albedo ----------------------------------------
 [leaf_reflect_nir]
 file = "pft"
 key = "pft.leaf_reflect_nir"
 range = [0.30, 0.55]
+state = "fit"
+stage = "optics"
 group = "radiation"
-source = "broadleaf NIR reflectance; plan §4.1"
+source = "broadleaf NIR reflectance; CLM5 broadleaf evergreen tropical 0.45; plan §4.1"
 
 [leaf_transmit_nir]
 file = "pft"
 key = "pft.leaf_transmit_nir"
 range = [0.15, 0.40]
+state = "fixed"
+stage = "optics"
 group = "radiation"
-source = "broadleaf NIR transmittance; plan §4.1 (upper bound 0.40 here)"
+reason = "collinear with leaf_reflect_nir (correlation -0.996): the albedo sees their sum"
+source = "broadleaf NIR transmittance; CLM5 0.25; plan §4.1"
+
+[leaf_reflect_vis]
+file = "pft"
+key = "pft.leaf_reflect_vis"
+range = [0.05, 0.12]
+state = "fixed"
+stage = "optics"
+group = "radiation"
+reason = "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+source = "broadleaf VIS reflectance; CLM5 0.10; plan §4.1"
+
+[leaf_transmit_vis]
+file = "pft"
+key = "pft.leaf_transmit_vis"
+range = [0.02, 0.08]
+state = "fixed"
+stage = "optics"
+group = "radiation"
+reason = "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+source = "broadleaf VIS transmittance; CLM5 0.05; plan §4.1"
 
 [leaf_clumping]
 file = "pft"
 key = "pft.leaf_clumping"
 range = [0.50, 1.00]
+state = "fit"
+stage = "optics"
 group = "radiation"
-source = "foliage clumping index of closed broadleaf canopies; plan §4.1"
+source = "foliage clumping index; the base value is the prior's centre. BCI's floor light (2.4 % of PAR under closed canopy at 0.8, against 1-2 % measured in tropical understories, Chazdon & Fetcher 1984) points to 0.9-1.0; plan §4.1"
 
 [leaf_angle_mean]
 file = "pft"
 key = "pft.leaf_angle_mean"
 range = [30.0, 65.0]
+state = "fit"
+stage = "optics"
 group = "radiation"
-source = "mean leaf inclination [deg]; spherical is 57.3; plan §4.1 (lower bound 30 here)"
+source = "mean leaf inclination [deg]; spherical is 57.3; plan §4.1"
 
-# ----- photosynthesis and stomata (§4.2) ----------------------------------------------------------
+# ----- 2 PHOTOSYNTHESIS (§4.2): a canopy of leaf solves, against GPP -------------------------------------
 [vcmax25]
 file = "pft"
 key = "pft.vcmax25"
 range = [25.0, 80.0]
 transform = "log"
+state = "fit"
+stage = "photosynthesis"
 group = "photosynthesis"
-source = "tropical evergreen top-of-canopy Vcmax25 (Kattge et al. 2009); plan §4.2"
+source = "top-of-canopy Vcmax25. The PFT mean and spread of Kattge et al. 2009 (Global Change Biology 15, 976-991) belong in prior.centre and prior.sd: to be read from the paper's table. Until then the prior is the range; plan §4.2"
 
+[theta_j]
+file = "pft"
+key = "pft.theta_j"
+range = [0.70, 0.90]
+state = "optional"
+stage = "photosynthesis"
+group = "photosynthesis"
+prior = { centre = 0.80, sd = 0.05, source = "the curvature of the electron-transport light response: CLM5 0.7, MEDS 0.9 (owner, 2026-10-02)" }
+source = "electron-transport curvature; plan §4.2. It trades with vcmax25: fit it only with a GPP target that samples the light response well"
+
+[jmax_vcmax_ratio]
+file = "pft"
+key = "pft.jmax_vcmax_ratio"
+range = [1.4, 2.2]
+state = "optional"
+stage = "photosynthesis"
+group = "photosynthesis"
+prior = { centre = 1.67, sd = 0.15, source = "Medlyn et al. 2002 (Plant, Cell & Environment 25, 1167-1179); Panama leaves 1.57-1.78" }
+source = "Jmax25/Vcmax25; plan §4.2"
+
+[phi_psii]
+file = "main"
+key = "leaf_physiology.phi_psii"
+range = [0.70, 0.88]
+state = "fixed"
+stage = "photosynthesis"
+group = "photosynthesis"
+reason = "the PSII quantum yield (0.85; Bjorkman & Demmig 1987, CLM5). Without a model of the tower GPP's respiration bias, fitting it absorbs that bias rather than the leaf's"
+source = "plan §4.2"
+
+[ds_vcmax]
+file = "main"
+key = "leaf_physiology.ds_vcmax"
+range = [630.0, 670.0]
+state = "fixed"
+stage = "photosynthesis"
+group = "photosynthesis"
+reason = "every fit left it at its default; the temperature response is the literature's (plan §14.1)"
+source = "Vcmax entropy term [J mol-1 K-1] (Kattge and Knorr 2007)"
+
+# ----- 3 ENERGY PARTITION AND AERODYNAMICS (§4.3): the coupled fast loop -----------------------------------
 [stomatal_g1]
 file = "pft"
 key = "pft.stomatal_g1"
-range = [1.5, 6.0]
+range = [1.5, 8.0]
 transform = "log"
+state = "fit"
+stage = "energy"
 group = "photosynthesis"
-source = "Medlyn g1 [kPa^0.5] (Medlyn et al. 2011; Lin et al. 2015); plan §4.2"
+prior = { centre = 3.77, log_sd = 0.35, source = "Lin et al. 2015 (Nature Climate Change 5, 459-464, Fig. 2e): 3.77 for tropical rainforest trees, 167 species; species values reach ~8" }
+source = "Medlyn g1 [kPa^0.5]; plan §4.2"
 
 [stomatal_g0]
 file = "pft"
 key = "pft.stomatal_g0"
 range = [0.001, 0.05]
 transform = "log"
+state = "fit"
+stage = "energy"
 group = "photosynthesis"
 source = "residual stomatal conductance [mol m-2 s-1]; plan §4.2"
 
-# ----- energy partition and aerodynamics (§4.3) -----------------------------------------------------
 [z0m_ratio]
 file = "main"
 key = "aerodynamics.z0m_ratio"
 range = [0.05, 0.20]
+state = "fit"
+stage = "energy"
 group = "aerodynamics"
 source = "roughness length / canopy height; plan §4.3"
+
+[d_ratio]
+file = "main"
+key = "aerodynamics.d_ratio"
+range = [0.50, 0.80]
+state = "fixed"
+stage = "energy"
+group = "aerodynamics"
+reason = "moves the fluxes as z0m_ratio does (correlation -0.996)"
+source = "displacement height / canopy height; plan §4.3"
 
 [leaf_width]
 file = "pft"
 key = "pft.leaf_width"
 range = [0.02, 0.15]
 transform = "log"
+state = "fit"
+stage = "energy"
 group = "aerodynamics"
 source = "characteristic leaf width [m]; plan §4.3"
 
@@ -103,6 +184,8 @@ file = "main"
 key = "soil.dsl_dmax"
 range = [0.005, 0.05]
 transform = "log"
+state = "fit"
+stage = "energy"
 group = "evaporation"
 source = "maximum dry surface layer [m]; plan §4.3"
 
@@ -111,6 +194,8 @@ file = "main"
 key = "soil.dewmx"
 range = [0.05, 0.3]
 transform = "log"
+state = "fit"
+stage = "energy"
 group = "interception"
 variants = ["interception_on"]
 source = "leaf-film water capacity [kg m-2 per unit LAI]; plan §4.3 (interception on)"
@@ -119,14 +204,51 @@ source = "leaf-film water capacity [kg m-2 per unit LAI]; plan §4.3 (intercepti
 file = "main"
 key = "soil.intercept_k"
 range = [0.3, 0.8]
+state = "fixed"
+stage = "energy"
 group = "interception"
 variants = ["interception_on"]
+reason = "its response is rough (smoothness -0.85) and the tower barely informs it (sd ratio 0.89)"
 source = "interception extinction coefficient; plan §4.3 (interception on)"
 
-# ----- respiration (§4.5) ---------------------------------------------------------------------------
+# ----- 4 WATER STRESS (§4.4): frozen seasonal runs, searched without derivatives ----------------------------
+[wstress_sref_stomata]
+file = "pft"
+key = "pft.wstress_sref_stomata"
+range = [0.5, 5.0]
+transform = "log"
+state = "fit"
+stage = "water"
+group = "water stress"
+source = "Sabot stomatal-stress sensitivity [MPa-1] below the onset (Sabot et al. 2022); plan §4.4"
+
+[stomata_psi_onset]
+file = "pft"
+key = "pft.stomata_psi_onset"
+range = [-3.4, 0.0]
+default = -0.857143
+state = "fit"
+stage = "water"
+group = "water stress"
+source = "predawn leaf potential where the stomatal stress begins [MPa] (#341). The model's default is half the PFT's turgor-loss point; -0.857143 is that at the shipped leaf_pi0 (-1.5 MPa) and leaf_elastic_mod (12 MPa). A PFT with other pressure-volume traits sets [priors.stomata_psi_onset].centre"
+
+[root_beta]
+file = "main"
+key = "hydraulics.root_beta"
+range = [3.4e-4, 0.37]
+transform = "log"
+state = "optional"
+stage = "water"
+group = "water stress"
+source = "ED2 root-profile decay over 2 m (an e-folding of 0.25-2 m); plan §4.4. Uninformed by ten-day windows (sd ratio 0.98); the seasonal runs may do better"
+
+# ----- RESPIRATION (§4.5) -----------------------------------------------------------------------------------
 [rd_vcmax_ratio]
 file = "pft"
 key = "pft.rd_vcmax_ratio"
 range = [0.008, 0.025]
+state = "fixed"
+stage = "energy"
 group = "respiration"
-source = "leaf dark respiration / Vcmax at 25 C; plan §4.5"
+reason = "night NEE leaves the fast fit (owner, 2026-10-02); the target that informed it pulled it to its floor"
+source = "leaf dark respiration / Vcmax at 25 C; CLM5 0.015; plan §4.5"
