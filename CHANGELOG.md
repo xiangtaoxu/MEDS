@@ -15,6 +15,15 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **`[leaf_physiology].medlyn_vpd_min`** (0.05 kPa, optional): the least leaf-to-air VPD the
+  Medlyn stomatal model uses, in the equation's own units (g1 is in kPa^0.5). It was a bare 50 Pa in
+  the code; CLM5 uses the same 50 Pa. At BCI (one year) 1.8 % of the lit leaf-hours sit below it,
+  with 0.6 % of the gross assimilation; 0.02 or 0.1 kPa moves the year's GPP by at most 0.01 % and LE
+  by at most 0.05 % (#346).
+- **ctest `clamps_named`** (`scripts/lint/check_clamps.py`): a `max`/`min` against a real literal
+  other than 0 or ±1 fails the suite unless the line says why (`! clamp-ok: <reason>`). A guard uses
+  `tiny_num` or `safe_exp`; a physical threshold is a named setting with its source (CLAUDE.md, "No
+  bare thresholds") (#346).
 - **`meds.config`**, the Python API's view of a run's configuration: it reads the main TOML and the
   PFT (plant trait) TOML that `[init].pft_config` names, sets keys (one PFT's element of a trait
   array included), writes the pair for a run, and reads back the run's parameter record. It needs no
@@ -59,6 +68,12 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **The canopy films' water capacity is a plant trait** (breaking). `[soil].dewmx`, CLM's
+  interception capacity, held only the leaf and wood films. It is replaced by the optional PFT
+  traits `leaf_surf_water_max` [kg m⁻² leaf] and `wood_surf_water_max` [kg m⁻² wood], both 0.1 by
+  default (the old `dewmx`). A config that sets `soil.dewmx` stops with a message naming them. The
+  calibration registry's `dewmx` is `leaf_surf_water_max`, fixed. Output is bit-identical with
+  interception off; with it on, the means agree to round-off (LE −0.0007 W m⁻²) (#346).
 - **The stomatal water stress begins at an onset** (`pft.stomata_psi_onset`, new and optional).
   β_stomata is 1 while the predawn leaf potential stays above the onset and
   exp(sref · (ψ − onset)) below it; before, it fell from any negative potential. Without the key the
@@ -116,6 +131,21 @@ before and after.
   - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
+- **A cohort with less than 0.1 m² m⁻² of leaf got too little light per leaf** (since v0.1.0). Its
+  leaf PAR was its absorbed PAR divided by max(LAI, 0.1), so a cohort of LAI 0.01 saw a tenth of its
+  light. It now divides by the cohort's own LAI. A stand of seedlings could not grow:
+  - The biophysics example's spin-up from bare ground (Ithaca) grew nothing after #321 halved the
+    leaf-area scale: under the floor, that halved a seedling's light per leaf as well as its leaf.
+    At the end of its 50 years: LAI 0.000 → 3.76, AGB 0.001 → 9.42 kgC m⁻², cohorts 2 → 28 (before
+    #321: LAI 4.1, AGB 9.6). After five years: LAI 0.000 → 0.048, cohorts 2 → 8.
+  - BCI, five years from the 2010 census, default parameters: GPP 11.24 → 11.28 µmol m⁻² s⁻¹
+    (+0.33 %), LE 68.56 → 68.68 W m⁻², H 66.79 → 66.73 W m⁻², LAI at the end 5.72 → 5.76.
+
+  With it (#346):
+  - the within-canopy wind treated a crown smaller than 1 % of the ground as 1 %; it now uses the
+    crown's own area;
+  - the forcing's wind had a 0.1 m s⁻¹ floor of its own under the 0.65 m s⁻¹
+    (`aerodynamics.ubmin`) that every use applies; only `ubmin` is left.
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
   `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's versions,
   which Python had loaded first, instead of Intel's. A ten-day BCI trial differed by up to 7e-4 W

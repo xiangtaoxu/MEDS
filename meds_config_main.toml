@@ -431,7 +431,8 @@ o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
 # medlyn_vpd_min   = 0.05    # [kPa] OPTIONAL: the leaf-to-air VPD the Medlyn stomatal model uses at least
-                            #   (g1/sqrt(D) is undefined at D = 0); it caps gs on humid nights and rainy hours
+                            #   (g1/sqrt(D) is undefined at D = 0); it caps gs on humid nights and rainy hours.
+                            #   CLM5's value (PhotosynthesisMod: VPD at least 50 Pa)
 # Thermal acclimation (#176, Kattge & Knorr 2007): ds_vcmax, ds_jmax and Jmax/Vcmax follow the
 # running-mean growth temperature Tg [degC]: ds = a - b*Tg, Jmax/Vcmax = a - b*Tg. Only with
 # temp_response_form = "peaked". Every key optional, at the published values shown.

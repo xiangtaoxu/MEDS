@@ -385,7 +385,8 @@ module meds_config
       real(wp) :: o2_mol_frac                           !< [mol/mol] atmospheric O2 mole fraction
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
       real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
-      !< [kPa] the leaf-to-air VPD the Medlyn stomatal model uses at least: g1/sqrt(D) is undefined at D = 0
+      !< [kPa] the leaf-to-air VPD the Medlyn stomatal model uses at least: g1/sqrt(D) is undefined at D = 0.
+      !< CLM5's value (PhotosynthesisMod floors the Medlyn VPD at 50 Pa).
       real(wp) :: medlyn_vpd_min = 0.05_wp
 
       !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
