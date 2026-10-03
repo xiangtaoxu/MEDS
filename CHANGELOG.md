@@ -19,11 +19,11 @@ before and after.
   Medlyn stomatal model uses, in the equation's own units (g1 is in kPa^0.5). It was a bare 50 Pa in
   the code; CLM5 uses the same 50 Pa. At BCI (one year) 1.8 % of the lit leaf-hours sit below it,
   with 0.6 % of the gross assimilation; 0.02 or 0.1 kPa moves the year's GPP by at most 0.01 % and LE
-  by at most 0.05 % (#346).
+  by at most 0.05 % (#347).
 - **ctest `clamps_named`** (`scripts/lint/check_clamps.py`): a `max`/`min` against a real literal
   other than 0 or ±1 fails the suite unless the line says why (`! clamp-ok: <reason>`). A guard uses
   `tiny_num` or `safe_exp`; a physical threshold is a named setting with its source (CLAUDE.md, "No
-  bare thresholds") (#346).
+  bare thresholds") (#347).
 - **`meds.config`**, the Python API's view of a run's configuration: it reads the main TOML and the
   PFT (plant trait) TOML that `[init].pft_config` names, sets keys (one PFT's element of a trait
   array included), writes the pair for a run, and reads back the run's parameter record. It needs no
@@ -73,7 +73,7 @@ before and after.
   traits `leaf_surf_water_max` [kg m⁻² leaf] and `wood_surf_water_max` [kg m⁻² wood], both 0.1 by
   default (the old `dewmx`). A config that sets `soil.dewmx` stops with a message naming them. The
   calibration registry's `dewmx` is `leaf_surf_water_max`, fixed. Output is bit-identical with
-  interception off; with it on, the means agree to round-off (LE −0.0007 W m⁻²) (#346).
+  interception off; with it on, the means agree to round-off (LE −0.0007 W m⁻²) (#347).
 - **The stomatal water stress begins at an onset** (`pft.stomata_psi_onset`, new and optional).
   β_stomata is 1 while the predawn leaf potential stays above the onset and
   exp(sref · (ψ − onset)) below it; before, it fell from any negative potential. Without the key the
@@ -141,7 +141,7 @@ before and after.
   - BCI, five years from the 2010 census, default parameters: GPP 11.24 → 11.28 µmol m⁻² s⁻¹
     (+0.33 %), LE 68.56 → 68.68 W m⁻², H 66.79 → 66.73 W m⁻², LAI at the end 5.72 → 5.76.
 
-  With it (#346):
+  With it (#347):
   - the within-canopy wind treated a crown smaller than 1 % of the ground as 1 %; it now uses the
     crown's own area;
   - the forcing's wind had a 0.1 m s⁻¹ floor of its own under the 0.65 m s⁻¹
