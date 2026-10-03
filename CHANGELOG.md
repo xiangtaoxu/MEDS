@@ -119,7 +119,7 @@ before and after.
   2015, tropical rainforest trees) in place of the base value with the range as its ±2 sd. The
   fit starts at the priors' centres.
 - **calibrate_fast fits the optics and photosynthesis keys in the coupled stage, against the
-  turbulent fluxes as measured** (#PRNUM, plan §13.4):
+  turbulent fluxes as measured** (#348, plan §13.4):
   - The default stages are `energy`, `water` and `polish`. A kernel stage (`optics`,
     `photosynthesis`) that is not listed has its keys fitted in `energy`.
   - No closure correction (`[tower].closure = "none"`, was `"bowen"`). At BCI the gap behaves like
