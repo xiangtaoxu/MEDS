@@ -125,6 +125,12 @@ on the line after the `#!` line if there is one. A new contributor adds themselv
 **No hidden global mutable state.** Config and state are derived types passed as arguments. This is
 what makes routines unit-testable, thread-safe and reentrant.
 
+**No bare thresholds.** A guard against dividing by zero or leaving a function's domain uses
+`tiny_num` (or `safe_exp`). A physical threshold is a named setting or parameter, with its source.
+A literal clamp that is right where it is (a solver's step size, a function's domain) says why on the
+line: `! clamp-ok: <reason>`. ctest `clamps_named` (`scripts/lint/check_clamps.py`) enforces it:
+`max(lai, 0.1)` once spread a thin cohort's light over leaf area it did not have (#346).
+
 **Test as you port.** Every ported kernel gets a CTest target. A port is not done until it
 reproduces its reference within tolerance.
 

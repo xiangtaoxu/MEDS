@@ -552,7 +552,7 @@ contains
       if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
       !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB      !
       !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored). --!
-      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)   ! clamp-ok: the finite-difference step [umol/mol]
       dAn_dci = (ci_net_assimilation(prob, ci + dci) - ci_net_assimilation(prob, ci - dci))          &
                 / (2.0_wp * dci)
       !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). ----!

@@ -229,7 +229,7 @@ contains
          !      let a pathological step balloon to ~1.8e5 sub-steps and stall the march; t_end/64 caps it at !
          !      64 and degrades gracefully. (Also surfaces a genuine non-finite state promptly rather than   !
          !      grinding at the floor forever.) -----------------------------------------------------------!
-         dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
+         dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
          call state_init(y0, n, nsl, y)
          t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik

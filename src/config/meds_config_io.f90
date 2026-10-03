@@ -1058,7 +1058,7 @@ contains
       !      patch_light_tol when that is larger, which keeps a looser config valid.  ---------------!
       cfg%patch_light_tol_max = 0.15_wp
       if (toml_has(tm, 'demography.patch_light_tol'))                                               &
-         cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)
+         cfg%patch_light_tol_max = max(0.15_wp, cfg%patch_light_tol)   ! clamp-ok: the setting's default
       cfg%patch_light_tol_max = toml_real(tm, 'demography.patch_light_tol_max', cfg%patch_light_tol_max)
       call req_r(tm, 'demography.patch_diff_age_tol',     cfg%patch_diff_age_tol,     miss)
       call req_r(tm, 'demography.min_patch_area',         cfg%min_patch_area,         miss)

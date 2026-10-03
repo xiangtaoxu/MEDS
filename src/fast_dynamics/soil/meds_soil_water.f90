@@ -15,7 +15,7 @@
 !==========================================================================================!
 module meds_soil_water
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std
+   use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, grav_head, p_std, safe_exp
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
    use meds_column_state_types, only : soil_column_t
@@ -703,7 +703,7 @@ contains
       real(wp) :: theta_air
       !----- CLM5 eq 5.78: the 'air dry' matric head, psi at which the soil is considered dry.  !
       real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp        ! [m] = CLM5's 1e7 mm
-      alpha_soil = exp(max(-40.0_wp, psi1 * grav / (r_wv * forcing%t_ground)))
+      alpha_soil = safe_exp(psi1 * grav / (r_wv * forcing%t_ground))
       !----- Saturate over ICE when the top layer is frozen (#89): the liquid curve overstates    !
       !      e_sat by 10 % at -10 C and 34 % at -30 C, and a frozen surface sublimes. ------------!
       q_g        = alpha_soil * sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)

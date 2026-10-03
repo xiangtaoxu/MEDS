@@ -188,7 +188,7 @@ contains
             call exact_substep(ml,    mw,    0.5_wp*h,   xl2, xw2)                                       ! second half
             errl = abs(xl2 - xl) / (o%atol + o%rtol*abs(xl2))
             errw = abs(xw2 - xw) / (o%atol + o%rtol*abs(xw2))
-            err  = max(errl, errw, 1.0e-12_wp)
+            err  = max(errl, errw, 1.0e-12_wp)   ! clamp-ok: the step controller's error floor
             !----- A non-finite error (or trial state) means the linearised 2x2 advance itself blew up;  !
             !      accepting it would poison psi, and rejecting it forever is the hang guarded above.     !
             !      Stop here with the last good psi and let the caller see converged = .false. -----------!

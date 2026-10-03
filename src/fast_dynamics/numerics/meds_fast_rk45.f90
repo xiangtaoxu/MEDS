@@ -419,7 +419,7 @@ contains
       !      (RK45 is explicit), but the sec 6 stability estimate already bounds normal operation      !
       !      to ~3 substeps, so a stiffness-driven runaway signals a genuinely pathological step,      !
       !      not routine behaviour; degrade gracefully rather than grind at a tiny floor forever). ---!
-      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
+      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik

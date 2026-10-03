@@ -31,6 +31,9 @@ module meds_canopy_aerodynamics
    real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp
    real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp
    real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp
+   !----- The under-canopy stability parameter of the dense-canopy ground conductance (CLM4's, whose  !
+   !      cs_dense and gamma_g it uses) is capped at 10 there; above it the conductance is ~0 anyway. -!
+   real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp
    private
 
    public :: canopy_aerodynamics             !< master per-patch seam
@@ -120,7 +123,7 @@ contains
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
       if (denom > tiny_num) then
-         stab = max(0.0_wp, min(10.0_wp, 2.0_wp * grav * geom%veg_height                       &
+         stab = max(0.0_wp, min(GROUND_STAB_MAX, 2.0_wp * grav * geom%veg_height               &
                     * (env%can_temp - env%t_ground) / denom))
       end if
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
@@ -206,7 +209,7 @@ contains
       !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!
       ustar = max(cfg%ustmin, vonkarman * um / d_mom(zeta, zldis, z0m, cfg))
       temp1 = vonkarman / d_heat(zeta, zldis, z0m, cfg)
-      obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)
+      obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral
    end subroutine mo_surface_layer
 
    !----- Momentum profile denominator D_m (ustar = vonk*um/D_m), four CLM5 ranges. ----------!
