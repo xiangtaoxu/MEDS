@@ -118,6 +118,28 @@ before and after.
   Default priors come from syntheses where there is one: `stomatal_g1` 3.77 kPa^0.5 (Lin et al.
   2015, tropical rainforest trees) in place of the base value with the range as its ±2 sd. The
   fit starts at the priors' centres.
+- **calibrate_fast fits the optics and photosynthesis keys in the coupled stage, against the
+  turbulent fluxes as measured** (#348, plan §13.4):
+  - The default stages are `energy`, `water` and `polish`. A kernel stage (`optics`,
+    `photosynthesis`) that is not listed has its keys fitted in `energy`.
+  - No closure correction (`[tower].closure = "none"`, was `"bowen"`). At BCI the gap behaves like
+    missing sensible heat.
+  - LE is kept at u\* ≥ 0.4 m s⁻¹. H is kept at u\* ≥ 0.6 m s⁻¹ and 9–16 h only, with
+    σ 10 W m⁻² + 30 % (was 15 %).
+  - Net radiation and the evaporative fraction are off. The water stage scores LE and GPP.
+  - Every target accepts every filter.
+  - Registry:
+    - fixed: `leaf_clumping` (0.80), `leaf_width` and `dsl_dmax`;
+    - fitted: `theta_j`, `jmax_vcmax_ratio` (prior 1.70 ± 0.15), `ds_vcmax` (641 ± 5) and the
+      new `ds_jmax` (640 ± 4);
+    - new and optional: `ea_vcmax` and `ea_jmax`.
+
+    The temperature priors are Kattge & Knorr (2007) acclimated at BCI's 25.5 °C. Slot & Winter
+    (2017) put four Panama species' Vcmax optima at 32.9–39.7 °C; the default `ds_vcmax`, 650,
+    peaks at 31.7 °C.
+  - Two quick BCI fits of the coupled stage leave `vcmax25` at its floor (25.1, 25.3). `theta_j` and
+    Jmax/Vcmax go to their floors too. At `vcmax25` 45 the model's GPP stays 1.44 times the tower's
+    at every hour.
 - **calibrate_fast's default targets and weights** (#345):
   - GPP's σ is 2.5 + 0.15 GPP (was 1.5 + 0.15 GPP), and its hours need u* ≥ 0.4 m s⁻¹ (was no
     filter): the tower's GPP carries its one-per-day respiration's error at every daytime hour, and

@@ -208,9 +208,13 @@ in [`MEDS_FAST_CALIBRATION_PLAN.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_
 **This section describes the shipped set, not `calibration.toml` as it now stands.**
 - The set in [`calibration/`](calibration) was fitted with the joint method, before the
   revision ([`MEDS_FAST_CALIBRATION_REVISION_PLAN.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_REVISION_PLAN.md)).
-- `calibration.toml` now declares the revision's staged fit. Its targets also differ from the
-  table below: GPP σ 2.5 + 0.15 GPP with u\* ≥ 0.4, and no night NEE.
-- `--calibrate` runs the staged fit. Its first BCI run, and the decisions it raises, are in the
+- `calibration.toml` now declares the revision's staged fit (`energy`, `water`, `polish`). Its
+  targets also differ from the table below:
+  - GPP: σ 2.5 + 0.15 GPP, with u\* ≥ 0.4;
+  - LE and H as measured, with no closure correction. LE is kept at u\* ≥ 0.4; H at u\* ≥ 0.6,
+    from 9 to 16 h, with σ 10 W m⁻² + 30 %;
+  - no net radiation, evaporative fraction or night NEE.
+- `--calibrate` runs the staged fit. Its BCI runs, and the decisions they raise, are in the
   revision plan's §13.
 
 - **The stand is held fixed.** Each trial is a 10-day run with `slow_on = false`, restarted from a

@@ -29,8 +29,8 @@ utc_offset_h = -5.0
 forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
 forcing_qc   = ["LWdown_qc", "Wind_qc"]
 forcing_grid = 1
-closure      = "bowen"         # FLUXNET2015's correction, the Bowen ratio kept
-closure_days = 31              # the closure correction's sliding window, centred
+closure      = "none"          # H and LE as measured: the closure gap behaves like missing sensible heat
+                               #   (site_reference.toml [tower].closure), so H is filtered harder instead
 daytime_sw   = 10.0            # [W m-2]
 
 [tower.columns]
@@ -52,23 +52,28 @@ min_sw = 200.0
 [targets.lw_up]
 sigma = 5.0
 
+# Rnet is the four radiation components summed (to 1e-11 W m-2), so the albedo and the upwelling
+# longwave already hold it; EF is biased high where closure is poor (site_reference.toml).
 [targets.rnet]
-sigma_abs = 10.0
-sigma_rel = 0.05
+on = false
 
+[targets.ef]
+on = false
+
+# LE and H as measured. LE/Rnet does not change with u* here, H/Rnet rises with it and is held back
+# by canopy heat storage before 9 h, so H is filtered harder and has a wider sigma.
 [targets.le]
 sigma_abs = 10.0
 sigma_rel = 0.15
-closure = true
+closure = false
+ustar_min = 0.4
 
 [targets.h]
 sigma_abs = 10.0
-sigma_rel = 0.15
-closure = true
-
-[targets.ef]
-sigma = 0.05
-min_hours = 6
+sigma_rel = 0.30
+closure = false
+ustar_min = 0.6
+hours = [9, 16]
 
 # GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), reported 40-50 %
 # below soil chambers, so sigma carries ~2 umol m-2 s-1 of systematic error; and the morning hours
@@ -87,7 +92,7 @@ sigma_abs = 0.1
 sigma_rel = 0.2
 
 [fit]
-stages     = ["optics", "photosynthesis", "energy", "water", "polish"]
+stages     = ["energy", "water", "polish"]   # optics and photosynthesis keys fitted with the coupled loop
 screening  = "report"
 weights    = "ess"
 seed       = 20260929
@@ -97,6 +102,7 @@ timeout    = 300             # [s] the floor of the trial timeout; a 10-day tria
 # The water stage: BCI's dry seasons, January to April, from the wet season's soil water. The 2016
 # one is the El Nino drought.
 [stages.water]
+targets = ["le", "gpp"]
 windows = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" },
             { name = "dry2017", start = "2017-01-01", days = 120, chain = "cal" } ]
 
