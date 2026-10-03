@@ -38,10 +38,15 @@ forcing_qc   = ["LWdown_qc", "Wind_qc"]   # Forcing qc variables that must be 0 
                                           #   trial driven by gap-filled forcing scores the gap filling.
 forcing_qc_val = ["Wind_qc"]      # The same for validation windows (a tower year without longwave still validates).
 forcing_grid = 1                  # The forcing file's grid cell (1-based).
-closure      = "bowen"            # "bowen": FLUXNET2015's energy-balance-closure correction, H and LE scaled together
-                                  #   so H + LE = Rnet with the Bowen ratio kept; "none": as measured. Closure is a
-                                  #   systematic error, so it is corrected (or not), not filtered (see closure_range).
-closure_days = 31                 # The correction's sliding window [days], centred.
+closure      = "none"             # "none": H and LE as measured. "bowen": FLUXNET2015's energy-balance-closure
+                                  #   correction, H and LE scaled together so H + LE = Rnet with the Bowen ratio kept.
+                                  #   Recommended "none": at BCI the gap (H + LE = 0.72 Rnet) behaves like missing
+                                  #   sensible heat, not missing LE. As turbulence rises (u* 0.3 -> 1.0, 10-15 h, within
+                                  #   a VPD class) H/Rnet climbs 0.21 -> 0.38 while LE/Rnet stays at 0.42-0.48, and the
+                                  #   midday gap grows with H, not LE (gap = 0.30 H - 0.26 LE + 165 W m-2). The Bowen
+                                  #   correction would raise LE by ~39 % that the data do not show; instead H is
+                                  #   filtered harder and given a wider sigma ([targets.h]).
+closure_days = 31                 # The "bowen" correction's sliding window [days], centred.
 daytime_sw   = 10.0               # [W m-2] incoming shortwave above which an hour is daytime (every daytime target).
 
 # The quantities, mapped to the tower file's column names. `par` (incident PAR, umol m-2 s-1) is
@@ -93,7 +98,10 @@ on    = true
 sigma = 5.0                       # [W m-2]
 
 [targets.rnet]
-on        = true
+on        = false                 # Off by default: a four-component radiometer's Rnet is Rs - Rs_up + LW_down - LW_up
+                                  #   (at BCI to 1e-11 W m-2), and the model takes Rs and LW_down from the tower as
+                                  #   forcing, so the Rnet residual is minus the albedo's and the upwelling longwave's:
+                                  #   it would count them twice. Turn it on for a net radiometer measured on its own.
 sigma_abs = 10.0                  # [W m-2]
 sigma_rel = 0.05
 
@@ -101,16 +109,24 @@ sigma_rel = 0.05
 on        = true
 sigma_abs = 10.0                  # [W m-2]; random error grows with the flux (Richardson et al. 2006)
 sigma_rel = 0.15
-closure   = true                  # compare with the closure-corrected LE ([tower].closure)
+closure   = false                 # true: compare with the closure-corrected LE ([tower].closure = "bowen")
+ustar_min = 0.4                   # [m s-1] the GPP target's: LE/Rnet does not change with u* at BCI (0.42-0.48), so a
+                                  #   light filter, against the calmest hours' poor eddy covariance
 
 [targets.h]
 on        = true
 sigma_abs = 10.0
-sigma_rel = 0.15
-closure   = true
+sigma_rel = 0.30                  # wider than LE's 0.15: no u* threshold recovers the missing sensible heat at BCI
+                                  #   (H/Rnet still rises above u* 1.0), so H stays biased low by an unknown amount
+closure   = false
+ustar_min = 0.6                   # [m s-1] stricter than LE's: H is under-measured in low turbulence (H/Rnet 0.21 at
+                                  #   u* 0.3-0.4 against 0.27 at 0.6-0.7, within a VPD class)
+hours     = [9, 16]               # local hours [from, to): canopy heat storage holds H back in the morning (H/Rnet
+                                  #   -0.09 at 7 h, 0.22 at 8 h, 0.27-0.34 from 9 to 16 h at u* >= 0.4)
 
 [targets.ef]
-on        = true
+on        = false                 # Off by default: the measured EF is biased high where closure is poor (at BCI 0.70
+                                  #   at u* < 0.4 against 0.54 above 0.8), the same missing sensible heat as H's
 sigma     = 0.05                  # the daily daytime evaporative fraction LE / (H + LE), uncorrected
 min_hours = 6                     # a day counts with at least this many measured daytime hours
 
@@ -148,8 +164,12 @@ sigma_rel = 0.2
 #   keys   = ["vcmax25", "stomatal_g1"]
 #   add    = ["theta_j"]
 #   remove = ["leaf_angle_mean"]
-stages     = ["optics", "photosynthesis", "energy", "water", "polish"]   # the staged fit (plan §7), in this order;
-                                  #   ["polish"] alone is the joint fit of every key at once (the original method)
+stages     = ["energy", "water", "polish"]   # the staged fit (plan §7, §13), in this order. "optics" (the two-stream
+                                  #   alone, against the albedo) and "photosynthesis" (a canopy of leaf solves, against
+                                  #   GPP) are optional: a kernel stage not listed has its keys fitted in "energy", with
+                                  #   every target. Recommended without them: at BCI the albedo alone sent clumping to
+                                  #   its floor, and the joint fit then moved it to its ceiling. ["polish"] alone is the
+                                  #   joint fit of every key at once (the original method)
 screening  = "report"             # "report": the first Jacobian's screening is reported, every requested key is fitted;
                                   #   "drop": keys the tower cannot inform (sigma ratio >= 0.95), dead or rough are fixed
 weights    = "ess"                # "ess": each target's rows weighted by its effective sample size, from the lag-1
@@ -187,7 +207,7 @@ rtol     = 1.0e-3
 # The seasonal runs: frozen runs long enough for soil water to draw down (the water-stress keys act through it).
 # Each needs its chain to pass its start. Empty = the stage is skipped.
 windows    = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" } ]
-targets    = ["le", "gpp", "ef"]  # the targets these runs are scored on
+targets    = ["le", "gpp"]        # the targets these runs are scored on
 grid_sigma = 1.0                  # the first grid: the starting value (the prior centre) +- this many prior sds in u
 rounds     = 2                    # grids (each half the last's width around the best point), then a local quadratic
 

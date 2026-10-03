@@ -41,15 +41,25 @@ silently fall back to the default.
 
 ### Targets and filters
 
-- **Targets.** Albedo, upwelling longwave, net radiation, LE and H (closure-corrected with the Bowen
-  ratio kept, `[tower].closure`), the daily evaporative fraction, daytime GPP and u\*. Night NEE is
-  off by default (`[targets.nee_night]`). Each target uses only the hours the tower measured and
-  the forcing observed, and has an observation error σ = `sigma_abs` + `sigma_rel` |obs|.
+- **Targets.** On by default: the albedo, upwelling longwave, LE, H, daytime GPP and u\*.
+  - LE and H are as measured (`[tower].closure = "none"`). At BCI the closure gap behaves like
+    missing sensible heat, so the Bowen-ratio correction (`"bowen"`) would raise LE in a way the
+    data do not show.
+  - Off by default, each with its reason in `site_reference.toml`:
+    - net radiation: from a four-component radiometer it repeats the albedo and the upwelling
+      longwave;
+    - the daily evaporative fraction: biased high where closure is poor;
+    - night NEE.
+  - Each target uses only the hours the tower measured and the forcing observed. Its observation
+    error is σ = `sigma_abs` + `sigma_rel` |obs|.
 - **Filters are per-target settings:** `ustar_min`, `par_min`, `hours`, `closure_range` and
   `min_solar_elevation`, each off unless set. The recommended values, with the reasons, are in
-  `site_reference.toml`. For GPP the defaults are u\* ≥ 0.4 m s⁻¹ and σ = 2.5 + 0.15 GPP. The
-  tower's GPP is built from one respiration value per day, so it carries a systematic error at every
-  daytime hour, on top of the random one.
+  `site_reference.toml`. Every target takes every filter. The defaults:
+  - GPP: u\* ≥ 0.4 m s⁻¹ and σ = 2.5 + 0.15 GPP. The tower's GPP is built from one respiration
+    value per day, so it carries a systematic error at every daytime hour, on top of the random one.
+  - LE: u\* ≥ 0.4 m s⁻¹.
+  - H: u\* ≥ 0.6 m s⁻¹, 9 to 16 h, and σ = 10 W m⁻² + 30 %. H is under-measured in low
+    turbulence, and canopy heat storage holds it back in the morning.
 - **The data report** (`report`, and the start of every `fit`) gives:
   - every target's rows through each filter step;
   - the GPP diurnal mean before and after the filters;
@@ -83,8 +93,13 @@ own keys with the cheapest model that can see them, keeping the upstream stages'
 | `optics` | the two-stream alone (`meds.canopy`), over each window's stand and shortwave | albedo | Levenberg–Marquardt; seconds per evaluation |
 | `photosynthesis` | a canopy of leaf solves (`meds.canopy`), over each window's hourly per-cohort drivers | GPP | Levenberg–Marquardt; outer passes re-run the windows and refresh the drivers |
 | `energy` | the coupled fast loop on the 10-day windows | every target | Levenberg–Marquardt |
-| `water` | frozen seasonal runs (`[stages.water].windows`, e.g. 120 dry-season days) | LE, GPP, EF | a grid in u, then a local quadratic (the responses can be rough) |
-| `polish` | the coupled loop, every fitted key, from the stage values | every target (plus the seasonal runs) | Levenberg–Marquardt, 3 iterations |
+| `water` | frozen seasonal runs (`[stages.water].windows`, e.g. 120 dry-season days) | LE, GPP | a grid in u, then a local quadratic (the responses can be rough) |
+| `polish` | the coupled loop, every fitted key, from the stage values | every target (plus the seasonal runs) | Levenberg–Marquardt, up to `[stages.polish].max_iter` (10) iterations |
+
+- **The default runs `energy`, `water` and `polish`.** A kernel stage (`optics`, `photosynthesis`)
+  that is not listed has its keys fitted in `energy`, against every target. At BCI the albedo alone
+  could not place the clumping: the `optics` stage sent it to its floor, and the joint fit then moved
+  it to its ceiling.
 
 - **The kernels are anchored** to the full run they take their drivers from. Their value for a
   parameter set is the kernel's, times, per hour, the model's over the kernel's at the drivers'

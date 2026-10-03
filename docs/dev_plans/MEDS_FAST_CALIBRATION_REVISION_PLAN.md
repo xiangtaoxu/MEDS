@@ -561,6 +561,75 @@ except H (+6.1 %) and the evaporative fraction (+7.3 %), both under the 10 % lim
    ended "no NaNs", and only the whole-site budget check (a NaN cumulative residual) caught it.
    Not yet filed.
 
+### 13.4 After R6: the owner's decisions and two quick fits (2026-10-02)
+
+**Decisions.**
+1. **Observations.**
+   - No closure correction: LE and H are used as measured. At BCI, H + LE = 0.72 Rnet, and the gap
+     behaves like missing sensible heat. As u\* rises from 0.3 to 1.0 (10–15 h, within a VPD class),
+     H/Rnet climbs from 0.21 to 0.38, while LE/Rnet stays at 0.42–0.48.
+   - LE is kept at u\* ≥ 0.4. H is kept at u\* ≥ 0.6 and 9–16 h only, with σ 10 W m⁻² + 30 %.
+   - Net radiation is off: the four-component sum repeats the albedo and the upwelling longwave.
+     The evaporative fraction is off: it is biased high where closure is poor. Soil water is not
+     used.
+2. **Stages.** The optics and photosynthesis keys are fitted in the coupled `energy` stage: the
+   default is `energy`, `water`, `polish` (finding 1). The water stage scores LE and GPP.
+3. **Keys.**
+   - Fixed:
+     - `leaf_clumping` at 0.80 (the base value; FATES uses 0.85);
+     - `leaf_width`;
+     - `dsl_dmax`;
+     - the film capacities. The tower does not see the wet canopy: FLAG gap-fills every raining
+       hour.
+   - Fitted:
+     - `theta_j`, prior 0.80 ± 0.05;
+     - `jmax_vcmax_ratio`, prior 1.70 ± 0.15;
+     - `ds_vcmax`, prior 641 ± 5;
+     - `ds_jmax`, prior 640 ± 4.
+
+     The last three priors are Kattge & Knorr (2007) acclimated at BCI's 25.5 °C. That matches
+     Slot & Winter (2017): four Panama species have Vcmax optima at 32.9–39.7 °C. The model's
+     default `ds_vcmax` (650) peaks at 31.7 °C.
+   - Optional: `ea_vcmax`, `ea_jmax`.
+
+**Two quick fits.** These are the `energy` stage alone, over the eight calibration windows: about
+2,100 trials and 24 min on 2 nodes each.
+- Fit 2: the combined stage, before the key decisions.
+- Fit 3: with `leaf_clumping` and `leaf_width` fixed and the photosynthesis keys fitted.
+  `dsl_dmax` was still fitted.
+
+| key | fit 2 | fit 3 | bound |
+|---|---|---|---|
+| `vcmax25` | 25.1 | 25.3 | 25 |
+| `theta_j` | — | 0.73 | 0.70 |
+| `jmax_vcmax_ratio` | — | 1.45 | 1.4 |
+| `ds_vcmax` | — | 639.4 (prior 641) | |
+| `ds_jmax` | — | 640.3 (prior 640) | |
+| `stomatal_g1` | 3.46 | 4.11 | |
+| `leaf_clumping` | 0.51 | 0.80 (fixed) | 0.50 |
+| `leaf_width` | 0.143 | 0.04 (fixed) | 0.15 |
+
+| model GPP / tower GPP (calibration hours) | all hours | 6–10 h | 10–14 h |
+|---|---|---|---|
+| fit 3 at the MAP | 1.02 | 0.99 | 0.99 |
+| fit 3 with `vcmax25` = 45 | 1.44 | 1.35 | 1.44 |
+
+**Findings.**
+- `vcmax25` stays at its floor. `theta_j` and Jmax/Vcmax go to their GPP-lowering floors too. Doing
+  so they remove the morning excess, but what remains is a flat offset: at a physiological
+  `vcmax25` of 45 the model is 44 % above the tower at every hour.
+- The temperature terms stay at their priors, and they cannot absorb the offset:
+  - the GPP hours' air temperature spans only 26.0–29.1 °C (10th–90th percentile);
+  - within each light class, model/tower GPP falls by 3.8 % per °C, so the data want a steeper
+    response, not a weaker one.
+- Fit 3 fails G4 on H (+18 % on validation). Fit 2 passes it, with H +3 %.
+- Splitting cohorts into thinner layers (`cohort_lai_cap` 0.1) lowers GPP by about 2 %. That test
+  exposed the leaf-PAR floor `max(LAI, 0.1)` (#346), fixed in #347 (+0.33 % GPP at BCI).
+- Still open for the owner:
+  - how to treat `vcmax25`: a literature prior, or an effective value that absorbs the offset;
+  - sunlit and shaded leaves (#343);
+  - finding 5.
+
 
 ## Sources
 
@@ -572,12 +641,14 @@ except H (+6.1 %) and the evaporative fraction (+7.3 %), both under the 10 % lim
 - Ehleringer & Björkman (1977), Plant Physiology 59, 86–90 (C3 quantum yield)
 - Bonan et al. (2012), Journal of Geophysical Research 117, G02026 (CLM4.5's tropical Vcmax25)
 - Kattge et al. (2009), Global Change Biology 15, 976–991 (Vcmax by PFT)
+- Kattge & Knorr (2007), Plant, Cell & Environment 30, 1176–1190 (thermal acclimation of Vcmax and Jmax)
 - LeBauer et al. (2013), Ecological Monographs 83, 133–154 (PEcAn trait meta-analysis)
 - Lin et al. (2015), Nature Climate Change 5, 459–464 (g1 by PFT; Fig. 2e)
 - Papale et al. (2006), Biogeosciences 3, 571–583 (u* filtering and flux processing)
 - Reichstein et al. (2005), Global Change Biology 11, 1424–1439 (u* threshold, flux partitioning)
 - Medlyn et al. (2002), Plant, Cell & Environment 25, 1167–1179 (Jmax/Vcmax)
 - Sabot et al. (2022), Plant, Cell & Environment (stomatal water stress)
+- Slot & Winter (2017), Plant, Cell & Environment 40, 3055–3068 (temperature response of Panama canopy leaves)
 - The BCI diagnosis (2026-10-01/02): its numbers are reproduced in §1, §3.3 and §6; its scripts
   are not part of the repository.
 - Deferred issues: #342 (Γ* pressure scaling), #343 (cohort-level sunlit/shaded leaves)

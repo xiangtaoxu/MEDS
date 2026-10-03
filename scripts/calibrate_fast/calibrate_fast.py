@@ -68,6 +68,7 @@ from registry import load_registry, resolve_defaults, select   # noqa: E402
 from meds.config import RunConfig, load_toml, read_record        # noqa: E402
 
 STAGE_ORDER = ("optics", "photosynthesis", "energy", "water", "polish")
+KERNEL_STAGES = ("optics", "photosynthesis")     # stages with a model of their own; their keys can join "energy"
 
 
 # ------------------------------------------------------------------------------------------------
@@ -470,19 +471,37 @@ def photo_model(site, model, params, theta, windows, work, log):
     return kernel_model(STG.PhotoModel, site, model, params, theta, windows, "gpp", work)
 
 
-def free_of(params, stage, skipped=()):
-    """The keys a stage moves: its own; for the polish, every fitted key whose own stage was not
-    skipped (a water key without seasonal runs is not fitted on ten-day windows, which reward a
-    value that dries the soil months later). A key the drop-mode screening fixed is in neither."""
-    return [i for i, p in enumerate(params)
-            if p.stage != "dropped" and p.stage not in skipped and (stage == "polish" or p.stage == stage)]
+def free_of(params, stage, run_stages=STAGE_ORDER, skipped=(), seasonal=True):
+    """The keys a stage moves:
+      - optics, photosynthesis, water: their own;
+      - energy (the coupled loop): its own, and those of a kernel stage (optics, photosynthesis)
+        that is not run, which then join the coupled fit;
+      - polish: every key, except those of a stage skipped for lack of data (its target off) and,
+        when the polish has no seasonal runs, the water keys (ten-day windows reward a value that
+        dries the soil months later).
+    A key the drop-mode screening fixed is in none."""
+    def moves(p):
+        if stage == "polish":
+            return p.stage not in skipped and (seasonal or p.stage != "water")
+        if stage == "energy":
+            return p.stage == "energy" or (p.stage in KERNEL_STAGES and p.stage not in run_stages)
+        return p.stage == stage
+    return [i for i, p in enumerate(params) if p.stage != "dropped" and moves(p)]
+
+
+def fitted_keys(params, run_stages, skipped, seasonal):
+    """The keys a whole fit moved: the polish's, or without one, every run stage's together."""
+    if "polish" in run_stages:
+        return free_of(params, "polish", run_stages, skipped, seasonal)
+    keys = {i for s in run_stages for i in free_of(params, s, run_stages, skipped)}
+    return sorted(i for i in keys if seasonal or params[i].stage != "water")
 
 
 def run_stage(stage, site, model, params, theta, cal, water, work, log, report):
     """One stage from theta; returns the new theta (every key; only this stage's moved) and the
     stage's report entry."""
     sc = site.stagecfg.get(stage, {})
-    free = free_of(params, stage)
+    free = free_of(params, stage, report["stages_run"])
     if not free:
         return theta, {"skipped": "no fitted key in this stage"}
     names = [params[i].name for i in free]
@@ -654,9 +673,9 @@ def cmd_fit(args):
         if fc["weights"] == "ess":
             report["weights_polish"] = ess_weights_at(site, model, theta, pspecs, pwin, log)
         model.windows = pwin
-        skipped = [s for s, e in progress["stages"].items() if "skipped" in e] + \
-                  [s for s in STAGE_ORDER[:-1] if s not in stages]
-        prob = F.Problem(model, free_of(params, "polish", skipped), theta.copy())
+        skipped = [s for s, e in progress["stages"].items() if "skipped" in e]
+        prob = F.Problem(model, free_of(params, "polish", stages, skipped, seasonal=bool(water and pc["include_water"])),
+                         theta.copy())
         out = F.lm(prob, prob.u_of(theta), int(pc["max_iter"]), float(pc["rtol"]), log=log, label="polish")
         theta = prob.theta(out["u"])
         progress["stages"]["polish"] = {"cost": out["cost"], "iterations": len(out["history"]) - 1,
@@ -704,9 +723,10 @@ def post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_st
     cal = [w for w in site.windows if w.role == "cal"]
     val = [w for w in site.windows if w.role == "val"]
     pspecs = [model.specs[x.name] for x in pwin]
-    skipped = [s for s, e in report.get("stages", {}).items() if "skipped" in e] + \
-              [s for s in STAGE_ORDER[:-1] if s not in report.get("stages_run", STAGE_ORDER)]
-    prob = F.Problem(model, free_of(params, "polish", skipped), theta_map.copy())
+    skipped = [s for s, e in report.get("stages", {}).items() if "skipped" in e]
+    seasonal = any(w.role == "water" for w in pwin)
+    prob = F.Problem(model, fitted_keys(params, report.get("stages_run", list(STAGE_ORDER)), skipped, seasonal),
+                     theta_map.copy())
     u_map = prob.u_of(theta_map)
     model.windows = pwin
     if jac_final is not None:

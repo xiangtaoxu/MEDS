@@ -339,7 +339,8 @@ def test_select_follows_the_site():
 
 def test_the_registry_menu():
     ps = {p.name: p for p in load_registry(REGISTRY, "interception_off")}
-    assert ps["theta_j"].state == "optional" and ps["phi_psii"].state == "fixed"
+    assert ps["theta_j"].state == "fit" and ps["phi_psii"].state == "fixed" and ps["ea_vcmax"].state == "optional"
+    assert ps["leaf_clumping"].state == "fixed" and ps["leaf_width"].state == "fixed" and ps["ds_jmax"].state == "fit"
     assert ps["rd_vcmax_ratio"].state == "fixed" and ps["stomatal_g1"].prior["centre"] == 3.77
     assert {p.stage for p in ps.values()} <= {"optics", "photosynthesis", "energy", "water"}
     assert all(p.reason for p in ps.values() if p.state == "fixed")
@@ -353,8 +354,44 @@ def test_the_bci_declaration_is_complete_and_valid():
     d = SET.complete(load_toml(BCI))
     assert d["targets"]["gpp"]["ustar_min"] == 0.4 and d["targets"]["gpp"]["sigma_abs"] == 2.5
     assert d["targets"]["nee_night"]["on"] is False
-    assert d["fit"]["stages"] == ["optics", "photosynthesis", "energy", "water", "polish"]
+    assert d["tower"]["closure"] == "none" and not d["targets"]["rnet"]["on"] and not d["targets"]["ef"]["on"]
+    assert d["targets"]["le"]["ustar_min"] == 0.4 and d["targets"]["h"]["ustar_min"] == 0.6
+    assert d["targets"]["h"]["hours"] == [9, 16] and d["targets"]["h"]["sigma_rel"] == 0.30
+    assert d["fit"]["stages"] == ["energy", "water", "polish"]
+    assert d["stages"]["water"]["targets"] == ["le", "gpp"]
     assert d["stages"]["polish"]["max_iter"] == 10                      # a default the site left out
+
+
+def test_every_target_takes_the_filters():
+    """A filter the reference does not list for a target is still accepted on it; a misspelt one is not."""
+    good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"path": "t.csv"},
+            "windows": {"chains": {"cal": "2015-01-01"}, "list": []}, "targets": {"gpp": {"hours": [8, 17]}}}
+    assert SET.complete(good)["targets"]["gpp"]["hours"] == [8, 17]
+    good["targets"]["gpp"]["hourz"] = [8, 17]
+    with pytest.raises(ValueError, match="hourz"):
+        SET.complete(good)
+
+
+def test_which_keys_each_stage_moves():
+    ps = []
+    for name, stage in (("rho", "optics"), ("vc", "photosynthesis"), ("g1", "energy"), ("sref", "water")):
+        p = Param(name, "main", f"a.{name}", 0.0, 1.0)
+        p.stage = stage
+        ps.append(p)
+    names = lambda idx: [ps[i].name for i in idx]                                      # noqa: E731
+    full = list(CF.STAGE_ORDER)
+    assert names(CF.free_of(ps, "energy", full)) == ["g1"]
+    #----- a kernel stage not run has its keys fitted in the coupled stage
+    assert names(CF.free_of(ps, "energy", ["energy", "water", "polish"])) == ["rho", "vc", "g1"]
+    assert names(CF.free_of(ps, "energy", ["photosynthesis", "energy"])) == ["rho", "g1"]
+    #----- the polish moves every key, the water keys only with seasonal runs
+    assert names(CF.free_of(ps, "polish", ["polish"])) == ["rho", "vc", "g1", "sref"]
+    assert names(CF.free_of(ps, "polish", ["polish"], seasonal=False)) == ["rho", "vc", "g1"]
+    assert names(CF.free_of(ps, "polish", full, skipped=["optics"])) == ["vc", "g1", "sref"]
+    #----- a fit without a polish: every run stage's keys together
+    assert names(CF.fitted_keys(ps, ["energy"], [], seasonal=False)) == ["rho", "vc", "g1"]
+    ps[2].stage = "dropped"
+    assert names(CF.free_of(ps, "polish", ["polish"])) == ["rho", "vc", "sref"]
 
 
 def test_settings_refuse_unknown_and_missing_keys():

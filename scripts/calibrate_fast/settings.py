@@ -14,6 +14,7 @@ import copy
 from pathlib import Path
 
 from meds.config import load_toml
+from residuals import FILTERS
 
 REFERENCE = Path(__file__).resolve().parent / "site_reference.toml"
 #: keys a site must set (their reference values are examples)
@@ -29,6 +30,7 @@ LIST_ENTRY = {("windows", "list"): {"name", "start", "role", "chain", "days"},
               ("windows", "seasons"): {"name", "from", "to", "role", "chain"},
               ("stages", "water", "windows"): {"name", "start", "days", "chain"}}
 PRIOR_ENTRY = {"centre", "sd", "log_sd", "source", "range"}
+#: every target takes the filters (residuals.FILTERS), whether or not its reference table lists them
 
 
 def reference() -> dict:
@@ -48,6 +50,8 @@ def _check(decl: dict, ref: dict, path: tuple, errors: list):
                         errors.append(f"[priors.{k}]: unknown settings {sorted(bad)}; known: {sorted(PRIOR_ENTRY)}")
             elif path == ("variants",) and not isinstance(v, dict):
                 errors.append(f"[variants.{k}] must be a table of model config keys")
+            continue
+        if len(path) == 2 and path[0] == "targets" and k in FILTERS:
             continue
         if k not in ref:
             where = ".".join(path) or "(top level)"
