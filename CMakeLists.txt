@@ -416,6 +416,16 @@ if(MEDS_BUILD_PYLIB)
    set_target_properties(meds_py PROPERTIES OUTPUT_NAME meds)
    target_link_libraries(meds_py PRIVATE meds_driver)
    meds_fortran_flags(meds_py)
+   #----- The same numbers as meds_main, in any process. An Intel build calls `exp`, `sin`, `pow`  #
+   #      and the rest by their C names, and meds_main finds them in Intel's math library. A       #
+   #      library loaded into Python would find glibc's first, because Python has already loaded  #
+   #      it, so a run through `meds.model` differed from the same run of meds_main in the last    #
+   #      digits (BCI: up to 7e-4 W m-2 in LE over ten days). Linking Intel's runtime into the      #
+   #      library and keeping its names inside it makes every call land where meds_main's does.    #
+   #      gfortran builds use glibc's math in both, so they need nothing here.                    #
+   if(CMAKE_Fortran_COMPILER_ID MATCHES "^Intel")
+      target_link_options(meds_py PRIVATE -static-intel LINKER:--exclude-libs,ALL)
+   endif()
    #----- RPATH so the INSTALLED library resolves its own dependencies.                         #
    #                                                                                            #
    #      libmeds.so links netCDF, HDF5 and the Fortran runtime. Decision #11 says declare       #
@@ -433,9 +443,10 @@ if(MEDS_BUILD_PYLIB)
    #      checkout, which is how MEDS is used; it is NOT a redistributable manylinux wheel, and    #
    #      building one would mean auditwheel plus the vendoring §7.3 rejected.                     #
    #      USE_LINK_PATH alone is NOT enough: it captures the directories of libraries CMake was  #
-   #      told to link (netCDF, HDF5), but the Fortran runtime -- libimf, libifport, libsvml --   #
-   #      is added implicitly by the compiler driver, so it is absent from the RPATH and the      #
-   #      library still fails to dlopen outside a `source setvars.sh` shell. CMAKE_Fortran_       #
+   #      told to link (netCDF, HDF5), but the compiler's own shared runtime (the OpenMP runtime  #
+   #      in an Intel build, which stays shared; libgfortran in a GNU one) is added implicitly by #
+   #      the compiler driver, so it is absent from the RPATH and the library still fails to       #
+   #      dlopen outside a `source setvars.sh` shell. CMAKE_Fortran_                               #
    #      IMPLICIT_LINK_DIRECTORIES is exactly that set. (`ldd` will NOT show this: run from a    #
    #      sourced shell it inherits LD_LIBRARY_PATH and reports everything resolved. Check with   #
    #      `env -u LD_LIBRARY_PATH ldd`, or by importing.)                                          #
@@ -689,12 +700,25 @@ if(MEDS_BUILD_TESTS)
          set_tests_properties(restart_exact PROPERTIES
                               ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
          #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests, #
-         #      and a smoke test that drives meds_main through a chain, a trial and a Jacobian column. #
+         #      and a smoke test that runs a chain, a trial and a Jacobian column through meds_main  #
+         #      and, when libmeds.so is built, through the Python API as well.                      #
+         set(meds_calib_env "PYTHONDONTWRITEBYTECODE=1" "MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         if (MEDS_BUILD_PYLIB)
+            list(APPEND meds_calib_env "MEDS_LIB=$<TARGET_FILE:meds_py>")
+         endif()
          add_test(NAME calibrate_fast
                   COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
                           ${CMAKE_CURRENT_SOURCE_DIR}/scripts/calibrate_fast/tests)
-         set_tests_properties(calibrate_fast PROPERTIES
-                              ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         set_tests_properties(calibrate_fast PROPERTIES ENVIRONMENT "${meds_calib_env}")
+         #----- The Python package's own tests (python/tests): the leaf and phenology kernels,     #
+         #      meds.config, and meds.model against meds_main, bit for bit.                         #
+         if (MEDS_BUILD_PYLIB)
+            add_test(NAME python_api
+                     COMMAND ${Python3_EXECUTABLE} -m pytest -q -p no:cacheprovider
+                             ${CMAKE_CURRENT_SOURCE_DIR}/python/tests)
+            set_tests_properties(python_api PROPERTIES ENVIRONMENT
+                                 "PYTHONDONTWRITEBYTECODE=1;PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/python;MEDS_LIB=$<TARGET_FILE:meds_py>;MEDS_MAIN=$<TARGET_FILE:meds_main>")
+         endif()
       else()
          message(STATUS "MEDS: prepare_flux_tower tests skipped (${Python3_EXECUTABLE} lacks numpy, pandas, "
                         "netCDF4, pytest or tomli)")

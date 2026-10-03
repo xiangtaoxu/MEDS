@@ -15,9 +15,11 @@ Python:
                 print(step.date, run.total_agb, run.soil_carbon)
 
 ``Run.step`` calls the same ``driver_step`` the executable calls, so a Python-driven run
-and a ``meds_main`` run of the same config produce byte-identical output. Importing this
-sub-module loads the shared library; ``import meds`` alone does not.
+and a ``meds_main`` run of the same config produce byte-identical output. ``run(config)``
+runs a config to its end, and ``python -m meds.model CONFIG`` does that from the shell in
+place of ``meds_main CONFIG``. ``meds.config`` reads and changes the config files. Importing
+this sub-module loads the shared library; ``import meds`` alone does not.
 """
-from ._run import Run, StepInfo
+from ._run import COMPLETED, Run, StepInfo, run
 
-__all__ = ["Run", "StepInfo"]
+__all__ = ["COMPLETED", "Run", "StepInfo", "run"]

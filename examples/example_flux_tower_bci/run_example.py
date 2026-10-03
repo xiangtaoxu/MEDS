@@ -87,7 +87,7 @@ def main(argv=None):
              "--out", os.path.join(CALIB, "growth_resp_monthly.csv")])
         work = os.path.join(CALIB, f"run_{args.variant}")
         run([py, CALIBRATE_FAST, "fit", "--site", "calibration.toml", "--variant", args.variant, "--work", work,
-             "--meds-main", args.meds_main, "--pool", "local", "--workers", str(args.workers)])
+             "--runner", args.meds_main, "--pool", "local", "--workers", str(args.workers)])
         run([py, CALIBRATE_FAST, "write-calibrated", "--site", "calibration.toml", "--variant", args.variant,
              "--fit", os.path.join(work, "fit.json"), "--out", CALIB])
         with open(os.path.join(work, "fit.json")) as src, \

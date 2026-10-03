@@ -16,9 +16,12 @@ Commands (each reads the site declaration, e.g. examples/example_flux_tower_bci/
   worker          a node's worker for --pool queue (started inside the Slurm allocation)
   smoke           the CTest smoke test: one Jacobian column on a short window, a repeated trial
 
+Trials run through MEDS's Python API (`python -m meds.model`, which needs libmeds.so) unless
+--runner names a meds_main executable; the two give the same output, bit for bit.
+
 Usage:
   calibrate_fast.py fit --site calibration.toml --variant interception_off --work runs/cal \
-      --meds-main build-ifx/meds_main --pool local --workers 40
+      --pool local --workers 40
 """
 from __future__ import annotations
 
@@ -37,16 +40,21 @@ import numpy as np
 import pandas as pd
 
 HERE = Path(__file__).resolve().parent
+ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
+#----- the meds package of this source tree: meds.config here, meds.model in the trials this starts
+sys.path.insert(0, str(ROOT / "python"))
+os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT / "python"),
+                                                        os.environ.get("PYTHONPATH")]))
 
 import fit as F                      # noqa: E402
 import residuals as R                # noqa: E402
 import states as S                   # noqa: E402
-import tomlio                        # noqa: E402
 import tower as TW                   # noqa: E402
 import trials as T                   # noqa: E402
 from pool import make_pool, worker   # noqa: E402
 from registry import SIGMA_U, load_registry, resolve_defaults   # noqa: E402
+from meds.config import RunConfig, load_toml, read_record        # noqa: E402
 
 
 # ------------------------------------------------------------------------------------------------
@@ -56,13 +64,15 @@ class Site:
     def __init__(self, path, variant=None):
         self.path = Path(path).resolve()
         self.dir = self.path.parent
-        self.decl = tomlio.load(self.path)
+        self.decl = load_toml(self.path)
         d = self.decl
         b = d["base"]
-        self.main_path = self._p(b["main"])
-        self.pft_path = self._p(b["pft"])
-        self.base_main = T.absolutize(tomlio.load(self.main_path), self.main_path.parent)
-        self.base_pft = tomlio.load(self.pft_path)
+        if "pft" in b:
+            raise SystemExit("[base].pft is not read: the PFT file is the one the main file names "
+                             "in [init].pft_config")
+        #----- the base configuration: the main file and the PFT file it names, inputs made absolute
+        self.base = RunConfig.load(self._p(b["main"]))
+        self.main_path, self.pft_path = self.base.path, self.base.pft_path
         self.registry_path = self._p(b["registry"])
         self.growth_resp_path = self._p(b["growth_resp"]) if b.get("growth_resp") else None
         self.variant = variant
@@ -101,7 +111,7 @@ class Site:
         only = self.fitcfg.get("keys")
         if only:
             ps = [p for p in ps if p.name in only]
-        return resolve_defaults(ps, self.base_main, self.base_pft, record)
+        return resolve_defaults(ps, self.base, record)
 
 
 def log_to(path):
@@ -136,7 +146,7 @@ def specs_for(site: Site, windows, obs, fok, log=print):
     return out
 
 
-def run_chains(site, params, theta, root, pool, exe, log, windows=None):
+def run_chains(site, params, theta, root, pool, runner, log, windows=None):
     windows = site.windows if windows is None else windows
     states, errs, threads = {}, [], []
 
@@ -146,8 +156,8 @@ def run_chains(site, params, theta, root, pool, exe, log, windows=None):
             return
         try:
             log(f"chain {name}: {len(ws)} windows from {site.chains[name]:%Y-%m-%d}")
-            states.update(S.run_chain(name, site.chains[name], ws, site.base_main, site.base_pft,
-                                      params, theta, root, pool, exe, site.overrides))
+            states.update(S.run_chain(name, site.chains[name], ws, site.base, params, theta, root,
+                                      pool, runner, site.overrides))
         except Exception as e:           # noqa: BLE001 -- reported below
             errs.append(e)
     for name in site.chains:
@@ -161,30 +171,26 @@ def run_chains(site, params, theta, root, pool, exe, log, windows=None):
     return states
 
 
-def base_record(site, work, pool, exe, log):
+def base_record(site, work, pool, runner, log):
     """Run one short trial at the base configs to read the parameter record: the defaults of keys
     the base TOML leaves to the model."""
     rdir = work / "record"
     rec_csv = rdir / "out" / f"{T.PREFIX}_parameters.csv"
     if not rec_csv.exists():
-        rdir.mkdir(parents=True, exist_ok=True)
-        (rdir / "out").mkdir(exist_ok=True)
-        main, pft = tomlio.clone(site.base_main), tomlio.clone(site.base_pft)
-        for k, v in site.overrides.items():
-            tomlio.deep_set(main, k, v)
-        (rdir / "pft.toml").write_text(tomlio.dumps(pft))
+        cfg = T.with_params(site.base, [], [], site.overrides)
         w = site.windows[0]
         for k, v in {"run.start_time": T.stamp(w.start), "run.end_time": T.stamp(w.start + dt.timedelta(days=1)),
-                     "run.slow_on": False, "run.n_threads": 1, "init.pft_config": str(rdir / "pft.toml"),
+                     "run.slow_on": False, "run.n_threads": 1,
                      "state.write_state": False, "output.enabled": True, "output.dir": str(rdir / "out"),
                      "output.prefix": T.PREFIX, "output.daily.enabled": False, "output.fast.enabled": False,
                      "output.monthly.enabled": False, "output.annual.enabled": False}.items():
-            tomlio.deep_set(main, k, v)
-        tomlio.write(rdir / "main.toml", main)
+            cfg.set(k, v)
+        (rdir / "out").mkdir(parents=True, exist_ok=True)
+        main = cfg.write(rdir)
         from pool import Task
         log("reading the parameter record from a one-day base run")
-        pool.run([Task("record", [exe, str(rdir / "main.toml")], str(rdir), str(rdir / "run.log"), 3600)])
-    return T.read_record(rec_csv, rdir / "main.toml", rdir / "pft.toml")
+        pool.run([Task("record", T.command(runner, main), str(rdir), str(rdir / "run.log"), 3600)])
+    return read_record(rec_csv, {rdir / "main.toml": "main", rdir / "pft.toml": "pft"})
 
 
 # ------------------------------------------------------------------------------------------------
@@ -255,17 +261,17 @@ def cmd_growth_resp(args):
 def setup_model(site, args, work, pool, log, windows=None, params=None, theta=None, states=None):
     obs, fok = observations(site)
     windows = site.windows if windows is None else windows
-    record = base_record(site, work, pool, args.meds_main, log)
+    record = base_record(site, work, pool, args.runner, log)
     params = site.params(record) if params is None else params
     theta = np.array([p.default for p in params]) if theta is None else theta
     if states is None:
-        states = run_chains(site, params, theta, work / "chains", pool, args.meds_main, log, windows)
+        states = run_chains(site, params, theta, work / "chains", pool, args.runner, log, windows)
     specs = specs_for(site, windows, obs, fok, log)
     gr = R.load_growth_resp(site.growth_resp_path) if site.growth_resp_path and site.growth_resp_path.exists() else None
     if gr is None:
         log("note: no growth-respiration climatology; night NEE is compared without it")
-    model = F.Model(params, windows, specs, states, site.base_main, site.base_pft, site.overrides,
-                    args.meds_main, pool, work / "trials", site.tower.utc_offset_h, gr,
+    model = F.Model(params, windows, specs, states, site.base, site.overrides,
+                    args.runner, pool, work / "trials", site.tower.utc_offset_h, gr,
                     float(site.fitcfg.get("timeout", 900)), args.keep_netcdf, log=log)
     return model, params, theta, obs, fok
 
@@ -283,19 +289,21 @@ def cmd_check(args):
     log(f"base: {model.n_trials} trials, {time.time() - t0:.1f} s wall, median trial "
         f"{np.median(model.seconds):.1f} s; Phi_data = {float(r @ r):.6g} over {len(r)} rows")
     # G2: the same parameters give byte-identical output
-    tdir = T.build_trial(site.base_main, site.base_pft, params, theta, cal[0], model.states[cal[0].name],
+    tdir = T.build_trial(site.base, params, theta, cal[0], model.states[cal[0].name],
                          work / "repeat", site.overrides)
     from pool import Task
-    pool.run([Task("repeat", T.command(args.meds_main, tdir), str(tdir), str(tdir / "run.log"), 3600)])
+    pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
+                   str(tdir / "run.log"), 3600)])
     df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
-    df1 = T.load_series(T.build_trial(site.base_main, site.base_pft, params, theta, cal[0],
+    df1 = T.load_series(T.build_trial(site.base, params, theta, cal[0],
                                       model.states[cal[0].name], work / "trials", site.overrides))
     same = all(np.array_equal(df1[v].values, df2[v].values) for v in T.TRIAL_VARIABLES)
     log(f"G2 repeat trial byte-identical: {same}")
     # G1: the stand is identical at the start and the end of a trial
-    gdir = T.build_trial(site.base_main, site.base_pft, params, theta, cal[0], model.states[cal[0].name],
+    gdir = T.build_trial(site.base, params, theta, cal[0], model.states[cal[0].name],
                          work / "g1", site.overrides, write_state=True)
-    pool.run([Task("g1", T.command(args.meds_main, gdir), str(gdir), str(gdir / "run.log"), 3600)])
+    pool.run([Task("g1", T.command(args.runner, gdir / "main.toml"), str(gdir),
+                   str(gdir / "run.log"), 3600)])
     g1 = stand_unchanged(model.states[cal[0].name], sorted((gdir / "out").glob(f"{T.PREFIX}-S-*.nc"))[-1])
     log(f"G1 stand identical at the trial's start and end: {g1['pass']} {g1['differ']}")
     same = same and g1["pass"]
@@ -338,12 +346,13 @@ def cmd_smoke(args):
     J, smooth, failed = F.jacobian(prob, u0, r0, log=log)
     moved = bool(np.any(J[:, 0])) and not failed
     log(f"Jacobian column for {key}: |J| = {np.linalg.norm(J[:, 0]):.4g}, smoothness {smooth[0]:.3f}")
-    tdir = T.build_trial(site.base_main, site.base_pft, params, theta, w, model.states[w.name],
+    tdir = T.build_trial(site.base, params, theta, w, model.states[w.name],
                          work / "repeat", site.overrides)
     from pool import Task
-    pool.run([Task("repeat", T.command(args.meds_main, tdir), str(tdir), str(tdir / "run.log"), 3600)])
+    pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
+                   str(tdir / "run.log"), 3600)])
     df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
-    df1 = T.load_series(T.build_trial(site.base_main, site.base_pft, params, theta, w,
+    df1 = T.load_series(T.build_trial(site.base, params, theta, w,
                                       model.states[w.name], work / "trials", site.overrides))
     same = all(np.array_equal(df1[v].values, df2[v].values) for v in T.TRIAL_VARIABLES)
     log(f"repeat byte-identical: {same}; Jacobian column moves the output: {moved}")
@@ -419,7 +428,7 @@ def cmd_fit(args):
     n_refresh = int(fc.get("refresh_iter", 5))
     if n_refresh > 0:
         log("refreshing the state chains with the MAP")
-        model.states = run_chains(site, params, theta_map, work / "chains", pool, args.meds_main, log)
+        model.states = run_chains(site, params, theta_map, work / "chains", pool, args.runner, log)
         best = F.lm(prob, best["u"], n_refresh, float(fc.get("rtol", 1e-3)), log=log, label="refresh")
         theta_map = prob.theta(best["u"])
 
@@ -524,7 +533,7 @@ def cmd_analyze(args):
         for k, uk in zip(keep, best["u"]):
             theta_refresh[k] = float(params[k].to_theta(uk))
     if site.fitcfg.get("refresh_iter", 5) > 0:
-        model.states = run_chains(site, params, theta_refresh, work / "chains", pool, args.meds_main, log)
+        model.states = run_chains(site, params, theta_refresh, work / "chains", pool, args.runner, log)
     model.windows = [w for w in site.windows if w.role == "cal"]
     if "cost_default" not in report:           # the default, on the default chain's states
         everything = F.Problem(model, list(range(len(params))), theta0.copy())
@@ -656,15 +665,16 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    def common(p, needs_exe=True):
+    def common(p):
         p.add_argument("--site", required=True, help="the site declaration (calibration.toml)")
         p.add_argument("--variant", default=None)
         p.add_argument("--work", required=True, help="the working directory (trials, states, results)")
-        if needs_exe:
-            p.add_argument("--meds-main", required=True)
-            p.add_argument("--pool", choices=("local", "queue"), default="local")
-            p.add_argument("--workers", type=int, default=os.cpu_count())
-            p.add_argument("--keep-netcdf", action="store_true")
+        p.add_argument("--runner", default=T.PYTHON_RUNNER,
+                       help='how a trial runs: "python" (the Python API, python -m meds.model; the '
+                            'default) or the path of a meds_main executable')
+        p.add_argument("--pool", choices=("local", "queue"), default="local")
+        p.add_argument("--workers", type=int, default=os.cpu_count())
+        p.add_argument("--keep-netcdf", action="store_true")
     p = sub.add_parser("select-windows")
     p.add_argument("--site", required=True)
     p.set_defaults(func=cmd_select_windows)
@@ -692,6 +702,9 @@ def main(argv=None):
     p.add_argument("--slots", type=int, default=os.cpu_count())
     p.set_defaults(func=lambda a: worker(a.queue, a.slots) or 0)
     args = ap.parse_args(argv)
+    #----- a trial runs in its own directory, so an executable's path must not be relative
+    if getattr(args, "runner", T.PYTHON_RUNNER) != T.PYTHON_RUNNER:
+        args.runner = str(Path(args.runner).resolve())
     return args.func(args)
 
 

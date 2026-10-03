@@ -2,13 +2,8 @@
 # CALIBRATED by scripts/calibrate_fast (variant interception_off) from meds_config_eval.toml.
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value):
-#   leaf_physiology.ds_vcmax       651.732  (650)
-#   aerodynamics.z0m_ratio         0.0510911  (0.13)
-#   aerodynamics.d_ratio           0.663277  (0.63)
-#   aerodynamics.canopy_freeboard  2.02569  (5)
-#   aerodynamics.ustmin            0.156304  (0.1)
-#   soil.dsl_dmax                  0.042051  (0.015)
-#   hydraulics.root_beta           0.148875  (0.0183156)
+#   aerodynamics.z0m_ratio         0.055768  (0.13)
+#   soil.dsl_dmax                  0.0483082  (0.015)
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
 #   trait_dynamics.trait_plasticity_on true
 #   fast.canopy_water_on           false
@@ -144,7 +139,7 @@ ea_rd     = 46390.0
 hd_vcmax  = 200000.0
 hd_jmax   = 200000.0
 hd_rd     = 200000.0
-ds_vcmax  = 651.732
+ds_vcmax  = 650.0
 ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209
@@ -197,13 +192,7 @@ bottom_bc = "dirichlet"
 deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08
 
 [aerodynamics]
-z0m_ratio = 0.0510911   # set by calibrate_fast
-d_ratio = 0.663277   # set by calibrate_fast
-canopy_freeboard = 2.02569   # set by calibrate_fast
-ustmin = 0.156304   # set by calibrate_fast
+z0m_ratio = 0.055768   # set by calibrate_fast
 
 [soil]
-dsl_dmax = 0.042051   # set by calibrate_fast
-
-[hydraulics]
-root_beta = 0.148875   # set by calibrate_fast
+dsl_dmax = 0.0483082   # set by calibrate_fast

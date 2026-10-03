@@ -89,6 +89,9 @@ leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (spheric
 leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+# OPTIONAL carbon traits; absent, each is 0 for every PFT.
+# storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
+# retained_carbon_fraction = [0.0, 0.0, 0.0]       # [--] shed leaf carbon kept (resorbed) rather than littered
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
@@ -98,6 +101,22 @@ evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppre
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
+# OPTIONAL per-PFT plant hydraulics. Each overrides the [hydraulics] value of the main file for the
+# PFTs it lists, so one trait can be made per-PFT without restating the others; absent, every PFT
+# takes the [hydraulics] value (shown here).
+# leaf_pi0           = [-1.5, -1.5, -1.5]          # [MPa] leaf osmotic potential at full turgor
+# leaf_elastic_mod   = [12.0, 12.0, 12.0]          # [MPa] leaf bulk elastic modulus
+# leaf_apoplast_frac = [0.30, 0.30, 0.30]          # [--]  leaf apoplastic fraction
+# leaf_water_sat     = [2.0, 2.0, 2.0]             # [kg H2O/kgC] leaf saturated water content
+# wood_pi0           = [-1.0, -1.0, -1.0]          # [MPa] wood osmotic potential at full turgor
+# wood_elastic_mod   = [8.0, 8.0, 8.0]             # [MPa] wood bulk elastic modulus
+# wood_apoplast_frac = [0.20, 0.20, 0.20]          # [--]  wood apoplastic fraction
+# wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
+# wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
+# wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
+# k_plant_max        = [6.0e-4, 6.0e-4, 6.0e-4]    # [kg/s/MPa/m2 leaf] whole-plant conductance
+# wood_kmax          = [8.0, 8.0, 8.0]             # [kg/m/s/MPa] sapwood specific conductivity
+# vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
@@ -175,4 +194,13 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # bare_snap_frac      = [0.02, 0.02, 0.02]         # [--]    below this leaf fraction the canopy snaps bare
 #
 # The WATER / HYDRO / LIGHT cue parameters are OPTIONAL (those cues are opt-in via the masks);
-# absent keys keep the table defaults. See docs/configuration.md for the full list.
+# absent keys keep the defaults shown. See docs/configuration.md for what each does.
+# water_off_threshold = [0.2, 0.2, 0.2]            # [--]    WATER cue: available soil water at which shedding is full
+# water_on_threshold  = [0.5, 0.5, 0.5]            # [--]    WATER cue: available soil water at which flushing is full
+# water_window        = [10.0, 10.0, 10.0]         # [day]   WATER cue: soil-water running-mean window
+# water_width         = [0.1, 0.1, 0.1]            # [--]    WATER cue: logistic transition width
+# low_psi_threshold   = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: dry days below the turgor-loss point to full shed
+# high_psi_threshold  = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: wet days to full flush
+# light_on_threshold  = [200.0, 200.0, 200.0]      # [W/m2]  LIGHT cue: radiation at which shedding starts
+# light_width         = [50.0, 50.0, 50.0]         # [W/m2]  LIGHT cue: shedding transition width
+# light_window        = [10.0, 10.0, 10.0]         # [day]   LIGHT cue: radiation running-mean window

@@ -232,3 +232,20 @@ class Run:
             return "<Run closed>"
         return (f"<Run {self.date} step={self.istep} "
                 f"cohorts={self.n_cohort} patches={self.n_patch}>")
+
+
+#: the line meds_main prints when a run ends well; a tool that checks a run's log looks for it
+COMPLETED = " OK: simulation completed, area conserved, no NaNs."
+
+
+def run(config, verbose=True):
+    """Run a config from its start to its ``end_time``, as the ``meds_main`` executable does: the
+    same steps, the same output files and the same closing line on stdout. Returns the number of
+    slow steps. A NaN in the state, an impossible soil-carbon pool or a site whose area is not
+    conserved raises RuntimeError, where the executable would stop."""
+    with Run(config, verbose=verbose) as r:
+        n = r.run_to_end()
+        r.finalize()
+    if verbose:
+        print(COMPLETED, flush=True)
+    return n

@@ -225,11 +225,17 @@ in [`MEDS_FAST_CALIBRATION_PLAN.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_
   | daytime GPP | 1.5 µmol m⁻² s⁻¹ + 15 % |
   | night NEE at u\* ≥ 0.2 m s⁻¹, the stand's growth respiration added to the model's | 2 µmol m⁻² s⁻¹ |
   | u\* | 0.1 m s⁻¹ + 20 % |
-- **The keys.** The registry has 28 keys with interception off. The first Jacobian fixed 8 of them
-  at their defaults, 6 that the tower cannot inform and 2 that respond roughly
-  (`wood_psi50`, `leaf_pi0`), and the fit estimated the other 20.
+- **The keys.** The registry holds the 11 keys a ten-day window can set: the leaves' NIR reflectance
+  and transmittance, the clumping and the leaf angle, `vcmax25`, the stomatal `g1` and `g0`, the
+  roughness length, the leaf width, the soil's dry-layer depth and the leaf respiration ratio. With
+  interception on it adds the leaf-film capacity and the interception coefficient. The registry's
+  header, and the plan's §14, list the 17 keys left at their defaults and why: the tower cannot
+  inform them, they act through soil water a ten-day window does not draw down, they repeat another
+  key, they are a numerical floor, or they are leaf biochemistry the tower's GPP cannot tell apart
+  from `vcmax25`.
 - **The fit.** Levenberg–Marquardt with Gaussian priors on the transformed parameters, from three
-  starts that reach the same objective within 0.3 %.
+  starts that reach the same objective within 0.2 %. Every trial runs through MEDS's Python API
+  (`python -m meds.model`).
 - **Two variants.** The fit was run with canopy interception off, as in the default run, and on.
   The shipped set is interception off.
 
@@ -240,58 +246,52 @@ and the evaporative fraction is scored on 77 days.
 | target | default | calibrated, interception off | default, interception on | calibrated, interception on |
 |---|---|---|---|---|
 | albedo | 5.13 | **1.55** | 5.13 | 1.56 |
-| u\* | 2.33 | **0.80** | 2.30 | 0.77 |
-| GPP | 2.63 | **1.29** | 2.61 | 1.39 |
-| evaporative fraction | 5.10 | **2.96** | 4.50 | 2.93 |
-| night NEE | 1.56 | **1.07** | 1.56 | 1.06 |
-| net radiation | 1.60 | **1.26** | 1.60 | 1.28 |
-| H | 3.09 | **2.56** | 2.92 | 2.45 |
-| LE | 1.68 | **1.50** | 1.81 | 1.61 |
-| upwelling longwave | 2.87 | **2.68** | 2.97 | 2.75 |
-| objective, validation | 68,018 | **29,790** | 66,985 | 30,093 |
-| objective, calibration | 70,094 | **25,971** | 69,732 | 25,925 |
+| u\* | 2.32 | **0.80** | 2.30 | 0.79 |
+| GPP | 2.63 | **1.43** | 2.60 | 1.47 |
+| evaporative fraction | 5.10 | **3.19** | 4.50 | 2.99 |
+| night NEE | 1.56 | **1.06** | 1.56 | 1.06 |
+| net radiation | 1.60 | **1.28** | 1.60 | 1.29 |
+| H | 3.09 | **2.60** | 2.92 | 2.45 |
+| LE | 1.68 | **1.56** | 1.81 | 1.68 |
+| upwelling longwave | 2.87 | **2.68** | 2.97 | 2.76 |
+| objective, validation | 68,018 | **30,969** | 66,985 | 30,816 |
+| objective, calibration | 70,101 | **27,015** | 69,762 | 27,076 |
 
 **What the fit changed** (interception off). The σ ratio compares the posterior and the prior; a small
 one means the tower pins the key.
 
 | key | default | calibrated | posterior / prior σ |
 |---|---|---|---|
-| `stomatal_g0` | 0.01 | 0.028 | 0.05 |
-| `ds_vcmax` | 650 | 652 | 0.07 |
-| `leaf_width` [m] | 0.04 | 0.042 | 0.14 |
-| `d_ratio` | 0.63 | 0.66 | 0.17 |
-| `wstress_sref_stomata` | 2 | 0.83 | 0.17 |
-| `leaf_angle_mean` [°] | 45 | 58.4 | 0.18 |
-| `root_beta` | 0.018 | 0.149 | 0.36 |
-| `leaf_reflect_nir` | 0.45 | 0.34 | 0.40 |
-| `ustmin` [m s⁻¹] | 0.10 | 0.156 | 0.59 |
-| `leaf_transmit_nir` | 0.25 | 0.17 | 0.78 |
-| `theta_j` | 0.90 | 0.71 | 0.93 |
-| `dsl_dmax` | 0.015 | 0.042 | 0.97 |
+| `stomatal_g0` [mol m⁻² s⁻¹] | 0.01 | 0.033 | 0.05 |
+| `leaf_angle_mean` [°] | 45 | 57.3 | 0.11 |
+| `leaf_transmit_nir` | 0.25 | 0.23 | 0.11 |
+| `leaf_width` [m] | 0.04 | 0.044 | 0.14 |
 | `vcmax25` [µmol m⁻² s⁻¹] | 45 | **25.0**, the range's floor | — |
-| `jmax_vcmax_ratio` | 1.7 | **1.40**, floor | — |
-| `rd_vcmax_ratio` | 0.015 | **0.0081**, floor | — |
-| `stomatal_g1` | 3 | **5.98**, ceiling | — |
+| `rd_vcmax_ratio` | 0.015 | **0.0080**, floor | — |
+| `leaf_reflect_nir` | 0.45 | **0.30**, floor | — |
+| `z0m_ratio` | 0.13 | **0.056**, floor | — |
+| `stomatal_g1` [kPa^0.5] | 3 | **5.98**, ceiling | — |
 | `leaf_clumping` | 0.8 | **1.00**, ceiling | — |
-| `canopy_freeboard` [m] | 5 | **2.03**, floor | — |
-| `z0m_ratio` | 0.13 | **0.051**, floor | — |
-| `leaf_transmit_vis` | 0.05 | **0.079**, ceiling | — |
+| `dsl_dmax` [m] | 0.015 | **0.048**, ceiling | — |
 
-- **Eight keys end at a bound of their range, and that is a finding, not a result.** The fit wants
-  more than a plausible value gives, so part of each misfit is in the model's structure:
-  - the photosynthetic capacity is taken to its floor to lower GPP;
-  - `stomatal_g1`, the clumping and the canopy freeboard are taken to their limits to move energy
+- **Seven of the eleven keys end at a bound of their range, and that is a finding, not a result.**
+  The fit wants more than a plausible value gives, so part of each misfit is in the model's
+  structure:
+  - the photosynthetic capacity and the leaf respiration are taken to their floors to lower GPP and
+    the night's respiration;
+  - `stomatal_g1`, the clumping and the soil's dry layer are taken to their limits to move energy
     from H to LE;
-  - the roughness length is taken to its floor to lower u\*.
+  - the NIR reflectance is taken to its floor to lower the albedo, and the roughness length to its
+    floor to lower u\*.
 
   The fit's report names the target that pushes each key against its bound (`fit_*.json`, gate
   G5). At a bound the posterior says nothing, so its σ is left out.
 - **The covariance holds only near the estimate.** The quadratic predicts a rise of 1 in the
-  objective at ±1σ along each of the three leading directions. The rises measured are 0.5 to 11.5,
-  and along one direction the objective falls by 3.1. Those directions are made of the at-bound
-  keys, where the estimate sits against a wall rather than in a minimum.
-- **The collinear pairs:** NIR reflectance with NIR transmittance (ρ = −0.99), NIR reflectance with
-  the leaf angle (0.8), and the roughness length with the displacement height (−0.66).
+  objective at ±1σ along each of the three leading directions. The rises measured are 1.9 to 10.8.
+  Those directions are made of the at-bound keys (the clumping, `vcmax25`, the respiration ratio,
+  the dry layer), where the estimate sits against a wall rather than in a minimum.
+- **The NIR reflectance and transmittance are collinear** (−0.92 at the estimate, −0.996 at the
+  default): the albedo sees their sum.
 
 **The gates** (plan §8):
 
@@ -299,11 +299,11 @@ one means the tower pins the key.
 |---|---|---|
 | G1 | the stand is identical at a trial's start and end | pass |
 | G2 | a repeated trial is identical, byte for byte | pass |
-| G3 | no fitted key has a dead Jacobian column | pass; two rough keys held at their defaults |
-| G4 | the validation objective falls, and no target's error rises by more than 10 % | pass: every target's error falls, by 7 % (upwelling longwave) to 70 % (albedo) |
-| G5 | keys near a bound are reported | the 8 keys above |
-| G6 | the starts agree within 5 % | 0.3 % |
-| G7 | the five-year run with the slow loop closes its budgets | pass for interception off; **fails for interception on** (53 water-budget breaches, #333), which is why that set is not shipped |
+| G3 | no fitted key has a dead Jacobian column | pass; with interception on, `intercept_k` responds roughly and is held at its default |
+| G4 | the validation objective falls, and no target's error rises by more than 10 % | pass: every target's error falls, by 7 % (LE, upwelling longwave) to 70 % (albedo) |
+| G5 | keys near a bound are reported | the 7 keys above |
+| G6 | the starts agree within 5 % | 0.2 % |
+| G7 | the five-year run with the slow loop closes its budgets | pass for both variants. The shipped set is interception off, as the default run is; with interception on, H is 2 W m⁻² lower over five years and April's GPP 0.5 lower |
 
 ### The calibrated run over the five years
 
@@ -316,49 +316,35 @@ in. Each opens with a header that lists the keys the fit set and the base file's
 
 | over the tower's measured hours | tower | default | calibrated |
 |---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.70 | **6.83** |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.17 | −3.14 |
-| latent heat [W m⁻²] | 75.5 | 56.4 | **81.9** |
-| sensible heat [W m⁻²] | 32.4 | 77.3 | 69.1 |
-| net radiation [W m⁻²] | 136.3 | 120.6 | **135.2** |
-| albedo (695 days) | 0.13 | 0.26 | **0.17** |
-| u\* at night / at midday [m s⁻¹] | 0.41 / 0.68 | 0.86 / 1.08 | **0.50 / 0.67** |
-| midday GPP, LE, H | 21.7, 237, 163 | 28.5, 161, 248 | 18.2, 232, 231 |
-| stand at the end: LAI, AGB [kgC m⁻²] | | 5.64, 18.1 | 5.62, 17.0 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.70 | **7.56** |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.17 | −3.63 |
+| latent heat [W m⁻²] | 75.5 | 56.4 | **80.5** |
+| sensible heat [W m⁻²] | 32.4 | 77.3 | 70.2 |
+| net radiation [W m⁻²] | 136.3 | 120.6 | **135.0** |
+| albedo, at incoming shortwave above 200 W m⁻² (1,388 days) | 0.129 | 0.180 | **0.121** |
+| u\* at night / at midday [m s⁻¹] | 0.41 / 0.68 | 0.86 / 1.08 | **0.50 / 0.68** |
+| midday GPP, LE, H | 21.7, 237, 163 | 28.5, 161, 248 | 20.0, 226, 234 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | 5.64, 18.1 | 5.77, 17.5 |
 
-- **The budgets close.** Whole-site energy and water have no failed check in 3.05 million, the soil
-  column's per-layer check reads 4e-13 kg m⁻², and the slow ledger closes. The run takes 7 minutes.
+- **The budgets close.** Whole-site energy and water have no failed check in 3.0 million, the soil
+  column's per-layer check reads 4e-13 kg m⁻², and the slow ledger closes. The run takes 6 minutes.
 - **Net radiation, the albedo, u\*, GPP and LE are now close to the tower.** LE sits above the
   tower's own value by design. The fit's LE is the tower's corrected for closure, and the tower's
   fluxes close only 0.77 of its net radiation.
-- **H is still 37 W m⁻² high.** At midday it is 231 against 163, even with `stomatal_g1` and the
+- **H is still 38 W m⁻² high.** At midday it is 234 against 163, even with `stomatal_g1` and the
   clumping at their limits.
 - **NEE takes up less carbon than the tower does.** The daytime uptake falls with GPP, and the
-  stand grows less: AGB 17.0 kgC m⁻² at the end against 18.1.
-- **The calibrated set is too dry late in the dry season.** April's GPP falls short in three of the
-  five years:
+  stand grows less: AGB 17.5 kgC m⁻² at the end against 18.1.
+- **The late dry season is too dry.** April's GPP falls short in three of the five years:
 
   | April GPP [µmol m⁻² s⁻¹] | 2014 | 2016 (El Niño) | 2017 |
   |---|---|---|---|
   | tower | 6.9 | 6.3 | 7.0 |
-  | calibrated | 5.2 | 3.9 | 5.3 |
-  | calibrated, under the former hard shutdown | 4.3 | 2.9 | 4.8 |
+  | calibrated | 5.6 | 4.1 | 5.8 |
 
-  - **The fit ran under a hard stomatal shutdown.** Until #332 MEDS shut a cohort's stomata for the
-    whole day once its predawn leaf water potential fell below twice its turgor-loss point, and
-    left them open above that. The calibrated set makes the stomata insensitive to drying
-    (`wstress_sref_stomata` 0.83, `stomatal_g1` at its ceiling). The plants kept transpiring until
-    they dried out: predawn potentials reached −21.6 MPa, and in April 2016 the shutdown held 42 %
-    of the cohorts shut.
-  - **The stomata now close gradually.** Since #332 the conductance falls linearly from the
-    turgor-loss point to zero at twice it (`[leaf_physiology].low_water_potential_control`). The
-    plants save water sooner: the lowest predawn potential is −6.8 MPa, cohort-days past twice the
-    turgor-loss point fall from 2.1 % to 0.12 %, and April GPP rises by 0.6–1.0 µmol m⁻² s⁻¹. The
-    default run changes only in the fifth digit.
-  - **The shutdown was also why the two hydraulic keys are rough.** `leaf_pi0` sets the turgor-loss
-    point. `wood_psi50` sets how much conductance the wood keeps as it dries, and so how low the
-    leaf water potential falls. Both moved the step, so the fit held them at their defaults. With
-    the gradual closure a refit can free them; the shipped set predates it.
+  A ten-day window from a fixed state cannot see the soil drying over the dry season, so the fit
+  leaves the water-stress keys at their defaults. Fitting `wstress_sref_stomata` and `root_beta`
+  as well moves April's GPP by less than 0.1 (plan §14.3): the shortfall is not a fast parameter's.
 
 ### Redoing it
 
@@ -368,9 +354,11 @@ python run_example.py --calibrate --workers 40
 
 This runs the default five years, takes the stand's monthly growth respiration from them
 (`calibration/growth_resp_monthly.csv`), runs the fit, and writes `calibration/` anew. The
-interception-off fit ran 19,096 trials. A trial takes 8.5 s on an idle node and 18.6 s on a full
-one, so the fit is about 100 core-hours. On eight 40-core nodes, with the tool's queue pool
-(`--pool queue`, one worker per node), it took 37 minutes. Run the tool directly for a cluster: see
+interception-off fit ran 9,824 trials. A trial takes about 6.5 s on an idle node and 16 s on a full
+one, so the fit is about 45 core-hours of trials. On two 40-core nodes, with the tool's queue pool
+(`--pool queue`, one worker per node), it took 50 minutes. `run_example.py` runs the trials with its
+`meds_main`; the tool itself runs them through the Python API unless `--runner` names an
+executable, and the two give the same numbers. Run the tool directly for a cluster: see
 [`scripts/calibrate_fast/README.md`](../../scripts/calibrate_fast/README.md).
 
 ## Files

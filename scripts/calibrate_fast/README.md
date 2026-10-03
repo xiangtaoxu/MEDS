@@ -10,10 +10,14 @@ Barro Colorado Island is the worked example: [`examples/example_flux_tower_bci/c
 
 - **Trials.** A trial is a 10-day frozen run (`[run].slow_on = false`) restarted from a shared state at
   its window's start, with `[init].reacclimate_traits = true` so a changed trait reaches the cohorts.
-  Its configs are made by parsing the base TOMLs and setting keys, and its directory is named by a
-  hash of them, so a repeated candidate reuses the finished run.
+  Its main and PFT files are the base configuration with keys set, through `meds.config`, and its
+  directory is named by a hash of them, so a repeated candidate reuses the finished run.
+- **Trials run through the Python API.** Each trial is `python -m meds.model main.toml` in its own
+  process, which needs `libmeds.so` (build with `-DMEDS_BUILD_PYLIB=ON`; `MEDS_LIB` names it if it is
+  not in a build directory of this tree). `--runner <path to meds_main>` runs the executable instead.
+  The two give the same output, bit for bit (ctest `python_api`).
 - **Every trial proves what it ran.** After the run, the trial's parameter record
-  (`<prefix>_parameters.csv`, written by `meds_main`) must list every key the trial set, marked as set
+  (`<prefix>_parameters.csv`, written by the model) must list every key the trial set, marked as set
   in the file, with the value written. A missing or defaulted key stops the fit instead of silently
   running the default. A trial that breaches a whole-site budget (a `budget[whole_*]` line with
   `fails` above 0) or does not end with `OK: simulation completed` fails.
@@ -32,16 +36,20 @@ Barro Colorado Island is the worked example: [`examples/example_flux_tower_bci/c
   positive scale). The Jacobian comes from central differences, and all 2k·W trials of a Jacobian run
   at once. Each iteration tries three damping values at once. There are three starts, and a failed
   or timed-out trial rejects its step. `fit.py` has the details.
+- **The keys.** The registry (`parameters.toml`) holds only keys a ten-day window can set: 11, and
+  two more for canopy interception. Its header lists the keys left at their defaults and why (plan
+  §14): the tower cannot inform them, they act through soil water a ten-day window does not draw
+  down, they repeat another key, they are a numerical floor, or they are leaf biochemistry the
+  tower's GPP cannot tell apart from `vcmax25`.
 - **Screening.** The first Jacobian, at the default, gives each key's sensitivity per target, its
   posterior-to-prior σ ratio, the collinear pairs, dead columns (a harness bug) and rough keys. Keys
   the tower cannot inform are fixed at their default.
 - **Rough keys stay at their default** (`[fit].rough_keys = "default"`). A rough key is one whose
-  response over the finite-difference step is not smooth, so a Jacobian cannot steer it. At BCI
-  these were `wood_psi50` and `leaf_pi0`. `rough_keys = "line_search"` sets each by a 1-D search at
-  the MAP instead. At BCI that search found values that fit the 10-day windows better but broke the
-  five-year run's water budget (gate G7, #333), which is why it is not the default. Both BCI keys were
-  rough because they moved the threshold of MEDS's former whole-day stomatal shutdown, since replaced
-  by a linear decline (#332).
+  response over the finite-difference step is not smooth, so a Jacobian cannot steer it; at BCI,
+  `leaf_pi0` is one, which is one reason it is not in the registry. `rough_keys = "line_search"` sets
+  each by a 1-D search at the MAP instead. At BCI that search found values that fit the 10-day
+  windows better but broke the five-year run's water budget (gate G7, #333), which is why it is not
+  the default.
 - **The covariance.** At the MAP, the Laplace covariance weights each target by its effective sample
   size, from the lag-1 autocorrelation of its residuals. A linearity check along the three leading
   directions compares the actual change in the objective at ±1σ with the quadratic prediction.
@@ -54,14 +62,16 @@ Barro Colorado Island is the worked example: [`examples/example_flux_tower_bci/c
 calibrate_fast.py select-windows --site calibration.toml                 # the best-covered windows
 calibrate_fast.py growth-resp --daily "output/eval-D-*.nc" --out calibration/growth_resp_monthly.csv
 calibrate_fast.py check --site calibration.toml --variant interception_off --work runs/check \
-    --meds-main ../../build-ifx/meds_main --workers 8                   # runs, record, G1, G2
-calibrate_fast.py fit   --site calibration.toml --variant interception_off --work runs/off \
-    --meds-main ../../build-ifx/meds_main --workers 40
+    --workers 8                                                         # runs, record, G1, G2
+calibrate_fast.py fit   --site calibration.toml --variant interception_off --work runs/off --workers 40
 calibrate_fast.py analyze --site calibration.toml --variant interception_off --work runs/off \
-    --meds-main ../../build-ifx/meds_main --workers 40                  # redo the post-fit steps
+    --workers 40                                                        # redo the post-fit steps
 calibrate_fast.py write-calibrated --site calibration.toml --variant interception_off \
     --fit runs/off/fit.json --out calibration                           # the configs with the MAP
 ```
+
+Add `--runner ../../build-ifx/meds_main` to `check`, `fit` or `analyze` to run the trials with the
+executable.
 
 `analyze` reruns everything after the iterations from the MAP in `fit.json`, reusing the cached
 trials: the rough keys, the covariance, the linearity check, the validation and the gates. Use it
@@ -80,7 +90,7 @@ touch runs/off/queue/STOP      # the driver writes it too, when the fit ends
 
 Ask Slurm for the memory with `--mem=0` (the whole node). A trial takes up to ~1 GB, and a cluster
 whose default is 1 GB per job kills the workers. A node running a trial on every core runs each
-trial about 2× slower than an idle node does: 18.6 s against 8.5 s at BCI.
+trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 
 ## What `fit` writes (in `--work`)
 
@@ -104,5 +114,4 @@ trial about 2× slower than an idle node does: 18.6 s against 8.5 s at BCI.
 | `residuals.py` | the targets and the residual vector, the effective-sample-size weights |
 | `fit.py` | Levenberg–Marquardt, the Jacobian, screening, the covariance, the linearity check |
 | `pool.py` | the local pool and the directory queue |
-| `tomlio.py` | TOML in and out |
 | `tests/` | unit tests, and a smoke test that runs `meds_main` (ctest `calibrate_fast`) |

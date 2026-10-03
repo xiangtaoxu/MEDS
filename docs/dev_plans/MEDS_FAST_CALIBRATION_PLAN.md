@@ -3,7 +3,9 @@
 **Status:** written 2026-09-29 against `beta` at `522def6`, and revised the same day after the
 owner's decisions (§12). P0d (#327) and P0h (#328) are merged. P0a, P0b, P0c and P0g are #329
 (`feat/fast-calibration-p0`). P1–P3 are #330 (`feat/fast-calibration-tool`), stacked on it, and the
-BCI fit is done. §13 records what the first fit showed and what to change next.
+BCI fit is done. §13 records what the first fit showed and what to change next. §14 (2026-10-01)
+cuts the registry to the 11 keys a ten-day window can set and refits on v0.3.2 through the Python
+API.
 
 **Goal:** a crude, fast, repeatable refinement of the parameters that govern MEDS's sub-daily
 physics, against eddy-covariance data, with the vegetation structure held at its initial state. It
@@ -614,3 +616,113 @@ So the next fit needs:
 - **The LM hit its iteration cap (15)** while still improving by 0.02–1 % per iteration.
 - **Eight of the 20 keys sat at a bound** yet were differenced every iteration: 16 of the 41 trials
   per window per Jacobian.
+
+## 14. The fast set (2026-10-01)
+
+The fit was redone on v0.3.2 (`ce9254d`) with every trial run through the Python API
+(`python -m meds.model`), after three fixes that a v0.3.2 fit needs: `pft.leaf_pi0` and 23 other
+optional keys are listed in the PFT reference (v0.3.2 refused them, so the shipped registry could not
+start), `libmeds.so` computes what `meds_main` computes, and each run in a process writes its own
+parameter record.
+
+### 14.1 The keys a ten-day window can set
+
+The screening at the default (the first Jacobian, 28 keys, 448 trials) on v0.3.2 matches v0.3.1's to
+two digits: the default run's leaves never fall below the turgor-loss point, so the linear decline of
+#335 does not act there. `leaf_pi0` is still rough (smoothness 0.03); `wood_psi50` is smooth now
+(0.35), but the tower cannot inform it. The registry keeps 11 keys (13 with interception on) and
+leaves 17 at their defaults, by five rules:
+
+| rule | keys left out | the screening |
+|---|---|---|
+| the tower cannot inform it (posterior/prior σ ratio 0.9 or more) | `leaf_reflect_vis`, `leaf_transmit_vis`, `k_plant_max`, `wood_psi50`, `psi_wilt`, `stem_resp_factor25`, `root_resp_factor25`, `resp_temp_increase` | 0.94–1.00 |
+| it acts through soil water that a ten-day window does not draw down (§13.3), so a frozen window rewards a value that dries the soil months later | `wstress_sref_stomata`, `root_beta`, `leaf_pi0` (also rough) | 0.32, 0.33, 0.67 |
+| it repeats another key | `d_ratio` (with `z0m_ratio`, correlation −0.996) | 0.59 |
+| a numerical floor or a constant of the canopy-air scheme, not a property of the canopy | `ustmin`, `canopy_freeboard` | 0.68, 0.58 |
+| leaf biochemistry (§4.6) that the tower's GPP cannot tell apart from `vcmax25` | `jmax_vcmax_ratio`, `theta_j`, `ds_vcmax` | 0.71, 0.69, 0.09 |
+
+`ds_vcmax` is informed (0.09), but every fit leaves it at 652 against 650. The 11 are the four
+canopy optics (`leaf_reflect_nir`, `leaf_transmit_nir`, `leaf_clumping`, `leaf_angle_mean`),
+`vcmax25`, `stomatal_g1` and `stomatal_g0`, `z0m_ratio`, `leaf_width`, `dsl_dmax` and
+`rd_vcmax_ratio`; interception on adds `dewmx` and `intercept_k`.
+
+### 14.2 Three fits on v0.3.2, interception off
+
+A is the 28-key registry as shipped, B the 11-key set, C the 11 plus the two water-stress keys.
+Core-hours are the job's nodes times its wall time (40 cores a node).
+
+| | v0.3.1 fit (shipped until now) | A: 28 keys | B: 11 keys | C: 13 keys |
+|---|---|---|---|---|
+| keys fitted | 20 | 20 (`max_free`) | 11 | 13 |
+| trials, failed | 19,096, 2 | 18,504, 0 | **9,824**, 0 | 11,592, 1 |
+| core-hours | 197 | 151 | **66** | 75 |
+| objective, calibration windows | 70,094 → 25,971 | 70,101 → 26,157 | 70,101 → 27,015 | 70,101 → 27,074 |
+| objective, validation windows | 68,018 → 29,790 | 68,018 → 29,862 | 68,018 → 30,969 | 68,018 → 30,639 |
+| start spread (G6) | 0.3 % | 0.4 % | 0.2 % | 0.1 % |
+| keys at a bound | 8 | 8 | 7 | 5 |
+
+Validation scores (RMSE in units of σ; the default's in the first column):
+
+| target | default | A | B | C |
+|---|---|---|---|---|
+| albedo | 5.13 | 1.57 | 1.55 | 1.59 |
+| u\* | 2.32 | 0.80 | 0.80 | 0.80 |
+| GPP | 2.63 | **1.22** | 1.43 | 1.44 |
+| evaporative fraction | 5.10 | 3.03 | 3.19 | **3.02** |
+| night NEE | 1.56 | 1.06 | 1.06 | 1.06 |
+| net radiation | 1.60 | 1.26 | 1.28 | 1.27 |
+| H | 3.09 | 2.56 | 2.60 | 2.58 |
+| LE | 1.68 | 1.52 | 1.56 | 1.52 |
+| upwelling longwave | 2.87 | 2.68 | 2.68 | 2.69 |
+
+- **A reproduces the v0.3.1 fit's objective** within 1 %, with seven of the same eight keys at a
+  bound (`theta_j` in place of `leaf_transmit_vis`, which A leaves fixed). The keys the tower informs
+  least move most: `leaf_transmit_nir` 0.22 against 0.17, `root_beta` 0.28 against 0.15 (σ ratio
+  0.93). #335 and the efficiency sweep do not change what the fit finds.
+- **Dropping 17 keys costs 4 % of the validation objective and half the trials.** The loss is in GPP,
+  where A takes `jmax_vcmax_ratio` and `theta_j` to their floors to lower it, and in the evaporative
+  fraction, where A uses the two water-stress keys.
+- **C wins the evaporative fraction back,** with deeper roots (`root_beta` 0.30, near its ceiling and
+  uninformed: σ ratio 0.98) and gentler stress (`wstress_sref_stomata` 1.41).
+- **B's structure shows at the bounds:** `vcmax25`, `rd_vcmax_ratio` and `leaf_reflect_nir` at their
+  floors, `stomatal_g1`, `leaf_clumping` and `dsl_dmax` at their ceilings, `z0m_ratio` at its floor.
+  The fit still wants less GPP than a Vcmax25 of 25 gives and more LE than a g1 of 6 gives (§13.1).
+- **B's screening finds the NIR reflectance and transmittance collinear (−0.996),** as `d_ratio`
+  and `z0m_ratio` were in the 28-key screening: the albedo sees their sum. One of them is the next
+  key to drop.
+
+### 14.3 Five years with the slow loop
+
+Each calibrated set over the five tower years, through `meds.model`, on the tower's measured hours
+(albedo: hours with incoming shortwave above 200 W m⁻², as the calibration target):
+
+| | tower | default | v0.3.1 fit | A | B | C |
+|---|---|---|---|---|---|---|
+| GPP [µmol m⁻² s⁻¹], RMSE | 7.46 | 10.70, 5.85 | 6.83, 3.54 | 6.77, 3.58 | **7.56, 3.46** | 7.65, 3.46 |
+| NEE | −4.24 | −4.17 | −3.14 | −3.31 | −3.63 | −3.69 |
+| LE [W m⁻²], RMSE | 75.5 | 56.4, 50.1 | 81.9, 42.2 | 81.9, 42.2 | **80.5, 41.6** | 82.0, 42.1 |
+| H, RMSE | 32.4 | 77.3, 62.2 | 69.1, 53.0 | 69.1, 53.1 | 70.2, 54.0 | 69.1, 52.7 |
+| net radiation, RMSE | 136.3 | 120.6, 45.7 | 135.3, 22.2 | 135.2, 22.3 | 135.0, 22.9 | 135.3, 22.6 |
+| midday GPP, LE, H | 21.7, 237, 163 | 28.5, 161, 248 | 18.2, 232, 231 | 18.0, 232, 231 | 20.0, 226, 234 | 20.3, 232, 230 |
+| u\* night / midday | 0.41 / 0.68 | 0.86 / 1.08 | 0.50 / 0.67 | 0.50 / 0.67 | 0.50 / 0.68 | 0.50 / 0.68 |
+| albedo | 0.129 | 0.180 | 0.121 | 0.121 | 0.121 | 0.121 |
+| April GPP 2014 / 2016 / 2017 | 6.9 / 6.3 / 7.0 | 11.0 / 9.7 / 11.0 | 5.2 / 3.9 / 5.3 | 5.2 / 3.9 / 5.2 | 5.6 / 4.1 / 5.8 | 5.7 / 4.1 / 5.9 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | 5.64, 18.1 | 5.62, 17.0 | 5.56, 16.9 | 5.77, 17.5 | 5.79, 17.6 |
+| whole-site budget breaches (G7) | | 0 | 0 | 0 | 0 | 0 |
+
+- **Over five years B is as good as A or better.** GPP lands on the tower's (7.56 against 7.46),
+  where A's is 9 % low: the light-response keys A pulls to their floors to fit the windows' midday
+  GPP leave the five-year midday GPP at 18.0 against the tower's 21.7. LE's RMSE is the lowest of the
+  four sets.
+- **The late dry season is still too dry** in every set (April 2016: 4.1 against 6.3), and the two
+  water-stress keys do not change it (C). It is not a fast-parameter problem.
+- **B is the shipped set.** C's extra keys buy little on the windows and nothing over five years,
+  and its `root_beta` is unconstrained.
+- **Interception on, with the same 11 keys and `dewmx` and `intercept_k`** (10,224 trials, 36 min
+  on 160 cores): validation objective 66,985 → 30,816, against v0.3.1's 30,093 with 20 keys.
+  `intercept_k` responds roughly (smoothness −0.85) and is held at its default. Its trials take
+  16.5 s at the median on a full node, against v0.3.1's 47 s. G7 now passes: no water-budget breach
+  in five years, where v0.3.1's set had 53. Over five years it gives GPP 7.49, LE 81.9, H 67.8 and
+  April GPP 5.1 / 3.7 / 5.3: H is 2 W m⁻² lower than B's, the late dry season drier.
+- **Next keys to drop:** `leaf_transmit_nir` or `leaf_reflect_nir` (collinear), and `intercept_k`
+  (σ ratio 0.89, rough).
