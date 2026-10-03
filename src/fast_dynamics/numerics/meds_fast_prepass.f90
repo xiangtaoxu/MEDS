@@ -21,7 +21,8 @@ module meds_fast_prepass
    use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
-                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
+                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
+                                     CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
    use meds_water_retention,  only : soil_psi_from_theta, psi_from_water_content
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
@@ -266,6 +267,11 @@ contains
             cdiag(CD_WIND,         i) = aero%wind(i)
             cdiag(CD_LEAF_WATER,   i) = biophys%leaf_water_mass(i)
             cdiag(CD_WOOD_WATER,   i) = biophys%wood_water_mass(i)
+            cdiag(CD_LEAF_PAR,     i) = par_arr(i)
+            cdiag(CD_GB_MOL,       i) = gb_arr(i)
+            cdiag(CD_PSI_PREDAWN,  i) = dmax_psi_arr(i)
+            cdiag(CD_CA,           i) = biophys%cas%can_co2
+            cdiag(CD_PRESSURE,     i) = press
          end do
       else
          call leaf_gas_exchange_batch(n, par_arr, biophys%leaf_temp(1:n), vpd_arr, biophys%cas%can_co2, press, &

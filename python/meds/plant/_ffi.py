@@ -59,6 +59,9 @@ def _lib():
         lib.meds_leaf_solve.restype = None
         lib.meds_leaf_solve.argtypes = [POINTER(_EnvC), POINTER(_ParamsC),
                                         c_int, c_int, c_int, c_int, POINTER(_FluxC)]
+        lib.meds_leaf_solve_batch.restype = None
+        lib.meds_leaf_solve_batch.argtypes = [c_int, POINTER(_EnvC), POINTER(_ParamsC),
+                                              c_int, c_int, c_int, c_int, POINTER(_FluxC)]
         lib.meds_assimilation_demand_c3.restype = None
         lib.meds_assimilation_demand_c3.argtypes = [c_double] * 8 + [c_int, c_double, c_double,
                                                     POINTER(_C3DemandC)]
@@ -84,6 +87,25 @@ def solve(env, params, stomata, temp_response, colimitation, boundary_layer):
     out = {n: getattr(flux_c, n) for n in _FLUX_REALS}
     out["limitation"] = flux_c.limitation
     out["converged"] = bool(flux_c.converged)
+    return out
+
+
+def solve_batch(env_columns, params, stomata, temp_response, colimitation, boundary_layer):
+    """The coupled solve for n leaves sharing `params`: `env_columns` maps each env field to a
+    sequence of length n. Returns a dict of lists, one entry per leaf."""
+    n = len(env_columns["par"])
+    envs = (_EnvC * n)()
+    for i in range(n):
+        for k in _ENV_FIELDS:
+            setattr(envs[i], k, float(env_columns[k][i]))
+    params_c = _ParamsC(pathway=int(params["pathway"]),
+                        **{k: float(params[k]) for k in PARAM_FIELDS})
+    fluxes = (_FluxC * n)()
+    _lib().meds_leaf_solve_batch(n, envs, byref(params_c), int(stomata), int(temp_response),
+                                 int(colimitation), 1 if boundary_layer else 0, fluxes)
+    out = {k: [getattr(f, k) for f in fluxes] for k in _FLUX_REALS}
+    out["limitation"] = [f.limitation for f in fluxes]
+    out["converged"] = [bool(f.converged) for f in fluxes]
     return out
 
 

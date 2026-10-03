@@ -93,7 +93,15 @@ module meds_site_diag_types
    integer(ik), parameter, public :: CD_GPP_RATE     = 23_ik  !< [umol CO2/plant/s]
    integer(ik), parameter, public :: CD_LEAF_WATER   = 24_ik  !< [kg/plant] internal leaf water
    integer(ik), parameter, public :: CD_WOOD_WATER   = 25_ik  !< [kg/plant] internal wood water
-   integer(ik), parameter, public :: N_CDIAG         = 25_ik
+   !----- The rest of the leaf solve's own inputs, as it saw them, so the solve can be repeated     !
+   !      outside the model (the calibration's canopy of leaf kernels): with CD_LEAF_TEMP,           !
+   !      CD_LEAF_VPD and CD_PSI_LEAF they are every driver of leaf_gas_exchange_batch. ------------!
+   integer(ik), parameter, public :: CD_LEAF_PAR     = 26_ik  !< [umol photon/m2 leaf/s] incident-equivalent PAR per leaf area
+   integer(ik), parameter, public :: CD_GB_MOL       = 27_ik  !< [mol H2O/m2 leaf/s] boundary-layer conductance
+   integer(ik), parameter, public :: CD_PSI_PREDAWN  = 28_ik  !< [MPa] the stomatal limb's predawn leaf potential
+   integer(ik), parameter, public :: CD_CA           = 29_ik  !< [umol/mol] canopy-air CO2 the leaf sees
+   integer(ik), parameter, public :: CD_PRESSURE     = 30_ik  !< [Pa] air pressure the leaf sees
+   integer(ik), parameter, public :: N_CDIAG         = 30_ik
 
    !----- Fusion kind per cohort field. Temperatures, conductances, potentials and the leaf-area- !
    !      normalized fluxes are INTENSIVE (leaf-area-weighted). The per-PLANT quantities (GPP rate, !
@@ -106,7 +114,8 @@ module meds_site_diag_types
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
         FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE,                    &
         FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_GROUND,    FK_GROUND,                       &
-        FK_GROUND,    FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE ]
+        FK_GROUND,    FK_INTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
+        FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE, FK_INTENSIVE ]
 
    !==========================================================================================!
    !  PER-COHORT SLOW-LOOP diagnostic fields -- a SECOND block of the same shape, written once per  !

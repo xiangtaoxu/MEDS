@@ -1,0 +1,210 @@
+# SPDX-License-Identifier: Apache-2.0
+# =====================================================================================================
+# calibrate_fast -- the SITE DECLARATION REFERENCE: every setting a site's calibration.toml may hold,
+# with the value the tool uses when the site leaves it out, and why that is the recommendation
+# (docs/dev_plans/MEDS_FAST_CALIBRATION_REVISION_PLAN.md §2-§8).
+#
+# This file IS the tool's schema. A key a site file sets that is not here stops the tool (a
+# misspelling would otherwise silently keep the default), and every value below is the default --
+# except the REQUIRED ones, marked so, whose values here are examples. Tables marked FREE take any
+# keys (model config keys, or names the site chooses).
+# =====================================================================================================
+
+[base]
+main        = "meds_config_eval.toml"   # REQUIRED. The main TOML of the base run; the PFT file is the one it names in [init].pft_config.
+registry    = "../../scripts/calibrate_fast/parameters.toml"   # REQUIRED. The parameter registry (the menu of keys, ranges, priors).
+growth_resp = ""                        # Monthly growth-respiration climatology (calibrate_fast.py growth-resp), added to the
+                                        #   model's night NEE. Only the nee_night target uses it; "" = none.
+
+# FREE: model config keys set in every run of the calibration (main-file keys, dotted), e.g.
+#   "trait_dynamics.trait_plasticity_on" = true
+[overrides]
+
+# FREE: named variants, each a table of model config keys on top of [overrides] (--variant NAME), e.g.
+#   [variants.interception_on]
+#   "fast.canopy_water_on" = true
+[variants]
+
+[tower]
+path         = "data/tower.csv"   # REQUIRED. The tower's half-hourly CSV.
+time_column  = "date"             # The time column: local time, the START of each half hour.
+flag_column  = "FLAG"             # The quality flag of the turbulent fluxes (H, LE, NEE, GPP, u*).
+flag_good    = 1                  # The flag value of a MEASURED half hour. Recommended: measured only. A gap-filled
+                                  #   half hour is a gap-filling model's prediction, not data, even when (as at BCI) it
+                                  #   carries the same light response. At BCI the flag also removes every rain half hour.
+utc_offset_h = 0.0                # Local time minus UTC [h].
+forcing      = ""                 # The run's forcing file, for the observed-forcing mask ("" = no mask).
+forcing_qc   = ["LWdown_qc", "Wind_qc"]   # Forcing qc variables that must be 0 (observed) in calibration windows: a
+                                          #   trial driven by gap-filled forcing scores the gap filling.
+forcing_qc_val = ["Wind_qc"]      # The same for validation windows (a tower year without longwave still validates).
+forcing_grid = 1                  # The forcing file's grid cell (1-based).
+closure      = "bowen"            # "bowen": FLUXNET2015's energy-balance-closure correction, H and LE scaled together
+                                  #   so H + LE = Rnet with the Bowen ratio kept; "none": as measured. Closure is a
+                                  #   systematic error, so it is corrected (or not), not filtered (see closure_range).
+closure_days = 31                 # The correction's sliding window [days], centred.
+daytime_sw   = 10.0               # [W m-2] incoming shortwave above which an hour is daytime (every daytime target).
+
+# The quantities, mapped to the tower file's column names. `par` (incident PAR, umol m-2 s-1) is
+# optional: the GPP target's par_min filter and the u* plateau report need it.
+[tower.columns]
+sw_in = "Rs"
+sw_up = "Rs_dn"
+lw_up = "Rl_up"
+rnet  = "Rnet"
+le    = "LE"
+h     = "H"
+nee   = "NEE"
+gpp   = "gpp"
+ustar = "ustar"
+par   = ""
+
+[windows]
+days       = 10                   # A calibration window's length [days]. Ten frozen days set the fast keys; the
+                                  #   water-stress keys need the seasonal runs of [stages.water].
+skip_hours = 0                    # Hours dropped at each window's start (the restart's first hours).
+# REQUIRED, FREE: chain name -> start date. A chain is a frozen run from the census that writes a state at each of its
+# windows' starts; every trial of a window restarts from that state.
+chains = { cal = "2015-04-01" }
+# REQUIRED: the windows: name, start (UTC date), role ("cal" or "val"), chain, and optionally days.
+list   = [ { name = "example", start = "2015-09-11", role = "cal", chain = "cal" } ]
+# For `select-windows`: the seasons to pick the best-covered window from.
+seasons = [ { name = "example", from = "2015-08-01", to = "2015-10-31", role = "cal", chain = "cal" } ]
+
+# ----- TARGETS -------------------------------------------------------------------------------------------
+# Every target takes:
+#   on                   use it
+#   sigma, or sigma_abs and sigma_rel   its observation error: sigma = sigma_abs + sigma_rel |obs|
+# and these FILTERS, applied in this order after the target's own definition (each documented in
+# residuals.py; a filter left out is off):
+#   ustar_min            u* at or above [m s-1]   (refused on the u* target: it would bias it)
+#   par_min              incident PAR at or above [umol m-2 s-1] (needs [tower.columns].par)
+#   hours                local hours [from, to)
+#   closure_range        days whose own closure ratio sum(H + LE) / sum(Rnet) lies in [lo, hi]. Off by default:
+#                        at BCI only 11 % of days fall in [0.8, 1.2], so it keeps too little and a skewed sample.
+#   min_solar_elevation  the sun at least this high [degrees]
+[targets.albedo]
+on       = true
+sigma    = 0.01
+min_sw   = 200.0                  # [W m-2] only hours with this much incoming shortwave (a ratio of small numbers is noise)
+min_solar_elevation = 0.0         # [deg] Recommended 0-30: low-sun albedo is the least reliable.
+
+[targets.lw_up]
+on    = true
+sigma = 5.0                       # [W m-2]
+
+[targets.rnet]
+on        = true
+sigma_abs = 10.0                  # [W m-2]
+sigma_rel = 0.05
+
+[targets.le]
+on        = true
+sigma_abs = 10.0                  # [W m-2]; random error grows with the flux (Richardson et al. 2006)
+sigma_rel = 0.15
+closure   = true                  # compare with the closure-corrected LE ([tower].closure)
+
+[targets.h]
+on        = true
+sigma_abs = 10.0
+sigma_rel = 0.15
+closure   = true
+
+[targets.ef]
+on        = true
+sigma     = 0.05                  # the daily daytime evaporative fraction LE / (H + LE), uncorrected
+min_hours = 6                     # a day counts with at least this many measured daytime hours
+
+[targets.gpp]
+on        = true
+sigma_abs = 2.5                   # [umol m-2 s-1] Recommended 2.5 for a tower whose GPP is built from ONE respiration
+sigma_rel = 0.15                  #   value per day (GPP = R_day - NEE). Such a respiration can be ~2 umol m-2 s-1 off at
+                                  #   EVERY daytime hour (BCI: reported 40-50 % below soil chambers), on top of the random
+                                  #   error (1.5 + 0.15 GPP). 2.5 + 0.15 GPP is the linear form of sqrt((1.5 + 0.15 GPP)^2
+                                  #   + 2^2): equal at GPP 0, 12 % wider at GPP 20. It down-weights the dim hours, where
+                                  #   that error is largest relative to GPP; 1.5 is right for a GPP partitioned by hour.
+ustar_min = 0.4                   # [m s-1] Recommended 0.3-0.4, or the site's plateau value (§3.3 of the plan; printed by
+                                  #   every fit): low turbulence after sunrise under-reads uptake. At BCI the 7 h GPP/PAR
+                                  #   rises 15 % from FLAG alone to u* >= 0.3 and 26 % to 0.5, and not at all from 9 h; 0.4
+                                  #   is the provider's own threshold and removes ~60 % of the deficit for 29 % of hours.
+plateau_hours = [7, 9]            # local hours of the u* plateau report (the morning transition)
+
+[targets.nee_night]
+on        = false                 # Off by default: night fluxes under-read in low turbulence, the frozen soil carbon makes
+                                  #   heterotrophic respiration a spin-up quantity, and at BCI the target pulled
+                                  #   rd_vcmax_ratio to its floor. Fix rd_vcmax_ratio instead (the registry does).
+sigma     = 2.0                   # [umol m-2 s-1]
+ustar_min = 0.4                   # [m s-1] if turned on: the provider's threshold for this tower
+night_sw  = 5.0                   # [W m-2] incoming shortwave below which an hour is night
+
+[targets.ustar]
+on        = true
+sigma_abs = 0.1                   # [m s-1] loose: the tower measures u* in the roughness sublayer
+sigma_rel = 0.2
+
+# ----- THE FIT -------------------------------------------------------------------------------------------
+[fit]
+# Which keys: the registry's `state = "fit"` keys by default. Set `keys` (the exact list; a fixed key may be named),
+# or `add` / `remove` (edits of the default set) -- not both. Unknown names stop the tool.
+#   keys   = ["vcmax25", "stomatal_g1"]
+#   add    = ["theta_j"]
+#   remove = ["leaf_angle_mean"]
+stages     = ["optics", "photosynthesis", "energy", "water", "polish"]   # the staged fit (plan §7), in this order;
+                                  #   ["polish"] alone is the joint fit of every key at once (the original method)
+screening  = "report"             # "report": the first Jacobian's screening is reported, every requested key is fitted;
+                                  #   "drop": keys the tower cannot inform (sigma ratio >= 0.95), dead or rough are fixed
+weights    = "ess"                # "ess": each target's rows weighted by its effective sample size, from the lag-1
+                                  #   autocorrelation of its residuals, in the fit as in the covariance; "none": every row 1
+loss       = "l2"                 # "l2" (least squares) or "huber" (robust: a row's pull is capped at huber_c sigma)
+huber_c    = 2.0
+seed       = 1
+timeout    = 900.0                # [s] the floor of a trial's timeout (3x the median of completed trials, if longer)
+rough_keys = "default"            # "default": a rough key (a step response) the screening drops stays at its default;
+                                  #   "line_search": set by a 1-D search (at BCI that broke the five-year water budget)
+max_free   = 20                   # with screening = "drop": at most this many keys, the best informed
+
+# FREE (key names from the registry): a key's prior and range, over the registry's.
+#   [priors.vcmax25]
+#   centre = 45.0                  # the prior's centre (theta units); also where the fit starts
+#   sd     = 8.0                   # its sd (theta units); or log_sd (log theta) for a log key
+#   range  = [25.0, 80.0]          # its bounds
+#   source = "site leaf data"
+# A narrow prior holds a key near its centre but lets strong evidence nudge it; a wide one lets the data decide.
+[priors]
+
+[stages.optics]
+max_iter = 15                     # the radiation solver alone against the albedo (meds.canopy): seconds per iteration
+
+[stages.photosynthesis]
+passes   = 3                      # outer passes: re-run the windows with the new leaf keys, refresh the leaf drivers, refit
+tol      = 0.01                   # stop when no key moves by more than this fraction between passes
+max_iter = 20                     # the canopy of leaf kernels against GPP (meds.canopy), per pass
+
+[stages.energy]
+max_iter = 10                     # the coupled fast loop (Levenberg-Marquardt on 10-day trials)
+rtol     = 1.0e-3
+
+[stages.water]
+# The seasonal runs: frozen runs long enough for soil water to draw down (the water-stress keys act through it).
+# Each needs its chain to pass its start. Empty = the stage is skipped.
+windows    = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" } ]
+targets    = ["le", "gpp", "ef"]  # the targets these runs are scored on
+grid_sigma = 1.0                  # the first grid: the starting value (the prior centre) +- this many prior sds in u
+rounds     = 2                    # grids (each half the last's width around the best point), then a local quadratic
+
+[stages.polish]
+max_iter      = 10                # every fitted key together from the stage values, then the final Jacobian. rtol
+                                  #   ends it sooner; at BCI 3 iterations left it still falling 4 % per iteration, a
+                                  #   Gauss-Newton step of up to 19 posterior sd short of its optimum
+rtol          = 1.0e-3
+include_water = true              # the seasonal runs enter as residual blocks too
+refresh       = true              # re-run the state chains with the stage values first
+
+[uncertainty]
+linearity_dirs = 3                # the linearity check: +-1 sd along this many leading directions
+# FREE: an alternative filter for the filter sensitivity (plan §8.5), target -> settings; the MAP's shift under it
+# is estimated from the final Jacobian with no new runs. Empty = no sensitivity.
+#   alternative = { gpp = { ustar_min = 0.3 } }
+alternative = {}
+
+# FREE: model config keys written into the calibrated main TOML (e.g. its output prefix).
+[calibrated]

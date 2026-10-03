@@ -25,7 +25,7 @@ import numpy as np  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "calibrate_fast"))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "python"))   # the registry reads TOML with meds.config
-from registry import SIGMA_U, load_registry  # noqa: E402
+from registry import load_registry  # noqa: E402
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 COLOURS = ["#2a78d6", "#d4661c", "#3a9a5b"]
@@ -64,7 +64,7 @@ def main(argv=None):
             if k in rep["fitted"]:
                 p = registry[k]
                 p.default = rep["default"][k]
-                shift.append(float((p.to_u(rep["map"][k]) - p.to_u(rep["default"][k])) / SIGMA_U))
+                shift.append(float((p.to_u(rep["map"][k]) - p.to_u(rep["default"][k])) / p.sigma_u))
                 err.append(rep["sigma_ratio"][k])
             else:
                 shift.append(np.nan)
@@ -98,9 +98,8 @@ def main(argv=None):
     fig.savefig(args.out, dpi=130)
     print(f"figure: {args.out}")
     for variant, rep in fits.items():
-        print(f"{variant}: Phi {rep['cost']['default']:.4g} -> {rep['cost']['map']:.4g} (calibration windows); "
-              f"validation {rep.get('cost_val', {}).get('default', math.nan):.4g} -> "
-              f"{rep.get('cost_val', {}).get('map', math.nan):.4g}")
+        print(f"{variant}: validation Phi {rep.get('cost_val', {}).get('default', math.nan):.4g} (default) -> "
+              f"{rep.get('cost_val', {}).get('map', math.nan):.4g} (calibrated)")
 
 
 if __name__ == "__main__":

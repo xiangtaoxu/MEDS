@@ -44,7 +44,7 @@ module meds_output_integrate
    !----- Cohort FIELDS (1000-1999). ---------------------------------------------------------!
    public :: FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
-   public :: FLD_C_LAI, FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON
+   public :: FLD_C_LAI, FLD_C_WAI, FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON
    public :: FLD_C_STORAGE_CARBON, FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_ONE
    public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN, FLD_C_OVERTOP_LAI
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
@@ -66,7 +66,7 @@ module meds_output_integrate
              SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
-   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT
+   public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0
    public :: SRC_F_PY0, SRC_F_PD0
 
    !==========================================================================================!
@@ -125,6 +125,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_NPP_ACCUM       = 1052_ik !< gpp - (leaf+stem+root) maintenance resp
    integer(ik), parameter :: FLD_C_BGB             = 1053_ik !< belowground biomass per plant
    integer(ik), parameter :: FLD_C_VEG_CARBON      = 1054_ik !< leaf+fineroot+wood+storage per plant
+   integer(ik), parameter :: FLD_C_WAI             = 1055_ik !< nplant*wood_area [m2/m2]
    !----- SLOW-loop diagnostics (1200+), read from site%cohort%sdiag. NOT from site%deriv: that     !
    !      bundle is transient and deliberately NOT lockstep-reordered, and the step re-sorts the     !
    !      cohorts after filling it, so at the output tick its index need not match the cohort axis. !
@@ -197,6 +198,9 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_F_COH_LEAF_TEMP = 5020_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_GPP       = 5021_ik  !< DIM_COHORT
    integer(ik), parameter :: SRC_F_COH_HEIGHT    = 5022_ik  !< DIM_COHORT
+   !----- The per-cohort diagnostic block's rows at the FAST tier, SRC_F_CD0 + CD_*, DIM_COHORT: the  !
+   !      fast loop stages every row of every sub-step when the block is on (fast_coh_cdiag). -----!
+   integer(ik), parameter :: SRC_F_CD0           = 5300_ik
 
 contains
 
@@ -445,6 +449,7 @@ contains
       case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
       case (FLD_C_LAI)             ; x(1:n) = cohort_lai(site%cohort%nplant(1:n),               &
                                                          site%cohort%leaf_area(1:n))
+      case (FLD_C_WAI)             ; x(1:n) = site%cohort%nplant(1:n) * site%cohort%wood_area(1:n)
       case (FLD_C_NPP_ACCUM)       ; x(1:n) = cohort_npp_per_plant(site%cohort%gpp_accum(1:n),  &
                                                 site%cohort%leaf_resp_accum(1:n),              &
                                                 site%cohort%stem_resp_accum(1:n),              &
@@ -960,8 +965,13 @@ contains
                call integrate_slab(bufs%buf(k,1), bufs%fast_coh_gpp(:,isub), bufs%fast_n_cohort, dt)
             case (SRC_F_COH_HEIGHT)
                call integrate_slab(bufs%buf(k,1), bufs%fast_coh_height(:,isub), bufs%fast_n_cohort, dt)
-            case default   ! SRC_F_COH_LEAF_TEMP
+            case (SRC_F_COH_LEAF_TEMP)
                call integrate_slab(bufs%buf(k,1), bufs%fast_coh_ltemp(:,isub), bufs%fast_n_cohort, dt)
+            case default   ! SRC_F_CD0 + CD_*: a row of the per-cohort diagnostic block
+               !----- staged only while the block is on (a fast loop that ran); else it reads as missing
+               if (allocated(bufs%fast_coh_cdiag))                                                    &
+                  call integrate_slab(bufs%buf(k,1), bufs%fast_coh_cdiag(:, src - SRC_F_CD0, isub),   &
+                                      bufs%fast_n_cohort, dt)
             end select
          end select
       end do

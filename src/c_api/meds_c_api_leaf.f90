@@ -22,7 +22,7 @@ module meds_c_api_leaf
    private
 
    public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c
-   public :: meds_leaf_solve, meds_assimilation_demand_c3, meds_electron_transport_j
+   public :: meds_leaf_solve, meds_leaf_solve_batch, meds_assimilation_demand_c3, meds_electron_transport_j
    public :: meds_peaked_arrhenius, meds_arrhenius
 
    !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
@@ -79,6 +79,24 @@ contains
       flux_c%rd = flux%rd ; flux_c%limitation = int(flux%limitation, c_int)
       flux_c%converged = merge(1_c_int, 0_c_int, flux%converged)
    end subroutine meds_leaf_solve
+
+   !---------------------------------------------------------------------------------------!
+   ! The same solve for n leaves sharing one parameter set: one call instead of n, for a caller !
+   ! that sweeps drivers (a light response, a canopy). env_c and flux_c are arrays of the       !
+   ! mirror structs; each leaf is exactly meds_leaf_solve's.                                     !
+   !---------------------------------------------------------------------------------------!
+   subroutine meds_leaf_solve_batch(n, env_c, p_c, sm, tresp, colim, use_boundary_layer, flux_c) &
+                                    bind(c, name="meds_leaf_solve_batch")
+      integer(c_int), value, intent(in)  :: n
+      type(leaf_env_c),      intent(in)  :: env_c(n)
+      type(leaf_params_c),   intent(in)  :: p_c
+      integer(c_int), value, intent(in)  :: sm, tresp, colim, use_boundary_layer
+      type(leaf_flux_c),     intent(out) :: flux_c(n)
+      integer(c_int) :: i
+      do i = 1_c_int, n
+         call meds_leaf_solve(env_c(i), p_c, sm, tresp, colim, use_boundary_layer, flux_c(i))
+      end do
+   end subroutine meds_leaf_solve_batch
 
    !---------------------------------------------------------------------------------------!
    ! Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (assimilation_demand_c3), stomata bypassed !

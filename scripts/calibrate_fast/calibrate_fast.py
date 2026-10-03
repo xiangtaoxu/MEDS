@@ -1,23 +1,32 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 """calibrate_fast.py -- fit MEDS's fast (sub-daily) parameters to a flux tower, with the stand frozen
-at its initial structure (docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md).
+at its initial structure (docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md and its revision,
+MEDS_FAST_CALIBRATION_REVISION_PLAN.md).
 
-Every trial is a 10-day frozen run restarted from a shared state at its window's start; the fit is
-Levenberg-Marquardt on the stacked residuals of every target in every window, with a parallel
-central-difference Jacobian, Gaussian priors, and the Laplace covariance at the MAP.
+The fit is staged along the canopy's causal chain (stages.py): optics with the two-stream alone,
+photosynthesis with a canopy of leaf solves, the energy partition with the coupled fast loop, the
+water stress with seasonal runs, and a joint polish of every key. Each coupled trial is a frozen
+run restarted from a shared state at its window's start. Every stage minimizes the stacked,
+filtered, weighted residuals plus Gaussian priors; the Laplace covariance at the MAP gives a rough
+uncertainty. Every setting of the site declaration is documented, with its default, in
+site_reference.toml.
 
 Commands (each reads the site declaration, e.g. examples/example_flux_tower_bci/calibration.toml):
   select-windows  pick the 10-day windows with the best tower coverage in each declared season
   growth-resp     the stand's monthly growth-respiration climatology from a slow-loop run
-  check           one trial per window at the default: runs, the parameter record, repeatability
-  fit             screening, the fit from several starts, the state refresh, covariance,
-                  linearity, validation, the gates and the calibrated configs
+  report          the data report only: every target's rows through every filter, the u* plateau
+  check           one trial per window at the start: runs, the parameter record, repeatability
+  fit             the data report, the screening, the stages, covariance, validation, gates and
+                  the calibrated configs (--stages to run some; --resume to continue from stages.json)
+  analyze         redo the post-fit steps from a finished fit's fit.json
   worker          a node's worker for --pool queue (started inside the Slurm allocation)
-  smoke           the CTest smoke test: one Jacobian column on a short window, a repeated trial
+  smoke           the CTest smoke test: one Jacobian column on a short window, a repeated trial,
+                  and gate G8 on the window's canopy drivers (with libmeds)
 
 Trials run through MEDS's Python API (`python -m meds.model`, which needs libmeds.so) unless
---runner names a meds_main executable; the two give the same output, bit for bit.
+--runner names a meds_main executable; the two give the same output, bit for bit. The optics and
+photosynthesis stages call libmeds directly (meds.canopy).
 
 Usage:
   calibrate_fast.py fit --site calibration.toml --variant interception_off --work runs/cal \
@@ -49,12 +58,16 @@ os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT / "python"),
 
 import fit as F                      # noqa: E402
 import residuals as R                # noqa: E402
+import settings as SET               # noqa: E402
+import stages as STG                 # noqa: E402
 import states as S                   # noqa: E402
 import tower as TW                   # noqa: E402
 import trials as T                   # noqa: E402
-from pool import make_pool, worker   # noqa: E402
-from registry import SIGMA_U, load_registry, resolve_defaults   # noqa: E402
+from pool import Task, make_pool, worker   # noqa: E402
+from registry import load_registry, resolve_defaults, select   # noqa: E402
 from meds.config import RunConfig, load_toml, read_record        # noqa: E402
+
+STAGE_ORDER = ("optics", "photosynthesis", "energy", "water", "polish")
 
 
 # ------------------------------------------------------------------------------------------------
@@ -64,12 +77,16 @@ class Site:
     def __init__(self, path, variant=None):
         self.path = Path(path).resolve()
         self.dir = self.path.parent
-        self.decl = load_toml(self.path)
-        d = self.decl
-        b = d["base"]
-        if "pft" in b:
+        raw = load_toml(self.path)
+        if "pft" in raw.get("base", {}):
             raise SystemExit("[base].pft is not read: the PFT file is the one the main file names "
                              "in [init].pft_config")
+        try:
+            self.decl = SET.complete(raw)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        d = self.decl
+        b = d["base"]
         #----- the base configuration: the main file and the PFT file it names, inputs made absolute
         self.base = RunConfig.load(self._p(b["main"]))
         self.main_path, self.pft_path = self.base.path, self.base.pft_path
@@ -83,35 +100,47 @@ class Site:
             self.overrides.update(d["variants"][variant])
         tw = d["tower"]
         self.tower = TW.TowerSpec(path=str(self._p(tw["path"])), columns=dict(tw["columns"]),
-                                  time_column=tw.get("time_column", "date"),
-                                  flag_column=tw.get("flag_column", "FLAG"),
-                                  flag_good=tw.get("flag_good", 1),
-                                  utc_offset_h=float(tw.get("utc_offset_h", 0.0)),
+                                  time_column=tw["time_column"], flag_column=tw["flag_column"],
+                                  flag_good=tw["flag_good"], utc_offset_h=float(tw["utc_offset_h"]),
                                   forcing=str(self._p(tw["forcing"])) if tw.get("forcing") else None,
-                                  forcing_qc=tuple(tw.get("forcing_qc", ("LWdown_qc", "Wind_qc"))),
-                                  forcing_qc_val=tuple(tw.get("forcing_qc_val", ("Wind_qc",))),
-                                  forcing_grid=int(tw.get("forcing_grid", 1)),
-                                  closure_days=int(tw.get("closure_days", 31)),
-                                  daytime_sw=float(tw.get("daytime_sw", 10.0)))
+                                  forcing_qc=tuple(tw["forcing_qc"]), forcing_qc_val=tuple(tw["forcing_qc_val"]),
+                                  forcing_grid=int(tw["forcing_grid"]), closure_days=int(tw["closure_days"]),
+                                  closure=tw["closure"], daytime_sw=float(tw["daytime_sw"]))
         w = d["windows"]
-        self.days = int(w.get("days", 10))
-        self.skip_hours = int(w.get("skip_hours", 0))
+        self.days = int(w["days"])
+        self.skip_hours = int(w["skip_hours"])
         self.chains = {k: dt.datetime.fromisoformat(v) for k, v in w["chains"].items()}
         self.windows = [T.Window(e["name"], dt.datetime.fromisoformat(e["start"]),
                                  int(e.get("days", self.days)), e["role"], e["chain"])
-                        for e in w.get("list", [])]
+                        for e in w["list"]]
+        self.water_windows = [T.Window(e["name"], dt.datetime.fromisoformat(e["start"]),
+                                       int(e.get("days", 120)), "water", e["chain"])
+                              for e in d["stages"]["water"]["windows"]]
         self.targets = d["targets"]
-        self.fitcfg = d.get("fit", {})
+        self.fitcfg = d["fit"]
+        self.stagecfg = d["stages"]
+        self.uncertainty = d["uncertainty"]
+        self.lat = self.base.get("site.latitude")
+        self.lon = self.base.get("site.longitude")
 
     def _p(self, rel) -> Path:
         return (self.dir / rel).resolve()
 
+    def menu(self):
+        """Every registry key of this variant, with its state."""
+        return load_registry(self.registry_path, self.variant)
+
     def params(self, record=None):
-        ps = load_registry(self.registry_path, self.variant)
-        only = self.fitcfg.get("keys")
-        if only:
-            ps = [p for p in ps if p.name in only]
+        """The keys this fit moves: the registry's default set, or the site's [fit] list, with the
+        site's [priors] over the registry's."""
+        try:
+            ps = select(self.menu(), self.fitcfg, self.decl.get("priors", {}))
+        except ValueError as e:
+            raise SystemExit(str(e))
         return resolve_defaults(ps, self.base, record)
+
+    def loss(self):
+        return (self.fitcfg["loss"], float(self.fitcfg["huber_c"]))
 
 
 def log_to(path):
@@ -128,19 +157,28 @@ def log_to(path):
 
 
 def observations(site: Site):
-    """The tower's hours, and the observed-forcing masks for calibration and validation windows."""
+    """The tower's hours, the observed-forcing masks for calibration and validation windows, and
+    the sun's elevation at every hour (None without the site's coordinates)."""
     obs = TW.load_tower(site.tower)
     fok = {"cal": TW.forcing_observed(site.tower, obs.index),
            "val": TW.forcing_observed(site.tower, obs.index, site.tower.forcing_qc_val)}
-    return obs, fok
+    fok["water"] = fok["cal"]
+    elev = None
+    if site.lat is not None and site.lon is not None:
+        elev = pd.Series(TW.solar_elevation(obs.index, float(site.lat), float(site.lon),
+                                            site.tower.utc_offset_h), index=obs.index)
+    return obs, fok, elev
 
 
-def specs_for(site: Site, windows, obs, fok, log=print):
+def specs_for(site: Site, windows, obs, fok, elev, targets=None, log=print):
     out = {}
     for w in windows:
         idx = R.window_index(w.start, w.days, site.tower.utc_offset_h)
-        out[w.name] = R.build_spec(w.name, idx, obs, fok[w.role], site.targets, site.skip_hours,
-                                   site.tower.daytime_sw)
+        e = None if elev is None else elev.reindex(idx).to_numpy()
+        tcfg = site.targets if targets is None else {k: v for k, v in site.targets.items() if k in targets}
+        out[w.name] = R.build_spec(w.name, idx, obs, fok[w.role], tcfg, site.skip_hours,
+                                   site.tower.daytime_sw, e)
+        out[w.name].loss = site.loss()
         if out[w.name].n == 0:
             log(f"WARNING: window {w.name} has no usable hours; it contributes nothing")
     return out
@@ -187,18 +225,17 @@ def base_record(site, work, pool, runner, log):
             cfg.set(k, v)
         (rdir / "out").mkdir(parents=True, exist_ok=True)
         main = cfg.write(rdir)
-        from pool import Task
         log("reading the parameter record from a one-day base run")
         pool.run([Task("record", T.command(runner, main), str(rdir), str(rdir / "run.log"), 3600)])
     return read_record(rec_csv, {rdir / "main.toml": "main", rdir / "pft.toml": "pft"})
 
 
 # ------------------------------------------------------------------------------------------------
-# select-windows
+# select-windows, growth-resp, report
 # ------------------------------------------------------------------------------------------------
 def cmd_select_windows(args):
     site = Site(args.site)
-    obs, fok = observations(site)
+    obs, fok, _ = observations(site)
     decl = site.decl["windows"].get("seasons", [])
     if not decl:
         raise SystemExit("declare [[windows.seasons]] (name, from, to, role, chain) to select from")
@@ -224,16 +261,12 @@ def cmd_select_windows(args):
             print(f"# {s['name']}: no complete {site.days}-day span in {a:%Y-%m-%d}..{b:%Y-%m-%d}")
             continue
         taken.append(best)
-        # the run's start is UTC midnight; the tower's local day starts 5 h later at BCI
         rows.append((s["name"], best, s.get("role", "cal"), s.get("chain", "cal"), best_score))
     for name, start, role, chain, score in rows:
         print(f'[[windows.list]]\nname = "{name}"\nstart = "{start:%Y-%m-%d}"\nrole = "{role}"\n'
               f'chain = "{chain}"   # coverage score {score:.2f}\n')
 
 
-# ------------------------------------------------------------------------------------------------
-# growth-resp
-# ------------------------------------------------------------------------------------------------
 def cmd_growth_resp(args):
     import glob
     from netCDF4 import Dataset
@@ -255,25 +288,72 @@ def cmd_growth_resp(args):
     print(out.to_string(index=False))
 
 
+def data_report(site, obs, fok, elev, log) -> dict:
+    """The filter report (revision plan §2): every target's rows over the whole record through each
+    step, its diurnal mean before and after the filters, and the GPP u* plateau."""
+    rep = R.record_report(obs, fok["cal"], site.targets, site.tower.daytime_sw,
+                          None if elev is None else elev.reindex(obs.index).to_numpy())
+    for t, r in rep.items():
+        log(f"data {t:9s} " + " -> ".join(f"{label} {n}" for label, n in r["counts"]))
+    g = site.targets.get("gpp", {})
+    plateau = R.ustar_plateau(obs, tuple(g.get("plateau_hours", (7, 9))), site.tower.daytime_sw)
+    if "threshold" in plateau:
+        cells = " ".join(f"{c['ustar'][0]:.2f}:{c['gpp_per_par']:.4f}" for c in plateau["classes"]
+                         if c["gpp_per_par"] is not None)
+        per = "; ".join(f"PAR {b['par'][0]:.0f}-{b['par'][1]:.0f}: {b['threshold']['0.95']}" for b in plateau["by_par"]
+                        if b["par"] is not None)
+        log(f"data gpp u* plateau ({plateau['hours'][0]}-{plateau['hours'][1]} h GPP/PAR by u* class) {cells}")
+        log(f"data gpp u* threshold (median over PAR classes) {plateau['threshold']}, 95 % by PAR class {per} "
+            f"(the target uses u* >= {g.get('ustar_min')})")
+    else:
+        log(f"data gpp u* plateau: {plateau.get('note')}")
+    if "gpp" in rep:
+        di = rep["gpp"]["diurnal"]
+        log("data gpp diurnal mean (before -> after the filters): "
+            + " ".join(f"{h}h {v[0]:.1f}->{v[1]:.1f}" for h, v in sorted(di.items())
+                       if 6 <= h <= 18 and v[1] is not None))
+    return {"filters": rep, "ustar_plateau": plateau, "closure": TW.closure_summary(obs)}
+
+
+def cmd_report(args):
+    site = Site(args.site, args.variant)
+    work = Path(args.work).resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    log = log_to(work / "report.log")
+    obs, fok, elev = observations(site)
+    F.save_json(work / "data_report.json", data_report(site, obs, fok, elev, log))
+    return 0
+
+
 # ------------------------------------------------------------------------------------------------
-# check and smoke
+# the model, the start, check and smoke
 # ------------------------------------------------------------------------------------------------
 def setup_model(site, args, work, pool, log, windows=None, params=None, theta=None, states=None):
-    obs, fok = observations(site)
+    obs, fok, elev = observations(site)
     windows = site.windows if windows is None else windows
     record = base_record(site, work, pool, args.runner, log)
     params = site.params(record) if params is None else params
-    theta = np.array([p.default for p in params]) if theta is None else theta
+    theta = start_theta(params) if theta is None else theta
     if states is None:
         states = run_chains(site, params, theta, work / "chains", pool, args.runner, log, windows)
-    specs = specs_for(site, windows, obs, fok, log)
+    specs = specs_for(site, windows, obs, fok, elev, log=log)
     gr = R.load_growth_resp(site.growth_resp_path) if site.growth_resp_path and site.growth_resp_path.exists() else None
-    if gr is None:
+    if gr is None and site.targets.get("nee_night", {}).get("on"):
         log("note: no growth-respiration climatology; night NEE is compared without it")
     model = F.Model(params, windows, specs, states, site.base, site.overrides,
                     args.runner, pool, work / "trials", site.tower.utc_offset_h, gr,
-                    float(site.fitcfg.get("timeout", 900)), args.keep_netcdf, log=log)
-    return model, params, theta, obs, fok
+                    float(site.fitcfg["timeout"]), args.keep_netcdf, log=log)
+    return model, params, theta, obs, fok, elev
+
+
+def base_theta(params):
+    """The base configuration's values."""
+    return np.array([p.default for p in params])
+
+
+def start_theta(params):
+    """Where the fit starts: every key at its prior's centre."""
+    return np.array([p.centre for p in params])
 
 
 def cmd_check(args):
@@ -283,15 +363,14 @@ def cmd_check(args):
     log = log_to(work / "check.log")
     pool = make_pool(args.pool, args.workers, work / "queue")
     cal = [w for w in site.windows if w.role == "cal"]
-    model, params, theta, _, _ = setup_model(site, args, work, pool, log, windows=cal)
+    model, params, theta, _, _, _ = setup_model(site, args, work, pool, log, windows=cal)
     t0 = time.time()
     r = model.residuals([theta])[0]
-    log(f"base: {model.n_trials} trials, {time.time() - t0:.1f} s wall, median trial "
+    log(f"start: {model.n_trials} trials, {time.time() - t0:.1f} s wall, median trial "
         f"{np.median(model.seconds):.1f} s; Phi_data = {float(r @ r):.6g} over {len(r)} rows")
     # G2: the same parameters give byte-identical output
     tdir = T.build_trial(site.base, params, theta, cal[0], model.states[cal[0].name],
                          work / "repeat", site.overrides)
-    from pool import Task
     pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
                    str(tdir / "run.log"), 3600)])
     df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
@@ -327,7 +406,8 @@ def stand_unchanged(state_a, state_b) -> dict:
 
 def cmd_smoke(args):
     """CTest smoke: a short window restarted from a state, one Jacobian column that must move the
-    output, and a repeated trial that must reproduce it byte for byte."""
+    output, a repeated trial that must reproduce it byte for byte, and -- when libmeds.so is
+    there -- gate G8, the canopy of leaf solves against the window's own GPP."""
     site = Site(args.site, args.variant)
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
@@ -337,18 +417,17 @@ def cmd_smoke(args):
     w = T.Window("smoke", w0.start, args.days, "cal", w0.chain)
     site.windows = [w]
     site.chains = {w.chain: w.start - dt.timedelta(days=1)}
-    model, params, theta, _, _ = setup_model(site, args, work, pool, log, windows=[w])
+    model, params, theta, _, _, _ = setup_model(site, args, work, pool, log, windows=[w])
     key = args.key
     j = next(i for i, p in enumerate(params) if p.name == key)
     prob = F.Problem(model, [j], theta.copy())
     u0 = np.array([params[j].u0])
     r0 = prob.data([u0])[0]
     J, smooth, failed = F.jacobian(prob, u0, r0, log=log)
-    moved = bool(np.any(J[:, 0])) and not failed
+    moved = bool(np.all(np.isfinite(J[:, 0])) and np.any(J[:, 0] != 0.0)) and not failed
     log(f"Jacobian column for {key}: |J| = {np.linalg.norm(J[:, 0]):.4g}, smoothness {smooth[0]:.3f}")
     tdir = T.build_trial(site.base, params, theta, w, model.states[w.name],
                          work / "repeat", site.overrides)
-    from pool import Task
     pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
                    str(tdir / "run.log"), 3600)])
     df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
@@ -356,13 +435,125 @@ def cmd_smoke(args):
                                       model.states[w.name], work / "trials", site.overrides))
     same = all(np.array_equal(df1[v].values, df2[v].values) for v in T.TRIAL_VARIABLES)
     log(f"repeat byte-identical: {same}; Jacobian column moves the output: {moved}")
+    g8_ok = True
+    if args.g8:
+        photo = photo_model(site, model, params, theta, [w], work, log)
+        g8 = photo.g8(theta)
+        log(f"G8 canopy of leaf solves vs the model's GPP: {g8}")
+        g8_ok = g8["pass"]
     pool.close()
-    return 0 if (same and moved) else 1
+    return 0 if (same and moved and g8_ok) else 1
 
 
 # ------------------------------------------------------------------------------------------------
-# fit
+# the stages
 # ------------------------------------------------------------------------------------------------
+def driver_data(model, theta, windows):
+    """Run (or find) each window's driver trial at theta: {name: drivers}, {name: hourly series}."""
+    dirs = model.run([theta], windows, kind="driver")[0]
+    if dirs is None:
+        raise RuntimeError("a driver trial failed; see the trial logs")
+    return ({w.name: T.load_drivers(td) for w, td in zip(windows, dirs)},
+            {w.name: T.load_series(td) for w, td in zip(windows, dirs)})
+
+
+def kernel_model(cls, site, model, params, theta, windows, target, work):
+    drivers, series = driver_data(model, theta, windows)
+    specs = {w.name: model.specs[w.name].subset([target]) for w in windows}
+    km = cls(params, windows, specs, drivers, series,
+             STG.config_writer(site.base, params, site.overrides, work / "kernel_configs"), model.log)
+    km.set_anchor(theta)
+    return km
+
+
+def photo_model(site, model, params, theta, windows, work, log):
+    return kernel_model(STG.PhotoModel, site, model, params, theta, windows, "gpp", work)
+
+
+def free_of(params, stage, skipped=()):
+    """The keys a stage moves: its own; for the polish, every fitted key whose own stage was not
+    skipped (a water key without seasonal runs is not fitted on ten-day windows, which reward a
+    value that dries the soil months later). A key the drop-mode screening fixed is in neither."""
+    return [i for i, p in enumerate(params)
+            if p.stage != "dropped" and p.stage not in skipped and (stage == "polish" or p.stage == stage)]
+
+
+def run_stage(stage, site, model, params, theta, cal, water, work, log, report):
+    """One stage from theta; returns the new theta (every key; only this stage's moved) and the
+    stage's report entry."""
+    sc = site.stagecfg.get(stage, {})
+    free = free_of(params, stage)
+    if not free:
+        return theta, {"skipped": "no fitted key in this stage"}
+    names = [params[i].name for i in free]
+    entry = {"keys": names}
+    t0 = time.time()
+    if stage == "optics":
+        if "albedo" not in site.targets or not site.targets["albedo"].get("on", True):
+            return theta, {"skipped": "the albedo target is off"}
+        km = kernel_model(STG.OpticsModel, site, model, params, theta, cal, "albedo", work)
+        prob = F.Problem(km, free, theta.copy())
+        out = F.lm(prob, prob.u_of(theta), int(sc["max_iter"]), 1e-4, log=log, label="optics")
+        theta = prob.theta(out["u"])
+        entry.update(cost=out["cost"], iterations=len(out["history"]) - 1, evaluations=km.n_evals)
+    elif stage == "photosynthesis":
+        if "gpp" not in site.targets or not site.targets["gpp"].get("on", True):
+            return theta, {"skipped": "the GPP target is off"}
+        passes = []
+        for k in range(int(sc["passes"])):
+            km = photo_model(site, model, params, theta, cal, work, log)
+            if k == 0:
+                entry["G8"] = km.g8(theta)
+                log(f"G8 canopy of leaf solves vs the model's GPP (before the anchor): {entry['G8']}")
+            prob = F.Problem(km, free, theta.copy())
+            out = F.lm(prob, prob.u_of(theta), int(sc["max_iter"]), 1e-4, log=log, label=f"photosynthesis pass {k + 1}")
+            new = prob.theta(out["u"])
+            move = max(abs(new[i] / theta[i] - 1.0) for i in free)
+            passes.append({"theta": {params[i].name: float(new[i]) for i in free}, "cost": out["cost"],
+                           "largest_move": move, "evaluations": km.n_evals})
+            log(f"photosynthesis pass {k + 1}: " + ", ".join(f"{params[i].name} {new[i]:.4g}" for i in free)
+                + f" (largest move {100 * move:.2f} %)")
+            theta = new
+            if move < float(sc["tol"]):
+                break
+        entry["passes"] = passes
+    elif stage == "energy":
+        prob = F.Problem(model, free, theta.copy())
+        out = F.lm(prob, prob.u_of(theta), int(sc["max_iter"]), float(sc["rtol"]), log=log, label="energy")
+        theta = prob.theta(out["u"])
+        entry.update(cost=out["cost"], iterations=len(out["history"]) - 1)
+    elif stage == "water":
+        if not water:
+            return theta, {"skipped": "no seasonal windows ([stages.water].windows)"}
+        model.windows = water
+        prob = F.Problem(model, free, theta.copy())
+        u, c, hist = STG.grid_search(prob, prob.u_of(theta), int(sc["rounds"]), float(sc["grid_sigma"]),
+                                     log=log, label="water")
+        theta = prob.theta(u)
+        model.windows = cal
+        entry.update(cost=c, history=hist)
+    entry["theta"] = {p.name: float(theta[i]) for i, p in enumerate(params)}
+    entry["wall_s"] = time.time() - t0
+    log(f"stage {stage} done in {(time.time() - t0) / 60:.1f} min: "
+        + ", ".join(f"{params[i].name} {theta[i]:.4g}" for i in free))
+    return theta, entry
+
+
+def ess_weights_at(site, model, theta, specs_list, windows, log):
+    """Set each target's effective-sample weight from the residuals at theta (unweighted)."""
+    for s in specs_list:
+        for t in s.targets:
+            t.weight = 1.0
+    r = model.residuals([theta], windows)[0]
+    if r is None:
+        raise RuntimeError("the weights' trials failed")
+    w = R.set_weights(specs_list, r)
+    log("effective-sample weights n_eff/n: " + ", ".join(
+        f"{k} {np.mean([v for kk, v in w.items() if kk.endswith('/' + k)]):.2f}"
+        for k in sorted({kk.split('/')[1] for kk in w})))
+    return w
+
+
 def cmd_fit(args):
     site = Site(args.site, args.variant)
     work = Path(args.work).resolve()
@@ -370,120 +561,202 @@ def cmd_fit(args):
     log = log_to(work / "fit.log")
     pool = make_pool(args.pool, args.workers, work / "queue")
     fc = site.fitcfg
+    stages = [s.strip() for s in args.stages.split(",")] if args.stages else list(fc["stages"])
+    bad = [s for s in stages if s not in STAGE_ORDER]
+    if bad:
+        raise SystemExit(f"unknown stages {bad}; known: {STAGE_ORDER}")
     cal = [w for w in site.windows if w.role == "cal"]
     val = [w for w in site.windows if w.role == "val"]
+    water = site.water_windows
     t_start = time.time()
-    log(f"variant {site.variant}: {len(cal)} calibration and {len(val)} validation windows")
-    model, params, theta0, obs, fok = setup_model(site, args, work, pool, log)
+    log(f"variant {site.variant}: {len(cal)} calibration, {len(val)} validation and {len(water)} seasonal "
+        f"windows; stages {stages}")
+    model, params, theta0, obs, fok, elev = setup_model(site, args, work, pool, log,
+                                                        windows=site.windows + water)
     model.windows = cal
-    states_default = dict(model.states)
-    report = {"variant": site.variant, "site": str(site.path), "windows": {w.name: [str(w.start), w.role]
-              for w in site.windows}, "closure": TW.closure_summary(obs)}
+    #----- the seasonal runs are scored on the water stage's targets only
+    for w in water:
+        model.specs[w.name] = model.specs[w.name].subset(site.stagecfg["water"]["targets"])
+    theta_base = base_theta(params)
+    states_start = dict(model.states)
+    report = {"variant": site.variant, "site": str(site.path), "stages_run": stages,
+              "windows": {w.name: [str(w.start), w.role, w.days] for w in site.windows + water},
+              "menu": {p.name: {"state": p.state, "stage": p.stage, "reason": p.reason} for p in site.menu()},
+              "keys": {p.name: {"stage": p.stage, "range": [p.lo, p.hi], "default": p.default,
+                                "prior_centre": p.centre, "prior_sigma_u": p.sigma_u,
+                                "prior_source": p.prior.get("source", p.source)} for p in params}}
+    log("fitting " + ", ".join(f"{p.name} [{p.stage}]" for p in params))
+    report["data"] = data_report(site, obs, fok, elev, log)
 
-    # ----- screening from the first Jacobian at the default ------------------------------------
+    # ----- the weights, at the start --------------------------------------------------------------
+    cspecs = [model.specs[w.name] for w in cal]
+    wspecs = [model.specs[w.name] for w in water]
+    if fc["weights"] == "ess":
+        report["weights_start"] = ess_weights_at(site, model, theta0, cspecs, cal, log)
+    elif fc["weights"] != "none":
+        raise SystemExit('[fit].weights must be "ess" or "none"')
+
+    # ----- the screening: the first Jacobian at the start, every fitted key --------------------
     everything = F.Problem(model, list(range(len(params))), theta0.copy())
-    u_def = everything.u_prior
-    r_def = everything.data([u_def])[0]
-    if r_def is None:
-        raise SystemExit("the default's trials failed; see the trial logs")
-    log(f"default: Phi = {everything.cost(u_def, r_def):.6g} over {len(r_def)} rows; screening "
+    u_start = everything.u_prior
+    r_start = everything.data([u_start])[0]
+    if r_start is None:
+        raise SystemExit("the start's trials failed; see the trial logs")
+    log(f"start: Phi = {everything.cost(u_start, r_start):.6g} over {len(r_start)} rows; screening "
         f"{len(params)} keys ({2 * len(params) * len(cal)} trials)")
-    J0, sm0, fl0 = F.jacobian(everything, u_def, r_def, log=log)
-    keep, scr = F.screening(everything, J0, r_def, sm0, fl0, [model.specs[w.name] for w in cal],
-                            max_free=int(fc.get("max_free", 20)))
+    J0, sm0, fl0 = F.jacobian(everything, u_start, r_start, log=log)
+    keep, scr = F.screening(everything, J0, r_start, sm0, fl0, cspecs, max_free=int(fc["max_free"]),
+                            mode=fc["screening"], weighted=fc["weights"] == "none")
     report["screening"] = scr
     if scr["dead"]:
         log(f"WARNING: exact-zero Jacobian columns (a harness bug or a dead key): {scr['dead']}")
-    log(f"screening: fit {len(keep)} keys {scr['fitted']}; fixed {len(scr['fixed'])}")
-    prob = F.Problem(model, keep, theta0.copy())
-    jac_def = (J0[:, keep], sm0[keep], [])
+    if scr["rough"]:
+        log(f"WARNING: rough keys (a step response; the gradient cannot steer them): {scr['rough']}")
+    log(f"screening ({fc['screening']}): fit {scr['fitted']}; the drop mode would fix {scr['would_drop']}")
+    if fc["screening"] == "drop":
+        for i in range(len(params)):                     # a dropped key stays at its prior's centre
+            if i not in keep:
+                params[i].stage = "dropped"
+    report["cost_start"] = everything.cost(u_start, r_start)
+    report["scores_cal_start"] = R.target_scores(cspecs, r_start)
 
-    # ----- the fit from several starts ----------------------------------------------------------
-    rng = np.random.default_rng(int(fc.get("seed", 1)))
-    starts = [prob.u_prior]
-    for _ in range(int(fc.get("starts", 3)) - 1):
-        z = np.clip(rng.standard_normal(len(keep)), -1.5, 1.5)
-        starts.append(prob.u_prior + z * SIGMA_U)
-    results = [None] * len(starts)
+    # ----- the stages -----------------------------------------------------------------------------
+    stages_path = work / "stages.json"
+    theta = theta0.copy()
+    progress = {"stages": {}}
+    if args.resume and stages_path.exists():
+        progress = json.loads(stages_path.read_text())
+        last = progress.get("theta")
+        if last:
+            theta = np.array([last.get(p.name, theta[i]) for i, p in enumerate(params)])
+            log(f"resuming from stages.json after {list(progress['stages'])}")
+    for stage in [s for s in stages if s != "polish"]:
+        if args.resume and stage in progress["stages"]:
+            continue
+        theta, entry = run_stage(stage, site, model, params, theta, cal, water, work, log, report)
+        if "skipped" in entry:
+            log(f"stage {stage} skipped: {entry['skipped']}")
+        progress["stages"][stage] = entry
+        progress["theta"] = {p.name: float(theta[i]) for i, p in enumerate(params)}
+        F.save_json(stages_path, progress)
 
-    def one(i):
-        results[i] = F.lm(prob, starts[i], int(fc.get("max_iter", 15)), float(fc.get("rtol", 1e-3)),
-                          log=log, label=f"start {i}", jac0=jac_def if i == 0 else None)
-    threads = [threading.Thread(target=one, args=(i,)) for i in range(len(starts))]
-    for th in threads:
-        th.start()
-    for th in threads:
-        th.join()
-    costs = [r["cost"] for r in results if r is not None]
-    best = min((r for r in results if r is not None), key=lambda r: r["cost"])
-    spread = (max(costs) - min(costs)) / min(costs) if costs else float("nan")
-    report["starts"] = [{"u_start": s.tolist(), "cost": r["cost"], "u": r["u"].tolist(),
-                         "iterations": len(r["history"]) - 1} for s, r in zip(starts, results)]
-    report["start_spread"] = spread
-    log(f"starts: Phi = {[round(c, 3) for c in costs]} (spread {100 * spread:.1f} %)")
+    # ----- the polish: every key together, from the stage values --------------------------------
+    pc = site.stagecfg["polish"]
+    theta_polish = None
+    if "polish" in stages:
+        theta_polish = {p.name: float(theta[i]) for i, p in enumerate(params)}
+        if pc["refresh"]:
+            log("refreshing the state chains with the stage values")
+            model.states = run_chains(site, params, theta, work / "chains", pool, args.runner, log,
+                                      site.windows + water)
+        pwin = cal + (water if pc["include_water"] else [])
+        pspecs = [model.specs[w.name] for w in pwin]
+        if fc["weights"] == "ess":
+            report["weights_polish"] = ess_weights_at(site, model, theta, pspecs, pwin, log)
+        model.windows = pwin
+        skipped = [s for s, e in progress["stages"].items() if "skipped" in e] + \
+                  [s for s in STAGE_ORDER[:-1] if s not in stages]
+        prob = F.Problem(model, free_of(params, "polish", skipped), theta.copy())
+        out = F.lm(prob, prob.u_of(theta), int(pc["max_iter"]), float(pc["rtol"]), log=log, label="polish")
+        theta = prob.theta(out["u"])
+        progress["stages"]["polish"] = {"cost": out["cost"], "iterations": len(out["history"]) - 1,
+                                        "theta": {p.name: float(theta[i]) for i, p in enumerate(params)}}
+        progress["theta"] = progress["stages"]["polish"]["theta"]
+        F.save_json(stages_path, progress)
+        jac_final = (out["J"], out["r"])
+    else:
+        pwin = cal
+        model.windows = pwin
+        jac_final = None
+    report["stages"] = progress["stages"]
+    report["theta_stages"] = progress.get("theta")
+    #----- where the polish started: its weights were set there, and its states (with refresh) ran there
+    report["theta_polish_start"] = theta_polish
+    report["chains_refreshed"] = bool(theta_polish and pc["refresh"])
 
-    # ----- the state refresh (§6.2) --------------------------------------------------------------
-    theta_map = prob.theta(best["u"])
-    theta_refresh = theta_map.copy()
-    n_refresh = int(fc.get("refresh_iter", 5))
-    if n_refresh > 0:
-        log("refreshing the state chains with the MAP")
-        model.states = run_chains(site, params, theta_map, work / "chains", pool, args.runner, log)
-        best = F.lm(prob, best["u"], n_refresh, float(fc.get("rtol", 1e-3)), log=log, label="refresh")
-        theta_map = prob.theta(best["u"])
-
-    # ----- rough keys: held at the default, or set by a 1-D line search (opt-in) -----------------
-    #       A rough key's response is a threshold, not a slope (at BCI the xylem vulnerability and the
-    #       turgor-loss point): a crude search can move it to a corner of its range, where the
-    #       five-year run broke its water budget (G7). So the default holds them.
-    rough_rule = fc.get("rough_keys", "default")
-    for name in (scr["rough"] if rough_rule == "line_search" else []):
-        j = next(i for i, p in enumerate(params) if p.name == name)
-        sub = F.Problem(model, [j], theta_map.copy())
-        u1, c1 = F.line_search(sub, np.array([params[j].to_u(theta_map[j])]), 0)
-        theta_map[j] = float(params[j].to_theta(u1[0]))
-        log(f"rough key {name}: line search -> {theta_map[j]:.6g}")
-    report["refresh_theta"] = {p.name: float(v) for p, v in zip(params, theta_refresh)}
-    report["cost_default"] = everything.cost(u_def, r_def)
-    report["scores_cal_default"] = R.target_scores([model.specs[x.name] for x in cal], r_def)
-    post_fit(site, model, params, theta0, theta_map, keep, states_default, report, work, log)
+    # ----- rough keys: held, or set by a 1-D line search (opt-in) --------------------------------
+    if fc["rough_keys"] == "line_search":
+        for name in scr["rough"]:
+            j = next(i for i, p in enumerate(params) if p.name == name)
+            sub = F.Problem(model, [j], theta.copy())
+            u1, _ = F.line_search(sub, np.array([params[j].to_u(theta[j])]), 0)
+            theta[j] = float(params[j].to_theta(u1[0]))
+            log(f"rough key {name}: line search -> {theta[j]:.6g}")
+    post_fit(site, model, params, theta_base, theta0, theta, pwin, states_start, report, work, log, jac_final)
     report["trials"] = {"run": model.n_trials, "failed": model.n_failed,
                         "median_s": float(np.median(model.seconds_ok)) if model.seconds_ok else None,
                         "wall_s": time.time() - t_start}
     F.save_json(work / "fit.json", report)
-    log(f"done: Phi {report['cost']['default']:.6g} -> {report['cost']['map']:.6g}; "
+    cv = report.get("cost_val") or {}
+    log(f"done: validation Phi {cv.get('default', float('nan')):.6g} (default) -> {cv.get('map', float('nan')):.6g} (MAP); "
+        f"gates {({k: v['pass'] for k, v in report['gates'].items()})}; "
         f"{model.n_trials} trials ({model.n_failed} failed) in {(time.time() - t_start) / 60:.1f} min")
     pool.close()
     return 0
 
 
-def post_fit(site, model, params, theta0, theta_map, keep, states_default, report, work, log):
-    """Everything after the fit: the covariance and linearity check at the MAP (on the current,
-    MAP-refreshed states), the scores, the validation (each set on its own chain's states), the
-    gates, and the calibrated configs."""
+def post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_start, report, work, log,
+             jac_final=None):
+    """Everything after the stages: the covariance (sigma-scaled) and its intervals, the linearity
+    check and the filter sensitivity at the MAP (on the current states), the scores, the validation
+    (each set on its own chain's states), the gates, and the calibrated configs."""
+    fc = site.fitcfg
     cal = [w for w in site.windows if w.role == "cal"]
     val = [w for w in site.windows if w.role == "val"]
-    cspecs = [model.specs[x.name] for x in cal]
-    prob = F.Problem(model, keep, theta_map.copy())
-    u_map = np.array([params[i].to_u(theta_map[i]) for i in keep])
-    r_map = prob.data([u_map])[0]
-    J_map, _, _ = F.jacobian(prob, u_map, r_map, log=log)
-    cov_u, w = F.posterior(prob, J_map, r_map, cspecs)
-    cov_t = F.theta_cov(prob, u_map, cov_u)
+    pspecs = [model.specs[x.name] for x in pwin]
+    skipped = [s for s, e in report.get("stages", {}).items() if "skipped" in e] + \
+              [s for s in STAGE_ORDER[:-1] if s not in report.get("stages_run", STAGE_ORDER)]
+    prob = F.Problem(model, free_of(params, "polish", skipped), theta_map.copy())
+    u_map = prob.u_of(theta_map)
+    model.windows = pwin
+    if jac_final is not None:
+        J_map, r_map = jac_final
+    else:
+        r_map = prob.data([u_map])[0]
+        J_map, _, _ = F.jacobian(prob, u_map, r_map, log=log)
+    scales = R.sigma_scales(pspecs, r_map)
+    report["sigma_scale"] = scales
+    big = {k: round(v, 2) for k, v in scales.items() if v >= 2.0}
+    if big:
+        log(f"targets with chi2 per row >= 2 (structural misfit; their sigma is scaled up in the covariance): {big}")
+    cov_u, _ = F.posterior(prob, J_map, r_map, pspecs, weighted=fc["weights"] == "none", sigma_scale=scales)
     report["map"] = {p.name: float(theta_map[i]) for i, p in enumerate(params)}
-    report["default"] = {p.name: float(theta0[i]) for i, p in enumerate(params)}
+    report["default"] = {p.name: float(theta_base[i]) for i, p in enumerate(params)}
+    report["start"] = {p.name: float(theta0[i]) for i, p in enumerate(params)}
     report["fitted"] = [p.name for p in prob.params]
-    report["cov_theta"] = cov_t
+    report["cov_theta"] = F.theta_cov(prob, u_map, cov_u)
     report["corr"] = F.correlation(cov_u)
-    report["sigma_ratio"] = {p.name: float(math.sqrt(cov_u[k, k]) / SIGMA_U) for k, p in enumerate(prob.params)}
-    report["linearity"] = F.linearity(prob, u_map, cov_u, J_map, log=log)
-    report["bounds"] = F.bound_pushers(prob, u_map, J_map, r_map, cspecs)
-    report["cost"] = {"default": report.get("cost_default"), "map": prob.cost(u_map, r_map)}
-    report["scores_cal"] = {"default": report.get("scores_cal_default"), "map": R.target_scores(cspecs, r_map)}
+    report["intervals"] = F.intervals(prob, u_map, cov_u)
+    report["sigma_ratio"] = {k: v["sigma_ratio"] for k, v in report["intervals"].items()}
+    for k, v in report["intervals"].items():
+        log(f"  {k:22s} {v['map']:10.4g}  68 % [{v['i68'][0]:.4g}, {v['i68'][1]:.4g}]  95 % "
+            f"[{v['i95'][0]:.4g}, {v['i95'][1]:.4g}]  sd ratio {v['sigma_ratio']:.2f}  ({v['stage']})")
+    #----- how far the fit stopped from its own optimum: the Gauss-Newton step left, in posterior sd
+    rest = F.gn_step(prob, u_map, J_map, r_map) / np.sqrt(np.diag(cov_u))
+    report["unconverged_sd"] = {p.name: float(v) for p, v in zip(prob.params, rest)}
+    log("the Gauss-Newton step left at the MAP [posterior sd] (0 at a converged fit): " + ", ".join(
+        f"{n} {v:+.2f}" for n, v in report["unconverged_sd"].items()))
+    report["linearity"] = F.linearity(prob, u_map, cov_u, J_map, int(site.uncertainty["linearity_dirs"]), log=log)
+    for d in report["linearity"]:
+        c, s = d["curvature_ratio"], d["slope_ratio"]
+        log(f"linearity along direction {d['direction']}: "
+            + ("a trial failed" if c is None else f"curvature {c:.2f} x the quadratic's, slope left {s:+.2f}")
+            + (" (local only)" if d["local_only"] else ""))
+    report["bounds"] = F.bound_pushers(prob, u_map, J_map, r_map, pspecs)
+    report["cost"] = {"start": report.get("cost_start"), "map": prob.cost(u_map, r_map)}
+    report["scores_cal"] = {"start": report.get("scores_cal_start"), "map": R.target_scores(pspecs, r_map)}
+    report["filter_sensitivity"] = filter_sensitivity(site, model, prob, u_map, pwin, cov_u, J_map, r_map, log)
     if val:
         states_map = dict(model.states)
-        model.states = states_default
-        rv0 = model.residuals([theta0], windows=val)[0]
+        #----- the default is the base configuration, on chains run with it (the start's chains ran
+        #      at the prior centres, which differ where a prior is centred off the base value)
+        if np.allclose(theta_base, theta0):
+            model.states = states_start
+        else:
+            log("running the state chains with the base configuration for the validation's default")
+            model.states = run_chains(site, params, theta_base, work / "chains", model.pool, model.runner,
+                                      log, val)
+        rv0 = model.residuals([theta_base], windows=val)[0]
         model.states = states_map
         rv1 = model.residuals([theta_map], windows=val)[0]
         vspecs = [model.specs[x.name] for x in val]
@@ -500,53 +773,91 @@ def post_fit(site, model, params, theta0, theta_map, keep, states_default, repor
         gates["G4"] = {"pass": False, "note": "no validation scores"}
     gates["G5"] = {"pass": True, "near_bound": report["bounds"]}
     scr = report.get("screening", {})
-    gates["G3"] = {"pass": not scr.get("dead"), "dead": scr.get("dead"), "rough": scr.get("rough")}
-    gates["G6"] = {"pass": report.get("start_spread", 1.0) <= 0.05, "spread": report.get("start_spread")}
+    gates["G3"] = {"pass": not scr.get("dead"), "dead": scr.get("dead"), "rough": scr.get("rough"),
+                   "note": "reported; a requested key is fitted unless [fit].screening = 'drop'"}
+    g8 = report.get("stages", {}).get("photosynthesis", {}).get("G8")
+    gates["G8"] = g8 if g8 else {"pass": None, "note": "the photosynthesis stage did not run"}
+    fs = report["filter_sensitivity"]
+    gates["G10"] = ({"pass": all(abs(v["shift_sd"]) < 1.0 for v in fs["keys"].values()), **fs}
+                    if fs.get("keys") else {"pass": None, "note": fs.get("note")})
+    gates["G11"] = {"pass": True, "near_bound": report["bounds"],
+                    "note": "every key near a bound is listed with the target that pushed it and its stage"}
     report["local_only"] = any(d["local_only"] for d in report["linearity"])
     report["gates"] = gates
     write_calibrated(site, params, theta_map, work)
 
 
+def filter_sensitivity(site, model, prob, u_map, windows, cov_u, J_map, r_map, log) -> dict:
+    """Revision plan §8.5: the MAP's linear response to the [uncertainty].alternative filters, from
+    the cached trials of the final point and Jacobian (no new model runs, unless the cache lacks
+    them): the Gauss-Newton step on the alternative rows minus the step on the fit's own rows."""
+    alt = site.uncertainty.get("alternative") or {}
+    if not alt:
+        return {"note": "no [uncertainty].alternative"}
+    obs, fok, elev = observations(site)
+    targets = {k: dict(v) for k, v in site.targets.items()}
+    for t, over in alt.items():
+        targets.setdefault(t, {}).update(over)
+    saved = model.specs
+    alt_site_targets, site.targets = site.targets, targets
+    try:
+        alt_specs = specs_for(site, windows, obs, fok, elev, log=log)
+    finally:
+        site.targets = alt_site_targets
+    #----- the same target weights as the fit's rows (one scalar per window and target)
+    for w in windows:
+        wmap = {t.name: t.weight for t in saved[w.name].targets}
+        for t in alt_specs[w.name].targets:
+            t.weight = wmap.get(t.name, 1.0)
+    model.specs = {**saved, **alt_specs}
+    try:
+        r_alt = prob.data([u_map], windows)[0]
+        J_alt, _, _ = F.jacobian(prob, u_map, r_alt, log=log)
+    finally:
+        model.specs = saved
+    du = F.shift(prob, u_map, J_map, r_map, J_alt, r_alt)
+    sd = np.sqrt(np.diag(cov_u))
+    out = {"alternative": alt, "keys": {}}
+    for k, p in enumerate(prob.params):
+        th0, th1 = float(p.to_theta(u_map[k])), float(p.to_theta(u_map[k] + du[k]))
+        out["keys"][p.name] = {"map": th0, "alternative": th1, "shift_sd": float(du[k] / sd[k])}
+    log("filter sensitivity " + json.dumps(alt) + ": " + ", ".join(
+        f"{n} {v['map']:.4g}->{v['alternative']:.4g} ({v['shift_sd']:+.2f} sd)" for n, v in out["keys"].items()))
+    return out
+
+
 def cmd_analyze(args):
-    """Redo the post-fit analysis of a finished fit from its fit.json: the states are rebuilt (or
-    found in the cache) for the default and for the parameters the fit refreshed them with."""
-    import json
+    """Redo the post-fit analysis of a finished fit from its fit.json, on the fit's own states and
+    weights: the states are rebuilt (or found in the cache) for the start and, with a refresh, for
+    the polish's starting point, and the weights are set at that point."""
     site = Site(args.site, args.variant)
     work = Path(args.work).resolve()
     log = log_to(work / "analyze.log")
     pool = make_pool(args.pool, args.workers, work / "queue")
     report = json.loads((work / "fit.json").read_text())
-    model, params, theta0, obs, fok = setup_model(site, args, work, pool, log)
-    states_default = dict(model.states)
+    water = site.water_windows
+    model, params, theta0, obs, fok, elev = setup_model(site, args, work, pool, log, windows=site.windows + water)
+    states_start = dict(model.states)
     names = [p.name for p in params]
-    keep = [names.index(k) for k in report["fitted"]]
     theta_map = np.array([report["map"][k] for k in names])
-    if site.fitcfg.get("rough_keys", "default") != "line_search":
-        for name in report["screening"].get("rough", []):
-            theta_map[names.index(name)] = theta0[names.index(name)]
-            log(f"rough key {name} held at its default ({theta0[names.index(name)]:.6g})")
-    if "refresh_theta" in report:
-        theta_refresh = np.array([report["refresh_theta"][k] for k in names])
-    else:                                    # a fit.json from before refresh_theta was recorded
-        best = min(report["starts"], key=lambda s: s["cost"])
-        theta_refresh = theta0.copy()
-        for k, uk in zip(keep, best["u"]):
-            theta_refresh[k] = float(params[k].to_theta(uk))
-    if site.fitcfg.get("refresh_iter", 5) > 0:
-        model.states = run_chains(site, params, theta_refresh, work / "chains", pool, args.runner, log)
-    model.windows = [w for w in site.windows if w.role == "cal"]
-    if "cost_default" not in report:           # the default, on the default chain's states
-        everything = F.Problem(model, list(range(len(params))), theta0.copy())
-        model.states, st = states_default, model.states
-        r_def = model.residuals([theta0], windows=model.windows)[0]
-        model.states = st
-        report["cost_default"] = everything.cost(everything.u_prior, r_def)
-        report["scores_cal_default"] = R.target_scores([model.specs[x.name] for x in model.windows], r_def)
-    post_fit(site, model, params, theta0, theta_map, keep, states_default, report, work, log)
+    theta_base = base_theta(params)
+    pc = site.stagecfg["polish"]
+    theta_weights = theta0
+    if report.get("theta_polish_start"):
+        theta_weights = np.array([report["theta_polish_start"][k] for k in names])
+        if report.get("chains_refreshed"):
+            model.states = run_chains(site, params, theta_weights, work / "chains", pool, args.runner, log,
+                                      site.windows + water)
+    cal = [w for w in site.windows if w.role == "cal"]
+    pwin = cal + (water if pc["include_water"] and "polish" in report.get("stages_run", []) else [])
+    if site.fitcfg["weights"] == "ess":
+        ess_weights_at(site, model, theta_weights, [model.specs[w.name] for w in pwin], pwin, log)
+    post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_start, report, work, log)
     F.save_json(work / "fit.json", report)
     gates = {k: v["pass"] for k, v in report["gates"].items()}
-    log(f"analyzed: Phi {report['cost']['default']:.6g} -> {report['cost']['map']:.6g}; validation "
-        f"{report.get('cost_val')}; gates {gates}")
+    cv = report.get("cost_val") or {}
+    log(f"analyzed: validation Phi {cv.get('default', float('nan')):.6g} (default) -> "
+        f"{cv.get('map', float('nan')):.6g} (MAP); gates {gates}")
     pool.close()
     return 0
 
@@ -644,13 +955,9 @@ def write_calibrated(site: Site, params, theta, work: Path):
 
 def cmd_write_calibrated(args):
     """The calibrated configs from a finished fit's fit.json, into --out."""
-    import json
     site = Site(args.site, args.variant)
     rep = json.loads(Path(args.fit).read_text())
-    params = load_registry(site.registry_path, site.variant)
-    missing = [p.name for p in params if p.name not in rep["map"]]
-    if missing:
-        raise SystemExit(f"fit.json has no MAP value for {missing}")
+    params = [p for p in site.menu() if p.name in rep["map"]]
     for p in params:
         p.default = rep["default"][p.name]
     theta = np.array([rep["map"][p.name] for p in params])
@@ -682,14 +989,25 @@ def main(argv=None):
     p.add_argument("--daily", required=True, help="glob of a slow-loop run's daily files")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_growth_resp)
-    for name, func in (("check", cmd_check), ("fit", cmd_fit), ("analyze", cmd_analyze)):
+    p = sub.add_parser("report")
+    p.add_argument("--site", required=True)
+    p.add_argument("--variant", default=None)
+    p.add_argument("--work", required=True)
+    p.set_defaults(func=cmd_report)
+    for name, func in (("check", cmd_check), ("analyze", cmd_analyze)):
         p = sub.add_parser(name)
         common(p)
         p.set_defaults(func=func)
+    p = sub.add_parser("fit")
+    common(p)
+    p.add_argument("--stages", default=None, help="comma-separated stages to run (default: [fit].stages)")
+    p.add_argument("--resume", action="store_true", help="continue from <work>/stages.json")
+    p.set_defaults(func=cmd_fit)
     p = sub.add_parser("smoke")
     common(p)
     p.add_argument("--days", type=int, default=3)
     p.add_argument("--key", default="stomatal_g1")
+    p.add_argument("--g8", action="store_true", help="also check gate G8 (needs libmeds.so)")
     p.set_defaults(func=cmd_smoke)
     p = sub.add_parser("write-calibrated")
     p.add_argument("--site", required=True)

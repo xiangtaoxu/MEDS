@@ -25,6 +25,38 @@ before and after.
 - **ctest `python_api`** (with `MEDS_BUILD_PYLIB`): the package's tests, among them a run through
   `meds.model` compared with the same run of `meds_main`, bit for bit, and two runs in one process
   (#340).
+- **`meds.canopy`**, the canopy's fast pieces on their own through the Python API: the two-stream
+  radiation over a stand of cohorts, the light-plastic Vcmax25 and Rd25 per cohort, and a batch of
+  leaf solves with every driver given. A new C API module (`meds_c_api_canopy.f90`) opens a config
+  once and serves all three. `meds.plant.leaf.gas_exchange_batch` solves many leaves in one call
+  (#345).
+- **The leaf solve's per-cohort drivers as hourly outputs** (FAST tier, off unless listed):
+  `gx_par_cohort_fast`, `gx_leaf_temp_cohort_fast`, `gx_vpd_cohort_fast`, `gx_ca_cohort_fast`,
+  `gx_pressure_cohort_fast`, `gx_psi_leaf_cohort_fast`, `gx_psi_predawn_cohort_fast`,
+  `gx_gb_cohort_fast`, `gx_agross_cohort_fast` and `abs_par_cohort_fast`, with the cohort's wood
+  area `wai_cohort`. With them a canopy of leaf solves reproduces a run's hourly GPP: at BCI to
+  0.43 % (median hour, 745 hours) from the hourly means of the four 15-minute steps. With the new
+  outputs off, a run is bit-identical to one before (#345).
+- **calibrate_fast: a staged, user-controlled fit** (`MEDS_FAST_CALIBRATION_REVISION_PLAN.md`,
+  #345). The fit runs optics, then photosynthesis, energy, water stress and a joint polish:
+  - optics uses the two-stream alone against the albedo;
+  - photosynthesis uses a canopy of leaf solves against GPP (gate G8 checks it against the model);
+  - water stress uses frozen 120-day dry-season runs and a grid search.
+
+  It also adds:
+  - `site_reference.toml`: every site setting with its default and the reason, checked against
+    each site file;
+  - per-target data filters (`ustar_min`, `par_min`, `hours`, `closure_range`,
+    `min_solar_elevation`);
+  - a `report` command: each target's rows through each filter, and the morning u* plateau test;
+  - a rough uncertainty: σ-scaled Laplace intervals in physical units, and the MAP's shift under an
+    alternative filter from the final Jacobian (gate G10).
+
+  At BCI it ran 4,804 trials (31.8 core-hours), against 10,224 (about 43) for the joint fit shipped
+  with #340. Over the five years its set gives GPP 7.52 µmol m⁻² s⁻¹ (tower 7.46; the shipped set's
+  7.49), and April GPP of 6.6, 5.0 and 7.0 in 2014, 2016 and 2017 (tower 6.9, 6.3 and 7.0; shipped
+  set 5.1, 3.7 and 5.3). The example still ships the joint fit's set; the decisions the run raises
+  are in the plan's §13.
 
 ### Changed
 - **The stomatal water stress begins at an onset** (`pft.stomata_psi_onset`, new and optional).
@@ -58,6 +90,30 @@ before and after.
   against the tower's 7.46 (the 28-key set's 6.77; v0.3.1's shipped set 6.83), NEE −3.63 (−3.31;
   −3.14), LE 80.5 (81.9), and April 2016 GPP 4.1 (3.9) against the tower's 6.3. The interception-on
   set now passes the five-year water budget (v0.3.1's had 53 breaches) (#340).
+
+- **The fast-calibration registry is a menu the site chooses from** (#345). Each key is `fit`
+  (the default set), `optional` or `fixed` (with the reason), has a stage and a prior, and a site
+  edits the set (`[fit].keys`, `add`, `remove`) and any prior (`[priors.<key>]`). The default set
+  changes:
+  - in: `wstress_sref_stomata` and `stomata_psi_onset`, fitted on the dry-season runs;
+  - out: `leaf_transmit_nir` (collinear with `leaf_reflect_nir`), `intercept_k` (rough) and
+    `rd_vcmax_ratio` (fixed at 0.015 with night NEE out);
+  - optional: `theta_j` (0.7–0.9) and `jmax_vcmax_ratio`.
+
+  Default priors come from syntheses where there is one: `stomatal_g1` 3.77 kPa^0.5 (Lin et al.
+  2015, tropical rainforest trees) in place of the base value with the range as its ±2 sd. The
+  fit starts at the priors' centres.
+- **calibrate_fast's default targets and weights** (#345):
+  - GPP's σ is 2.5 + 0.15 GPP (was 1.5 + 0.15 GPP), and its hours need u* ≥ 0.4 m s⁻¹ (was no
+    filter): the tower's GPP carries its one-per-day respiration's error at every daytime hour, and
+    calm mornings under-read uptake.
+  - Night NEE is off (was on), with `rd_vcmax_ratio` fixed.
+  - The screening reports by default and fixes nothing (was: fix the keys the tower cannot inform);
+    `[fit].screening = "drop"` restores it.
+  - The effective-sample-size weights apply in the fit itself (`[fit].weights = "ess"`), not only
+    in the covariance.
+  - A target the model cannot fit (χ² per row above 1) has its σ scaled up in the covariance.
+  - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
 - **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,

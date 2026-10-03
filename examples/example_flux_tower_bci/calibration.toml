@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # The fast-parameter calibration at Barro Colorado Island (scripts/calibrate_fast;
-# docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md). run_example.py --calibrate runs it.
+# docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md and MEDS_FAST_CALIBRATION_REVISION_PLAN.md).
+# run_example.py --calibrate runs it. Every setting, its default and why: scripts/calibrate_fast/site_reference.toml.
 # Paths are relative to this file.
 
 [base]
@@ -28,6 +29,7 @@ utc_offset_h = -5.0
 forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
 forcing_qc   = ["LWdown_qc", "Wind_qc"]
 forcing_grid = 1
+closure      = "bowen"         # FLUXNET2015's correction, the Bowen ratio kept
 closure_days = 31              # the closure correction's sliding window, centred
 daytime_sw   = 10.0            # [W m-2]
 
@@ -41,6 +43,7 @@ h     = "H"
 nee   = "NEE"
 gpp   = "gpp"
 ustar = "ustar"
+par   = "Par_tot"              # incident PAR: the u* plateau report
 
 [targets.albedo]
 sigma = 0.01
@@ -67,28 +70,38 @@ closure = true
 sigma = 0.05
 min_hours = 6
 
+# GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), reported 40-50 %
+# below soil chambers, so sigma carries ~2 umol m-2 s-1 of systematic error; and the morning hours
+# need turbulence (the u* plateau of the data report). site_reference.toml explains both.
 [targets.gpp]
-sigma_abs = 1.5
+sigma_abs = 2.5
 sigma_rel = 0.15
+ustar_min = 0.4
 
+# Night NEE is out of the fast fit (revision plan decision 3): rd_vcmax_ratio is fixed instead.
 [targets.nee_night]
-sigma = 2.0
-ustar_min = 0.2
-night_sw = 5.0
+on = false
 
 [targets.ustar]
 sigma_abs = 0.1
 sigma_rel = 0.2
 
 [fit]
-max_free     = 20
-max_iter     = 15
-rtol         = 1.0e-3
-starts       = 3
-seed         = 20260929
-refresh_iter = 5
-rough_keys   = "default"       # a key the screening finds rough stays at its default ("line_search" to move it)
-timeout      = 300          # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
+stages     = ["optics", "photosynthesis", "energy", "water", "polish"]
+screening  = "report"
+weights    = "ess"
+seed       = 20260929
+rough_keys = "default"       # a key the screening finds rough stays at its default ("line_search" to move it)
+timeout    = 300             # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
+
+# The water stage: BCI's dry seasons, January to April, from the wet season's soil water. The 2016
+# one is the El Nino drought.
+[stages.water]
+windows = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" },
+            { name = "dry2017", start = "2017-01-01", days = 120, chain = "cal" } ]
+
+[uncertainty]
+alternative = { gpp = { ustar_min = 0.3 } }
 
 [windows]
 days       = 10

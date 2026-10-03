@@ -4,7 +4,9 @@ self-contained site -- the demography example's census, a synthetic forcing file
 `calibrate_fast.py smoke`: a state chain, a trial restarted from it with its parameter record
 checked, one Jacobian column that must move the output, and a repeated trial that must reproduce it
 byte for byte. It runs once with meds_main (MEDS_MAIN names it) and once through the Python API
-(MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is missing is skipped."""
+(MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is missing is skipped. The
+Python-API run also checks gate G8: the canopy of leaf solves (meds.canopy) on the window's own
+hourly drivers against the model's GPP (revision plan §7.2)."""
 import os
 import subprocess
 import sys
@@ -99,6 +101,17 @@ h = "H"
 nee = "NEE"
 gpp = "gpp"
 ustar = "ustar"
+# the synthetic sun is not the site's (its noon is 12 UTC at 76.5 W): only the three targets the smoke checks
+[targets.albedo]
+on = false
+[targets.lw_up]
+on = false
+[targets.rnet]
+on = false
+[targets.ef]
+on = false
+[targets.ustar]
+on = false
 [targets.le]
 sigma_abs = 10.0
 sigma_rel = 0.15
@@ -119,9 +132,12 @@ role = "cal"
 chain = "cal"
 """
     (tmp_path / "calibration.toml").write_text(decl)
+    g8 = ["--g8"] if runner == "python" else []
     res = subprocess.run([sys.executable, str(HERE / "calibrate_fast.py"), "smoke", "--site",
                           str(tmp_path / "calibration.toml"), "--work", str(tmp_path / "work"),
-                          "--runner", runner, "--days", "2", "--key", "stomatal_g1"],
+                          "--runner", runner, "--days", "2", "--key", "stomatal_g1"] + g8,
                          capture_output=True, text=True, timeout=1200)
     assert res.returncode == 0, res.stdout[-4000:] + res.stderr[-4000:]
     assert "repeat byte-identical: True; Jacobian column moves the output: True" in res.stdout
+    if g8:
+        assert "G8 canopy of leaf solves vs the model's GPP: {'pass': True" in res.stdout, res.stdout[-3000:]
