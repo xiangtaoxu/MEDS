@@ -242,7 +242,6 @@ contains
       s%max_substep    = toml_int    (tm, 'soil.max_substep',     s%max_substep)
       s%max_picard     = toml_int    (tm, 'soil.max_picard',      s%max_picard)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
-      s%dewmx          = toml_real   (tm, 'soil.dewmx',           s%dewmx)
       s%intercept_alpha= toml_real   (tm, 'soil.intercept_alpha', s%intercept_alpha)
       s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)
       s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
@@ -1154,6 +1153,7 @@ contains
       call req_r(tm, 'leaf_physiology.o2_mol_frac',      cfg%o2_mol_frac,      miss)
       call req_r(tm, 'leaf_physiology.leaf_absorptance', cfg%leaf_absorptance, miss)
       call req_r(tm, 'leaf_physiology.phi_psii',         cfg%phi_psii,         miss)
+      cfg%medlyn_vpd_min = toml_real(tm, 'leaf_physiology.medlyn_vpd_min', cfg%medlyn_vpd_min)
 
       !----- PFT file (named in the main file). -------------------------------------------!
       call toml_parse_file(trim(cfg%pft_config), tp, found)
@@ -1217,6 +1217,8 @@ contains
       call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
       call req_pa(tp, 'pft.wstress_sref_stomata',cfg%pft%wstress_sref_stomata,npft, miss)
       call opt_pa(tp, 'pft.stomata_psi_onset',   cfg%pft%stomata_psi_onset,   npft, miss)
+      call opt_pa(tp, 'pft.leaf_surf_water_max', cfg%pft%leaf_surf_water_max, npft, miss)
+      call opt_pa(tp, 'pft.wood_surf_water_max', cfg%pft%wood_surf_water_max, npft, miss)
 
       !----- Carbon-allocation per-PFT traits (meds_plant_carbon_allocation). --------------!
       call req_pa(tp, 'pft.sla',                    cfg%pft%sla,                    npft, miss)
@@ -1339,18 +1341,18 @@ contains
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c3,theta_ip_c3,'   &
            //'theta_cj_c4,theta_ic_c4,'                                                               &
            //'katul_lambda25,wstress_psi_open,wstress_psi_close,wstress_lambda_exp,wstress_sref_stomata,' &
-           //'stomata_psi_onset,'                                                                        &
+           //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
            //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 47 ITEMS: i0 + 9 + i0 + 2 + i0 + 20 + 11 + i0 + 3. A format SHORTER than the value !
+            !----- 49 ITEMS: i0 + 9 + i0 + 2 + i0 + 22 + 11 + i0 + 3. A format SHORTER than the value !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,20(",",es15.8),11(",",es15.8),",",i0,3(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,22(",",es15.8),11(",",es15.8),",",i0,3(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1361,6 +1363,7 @@ contains
                  p%theta_cj_c4(pf), p%theta_ic_c4(pf),                                                  &
                  p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
+                 p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &

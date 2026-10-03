@@ -27,7 +27,7 @@ program test_column_dynamics
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
-                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, &
+                                        column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
                                         ark_workspace_t
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
@@ -106,6 +106,7 @@ program test_column_dynamics
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
+   call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, col_config%leaf_photo)
    col_config%integrator = build_integrator_opts(cfg)
 

@@ -98,6 +98,10 @@ module meds_pft_params
       !< [MPa] predawn leaf psi where the stomatal stress begins (beta_stomata = 1 above it). OPTIONAL:
       !<       HYD_UNSET means half the PFT's leaf turgor-loss point (pft_stomata_psi_onset)
       real(wp), allocatable :: stomata_psi_onset(:)
+      !----- The canopy films' capacities (interception and dew): the water a leaf or a woody surface holds
+      !      before it drips. OPTIONAL, 0.1 by default (CLM5's dewmx, per unit leaf or stem area).
+      real(wp), allocatable :: leaf_surf_water_max(:)   !< [kg/m2 leaf]
+      real(wp), allocatable :: wood_surf_water_max(:)   !< [kg/m2 wood]
       !----- Leaf photosynthesis DERIVED per-PFT (derive_leaf_params). ------------------------!
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
@@ -294,6 +298,7 @@ contains
                pft%theta_cj_c3(n), pft%theta_ip_c3(n))
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
                pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n), pft%stomata_psi_onset(n))
+      allocate(pft%leaf_surf_water_max(n), pft%wood_surf_water_max(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
       allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
@@ -321,6 +326,7 @@ contains
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
       pft%hyd_leaf_pi0 = HYD_UNSET ; pft%hyd_leaf_elastic_mod = HYD_UNSET
       pft%stomata_psi_onset = HYD_UNSET   ! the same sentinel: half the PFT's turgor-loss point
+      pft%leaf_surf_water_max = 0.1_wp ; pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
       pft%hyd_leaf_apoplast_frac = HYD_UNSET ; pft%hyd_leaf_water_sat = HYD_UNSET
       pft%hyd_wood_pi0 = HYD_UNSET ; pft%hyd_wood_elastic_mod = HYD_UNSET
       pft%hyd_wood_apoplast_frac = HYD_UNSET ; pft%hyd_wood_water_sat = HYD_UNSET

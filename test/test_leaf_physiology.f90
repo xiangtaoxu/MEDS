@@ -138,7 +138,7 @@ program test_leaf_physiology
                     'A_net must satisfy the CO2 diffusion identity')
    !----- The converged gs reproduces the Medlyn law (root really solved the coupled system). -!
    call check_close(flux%gs, stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd,                   &
-                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1)), 1.0e-4_wp,                 &
+                    cfg%pft%stomatal_g0(1), cfg%pft%stomatal_g1(1), cfg%medlyn_vpd_min), 1.0e-4_wp, &
                     'back-computed gs must match the Medlyn model at the solution')
 
    !=== 5. All three stomatal models converge; gs decreases as VPD rises. ===================!
@@ -262,7 +262,7 @@ program test_leaf_physiology
    call leaf_gas_exchange(env, cfg, 1_ik, flux)
    gs_model = stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd, cfg%pft%stomatal_g0(1),              &
                                 cfg%pft%stomatal_g1(1) * min(1.0_wp, exp(0.3_wp * (env%psi                    &
-                                - pft_stomata_psi_onset(cfg, 1_ik)))))
+                                - pft_stomata_psi_onset(cfg, 1_ik)))), cfg%medlyn_vpd_min)
    call check(flux%converged, 'lwp mid-band: the solve converges')
    call check_close(flux%gs, 0.5_wp * gs_model, 1.0e-4_wp * gs_model,                              &
                     'lwp mid-band: gs is 0.5 x the Medlyn conductance at the solved A and Cs')

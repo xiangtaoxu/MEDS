@@ -23,7 +23,7 @@
 !==========================================================================================!
 module meds_phenology
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : safe_exp
+   use meds_constants,   only : safe_exp, tiny_num
    use meds_numerics,    only : logistic, clamp01
    use meds_time,        only : doy_effective
    use meds_phenology_types
@@ -81,9 +81,9 @@ contains
       end if
       if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik)                                       &
          s_flush = min(s_flush, logistic(k * (state%water_avg - params%water_on_threshold)      &
-                                           / max(params%water_width, tiny(1.0_wp))))
+                                           / max(params%water_width, tiny_num)))
       if (iand(params%flush_cue_mask, CUE_HYDRO) /= 0_ik)                                       &
-         s_flush = min(s_flush, clamp01(state%high_psi_days / max(params%high_psi_threshold, tiny(1.0_wp))))
+         s_flush = min(s_flush, clamp01(state%high_psi_days / max(params%high_psi_threshold, tiny_num)))
       !----- CUE_LIGHT contributes a flush signal of 1 (non-limiting) -- no term needed. ---!
 
       !----- (3b) SHED signal = MAX over the shed cues (CUE_NONE => no active shed 0). -----!
@@ -91,13 +91,13 @@ contains
       if (iand(params%shed_cue_mask, CUE_TEMP) /= 0_ik)  call consider(t_shed, CUE_TEMP,  s_shed, lim)
       if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik)                                        &
          call consider(logistic(k * (params%water_off_threshold - state%water_avg)              &
-                                  / max(params%water_width, tiny(1.0_wp))), CUE_WATER, s_shed, lim)
+                                  / max(params%water_width, tiny_num)), CUE_WATER, s_shed, lim)
       if (iand(params%shed_cue_mask, CUE_HYDRO) /= 0_ik)                                        &
-         call consider(clamp01(state%low_psi_days / max(params%low_psi_threshold, tiny(1.0_wp))), &
+         call consider(clamp01(state%low_psi_days / max(params%low_psi_threshold, tiny_num)), &
                        CUE_HYDRO, s_shed, lim)
       if (iand(params%shed_cue_mask, CUE_LIGHT) /= 0_ik)                                        &
          call consider(logistic(k * (state%light_avg - params%light_on_threshold)              &
-                                  / max(params%light_width, tiny(1.0_wp))), CUE_LIGHT, s_shed, lim)
+                                  / max(params%light_width, tiny_num)), CUE_LIGHT, s_shed, lim)
 
       !----- (4) low-pass the two governors (guarded weight caps at 1; FPE-safe), map to rates. -!
       w_f = dt / max(params%tau_flush, dt)

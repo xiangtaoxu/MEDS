@@ -29,6 +29,7 @@ from registry import load_registry  # noqa: E402
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 COLOURS = ["#2a78d6", "#d4661c", "#3a9a5b"]
+RENAMED = {"dewmx": "leaf_surf_water_max"}   # registry keys renamed since a shipped fit was made
 TARGET_NAMES = {"albedo": "albedo", "lw_up": "LW up", "rnet": "Rnet", "le": "LE", "h": "H", "ef": "EF",
                 "gpp": "GPP", "nee_night": "night\nNEE", "ustar": "u*"}
 
@@ -47,6 +48,7 @@ def main(argv=None):
     if not fits:
         raise SystemExit(f"no fit results match {args.fits}")
     registry = {p.name: p for p in load_registry(args.registry, "interception_on")}
+    registry |= {old: registry[new] for old, new in RENAMED.items() if new in registry}   # older fits' names
     keys = []
     for rep in fits.values():
         keys += [k for k in rep["fitted"] if k not in keys]

@@ -625,8 +625,9 @@ contains
       !      of surf_overflow's sign. ---------------------------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%soil_water_opts%dewmx, n, surf_overflow, &
-                                surf_deficit)
+         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
+                                col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
+                                col_config%wood_surf_water_max(col_cohort%pft(1:n)), n, surf_overflow, surf_deficit)
       end if
 
       !----- unpack into biophys + re-derive the diagnostic soil/leaf/wood temperatures. -----------!

@@ -20,7 +20,7 @@
 !==========================================================================================!
 module meds_plant_trait_dynamics
    use meds_kinds,     only : wp
-   use meds_constants, only : safe_exp
+   use meds_constants, only : safe_exp, tiny_num
    implicit none
    private
 
@@ -72,7 +72,7 @@ contains
       if (instant) then
          updated = target
       else
-         f       = 1.0_wp - safe_exp(-dt_yr / max(llspan, tiny(1.0_wp)))
+         f       = 1.0_wp - safe_exp(-dt_yr / max(llspan, tiny_num))
          updated = current + f * (target - current)
       end if
    end function update_plastic_trait

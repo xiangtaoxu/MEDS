@@ -22,7 +22,6 @@ module meds_plant_biophysics
    public :: sensible_heat_coeff, lw_emission_slope, leaf_transp_coeff
    public :: leaf_film_coeff
 
-   real(wp), parameter :: LEAF_MAXWHC = 0.11_wp     !< [kg/m2 leaf] film-holding capacity (wetted fraction)
 
 contains
 
@@ -253,20 +252,22 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Per-cohort canopy interception (design 3c). One canopy layer: capacity-limited bucket    !
+   ! (leaf_max*LAI + wood_max*SAI, the PFT's film capacities per unit leaf and wood area)       !
    ! with a Beer interception fraction; the caller sweeps the height-sorted cohorts top->bottom !
    ! feeding each `throughfall` as the next cohort's `rain_above`. `leaf_water` is the per-cohort !
    ! prognostic film [kg/m2 ground]; `sigma_w` (wetted fraction) is exported for the CAS-space     !
    ! evaporation. Not `elemental`: the cascade is a sequential recurrence.                          !
    !---------------------------------------------------------------------------------------!
    pure subroutine intercept_canopy_layer(leaf_water, rain_above, lai, sai, e_canopy, dt,     &
-                                          dewmx, k_int, alpha_pi, throughfall, drip, sigma_w)
+                                          leaf_max, wood_max, k_int, alpha_pi, throughfall, drip, sigma_w)
       real(wp), intent(inout) :: leaf_water
-      real(wp), intent(in)    :: rain_above, lai, sai, e_canopy, dt, dewmx, k_int, alpha_pi
+      real(wp), intent(in)    :: rain_above, lai, sai, e_canopy, dt, k_int, alpha_pi
+      real(wp), intent(in)    :: leaf_max, wood_max   !< [kg/m2 leaf], [kg/m2 wood] film capacities
       real(wp), intent(out)   :: throughfall, drip, sigma_w
       real(wp) :: pai, f_pi, w_max, q_grab, room, q_intr, w_new, over
       pai    = lai + sai
       f_pi   = alpha_pi * (1.0_wp - exp(-k_int * pai))
-      w_max  = dewmx * pai
+      w_max  = leaf_max * lai + wood_max * sai
       q_grab = f_pi * rain_above
       room   = max(0.0_wp, w_max - leaf_water) / dt
       q_intr = min(q_grab, room + e_canopy)                      ! bounded by capacity + evap headroom

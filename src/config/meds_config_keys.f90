@@ -35,6 +35,9 @@ module meds_config_keys
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
                     '[hydraulics].root_beta (0 < beta < 1) and root_depth; root_beta = '//        &
                     'exp(-b*root_depth) gives the old exponential decay b per metre'),           &
+      retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
+                    '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
+                    'both default to 0.1, the old dewmx'),                                       &
       retired_key_t('energy.phase_change', 'ice-aware soil conductivity and heat capacity are '//  &
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &

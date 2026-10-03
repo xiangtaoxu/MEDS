@@ -219,15 +219,15 @@ contains
       dt = 600.0_wp ; rain = 1.0e-4_wp
       !----- Dry canopy fills below capacity: no drip, exact balance. -----!
       lw = 0.0_wp
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       bal = tf + lw / dt + 0.0_wp                       ! throughfall + storage-rate + evap
       call check('interception water balance', bal, rain, 1.0e-12_wp)
       call check_true('no drip below capacity', dr < 1.0e-30_wp, dr)
       call check_true('leaf_water within capacity', lw <= 0.1_wp * 2.5_wp + 1.0e-12_wp, lw)
       !----- Saturated canopy overflows: drip appears, storage capped. -----!
-      lw = 0.25_wp                                       ! = dewmx * pai (full)
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      lw = 0.25_wp                                       ! = 0.1*LAI + 0.1*SAI (full)
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       call check_true('drip when full', dr > 0.0_wp, dr)
       call check_true('capacity respected', lw <= 0.25_wp + 1.0e-12_wp, lw)
@@ -235,7 +235,7 @@ contains
       !----- #333: a film already ABOVE capacity (leaf area lost under a full film) drips the excess:  !
       !      storage capped, and throughfall + storage change = rain -- nothing discarded. ---------!
       lw = 0.30_wp                                       ! capacity is 0.25: 0.05 too much
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       call check_true('over capacity: storage capped', lw <= 0.25_wp + 1.0e-12_wp, lw)
       bal = tf + (lw - 0.30_wp) / dt

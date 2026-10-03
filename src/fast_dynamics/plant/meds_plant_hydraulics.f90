@@ -65,7 +65,7 @@ contains
       real(wp), intent(in) :: nplant      !< [pl/m2] plant density
       real(wp) :: rai
       rai = broot * sra * root_frac * nplant                     ! root area index [m2/m2]
-      gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny(1.0_wp))
+      gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny_num)
    end function rhizosphere_cond
 
    !----- Reduce the root boundary to an effective (conductance, soil potential) at the wood node.    !

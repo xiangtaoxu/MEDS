@@ -40,6 +40,10 @@ wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-str
                                                     #   (beta_stomata = 1 above it). Absent: half the PFT's leaf turgor-loss
                                                     #   point, the recommended value (-0.857 at the [hydraulics] leaf_pi0 and
                                                     #   leaf_elastic_mod). It clears the gravity head of a tree up to ~85 m in wet soil.
+# leaf_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 leaf] OPTIONAL film capacity of a leaf (intercepted rain and dew)
+# wood_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 wood] OPTIONAL film capacity of the woody surface. Absent: 0.1 each,
+                                                    #   CLM5's dewmx. Used with [fast].canopy_water_on; a cohort holds
+                                                    #   leaf_surf_water_max*LAI + wood_surf_water_max*WAI before it drips.
 # Carbon-dynamics traits (meds_plant_carbon_dynamics). All state is CARBON; conversions folded in here.
 # Consumed once the carbon-allocation engine is wired; size2leaf_carbon/size2wood_carbon use sla/aboveground_frac.
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)

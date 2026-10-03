@@ -22,6 +22,15 @@ module meds_canopy_aerodynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_opts, only : aero_cfg_t
    implicit none
+
+   !----- The bounds of the Monin-Obukhov initial guess (zeta from the bulk Richardson number), as in   !
+   !      CLM5's MoninObukIni (FrictionVelocityMod; the scheme of Zeng et al. 1998, J. Climate 11,     !
+   !      2628-2644). They seed the fixed-iteration solve only: |zeta| starts at least 0.01 away from  !
+   !      neutral, a stable guess uses Ri_b <= 0.19 (where 1 - 5 Ri_b stays positive), and an unstable  !
+   !      guess is no lower than -100. -------------------------------------------------------------!
+   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp
+   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp
+   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp
    private
 
    public :: canopy_aerodynamics             !< master per-patch seam
@@ -172,17 +181,17 @@ contains
 
       !----- MoninObukIni: convective velocity if unstable, then analytic Rib -> zeta guess. -!
       if (dthv >= 0.0_wp) then
-         um = max(uref, 0.1_wp)
+         um = uref                                    ! already at least cfg%ubmin
       else
          um = sqrt(uref * uref + cfg%wc * cfg%wc)
       end if
       rib = grav * zldis * dthv / (thv_atm * um * um)
       if (rib >= 0.0_wp) then
-         zeta = rib * log(zldis / z0m) / (1.0_wp - 5.0_wp * min(rib, 0.19_wp))
-         zeta = min(cfg%zeta_max_stable, max(zeta, 0.01_wp))
+         zeta = rib * log(zldis / z0m) / (1.0_wp - 5.0_wp * min(rib, RIB_GUESS_MAX))
+         zeta = min(cfg%zeta_max_stable, max(zeta, ZETA_GUESS_NEUTRAL))
       else
          zeta = rib * log(zldis / z0m)
-         zeta = max(-100.0_wp, min(zeta, -0.01_wp))
+         zeta = max(ZETA_GUESS_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
       !----- Fixed-iteration solve (no data-dependent exit -> warp-uniform on GPU). --------!

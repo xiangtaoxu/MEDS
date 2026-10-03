@@ -62,7 +62,7 @@ def test_prior_band_is_the_range():
 def test_registry_loads_and_filters_variants():
     off = {p.name for p in load_registry(REGISTRY, "interception_off")}
     on = {p.name for p in load_registry(REGISTRY, "interception_on")}
-    assert "dewmx" not in off and "dewmx" in on and "stomatal_g1" in off
+    assert "leaf_surf_water_max" not in off and "leaf_surf_water_max" in on and "stomatal_g1" in off
     for p in load_registry(REGISTRY, "interception_on"):
         assert p.lo < p.hi and p.file in ("pft", "main")
 

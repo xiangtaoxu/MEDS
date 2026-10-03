@@ -61,7 +61,6 @@ module meds_biophysics_opts
       integer(ik) :: max_substep = 200_ik
       integer(ik) :: max_picard  = 5_ik
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
-      real(wp)    :: dewmx      = 0.1_wp                 !< [kg/m2 per PAI] canopy storage capacity
       real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction
       real(wp)    :: dsl_dmax       = 0.015_wp           !< [m] DSL max thickness (soil evap)

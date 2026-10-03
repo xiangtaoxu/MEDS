@@ -102,7 +102,7 @@ contains
       integer(ik) :: nsub_b(n)
       logical     :: converged_b(n)
       !----- Canopy-SURFACE water pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c). ------------!
-      real(wp) :: rain_above, combined_w, pai_i, throughfall_i, drip_i, throughfall_total
+      real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
 
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
@@ -195,15 +195,21 @@ contains
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%rainfall + forc%snowfall
          do i = 1_ik, n
-            pai_i      = col_cohort%lai(i) + col_cohort%wai(i)
             combined_w = biophys%leaf_surf_water(i) + biophys%wood_surf_water(i)
+            leaf_cap_i = col_config%leaf_surf_water_max(col_cohort%pft(i)) * col_cohort%lai(i)
+            wood_cap_i = col_config%wood_surf_water_max(col_cohort%pft(i)) * col_cohort%wai(i)
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
-                                        col_config%soil_water_opts%dewmx, col_config%soil_water_opts%intercept_k, &
+                                        col_config%leaf_surf_water_max(col_cohort%pft(i)),                  &
+                                        col_config%wood_surf_water_max(col_cohort%pft(i)),                  &
+                                        col_config%soil_water_opts%intercept_k, &
                                              col_config%soil_water_opts%intercept_alpha, &
                                         throughfall_i, drip_i, frozen%film%f_wet_c(i))
-            if (pai_i > tiny_num) then
-               frozen%film%intercept_leaf(i) = (combined_w*col_cohort%lai(i)/pai_i - biophys%leaf_surf_water(i)) / dt_fast
-               frozen%film%intercept_wood(i) = (combined_w*col_cohort%wai(i)/pai_i - biophys%wood_surf_water(i)) / dt_fast
+            !----- the combined film shared by capacity, so neither film is left above its own cap -------!
+            if (leaf_cap_i + wood_cap_i > tiny_num) then
+               frozen%film%intercept_leaf(i) = (combined_w*leaf_cap_i/(leaf_cap_i + wood_cap_i)                 &
+                                               - biophys%leaf_surf_water(i)) / dt_fast
+               frozen%film%intercept_wood(i) = (combined_w*wood_cap_i/(leaf_cap_i + wood_cap_i)                 &
+                                               - biophys%wood_surf_water(i)) / dt_fast
             else
                frozen%film%intercept_leaf(i) = -biophys%leaf_surf_water(i) / dt_fast
                frozen%film%intercept_wood(i) = -biophys%wood_surf_water(i) / dt_fast

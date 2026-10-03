@@ -82,6 +82,7 @@ contains
       p%hd_vcmax = cfg%hd_vcmax ; p%hd_jmax = cfg%hd_jmax ; p%hd_rd = cfg%hd_rd
       p%ds_vcmax = cfg%ds_vcmax ; p%ds_jmax = cfg%ds_jmax ; p%ds_rd = cfg%ds_rd
       p%o2_mol_frac = cfg%o2_mol_frac ; p%absorptance = cfg%leaf_absorptance ; p%phi_psii = cfg%phi_psii
+      p%medlyn_vpd_min = cfg%medlyn_vpd_min
    end subroutine leaf_photo_params_for_pft
 
    !----- build_leaf_photo_table -- every PFT's parameters plus the run-level solver selectors,     !

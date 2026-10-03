@@ -470,18 +470,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Canopy-film capacity clamp on the COMMITTED state: cap each cohort's leaf/wood film at        !
-   ! dewmx*LAI / dewmx*WAI and floor it at 0; the clipped excess (overflow) and the floored          !
+   ! leaf_max*LAI / wood_max*WAI and floor it at 0; the clipped excess (overflow) and the floored    !
    ! shortfall (deficit) are returned so the caller books them in the whole-column ledger.          !
    !---------------------------------------------------------------------------------------!
-   pure subroutine clamp_canopy_film(y_out, lai, wai, dewmx, n, surf_overflow, surf_deficit)
+   pure subroutine clamp_canopy_film(y_out, lai, wai, leaf_max, wood_max, n, surf_overflow, surf_deficit)
       type(column_state_t), intent(inout) :: y_out
-      real(wp),             intent(in)    :: lai(:), wai(:), dewmx
+      real(wp),             intent(in)    :: lai(:), wai(:)
+      real(wp),             intent(in)    :: leaf_max(:), wood_max(:)   !< [kg/m2 leaf], [kg/m2 wood] per cohort
       integer(ik),          intent(in)    :: n
       real(wp),             intent(inout) :: surf_overflow, surf_deficit   !< [kg/m2] accumulated
       real(wp)    :: leaf_cap_i, wood_cap_i
       integer(ik) :: i
       do i = 1_ik, n
-         leaf_cap_i = dewmx * lai(i) ; wood_cap_i = dewmx * wai(i)
+         leaf_cap_i = leaf_max(i) * lai(i) ; wood_cap_i = wood_max(i) * wai(i)
          surf_overflow = surf_overflow + max(0.0_wp, y_out%leaf_surf_water(i) - leaf_cap_i)          &
                                         + max(0.0_wp, y_out%wood_surf_water(i) - wood_cap_i)
          surf_deficit  = surf_deficit  + max(0.0_wp, -y_out%leaf_surf_water(i))                      &

@@ -42,7 +42,7 @@ module meds_fast_types
    public :: GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W, GRP_THETA, N_TOL_GROUP
    public :: tol_set_t, error_control_t, integrator_opts_t
    public :: process_mask_t, mask_is_full
-   public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config
+   public :: alloc_column_cohort, ensure_column_cohort_capacity, apply_hydraulics_config, apply_canopy_film_config
    public :: surface_state_t, surface_tend_t
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: snow_stage_t
@@ -173,6 +173,10 @@ module meds_fast_types
       !      right-hand side, RK45 in its own film advance. With it off the wetted fraction stays 0,   !
       !      which makes every film term vanish rather than branching. -------------------------------!
       logical                     :: canopy_water_on  = .false.
+      !----- The films' capacities per PFT [kg/m2 leaf], [kg/m2 wood] (pft.leaf_surf_water_max,       !
+      !      pft.wood_surf_water_max): a cohort holds leaf_max*LAI + wood_max*WAI. Built by            !
+      !      apply_canopy_film_config, beside the hydraulics table. ---------------------------------!
+      real(wp), allocatable       :: leaf_surf_water_max(:), wood_surf_water_max(:)
       type(snow_params_t) :: snow                    !< snow parameters (density, albedo, thresholds, conductivity)
       !----- The ARK's Newton iteration cap is NOT a config field: it is the NEWT_MAX parameter in     !
       !      meds_fast_ark. Do not add a mirror of it here. ---------------------------------------------!
@@ -946,6 +950,14 @@ contains
          if (src > HYD_UNSET) dst = src
       end subroutine ovr
    end subroutine apply_hydraulics_config
+
+   !----- The canopy films' per-PFT capacities, from the PFT table (both default to 0.1). -------!
+   subroutine apply_canopy_film_config(pft, leaf_max, wood_max)
+      type(pft_table_t),     intent(in)  :: pft
+      real(wp), allocatable, intent(out) :: leaf_max(:), wood_max(:)
+      leaf_max = pft%leaf_surf_water_max(1:pft%n)
+      wood_max = pft%wood_surf_water_max(1:pft%n)
+   end subroutine apply_canopy_film_config
 
    !----- Allocate + seed a patch_biophys_t from an initial CAS temperature (mirrors the other !
    !      alloc_* helpers; seeds can_enthalpy via the shared thermo inverter). ----------------!
