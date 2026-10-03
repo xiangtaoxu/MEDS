@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : grav, pi, tiny_num, vonkarman
+   use meds_constants,        only : grav, pi, tiny_num, vonkarman, safe_exp
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_opts, only : aero_cfg_t
    implicit none
@@ -135,9 +135,9 @@ contains
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
       do ico = n, 1_ik, -1_ik
-         ca            = min(max(crown_area(ico), 0.01_wp), 1.0_wp)
-         ext_half      = ca * exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
-         ext_full      = ca * exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
+         ca            = min(max(crown_area(ico), tiny_num), 1.0_wp)
+         ext_half      = ca * safe_exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
+         ext_full      = ca * safe_exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
          out%wind(ico) = max(cfg%ugbmin, uh * ext_half)          ! wind at crown mid-depth
          uh            = uh * ext_full                            ! attenuate for the cohort below
       end do

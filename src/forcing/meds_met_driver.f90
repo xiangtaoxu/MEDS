@@ -66,7 +66,6 @@ module meds_met_driver
              MET_ERR_ATTR_MISMATCH, MET_ERR_ARCHIVE, MET_ERR_CO2_FILE, MET_ERR_CO2_NOT_COVERED,   &
              MET_ERR_CO2_IN_MET_FILE, MET_ERR_NOT_UTC, MET_ERR_HUMIDITY
 
-   real(wp), parameter :: U_MIN     = 0.1_wp     !< [m/s] wind floor (M-O similarity stability)
    integer(ik), parameter :: N_COSZ_SUB = 10_ik  !< sub-samples per forcing interval for <cosz>_win
 
 contains
@@ -335,7 +334,7 @@ contains
          met%qair     = interpolate_forcing(INTERP_LINEAR, p%qair,     n%qair,     w_next)
          met%psurf_pa = interpolate_forcing(INTERP_LINEAR, p%psurf_pa, n%psurf_pa, w_next)
          met%lwdown   = interpolate_forcing(INTERP_LINEAR, p%lwdown,   n%lwdown,   w_next)
-         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next, U_MIN)
+         met%wind     = interpolate_wind_energy(p%wind, n%wind, w_next)   ! floored at aerodynamics.ubmin where used
          !----- The vector interpolates linearly, which keeps its direction (§5.3); never floored. ---!
          if (src%has_wind_vector) then
             met%wind_u = interpolate_forcing(INTERP_LINEAR, p%wind_u, n%wind_u, w_next)

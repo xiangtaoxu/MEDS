@@ -31,7 +31,7 @@ program test_column_dynamics
                                         ark_workspace_t
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
-   use meds_fast_prepass,        only : aero_bottom_to_top
+   use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
    use meds_fast_types,          only : tol_set_t, GRP_ENTH, GRP_THETA
    use meds_fast_dynamics,       only : fast_context_t, build_fast_context
    use meds_water_retention,     only : psi_from_water_content, water_content
@@ -113,6 +113,17 @@ program test_column_dynamics
    call alloc_aero_out(aero, n)
    allocate(forc%abs_sw(n), forc%abs_lw(n), forc%abs_par(n), forc%abs_sw_wood(n), forc%abs_lw_wood(n))
    forc%abs_sw_wood = 0.0_wp ; forc%abs_lw_wood = 0.0_wp
+
+   !----- A cohort's leaf PAR is its absorbed PAR per unit of its own leaf area (#346): a thin cohort's !
+   !      leaves see the same light as a thick one's when each absorbs in proportion to its leaf   !
+   !      area, and a leafless cohort sees none. ---------------------------------------------------!
+   call check_true('leaf PAR of a thin cohort (LAI 0.05) is its own', abs(cohort_leaf_par(5.0_wp, 0.05_wp, 4.6_wp) &
+                   - 460.0_wp) < 1.0e-9_wp, cohort_leaf_par(5.0_wp, 0.05_wp, 4.6_wp))
+   call check_true('leaf PAR does not depend on the cohort''s thickness',                                  &
+                   abs(cohort_leaf_par(0.05_wp * 100.0_wp, 0.05_wp, 4.6_wp)                              &
+                       - cohort_leaf_par(0.5_wp * 100.0_wp, 0.5_wp, 4.6_wp)) < 1.0e-9_wp, 0.0_wp)
+   call check_true('a leafless cohort absorbs nothing and sees no PAR', cohort_leaf_par(0.0_wp, 0.0_wp, 4.6_wp) == 0.0_wp, &
+                   cohort_leaf_par(0.0_wp, 0.0_wp, 4.6_wp))
 
    !=====================================================================================!
    !  RUN 1 -- the full physical-sanity suite. This is now the ONLY soil-thermal coupling      !

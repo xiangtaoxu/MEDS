@@ -65,10 +65,10 @@ contains
    end function interpolate_forcing
 
    !----- Wind interpolates as SQUARED quantities (kinetic-energy-conserving, ED2 vels). ----!
-   elemental function interpolate_wind_energy(prev, next, w_next, u_min) result(u)
-      real(wp), intent(in) :: prev, next, w_next, u_min
+   elemental function interpolate_wind_energy(prev, next, w_next) result(u)
+      real(wp), intent(in) :: prev, next, w_next
       real(wp) :: u
-      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, u_min * u_min))
+      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, 0.0_wp))
    end function interpolate_wind_energy
 
    !=======================================================================================!
