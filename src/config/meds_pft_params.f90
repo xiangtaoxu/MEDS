@@ -92,8 +92,12 @@ module meds_pft_params
       real(wp), allocatable :: wstress_psi_open(:)   !< [MPa]   leaf potential at which beta = 1 (<= 0)
       real(wp), allocatable :: wstress_psi_close(:)  !< [MPa]   leaf potential at which beta = 0 (< psi_open)
       real(wp), allocatable :: wstress_lambda_exp(:) !< [--]    Katul lambda water-stress exponent
-      !< [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata = exp(sref*psi), psi = predawn leaf psi)
+      !< [1/MPa] Sabot stomatal-stress sensitivity: beta_stomata = exp(sref*(psi - psi_onset)) below the
+      !<         onset, psi = predawn leaf psi
       real(wp), allocatable :: wstress_sref_stomata(:)
+      !< [MPa] predawn leaf psi where the stomatal stress begins (beta_stomata = 1 above it). OPTIONAL:
+      !<       HYD_UNSET means half the PFT's leaf turgor-loss point (pft_stomata_psi_onset)
+      real(wp), allocatable :: stomata_psi_onset(:)
       !----- Leaf photosynthesis DERIVED per-PFT (derive_leaf_params). ------------------------!
       real(wp), allocatable :: jmax25(:)             !< [umol/m2/s] DERIVED = jmax_vcmax_ratio * vcmax25
       real(wp), allocatable :: tpu25(:)              !< [umol/m2/s] DERIVED = tpu_vcmax_ratio  * vcmax25
@@ -289,7 +293,7 @@ contains
                pft%quantum_yield_c4(n), pft%theta_j(n), pft%theta_cj_c4(n), pft%theta_ic_c4(n),  &
                pft%theta_cj_c3(n), pft%theta_ip_c3(n))
       allocate(pft%katul_lambda25(n), pft%wstress_psi_open(n), pft%wstress_psi_close(n),     &
-               pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n))
+               pft%wstress_lambda_exp(n), pft%wstress_sref_stomata(n), pft%stomata_psi_onset(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
       allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
@@ -316,6 +320,7 @@ contains
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
       pft%hyd_leaf_pi0 = HYD_UNSET ; pft%hyd_leaf_elastic_mod = HYD_UNSET
+      pft%stomata_psi_onset = HYD_UNSET   ! the same sentinel: half the PFT's turgor-loss point
       pft%hyd_leaf_apoplast_frac = HYD_UNSET ; pft%hyd_leaf_water_sat = HYD_UNSET
       pft%hyd_wood_pi0 = HYD_UNSET ; pft%hyd_wood_elastic_mod = HYD_UNSET
       pft%hyd_wood_apoplast_frac = HYD_UNSET ; pft%hyd_wood_water_sat = HYD_UNSET
