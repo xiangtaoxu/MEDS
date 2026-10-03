@@ -46,7 +46,7 @@ program test_slow_diag_units
    use meds_column_params,       only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention,     only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
-   use meds_fast_types,          only : apply_hydraulics_config
+   use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config,         only : build_leaf_photo_table, build_integrator_opts
    use meds_slow_dynamics,       only : advance_slow_dynamics, advance_boundary_dynamics
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
@@ -74,6 +74,7 @@ program test_slow_diag_units
                           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+   call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
    call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)
    ctx%col_config%integrator = build_integrator_opts(cfg)
    ctx%air_temp = 295.0_wp ; ctx%rad_sw_top = 500.0_wp ; ctx%rad_sw_ground = 75.0_wp

@@ -189,16 +189,29 @@ stage = "energy"
 group = "evaporation"
 source = "maximum dry surface layer [m]; plan §4.3"
 
-[dewmx]
-file = "main"
-key = "soil.dewmx"
+[leaf_surf_water_max]
+file = "pft"
+key = "pft.leaf_surf_water_max"
 range = [0.05, 0.3]
 transform = "log"
-state = "fit"
+state = "fixed"
 stage = "energy"
 group = "interception"
 variants = ["interception_on"]
-source = "leaf-film water capacity [kg m-2 per unit LAI]; plan §4.3 (interception on)"
+reason = "the tower does not see the wet canopy: at BCI FLAG gap-fills every raining hour and 56 % of the three hours after (an open-path analyser's usual loss), so a fit tunes it on dry hours only (owner, 2026-10-02). A tower that measures through rain may fit it"
+source = "leaf film capacity [kg m-2 leaf] (the old soil.dewmx, CLM5 0.1); plan §4.3 (interception on)"
+
+[wood_surf_water_max]
+file = "pft"
+key = "pft.wood_surf_water_max"
+range = [0.05, 0.3]
+transform = "log"
+state = "fixed"
+stage = "energy"
+group = "interception"
+variants = ["interception_on"]
+reason = "as leaf_surf_water_max; the tower cannot tell the wood film from the leaf film"
+source = "woody-surface film capacity [kg m-2 wood] (the old soil.dewmx, CLM5 0.1)"
 
 [intercept_k]
 file = "main"

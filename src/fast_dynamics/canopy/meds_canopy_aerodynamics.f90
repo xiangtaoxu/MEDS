@@ -18,10 +18,22 @@
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : grav, pi, tiny_num, vonkarman
+   use meds_constants,        only : grav, pi, tiny_num, vonkarman, safe_exp
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_biophysics_opts, only : aero_cfg_t
    implicit none
+
+   !----- The bounds of the Monin-Obukhov initial guess (zeta from the bulk Richardson number), as in   !
+   !      CLM5's MoninObukIni (FrictionVelocityMod; the scheme of Zeng et al. 1998, J. Climate 11,     !
+   !      2628-2644). They seed the fixed-iteration solve only: |zeta| starts at least 0.01 away from  !
+   !      neutral, a stable guess uses Ri_b <= 0.19 (where 1 - 5 Ri_b stays positive), and an unstable  !
+   !      guess is no lower than -100. -------------------------------------------------------------!
+   real(wp), parameter :: RIB_GUESS_MAX           = 0.19_wp
+   real(wp), parameter :: ZETA_GUESS_NEUTRAL      = 0.01_wp
+   real(wp), parameter :: ZETA_GUESS_UNSTABLE_MIN = -100.0_wp
+   !----- The under-canopy stability parameter of the dense-canopy ground conductance (CLM4's, whose  !
+   !      cs_dense and gamma_g it uses) is capped at 10 there; above it the conductance is ~0 anyway. -!
+   real(wp), parameter :: GROUND_STAB_MAX = 10.0_wp
    private
 
    public :: canopy_aerodynamics             !< master per-patch seam
@@ -111,7 +123,7 @@ contains
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
       if (denom > tiny_num) then
-         stab = max(0.0_wp, min(10.0_wp, 2.0_wp * grav * geom%veg_height                       &
+         stab = max(0.0_wp, min(GROUND_STAB_MAX, 2.0_wp * grav * geom%veg_height               &
                     * (env%can_temp - env%t_ground) / denom))
       end if
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
@@ -126,9 +138,9 @@ contains
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
       do ico = n, 1_ik, -1_ik
-         ca            = min(max(crown_area(ico), 0.01_wp), 1.0_wp)
-         ext_half      = ca * exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
-         ext_full      = ca * exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
+         ca            = min(max(crown_area(ico), tiny_num), 1.0_wp)
+         ext_half      = ca * safe_exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
+         ext_full      = ca * safe_exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
          out%wind(ico) = max(cfg%ugbmin, uh * ext_half)          ! wind at crown mid-depth
          uh            = uh * ext_full                            ! attenuate for the cohort below
       end do
@@ -172,17 +184,17 @@ contains
 
       !----- MoninObukIni: convective velocity if unstable, then analytic Rib -> zeta guess. -!
       if (dthv >= 0.0_wp) then
-         um = max(uref, 0.1_wp)
+         um = uref                                    ! already at least cfg%ubmin
       else
          um = sqrt(uref * uref + cfg%wc * cfg%wc)
       end if
       rib = grav * zldis * dthv / (thv_atm * um * um)
       if (rib >= 0.0_wp) then
-         zeta = rib * log(zldis / z0m) / (1.0_wp - 5.0_wp * min(rib, 0.19_wp))
-         zeta = min(cfg%zeta_max_stable, max(zeta, 0.01_wp))
+         zeta = rib * log(zldis / z0m) / (1.0_wp - 5.0_wp * min(rib, RIB_GUESS_MAX))
+         zeta = min(cfg%zeta_max_stable, max(zeta, ZETA_GUESS_NEUTRAL))
       else
          zeta = rib * log(zldis / z0m)
-         zeta = max(-100.0_wp, min(zeta, -0.01_wp))
+         zeta = max(ZETA_GUESS_UNSTABLE_MIN, min(zeta, -ZETA_GUESS_NEUTRAL))
       end if
 
       !----- Fixed-iteration solve (no data-dependent exit -> warp-uniform on GPU). --------!
@@ -197,7 +209,7 @@ contains
       !----- Final ustar/temp1 consistent with the converged zeta. -------------------------!
       ustar = max(cfg%ustmin, vonkarman * um / d_mom(zeta, zldis, z0m, cfg))
       temp1 = vonkarman / d_heat(zeta, zldis, z0m, cfg)
-      obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)
+      obu   = zldis / sign(max(abs(zeta), 1.0e-6_wp), zeta)   ! clamp-ok: a finite Obukhov length near neutral
    end subroutine mo_surface_layer
 
    !----- Momentum profile denominator D_m (ustar = vonk*um/D_m), four CLM5 ranges. ----------!

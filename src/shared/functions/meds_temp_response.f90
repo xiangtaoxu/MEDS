@@ -87,7 +87,7 @@ contains
       real(wp), intent(in) :: a_coef, b_coef   !< [-], [1/K] intercept and slope
       real(wp), intent(in) :: t_growth         !< [K] growth temperature
       real(wp)             :: jv
-      jv = max(0.1_wp, a_coef - b_coef * (t_growth - t_kelvin))
+      jv = max(0.1_wp, a_coef - b_coef * (t_growth - t_kelvin))   ! clamp-ok: positive far outside the 11-35 C fit
    end function kattge_knorr_jv_ratio
 
    !---------------------------------------------------------------------------------------!

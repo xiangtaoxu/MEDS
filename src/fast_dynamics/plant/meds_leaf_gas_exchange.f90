@@ -30,7 +30,6 @@ module meds_leaf_gas_exchange
 
    public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda, low_psi_gs_factor
 
-   real(wp), parameter :: vpd_floor_pa = 50.0_wp     !< [Pa] VPD floor (avoid 1/sqrt(0) in Medlyn)
    real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
    !----- from meds_leaf_solver.f90 ------------------------------------------------------!
@@ -64,6 +63,7 @@ module meds_leaf_gas_exchange
       logical     :: boundary_layer                           !< draw leaf-surface CO2 down through gb
       real(wp)    :: vpd, ddef                                !< [Pa], [mol/mol] water deficit
       real(wp)    :: g0, g1, d0, lambda                       !< the stomatal model's parameters
+      real(wp)    :: vpd_min                                  !< [kPa] the Medlyn model's least VPD
       real(wp)    :: f_lwp                                    !< low-water-potential factor on gs
       real(wp)    :: gs_pin = 0.0_wp                          !< [mol/m2/s] the GS_PINNED conductance
    end type ci_problem_t
@@ -186,17 +186,18 @@ contains
       end if
    end function low_psi_gs_factor
 
-   pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1) result(gs)
+   pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1, vpd_min) result(gs)
       real(wp), intent(in) :: a_net   !< [umol/m2/s] net assimilation
       real(wp), intent(in) :: cs      !< [umol/mol]  leaf-surface CO2
       real(wp), intent(in) :: vpd     !< [Pa]        leaf-to-air VPD
       real(wp), intent(in) :: g0, g1  !< [mol/m2/s], [kPa^0.5]
+      real(wp), intent(in) :: vpd_min !< [kPa]       the VPD used at least (g1/sqrt(D) is undefined at 0)
       real(wp)             :: gs, vpd_kpa
       if (a_net <= 0.0_wp) then
          gs = g0
          return
       end if
-      vpd_kpa = max(vpd, vpd_floor_pa) * 1.0e-3_wp
+      vpd_kpa = max(vpd * 1.0e-3_wp, vpd_min)
       gs = g0 + gsw_2_gsc * (1.0_wp + g1 / sqrt(vpd_kpa)) * a_net / max(cs, tiny_num)
    end function stomata_gs_medlyn
 
@@ -346,6 +347,7 @@ contains
                           theta_cj_c4 = p%theta_cj_c4, theta_ic_c4 = p%theta_ic_c4,                   &
                           ca = ca_ppm, gb = env%gb, boundary_layer = do_boundary_layer,               &
                           vpd = env%vpd, ddef = ddef, g0 = p%g0, g1 = g1_eff, d0 = p%d0,              &
+                          vpd_min = p%medlyn_vpd_min,                                                 &
                           lambda = lambda_eff, f_lwp = f_lwp)
 
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
@@ -527,7 +529,7 @@ contains
             gs = prob%f_lwp * stomata_gs_leuning(An_loc, cs_surf, prob%gstar, prob%vpd, prob%g0,       &
                                                  prob%g1, prob%d0)
          else
-            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1)
+            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1, prob%vpd_min)
          end if
       end select
       !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so     !
@@ -550,7 +552,7 @@ contains
       if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
       !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB      !
       !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored). --!
-      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)   ! clamp-ok: the finite-difference step [umol/mol]
       dAn_dci = (ci_net_assimilation(prob, ci + dci) - ci_net_assimilation(prob, ci - dci))          &
                 / (2.0_wp * dci)
       !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). ----!

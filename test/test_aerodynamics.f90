@@ -25,6 +25,7 @@ program test_aerodynamics
    call test_wind_profile()
    call test_boundary_layer()
    call test_master()
+   call test_small_crown()
 
    call test_report('test_aerodynamics')
 
@@ -116,5 +117,28 @@ contains
       ggbare_open = out%ggbare
       call check('ggnet == ggbare when open', out%ggnet, ggbare_open, 1.0e-12_wp)
    end subroutine test_master
+
+   !----- A cohort whose crowns cover almost nothing barely slows the wind: its extinction is      !
+   !      ca*exp(-lai/(2 ca)) + (1 - ca) with its own crown cover ca, however small (#346: the     !
+   !      cover used to be floored at 0.01). --------------------------------------------------!
+   subroutine test_small_crown()
+      type(aero_cfg_t)  :: cfg
+      type(aero_env_t)  :: env
+      type(aero_geom_t) :: geom
+      type(aero_out_t)  :: out
+      integer(ik), parameter :: n = 2_ik
+      real(wp) :: height(n), lai(n), crown(n), tl(n), tw(n), lw(n), bd(n), ext_top, ext_half_bot
+      print '(a)', 'test_small_crown:'
+      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 0.05_wp] ; crown = [0.8_wp, 0.001_wp]
+      tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
+      lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
+      geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
+      call alloc_aero_out(out, n)
+      call canopy_aerodynamics(cfg, env, geom, n, height, lai, crown, tl, tw, lw, bd, out)
+      ext_top      = 0.001_wp * exp(-0.50_wp * 0.05_wp / 0.001_wp) + 0.999_wp
+      ext_half_bot = 0.8_wp * exp(-0.25_wp * 1.5_wp / 0.8_wp) + 0.2_wp
+      call check('tiny-crown cohort: its own crown cover attenuates the wind below it', out%wind(1),  &
+                 max(cfg%ugbmin, out%uh * ext_top * ext_half_bot), 1.0e-12_wp)
+   end subroutine test_small_crown
 
 end program test_aerodynamics

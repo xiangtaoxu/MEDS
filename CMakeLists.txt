@@ -497,6 +497,14 @@ if(MEDS_BUILD_TESTS)
                     -DMAIN_TOML=${CMAKE_CURRENT_SOURCE_DIR}/meds_config_main.toml
                     -DPFT_TOML=${CMAKE_CURRENT_SOURCE_DIR}/meds_config_pft.toml
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_keys.cmake)
+   #----- No bare literal clamps in src/ (#346): a guard uses tiny_num, a threshold is a named        #
+   #      setting, or the line says why. scripts/lint/check_clamps.py explains the rule.             #
+   find_package(Python3 COMPONENTS Interpreter QUIET)
+   if (Python3_Interpreter_FOUND)
+      add_test(NAME clamps_named
+               COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/lint/check_clamps.py
+                       ${CMAKE_CURRENT_SOURCE_DIR}/src)
+   endif()
    add_executable(test_config_keys test/test_config_keys.f90)
    target_link_libraries(test_config_keys PRIVATE meds_config meds_testsupport)
    meds_fortran_flags(test_config_keys)

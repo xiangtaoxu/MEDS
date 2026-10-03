@@ -46,7 +46,7 @@ module meds_fast_prepass
    private
 
    public :: column_prepass
-   public :: refresh_canopy_aerodynamics, canopy_leaf_gas_exchange, canopy_maintenance_respiration
+   public :: refresh_canopy_aerodynamics, canopy_leaf_gas_exchange, canopy_maintenance_respiration, cohort_leaf_par
    public :: root_zone_environment, patch_heterotrophic_respiration, cas_capacities_and_conductances
    public :: aero_bottom_to_top
 
@@ -224,7 +224,7 @@ contains
       e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant
       do i = 1_ik, n
          rho_mol_arr(i)  = press / (r_gas * biophys%leaf_temp(i))
-         par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
+         par_arr(i)      = cohort_leaf_par(forc%abs_par(i), col_cohort%lai(i), forc%par_per_w)
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hyd_table%pft(col_cohort%pft(i))%leaf_curve, &
@@ -293,6 +293,18 @@ contains
          g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's leaf PAR: the PAR its leaves absorb per unit of its OWN leaf area. The guard only    !
+   ! keeps a leafless cohort, which absorbs nothing, at 0. It used to be max(LAI, 0.1), which spread !
+   ! a thin cohort's light over leaf area it does not have (#346).                                   !
+   !---------------------------------------------------------------------------------------!
+   elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
+      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb
+      real(wp), intent(in) :: lai        !< [m2 leaf/m2 ground] the cohort's leaf area index
+      real(wp), intent(in) :: par_per_w  !< [umol/J] PAR photons per joule
+      par = abs_par / max(lai, tiny_num) * par_per_w
+   end function cohort_leaf_par
 
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort     !

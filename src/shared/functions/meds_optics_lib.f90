@@ -92,7 +92,7 @@ contains
    pure function beta_pdf_kernel(t, p, q) result(f)
       real(wp), intent(in) :: t, p, q
       real(wp)             :: f, tt
-      tt = min(max(t, 1.0e-9_wp), 1.0_wp - 1.0e-9_wp)
+      tt = min(max(t, 1.0e-9_wp), 1.0_wp - 1.0e-9_wp)   ! clamp-ok: the beta density's domain (0, 1)
       f  = exp((p - 1.0_wp) * log(tt) + (q - 1.0_wp) * log(1.0_wp - tt))
    end function beta_pdf_kernel
 
@@ -105,7 +105,7 @@ contains
       real(wp), intent(out) :: p, q
       real(wp) :: mt, vt, kappa
       real(wp), parameter :: VT_MIN = 1.0e-6_wp   ! variance floor (std_deg floor ~0.09 deg)
-      mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! mean of t in (0,1)
+      mt = min(max(mean_deg / 90.0_wp, 1.0e-3_wp), 1.0_wp - 1.0e-3_wp)   ! clamp-ok: the beta mean inside (0, 1)
       vt = (std_deg / 90.0_wp) ** 2                                       ! variance of t
       vt = min(vt, mt * (1.0_wp - mt) * (1.0_wp - 1.0e-6_wp))             ! keep < mt(1-mt)
       vt = max(vt, VT_MIN)                                                ! keep kappa finite at std_deg=0

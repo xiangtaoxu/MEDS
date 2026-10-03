@@ -132,7 +132,6 @@ h_init         = 900.0        # [s]      initial substep
 max_substep    = 200          # [-]      substep cap
 max_picard     = 5            # [-]      modified-Picard iteration cap
 w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
-dewmx          = 0.1          # [kg/m2 per PAI] canopy interception storage capacity
 intercept_alpha = 1.0         # [-]      Beer interception efficiency
 intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
 dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
@@ -431,6 +430,9 @@ ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
 phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+# medlyn_vpd_min   = 0.05    # [kPa] OPTIONAL: the leaf-to-air VPD the Medlyn stomatal model uses at least
+                            #   (g1/sqrt(D) is undefined at D = 0); it caps gs on humid nights and rainy hours.
+                            #   CLM5's value (PhotosynthesisMod: VPD at least 50 Pa)
 # Thermal acclimation (#176, Kattge & Knorr 2007): ds_vcmax, ds_jmax and Jmax/Vcmax follow the
 # running-mean growth temperature Tg [degC]: ds = a - b*Tg, Jmax/Vcmax = a - b*Tg. Only with
 # temp_response_form = "peaked". Every key optional, at the published values shown.

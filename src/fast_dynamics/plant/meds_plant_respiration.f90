@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_plant_respiration
    use meds_kinds,         only : wp, ik
-   use meds_constants,     only : pi
+   use meds_constants,     only : pi, tiny_num
    use meds_plant_types, only : wood_params_t, root_params_t
    use meds_temp_response, only : peaked_arrhenius_scale
    implicit none
@@ -69,7 +69,7 @@ contains
       !----- Per-plant stem surface area: cylinder lateral area + the WAI branch term, scaled !
       !      by the aboveground structural fraction (ED2). WAI is per-ground => /nplant.        !
       stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
-                  + pi * wai / max(nplant, tiny(1.0_wp)) ) / max(aboveground_frac, tiny(1.0_wp))
+                  + pi * wai / max(nplant, tiny_num) ) / max(aboveground_frac, tiny_num)
       stem_resp = srf25 * tscale * stem_area
    end subroutine stem_maintenance_respiration
 

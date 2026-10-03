@@ -62,7 +62,8 @@ module meds_fast_dynamics
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t,        &
                                      GRP_THETA,                                                   &
                                      column_budget_t,                                             &
-                                     ensure_column_cohort_capacity, apply_hydraulics_config
+                                     ensure_column_cohort_capacity, apply_hydraulics_config,      &
+                                     apply_canopy_film_config
    use meds_fast_step,       only : column_fast_step
    use meds_water_retention,  only : water_content, clamp_water_to_capacity
    !$ use omp_lib,            only : omp_get_thread_num
@@ -170,6 +171,7 @@ contains
       !----- #179: ONE seam, and it builds the PER-PFT table. The shared [hydraulics] block is the  !
       !      base; whatever per-PFT traits the [pft] table supplied are laid over it.  ---------------!
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
+      call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
       !----- [hydraulics].conductance: k_plant_max per leaf area, or the sapwood segment. ---------!
       if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
          ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_SEGMENT

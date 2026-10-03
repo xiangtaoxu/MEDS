@@ -385,6 +385,9 @@ module meds_config
       real(wp) :: o2_mol_frac                           !< [mol/mol] atmospheric O2 mole fraction
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
       real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
+      !< [kPa] the leaf-to-air VPD the Medlyn stomatal model uses at least: g1/sqrt(D) is undefined at D = 0.
+      !< CLM5's value (PhotosynthesisMod floors the Medlyn VPD at 50 Pa).
+      real(wp) :: medlyn_vpd_min = 0.05_wp
 
       !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
       !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
@@ -1002,6 +1005,7 @@ contains
       if (cfg%o2_mol_frac <= 0.0_wp)     error stop tag//'o2_mol_frac <= 0'
       if (cfg%leaf_absorptance <= 0.0_wp) error stop tag//'leaf_absorptance <= 0'
       if (cfg%phi_psii <= 0.0_wp)        error stop tag//'phi_psii <= 0'
+      if (cfg%medlyn_vpd_min <= 0.0_wp)  error stop tag//'medlyn_vpd_min <= 0 [kPa]'
       !----- Leaf physiology: per-PFT traits. ---------------------------------------------!
       if (any(cfg%pft%photosynthetic_pathway /= PATH_C3 .and.                              &
               cfg%pft%photosynthetic_pathway /= PATH_C4)) error stop tag//'photosynthetic_pathway not in {1,2}'
@@ -1022,6 +1026,8 @@ contains
          error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
       if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &
          error stop tag//'stomata_psi_onset must be <= 0 (a predawn leaf water potential)'
+      if (any(cfg%pft%leaf_surf_water_max < 0.0_wp) .or. any(cfg%pft%wood_surf_water_max < 0.0_wp)) &
+         error stop tag//'leaf_surf_water_max and wood_surf_water_max must be >= 0 [kg/m2 of surface]'
       !----- C3 uses theta_j (the J hyperbola / co-limitation curvature); C4 does not. -----!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C3 .and.                              &
               (cfg%pft%theta_j <= 0.0_wp .or. cfg%pft%theta_j >= 1.0_wp)))                 &
