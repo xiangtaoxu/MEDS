@@ -15,6 +15,21 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **Keys and priors** (`scripts/calibrate_fast/priors.py`, best-practice plan P4):
+  - **Key kinds** (trait, effective, numerical, observation) and scopes (plant type, site,
+    observation).
+  - **Physical bounds kept apart from the evidence priors**, with an sd for every fitted key.
+  - **The prior z at the MAP**, and gate G13 for trait keys beyond 2 sd.
+  - **EEO prior centres from the forcing:** the least-cost `stomatal_g1`, and the coordination
+    `vcmax25` with MEDS's own leaf.
+  - **Jmax/Vcmax and the two ds** fixed at Kattge & Knorr for the growth temperature.
+  - **Meta-analysis priors by plant type** (`[fit].plant_type`).
+  - **Effective and Kattge & Knorr keys labelled** in the calibrated files.
+
+  At BCI:
+  - g1 2.80 (Lin et al. 3.77, 0.9 sd apart);
+  - vcmax25 41 at #351's leaf light use (94 at the example's);
+  - JV 1.70, ds 641.1 and 640.6 (they were fitted against GPP) (#360).
 - **The targets' observation models** (`scripts/calibrate_fast/obsmodels.py`, best-practice plan P3):
   - **The closure model for H and LE.** The daily closure factor over ±15 days, with shares from the
     attribution test and Bowen as the alternative.

@@ -189,6 +189,10 @@ night     = false
 #   keys   = ["vcmax25", "stomatal_g1"]
 #   add    = ["theta_j"]
 #   remove = ["leaf_angle_mean"]
+plant_type = ""                   # the plant type of the fitted PFT, for the registry's meta-analysis priors (`meta`):
+                                  #   e.g. "tropical_evergreen_broadleaf". A key without an EEO centre takes its type's
+                                  #   prior; an EEO centre is reported beside it and flagged when more than 2 sd apart.
+                                  #   (The PFT file would hold it, but its schema refuses unknown keys.)
 stages     = ["energy", "water", "polish"]   # the staged fit (plan §7, §13), in this order. "optics" (the two-stream
                                   #   alone, against the albedo) and "photosynthesis" (a canopy of leaf solves, against
                                   #   GPP) are optional: a kernel stage not listed has its keys fitted in "energy", with
@@ -213,7 +217,9 @@ max_free   = 20                   # with screening = "drop": at most this many k
 min_process_records = 48          # a key that acts through one process (the registry's `process`: wet canopy, night,
                                   #   snow, drought) is fixed when the kept records sample it fewer times than this
 
-# FREE (key names from the registry): a key's prior and range, over the registry's.
+# FREE (key names from the registry): a key's prior and range, over the registry's. Site leaf measurements come
+# first (best-practice plan §3.5), then the EEO centres the registry computes from the site's climate (stomatal_g1,
+# vcmax25), then a meta-analysis by plant type.
 #   [priors.vcmax25]
 #   centre = 45.0                  # the prior's centre (theta units); also where the fit starts
 #   sd     = 8.0                   # its sd (theta units); or log_sd (log theta) for a log key

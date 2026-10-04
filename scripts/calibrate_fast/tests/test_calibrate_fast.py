@@ -5,6 +5,7 @@ the transforms, the trial writer, the closure correction, the targets' filters a
 calibrated-config writer, the kernel models' anchor, the water stage's search, the filter
 sensitivity, and the fit on a synthetic linear model with a known answer and covariance. No MEDS run."""
 import datetime as dt
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import calibrate_fast as CF   # noqa: E402  (puts the source tree's meds package on the path)
 import datarules as DR        # noqa: E402
 import obsmodels as OM        # noqa: E402
+import priors as PR           # noqa: E402
 import fit as F               # noqa: E402
 import residuals as R         # noqa: E402
 import settings as SET        # noqa: E402
@@ -210,7 +212,8 @@ def test_kappa_is_an_observation_key_of_the_gpp_residual(tmp_path):
     assert np.allclose(R.residual(spec, df, {"kappa": 2.0 / 3.0}), 0.0)    # 10 + (1.5 - 1) 4 = 12
     #----- kappa is never written to a trial, and never fitted beside a shape key
     base = RunConfig({"run": {}, "init": {}, "output": {"fast": {}}}, {"pft": {"stomatal_g1": [3.0]}})
-    kappa = Param("kappa", "obs", "kappa", 0.4, 1.0, prior={"centre": 0.65, "sd": 0.1})
+    kappa = Param("kappa", "obs", "kappa", 0.4, 1.0, prior={"centre": 0.65, "sd": 0.1}, kind="observation",
+                  scope="observation")
     g1 = Param("g1", "pft", "pft.stomatal_g1", 1.5, 6.0, "log", pft=1)
     resolve_defaults([kappa], base)
     assert kappa.default == 0.65
@@ -476,7 +479,11 @@ def test_the_registry_menu():
     assert ps["kappa"].state == "fit" and ps["kappa"].file == "obs"
     assert {n for n, p in ps.items() if p.shape} == {"theta_j", "jmax_vcmax_ratio", "phi_psii", "ds_vcmax", "ds_jmax",
                                                       "ea_vcmax", "ea_jmax"}
-    assert ps["rd_vcmax_ratio"].state == "fixed" and ps["stomatal_g1"].prior["centre"] == 3.77
+    assert ps["rd_vcmax_ratio"].state == "fixed" and ps["stomatal_g1"].prior["centre"] == "eeo"
+    assert ps["stomatal_g1"].meta["tropical_evergreen_broadleaf"]["centre"] == 3.77
+    assert {p.kind for p in ps.values()} <= {"trait", "effective", "observation"} and ps["z0m_ratio"].kind == "effective"
+    assert {n for n, p in ps.items() if p.fixed_at} == {"jmax_vcmax_ratio", "ds_vcmax", "ds_jmax"}
+    assert all(p.prior.get("sd") or p.prior.get("log_sd") for p in ps.values() if p.state == "fit")   # bounds apart
     assert {p.stage for p in ps.values()} <= {"optics", "photosynthesis", "energy", "water"}
     assert all(p.reason for p in ps.values() if p.state == "fixed")
 
@@ -874,3 +881,64 @@ def test_a_driver_trial_is_its_own_directory_and_writes_the_drivers(tmp_path):
     assert all(v in text for v in T.DRIVER_COHORT + T.DRIVER_SITE) and 'wai_cohort = "D"' in text
     m = load_toml(b / "main.toml")
     assert m["state"]["write_state"] is True and m["output"]["daily"]["enabled"] is True
+
+
+# ----- keys and priors (best-practice plan §3.5, §4) ------------------------------------------------
+def test_kinds_scopes_and_plant_type_priors():
+    g1 = Param("g1", "pft", "pft.stomatal_g1", 0.5, 15.0, "log", prior={"centre": "eeo", "log_sd": 0.5},
+               meta={"c3_grass": {"centre": 5.25, "log_sd": 0.35}})
+    g0 = Param("g0", "pft", "pft.stomatal_g0", 1e-4, 0.1, "log", meta={"c3_grass": {"centre": 0.02, "log_sd": 0.5}})
+    out = select([g1, g0], {"plant_type": "c3_grass"}, {})
+    assert out[0].prior["centre"] == "eeo" and out[1].prior["centre"] == 0.02     # EEO first, else the type's
+    with pytest.raises(ValueError, match="not resolved"):
+        out[0].centre
+    with pytest.raises(ValueError, match="numerical"):
+        select([Param("dt", "main", "fast.x", 0.1, 1.0, kind="numerical")], {}, {})
+    with pytest.raises(ValueError, match="kind"):
+        select([Param("x", "main", "a.x", 0.1, 1.0, kind="clever")], {}, {})
+    with pytest.raises(ValueError, match="EEO centre"):
+        select([Param("x", "main", "a.x", 0.1, 1.0, prior={"centre": "eeo"})], {}, {})
+
+
+def test_kattge_knorr_and_the_least_cost_g1():
+    kk = PR.kattge_knorr(25.5)
+    assert kk["pft.jmax_vcmax_ratio"] == pytest.approx(1.6975) and kk["leaf_physiology.ds_vcmax"] == pytest.approx(641.105)
+    assert kk["leaf_physiology.ds_jmax"] == pytest.approx(640.575) and PR.viscosity_ratio(298.15) == pytest.approx(1.0)
+    clim = {"t_day_k": 299.4, "p_day_pa": 99300.0, "vpd_day_pa": 530.0, "par_day": 840.0}
+    g1 = PR.eeo_g1(dict(PR.LEAF_DEFAULTS), clim)
+    assert 2.6 < g1 < 3.0                                           # BCI's climate: 2.80
+    hot = PR.eeo_g1(dict(PR.LEAF_DEFAULTS), {**clim, "t_day_k": 308.0})
+    assert hot > g1                                                  # warmer: K + Gamma* up, viscosity down
+
+
+def test_co2_from_the_run_setting(tmp_path):
+    (tmp_path / "co2.txt").write_text("# a CO2 file\n2015  400.0\n2016  402.0\n2017  404.0\n")
+    main = tmp_path / "main.toml"
+    base = RunConfig({"forcing": {"co2_source": "file", "co2_file": "co2.txt"}}, {"pft": {}}, path=main)
+    assert PR.co2_ppm(base, [2015, 2016]) == 401.0
+    base = RunConfig({"forcing": {"co2_source": "const", "co2_const": 390.0}}, {"pft": {}}, path=main)
+    assert PR.co2_ppm(base, [2015]) == 390.0
+
+
+@pytest.mark.skipif(not os.environ.get("MEDS_LIB"), reason="the EEO vcmax25 uses MEDS's own leaf (libmeds.so)")
+def test_the_coordination_vcmax25_balances_the_two_rates():
+    from meds.plant import leaf
+    lp = dict(PR.LEAF_DEFAULTS)
+    clim = {"t_day_k": 299.4, "p_day_pa": 99300.0, "vpd_day_pa": 530.0, "par_day": 840.0}
+    pft = {"theta_j": 0.7, "jmax_vcmax_ratio": 1.7}
+    v25 = PR.eeo_vcmax25(lp, pft, clim, 400.0)
+    assert 20.0 < v25 < 80.0
+    brighter = PR.eeo_vcmax25(lp, pft, {**clim, "par_day": 1200.0}, 400.0)
+    assert brighter > v25                                            # more light: more Rubisco to match it
+
+
+def test_the_prior_z_and_who_pushes_a_key():
+    prob, A, u_true, e = linear_problem(k=3, n=200)
+    out = F.lm(prob, prob.u_prior, max_iter=30, rtol=1e-14, log=lambda *_: None)
+    spec = R.WindowSpec("w", pd.date_range("2016-01-01", periods=200, freq="1h"),
+                        [R.TargetRows("le", np.arange(100), np.zeros(100), np.ones(100)),
+                         R.TargetRows("h", np.arange(100), np.zeros(100), np.ones(100))])
+    z = F.prior_z(prob, out["u"], A, out["r"], [spec])
+    for k, p in enumerate(prob.params):
+        assert z[p.name]["z"] == pytest.approx((out["u"][k] - p.u0) / p.sigma_u)
+        assert z[p.name]["pushed_by"] in ("le", "h")

@@ -58,6 +58,7 @@ range  = [0.4, 1.0]
 source = "best-practice plan §3.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)"
 
 [fit]
+plant_type = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
 stages     = ["energy", "water", "polish"]   # optics and photosynthesis keys fitted with the coupled loop
 screening  = "report"
 weights    = "ess"

@@ -126,6 +126,26 @@ silently fall back to the default.
 
 ### Keys and priors
 
+- **Kinds and scopes** (the registry's `kind`, `scope`):
+  - **kinds:** trait (measurable, prior from evidence), effective (a scheme property, labelled in
+    the calibrated files), numerical (never calibrated), observation (κ);
+  - **scopes:** plant type, site, observation.
+- **The range is what is physically possible, the prior what the evidence says.** Every fitted
+  key has its own sd. Its prior z at the MAP is reported, and gate G13 asks for a diagnosis of any
+  trait key beyond 2 sd.
+- **The priors from the site's climate** (`priors.py`; the forcing only, never the tower's fluxes):
+  - **`stomatal_g1`:** the least-cost value, ξ = √(β (K + Γ\*)/(1.6 η\*)) with β = 146, at the
+    growing-season daytime climate with MEDS's Rubisco kinetics. Log-sd 0.5. At BCI: 2.80
+    (Lin et al.'s 3.77 for tropical rainforest is 0.9 sd away).
+  - **`vcmax25`:** the coordination of the Rubisco- and light-limited rates, solved with MEDS's own
+    leaf (`meds.plant.leaf`, so libmeds). Log-sd 0.5. At BCI: 41 with phi_psii 0.74 and θ_J 0.7; 94
+    with the example's 0.85 and 0.9.
+  - **Jmax/Vcmax, `ds_vcmax`, `ds_jmax`:** fixed at Kattge & Knorr for the growth temperature, set
+    in every run and written into the calibrated files. At BCI (25.5 °C): 1.70, 641.1 and 640.6.
+- **Priors by plant type** (`[fit].plant_type`, the registry's `meta`): the prior of a key without an
+  EEO centre. Beside an EEO centre the type's prior is reported, and flagged when more than 2 sd
+  apart. Site leaf data in `[priors]` come first.
+
 - **The registry** (`parameters.toml`) is a menu. Each key has a state:
   - `fit`: in the default set;
   - `optional`: fitted when the site asks;
@@ -281,6 +301,7 @@ trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 | `states.py` | the state chains |
 | `tower.py` | the tower's records (through `tower_inputs`), the closure correction, the observed-forcing mask, the sun's elevation |
 | `datarules.py` | the u\* diagnostic, the process coverage, the window rule, the water-deficit index and seasonal runs |
+| `priors.py` | the growth climate, the EEO centres (least-cost g1, coordination vcmax25 with MEDS's leaf), Kattge & Knorr |
 | `obsmodels.py` | the closure model and its attribution test, the respiration model's κ prior, the random error (provider, paired days) at a smoothed observation |
 | `residuals.py` | the targets, the filters, the residual vector, the weights, the filter report |
 | `fit.py` | Levenberg–Marquardt, the Jacobian, screening, the covariance and intervals, the linearity check, the filter shift |
