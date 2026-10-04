@@ -36,7 +36,7 @@ module meds_fast_frozen
    use meds_soil_water, only : advance_soil_water_column
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_therm_lib, only : internal_energy_liquid, internal_energy_ice, temp_of_liquid_enthalpy
+   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_column_state_types, only : snow_column_t
@@ -463,9 +463,9 @@ contains
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
-      !      rain arrives as liquid at the air temperature above the canopy (forc%air_temp, the forcing   !
-      !      moved to the canopy-air top), snow as ICE at min(t_3ple, air_temp) -- the same valuations     !
-      !      snow_accumulate gives rain and snow that land on a pack -- and the mixture enthalpy per kg is  !
+      !      precip_enthalpy values both at the air temperature above the canopy (forc%air_temp, the      !
+      !      forcing moved to the canopy-air top), exactly as snow_accumulate does for a pack, and the    !
+      !      mixture enthalpy per kg is                                                                   !
       !      expressed through temp_of_liquid_enthalpy (exact inverse of internal_energy_liquid; below    !
       !      t_3ple it represents water that must still melt, which the pond/soil plateau then does with  !
       !      soil heat). Valuing the snow as liquid at tcas, as this used to, created the fusion enthalpy  !
@@ -477,9 +477,8 @@ contains
       if (snow_st%exists) then
          hforc%t_pond_inflow = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         hforc%t_pond_inflow = temp_of_liquid_enthalpy(                                                    &
-              (forc%rainfall * internal_energy_liquid(forc%air_temp)                                   &
-               + forc%snowfall * internal_energy_ice(min(t_3ple, forc%air_temp))) / (forc%rainfall + forc%snowfall))
+         hforc%t_pond_inflow = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
+                                                       / (forc%rainfall + forc%snowfall))
       end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !

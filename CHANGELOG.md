@@ -221,6 +221,9 @@ before and after.
   the same value rain landing on a snowpack and sub-threshold snowfall already used. No recorded reason
   for the old choice was found. At the BCI storm front the canopy air was 2.3 K warmer than that air;
   the change lowers H by 2 W m⁻² and LE by 3 W m⁻² at 18 UTC, and Jan–Jul means by under 0.1 W m⁻².
+  With one rule for all precipitation, the snowpack and the bare ground now share one function for it
+  (`precip_enthalpy` in `meds_therm_lib`) instead of writing the same expression twice (BCI output
+  bit-identical; snow sites change at round-off).
 - **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
   the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
   check of the soil column: the end-of-run report prints a warning with the count, and
