@@ -31,6 +31,7 @@ module meds_polygon
    use meds_forcing_types,          only : met_source_t, met_cursor_t
    use meds_met_driver,             only : met_cursor_init
    use meds_diagnostic_reduce,      only : total_area, has_nan
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
@@ -244,11 +245,15 @@ contains
       poly%restructure_pending  = is_new_month
       poly%restructure_new_year = is_new_year
 
-      !----- A NaN is a STATUS here, not an `error stop`: a library caller survives it. -----------!
-      if (is_new_year) then
-         if (has_nan(poly%site)) then
-            status = DRIVER_ERR_NAN ; poly%status = status ; return
-         end if
+      !----- NAN GUARD, every step: the stand, the tissue temperatures and the canopy air         !
+      !      (has_nan), and the run's energy and water ledgers, whose running residual turns NaN    !
+      !      the step any flux or store in them does. A NaN is a STATUS here, not an `error stop`:   !
+      !      a library caller survives it.  ---------------------------------------------------------!
+      if (has_nan(poly%site) .or. ledger_not_finite()) then
+         write(*,'(a)') ' ERROR: a NaN reached the state or the energy/water ledger.'
+         if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
+         write(*,'(2a)') '        in the step ending ', time_to_string(now)
+         status = DRIVER_ERR_NAN ; poly%status = status ; return
       end if
 
       !----- SOIL-CARBON PLAUSIBILITY, checked every step and NOT gated on the ledger. -----------!
@@ -282,6 +287,14 @@ contains
       poly%status = status
 
    contains
+
+      !----- The run's whole-column ledgers: one NaN flux or store poisons the running residual  !
+      !      for good, so a non-finite residual means a NaN entered the energy or water budget. ---!
+      logical function ledger_not_finite()
+         ledger_not_finite = cfg%fast_biophysics_on .and.                                         &
+                             .not. (ieee_is_finite(poly%energy_budget%resid_sum) .and.            &
+                                    ieee_is_finite(poly%water_budget%resid_sum))
+      end function ledger_not_finite
 
       !----- Everything is handed on; the fast loop uses the forcing only when forcing_on, and     !
       !      stages the fast output tier only then. -------------------------------------------------!

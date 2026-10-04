@@ -167,6 +167,26 @@ before and after.
   - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
+- **A NaN in the fast loop went unreported, and the run still ended "no NaNs"** (#352).
+  - **The old guard:** four cohort-structure fields (diameter, density, AGB, wood carbon), and only on
+    year boundaries. Meanwhile the fast loop's integrators commit a non-finite state when even their
+    smallest step fails.
+  - **The new guard runs every step,** on:
+    - the stand;
+    - every cohort's leaf and wood temperature;
+    - every patch's canopy air (enthalpy, humidity, CO2);
+    - the run's energy and water ledgers, whose running residual turns non-finite the step a NaN
+      enters them.
+
+    It names the step it fired in.
+  - **The #352 case** (BCI, a storm front on 2017-04-17) now stops in the step ending 2017-04-18
+    00:00 instead of finishing with NaN fluxes and NaN budgets. `meds.model` raises the same.
+- **The BCI provider's note on the tower's respiration was misquoted** in `site_reference.toml`
+  (`[targets.gpp]`), the BCI `calibration.toml` and the calibration revision plan (§1, §6) as "40–50 %
+  below soil chambers". The note says the respiration "appeared underestimated" against soil chambers,
+  "considering that RECO includes also above ground respiration which can contribute up to 40-50% of
+  total respiration". The tower's mean (4.09 µmol m⁻² s⁻¹) is about what the chambers measure for
+  the soil alone (≈ 4.3; Rubio & Detto 2017). No setting changes.
 - **A cohort with less than 0.1 m² m⁻² of leaf got too little light per leaf** (since v0.1.0). Its
   leaf PAR was its absorbed PAR divided by max(LAI, 0.1), so a cohort of LAI 0.01 saw a tenth of its
   light. It now divides by the cohort's own LAI. A stand of seedlings could not grow:

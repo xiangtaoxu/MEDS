@@ -75,9 +75,10 @@ closure = false
 ustar_min = 0.6
 hours = [9, 16]
 
-# GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), reported 40-50 %
-# below soil chambers, so sigma carries ~2 umol m-2 s-1 of systematic error; and the morning hours
-# need turbulence (the u* plateau of the data report). site_reference.toml explains both.
+# GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), about the soil
+# chambers' alone (without the above-ground part), so sigma carries ~2 umol m-2 s-1 of systematic
+# error; and the morning hours need turbulence (the u* plateau of the data report).
+# site_reference.toml explains both.
 [targets.gpp]
 sigma_abs = 2.5
 sigma_rel = 0.15
