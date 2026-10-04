@@ -15,6 +15,18 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **The calibration's uncertainty and report** (best-practice plan P6):
+  - **Declared alternatives, the same at every site:** GPP u\* provider against the daytime
+    plateau, the closure attribution shares against Bowen, and night-time against daytime
+    partitioning. Each alternative's shift is estimated from the final gradient matrix with no new
+    trials, and the fit is rerun from the MAP when it exceeds 1 posterior sd (`[uncertainty]`).
+  - **`calibrate_fast.py variants`:** the structural variants' MAPs side by side, with their spread.
+  - **`report.md`:** per target, χ²/n, the σ scale and the model/tower ratio by hour and by light
+    class; per key, kind, scope, prior source and z, and σ ratio; κ with the respiration and GPP it
+    implies.
+
+  `[uncertainty].alternative` is replaced by `alternatives`, `refit_sd` and `refit_max_iter`. The
+  closure model's "as measured" case no longer gave LE the whole gap (#362).
 - **Keys and priors** (`scripts/calibrate_fast/priors.py`, best-practice plan P4):
   - **Key kinds** (trait, effective, numerical, observation) and scopes (plant type, site,
     observation).

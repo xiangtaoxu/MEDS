@@ -196,3 +196,6 @@ role = "val"
     assert {"G3", "G4", "G5", "G7", "G10", "G12", "G13"} <= set(rep["gates"]) and "G8" not in rep["gates"]
     assert "stomatal_g1" in rep["intervals"] and rep["scores_val"]["map"]
     assert (tmp_path / "work" / "pft_parameters_calibrated.toml").exists()
+    assert set(rep["alternatives"]) == {"gpp_ustar", "closure", "partitioning"} and "gpp" in rep["ratios"]
+    text = (tmp_path / "work" / "report.md").read_text()
+    assert "## Gates" in text and "stomatal_g1" in text and "alternative closure" in text

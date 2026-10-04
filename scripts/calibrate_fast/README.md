@@ -167,16 +167,33 @@ One fit of every key at once (best-practice plan §6.3):
 The separate water stage, the polish, the kernel stages (and their gate G8) and multiple starts are
 gone.
 
-### Rough uncertainty
+### Three uncertainties side by side
 
-From the final gradient matrix, with almost no extra runs:
-- **The Laplace covariance at the MAP**, with the σ scales applied.
-- **Intervals** (68 % and 95 %), mapped back through the transform: asymmetric, and inside the bounds.
-- **The linearity check** along the leading directions: the objective at ±1 sd against the
-  quadratic. Outside 0.5–2× the quadratic's curvature, the covariance is marked "local only".
-- **Convergence:** the Gauss–Newton step left at the MAP, per key in posterior sd.
-- **The filter sensitivity:** the MAP's shift under `[uncertainty].alternative`, from the same
-  trials (gate G10).
+1. **Laplace, from the final gradient matrix,** with the σ scales applied.
+   - **Intervals** (68 % and 95 %), mapped back through the transform: asymmetric, and inside the
+     bounds.
+   - **The linearity check** along the 3 leading directions: the objective at ±1 sd against the
+     quadratic. Outside 0.5–2× the quadratic's curvature, the covariance is marked "local only".
+   - **Convergence:** the Gauss–Newton step left at the MAP, per key in posterior sd.
+2. **The declared alternatives,** the same at every site (`[uncertainty].alternatives`):
+   - **GPP u\*:** the provider's threshold against the daytime plateau;
+   - **closure:** the attribution shares against Bowen;
+   - **partitioning:** night-time against daytime, where both exist.
+
+   Each alternative's shift of the MAP is first estimated from the final gradient matrix, from the
+   cached trials, so it costs no runs. Above 1 posterior sd (`refit_sd`), the fit is rerun from the
+   MAP under that alternative and both MAPs are reported (gate G10).
+3. **Structural variants.** The same keys, priors and filters under each structure in
+   `[variants]` (interception on and off). `calibrate_fast.py variants` puts the variants' fits side
+   by side: each key's MAP, and their spread in posterior sd.
+
+**The report** (`report.md` beside `fit.json`) gives:
+- the gates;
+- per key: kind, scope, MAP and interval, prior centre, source and z, and posterior/prior σ ratio;
+- per target: χ²/n, the σ scale, and the model/tower ratio overall, by local hour and by light
+  class;
+- κ, with the respiration and GPP it implies;
+- the three uncertainties.
 
 ### Validation and gates
 
@@ -190,7 +207,7 @@ chain's states.
 | G4 | the MAP beats the default on validation, no target more than 10 % worse |
 | G5 | keys near a bound, each with the target that pushed it |
 | G7 | the full record with the slow tier on (run the calibrated configs) |
-| G10 | the filter sensitivity: every key's predicted shift below 1 posterior sd |
+| G10 | every declared alternative's shift is under 1 posterior sd, or its refit is reported |
 | G12 | no scored output has a NaN (a trial with one fails) |
 | G13 | every trait key with \|prior z\| > 2 is diagnosed or relabelled effective |
 
@@ -206,6 +223,7 @@ calibrate_fast.py analyze --site calibration.toml --variant interception_on --wo
     --workers 40                                                        # redo the post-fit steps
 calibrate_fast.py write-calibrated --site calibration.toml --variant interception_on \
     --fit runs/on/fit.json --out calibration                            # the configs with the MAP
+calibrate_fast.py variants runs/off/fit.json runs/on/fit.json --out runs/variants.json   # the structures side by side
 calibrate_fast.py smoke --site ... --work ...                           # the ctest smoke test
 ```
 
@@ -231,6 +249,7 @@ whose default is 1 GB per job kills the workers.
 | file | what |
 |---|---|
 | `fit.json` | everything below |
+| `report.md` | the results for a reader: gates, keys, targets, κ, the three uncertainties |
 | `pft_parameters_calibrated.toml`, `meds_config_calibrated.toml` | the base configs with the MAP and the Kattge & Knorr values written in, comments kept, effective keys labelled |
 | `fit.log` | the run's log |
 | `trials/`, `chains/` | every trial and state (cached: a re-run reuses them) |
@@ -240,8 +259,8 @@ whose default is 1 GB per job kills the workers.
 - each Levenberg–Marquardt phase's history, and the refresh's weights and σ scales;
 - the MAP, start and default values, the intervals, the covariance and correlations;
 - each key's posterior-to-prior σ ratio and prior z;
-- the linearity check, the filter sensitivity, and the scores on the calibration and validation
-  windows;
+- the linearity check, the declared alternatives, the model/tower ratios, κ's implications, and
+  the scores on the calibration and validation windows;
 - the gates, and the trial count and timing.
 
 ## Files

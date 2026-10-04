@@ -19,6 +19,7 @@ Commands (each reads the site declaration, e.g. examples/example_flux_tower_bci/
   fit             the data report, the coverage and triage of the keys, the joint fit, the
                   covariance, validation, gates and the calibrated configs
   analyze         redo the post-fit steps from a finished fit's fit.json
+  variants        the structural variants' fits side by side: each key's MAP and their spread
   worker          a node's worker for --pool queue (started inside the Slurm allocation)
   smoke           the CTest smoke test: one gradient column on a short window and a repeated trial
 
@@ -282,7 +283,7 @@ def load_data(site: Site) -> dict:
     test = OM.attribution(obs, ccfg, float(site.decl["ustar"]["min_driver"]["rnet"]), tw.daytime_sw)
     try:
         s_h, s_le, why = OM.closure_shares(ccfg["shares"], test, float(ccfg["rise_min"]))
-        obs["h_c"], obs["le_c"] = OM.corrected(obs, s_h)
+        obs["h_c"], obs["le_c"] = OM.corrected(obs, s_h, s_le)
         sigma = OM.set_sigmas(site.targets, obs, site.decl["sigma"], tw.utc_offset_h, tw.step)
     except ValueError as e:
         raise SystemExit(str(e))
@@ -715,6 +716,7 @@ def cmd_fit(args):
         model.states = run_chains(site, params, theta, work / "chains", pool, args.runner, log, site.windows + water)
         report["weights_refresh"], report["sigma_scale_refresh"] = weights_and_sigma(
             site, model, theta, fspecs, fit_windows, log, scale_sigma=True)
+        site.data["fit_sigma_scale"] = report["sigma_scale_refresh"]
         prob = F.Problem(model, free, theta.copy())
         out = F.lm(prob, prob.u_of(theta), label="fit after the refresh", **lm_kw)
         theta = prob.theta(out["u"])
@@ -734,9 +736,9 @@ def cmd_fit(args):
 
 def post_fit(site, model, params, free, theta_base, theta0, theta_map, fit_windows, states_start, report, work, log):
     """Everything after the fit: the final central gradient matrix, the covariance and its
-    intervals, the linearity check, the keys near a bound and their prior z, the filter
-    sensitivity, the scores, the validation (each set on its own chain's states), the gates, and
-    the calibrated configs."""
+    intervals, the linearity check, the keys near a bound and their prior z, the declared
+    alternatives, the model/tower ratios and kappa, the scores, the validation (each set on its own
+    chain's states), the gates, the calibrated configs and report.md."""
     fc = site.fitcfg
     val = [w for w in site.windows if w.role == "val"]
     fspecs = [model.specs[x.name] for x in fit_windows]
@@ -787,7 +789,13 @@ def post_fit(site, model, params, free, theta_base, theta0, theta_map, fit_windo
         log(f"  prior z of {k:22s} {v['z']:+.2f} ({v['kind']}){' pushed by ' + str(v['pushed_by']) if flag else ''}")
     report["cost"] = {"start": report.get("cost_start"), "map": prob.cost(u_map, r_map)}
     report["scores_cal"] = {"start": report.get("scores_cal_start"), "map": R.target_scores(fspecs, r_map)}
-    report["filter_sensitivity"] = filter_sensitivity(site, model, prob, u_map, fit_windows, cov_u, J_map, r_map, log)
+    report["alternatives"] = alternatives(site, model, prob, u_map, fit_windows, cov_u, J_map, r_map, report, log)
+    report["ratios"] = ratio_tables(site, model, theta_map, fit_windows)
+    report["kappa"] = kappa_report(site, theta_map, params)
+    if report["kappa"]:
+        kr = report["kappa"]
+        log(f"kappa {kr['kappa']:.3f}: the tower's respiration {kr['reco_tower']:.2f} -> {kr['reco_implied']:.2f}, "
+            f"GPP {kr['gpp_tower']:.2f} -> {kr['gpp_implied']:.2f} umol m-2 s-1 over its measured records")
     if val:
         states_map = dict(model.states)
         #----- the default is the base configuration, on chains run with it (the start's chains ran
@@ -821,9 +829,12 @@ def post_fit(site, model, params, free, theta_base, theta0, theta_map, fit_windo
                    "note": "every key near a bound is listed with the target that pushed it"}
     gates["G7"] = {"pass": None, "note": "the full record with the slow tier on: run the calibrated configs "
                                          "(closed budgets; dry-season GPP and LE no worse than the default's)"}
-    fs = report["filter_sensitivity"]
-    gates["G10"] = ({"pass": all(abs(v["shift_sd"]) < 1.0 for v in fs["keys"].values()), **fs}
-                    if fs.get("keys") else {"pass": None, "note": fs.get("note")})
+    alts = {k: v for k, v in report["alternatives"].items() if "keys" in v}
+    gates["G10"] = {"pass": all(v["worst_shift_sd"] < float(site.uncertainty["refit_sd"]) or "refit" in v
+                                for v in alts.values()) if alts else None,
+                    "shift_sd": {k: v["worst_shift_sd"] for k, v in alts.items()},
+                    "refitted": [k for k, v in alts.items() if "refit" in v],
+                    "note": "every declared alternative's shift is under 1 posterior sd, or its refit is reported"}
     gates["G12"] = {"pass": True, "failed_trials": model.n_failed,
                     "note": "no scored output has a NaN: a trial with one fails (trials.finish) and never scores"}
     flagged = {k: v for k, v in report["prior_z"].items() if v["kind"] == "trait" and abs(v["z"]) > 2.0}
@@ -832,49 +843,250 @@ def post_fit(site, model, params, free, theta_base, theta0, theta_map, fit_windo
     report["local_only"] = any(d["local_only"] for d in report["linearity"])
     report["gates"] = gates
     write_calibrated(site, params, theta_map, work)
+    write_report(report, work / "report.md")
 
 
-def filter_sensitivity(site, model, prob, u_map, windows, cov_u, J_map, r_map, log) -> dict:
-    """The MAP's linear response to the [uncertainty].alternative filters, from the cached trials
-    of the final point and gradient matrix (no new model runs, unless the cache lacks them): the
-    Gauss-Newton step on the alternative rows minus the step on the fit's own rows."""
-    alt = site.uncertainty.get("alternative") or {}
-    if not alt:
-        return {"note": "no [uncertainty].alternative"}
-    obs, fok, elev = observations(site)
+ALTERNATIVES = ("gpp_ustar", "closure", "partitioning")
+
+
+def alternative_data(site, name):
+    """The targets and observations of one declared alternative (best-practice plan §7.1), or a
+    note saying why it does not apply here:
+      gpp_ustar     GPP's u* filter: the provider's threshold against the daytime plateau of GPP's
+                    own diagnostic (whichever the fit did not use)
+      closure       the closure shares: the attribution test's against Bowen (or Bowen against the
+                    attribution's, when the fit used Bowen)
+      partitioning  the provider's night-time partitioning (RECO, GPP) against its daytime one
+                    (RECO_DT, GPP_DT), where the site TOML declares both"""
+    obs = site.data["obs"]
     targets = {k: dict(v) for k, v in site.targets.items()}
-    for t, over in alt.items():
-        targets.setdefault(t, {}).update(over)
-    saved = model.specs
-    alt_site_targets, site.targets = site.targets, targets
+    if name == "gpp_ustar":
+        u = site.data["ustar"].get("gpp", {})
+        diag, rule = u.get("diagnostic") or {}, u.get("rule")
+        provider = DR.provider_threshold(site.tower.provider)
+        if diag.get("outcome") != "plateau" or provider is None:
+            return None, None, "no daytime plateau of GPP's diagnostic, or no provider threshold"
+        alt = diag["threshold"] if rule != "diagnostic" else provider
+        targets["gpp"]["ustar_min"] = alt
+        return targets, obs, f"GPP u* >= {alt} (the fit used {targets_used(site)})"
+    if name == "closure":
+        s_h = site.data["closure"]["shares"]["h"]
+        obs = obs.copy()
+        if s_h is None:                                   # the fit used Bowen: the attribution's shares instead
+            sh, sle, why = OM.closure_shares("attribution", site.data["closure"]["attribution"],
+                                             float(site.decl["closure"]["rise_min"]))
+            if sh is None:
+                return None, None, "the attribution test also gives Bowen"
+            obs["h_c"], obs["le_c"] = OM.corrected(obs, sh, sle)
+            return targets, obs, f"the attribution's shares (s_H {sh}) against the fit's Bowen"
+        obs["h_c"], obs["le_c"] = OM.corrected(obs, None, None)
+        return targets, obs, "Bowen (H and LE scaled together) against the fit's attribution shares"
+    if name == "partitioning":
+        if obs["gpp_dt"].notna().sum() == 0 or obs["reco_dt"].notna().sum() == 0:
+            return None, None, "the site TOML declares no daytime partitioning (GPP_DT, RECO_DT)"
+        obs = obs.copy()
+        obs["gpp"], obs["reco"] = obs["gpp_dt"], obs["reco_dt"]
+        return targets, obs, "the provider's daytime partitioning (GPP_DT, RECO_DT)"
+    raise SystemExit(f"[uncertainty].alternatives: unknown {name!r}; known: {ALTERNATIVES}")
+
+
+def targets_used(site):
+    return site.targets.get("gpp", {}).get("ustar_min")
+
+
+def alternative_specs(site, model, windows, targets, obs, log):
+    """The fit's windows rebuilt under an alternative's targets and observations, with the fit's
+    own weights and sigma scales."""
+    fok, elev = site.data["fok"], site.data["elev"]
+    saved_t, saved_obs = site.targets, site.data["obs"]
+    site.targets, site.data["obs"] = targets, obs
     try:
-        alt_specs = specs_for(site, windows, obs, fok, elev, log=log)
+        alt = specs_for(site, windows, obs, fok, elev, log=lambda *_: None)
     finally:
-        site.targets = alt_site_targets
+        site.targets, site.data["obs"] = saved_t, saved_obs
     seasonal_targets = list(site.decl["windows"]["seasonal"]["targets"])
+    scales = (site.data.get("fit_sigma_scale") or {})
     for w in windows:
         if w.role == "water":
-            alt_specs[w.name] = alt_specs[w.name].subset(seasonal_targets)
-        #----- the same target weights and sigma scale as the fit's rows
-        fit_t = {t.name: t for t in saved[w.name].targets}
-        for t in alt_specs[w.name].targets:
+            alt[w.name] = alt[w.name].subset(seasonal_targets)
+        fit_t = {t.name: t for t in model.specs[w.name].targets}
+        for t in alt[w.name].targets:
+            t.sigma = t.sigma * scales.get(t.name, 1.0)
             if t.name in fit_t:
                 t.weight = fit_t[t.name].weight
-    model.specs = {**saved, **alt_specs}
-    try:
-        r_alt = prob.data([u_map], windows)[0]
-        J_alt, _, _ = F.jacobian(prob, u_map, r_alt, log=log)
-    finally:
-        model.specs = saved
-    du = F.shift(prob, u_map, J_map, r_map, J_alt, r_alt)
+        alt[w.name].loss = model.specs[w.name].loss
+    return alt
+
+
+def alternatives(site, model, prob, u_map, windows, cov_u, J_map, r_map, report, log) -> dict:
+    """The declared alternatives (best-practice plan §7.1). Each one's shift of the MAP is first the
+    linear estimate from the final gradient matrix -- the Gauss-Newton step on the alternative's
+    rows minus that on the fit's own, from the cached trials. When any key moves by more than
+    [uncertainty].refit_sd posterior sd, the fit is rerun from the MAP under the alternative and both
+    MAPs are reported."""
+    uc = site.uncertainty
     sd = np.sqrt(np.diag(cov_u))
-    out = {"alternative": alt, "keys": {}}
-    for k, p in enumerate(prob.params):
-        th0, th1 = float(p.to_theta(u_map[k])), float(p.to_theta(u_map[k] + du[k]))
-        out["keys"][p.name] = {"map": th0, "alternative": th1, "shift_sd": float(du[k] / sd[k])}
-    log("filter sensitivity " + json.dumps(alt) + ": " + ", ".join(
-        f"{n} {v['map']:.4g}->{v['alternative']:.4g} ({v['shift_sd']:+.2f} sd)" for n, v in out["keys"].items()))
+    out = {}
+    for name in uc["alternatives"]:
+        targets, obs, what = alternative_data(site, name)
+        if targets is None:
+            out[name] = {"note": what}
+            log(f"alternative {name}: skipped ({what})")
+            continue
+        alt = alternative_specs(site, model, windows, targets, obs, log)
+        saved = model.specs
+        model.specs = {**saved, **alt}
+        try:
+            r_alt = prob.data([u_map], windows)[0]
+            if r_alt is None:
+                out[name] = {"what": what, "note": "the MAP's trials failed under the alternative"}
+                continue
+            J_alt, _, _ = F.jacobian(prob, u_map, r_alt, log=log)
+            du = F.shift(prob, u_map, J_map, r_map, J_alt, r_alt)
+            entry = {"what": what, "keys": {}}
+            for k, p in enumerate(prob.params):
+                entry["keys"][p.name] = {"map": float(p.to_theta(u_map[k])),
+                                         "linear": float(p.to_theta(u_map[k] + du[k])),
+                                         "shift_sd": float(du[k] / sd[k])}
+            worst = max(abs(v["shift_sd"]) for v in entry["keys"].values()) if entry["keys"] else 0.0
+            log(f"alternative {name} ({what}): linear shift " + ", ".join(
+                f"{n} {v['map']:.4g}->{v['linear']:.4g} ({v['shift_sd']:+.2f} sd)" for n, v in entry["keys"].items()))
+            if worst > float(uc["refit_sd"]):
+                log(f"alternative {name}: a key moves {worst:.2f} sd > {uc['refit_sd']}: refitting from the MAP")
+                res = F.lm(prob, u_map, max_iter=int(uc["refit_max_iter"]), rtol=float(site.fitcfg["rtol"]),
+                           log=log, label=f"refit under {name}", jac=J_alt, r=r_alt,
+                           refresh_every=int(site.fitcfg["jacobian_refresh"]))
+                for k, p in enumerate(prob.params):
+                    v = entry["keys"][p.name]
+                    v["refit"] = float(p.to_theta(res["u"][k]))
+                    v["refit_shift_sd"] = float((res["u"][k] - u_map[k]) / sd[k])
+                entry["refit"] = {"cost": res["cost"], "iterations": res["iterations"]}
+            entry["worst_shift_sd"] = worst
+            out[name] = entry
+        finally:
+            model.specs = saved
     return out
+
+
+def ratio_tables(site, model, theta, windows) -> dict:
+    """Per target: the model/tower ratio of the means by local hour and by incoming-shortwave
+    quartile, on the fit's rows at theta (the cached trials)."""
+    dirs = model.run([theta], windows)[0]
+    if dirs is None:
+        return {}
+    ok = model.obs_keys(theta)
+    acc = {}
+    sw_all = site.data["obs"]["sw_in"]
+    for w, td in zip(windows, dirs):
+        df = T.load_series(td).reindex(model.specs[w.name].index)
+        hr = R.local_hours(df.index, site.tower.utc_offset_h)
+        sw = sw_all.reindex(df.index).to_numpy()
+        for t in model.specs[w.name].targets:
+            a = acc.setdefault(t.name, {"m": [], "o": [], "h": [], "sw": []})
+            a["m"].append(R.model_values(t, df))
+            a["o"].append(R.observed(t, ok))
+            a["h"].append(hr[t.rows])
+            a["sw"].append(sw[t.rows])
+    out = {}
+    for name, a in acc.items():
+        m, o, h, sw = (np.concatenate(a[k]) for k in ("m", "o", "h", "sw"))
+        by_hour = {int(x): float(m[h == x].mean() / o[h == x].mean()) for x in np.unique(h)
+                   if (h == x).sum() >= 10 and abs(o[h == x].mean()) > 1e-9}
+        q = np.nanquantile(sw, [0.25, 0.5, 0.75]) if np.isfinite(sw).any() else []
+        cls = np.digitize(sw, q) if len(q) else np.zeros(len(sw), int)
+        by_light = {f"SW quartile {int(c) + 1}": float(m[cls == c].mean() / o[cls == c].mean())
+                    for c in np.unique(cls) if (cls == c).sum() >= 10 and abs(o[cls == c].mean()) > 1e-9}
+        out[name] = {"overall": float(m.mean() / o.mean()) if abs(o.mean()) > 1e-9 else None,
+                     "by_local_hour": by_hour, "by_light": by_light}
+    return out
+
+
+def kappa_report(site, theta, params) -> dict | None:
+    """kappa, and the respiration and GPP it implies over the tower's measured records."""
+    names = [p.name for p in params]
+    if "kappa" not in names:
+        return None
+    k = float(theta[names.index("kappa")])
+    obs = site.data["obs"]
+    m = obs["gpp"].notna() & obs["reco"].notna()
+    reco, gpp = obs.loc[m, "reco"].mean(), obs.loc[m, "gpp"].mean()
+    to_kgc = 12.011e-9 * 365.25 * 86400.0
+    return {"kappa": k, "records": int(m.sum()), "reco_tower": float(reco), "reco_implied": float(reco / k),
+            "gpp_tower": float(gpp), "gpp_implied": float(gpp + (1.0 / k - 1.0) * reco),
+            "gpp_tower_kgc_yr": float(gpp * to_kgc), "gpp_implied_kgc_yr": float((gpp + (1.0 / k - 1.0) * reco) * to_kgc),
+            "note": "means over the records with GPP and its respiration measured (daytime and night)"}
+
+
+def cmd_variants(args):
+    """The structural variants side by side (best-practice plan §5.3, §7.1): each key's MAP in every
+    finished fit given, and the spread of the MAPs in the largest posterior sd."""
+    fits = {}
+    for path in args.fits:
+        rep = json.loads(Path(path).read_text())
+        fits[rep.get("variant") or Path(path).parent.name] = rep
+    keys = sorted(set().union(*(set(r.get("intervals", {})) for r in fits.values())))
+    table = {}
+    for k in keys:
+        row = {v: r["intervals"][k] for v, r in fits.items() if k in r.get("intervals", {})}
+        maps = [x["map"] for x in row.values()]
+        #----- the spread in u, over the largest posterior sd, so keys of any range compare
+        widest = max((x["i68"][1] - x["i68"][0]) / 2.0 for x in row.values())
+        table[k] = {"map": {v: x["map"] for v, x in row.items()},
+                    "spread_sd": float((max(maps) - min(maps)) / widest) if widest > 0 else None}
+    out = {"variants": list(fits), "keys": table,
+           "cost_val": {v: r.get("cost_val") for v, r in fits.items()},
+           "gates": {v: {g: e.get("pass") for g, e in r.get("gates", {}).items()} for v, r in fits.items()}}
+    F.save_json(Path(args.out), out)
+    print(f"{'key':22s} " + " ".join(f"{v:>16s}" for v in fits) + "   spread [sd]")
+    for k, e in table.items():
+        print(f"{k:22s} " + " ".join(f"{e['map'].get(v, float('nan')):16.4g}" for v in fits)
+              + f"   {e['spread_sd'] if e['spread_sd'] is not None else float('nan'):.2f}")
+    return 0
+
+
+def write_report(report: dict, path: Path):
+    """report.md: the fit's results for a reader (best-practice plan §7.2)."""
+    L = [f"# Fast calibration: {Path(report['site']).parent.name}, variant {report.get('variant')}", ""]
+    g = report.get("gates", {})
+    L += ["## Gates", "", "| gate | pass | note |", "|---|---|---|"]
+    L += [f"| {k} | {v.get('pass')} | {str(v.get('note', ''))[:120]} |" for k, v in sorted(g.items(), key=lambda kv: int(kv[0][1:]))]
+    L += ["", "## Keys", "", "| key | kind | scope | MAP | 68 % | prior centre | prior z | sd ratio | prior source |",
+          "|---|---|---|---|---|---|---|---|---|"]
+    for k, v in report.get("intervals", {}).items():
+        z = report.get("prior_z", {}).get(k, {})
+        L.append(f"| {k} | {v['kind']} | {z.get('scope', '')} | {v['map']:.4g} | {v['i68'][0]:.4g}-{v['i68'][1]:.4g} | "
+                 f"{v['prior_centre']:.4g} | {z.get('z', float('nan')):+.2f} | {v['sigma_ratio']:.2f} | "
+                 f"{str(z.get('prior_source', ''))[:80]} |")
+    fixed = {**report.get("fixed_by_coverage", {}), **report.get("screening", {}).get("fixed", {})}
+    if fixed:
+        L += ["", "Fixed at their priors: " + "; ".join(f"{k} ({v})" for k, v in fixed.items())]
+    L += ["", "## Targets", "", "| target | chi2/n | sigma scale | model/tower | n (cal) |", "|---|---|---|---|---|"]
+    rt = report.get("ratios", {})
+    for t, v in report.get("chi2_per_row", {}).items():
+        sc = (report.get("sigma_scale_refresh") or {}).get(t, 1.0)
+        n = report.get("scores_cal", {}).get("map", {}).get(t, {}).get("n")
+        L.append(f"| {t} | {v:.2f} | {sc:.2f} | {rt.get(t, {}).get('overall') or float('nan'):.3f} | {n} |")
+    for t, v in rt.items():
+        L.append(f"\n{t}, model/tower by local hour: " + ", ".join(f"{h} h {r:.2f}" for h, r in v["by_local_hour"].items()))
+        L.append(f"{t}, by light: " + ", ".join(f"{c} {r:.2f}" for c, r in v["by_light"].items()))
+    kr = report.get("kappa")
+    if kr:
+        L += ["", "## kappa", "", f"kappa = {kr['kappa']:.3f}: the tower's respiration {kr['reco_tower']:.2f} -> "
+              f"{kr['reco_implied']:.2f} umol m-2 s-1; GPP {kr['gpp_tower']:.2f} -> {kr['gpp_implied']:.2f} "
+              f"({kr['gpp_tower_kgc_yr']:.2f} -> {kr['gpp_implied_kgc_yr']:.2f} kgC m-2 yr-1), {kr['note']}."]
+    L += ["", "## Uncertainty", "", "Laplace, from the final gradient matrix"
+          + (" -- LOCAL ONLY (the linearity check failed)" if report.get("local_only") else "") + "."]
+    for name, a in report.get("alternatives", {}).items():
+        if "keys" not in a:
+            L.append(f"- alternative {name}: {a.get('note')}")
+            continue
+        L.append(f"- alternative {name} ({a['what']}): largest linear shift {a['worst_shift_sd']:.2f} sd"
+                 + (" -- refitted: " + ", ".join(f"{k} {v['map']:.4g}->{v['refit']:.4g}" for k, v in a["keys"].items())
+                    if "refit" in a else ""))
+    cv = report.get("cost_val")
+    if cv:
+        L += ["", f"Validation cost: default {cv['default']:.6g}, MAP {cv['map']:.6g}."]
+    path.write_text("\n".join(L) + "\n")
 
 
 def cmd_analyze(args):
@@ -903,7 +1115,7 @@ def cmd_analyze(args):
     if report.get("theta_refresh"):
         theta_r = np.array([report["theta_refresh"][k] for k in names])
         model.states = run_chains(site, params, theta_r, work / "chains", pool, args.runner, log, site.windows + water)
-        weights_and_sigma(site, model, theta_r, fspecs, fit_windows, log, scale_sigma=True)
+        _, site.data["fit_sigma_scale"] = weights_and_sigma(site, model, theta_r, fspecs, fit_windows, log, scale_sigma=True)
     else:
         weights_and_sigma(site, model, theta0, fspecs, fit_windows, log)
     post_fit(site, model, params, free, theta_base, theta0, theta_map, fit_windows, states_start, report, work, log)
@@ -1074,6 +1286,10 @@ def main(argv=None):
     p.add_argument("--fit", required=True, help="a finished fit's fit.json")
     p.add_argument("--out", required=True)
     p.set_defaults(func=cmd_write_calibrated)
+    p = sub.add_parser("variants")
+    p.add_argument("fits", nargs="+", help="the fit.json of each variant's fit")
+    p.add_argument("--out", required=True, help="the comparison's JSON")
+    p.set_defaults(func=cmd_variants)
     p = sub.add_parser("worker")
     p.add_argument("--queue", required=True)
     p.add_argument("--slots", type=int, default=os.cpu_count())

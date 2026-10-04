@@ -149,9 +149,11 @@ def test_the_closure_factor_is_a_median_of_whole_days():
     f, rep = OM.closure_factor(values, measured, 0.0, cfg)
     assert np.allclose(f.dropna(), 1.25) and rep["valid_days"] == 39 and rep["daily_closure_median"] == pytest.approx(0.8)
     obs = df.assign(closure_f=f)
-    h_c, le_c = OM.corrected(obs, 1.0)                              # the gap is H's
+    h_c, le_c = OM.corrected(obs, 1.0, 0.0)                         # the gap is H's
     assert np.allclose(le_c.dropna(), obs["le"][le_c.notna()]) and np.allclose((h_c + le_c).dropna(), 1.25 * (obs["h"] + obs["le"])[h_c.notna()])
-    h_b, le_b = OM.corrected(obs, None)                             # Bowen
+    h_m, le_m = OM.corrected(obs, 0.0, 0.0)                         # as measured
+    assert np.allclose(h_m.dropna(), obs["h"][h_m.notna()]) and np.allclose(le_m.dropna(), obs["le"][le_m.notna()])
+    h_b, le_b = OM.corrected(obs, None, None)                       # Bowen
     d = h_b.notna() & (obs["le"] > 0)
     assert np.allclose(h_b[d] / le_b[d], obs["h"][d] / obs["le"][d])
 
@@ -304,7 +306,7 @@ TARGETS = {"albedo": {"sigma": 0.01, "min_sw": 200.0}, "lw_up": {"sigma": 5.0},
 def with_closure(df, f=1.0, s_h=1.0):
     """A synthetic tower with its closure factor, corrected H and LE, and a respiration."""
     out = df.assign(closure_f=f, reco=4.0)
-    out["h_c"], out["le_c"] = OM.corrected(out, s_h)
+    out["h_c"], out["le_c"] = OM.corrected(out, s_h, 1.0 - s_h)
     return out
 
 
@@ -898,6 +900,47 @@ def test_the_prior_z_and_who_pushes_a_key():
         assert z[p.name]["z"] == pytest.approx((out["u"][k] - p.u0) / p.sigma_u)
         assert z[p.name]["pushed_by"] in ("le", "h")
 
+
+# ----- the uncertainty: the declared alternatives, the variants, the report (best-practice plan §7) ---
+class FakeSite:
+    """The parts of a Site the alternatives read."""
+    def __init__(self, obs, ustar, closure, provider=0.4):
+        self.data = {"obs": obs, "ustar": ustar, "closure": closure}
+        self.targets = {"gpp": {"ustar_min": provider}, "le": {}, "h": {}}
+        self.tower = TW.TowerSpec(site="", provider={"ustar_threshold": provider})
+        self.decl = {"closure": {"rise_min": 0.10}}
+
+
+def test_the_declared_alternatives():
+    obs = with_closure(synthetic_tower(closure=0.8), f=1.25)
+    obs["gpp_dt"], obs["reco_dt"] = np.nan, np.nan
+    site = FakeSite(obs, {"gpp": {"rule": "provider", "diagnostic": {"outcome": "plateau", "threshold": 0.325}}},
+                    {"shares": {"h": 1.0, "le": 0.0}, "attribution": {"rises": {"h": 0.5, "le": 0.0}}})
+    targets, o, what = CF.alternative_data(site, "gpp_ustar")
+    assert targets["gpp"]["ustar_min"] == 0.325 and o is obs
+    targets, o, what = CF.alternative_data(site, "closure")
+    d = o["h"] > 0
+    assert np.allclose(o.loc[d, "h_c"] / o.loc[d, "le_c"], o.loc[d, "h"] / o.loc[d, "le"]) and "Bowen" in what
+    assert CF.alternative_data(site, "partitioning")[0] is None          # no daytime partitioning declared
+    obs["gpp_dt"], obs["reco_dt"] = obs["gpp"] * 1.1, 5.0
+    targets, o, what = CF.alternative_data(site, "partitioning")
+    assert np.allclose(o["reco"], 5.0) and np.allclose(o["gpp"].dropna(), (obs["gpp"] * 1.1).dropna())
+    site.data["ustar"]["gpp"]["diagnostic"] = {"outcome": "rising"}
+    assert CF.alternative_data(site, "gpp_ustar")[0] is None
+
+
+def test_the_variants_side_by_side(tmp_path, capsys):
+    import argparse
+    for v, g1 in (("interception_off", 3.0), ("interception_on", 3.3)):
+        (tmp_path / v).mkdir()
+        (tmp_path / v / "fit.json").write_text(json.dumps({
+            "variant": v, "site": "x/calibration.toml",
+            "intervals": {"stomatal_g1": {"map": g1, "i68": [g1 - 0.15, g1 + 0.15]}}, "gates": {"G4": {"pass": True}}}))
+    CF.cmd_variants(argparse.Namespace(fits=[str(tmp_path / v / "fit.json") for v in ("interception_off", "interception_on")],
+                                       out=str(tmp_path / "variants.json")))
+    out = json.loads((tmp_path / "variants.json").read_text())
+    assert out["keys"]["stomatal_g1"]["spread_sd"] == pytest.approx(2.0)   # 0.3 apart, sd 0.15
+    assert "stomatal_g1" in capsys.readouterr().out
 
 def test_a_true_false_setting_from_the_parameter_record():
     """The record holds a logical as text: "false" must read as false (it once switched off the

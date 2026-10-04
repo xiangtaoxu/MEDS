@@ -115,15 +115,14 @@ def closure_shares(rule: str, test: dict, rise_min: float):
     return 0.0, 0.0, f"neither rises with u* (H {r['h']:+.0%}, LE {r['le']:+.0%}): as measured"
 
 
-def corrected(obs: pd.DataFrame, s_h) -> tuple[pd.Series, pd.Series]:
-    """H and LE corrected for the closure gap with shares (s_H, 1 - s_H), or Bowen when s_H is
-    None; where f_d is unknown the record has no corrected value."""
+def corrected(obs: pd.DataFrame, s_h, s_le) -> tuple[pd.Series, pd.Series]:
+    """H and LE corrected for the closure gap with shares s_H and s_LE (both 0: as measured; both
+    None: Bowen, H and LE scaled together); where f_d is unknown the record has no corrected value."""
     f = obs["closure_f"]
-    turb = obs["h"] + obs["le"]
     if s_h is None:
         return obs["h"] * f, obs["le"] * f
-    gap = (f - 1.0) * turb
-    return obs["h"] + s_h * gap, obs["le"] + (1.0 - s_h) * gap
+    gap = (f - 1.0) * (obs["h"] + obs["le"])
+    return obs["h"] + s_h * gap, obs["le"] + s_le * gap
 
 
 # ------------------------------------------------------------------------------------------------

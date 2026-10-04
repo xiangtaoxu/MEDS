@@ -22,7 +22,7 @@ REQUIRED = {("base", "main"), ("base", "registry"), ("tower", "site")}
 #: lists whose reference entries are examples: the default is empty
 EXAMPLES = {("windows", "list"), ("windows", "seasonal", "list")}
 #: tables that take any keys
-FREE = {("overrides",), ("variants",), ("calibrated",), ("priors",), ("uncertainty", "alternative")}
+FREE = {("overrides",), ("variants",), ("calibrated",), ("priors",)}
 #: the keys of one entry of a list of tables
 LIST_ENTRY = {("windows", "list"): {"name", "start", "role", "days"},
               ("windows", "seasonal", "list"): {"name", "start", "days"}}

@@ -407,7 +407,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P3 | **done (#359):** errors (`obsmodels.py`): `obs_model` per target (identity, closure with the attribution test, respiration with κ); σ from the provider or paired days at a smoothed observation; Huber by default; σ scaling at the refresh. BCI: f 1.33, s_H = 1, κ 0.65 ± 0.10 | medium |
 | P4 | **done (#360):** keys and priors (`priors.py`): kinds, scope tags, plant-type priors (`[fit].plant_type`), bounds apart, prior z and G13; EEO g1 (2.80 at BCI) and vcmax25 (MEDS's leaf: 41 at phi_psii 0.74, θ_J 0.7); Kattge & Knorr from the growth temperature | small–medium |
 | P5 | **done (#361):** the joint fit with one refresh (chains, weights, σ); one-sided differences with Broyden reuse (full every third step); the final central matrix; the triage; **removed:** the water stage, polish, kernel stages (`stages.py`), G8 and the stage settings | medium; removes code |
-| P6 | uncertainty: declared alternatives with the refit rule, structural variants, the report | small |
+| P6 | **done (#362):** uncertainty: declared alternatives (GPP u\*, closure, partitioning) with the refit rule; structural variants (`variants`); the report (`report.md`: χ²/n, σ scale, model/tower by hour and light, κ's implications, prior z) | small |
 | P7 | BCI: the examples with #351's values, the refit, the full-record run, the README | small; Slurm |
 
 P0 first; P1–P3 before P5; P7 last. Each phase adds or changes settings with documented defaults, and the tests change with it.
