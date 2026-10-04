@@ -46,29 +46,26 @@ on = false
 [targets.ef]
 on = false
 
-# LE and H as measured. LE/Rnet does not change with u* here, H/Rnet rises with it and is held back
-# by canopy heat storage before 9 h, so H is filtered harder and has a wider sigma.
+# LE and H as measured, daytime only, with the u* rule of the diagnostic: LE/Rnet is flat in u* and
+# H/Rnet still rises at the top classes, so neither is filtered (site_reference.toml). H keeps a
+# wider sigma: the tower misses sensible heat.
 [targets.le]
 sigma_abs = 10.0
 sigma_rel = 0.15
 closure = false
-ustar_min = 0.4
 
 [targets.h]
 sigma_abs = 10.0
 sigma_rel = 0.30
 closure = false
-ustar_min = 0.6
-hours = [9, 16]
 
 # GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), about the soil
 # chambers' alone (without the above-ground part), so sigma carries ~2 umol m-2 s-1 of systematic
-# error; and the morning hours need turbulence (the u* plateau of the data report).
+# error; the provider's u* threshold (0.4, bci_site.toml) filters the calm morning hours.
 # site_reference.toml explains both.
 [targets.gpp]
 sigma_abs = 2.5
 sigma_rel = 0.15
-ustar_min = 0.4
 
 # Night NEE is out of the fast fit (revision plan decision 3): rd_vcmax_ratio is fixed instead.
 [targets.nee_night]
@@ -86,235 +83,16 @@ seed       = 20260929
 rough_keys = "default"       # a key the screening finds rough stays at its default ("line_search" to move it)
 timeout    = 300             # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
 
-# The water stage: BCI's dry seasons, January to April, from the wet season's soil water. The 2016
-# one is the El Nino drought.
-[stages.water]
-targets = ["le", "gpp"]
-windows = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" },
-            { name = "dry2017", start = "2017-01-01", days = 120, chain = "cal" } ]
-
 [uncertainty]
 alternative = { gpp = { ustar_min = 0.3 } }
 
+# The windows and seasonal runs are chosen by the rule (best-practice plan §6.2; `calibrate_fast.py
+# select-windows` prints them): eight ten-day windows, one per 1.5-month slot, each the slot's best
+# covered, with validation windows in the same slots of other years; and the soil-drying runs from
+# the years' deepest water deficits (2016's is the El Nino drought).
 [windows]
 days       = 10
 skip_hours = 3                 # the first hours after a restart with changed traits are not scored
-
-# Each chain is a frozen run from the census at this date, passing its windows' starts in order.
-[windows.chains]
-cal   = "2015-04-01"
-early = "2013-04-01"
-
-# The seasons `calibrate_fast.py select-windows` searches for the best-covered 10-day span. BCI's dry
-# season is January to April. Calibration windows need the tower's longwave, observed from 2015.
-[[windows.seasons]]
-name = "wet15"
-from = "2015-08-15"
-to = "2015-10-15"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "wetdry15"
-from = "2015-12-01"
-to = "2016-01-31"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "dry16"                  # the 2016 El Nino drought
-from = "2016-02-01"
-to = "2016-04-10"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "drywet16"
-from = "2016-04-11"
-to = "2016-06-15"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "wet16"
-from = "2016-08-15"
-to = "2016-10-15"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "wetdry16"
-from = "2016-12-01"
-to = "2017-01-31"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "dry17"
-from = "2017-02-01"
-to = "2017-04-10"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "drywet17"
-from = "2017-04-11"
-to = "2017-06-15"
-role = "cal"
-chain = "cal"
-
-[[windows.seasons]]
-name = "val_wet13"
-from = "2013-08-15"
-to = "2013-11-30"
-role = "val"
-chain = "early"
-
-[[windows.seasons]]
-name = "val_wetdry13"
-from = "2013-12-01"
-to = "2014-01-31"
-role = "val"
-chain = "early"
-
-[[windows.seasons]]
-name = "val_dry14"
-from = "2014-02-01"
-to = "2014-04-10"
-role = "val"
-chain = "early"
-
-[[windows.seasons]]
-name = "val_drywet14"
-from = "2014-04-11"
-to = "2014-06-15"
-role = "val"
-chain = "early"
-
-[[windows.seasons]]
-name = "val_wet15b"
-from = "2015-10-16"
-to = "2015-11-30"
-role = "val"
-chain = "cal"
-
-[[windows.seasons]]
-name = "val_mid16"
-from = "2016-06-16"
-to = "2016-08-14"
-role = "val"
-chain = "cal"
-
-[[windows.seasons]]
-name = "val_wet16b"
-from = "2016-10-16"
-to = "2016-11-30"
-role = "val"
-chain = "cal"
-
-[[windows.seasons]]
-name = "val_mid17"
-from = "2017-06-16"
-to = "2017-07-21"
-role = "val"
-chain = "cal"
-
-# The windows themselves, as select-windows chose them (dates are the runs' UTC start).
-[[windows.list]]
-name = "wet15"
-start = "2015-09-11"
-role = "cal"
-chain = "cal"   # coverage score 0.90
-
-[[windows.list]]
-name = "wetdry15"
-start = "2015-12-20"
-role = "cal"
-chain = "cal"   # coverage score 0.98
-
-[[windows.list]]
-name = "dry16"
-start = "2016-03-05"
-role = "cal"
-chain = "cal"   # coverage score 0.98
-
-[[windows.list]]
-name = "drywet16"
-start = "2016-04-13"
-role = "cal"
-chain = "cal"   # coverage score 0.97
-
-[[windows.list]]
-name = "wet16"
-start = "2016-08-26"
-role = "cal"
-chain = "cal"   # coverage score 0.81
-
-[[windows.list]]
-name = "wetdry16"
-start = "2017-01-11"
-role = "cal"
-chain = "cal"   # coverage score 0.96
-
-[[windows.list]]
-name = "dry17"
-start = "2017-02-01"
-role = "cal"
-chain = "cal"   # coverage score 0.96
-
-[[windows.list]]
-name = "drywet17"
-start = "2017-04-20"
-role = "cal"
-chain = "cal"   # coverage score 0.90
-
-[[windows.list]]
-name = "val_wet13"
-start = "2013-09-07"
-role = "val"
-chain = "early"   # coverage score 0.90
-
-[[windows.list]]
-name = "val_wetdry13"
-start = "2014-01-10"
-role = "val"
-chain = "early"   # coverage score 0.98
-
-[[windows.list]]
-name = "val_dry14"
-start = "2014-02-05"
-role = "val"
-chain = "early"   # coverage score 0.98
-
-[[windows.list]]
-name = "val_drywet14"
-start = "2014-04-14"
-role = "val"
-chain = "early"   # coverage score 0.95
-
-[[windows.list]]
-name = "val_wet15b"
-start = "2015-10-17"
-role = "val"
-chain = "cal"   # coverage score 0.85
-
-[[windows.list]]
-name = "val_mid16"
-start = "2016-08-03"
-role = "val"
-chain = "cal"   # coverage score 0.81
-
-[[windows.list]]
-name = "val_wet16b"
-start = "2016-10-16"
-role = "val"
-chain = "cal"   # coverage score 0.80
-
-[[windows.list]]
-name = "val_mid17"
-start = "2017-06-17"
-role = "val"
-chain = "cal"   # coverage score 0.78
 
 # Set in the calibrated main config the fit writes (meds_config_calibrated.toml), beside the MAP.
 [calibrated]

@@ -428,6 +428,16 @@ def test_reflected_shortwave_above_the_incoming_is_reported(tmp_path):
     assert any(f.startswith("F3: the reflected shortwave") for f in failures)
 
 
+def test_the_leaf_on_months_and_a_yearly_ustar_threshold(tmp_path):
+    frame = with_fluxes(synthetic_tower(days=2))
+    site = write_site(tmp_path, frame, extra=FLUXES + "[provider]\nustar_threshold = { 2014 = 0.35, 2015 = 0.4 }")
+    assert site.leaf_on_months == list(range(1, 13)) and site.provider["ustar_threshold"]["2014"] == 0.35
+    text = (tmp_path / "site.toml").read_text().replace("elevation = 100.0", "elevation = 100.0\nleaf_on_months = [5, 13]")
+    (tmp_path / "site.toml").write_text(text)
+    with pytest.raises(SystemExit, match="leaf_on_months"):
+        ti.read_site(str(tmp_path / "site.toml"))
+
+
 @pytest.mark.parametrize("fluxes,message", [
     ('NEE = { column = "NEE", units = "umol m-2 s-1" }\nRECO = { sum = ["GPP", "NEE"] }', "RECO sums 'GPP'"),
     ('GPP = { sum = ["NEE"] }', "only RECO may be a sum"),
@@ -437,6 +447,7 @@ def test_reflected_shortwave_above_the_incoming_is_reported(tmp_path):
     ('LE = { column = "LE", units = "W m-2" }\n[provider]\nmethod = "x"', "provider.method is not one of"),
     ('LE = { column = "LE", units = "W m-2" }\n[provider]\nuncertainty = { H = "H_RANDUNC" }',
      "provider.uncertainty.H names no declared flux"),
+    ('LE = { column = "LE", units = "W m-2" }\n[provider]\nustar_threshold = "high"', "provider.ustar_threshold"),
 ])
 def test_a_flux_declaration_is_checked(tmp_path, fluxes, message):
     with pytest.raises(SystemExit, match=message):

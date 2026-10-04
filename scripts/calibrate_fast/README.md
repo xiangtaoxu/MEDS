@@ -35,9 +35,20 @@ silently fall back to the default.
 - **A failed trial rejects its step; it does not stop the fit.** A trial also fails when it runs
   past 3 times the median of the trials that succeeded, or `[fit].timeout` seconds if that is
   longer. So one pathological candidate cannot hold up an iteration.
-- **States.** A chain is a frozen run from the census that stops at each window's start in turn and
-  writes a state there. The windows' soil water and temperature are then a spun-up run's. Before the
-  polish the chains are re-run with the stage values (`[stages.polish].refresh`).
+- **States.** Every window has its own chain: a frozen run from the initial stand (the base
+  config's census or state) that starts `[windows].chain_lead_days` (180) before the window and
+  writes a state at its start. The window's soil water and temperature are then the model's own.
+  The chains run at once. Before the polish they are re-run with the stage values
+  (`[stages.polish].refresh`).
+- **Windows, by rule** (`[windows]`; `select-windows` prints the choice). One ten-day calibration
+  window per 1.5-month slot of the year inside the site TOML's leaf-on months, each the slot's best
+  covered: the share of daytime records with H, LE and GPP measured, times the share with observed
+  forcing. Validation windows are in the same slots of other years. A site may list its own.
+- **Seasonal runs, by rule** (`[windows.seasonal]`). Up to two 120-day runs, each ending at a year's
+  deepest cumulative water deficit (rain minus Priestley–Taylor evaporation, from the forcing)
+  inside the leaf-on months, the deepest covered years first. They are scored on LE only. A year
+  under 100 mm gives none; without any, the drought keys are fixed. At BCI the rule picks the 2016
+  and 2017 dry seasons (1,331 and 698 mm).
 
 ### The tower
 
@@ -69,18 +80,32 @@ silently fall back to the default.
     - night NEE.
   - Each target uses only the records the tower measured and the forcing observed. Its observation
     error is σ = `sigma_abs` + `sigma_rel` |obs|.
-- **Filters are per-target settings:** `ustar_min`, `par_min`, `hours`, `closure_range` and
-  `min_solar_elevation`, each off unless set. The recommended values, with the reasons, are in
-  `site_reference.toml`. Every target takes every filter. The defaults:
-  - GPP: u\* ≥ 0.4 m s⁻¹ and σ = 2.5 + 0.15 GPP. The tower's GPP is built from one respiration
-    value per day, so it carries a systematic error at every daytime hour, on top of the random one.
-  - LE: u\* ≥ 0.4 m s⁻¹.
-  - H: u\* ≥ 0.6 m s⁻¹, 9 to 16 h, and σ = 10 W m⁻² + 30 %. H is under-measured in low
-    turbulence, and canopy heat storage holds it back in the morning.
+  - H, LE and u\* are daytime targets: at night they are set mostly by the model's numerical floors
+    and stable-air measurement problems (`night = true` keeps night records at the provider's u\*
+    threshold). No hours are cut for transitions: canopy storage is ignored, every tower flux is
+    treated as turbulent.
+- **u\* per target, by its own diagnostic** (`datarules.py`, `[ustar]`). Within classes of the
+  target's driver (PAR for GPP, Rnet for LE and H), the flux-to-driver ratio across u\* classes. The
+  plateau test (Papale et al. 2006) finds the lowest class within 95 % of the mean of the classes
+  above, and a bootstrap over days gives its spread (Barr et al. 2013).
+  - A plateau is filtered at its threshold. A flat ratio or one still rising at the top classes
+    is not filtered: a rising one is the observation model's to handle.
+  - GPP takes the provider's CO₂ threshold (`ustar_min = "provider"`, one value or one per year).
+  - At BCI: LE flat, H rising, so neither is filtered. GPP takes the provider's 0.4. The all-day
+    diagnostic finds a GPP plateau at 0.33 (bootstrap 0.15–0.35); the morning hours alone gave 0.5.
+- **Filters are per-target settings:** `ustar_min`, `par_min`, `hours`, `closure_range`,
+  `min_solar_elevation` and `snow_free_days`, each off unless set. The albedo's defaults are the
+  plan's rule: SW_in > 200 W m⁻², the sun at least 20° high, a week without frost.
+- **Keys fixed from coverage.** A key that acts through one process (the registry's `process`: wet
+  canopy, night, snow, drought) is fixed when the kept records sample that process fewer than
+  `[fit].min_process_records` (48) times. At BCI the flag removes every rain half hour.
 - **The data report** (`report`, and the start of every `fit`) gives:
   - every target's rows through each filter step;
-  - the GPP diurnal mean before and after the filters;
-  - the u\* plateau test on the morning GPP/PAR (Reichstein et al. 2005, within PAR classes).
+  - the u\* diagnostics, and the rule each target got;
+  - the windows, the years' water deficits and the seasonal runs;
+  - the share of the record's daytime radiation, temperature, VPD and deficit range that the fit's
+    records span;
+  - at the fit, the share of the stand's area whose canopy-air top is above the sensor (#350).
 
 ### Keys and priors
 
@@ -177,7 +202,7 @@ The default is the base configuration, on chains run with it.
 ## Commands
 
 ```
-calibrate_fast.py select-windows --site calibration.toml                 # the best-covered windows
+calibrate_fast.py select-windows --site calibration.toml                 # print the rule's windows and seasonal runs
 calibrate_fast.py growth-resp --daily "output/eval-D-*.nc" --out calibration/growth_resp_monthly.csv
 calibrate_fast.py report --site calibration.toml --work runs/report      # the data report only
 calibrate_fast.py check --site calibration.toml --variant interception_on --work runs/check \
@@ -239,7 +264,8 @@ trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 | `trials.py` | the trial writer and runner, the parameter-record check, the fast-series reader (on the tower's interval), the driver trials |
 | `states.py` | the state chains |
 | `tower.py` | the tower's records (through `tower_inputs`), the closure correction, the observed-forcing mask, the sun's elevation |
-| `residuals.py` | the targets, the filters, the residual vector, the weights, the data report, the u\* plateau |
+| `datarules.py` | the u\* diagnostic, the process coverage, the window rule, the water-deficit index and seasonal runs |
+| `residuals.py` | the targets, the filters, the residual vector, the weights, the filter report |
 | `fit.py` | Levenberg–Marquardt, the Jacobian, screening, the covariance and intervals, the linearity check, the filter shift |
 | `pool.py` | the local pool and the directory queue |
 | `tests/` | unit tests, and a smoke test that runs the model and checks G8 (ctest `calibrate_fast`) |

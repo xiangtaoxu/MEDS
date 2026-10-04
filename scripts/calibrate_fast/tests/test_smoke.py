@@ -81,6 +81,8 @@ H = {{ column = "H", units = "W m-2", {flag} }}
 NEE = {{ column = "NEE", units = "umol m-2 s-1", {flag} }}
 GPP = {{ column = "gpp", units = "umol m-2 s-1", {flag} }}
 USTAR = {{ column = "ustar", units = "m s-1", {flag} }}
+[provider]
+ustar_threshold = 0.4
 """)
 
 
@@ -151,13 +153,10 @@ sigma_abs = 1.5
 sigma_rel = 0.15
 [windows]
 days = 3
-[windows.chains]
-cal = "2001-06-01"
 [[windows.list]]
 name = "w"
 start = "2001-06-02"
 role = "cal"
-chain = "cal"
 """
     (tmp_path / "calibration.toml").write_text(decl)
     g8 = ["--g8"] if runner == "python" else []

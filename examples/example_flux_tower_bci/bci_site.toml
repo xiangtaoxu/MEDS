@@ -16,6 +16,7 @@ name      = "Barro Colorado Island (PA-Bar)"
 latitude  = 9.1568                          # [deg N]  AmeriFlux site coordinates
 longitude = -79.8486                        # [deg E]
 elevation = 150.0                           # [m]      AmeriFlux; the papers give "about 140 m"
+leaf_on_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # the model's one PFT is evergreen
 
 [clock]
 utc_offset = -5.0                           # [h] the file is in Panama's local standard time

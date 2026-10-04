@@ -17,7 +17,9 @@ Each key has a state, the registry's recommendation:
   fit       in the default fitted set
   optional  available, fitted only when the site declaration asks for it
   fixed     not tunable in the fast fit (`reason` says why); a site may still ask for it
-and a stage, the part of the staged fit that sets it (stages.py).
+and a stage, the part of the staged fit that sets it (stages.py). A key that acts only through
+one process (the wet canopy, night, snow, drought) names it in `process`: the fit fixes it when the
+kept data sample that process in too few records (datarules.process_coverage).
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ TRANSFORMS = ("linear", "log")
 FILES = ("pft", "main")
 STATES = ("fit", "optional", "fixed")
 STAGES = ("optics", "photosynthesis", "energy", "water")
+PROCESSES = ("", "wet_canopy", "night", "snow", "drought")
 PRIOR_KEYS = ("centre", "sd", "log_sd", "source")
 
 
@@ -54,6 +57,7 @@ class Param:
     state: str = "fit"
     stage: str = "energy"
     reason: str = ""           # why a fixed key is fixed
+    process: str = ""          # the one process it acts through, if any (fixed without coverage)
     prior: dict = field(default_factory=dict)   # centre, sd or log_sd, source
     extra: dict = field(default_factory=dict)
 
@@ -116,6 +120,8 @@ def _check(p: Param):
         raise ValueError(f"{p.name}: state must be one of {STATES}")
     if p.stage not in STAGES:
         raise ValueError(f"{p.name}: stage must be one of {STAGES}")
+    if p.process not in PROCESSES:
+        raise ValueError(f"{p.name}: process must be one of {PROCESSES[1:]}")
     if not p.lo < p.hi:
         raise ValueError(f"{p.name}: range must be increasing")
     if p.transform == "log" and p.lo <= 0.0:
@@ -146,7 +152,7 @@ def load_registry(path, variant: str | None = None) -> list[Param]:
                   default=None if e.get("default") is None else float(e["default"]),
                   group=e.get("group", ""), source=e.get("source", ""), variants=variants,
                   notes=e.get("notes", ""), state=e.get("state", "fit"), stage=e.get("stage", "energy"),
-                  reason=e.get("reason", ""), prior=dict(e.get("prior", {})))
+                  reason=e.get("reason", ""), process=e.get("process", ""), prior=dict(e.get("prior", {})))
         _check(p)
         if p.file == "pft" and p.pft is None:
             p.pft = 1

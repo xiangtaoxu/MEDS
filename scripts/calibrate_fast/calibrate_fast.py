@@ -56,6 +56,7 @@ sys.path.insert(0, str(ROOT / "python"))
 os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT / "python"),
                                                         os.environ.get("PYTHONPATH")]))
 
+import datarules as DR               # noqa: E402
 import fit as F                      # noqa: E402
 import residuals as R                # noqa: E402
 import settings as SET               # noqa: E402
@@ -113,17 +114,22 @@ class Site:
             raise SystemExit(f"the tower's interval ({self.tower.step:g} s) is not a whole number of the model's "
                              f"fast steps (fast.dt_fast = {dt_fast:g} s)")
         self.base.set("output.fast_interval_steps", int(round(steps)))
+        #----- the windows: the site's list, else chosen by the rule when the data are read
+        #      (load_data). Every window has its own state chain, a frozen run from the initial
+        #      stand that starts chain_lead_days before it.
         w = d["windows"]
         self.days = int(w["days"])
         self.skip_hours = int(w["skip_hours"])
-        self.chains = {k: dt.datetime.fromisoformat(v) for k, v in w["chains"].items()}
+        self.chain_lead = int(w["chain_lead_days"])
         self.windows = [T.Window(e["name"], dt.datetime.fromisoformat(e["start"]),
-                                 int(e.get("days", self.days)), e["role"], e["chain"])
+                                 int(e.get("days", self.days)), e["role"], e["name"])
                         for e in w["list"]]
         self.water_windows = [T.Window(e["name"], dt.datetime.fromisoformat(e["start"]),
-                                       int(e.get("days", 120)), "water", e["chain"])
-                              for e in d["stages"]["water"]["windows"]]
-        self.targets = d["targets"]
+                                       int(e.get("days", w["seasonal"]["days"])), "water", e["name"])
+                              for e in w["seasonal"]["list"]]
+        self.targets_declared = d["targets"]
+        self.targets = d["targets"]           # with the u* rules made numbers by load_data
+        self.data = None                      # load_data's cache
         self.fitcfg = d["fit"]
         self.stagecfg = d["stages"]
         self.uncertainty = d["uncertainty"]
@@ -172,7 +178,16 @@ def log_to(path):
 
 def observations(site: Site):
     """The tower's records, the observed-forcing masks for calibration and validation windows, and
-    the sun's elevation at every record (None without the site's coordinates)."""
+    the sun's elevation at every record (None without the site's coordinates); with the data rules
+    applied once (load_data)."""
+    if site.data is None:
+        load_data(site)
+    return site.data["obs"], site.data["fok"], site.data["elev"]
+
+
+def load_data(site: Site) -> dict:
+    """Read the tower and apply the data rules (datarules.py): each target's u* rule made a number,
+    the windows chosen where the site lists none, and the seasonal runs from the water deficit."""
     obs = TW.observations(site.tower)
     fok = {"cal": TW.forcing_observed(site.tower, obs.index),
            "val": TW.forcing_observed(site.tower, obs.index, site.tower.forcing_qc_val)}
@@ -181,7 +196,39 @@ def observations(site: Site):
     if site.lat is not None and site.lon is not None:
         elev = pd.Series(TW.solar_elevation(obs.index, float(site.lat), float(site.lon), site.tower.step),
                          index=obs.index)
-    return obs, fok, elev
+    tw = site.tower
+    try:
+        site.targets, ustar = DR.resolve_ustar(site.targets_declared, obs, DR.provider_threshold(tw.provider),
+                                               site.decl["ustar"], tw.daytime_sw, tw.utc_offset_h)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    span = TW.forcing_span(tw)
+    record_start = span[0] if span else obs.index[0]
+    first = pd.Timestamp(record_start).floor("D") + pd.Timedelta(days=site.chain_lead)
+    wcfg = site.decl["windows"]
+    windows_report = {"source": "the site's list"}
+    if not site.windows:
+        chosen, windows_report = DR.select_windows(obs, fok, wcfg, tw.leaf_on_months, record_start,
+                                                   tw.daytime_sw, tw.utc_offset_h)
+        windows_report["source"] = "the rule (datarules.select_windows)"
+        site.windows = [T.Window(n, start, site.days, role, n) for n, start, role in chosen]
+        if not any(w.role == "cal" for w in site.windows):
+            raise SystemExit("no calibration window passes the rule: " + json.dumps(windows_report["slots"]))
+    deficit, seasonal_report = None, {"source": "the site's list"}
+    if span:
+        deficit = DR.water_deficit(DR.forcing_daily(tw.forcing, tw.forcing_grid))
+    scfg = wcfg["seasonal"]
+    if not site.water_windows and int(scfg["max_runs"]) > 0:
+        if deficit is None:
+            seasonal_report = {"note": "no forcing file ([tower].forcing): no water-deficit index, no seasonal runs"}
+        else:
+            scores = DR.day_scores(obs, fok["cal"], tw.daytime_sw, tw.utc_offset_h)
+            runs, seasonal_report = DR.seasonal_runs(deficit, scfg, tw.leaf_on_months, first, scores,
+                                                     float(wcfg["min_score"]))
+            site.water_windows = [T.Window(n, start, days, "water", n) for n, start, days in runs]
+    site.data = {"obs": obs, "fok": fok, "elev": elev, "ustar": ustar, "windows": windows_report,
+                 "seasonal": seasonal_report, "deficit": deficit}
+    return site.data
 
 
 def specs_for(site: Site, windows, obs, fok, elev, targets=None, log=print):
@@ -199,21 +246,21 @@ def specs_for(site: Site, windows, obs, fok, elev, targets=None, log=print):
 
 
 def run_chains(site, params, theta, root, pool, runner, log, windows=None):
+    """Each window's state: its own frozen chain from the initial stand, chain_lead_days long,
+    every chain at once."""
     windows = site.windows if windows is None else windows
     states, errs, threads = {}, [], []
 
-    def one(name):
-        ws = [w for w in windows if w.chain == name]
-        if not ws:
-            return
+    def one(w):
         try:
-            log(f"chain {name}: {len(ws)} windows from {site.chains[name]:%Y-%m-%d}")
-            states.update(S.run_chain(name, site.chains[name], ws, site.base, params, theta, root,
+            start = w.start - dt.timedelta(days=site.chain_lead)
+            states.update(S.run_chain(w.name, start, [w], site.base, params, theta, root,
                                       pool, runner, site.overrides))
         except Exception as e:           # noqa: BLE001 -- reported below
             errs.append(e)
-    for name in site.chains:
-        th = threading.Thread(target=one, args=(name,))
+    log(f"state chains: {len(windows)} windows, each from the initial stand {site.chain_lead} days before it")
+    for w in windows:
+        th = threading.Thread(target=one, args=(w,))
         th.start()
         threads.append(th)
     for th in threads:
@@ -248,37 +295,16 @@ def base_record(site, work, pool, runner, log):
 # select-windows, growth-resp, report
 # ------------------------------------------------------------------------------------------------
 def cmd_select_windows(args):
+    """Print the windows and seasonal runs the rule chooses, as calibration.toml entries (to freeze
+    a choice; a site that lists none gets the same choice at every run)."""
     site = Site(args.site)
-    obs, fok, _ = observations(site)
-    decl = site.decl["windows"].get("seasons", [])
-    if not decl:
-        raise SystemExit("declare [[windows.seasons]] (name, from, to, role, chain) to select from")
-    day_ok = pd.DataFrame({
-        "flux": (obs["h"].notna() & obs["le"].notna()),
-        "lw": fok["cal"] & obs["lw_up"].notna(),
-    }).astype(float).resample("1D").mean()
-    rows = []
-    taken = []
-    for s in decl:
-        a, b = pd.Timestamp(s["from"]), pd.Timestamp(s["to"])
-        best, best_score = None, -1.0
-        for start in pd.date_range(a, b - pd.Timedelta(days=site.days), freq="1D"):
-            span = day_ok.loc[start:start + pd.Timedelta(days=site.days - 1)]
-            if len(span) < site.days:
-                continue
-            need_lw = s.get("role", "cal") == "cal"
-            score = float(span["flux"].mean()) * (float(span["lw"].mean()) if need_lw else 1.0)
-            clash = any(abs((start - t).days) < site.days for t in taken)
-            if not clash and score > best_score:
-                best, best_score = start, score
-        if best is None:
-            print(f"# {s['name']}: no complete {site.days}-day span in {a:%Y-%m-%d}..{b:%Y-%m-%d}")
-            continue
-        taken.append(best)
-        rows.append((s["name"], best, s.get("role", "cal"), s.get("chain", "cal"), best_score))
-    for name, start, role, chain, score in rows:
-        print(f'[[windows.list]]\nname = "{name}"\nstart = "{start:%Y-%m-%d}"\nrole = "{role}"\n'
-              f'chain = "{chain}"   # coverage score {score:.2f}\n')
+    site.windows, site.water_windows = [], []
+    load_data(site)
+    for w in site.windows:
+        print(f'[[windows.list]]\nname = "{w.name}"\nstart = "{w.start:%Y-%m-%d}"\nrole = "{w.role}"\n')
+    for w in site.water_windows:
+        print(f'[[windows.seasonal.list]]\nname = "{w.name}"\nstart = "{w.start:%Y-%m-%d}"\ndays = {w.days}\n')
+    print("# " + json.dumps(site.data["windows"]) + "\n# " + json.dumps(site.data["seasonal"]))
 
 
 def cmd_growth_resp(args):
@@ -302,35 +328,58 @@ def cmd_growth_resp(args):
     print(out.to_string(index=False))
 
 
-def data_report(site, obs, fok, elev, log) -> dict:
-    """The filter report (revision plan §2): every target's rows over the whole record through each
-    step, its diurnal mean before and after the filters, and the GPP u* plateau."""
-    rep = R.record_report(obs, fok["cal"], site.targets, site.tower.daytime_sw,
-                          None if elev is None else elev.reindex(obs.index).to_numpy(), site.tower.utc_offset_h)
+def data_report(site, obs, fok, elev, log, specs=None) -> dict:
+    """The data report (best-practice plan §2, §6.2): every target's rows over the whole record
+    through each step, the u* diagnostics and the rule each target got, the windows and seasonal
+    runs, what the calibration windows cover, and the reader's checks."""
+    tw = site.tower
+    rep = R.record_report(obs, fok["cal"], site.targets, tw.daytime_sw,
+                          None if elev is None else elev.reindex(obs.index).to_numpy(), tw.utc_offset_h)
     for t, r in rep.items():
         log(f"data {t:9s} " + " -> ".join(f"{label} {n}" for label, n in r["counts"]))
-    g = site.targets.get("gpp", {})
-    plateau = R.ustar_plateau(obs, tuple(g.get("plateau_hours", (7, 9))), site.tower.daytime_sw,
-                              site.tower.utc_offset_h)
-    if "threshold" in plateau:
-        cells = " ".join(f"{c['ustar'][0]:.2f}:{c['gpp_per_par']:.4f}" for c in plateau["classes"]
-                         if c["gpp_per_par"] is not None)
-        per = "; ".join(f"PAR {b['par'][0]:.0f}-{b['par'][1]:.0f}: {b['threshold']['0.95']}" for b in plateau["by_par"]
-                        if b["par"] is not None)
-        log(f"data gpp u* plateau ({plateau['hours'][0]}-{plateau['hours'][1]} h GPP/PAR by u* class) {cells}")
-        log(f"data gpp u* threshold (median over PAR classes) {plateau['threshold']}, 95 % by PAR class {per} "
-            f"(the target uses u* >= {g.get('ustar_min')})")
-    else:
-        log(f"data gpp u* plateau: {plateau.get('note')}")
-    if "gpp" in rep:
-        di = rep["gpp"]["diurnal"]
-        log("data gpp diurnal mean (before -> after the filters): "
-            + " ".join(f"{h}h {v[0]:.1f}->{v[1]:.1f}" for h, v in sorted(di.items())
-                       if 6 <= h <= 18 and v[1] is not None))
-    checks = site.tower.report.get("fluxes", {})
+    for t, u in site.data["ustar"].items():
+        d = u["diagnostic"]
+        if d is not None:
+            b = d.get("bootstrap", {})
+            log(f"data {t} u* diagnostic ({d.get('driver', '?')} classes): {d['outcome']}"
+                + (f" at {d['threshold']}" if d.get("threshold") is not None else "")
+                + (f", bootstrap 5-50-95 % {b['threshold_p05_p50_p95']}, outcomes {b['outcome_share']}"
+                   if b.get("threshold_p05_p50_p95") else "") + (f" ({d['note']})" if d.get("note") else ""))
+        log(f"data {t} u* filter: {u['ustar_min']} ({u['reason']})")
+    for w in site.windows + site.water_windows:
+        log(f"data window {w.name:12s} {w.role:5s} {w.start:%Y-%m-%d} + {w.days} d")
+    sr = site.data["seasonal"]
+    if sr.get("years"):
+        log("data water deficit by year (deepest inside the leaf-on months): " + ", ".join(
+            f"{y['year']} {y['deficit_mm']:.0f} mm on {y['end']}" for y in sr["years"]))
+    if sr.get("note"):
+        log(f"data seasonal runs: {sr['note']}")
+    #----- what the calibration windows' kept records span of the record's conditions
+    cal = [w for w in site.windows if w.role == "cal"]
+    specs = specs or specs_for(site, cal + site.water_windows, obs, fok, elev, log=lambda *_: None)
+    kept = {k: [] for k in ("sw_in", "tair", "vpd")}
+    kept["deficit_mm"] = []
+    deficit = site.data["deficit"]
+    for w in cal + site.water_windows:
+        spec = specs[w.name]
+        rows = sorted({int(i) for t in spec.targets for i in t.rows})
+        o = obs.reindex(spec.index).iloc[rows]
+        for k in ("sw_in", "tair", "vpd"):
+            kept[k] += o[k].tolist()
+        if deficit is not None:
+            kept["deficit_mm"] += deficit.reindex(pd.date_range(w.start, w.end, freq="D")).tolist()
+    day = obs["sw_in"] > tw.daytime_sw
+    record = {k: obs.loc[day, k].to_numpy() for k in ("sw_in", "tair", "vpd")}
+    record["deficit_mm"] = deficit.to_numpy() if deficit is not None else []
+    coverage = DR.range_coverage(record, kept)
+    log("data the fit's records (calibration windows and seasonal runs) span of the record's daytime range: " + ", ".join(
+        f"{k} {v['share']:.0%}" for k, v in coverage.items() if v))
+    checks = tw.report.get("fluxes", {})
     for failure in checks.get("failures", []):
         log(f"data WARNING the tower's fluxes fail a check: {failure}")
-    return {"filters": rep, "ustar_plateau": plateau, "closure": TW.closure_summary(obs), "tower_checks": checks}
+    return {"filters": rep, "ustar": site.data["ustar"], "windows": site.data["windows"],
+            "seasonal": sr, "range_coverage": coverage, "closure": TW.closure_summary(obs),
+            "tower_checks": checks}
 
 
 def cmd_report(args):
@@ -338,6 +387,7 @@ def cmd_report(args):
     work = Path(args.work).resolve()
     work.mkdir(parents=True, exist_ok=True)
     log = log_to(work / "report.log")
+    load_data(site)
     obs, fok, elev = observations(site)
     F.save_json(work / "data_report.json", data_report(site, obs, fok, elev, log))
     return 0
@@ -350,6 +400,7 @@ def setup_model(site, args, work, pool, log, windows=None, params=None, theta=No
     obs, fok, elev = observations(site)
     windows = site.windows if windows is None else windows
     record = base_record(site, work, pool, args.runner, log)
+    site.data["record"] = record
     params = site.params(record) if params is None else params
     theta = start_theta(params) if theta is None else theta
     if states is None:
@@ -362,6 +413,22 @@ def setup_model(site, args, work, pool, log, windows=None, params=None, theta=No
                     args.runner, pool, work / "trials", site.tower.step, gr,
                     float(site.fitcfg["timeout"]), args.keep_netcdf, log=log)
     return model, params, theta, obs, fok, elev
+
+
+def area_above_sensor(site, state_file, log) -> dict:
+    """The share of the stand's area whose canopy-air top is above the tower's sensor (#350)."""
+    rec = site.data.get("record") or {}
+    def value(key, default):
+        v = site.base.get(key)
+        if v is None and ("main", key, 0) in rec:
+            v = rec[("main", key, 0)][1]
+        return float(default if v is None else v)
+    out = DR.area_above_sensor(state_file, value("aerodynamics.canopy_freeboard", 5.0),
+                               value("aerodynamics.min_canopy_depth", 5.0), site.tower.sensor_height)
+    log(f"data canopy-air tops: {out['share_above']:.0%} of the area above the sensor at {out['sensor_height']:g} m "
+        f"(area-weighted mean top {out['top_mean_area_weighted']:.1f} m, range {out['top_range'][0]:.1f}-"
+        f"{out['top_range'][1]:.1f} m)")
+    return out
 
 
 def base_theta(params):
@@ -380,6 +447,7 @@ def cmd_check(args):
     work.mkdir(parents=True, exist_ok=True)
     log = log_to(work / "check.log")
     pool = make_pool(args.pool, args.workers, work / "queue")
+    load_data(site)
     cal = [w for w in site.windows if w.role == "cal"]
     model, params, theta, _, _, _ = setup_model(site, args, work, pool, log, windows=cal)
     t0 = time.time()
@@ -431,10 +499,11 @@ def cmd_smoke(args):
     work.mkdir(parents=True, exist_ok=True)
     log = log_to(work / "smoke.log")
     pool = make_pool("local", 3)
+    load_data(site)
     w0 = [w for w in site.windows if w.role == "cal"][0]
-    w = T.Window("smoke", w0.start, args.days, "cal", w0.chain)
-    site.windows = [w]
-    site.chains = {w.chain: w.start - dt.timedelta(days=1)}
+    w = T.Window("smoke", w0.start, args.days, "cal", "smoke")
+    site.windows, site.water_windows = [w], []
+    site.chain_lead = 1
     model, params, theta, _, _, _ = setup_model(site, args, work, pool, log, windows=[w])
     key = args.key
     j = next(i for i, p in enumerate(params) if p.name == key)
@@ -601,6 +670,7 @@ def cmd_fit(args):
     bad = [s for s in stages if s not in STAGE_ORDER]
     if bad:
         raise SystemExit(f"unknown stages {bad}; known: {STAGE_ORDER}")
+    load_data(site)
     cal = [w for w in site.windows if w.role == "cal"]
     val = [w for w in site.windows if w.role == "val"]
     water = site.water_windows
@@ -621,8 +691,19 @@ def cmd_fit(args):
               "keys": {p.name: {"stage": p.stage, "range": [p.lo, p.hi], "default": p.default,
                                 "prior_centre": p.centre, "prior_sigma_u": p.sigma_u,
                                 "prior_source": p.prior.get("source", p.source)} for p in params}}
+    report["data"] = data_report(site, obs, fok, elev, log, model.specs)
+    #----- keys whose process the kept data never sample are fixed (best-practice plan §2.5)
+    coverage = DR.process_coverage(model.specs, obs, cal + water, site.tower.daytime_sw)
+    fixed = DR.fix_by_coverage(params, coverage, int(fc["min_process_records"]))
+    for p in params:
+        if p.name in fixed:
+            p.stage = "dropped"
+    report["process_coverage"], report["fixed_by_coverage"] = coverage, fixed
+    log(f"kept records sampling each process: {coverage}")
+    for k, why in fixed.items():
+        log(f"fixed by coverage: {k}: {why}")
+    report["data"]["area_above_sensor"] = area_above_sensor(site, model.states[cal[0].name], log)
     log("fitting " + ", ".join(f"{p.name} [{p.stage}]" for p in params))
-    report["data"] = data_report(site, obs, fok, elev, log)
 
     # ----- the weights, at the start --------------------------------------------------------------
     cspecs = [model.specs[w.name] for w in cal]
@@ -872,6 +953,7 @@ def cmd_analyze(args):
     log = log_to(work / "analyze.log")
     pool = make_pool(args.pool, args.workers, work / "queue")
     report = json.loads((work / "fit.json").read_text())
+    load_data(site)
     water = site.water_windows
     model, params, theta0, obs, fok, elev = setup_model(site, args, work, pool, log, windows=site.windows + water)
     states_start = dict(model.states)
