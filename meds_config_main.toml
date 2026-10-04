@@ -429,7 +429,11 @@ ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
-phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+phi_psii         = 0.74    # [--] electron yield of linear transport in low light: J's initial slope is
+                           #   0.5*phi_psii electrons per absorbed photon. 0.74 gives 0.37, the measured
+                           #   maximum CO2 yield of C3 leaves (0.093 per absorbed photon, Long et al. 1993)
+                           #   at 4 electrons per CO2 (Aj's 4ci + 8 Gamma*). Not Fv/Fm (0.85): with it the
+                           #   leaf would fix CO2 at the O2-evolution yield (0.106, Bjorkman & Demmig 1987)
 # medlyn_vpd_min   = 0.05    # [kPa] OPTIONAL: the leaf-to-air VPD the Medlyn stomatal model uses at least
                             #   (g1/sqrt(D) is undefined at D = 0); it caps gs on humid nights and rainy hours.
                             #   CLM5's value (PhotosynthesisMod: VPD at least 50 Pa)

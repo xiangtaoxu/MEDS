@@ -116,7 +116,7 @@ range = [0.70, 0.88]
 state = "fixed"
 stage = "photosynthesis"
 group = "photosynthesis"
-reason = "the PSII quantum yield (0.85; Bjorkman & Demmig 1987, CLM5). Without a model of the tower GPP's respiration bias, fitting it absorbs that bias rather than the leaf's"
+reason = "the electron yield of linear transport in low light (0.74: 0.37 electrons per absorbed photon, the measured maximum CO2 yield 0.093 of Long et al. 1993 at 4 electrons per CO2). A tower's dim-light GPP cannot tell it from the error in the tower's respiration, so the leaf measurements set it"
 source = "plan §4.2"
 
 [ds_vcmax]

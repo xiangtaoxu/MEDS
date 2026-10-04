@@ -80,7 +80,7 @@ contains
    elemental pure function electron_transport_j(par, absorptance, phi_psii, jmax, theta) result(j)
       real(wp), intent(in) :: par         !< [umol photon/m2/s] incident PAR
       real(wp), intent(in) :: absorptance !< [--] leaf PAR absorptance
-      real(wp), intent(in) :: phi_psii    !< [--] PSII quantum yield (electrons/photon)
+      real(wp), intent(in) :: phi_psii    !< [--] electron yield of linear transport in low light
       real(wp), intent(in) :: jmax        !< [umol/m2/s] electron-transport capacity (T-scaled)
       real(wp), intent(in) :: theta       !< [--] curvature (0 < theta < 1)
       real(wp)             :: j, i2

@@ -111,7 +111,7 @@ class Params:
     ds_rd: float = 490.0
     o2_mol_frac: float = 0.209     # [mol/mol]  ambient O2
     absorptance: float = 0.85      # [--]  leaf PAR absorptance
-    phi_psii: float = 0.85         # [--]  quantum yield of PSII e-transport
+    phi_psii: float = 0.74         # [--]  electron yield of linear transport in low light (meds_config_main.toml)
 
 
 #----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
@@ -225,7 +225,7 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     return C3Rates(**result)
 
 
-def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.85, theta=0.85) -> float:
+def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.74, theta=0.85) -> float:
     """Electron-transport rate J from Jmax and incident PAR (the non-rectangular hyperbola)."""
     return _ffi.electron_transport_j(par, absorptance, phi_psii, jmax, theta)
 
