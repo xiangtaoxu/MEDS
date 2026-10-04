@@ -69,17 +69,34 @@ silently fall back to the default.
 
 ### Targets and filters
 
-- **Targets.** On by default: the albedo, upwelling longwave, LE, H, daytime GPP and u\*.
-  - LE and H are as measured (`[tower].closure = "none"`). At BCI the closure gap behaves like
-    missing sensible heat, so the Bowen-ratio correction (`"bowen"`) would raise LE in a way the
-    data do not show.
-  - Off by default, each with its reason in `site_reference.toml`:
-    - net radiation: from a four-component radiometer it repeats the albedo and the upwelling
-      longwave;
-    - the daily evaporative fraction: biased high where closure is poor;
-    - night NEE.
-  - Each target uses only the records the tower measured and the forcing observed. Its observation
-    error is σ = `sigma_abs` + `sigma_rel` |obs|.
+- **Targets:** the albedo, the upwelling longwave, H, LE, GPP and u\*. Net radiation (an input to the
+  closure model), the evaporative fraction (it repeats H and LE) and night NEE are not targets.
+  - Each target uses only the records the tower measured and the forcing observed.
+- **Each target has an observation model** (`obsmodels.py`): how the tower's number relates to the
+  true flux, each known bias as its own term.
+  - **H and LE: closure.** The tower misses the same fraction of the turbulent flux at every hour.
+    That fraction comes from whole days, f_d = median over ±15 days of the daily (Rnet − G)/(H + LE),
+    using days with at least 70 % of records measured. The provider's gap-filled values fill those
+    days' sums.
+  - **The closure shares come from the attribution test:** within VPD classes, which of H/Rnet and
+    LE/Rnet rises from the calmest to the most turbulent third of the records. At BCI, H/Rnet rises
+    44–64 % in every class and LE/Rnet does not (−4 %, median), so H takes the whole gap. With
+    f_d = 1.33 (daily closure 0.75) H rises to close the day and LE stays as measured.
+  - **Bowen** (`[closure].shares = "bowen"`) is the declared alternative.
+  - **GPP: respiration.** The provider made GPP from its own respiration, R_tower = κ R_true. The
+    residual is [GPP_model − GPP_tower − (1/κ − 1) R_tower]/σ_NEE, and κ is an observation key: it
+    is fitted with a prior, never written to a MEDS config, and its gradient costs no trials.
+    - At BCI the prior is 0.65 ± 0.10: the tower's respiration is about the soil chambers' alone.
+    - κ is never fitted beside a free shape key of the leaf's light response.
+- **Random error,** σ = `sigma_abs` + `sigma_rel` |x|. The source is, in order: the provider's
+  per-record uncertainty, the paired days (Hollinger & Richardson 2005), then the defaults.
+  - σ is evaluated at a smoothed observation: the mean at the same time of day within ±7 days. GPP's
+    σ is NEE's.
+  - At BCI the paired days give LE 10.5 + 0.29|LE|, H 7.5 + 0.14|H| and NEE 2.1 + 0.17|NEE|.
+- **Huber loss by default** (c = 2): half-hourly errors are heavy-tailed. χ² is reported on the
+  plain residuals.
+- **The model-error step:** at the refresh, each target's σ is multiplied by
+  max(1, √(χ²/n)), at most 3×, so a target the model structurally cannot fit stops bending the keys.
   - H, LE and u\* are daytime targets: at night they are set mostly by the model's numerical floors
     and stable-air measurement problems (`night = true` keeps night records at the provider's u\*
     threshold). No hours are cut for transitions: canopy storage is ignored, every tower flux is
@@ -203,7 +220,6 @@ The default is the base configuration, on chains run with it.
 
 ```
 calibrate_fast.py select-windows --site calibration.toml                 # print the rule's windows and seasonal runs
-calibrate_fast.py growth-resp --daily "output/eval-D-*.nc" --out calibration/growth_resp_monthly.csv
 calibrate_fast.py report --site calibration.toml --work runs/report      # the data report only
 calibrate_fast.py check --site calibration.toml --variant interception_on --work runs/check \
     --workers 8                                                         # runs, record, G1, G2
@@ -265,6 +281,7 @@ trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 | `states.py` | the state chains |
 | `tower.py` | the tower's records (through `tower_inputs`), the closure correction, the observed-forcing mask, the sun's elevation |
 | `datarules.py` | the u\* diagnostic, the process coverage, the window rule, the water-deficit index and seasonal runs |
+| `obsmodels.py` | the closure model and its attribution test, the respiration model's κ prior, the random error (provider, paired days) at a smoothed observation |
 | `residuals.py` | the targets, the filters, the residual vector, the weights, the filter report |
 | `fit.py` | Levenberg–Marquardt, the Jacobian, screening, the covariance and intervals, the linearity check, the filter shift |
 | `pool.py` | the local pool and the directory queue |

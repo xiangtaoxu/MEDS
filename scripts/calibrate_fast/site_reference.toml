@@ -13,8 +13,6 @@
 [base]
 main        = "meds_config_eval.toml"   # REQUIRED. The main TOML of the base run; the PFT file is the one it names in [init].pft_config.
 registry    = "../../scripts/calibrate_fast/parameters.toml"   # REQUIRED. The parameter registry (the menu of keys, ranges, priors).
-growth_resp = ""                        # Monthly growth-respiration climatology (calibrate_fast.py growth-resp), added to the
-                                        #   model's night NEE. Only the nee_night target uses it; "" = none.
 
 # FREE: model config keys set in every run of the calibration (main-file keys, dotted), e.g.
 #   "trait_dynamics.trait_plasticity_on" = true
@@ -39,16 +37,40 @@ forcing_qc   = ["LWdown_qc", "Wind_qc"]   # Forcing qc variables that must be 0 
                                           #   trial driven by gap-filled forcing scores the gap filling.
 forcing_qc_val = ["Wind_qc"]      # The same for validation windows (a tower year without longwave still validates).
 forcing_grid = 1                  # The forcing file's grid cell (1-based).
-closure      = "none"             # "none": H and LE as measured. "bowen": FLUXNET2015's energy-balance-closure
-                                  #   correction, H and LE scaled together so H + LE = Rnet with the Bowen ratio kept.
-                                  #   Recommended "none": at BCI the gap (H + LE = 0.72 Rnet) behaves like missing
-                                  #   sensible heat, not missing LE. As turbulence rises (u* 0.3 -> 1.0, 10-15 h, within
-                                  #   a VPD class) H/Rnet climbs 0.21 -> 0.38 while LE/Rnet stays at 0.42-0.48, and the
-                                  #   midday gap grows with H, not LE (gap = 0.30 H - 0.26 LE + 165 W m-2). The Bowen
-                                  #   correction would raise LE by ~39 % that the data do not show; instead H is
-                                  #   filtered harder and given a wider sigma ([targets.h]).
-closure_days = 31                 # The "bowen" correction's sliding window [local days], centred.
 daytime_sw   = 10.0               # [W m-2] incoming shortwave above which a record is daytime (every daytime target).
+
+# The closure observation model of H and LE (best-practice plan §3.3; obsmodels.py). The tower misses the same
+# fraction of the turbulent flux at every hour: f_d = median over +-window_days of the daily (Rnet - G) / (H + LE),
+# from days with at least min_measured of their records measured (the provider's gap-filled values fill those days'
+# sums; over a whole day storage nets out). H_true = H + s_H (f_d - 1)(H + LE), LE_true likewise with s_LE.
+[closure]
+shares       = "attribution"      # "attribution": from the attribution test -- within VPD classes, which of H/Rnet and
+                                  #   LE/Rnet rises from the calmest to the most turbulent third of the records by more
+                                  #   than rise_min (median over the classes). One rising takes the whole share, both
+                                  #   rising means Bowen, neither means as measured. At BCI H/Rnet rises 44-64 % in every
+                                  #   class and LE/Rnet -4 % (median), so s_H = 1. "bowen": H and LE scaled together (the
+                                  #   FLUXNET convention, the declared alternative). "none": as measured.
+rise_min     = 0.10
+vpd_classes  = 4
+window_days  = 15                 # [days] f_d's window, each side
+min_measured = 0.7                # a day counts when this share of its records has H and LE measured
+min_days     = 5                  # f_d needs at least this many valid days in its window
+
+# The targets' random error (best-practice plan §3.1; obsmodels.py): sigma = sigma_abs + sigma_rel |x| from, in order,
+# the provider's per-record random uncertainty ([provider].uncertainty in the site TOML), the paired-day estimate
+# (Hollinger & Richardson 2005: the same record on two days in a row, both measured, with similar conditions), or the
+# target's defaults. It is evaluated at a smoothed observation -- the mean of the measured values at the same time of
+# day within +-smooth_days -- because a sigma that follows each record's own value gives the randomly low records more
+# weight (a simulation put the fitted GPP 6-14 % low).
+[sigma]
+smooth_days  = 7
+paired_dpar  = 75.0               # [umol m-2 s-1] a pair's light differs by less (incoming PAR) ...
+paired_dsw   = 35.0               # [W m-2] ... or incoming shortwave, where the site gives no PAR
+paired_dt    = 3.0                # [K] air temperature
+paired_dvpd  = 200.0              # [Pa] VPD
+paired_dwind = 1.0                # [m s-1] wind
+min_pairs    = 200                # fewer pairs: the next source
+bins         = 10                 # equal-count bins of |x| for the fit of sigma_abs and sigma_rel
 
 [windows]
 days       = 10                   # A calibration window's length [days]. Ten frozen days set the fast keys; the
@@ -122,57 +144,37 @@ snow_free_days = 7                # snow is a different surface from the one the
 on    = true
 sigma = 5.0                       # [W m-2]
 
-[targets.rnet]
-on        = false                 # Off by default: a four-component radiometer's Rnet is Rs - Rs_up + LW_down - LW_up
-                                  #   (at BCI to 1e-11 W m-2), and the model takes Rs and LW_down from the tower as
-                                  #   forcing, so the Rnet residual is minus the albedo's and the upwelling longwave's:
-                                  #   it would count them twice. Turn it on for a net radiometer measured on its own.
-sigma_abs = 10.0                  # [W m-2]
-sigma_rel = 0.05
-
 [targets.le]
 on        = true
-sigma_abs = 10.0                  # [W m-2]; random error grows with the flux (Richardson et al. 2006)
+obs_model = "closure"             # "closure" ([closure]) or "identity" (as measured)
+sigma_source = "auto"             # "auto" (provider, then paired days, then the defaults below), "provider", "paired", "default"
+sigma_abs = 10.0                  # [W m-2] the defaults; random error grows with the flux (Richardson et al. 2006)
 sigma_rel = 0.15
-closure   = false                 # true: compare with the closure-corrected LE ([tower].closure = "bowen")
 ustar_min = "diagnostic"          # LE/Rnet is flat in u* at BCI, so no filter
 night     = false
 
 [targets.h]
 on        = true
+obs_model = "closure"
+sigma_source = "auto"
 sigma_abs = 10.0
-sigma_rel = 0.30                  # wider than LE's 0.15: no u* threshold recovers the missing sensible heat at BCI
-                                  #   (H/Rnet still rises above u* 1.0), so H stays biased low by an unknown amount
-closure   = false
+sigma_rel = 0.15
 ustar_min = "diagnostic"          # H/Rnet still rises at the top u* classes at BCI, so no filter: the missing sensible
-                                  #   heat is the observation model's to handle, not a filter's
+                                  #   heat is the closure model's to handle, not a filter's
 night     = false
-
-[targets.ef]
-on        = false                 # Off by default: the measured EF is biased high where closure is poor (at BCI 0.70
-                                  #   at u* < 0.4 against 0.54 above 0.8), the same missing sensible heat as H's
-sigma     = 0.05                  # the daily daytime evaporative fraction LE / (H + LE), uncorrected
-min_hours = 6                     # a day counts with at least this many measured daytime hours
 
 [targets.gpp]
 on        = true
-sigma_abs = 2.5                   # [umol m-2 s-1] Recommended 2.5 for a tower whose GPP is built from ONE respiration
-sigma_rel = 0.15                  #   value per day (GPP = R_day - NEE). Such a respiration can be ~2 umol m-2 s-1 off at
-                                  #   EVERY daytime hour (BCI: about the soil chambers' alone, without the above-ground
-                                  #   part), on top of the random error (1.5 + 0.15 GPP). 2.5 + 0.15 GPP is the linear form of sqrt((1.5 + 0.15 GPP)^2
-                                  #   + 2^2): equal at GPP 0, 12 % wider at GPP 20. It down-weights the dim hours, where
-                                  #   that error is largest relative to GPP; 1.5 is right for a GPP partitioned by hour.
+obs_model = "respiration"         # "respiration": the provider made GPP from its respiration, R_tower = kappa R_true, so the
+                                  #   residual is [GPP_model - GPP_tower - (1/kappa - 1) R_tower] / sigma_NEE, with kappa an
+                                  #   observation key (the registry's `kappa`); the site TOML must declare RECO. "identity":
+                                  #   the tower's GPP as given
+sigma_source = "auto"             # NEE's random error: the respiration's error is kappa's
+sigma_abs = 1.5                   # [umol m-2 s-1] the defaults, of NEE
+sigma_rel = 0.15
 ustar_min = "provider"            # the provider's CO2 threshold (the ONEFlux convention; BCI 0.4): low turbulence after
                                   #   sunrise under-reads uptake. The daytime plateau of the u* diagnostic is the
                                   #   declared alternative.
-
-[targets.nee_night]
-on        = false                 # Off by default: night fluxes under-read in low turbulence, the frozen soil carbon makes
-                                  #   heterotrophic respiration a spin-up quantity, and at BCI the target pulled
-                                  #   rd_vcmax_ratio to its floor. Fix rd_vcmax_ratio instead (the registry does).
-sigma     = 2.0                   # [umol m-2 s-1]
-ustar_min = 0.4                   # [m s-1] if turned on: the provider's threshold for this tower
-night_sw  = 5.0                   # [W m-2] incoming shortwave below which an hour is night
 
 [targets.ustar]
 on        = true
@@ -197,8 +199,12 @@ screening  = "report"             # "report": the first Jacobian's screening is 
                                   #   "drop": keys the tower cannot inform (sigma ratio >= 0.95), dead or rough are fixed
 weights    = "ess"                # "ess": each target's rows weighted by its effective sample size, from the lag-1
                                   #   autocorrelation of its residuals, in the fit as in the covariance; "none": every row 1
-loss       = "l2"                 # "l2" (least squares) or "huber" (robust: a row's pull is capped at huber_c sigma)
+loss       = "huber"              # "huber" (robust: a row's pull is capped at huber_c sigma; half-hourly errors are heavy-
+                                  #   tailed, Lasslop et al. 2008) or "l2" (least squares). chi^2 is reported on the plain
+                                  #   residuals either way
 huber_c    = 2.0
+sigma_scale_max = 3.0             # at the refresh each target's sigma is multiplied by max(1, sqrt(chi^2 per row)), at most
+                                  #   this: a target the model structurally cannot fit stops bending the keys (§3.4)
 seed       = 1
 timeout    = 900.0                # [s] the floor of a trial's timeout (3x the median of completed trials, if longer)
 rough_keys = "default"            # "default": a rough key (a step response) the screening drops stays at its default;

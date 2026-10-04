@@ -36,7 +36,7 @@ def run_chain(name, chain_start, windows, base, params, theta, root: Path, pool,
     parameters is reused."""
     starts = [w.start for w in windows]
     key = digest(name, str(chain_start), [str(s) for s in sorted(set(starts))],
-                 [(p.name, float(v)) for p, v in zip(params, theta)], overrides or {},
+                 [(p.name, float(v)) for p, v in zip(params, theta) if p.file != "obs"], overrides or {},
                  base.main, base.pft)
     cdir = root / f"chain-{name}-{key[:12]}"
     cdir.mkdir(parents=True, exist_ok=True)

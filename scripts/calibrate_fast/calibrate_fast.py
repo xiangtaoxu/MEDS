@@ -14,7 +14,6 @@ site_reference.toml.
 
 Commands (each reads the site declaration, e.g. examples/example_flux_tower_bci/calibration.toml):
   select-windows  pick the 10-day windows with the best tower coverage in each declared season
-  growth-resp     the stand's monthly growth-respiration climatology from a slow-loop run
   report          the data report only: every target's rows through every filter, the u* plateau
   check           one trial per window at the start: runs, the parameter record, repeatability
   fit             the data report, the screening, the stages, covariance, validation, gates and
@@ -58,6 +57,7 @@ os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT / "python"),
 
 import datarules as DR               # noqa: E402
 import fit as F                      # noqa: E402
+import obsmodels as OM               # noqa: E402
 import residuals as R                # noqa: E402
 import settings as SET               # noqa: E402
 import stages as STG                 # noqa: E402
@@ -93,7 +93,6 @@ class Site:
         self.base = RunConfig.load(self._p(b["main"]))
         self.main_path, self.pft_path = self.base.path, self.base.pft_path
         self.registry_path = self._p(b["registry"])
-        self.growth_resp_path = self._p(b["growth_resp"]) if b.get("growth_resp") else None
         self.variant = variant
         self.overrides = dict(d.get("overrides", {}))
         if variant is not None:
@@ -105,8 +104,7 @@ class Site:
         self.tower = TW.TowerSpec.from_site(
             self._p(tw["site"]), forcing=str(self._p(tw["forcing"])) if tw.get("forcing") else None,
             forcing_qc=tuple(tw["forcing_qc"]), forcing_qc_val=tuple(tw["forcing_qc_val"]),
-            forcing_grid=int(tw["forcing_grid"]), closure_days=int(tw["closure_days"]),
-            closure=tw["closure"], daytime_sw=float(tw["daytime_sw"]))
+            forcing_grid=int(tw["forcing_grid"]), daytime_sw=float(tw["daytime_sw"]), closure=dict(d["closure"]))
         #----- the trials write their fast output at the tower's own interval (30 min at BCI)
         dt_fast = seconds(self.base.get("fast.dt_fast"))
         steps = self.tower.step / dt_fast
@@ -149,7 +147,21 @@ class Site:
             ps = select(self.menu(), self.fitcfg, self.decl.get("priors", {}))
         except ValueError as e:
             raise SystemExit(str(e))
+        #----- kappa's sd from the gap between the provider's two partitionings, unless the site sets it
+        site_kappa = self.decl.get("priors", {}).get("kappa", {})
+        sd = (self.data or {}).get("kappa_sd")
+        for p in ps:
+            if p.file == "obs" and p.key == "kappa" and sd is not None and not ({"sd", "log_sd"} & set(site_kappa)):
+                p.prior = {**p.prior, "sd": sd, "source": "the gap between the provider's night-time and daytime "
+                                                          "partitionings (RECO against RECO_DT)"}
+                p.prior.pop("log_sd", None)
         return resolve_defaults(ps, self.base, record)
+
+    def obs_fixed(self, params) -> dict:
+        """The observation keys this fit does not move, at their prior centres (kappa enters the GPP
+        residual whether or not it is fitted)."""
+        fitted = {p.name for p in params}
+        return {p.key: float(p.prior.get("centre", 1.0)) for p in self.menu() if p.file == "obs" and p.name not in fitted}
 
     def loss(self):
         return (self.fitcfg["loss"], float(self.fitcfg["huber_c"]))
@@ -202,6 +214,16 @@ def load_data(site: Site) -> dict:
                                                site.decl["ustar"], tw.daytime_sw, tw.utc_offset_h)
     except ValueError as e:
         raise SystemExit(str(e))
+    #----- the observation models (obsmodels.py): the closure shares, then each target's sigma
+    ccfg = site.decl["closure"]
+    test = OM.attribution(obs, ccfg, float(site.decl["ustar"]["min_driver"]["rnet"]), tw.daytime_sw)
+    try:
+        s_h, s_le, why = OM.closure_shares(ccfg["shares"], test, float(ccfg["rise_min"]))
+        obs["h_c"], obs["le_c"] = OM.corrected(obs, s_h)
+        sigma = OM.set_sigmas(site.targets, obs, site.decl["sigma"], tw.utc_offset_h, tw.step)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    closure = {**tw.report.get("closure", {}), "attribution": test, "shares": {"h": s_h, "le": s_le}, "reason": why}
     span = TW.forcing_span(tw)
     record_start = span[0] if span else obs.index[0]
     first = pd.Timestamp(record_start).floor("D") + pd.Timedelta(days=site.chain_lead)
@@ -227,7 +249,8 @@ def load_data(site: Site) -> dict:
                                                      float(wcfg["min_score"]))
             site.water_windows = [T.Window(n, start, days, "water", n) for n, start, days in runs]
     site.data = {"obs": obs, "fok": fok, "elev": elev, "ustar": ustar, "windows": windows_report,
-                 "seasonal": seasonal_report, "deficit": deficit}
+                 "seasonal": seasonal_report, "deficit": deficit, "closure": closure, "sigma": sigma,
+                 "kappa_sd": OM.kappa_sd(obs)}
     return site.data
 
 
@@ -292,7 +315,7 @@ def base_record(site, work, pool, runner, log):
 
 
 # ------------------------------------------------------------------------------------------------
-# select-windows, growth-resp, report
+# select-windows, report
 # ------------------------------------------------------------------------------------------------
 def cmd_select_windows(args):
     """Print the windows and seasonal runs the rule chooses, as calibration.toml entries (to freeze
@@ -305,27 +328,6 @@ def cmd_select_windows(args):
     for w in site.water_windows:
         print(f'[[windows.seasonal.list]]\nname = "{w.name}"\nstart = "{w.start:%Y-%m-%d}"\ndays = {w.days}\n')
     print("# " + json.dumps(site.data["windows"]) + "\n# " + json.dumps(site.data["seasonal"]))
-
-
-def cmd_growth_resp(args):
-    import glob
-    from netCDF4 import Dataset
-    frames = []
-    for p in sorted(glob.glob(args.daily)):
-        with Dataset(p) as ds:
-            if "growth_resp_site" not in ds.variables:
-                continue
-            when = pd.to_datetime(dict(year=ds["year"][:], month=ds["month"][:], day=ds["day"][:]))
-            frames.append(pd.Series(np.asarray(ds["growth_resp_site"][:], float).squeeze(), index=when))
-    if not frames:
-        raise SystemExit(f"no growth_resp_site in {args.daily}")
-    gr = pd.concat(frames).sort_index()
-    gr = gr.where(gr.abs() < 1e30) * R.KGC_YR_TO_UMOL_S
-    clim = gr.groupby(gr.index.month).mean()
-    out = pd.DataFrame({"month": clim.index, "growth_resp_umol": clim.values})
-    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    out.to_csv(args.out, index=False, float_format="%.6g")
-    print(out.to_string(index=False))
 
 
 def data_report(site, obs, fok, elev, log, specs=None) -> dict:
@@ -374,11 +376,23 @@ def data_report(site, obs, fok, elev, log, specs=None) -> dict:
     coverage = DR.range_coverage(record, kept)
     log("data the fit's records (calibration windows and seasonal runs) span of the record's daytime range: " + ", ".join(
         f"{k} {v['share']:.0%}" for k, v in coverage.items() if v))
+    cl = site.data["closure"]
+    if cl.get("f_median") is not None:
+        log(f"data closure: daily (H + LE) / (Rnet - G) median {cl['daily_closure_median']:.2f} over {cl['valid_days']} "
+            f"days, f median {cl['f_median']:.2f} (10-90 % {cl['f_p10_p90'][0]:.2f}-{cl['f_p10_p90'][1]:.2f})")
+    if cl["attribution"].get("rises", {}).get("h") is not None:
+        log("data closure attribution (rise from the calmest to the most turbulent third, by VPD class): "
+            + "; ".join(f"{k.upper()} " + " ".join(f"{x:+.0%}" for x in v)
+                        for k, v in cl["attribution"]["rises_by_vpd_class"].items()))
+    log(f"data closure shares: H {cl['shares']['h']}, LE {cl['shares']['le']} ({cl['reason']})")
+    for t, e in site.data["sigma"].items():
+        log(f"data {t} sigma = {e['sigma_abs']:.3g} + {e['sigma_rel']:.3g} |{e['flux']}| ({e['source']}), "
+            f"evaluated at the smoothed {e['flux']}")
     checks = tw.report.get("fluxes", {})
     for failure in checks.get("failures", []):
         log(f"data WARNING the tower's fluxes fail a check: {failure}")
     return {"filters": rep, "ustar": site.data["ustar"], "windows": site.data["windows"],
-            "seasonal": sr, "range_coverage": coverage, "closure": TW.closure_summary(obs),
+            "seasonal": sr, "range_coverage": coverage, "closure": cl, "sigma": site.data["sigma"],
             "tower_checks": checks}
 
 
@@ -406,12 +420,10 @@ def setup_model(site, args, work, pool, log, windows=None, params=None, theta=No
     if states is None:
         states = run_chains(site, params, theta, work / "chains", pool, args.runner, log, windows)
     specs = specs_for(site, windows, obs, fok, elev, log=log)
-    gr = R.load_growth_resp(site.growth_resp_path) if site.growth_resp_path and site.growth_resp_path.exists() else None
-    if gr is None and site.targets.get("nee_night", {}).get("on"):
-        log("note: no growth-respiration climatology; night NEE is compared without it")
     model = F.Model(params, windows, specs, states, site.base, site.overrides,
-                    args.runner, pool, work / "trials", site.tower.step, gr,
-                    float(site.fitcfg["timeout"]), args.keep_netcdf, log=log)
+                    args.runner, pool, work / "trials", site.tower.step,
+                    timeout=float(site.fitcfg["timeout"]), keep_netcdf=args.keep_netcdf, log=log,
+                    obs_fixed=site.obs_fixed(params))
     return model, params, theta, obs, fok, elev
 
 
@@ -644,8 +656,10 @@ def run_stage(stage, site, model, params, theta, cal, water, work, log, report):
     return theta, entry
 
 
-def ess_weights_at(site, model, theta, specs_list, windows, log):
-    """Set each target's effective-sample weight from the residuals at theta (unweighted)."""
+def ess_weights_at(site, model, theta, specs_list, windows, log, scale_sigma=False):
+    """Set each target's effective-sample weight from the residuals at theta (unweighted); with
+    scale_sigma, also scale each target's sigma by its misfit (residuals.scale_sigma). Returns the
+    weights and the scales."""
     for s in specs_list:
         for t in s.targets:
             t.weight = 1.0
@@ -656,7 +670,18 @@ def ess_weights_at(site, model, theta, specs_list, windows, log):
     log("effective-sample weights n_eff/n: " + ", ".join(
         f"{k} {np.mean([v for kk, v in w.items() if kk.endswith('/' + k)]):.2f}"
         for k in sorted({kk.split('/')[1] for kk in w})))
-    return w
+    scales = None
+    if scale_sigma:
+        for s in specs_list:                     # the scale is from the plain residuals: weights out
+            for t in s.targets:
+                t.weight_saved, t.weight = t.weight, 1.0
+        scales = R.scale_sigma(specs_list, r, float(site.fitcfg["sigma_scale_max"]))
+        for s in specs_list:
+            for t in s.targets:
+                t.weight = t.weight_saved
+        log("sigma scaled by the model's misfit (max(1, sqrt(chi2 per row)), at most "
+            f"{site.fitcfg['sigma_scale_max']}): " + ", ".join(f"{k} {v:.2f}" for k, v in scales.items()))
+    return w, scales
 
 
 def cmd_fit(args):
@@ -709,7 +734,7 @@ def cmd_fit(args):
     cspecs = [model.specs[w.name] for w in cal]
     wspecs = [model.specs[w.name] for w in water]
     if fc["weights"] == "ess":
-        report["weights_start"] = ess_weights_at(site, model, theta0, cspecs, cal, log)
+        report["weights_start"], _ = ess_weights_at(site, model, theta0, cspecs, cal, log)
     elif fc["weights"] != "none":
         raise SystemExit('[fit].weights must be "ess" or "none"')
 
@@ -769,7 +794,8 @@ def cmd_fit(args):
         pwin = cal + (water if pc["include_water"] else [])
         pspecs = [model.specs[w.name] for w in pwin]
         if fc["weights"] == "ess":
-            report["weights_polish"] = ess_weights_at(site, model, theta, pspecs, pwin, log)
+            report["weights_polish"], report["sigma_scale_refresh"] = ess_weights_at(
+                site, model, theta, pspecs, pwin, log, scale_sigma=pc["refresh"])
         model.windows = pwin
         skipped = [s for s, e in progress["stages"].items() if "skipped" in e]
         prob = F.Problem(model, free_of(params, "polish", stages, skipped, seasonal=bool(water and pc["include_water"])),
@@ -832,11 +858,13 @@ def post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_st
     else:
         r_map = prob.data([u_map])[0]
         J_map, _, _ = F.jacobian(prob, u_map, r_map, log=log)
-    scales = R.sigma_scales(pspecs, r_map)
-    report["sigma_scale"] = scales
-    big = {k: round(v, 2) for k, v in scales.items() if v >= 2.0}
+    chi2 = R.chi2_per_row(pspecs, r_map)
+    report["chi2_per_row"] = chi2
+    #----- sigma was scaled by the misfit at the refresh; without one, the covariance scales it here
+    scales = None if report.get("sigma_scale_refresh") else chi2
+    big = {k: round(v, 2) for k, v in chi2.items() if v >= 2.0}
     if big:
-        log(f"targets with chi2 per row >= 2 (structural misfit; their sigma is scaled up in the covariance): {big}")
+        log(f"targets with chi2 per row >= 2 at the MAP (structural misfit): {big}")
     cov_u, _ = F.posterior(prob, J_map, r_map, pspecs, weighted=fc["weights"] == "none", sigma_scale=scales)
     report["map"] = {p.name: float(theta_map[i]) for i, p in enumerate(params)}
     report["default"] = {p.name: float(theta_base[i]) for i, p in enumerate(params)}
@@ -970,7 +998,8 @@ def cmd_analyze(args):
     cal = [w for w in site.windows if w.role == "cal"]
     pwin = cal + (water if pc["include_water"] and "polish" in report.get("stages_run", []) else [])
     if site.fitcfg["weights"] == "ess":
-        ess_weights_at(site, model, theta_weights, [model.specs[w.name] for w in pwin], pwin, log)
+        _, report["sigma_scale_refresh"] = ess_weights_at(site, model, theta_weights, [model.specs[w.name] for w in pwin],
+                                                          pwin, log, scale_sigma=bool(report.get("sigma_scale_refresh")))
     post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_start, report, work, log)
     F.save_json(work / "fit.json", report)
     gates = {k: v["pass"] for k, v in report["gates"].items()}
@@ -1054,7 +1083,7 @@ def write_calibrated(site: Site, params, theta, work: Path):
     pft_text = site.pft_path.read_text()
     changed = {"pft": [], "main": []}
     for p, v in zip(params, theta):
-        if abs(v - p.default) <= 1e-12 * max(1.0, abs(p.default)):
+        if p.file == "obs" or abs(v - p.default) <= 1e-12 * max(1.0, abs(p.default)):
             continue
         if p.file == "pft":
             pft_text = set_toml_text(pft_text, p.key, v, index=p.pft - 1)
@@ -1104,10 +1133,6 @@ def main(argv=None):
     p = sub.add_parser("select-windows")
     p.add_argument("--site", required=True)
     p.set_defaults(func=cmd_select_windows)
-    p = sub.add_parser("growth-resp")
-    p.add_argument("--daily", required=True, help="glob of a slow-loop run's daily files")
-    p.add_argument("--out", required=True)
-    p.set_defaults(func=cmd_growth_resp)
     p = sub.add_parser("report")
     p.add_argument("--site", required=True)
     p.add_argument("--variant", default=None)
