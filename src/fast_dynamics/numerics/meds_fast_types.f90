@@ -592,6 +592,9 @@ module meds_fast_types
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
+      !----- (theta1 - theta^n) / dt_fast: the steady rate at which the stages move soil water, so the   !
+      !      water a layer holds keeps pace with the enthalpy its faces carry in (see column_be_stage).  !
+      real(wp) :: theta_rate(n_soil_layer_max) = 0.0_wp   !< [1/s]
    end type soil_hydrology_t
 
    !----- ROOT ZONE: the realized aggregate uptake, where it is placed, and the soil-side hydraulic  !

@@ -575,6 +575,7 @@ contains
       !      advance_soil_water_column above, so its theta IS the end-of-step (relieved) soil water. -----------!
       allocate(frozen%hydrology%theta1(nsl))
       frozen%hydrology%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
+      frozen%hydrology%theta_rate(1:nsl) = (soil_w_scratch%theta(1:nsl) - biophys%soil_w%theta(1:nsl)) / dt_fast
 
       !----- pack the prognostic state: plant water MASS is now NATIVE (MEDS_ED2_RK45_DESIGN.md sec 4, !
       !      P2) -- a direct copy from the persisted state, no psi round-trip needed any more. ----------!

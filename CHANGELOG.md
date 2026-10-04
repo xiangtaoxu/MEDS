@@ -189,6 +189,13 @@ before and after.
     µmol m⁻² s⁻¹. That is 25–300 times smaller than the usual gap between ARK and RK45.
   - **Test:** `test_column_hydrology` replays the failing solve's inputs from that patch (it failed
     with flows of 5.8 m s⁻¹ and 2.5e7 kg m⁻² created by the floor).
+- **ARK's stages read the top soil too warm during rain** (found with #352). The stages carried the
+  enthalpy of the water moving between layers, but held the water itself at its start-of-step amount.
+  So the next stage read that enthalpy as heat in a dry layer: tens of kelvin late in a heavy-rain step
+  (up to ~50 K at BCI), which the ground skin then saw. The stages now move soil water at the soil
+  solve's steady rate, ending the step at the same committed amount as before. Over Jan–Aug 2017 at
+  BCI, the ARK − RK45 gap in rain hours shrinks from 0.52 to 0.23 K for top-soil temperature and from
+  6.1 to 5.5 W m⁻² for LE; dry hours are unchanged.
 - **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
   the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
   check of the soil column: the end-of-run report prints a warning with the count, and
