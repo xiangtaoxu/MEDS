@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # CALIBRATED by scripts/calibrate_fast (variant interception_off) from pft_parameters.toml.
 # Every line is the base file's, comments included, except these keys the fit set
-# (calibrated value, the base file's value):
-#   pft.leaf_reflect_nir           0.304109  (0.45)
-#   pft.leaf_transmit_nir          0.231844  (0.25)
-#   pft.leaf_clumping              0.999328  (0.8)
-#   pft.leaf_angle_mean            57.2837  (45)
-#   pft.vcmax25                    25.012  (45)
-#   pft.stomatal_g1                5.98034  (3)
-#   pft.stomatal_g0                0.033153  (0.01)
-#   pft.leaf_width                 0.0440455  (0.04)
-#   pft.rd_vcmax_ratio             0.0080252  (0.015)
+# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
+# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
+#   pft.leaf_reflect_nir           0.320418  (0.45)
+#   pft.leaf_angle_mean            60.7657  (45)
+#   pft.vcmax25                    30.6004  (45)
+#   pft.stomatal_g1                3.52488  (3)
+#   pft.stomatal_g0                0.00285604  (0.01)
+#   pft.wstress_sref_stomata       1.15334  (2)  EFFECTIVE
+#   pft.stomata_psi_onset          -0.155934  (-0.857143)
+#   pft.jmax_vcmax_ratio           1.6983  (1.7)  KATTGE & KNORR
 # MEDS PFT config for the flux-tower example at Barro Colorado Island: ONE evergreen broadleaf PFT
 # at a mid-successional wood density. It is the example_biophysics PFT with its leaf habit changed,
 # not a calibration for BCI -- the example is about building forcing from tower data. BCI's
@@ -27,7 +27,7 @@ sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 
 #----- Canopy-element geometry for the aerodynamic boundary layers. These were hard-coded
 #      constants in the fast loop (0.04 m, 0.02 m, 1.0); the values below reproduce them.
-leaf_width         = [0.0440455]     # [m]  characteristic leaf width
+leaf_width         = [0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02]     # [m]  characteristic branch diameter
 crown_area_frac    = [1.0]      # [--] crown area as a fraction of the patch
 dbh_critical       = [100.0]     # [cm] maximum diameter
@@ -40,16 +40,16 @@ min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
 min_reproduction_height = 20.0   # [m] shared scalar
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
-vcmax25            = [25.012]
-jmax_vcmax_ratio   = [1.7]
+vcmax25            = [30.6004]
+jmax_vcmax_ratio   = [1.6983]
 tpu_vcmax_ratio    = [0.167]
-rd_vcmax_ratio     = [0.0080252]
+rd_vcmax_ratio     = [0.015]
 kp25               = [1.0e-9]
-stomatal_g0        = [0.033153]
-stomatal_g1        = [5.98034]        # Medlyn [kPa^0.5]
+stomatal_g0        = [0.00285604]
+stomatal_g1        = [3.52488]        # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0]
 quantum_yield_c4   = [0.0]
-theta_j            = [0.90]
+theta_j            = [0.70]       # the effective curvature of a mean-light cohort (#351; CLM5, ED2)
 theta_cj_c3        = [0.98]                        # [--] C3 Ac/Aj co-limitation curvature (#118; NOT theta_j)
 theta_ip_c3        = [0.95]                        # [--] C3 (Ac,Aj)/Ap co-limitation curvature (#118)
 theta_cj_c4        = [0.80]
@@ -58,7 +58,7 @@ katul_lambda25     = [800.0]
 wstress_psi_open   = [-0.5]
 wstress_psi_close  = [-3.0]
 wstress_lambda_exp = [1.0]
-wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity (added: schema grew since this file was written)
+wstress_sref_stomata = [1.15334]     # [1/MPa] Sabot stomatal-stress sensitivity (added: schema grew since this file was written)
 # Carbon-dynamics traits.
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
@@ -78,17 +78,17 @@ root_resp_factor25 = [0.30]  # [umol CO2/kgC fine root/s @25C]
 #      and must stay BELOW 1, or a scattering layer conserves or creates energy.
 leaf_reflect_vis   = [0.10]   # [--] leaf VIS reflectance
 leaf_transmit_vis  = [0.05]   # [--] leaf VIS transmittance
-leaf_reflect_nir   = [0.304109]   # [--] leaf NIR reflectance
-leaf_transmit_nir  = [0.231844]   # [--] leaf NIR transmittance
+leaf_reflect_nir   = [0.320418]   # [--] leaf NIR reflectance
+leaf_transmit_nir  = [0.25]   # [--] leaf NIR transmittance
 leaf_emissivity    = [0.97]    # [--] leaf thermal emissivity
 wood_reflect_vis   = [0.11]   # [--] wood/bark VIS reflectance
 wood_transmit_vis  = [0.001]   # [--] wood/bark VIS transmittance (near-opaque)
 wood_reflect_nir   = [0.25]   # [--] wood/bark NIR reflectance
 wood_transmit_nir  = [0.001]   # [--] wood/bark NIR transmittance
 wood_emissivity    = [0.90]    # [--] wood thermal emissivity
-leaf_clumping      = [0.999328]    # [--] leaf clumping factor in (0,1]
+leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
-leaf_angle_mean    = [57.2837]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
+leaf_angle_mean    = [60.7657]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
@@ -102,6 +102,7 @@ f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-roo
 f_labile_stem          = [0.05]  # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.25]  # [--] lignin fraction of the structural-litter stream
 
+stomata_psi_onset = [-0.155934]   # set by calibrate_fast
 [camac]
 mort_rho_ref   = 0.6
 mort_gamma_0   = 0.0094

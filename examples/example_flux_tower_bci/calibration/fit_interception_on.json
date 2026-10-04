@@ -1,1248 +1,3375 @@
 {
  "variant": "interception_on",
- "site": "/home/xx286/projects/MEDS/.claude/worktrees/calib-python/examples/example_flux_tower_bci/calibration.toml",
+ "site": "/home/xx286/projects/MEDS/.claude/worktrees/cal-p1/examples/example_flux_tower_bci/calibration.toml",
  "windows": {
-  "wet15": [
-   "2015-09-11 00:00:00",
-   "cal"
+  "cal1_2016": [
+   "2016-01-01 00:00:00",
+   "cal",
+   10
   ],
-  "wetdry15": [
-   "2015-12-20 00:00:00",
-   "cal"
-  ],
-  "dry16": [
-   "2016-03-05 00:00:00",
-   "cal"
-  ],
-  "drywet16": [
-   "2016-04-13 00:00:00",
-   "cal"
-  ],
-  "wet16": [
-   "2016-08-26 00:00:00",
-   "cal"
-  ],
-  "wetdry16": [
-   "2017-01-11 00:00:00",
-   "cal"
-  ],
-  "dry17": [
-   "2017-02-01 00:00:00",
-   "cal"
-  ],
-  "drywet17": [
-   "2017-04-20 00:00:00",
-   "cal"
-  ],
-  "val_wet13": [
-   "2013-09-07 00:00:00",
-   "val"
-  ],
-  "val_wetdry13": [
-   "2014-01-10 00:00:00",
-   "val"
-  ],
-  "val_dry14": [
+  "val1_2014": [
    "2014-02-05 00:00:00",
-   "val"
+   "val",
+   10
   ],
-  "val_drywet14": [
-   "2014-04-14 00:00:00",
-   "val"
+  "cal2_2016": [
+   "2016-03-07 00:00:00",
+   "cal",
+   10
   ],
-  "val_wet15b": [
-   "2015-10-17 00:00:00",
-   "val"
+  "val2_2017": [
+   "2017-03-14 00:00:00",
+   "val",
+   10
   ],
-  "val_mid16": [
-   "2016-08-03 00:00:00",
-   "val"
+  "cal3_2017": [
+   "2017-04-04 00:00:00",
+   "cal",
+   10
   ],
-  "val_wet16b": [
-   "2016-10-16 00:00:00",
-   "val"
+  "val3_2013": [
+   "2013-04-22 00:00:00",
+   "val",
+   10
   ],
-  "val_mid17": [
-   "2017-06-17 00:00:00",
-   "val"
+  "cal4_2015": [
+   "2015-06-18 00:00:00",
+   "cal",
+   10
+  ],
+  "val4_2013": [
+   "2013-06-02 00:00:00",
+   "val",
+   10
+  ],
+  "cal5_2016": [
+   "2016-07-07 00:00:00",
+   "cal",
+   10
+  ],
+  "val5_2015": [
+   "2015-07-25 00:00:00",
+   "val",
+   10
+  ],
+  "cal6_2015": [
+   "2015-09-11 00:00:00",
+   "cal",
+   10
+  ],
+  "val6_2013": [
+   "2013-09-10 00:00:00",
+   "val",
+   10
+  ],
+  "cal7_2015": [
+   "2015-11-06 00:00:00",
+   "cal",
+   10
+  ],
+  "val7_2013": [
+   "2013-11-04 00:00:00",
+   "val",
+   10
+  ],
+  "cal8_2015": [
+   "2015-12-22 00:00:00",
+   "cal",
+   10
+  ],
+  "val8_2013": [
+   "2013-12-21 00:00:00",
+   "val",
+   10
+  ],
+  "dry2016": [
+   "2016-01-10 00:00:00",
+   "water",
+   120
+  ],
+  "dry2017": [
+   "2016-12-30 00:00:00",
+   "water",
+   120
   ]
  },
- "closure": {
-  "median_f": 1.3897058475759752,
-  "p10_f": 1.2457788559428438,
-  "p90_f": 1.559708899214281
+ "menu": {
+  "leaf_reflect_nir": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "leaf_transmit_nir": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "collinear with leaf_reflect_nir (correlation -0.996): the albedo sees their sum"
+  },
+  "leaf_reflect_vis": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+  },
+  "leaf_transmit_vis": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+  },
+  "leaf_clumping": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "site",
+   "reason": "held at the base value (0.80: ED2's tropical trees and lianas; FATES uses 0.85 for broadleaf evergreen tropical trees): the albedo cannot tell it from the leaf NIR reflectance (Jacobian correlation 0.986), and the fits sent it to either bound with the energy targets' treatment (owner, 2026-10-02)"
+  },
+  "leaf_angle_mean": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "vcmax25": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "theta_j": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "plant_type",
+   "reason": "held at the PFT file's value (0.7 in the reference PFTs: the effective curvature of a mean-light cohort). A tower cannot tell it from the canopy's light distribution or from the error in its respiration; fit 3 drove it to its floor to absorb the GPP offset. Revisit with sunlit/shaded leaves (#343)"
+  },
+  "jmax_vcmax_ratio": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "fixed at Kattge & Knorr (2007) for the site's growth temperature (2.59 - 0.035 T), computed from the forcing; a shape key, never fitted beside kappa (best-practice plan \u00a73.5, \u00a74.3)"
+  },
+  "phi_psii": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "the electron yield of linear transport in low light (0.74: 0.37 electrons per absorbed photon, the measured maximum CO2 yield 0.093 of Long et al. 1993 at 4 electrons per CO2). A tower's dim-light GPP cannot tell it from the error in the tower's respiration, so the leaf measurements set it"
+  },
+  "ds_vcmax": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "fixed at Kattge & Knorr (2007) for the site's growth temperature (668.39 - 1.07 T), computed from the forcing (best-practice plan \u00a73.5)"
+  },
+  "ds_jmax": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "fixed at Kattge & Knorr (2007) for the site's growth temperature (659.70 - 0.75 T), computed from the forcing (best-practice plan \u00a73.5)"
+  },
+  "ea_vcmax": {
+   "state": "optional",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "ea_jmax": {
+   "state": "optional",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "stomatal_g1": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "stomatal_g0": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "z0m_ratio": {
+   "state": "fit",
+   "kind": "effective",
+   "scope": "site",
+   "reason": ""
+  },
+  "d_ratio": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "site",
+   "reason": "moves the fluxes as z0m_ratio does (correlation -0.996)"
+  },
+  "leaf_width": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "held at the base value: the fits drove it to its ceiling (0.143 of 0.15, pushed by H) with a posterior/prior sd ratio of 0.94, so the tower barely informs it (owner, 2026-10-02)"
+  },
+  "dsl_dmax": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "site",
+   "reason": "the tower does not inform it: it sets only soil evaporation, a small part of LE under a closed canopy, and its posterior/prior sd ratio was 0.97-0.99; the fits drove it to its ceiling to trim LE (owner, 2026-10-02)"
+  },
+  "leaf_surf_water_max": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "plant_type",
+   "reason": "the tower does not see the wet canopy: at BCI FLAG gap-fills every raining hour and 56 % of the three hours after (an open-path analyser's usual loss), so a fit tunes it on dry hours only (owner, 2026-10-02). A tower that measures through rain may fit it"
+  },
+  "wood_surf_water_max": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "plant_type",
+   "reason": "as leaf_surf_water_max; the tower cannot tell the wood film from the leaf film"
+  },
+  "intercept_k": {
+   "state": "fixed",
+   "kind": "effective",
+   "scope": "site",
+   "reason": "its response is rough (smoothness -0.85) and the tower barely informs it (sd ratio 0.89)"
+  },
+  "wstress_sref_stomata": {
+   "state": "fit",
+   "kind": "effective",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "stomata_psi_onset": {
+   "state": "fit",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "root_beta": {
+   "state": "optional",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": ""
+  },
+  "rd_vcmax_ratio": {
+   "state": "fixed",
+   "kind": "trait",
+   "scope": "plant_type",
+   "reason": "night NEE leaves the fast fit (owner, 2026-10-02); the target that informed it pulled it to its floor"
+  },
+  "kappa": {
+   "state": "fit",
+   "kind": "observation",
+   "scope": "observation",
+   "reason": ""
+  }
+ },
+ "keys": {
+  "leaf_reflect_nir": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    0.25,
+    0.65
+   ],
+   "default": 0.45,
+   "prior_centre": 0.45,
+   "prior_sigma_u": 0.5,
+   "prior_source": "CLM5 broadleaf evergreen tropical 0.45; measured broadleaf NIR reflectance spans about 0.35-0.55 (+-2 sd). The range is what a leaf can do"
+  },
+  "leaf_angle_mean": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    10.0,
+    80.0
+   ],
+   "default": 45.0,
+   "prior_centre": 45.0,
+   "prior_sigma_u": 0.5714285714285714,
+   "prior_source": "the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is what a canopy can do"
+  },
+  "vcmax25": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    10.0,
+    150.0
+   ],
+   "default": 45.0,
+   "prior_centre": 41.00812154770578,
+   "prior_sigma_u": 0.7398572397404044,
+   "prior_source": "EEO: the coordination of the Rubisco- and light-limited rates at the site's growing-season daytime climate, with MEDS's own leaf (priors.py; Wang et al. 2017, Smith et al. 2019)"
+  },
+  "stomatal_g1": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    0.5,
+    15.0
+   ],
+   "default": 3.0,
+   "prior_centre": 2.7973768351497585,
+   "prior_sigma_u": 0.588119869237435,
+   "prior_source": "EEO: the least-cost optimum at the site's growing-season daytime climate (priors.py; Prentice et al. 2014, Stocker et al. 2020, beta 146)"
+  },
+  "stomatal_g0": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    0.0001,
+    0.1
+   ],
+   "default": 0.01,
+   "prior_centre": 0.01,
+   "prior_sigma_u": 0.6514417228548774,
+   "prior_source": "the PFT file's value, a factor e either way: the residual conductance is poorly known"
+  },
+  "z0m_ratio": {
+   "kind": "effective",
+   "scope": "site",
+   "range": [
+    0.02,
+    0.3
+   ],
+   "default": 0.13,
+   "prior_centre": 0.13,
+   "prior_sigma_u": 0.5989304812834225,
+   "prior_source": "the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15 (Raupach 1994). Effective: it carries the canopy-air scheme's errors"
+  },
+  "wstress_sref_stomata": {
+   "kind": "effective",
+   "scope": "plant_type",
+   "range": [
+    0.1,
+    10.0
+   ],
+   "default": 2.0,
+   "prior_centre": 2.0,
+   "prior_sigma_u": 0.668600194678462,
+   "prior_source": "the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across species)"
+  },
+  "stomata_psi_onset": {
+   "kind": "trait",
+   "scope": "plant_type",
+   "range": [
+    -5.0,
+    0.0
+   ],
+   "default": -0.857143,
+   "prior_centre": -0.857143,
+   "prior_sigma_u": 0.7040228954452541,
+   "prior_source": "half the PFT's turgor-loss point (the model's default), +-0.5 MPa"
+  },
+  "kappa": {
+   "kind": "observation",
+   "scope": "observation",
+   "range": [
+    0.4,
+    1.0
+   ],
+   "default": 0.65,
+   "prior_centre": 0.65,
+   "prior_sigma_u": 0.6857142857142857,
+   "prior_source": "best-practice plan \u00a73.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)"
+  }
+ },
+ "climate_priors": {
+  "climate": {
+   "t_growth_c": 25.477271091613602,
+   "t_day_k": 299.41852685693163,
+   "vpd_day_pa": 531.3520071957017,
+   "p_day_pa": 99287.2954652898,
+   "par_day": 843.0264648786839,
+   "years": [
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017
+   ],
+   "leaf_on_months": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12
+   ]
+  },
+  "kattge_knorr": {
+   "jmax_vcmax_ratio": 1.6982955117935237,
+   "ds_vcmax": 641.1293199319734,
+   "ds_jmax": 640.5920466812898
+  },
+  "co2_ppm": 399.2803333333334,
+  "eeo": {
+   "vcmax25": {
+    "eeo": 41.00812154770578
+   },
+   "stomatal_g1": {
+    "eeo": 2.7973768351497585,
+    "meta": {
+     "centre": 3.77,
+     "log_sd": 0.35,
+     "source": "Lin et al. 2015 (Nature Climate Change 5, 459-464, Fig. 2e): tropical rainforest trees, 167 species"
+    },
+    "meta_apart_sd": 0.8525510513751451
+   }
+  }
+ },
+ "derived": [
+  [
+   "pft",
+   "pft.jmax_vcmax_ratio",
+   1,
+   1.6982955117935237
+  ],
+  [
+   "main",
+   "leaf_physiology.ds_vcmax",
+   null,
+   641.1293199319734
+  ],
+  [
+   "main",
+   "leaf_physiology.ds_jmax",
+   null,
+   640.5920466812898
+  ]
+ ],
+ "data": {
+  "filters": {
+   "albedo": {
+    "counts": [
+     [
+      "measured",
+      35907
+     ],
+     [
+      "forcing observed",
+      17919
+     ],
+     [
+      "sw_in > 200.0",
+      10830
+     ],
+     [
+      "sun >= 20.0 deg",
+      10550
+     ],
+     [
+      "no frost in 7 d",
+      10550
+     ]
+    ],
+    "diurnal": {
+     "7": [
+      0.15747526375964652,
+      0.15243603090625607,
+      258,
+      201
+     ],
+     "8": [
+      0.136522472514147,
+      0.136522472514147,
+      1076,
+      1076
+     ],
+     "9": [
+      0.12348120164895454,
+      0.12348120164895454,
+      1265,
+      1265
+     ],
+     "10": [
+      0.12063140238858337,
+      0.12063140238858337,
+      1332,
+      1332
+     ],
+     "11": [
+      0.12020735453148587,
+      0.12020735453148587,
+      1344,
+      1344
+     ],
+     "12": [
+      0.12070988863283696,
+      0.12070988863283696,
+      1298,
+      1298
+     ],
+     "13": [
+      0.12203601279760999,
+      0.12203601279760999,
+      1241,
+      1241
+     ],
+     "14": [
+      0.12424456789472484,
+      0.12424456789472484,
+      1133,
+      1133
+     ],
+     "15": [
+      0.12884988101848852,
+      0.12884988101848852,
+      988,
+      988
+     ],
+     "16": [
+      0.14449246859554854,
+      0.14322505240369643,
+      737,
+      672
+     ],
+     "17": [
+      0.18079925952728532,
+      null,
+      158,
+      0
+     ]
+    }
+   },
+   "lw_up": {
+    "counts": [
+     [
+      "measured",
+      35147
+     ],
+     [
+      "forcing observed",
+      34180
+     ]
+    ],
+    "diurnal": {
+     "0": [
+      456.2872803859771,
+      456.2872803859771,
+      1421,
+      1421
+     ],
+     "1": [
+      455.50472374799904,
+      455.50472374799904,
+      1426,
+      1426
+     ],
+     "2": [
+      454.7936346303361,
+      454.7936346303361,
+      1425,
+      1425
+     ],
+     "3": [
+      454.1163625303149,
+      454.1163625303149,
+      1425,
+      1425
+     ],
+     "4": [
+      453.5541355477801,
+      453.5541355477801,
+      1426,
+      1426
+     ],
+     "5": [
+      453.13477492876206,
+      453.13477492876206,
+      1426,
+      1426
+     ],
+     "6": [
+      453.2785484956892,
+      453.2785484956892,
+      1426,
+      1426
+     ],
+     "7": [
+      458.73046254128076,
+      458.73046254128076,
+      1426,
+      1426
+     ],
+     "8": [
+      468.9656548299933,
+      468.9656548299933,
+      1425,
+      1425
+     ],
+     "9": [
+      478.60457573213074,
+      478.60457573213074,
+      1421,
+      1421
+     ],
+     "10": [
+      485.7198543605557,
+      485.7198543605557,
+      1422,
+      1422
+     ],
+     "11": [
+      489.47197747034323,
+      489.47197747034323,
+      1417,
+      1417
+     ],
+     "12": [
+      489.6913321658346,
+      489.6913321658346,
+      1418,
+      1418
+     ],
+     "13": [
+      487.77731302876947,
+      487.77731302876947,
+      1418,
+      1418
+     ],
+     "14": [
+      483.77781556800625,
+      483.77781556800625,
+      1423,
+      1423
+     ],
+     "15": [
+      478.9536720124809,
+      478.9536720124809,
+      1428,
+      1428
+     ],
+     "16": [
+      473.487270758928,
+      473.487270758928,
+      1426,
+      1426
+     ],
+     "17": [
+      467.508909870394,
+      467.508909870394,
+      1427,
+      1427
+     ],
+     "18": [
+      461.99095223163135,
+      461.99095223163135,
+      1424,
+      1424
+     ],
+     "19": [
+      459.74301957104154,
+      459.74301957104154,
+      1426,
+      1426
+     ],
+     "20": [
+      458.932936695821,
+      458.932936695821,
+      1426,
+      1426
+     ],
+     "21": [
+      458.291292612993,
+      458.291292612993,
+      1425,
+      1425
+     ],
+     "22": [
+      457.5866595876748,
+      457.5866595876748,
+      1426,
+      1426
+     ],
+     "23": [
+      457.02290409296023,
+      457.02290409296023,
+      1427,
+      1427
+     ]
+    }
+   },
+   "le": {
+    "counts": [
+     [
+      "measured",
+      51984
+     ],
+     [
+      "forcing observed",
+      28746
+     ],
+     [
+      "daytime",
+      13680
+     ]
+    ],
+    "diurnal": {
+     "6": [
+      8.083500276699297,
+      8.083500276699297,
+      554,
+      554
+     ],
+     "7": [
+      33.79189486820844,
+      33.79189486820844,
+      1204,
+      1204
+     ],
+     "8": [
+      93.02822218080756,
+      93.02822218080756,
+      1195,
+      1195
+     ],
+     "9": [
+      163.55008170738415,
+      163.55008170738415,
+      1229,
+      1229
+     ],
+     "10": [
+      215.19758498876564,
+      215.19758498876564,
+      1211,
+      1211
+     ],
+     "11": [
+      239.8371328392389,
+      239.8371328392389,
+      1187,
+      1187
+     ],
+     "12": [
+      246.51880409107878,
+      246.51880409107878,
+      1173,
+      1173
+     ],
+     "13": [
+      230.85674475016486,
+      230.85674475016486,
+      1150,
+      1150
+     ],
+     "14": [
+      199.318370119974,
+      199.318370119974,
+      1127,
+      1127
+     ],
+     "15": [
+      156.6575764252777,
+      156.6575764252777,
+      1075,
+      1075
+     ],
+     "16": [
+      97.53686442516523,
+      97.53686442516523,
+      1091,
+      1091
+     ],
+     "17": [
+      45.583835457148375,
+      45.583835457148375,
+      1110,
+      1110
+     ],
+     "18": [
+      22.003771091555755,
+      22.003771091555755,
+      374,
+      374
+     ]
+    }
+   },
+   "h": {
+    "counts": [
+     [
+      "measured",
+      51984
+     ],
+     [
+      "forcing observed",
+      28746
+     ],
+     [
+      "daytime",
+      13680
+     ]
+    ],
+    "diurnal": {
+     "6": [
+      -14.596565239054568,
+      -14.596565239054568,
+      554,
+      554
+     ],
+     "7": [
+      13.162420795299306,
+      13.162420795299306,
+      1204,
+      1204
+     ],
+     "8": [
+      91.850501033577,
+      91.850501033577,
+      1195,
+      1195
+     ],
+     "9": [
+      177.12593294508437,
+      177.12593294508437,
+      1229,
+      1229
+     ],
+     "10": [
+      245.9230605719501,
+      245.9230605719501,
+      1211,
+      1211
+     ],
+     "11": [
+      288.89717475726843,
+      288.89717475726843,
+      1187,
+      1187
+     ],
+     "12": [
+      313.56168183913854,
+      313.56168183913854,
+      1173,
+      1173
+     ],
+     "13": [
+      303.65314980340685,
+      303.65314980340685,
+      1150,
+      1150
+     ],
+     "14": [
+      265.08643748687894,
+      265.08643748687894,
+      1127,
+      1127
+     ],
+     "15": [
+      201.6909038666406,
+      201.6909038666406,
+      1075,
+      1075
+     ],
+     "16": [
+      113.17806614171111,
+      113.17806614171111,
+      1091,
+      1091
+     ],
+     "17": [
+      29.041156621467373,
+      29.041156621467373,
+      1110,
+      1110
+     ],
+     "18": [
+      -14.390109419672532,
+      -14.390109419672532,
+      374,
+      374
+     ]
+    }
+   },
+   "gpp": {
+    "counts": [
+     [
+      "measured",
+      60252
+     ],
+     [
+      "forcing observed",
+      28977
+     ],
+     [
+      "daytime",
+      13781
+     ],
+     [
+      "u* >= 0.4",
+      10272
+     ]
+    ],
+    "diurnal": {
+     "6": [
+      3.7510783843785815,
+      4.30201122751118,
+      560,
+      161
+     ],
+     "7": [
+      7.255389052867895,
+      8.412992468668797,
+      1215,
+      497
+     ],
+     "8": [
+      13.573770424985124,
+      15.075317397481744,
+      1207,
+      680
+     ],
+     "9": [
+      18.67359915456602,
+      19.73273356915596,
+      1234,
+      818
+     ],
+     "10": [
+      21.40026128850815,
+      22.0173931124651,
+      1217,
+      899
+     ],
+     "11": [
+      21.860931441700842,
+      22.186846829649536,
+      1191,
+      977
+     ],
+     "12": [
+      21.778101636542587,
+      22.10562307417108,
+      1179,
+      1044
+     ],
+     "13": [
+      20.312590880389806,
+      20.620646246800415,
+      1155,
+      1047
+     ],
+     "14": [
+      18.889358971990493,
+      19.245112326037756,
+      1135,
+      1035
+     ],
+     "15": [
+      16.111534486777607,
+      16.574983895384992,
+      1085,
+      975
+     ],
+     "16": [
+      11.788676476654006,
+      12.519498585742024,
+      1102,
+      942
+     ],
+     "17": [
+      6.504801898620685,
+      6.89356800658623,
+      1122,
+      893
+     ],
+     "18": [
+      3.3139740910937463,
+      3.0551182575669817,
+      379,
+      304
+     ]
+    }
+   },
+   "ustar": {
+    "counts": [
+     [
+      "measured",
+      60252
+     ],
+     [
+      "forcing observed",
+      28977
+     ],
+     [
+      "daytime",
+      13781
+     ]
+    ],
+    "diurnal": {
+     "6": [
+      0.3308054201842395,
+      0.3308054201842395,
+      560,
+      560
+     ],
+     "7": [
+      0.4009308545292218,
+      0.4009308545292218,
+      1215,
+      1215
+     ],
+     "8": [
+      0.48167290658573014,
+      0.48167290658573014,
+      1207,
+      1207
+     ],
+     "9": [
+      0.5439426132173228,
+      0.5439426132173228,
+      1234,
+      1234
+     ],
+     "10": [
+      0.5947702835103031,
+      0.5947702835103031,
+      1217,
+      1217
+     ],
+     "11": [
+      0.6612819837744506,
+      0.6612819837744506,
+      1191,
+      1191
+     ],
+     "12": [
+      0.71952696062055,
+      0.71952696062055,
+      1179,
+      1179
+     ],
+     "13": [
+      0.7607642500308112,
+      0.7607642500308112,
+      1155,
+      1155
+     ],
+     "14": [
+      0.7777767685414317,
+      0.7777767685414317,
+      1135,
+      1135
+     ],
+     "15": [
+      0.7671257319787496,
+      0.7671257319787496,
+      1085,
+      1085
+     ],
+     "16": [
+      0.7139915664427532,
+      0.7139915664427532,
+      1102,
+      1102
+     ],
+     "17": [
+      0.6408503618429534,
+      0.6408503618429534,
+      1122,
+      1122
+     ],
+     "18": [
+      0.6357249047630921,
+      0.6357249047630921,
+      379,
+      379
+     ]
+    }
+   }
+  },
+  "ustar": {
+   "albedo": {
+    "rule": null,
+    "diagnostic": null,
+    "reason": "no u* filter",
+    "ustar_min": null
+   },
+   "lw_up": {
+    "rule": null,
+    "diagnostic": null,
+    "reason": "no u* filter",
+    "ustar_min": null
+   },
+   "le": {
+    "rule": "diagnostic",
+    "diagnostic": {
+     "outcome": "flat",
+     "threshold": 0.0,
+     "records": 20400,
+     "driver": "rnet",
+     "by_driver_class": [
+      "rising",
+      "flat",
+      "flat",
+      "flat"
+     ],
+     "ratio": [
+      [
+       0.30043490069894013,
+       0.33441188048186465,
+       0.39637043083826184,
+       0.41564398700005606,
+       0.42768513569783917,
+       0.4434430309721108,
+       0.5038761107142281,
+       0.5870534140099775,
+       0.6268322449798319,
+       0.6627720273161869
+      ],
+      [
+       0.42776033083199255,
+       0.3752089986004701,
+       0.40546281567916653,
+       0.45045015913890313,
+       0.4355649875983446,
+       0.4432924178438144,
+       0.4494368691359378,
+       0.4687687458133734,
+       0.49224411184352435,
+       0.48615680608915124
+      ],
+      [
+       0.43042555172695424,
+       0.40921319823852287,
+       0.43486213719302963,
+       0.4248426305701817,
+       0.4406347850372891,
+       0.45089308006146295,
+       0.43302505664153607,
+       0.4430592478357673,
+       0.4550180100420978,
+       0.4260906063731722
+      ],
+      [
+       null,
+       null,
+       0.4196690727498878,
+       0.4232464456964067,
+       0.4210649549626296,
+       0.4623067775214541,
+       0.4279673968907985,
+       0.42238032689358007,
+       0.41953881981978675,
+       0.3742978100339468
+      ]
+     ],
+     "edges": [
+      0.0,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.5,
+      0.6,
+      0.8,
+      3.0
+     ],
+     "driver_class_edges": [
+      50.010075,
+      197.185166666667,
+      377.954633333333,
+      582.615683333333,
+      949.288
+     ],
+     "bootstrap": {
+      "n": 200,
+      "threshold_p05_p50_p95": [
+       0.0,
+       0.0,
+       0.25
+      ],
+      "outcome_share": {
+       "flat": 0.78,
+       "plateau": 0.22
+      }
+     }
+    },
+    "reason": "the ratio is flat: no filter",
+    "ustar_min": null
+   },
+   "h": {
+    "rule": "diagnostic",
+    "diagnostic": {
+     "outcome": "rising",
+     "threshold": null,
+     "records": 20400,
+     "driver": "rnet",
+     "by_driver_class": [
+      "rising",
+      "rising",
+      "rising",
+      "rising"
+     ],
+     "ratio": [
+      [
+       0.0699211979228031,
+       0.10015247271417761,
+       0.10887523269714433,
+       0.10996310923606047,
+       0.1247483511088929,
+       0.11893003940964196,
+       0.12345785589267147,
+       0.11531234083486266,
+       0.16392084156239978,
+       0.3290731171571214
+      ],
+      [
+       0.13413574959098212,
+       0.1587768327785569,
+       0.15928755399811625,
+       0.18664958657139386,
+       0.17779976145815565,
+       0.1809718903103431,
+       0.199258285342018,
+       0.21126765003632633,
+       0.2457346508931271,
+       0.35408542804574955
+      ],
+      [
+       0.15691481334916876,
+       0.16912217638906363,
+       0.17775014438749615,
+       0.18750401929835714,
+       0.214678707957188,
+       0.2188659522511673,
+       0.2316269837162236,
+       0.23995713842141383,
+       0.2626078189974692,
+       0.3587792282114492
+      ],
+      [
+       null,
+       null,
+       0.21406636993328912,
+       0.24104449559003088,
+       0.2272739506659565,
+       0.2466837071495882,
+       0.2564124400229418,
+       0.26715584707336243,
+       0.2958197733785042,
+       0.38169715316468417
+      ]
+     ],
+     "edges": [
+      0.0,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.5,
+      0.6,
+      0.8,
+      3.0
+     ],
+     "driver_class_edges": [
+      50.010075,
+      197.185166666667,
+      377.954633333333,
+      582.615683333333,
+      949.288
+     ],
+     "bootstrap": {
+      "n": 200,
+      "threshold_p05_p50_p95": null,
+      "outcome_share": {
+       "rising": 1.0
+      }
+     }
+    },
+    "reason": "still rising at the top u* classes: no filter (the observation model's job)",
+    "ustar_min": null
+   },
+   "gpp": {
+    "rule": "provider",
+    "diagnostic": {
+     "outcome": "plateau",
+     "threshold": 0.325,
+     "records": 11261,
+     "driver": "par",
+     "by_driver_class": [
+      "plateau",
+      "plateau",
+      "plateau",
+      "plateau"
+     ],
+     "ratio": [
+      [
+       0.021962393829988013,
+       0.02618060545048065,
+       0.023808647450818586,
+       0.027877374213611063,
+       0.02816802814122522,
+       0.030513315428934016,
+       0.0312929026662597,
+       0.03507649740049916,
+       0.03341117884475979,
+       0.029123080104224385
+      ],
+      [
+       0.01891852216640101,
+       0.019428620761207334,
+       0.02024954501043663,
+       0.02101756069621081,
+       0.021631921674062367,
+       0.022148192499134554,
+       0.023480784857912246,
+       0.024863620247898687,
+       0.024557831524536618,
+       0.022198751511675576
+      ],
+      [
+       0.015571598601610845,
+       0.014505915579605688,
+       0.016257929228114035,
+       0.01683452971193582,
+       0.017055499247563107,
+       0.017257866446162114,
+       0.017969655348269546,
+       0.01840215787922622,
+       0.018440229567642703,
+       0.01712024740173449
+      ],
+      [
+       null,
+       null,
+       0.011236780261643224,
+       0.011887190677788324,
+       0.011771744782877604,
+       0.011745814812949605,
+       0.011610762545411834,
+       0.012455978319796893,
+       0.012742582843934482,
+       0.011751551059949539
+      ]
+     ],
+     "edges": [
+      0.0,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.5,
+      0.6,
+      0.8,
+      3.0
+     ],
+     "driver_class_edges": [
+      100.033333333333,
+      474.483333333333,
+      955.816666666667,
+      1476.16666666667,
+      2479.33333333333
+     ],
+     "bootstrap": {
+      "n": 200,
+      "threshold_p05_p50_p95": [
+       0.15,
+       0.3,
+       0.35
+      ],
+      "outcome_share": {
+       "plateau": 1.0
+      }
+     }
+    },
+    "reason": "the provider's CO2 threshold",
+    "ustar_min": 0.4
+   },
+   "ustar": {
+    "rule": null,
+    "diagnostic": null,
+    "reason": "no u* filter",
+    "ustar_min": null
+   }
+  },
+  "windows": {
+   "slots": {
+    "1": {
+     "cal": [
+      "2016-01-01",
+      0.986
+     ],
+     "val": [
+      "2014-02-05",
+      0.996
+     ]
+    },
+    "2": {
+     "cal": [
+      "2016-03-07",
+      1.0
+     ],
+     "val": [
+      "2017-03-14",
+      0.938
+     ]
+    },
+    "3": {
+     "cal": [
+      "2017-04-04",
+      0.992
+     ],
+     "val": [
+      "2013-04-22",
+      1.0
+     ]
+    },
+    "4": {
+     "cal": [
+      "2015-06-18",
+      0.944
+     ],
+     "val": [
+      "2013-06-02",
+      0.866
+     ]
+    },
+    "5": {
+     "cal": [
+      "2016-07-07",
+      0.883
+     ],
+     "val": [
+      "2015-07-25",
+      0.922
+     ]
+    },
+    "6": {
+     "cal": [
+      "2015-09-11",
+      0.911
+     ],
+     "val": [
+      "2013-09-10",
+      0.892
+     ]
+    },
+    "7": {
+     "cal": [
+      "2015-11-06",
+      0.902
+     ],
+     "val": [
+      "2013-11-04",
+      0.933
+     ]
+    },
+    "8": {
+     "cal": [
+      "2015-12-22",
+      0.987
+     ],
+     "val": [
+      "2013-12-21",
+      0.983
+     ]
+    }
+   },
+   "source": "the rule (datarules.select_windows)"
+  },
+  "seasonal": {
+   "years": [
+    {
+     "year": 2012,
+     "end": "2012-09-09",
+     "deficit_mm": 54.514292660311554,
+     "coverage": 0.0,
+     "usable": false
+    },
+    {
+     "year": 2013,
+     "end": "2013-05-08",
+     "deficit_mm": 642.6509672818756,
+     "coverage": 0.0,
+     "usable": false
+    },
+    {
+     "year": 2014,
+     "end": "2014-05-05",
+     "deficit_mm": 900.829443678659,
+     "coverage": 0.0,
+     "usable": false
+    },
+    {
+     "year": 2015,
+     "end": "2015-08-13",
+     "deficit_mm": 893.6792525952477,
+     "coverage": 0.242,
+     "usable": false
+    },
+    {
+     "year": 2016,
+     "end": "2016-05-09",
+     "deficit_mm": 1331.417866199733,
+     "coverage": 0.932,
+     "usable": true
+    },
+    {
+     "year": 2017,
+     "end": "2017-04-29",
+     "deficit_mm": 698.0308805566082,
+     "coverage": 0.809,
+     "usable": true
+    }
+   ],
+   "deepest_mm": 1331.417866199733,
+   "runs": [
+    [
+     "dry2016",
+     "2016-01-10",
+     120
+    ],
+    [
+     "dry2017",
+     "2016-12-30",
+     120
+    ]
+   ]
+  },
+  "range_coverage": {
+   "sw_in": {
+    "record": [
+     12.625298254999969,
+     1024.7062175
+    ],
+    "kept": [
+     0.0,
+     1127.03866666667
+    ],
+    "share": 1.0
+   },
+   "tair": {
+    "record": [
+     295.8811185666666,
+     302.65571153333326
+    ],
+    "kept": [
+     295.159545,
+     305.94608333333326
+    ],
+    "share": 1.0
+   },
+   "vpd": {
+    "record": [
+     0.0,
+     1406.3592511323232
+    ],
+    "kept": [
+     0.0,
+     2263.90455736968
+    ],
+    "share": 1.0
+   },
+   "deficit_mm": {
+    "record": [
+     -1310.0252002209768,
+     0.0
+    ],
+    "kept": [
+     -1331.417866199733,
+     -59.5963401059316
+    ],
+    "share": 0.954507485737008
+   }
+  },
+  "closure": {
+   "valid_days": 1022,
+   "days": 1886,
+   "daily_closure_median": 0.7476507741109932,
+   "f_median": 1.3330820755801214,
+   "f_p10_p90": [
+    1.1639186241672188,
+    1.527807815165231
+   ],
+   "attribution": {
+    "rises_by_vpd_class": {
+     "h": [
+      0.5254420779295168,
+      0.44249843050399074,
+      0.5599007028476692,
+      0.63716888841636
+     ],
+     "le": [
+      0.22581358569346555,
+      0.01980771908540424,
+      -0.08989162388986793,
+      -0.14498912857056356
+     ]
+    },
+    "rises": {
+     "h": 0.542671390388593,
+     "le": -0.035041952402231846
+    },
+    "records": 20400
+   },
+   "shares": {
+    "h": 1.0,
+    "le": 0.0
+   },
+   "reason": "H/Rnet rises with u* (+54%), LE/Rnet does not (-4%): the gap is H's"
+  },
+  "sigma": {
+   "le": {
+    "source": "paired days",
+    "flux": "le",
+    "sigma_abs": 10.4528641398494,
+    "sigma_rel": 0.2857732643006068,
+    "estimate": {
+     "pairs": 9371,
+     "bin_level": [
+      0.885502764490606,
+      2.5688434016065615,
+      4.346311413829267,
+      6.2995780168257545,
+      8.634994528556023,
+      11.432178931548469,
+      15.321513319446725,
+      21.621236648783015,
+      37.80432698023504,
+      155.06039554370844
+     ],
+     "bin_sigma": [
+      7.8796723709417416,
+      8.711480388005935,
+      9.546460184337695,
+      10.32570925917378,
+      12.487551320817376,
+      12.915830745457072,
+      14.527791919481743,
+      18.993929252290332,
+      32.60153658877771,
+      51.9786592326235
+     ]
+    }
+   },
+   "h": {
+    "source": "paired days",
+    "flux": "h",
+    "sigma_abs": 8.908379068827069,
+    "sigma_rel": 0.14248129301180024,
+    "estimate": {
+     "pairs": 9371,
+     "bin_level": [
+      3.6692244583225597,
+      9.910672396265664,
+      15.118180354740232,
+      20.02100864391166,
+      24.786974661259077,
+      29.650235469320094,
+      34.7473924875206,
+      41.13233636375569,
+      51.89411143871413,
+      138.83672272373104
+     ],
+     "bin_sigma": [
+      9.28369112273604,
+      9.098172645195742,
+      8.908379068827069,
+      10.623404539943888,
+      10.397766503931743,
+      11.140195161721584,
+      11.5638384587327,
+      12.974505913789315,
+      15.963685154087214,
+      27.35067415365375
+     ]
+    }
+   },
+   "gpp": {
+    "source": "paired days",
+    "flux": "nee",
+    "sigma_abs": 2.163810976134719,
+    "sigma_rel": 0.17123093123127642,
+    "estimate": {
+     "pairs": 9371,
+     "bin_level": [
+      0.3537376902277403,
+      1.0337602483102657,
+      1.6084202482843843,
+      2.1064998892966664,
+      2.6060545618994047,
+      3.124225810551336,
+      3.7295229235679845,
+      4.591184174034631,
+      6.290763782778677,
+      14.027424227192013
+     ],
+     "bin_sigma": [
+      2.4092884728844095,
+      2.477828469714161,
+      2.163810976134719,
+      2.233286602606472,
+      2.3293983866789056,
+      2.1861762408993544,
+      2.432471471538696,
+      2.917455144319899,
+      3.9213064889735567,
+      4.311018642726735
+     ]
+    }
+   }
+  },
+  "tower_checks": {
+   "F1_rnet_components": {
+    "records": 35130,
+    "median_abs_residual": 6.963318810448982e-13,
+    "p95_abs_residual": 3.8194836833331403
+   },
+   "F2_longwave_at_night": {
+    "records": 17671,
+    "median_lw_out_minus_lw_in": 32.267666666667026,
+    "lw_out_over_sigma_t4": 1.0209174793266138,
+    "lw_in_over_sigma_t4": 0.9518288343009096
+   },
+   "F3_sw_out": {
+    "records": 21979,
+    "median_albedo": 0.13025090779859425,
+    "fraction_above_sw_in": 0.0
+   },
+   "F3_lw_out": {
+    "records": 35147,
+    "fraction_outside_band": 0.0
+   },
+   "failures": []
+  },
+  "area_above_sensor": {
+   "sensor_height": 41.0,
+   "share_above": 0.3416,
+   "top_mean_area_weighted": 37.980007786601064,
+   "top_range": [
+    24.8184573371024,
+    51.0
+   ]
+  }
+ },
+ "process_coverage": {
+  "wet_canopy": 0,
+  "night": 0,
+  "snow": 0,
+  "drought": 4909
+ },
+ "fixed_by_coverage": {},
+ "weights_start": {
+  "cal1_2016/albedo": 0.4643571646587038,
+  "cal1_2016/lw_up": 0.2832563885638059,
+  "cal1_2016/le": 0.5614843603805655,
+  "cal1_2016/h": 0.15733564682828463,
+  "cal1_2016/gpp": 0.5033839481526171,
+  "cal1_2016/ustar": 0.2198572848063797,
+  "cal2_2016/albedo": 0.2133180735082374,
+  "cal2_2016/lw_up": 0.09633913238179335,
+  "cal2_2016/le": 0.7941699347014222,
+  "cal2_2016/h": 0.16601029634922257,
+  "cal2_2016/gpp": 0.22384001804458348,
+  "cal2_2016/ustar": 0.20164844136833085,
+  "cal3_2017/albedo": 0.22197604407333812,
+  "cal3_2017/lw_up": 0.24631893323719264,
+  "cal3_2017/le": 0.6875277645900335,
+  "cal3_2017/h": 0.2249544768130806,
+  "cal3_2017/gpp": 0.34979970112018616,
+  "cal3_2017/ustar": 0.26318284045596846,
+  "cal4_2015/albedo": 0.255292504568821,
+  "cal4_2015/lw_up": 0.2189511176814132,
+  "cal4_2015/le": 0.33142303770200005,
+  "cal4_2015/h": 0.15572024831666287,
+  "cal4_2015/gpp": 0.4882318960984456,
+  "cal4_2015/ustar": 0.1905189543657364,
+  "cal5_2016/albedo": 0.2524744358346999,
+  "cal5_2016/lw_up": 0.19197255671497337,
+  "cal5_2016/le": 1.0,
+  "cal5_2016/h": 0.21459536424578016,
+  "cal5_2016/gpp": 0.7951544283019011,
+  "cal5_2016/ustar": 0.2808404085029822,
+  "cal6_2015/albedo": 0.3749122331797608,
+  "cal6_2015/lw_up": 0.1613219499453666,
+  "cal6_2015/le": 0.5172866501298627,
+  "cal6_2015/h": 0.20496102161209384,
+  "cal6_2015/gpp": 0.4627708832395946,
+  "cal6_2015/ustar": 0.27772558674922254,
+  "cal7_2015/albedo": 0.23438188841025262,
+  "cal7_2015/lw_up": 0.16380405550062666,
+  "cal7_2015/le": 0.5008800740021211,
+  "cal7_2015/h": 0.2030005177724768,
+  "cal7_2015/gpp": 0.6161067330713113,
+  "cal7_2015/ustar": 0.25604827757524695,
+  "cal8_2015/albedo": 0.4890255356325531,
+  "cal8_2015/lw_up": 0.12333718711263138,
+  "cal8_2015/le": 0.28154820957168647,
+  "cal8_2015/h": 0.12814398259317572,
+  "cal8_2015/gpp": 0.43137327362200134,
+  "cal8_2015/ustar": 0.25967203853175536,
+  "dry2016/le": 0.3417578179171346,
+  "dry2017/le": 0.4235868972041049
  },
  "screening": {
+  "mode": "triage",
   "keys": [
    "leaf_reflect_nir",
-   "leaf_transmit_nir",
-   "leaf_clumping",
    "leaf_angle_mean",
    "vcmax25",
    "stomatal_g1",
    "stomatal_g0",
    "z0m_ratio",
-   "leaf_width",
-   "dsl_dmax",
-   "dewmx",
-   "intercept_k",
-   "rd_vcmax_ratio"
+   "wstress_sref_stomata",
+   "stomata_psi_onset",
+   "kappa"
   ],
   "sigma_ratio": {
-   "leaf_reflect_nir": 0.3757639410792702,
-   "leaf_transmit_nir": 0.4923167233071164,
-   "leaf_clumping": 0.15794559166220237,
-   "leaf_angle_mean": 0.1636549581797116,
-   "vcmax25": 0.04638414679829224,
-   "stomatal_g1": 0.09267872695387995,
-   "stomatal_g0": 0.06442587011932362,
-   "z0m_ratio": 0.03093621524069574,
-   "leaf_width": 0.1344737593655105,
-   "dsl_dmax": 0.39351976485271234,
-   "dewmx": 0.07919197786553969,
-   "intercept_k": 0.8914488927091356,
-   "rd_vcmax_ratio": 0.08977795045056493
+   "leaf_reflect_nir": 0.09047023227355873,
+   "leaf_angle_mean": 0.20581590560830207,
+   "vcmax25": 0.049748199382128044,
+   "stomatal_g1": 0.062277726286890135,
+   "stomatal_g0": 0.0819254261716855,
+   "z0m_ratio": 0.05510861393386653,
+   "wstress_sref_stomata": 0.425779950179808,
+   "stomata_psi_onset": 0.31711673518110395,
+   "kappa": 0.24865447953466388
   },
   "smoothness": {
-   "leaf_reflect_nir": 0.9920154471921976,
-   "leaf_transmit_nir": 1.0046845062007563,
-   "leaf_clumping": 0.9288094651786726,
-   "leaf_angle_mean": 0.9753157137810822,
-   "vcmax25": 1.1879879772723552,
-   "stomatal_g1": 0.9826335887939724,
-   "stomatal_g0": 1.0043170162407022,
-   "z0m_ratio": 0.8076858567160676,
-   "leaf_width": 0.8984393421212529,
-   "dsl_dmax": 0.44283138449082016,
-   "dewmx": 0.9160571929207192,
-   "intercept_k": -0.8506594685675568,
-   "rd_vcmax_ratio": 0.8821694033877517
+   "leaf_reflect_nir": 0.9830295562006522,
+   "leaf_angle_mean": 0.9893042025007031,
+   "vcmax25": 0.9894855766549912,
+   "stomatal_g1": 1.0017155179512929,
+   "stomatal_g0": 1.0107132650105937,
+   "z0m_ratio": 0.7482783497673625,
+   "wstress_sref_stomata": 0.919153458186251,
+   "stomata_psi_onset": 0.9317480157653012,
+   "kappa": 0.9892311026824688
   },
   "sensitivity": {
    "leaf_reflect_nir": {
-    "albedo": 4.283695972883159,
-    "lw_up": 0.18475580789982796,
-    "rnet": 0.5325097344161306,
-    "le": 0.03627551916591018,
-    "h": 0.34551030522868476,
-    "ef": 0.44110849586553263,
-    "gpp": 0.07946736749992474,
-    "nee_night": 0.00098406576166209,
-    "ustar": 0.022370995089239665
-   },
-   "leaf_transmit_nir": {
-    "albedo": 2.8263368650849934,
-    "lw_up": 0.16780380689947644,
-    "rnet": 0.38490900171069287,
-    "le": 0.03332810037159699,
-    "h": 0.26909620426935527,
-    "ef": 0.342137885611087,
-    "gpp": 0.06774973043595325,
-    "nee_night": 0.0015960171041541319,
-    "ustar": 0.020927626081308603
-   },
-   "leaf_clumping": {
-    "albedo": 0.5549581830033055,
-    "lw_up": 0.3329483676433176,
-    "rnet": 0.053708994771709984,
-    "le": 0.1537975971817076,
-    "h": 0.2989300478356177,
-    "ef": 0.5680179048365498,
-    "gpp": 0.5449297480047589,
-    "nee_night": 0.004058962263824408,
-    "ustar": 0.03234793444661608
+    "albedo": 0.5706860231017268,
+    "lw_up": 0.03030347542274567,
+    "le": 0.017446734759559622,
+    "h": 0.09810487919583051,
+    "gpp": 0.009754219601449066,
+    "ustar": 0.006944398136181926
    },
    "leaf_angle_mean": {
-    "albedo": 1.5046963028469513,
-    "lw_up": 0.08836845603517446,
-    "rnet": 0.18722046576114915,
-    "le": 0.07860243155334623,
-    "h": 0.10964400561453302,
-    "ef": 0.14981809201494667,
-    "gpp": 0.22461339244952133,
-    "nee_night": 0.0015869319839177756,
-    "ustar": 0.014733964749349364
+    "albedo": 0.2411993889790349,
+    "lw_up": 0.018556690677150336,
+    "le": 0.03878864069887796,
+    "h": 0.03244855030140213,
+    "gpp": 0.06746404485545034,
+    "ustar": 0.0014346819293319772
    },
    "vcmax25": {
     "albedo": 0.0,
-    "lw_up": 0.21874506967598023,
-    "rnet": 0.029512408860565633,
-    "le": 0.6403914089305057,
-    "h": 0.5342051715518633,
-    "ef": 2.1705717737522714,
-    "gpp": 2.0112947714557285,
-    "nee_night": 0.6237728353989173,
-    "ustar": 0.025418386794592854
+    "lw_up": 0.07406452759565936,
+    "le": 0.3195490335834658,
+    "h": 0.21126157272526638,
+    "gpp": 0.8815399628492203,
+    "ustar": 0.009771736653050008
    },
    "stomatal_g1": {
     "albedo": 0.0,
-    "lw_up": 0.233148285574979,
-    "rnet": 0.034475310249573406,
-    "le": 0.636550930944515,
-    "h": 0.5646639184871382,
-    "ef": 2.203395779774577,
-    "gpp": 0.7413289156929986,
-    "nee_night": 0.0016663615313738684,
-    "ustar": 0.02698617859464783
+    "lw_up": 0.09190923846020961,
+    "le": 0.47521841519929375,
+    "h": 0.33286044034362583,
+    "gpp": 0.20608374624101403,
+    "ustar": 0.01589648680332815
    },
    "stomatal_g0": {
     "albedo": 0.0,
-    "lw_up": 0.24632367306552477,
-    "rnet": 0.04029391054595572,
-    "le": 1.0911669802973134,
-    "h": 0.7473607971048051,
-    "ef": 2.5507610021696565,
-    "gpp": 0.9613674972331537,
-    "nee_night": 0.008903613364702887,
-    "ustar": 0.04302915086254108
+    "lw_up": 0.0348238469913126,
+    "le": 0.2753785437311365,
+    "h": 0.16389934224169717,
+    "gpp": 0.10065396299841527,
+    "ustar": 0.007484576077470961
    },
    "z0m_ratio": {
     "albedo": 0.0,
-    "lw_up": 0.17448816929493255,
-    "rnet": 0.036575231693060546,
-    "le": 0.18355439616821015,
-    "h": 0.21704815712088946,
-    "ef": 0.20720374206170838,
-    "gpp": 0.0777408925420779,
-    "nee_night": 0.00558455263051809,
-    "ustar": 1.703782752551273
+    "lw_up": 0.0368787596034849,
+    "le": 0.04618348009558505,
+    "h": 0.05399295039159892,
+    "gpp": 0.01243104510455115,
+    "ustar": 0.4151846822802479
    },
-   "leaf_width": {
+   "wstress_sref_stomata": {
     "albedo": 0.0,
-    "lw_up": 0.3679665406911776,
-    "rnet": 0.05000286315710427,
-    "le": 0.1043146162720869,
-    "h": 0.21762190918827579,
-    "ef": 0.21934154858283816,
-    "gpp": 0.14070579177827477,
-    "nee_night": 0.00446337930543956,
-    "ustar": 0.029032818009441505
+    "lw_up": 0.009253722094431668,
+    "le": 0.052230238679199494,
+    "h": 0.04080181433911768,
+    "gpp": 0.0654689631576869,
+    "ustar": 0.0012345528072912598
    },
-   "dsl_dmax": {
+   "stomata_psi_onset": {
     "albedo": 0.0,
-    "lw_up": 0.01969858651389849,
-    "rnet": 0.009637122609021396,
-    "le": 0.17083612440323423,
-    "h": 0.11012612958955921,
-    "ef": 0.20386821992051074,
-    "gpp": 0.031363134631932583,
-    "nee_night": 0.0027324768297507748,
-    "ustar": 0.016499201602068362
+    "lw_up": 0.013495248127883911,
+    "le": 0.07364515491585036,
+    "h": 0.05574570764571808,
+    "gpp": 0.06770142688872505,
+    "ustar": 0.00201728535441785
    },
-   "dewmx": {
+   "kappa": {
     "albedo": 0.0,
-    "lw_up": 0.08643297822742517,
-    "rnet": 0.027721523030168695,
-    "le": 0.44306693810971287,
-    "h": 0.3828892519838248,
-    "ef": 0.7522415100818208,
-    "gpp": 0.03661832020733286,
-    "nee_night": 0.0035116734350875414,
-    "ustar": 0.06478475256062305
-   },
-   "intercept_k": {
-    "albedo": 0.0,
-    "lw_up": 0.010969022330023394,
-    "rnet": 0.0020191580064776353,
-    "le": 0.017340581870822862,
-    "h": 0.01438897952558148,
-    "ef": 0.015864923782627577,
-    "gpp": 0.0008961117985575933,
-    "nee_night": 0.0004293647912427327,
-    "ustar": 0.001485321642019266
-   },
-   "rd_vcmax_ratio": {
-    "albedo": 0.0,
-    "lw_up": 0.031362053324117393,
-    "rnet": 0.004846055103117146,
-    "le": 0.09852732227481449,
-    "h": 0.0864862338590851,
-    "ef": 0.32274195225775704,
-    "gpp": 0.07283974239446346,
-    "nee_night": 0.7114564192148559,
-    "ustar": 0.006030914420879832
+    "lw_up": 0.0,
+    "le": 0.0,
+    "h": 0.0,
+    "gpp": 0.1396195957408901,
+    "ustar": 0.0
    }
   },
-  "dead": [],
-  "rough": [
-   "intercept_k"
-  ],
-  "collinear": [
-   [
-    "leaf_reflect_nir",
-    "leaf_transmit_nir",
-    -0.995702912637042
-   ]
-  ],
+  "collinear": [],
   "singular_values": [
-   145.8607743545037,
-   98.85525914538928,
-   73.13106204182247,
-   49.69569795121066,
-   28.03173230339908,
-   26.293466613805066,
-   22.869887557915884,
-   17.36289203496064,
-   15.535493075961739,
-   13.053247375164517,
-   5.189542551772291,
-   2.1319262243396784,
-   1.0323468201047554
+   60.19589339697226,
+   24.353994579430747,
+   22.554544811506744,
+   18.056282832260088,
+   11.40067893861832,
+   8.043654144768247,
+   4.603574108936521,
+   3.715665713173606,
+   1.6531220468918555
   ],
+  "dead": [],
+  "rough": [],
+  "would_fix": {},
   "fitted": [
    "leaf_reflect_nir",
-   "leaf_transmit_nir",
-   "leaf_clumping",
    "leaf_angle_mean",
    "vcmax25",
    "stomatal_g1",
    "stomatal_g0",
    "z0m_ratio",
-   "leaf_width",
-   "dsl_dmax",
-   "dewmx",
-   "rd_vcmax_ratio"
+   "wstress_sref_stomata",
+   "stomata_psi_onset",
+   "kappa"
   ],
-  "fixed": [
-   "intercept_k"
-  ]
+  "fixed": {}
  },
- "starts": [
-  {
-   "u_start": [
-    0.4054651081081642,
-    -0.4054651081081643,
-    0.40546510810816483,
-    -0.2876820724517809,
-    0.021360931438257732,
-    4.440892098500625e-16,
-    0.35814744992084535,
-    0.13353139262452218,
-    -0.6454739550766662,
-    -0.09157893124566766,
-    -0.460560748198363,
-    -0.3566749439387328
-   ],
-   "cost": 25887.00725162956,
-   "u": [
-    -1.2361207263300786,
-    -3.145292507461618,
-    6.24614801899717,
-    1.6221191836006548,
-    -6.592721582447077,
-    4.78341304508889,
-    1.6580045294708305,
-    -3.129398268377934,
-    -0.3587421145312367,
-    3.4602733132279844,
-    -1.0385347181341074,
-    -5.961980125678033
-   ],
-   "iterations": 12
-  },
-  {
-   "u_start": [
-    1.5709751621353216,
-    -0.030267122695937676,
-    -0.4161048658868166,
-    1.70108674538265,
-    0.009456701033910216,
-    -0.7625204351412664,
-    -2.3895237846763893,
-    1.1428921445212707,
-    -2.339527729794008,
-    -1.1225575495678928,
-    1.531763926567197,
-    -0.7246894631926595
-   ],
-   "cost": 25904.796436136687,
-   "u": [
-    -1.2516371338591552,
-    -2.8930711931122346,
-    6.771432215466527,
-    1.6808279870053835,
-    -8.297665527229597,
-    6.012285416040022,
-    1.6467965254775812,
-    -3.1886181966854568,
-    -0.34933637227967307,
-    3.0506148182370705,
-    -0.4750177398471139,
-    -5.890457834000834
-   ],
-   "iterations": 15
-  },
-  {
-   "u_start": [
-    1.9608902588933914,
-    1.3908706498984063,
-    0.9368859317383842,
-    -1.5481694191409083,
-    0.25445265859439453,
-    -2.1295683540259933,
-    1.0822184025961823,
-    -2.614139841972712,
-    2.0035888190610414,
-    0.8055395383067881,
-    -0.013650064634740444,
-    -2.280054992294188
-   ],
-   "cost": 25913.472554363554,
-   "u": [
-    -1.1034639238993054,
-    -3.1138139752440077,
-    6.700636633683994,
-    1.8131469595658567,
-    -7.818891151560029,
-    5.92482428933952,
-    1.6459596066281907,
-    -3.5580159162975007,
-    -0.3984067035225081,
-    4.1975389156658585,
-    -0.7101774898166453,
-    -5.79471111333273
-   ],
-   "iterations": 13
-  }
- ],
- "start_spread": 0.0010223392173820914,
- "refresh_theta": {
-  "leaf_reflect_nir": 0.35627798780334397,
-  "leaf_transmit_nir": 0.16031929193819244,
-  "leaf_clumping": 0.999032921830634,
-  "leaf_angle_mean": 59.22805143325202,
-  "vcmax25": 25.03982395609421,
-  "stomatal_g1": 5.931374980076887,
-  "stomatal_g0": 0.026735219536216135,
-  "z0m_ratio": 0.05628661437214504,
-  "leaf_width": 0.04580483018368328,
-  "dsl_dmax": 0.04661289157008955,
-  "dewmx": 0.07987378778510776,
-  "intercept_k": 0.5,
-  "rd_vcmax_ratio": 0.0080436593296889
- },
- "cost_default": 69762.21922006535,
- "scores_cal_default": {
+ "cost_start": 17666.046977827238,
+ "scores_cal_start": {
   "albedo": {
-   "nrmse": 5.989862179934856,
-   "n": 701
+   "nrmse": 5.488361042156004,
+   "n": 1295,
+   "share": 0.3995069058642918
   },
   "lw_up": {
-   "nrmse": 2.0186187252172405,
-   "n": 1896
-  },
-  "rnet": {
-   "nrmse": 1.5575392587182195,
-   "n": 1896
+   "nrmse": 1.58088242208559,
+   "n": 3792,
+   "share": 0.10523162446196263
   },
   "le": {
-   "nrmse": 1.7391462153017705,
-   "n": 1766
+   "nrmse": 1.3222732270450057,
+   "n": 6691,
+   "share": 0.23004670631403068
   },
   "h": {
-   "nrmse": 2.4264762936828093,
-   "n": 1766
-  },
-  "ef": {
-   "nrmse": 3.7473760592590075,
-   "n": 80
+   "nrmse": 3.6387279923696103,
+   "n": 1782,
+   "share": 0.14516781994610303
   },
   "gpp": {
-   "nrmse": 2.6103917275036514,
-   "n": 866
-  },
-  "nee_night": {
-   "nrmse": 1.8551325384724735,
-   "n": 740
+   "nrmse": 1.3066370172931465,
+   "n": 1472,
+   "share": 0.05407226047558636
   },
   "ustar": {
-   "nrmse": 1.9874290958315748,
-   "n": 1766
+   "nrmse": 1.6477953978620343,
+   "n": 1782,
+   "share": 0.0659746829380256
   }
  },
+ "lm": {
+  "first": {
+   "cost": 8936.172940501647,
+   "iterations": 6,
+   "history": [
+    {
+     "iter": 0,
+     "cost": 17666.046977827238,
+     "lambda": 0.01,
+     "u": [
+      0.0,
+      0.0,
+      0.08447986844105278,
+      0.024969707896492947,
+      0.6931471805599452,
+      -0.43531807125784533,
+      0.6213037050378377,
+      1.5755361596090076,
+      -0.33647223662121273
+     ]
+    },
+    {
+     "iter": 1,
+     "cost": 9124.140838220676,
+     "lambda": 0.01,
+     "u": [
+      -1.3816392353002962,
+      1.5220783703525231,
+      -0.3424985515766296,
+      0.009904498957402653,
+      0.41981726552690857,
+      -1.5042402226054918,
+      -1.0056390038650949,
+      3.1320356411859716,
+      0.3452034982615756
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 2,
+     "cost": 9078.707182029408,
+     "lambda": 0.1,
+     "u": [
+      -1.4538678604464579,
+      0.8366898810745489,
+      -0.2648725114656573,
+      0.07286832215896533,
+      0.3435779230713353,
+      -1.6611923923907832,
+      -1.4557089273585562,
+      4.08999298504939,
+      0.44531143173221976
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 3,
+     "cost": 8997.86770968124,
+     "lambda": 0.01,
+     "u": [
+      -1.403654927438132,
+      1.0930958379119593,
+      -0.308926074277562,
+      0.08988845662052085,
+      0.3003637057591537,
+      -1.6851775462534984,
+      -0.7133116621415522,
+      3.805081912227484,
+      0.558245249331848
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 4,
+     "cost": 8946.22155706516,
+     "lambda": 0.1,
+     "u": [
+      -1.566211071677512,
+      0.8413281625719814,
+      -0.29975864528308344,
+      0.10867130887063883,
+      0.1813907564290127,
+      -1.8063045219077414,
+      -0.29624200017796926,
+      2.994628661561203,
+      0.5021423629393464
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 5,
+     "cost": 8936.408617145396,
+     "lambda": 0.1,
+     "u": [
+      -1.6209877286619205,
+      0.7700518550878062,
+      -0.29871625549361797,
+      0.10687676725327926,
+      0.1182223740037332,
+      -1.81881910435547,
+      -0.28247565739522,
+      3.099716875653269,
+      0.5133933349719169
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 6,
+     "cost": 8936.172940501647,
+     "lambda": 1.0,
+     "u": [
+      -1.628000344199541,
+      0.7716735188533483,
+      -0.2982802306239927,
+      0.10627361982706379,
+      0.11195560070106547,
+      -1.818628352554637,
+      -0.28685716942197853,
+      3.0652602250785868,
+      0.5129582471343495
+     ],
+     "accepted": true
+    }
+   ]
+  },
+  "after_refresh": {
+   "cost": 5062.172351464952,
+   "iterations": 2,
+   "history": [
+    {
+     "iter": 0,
+     "cost": 5095.187067579927,
+     "lambda": 0.01,
+     "u": [
+      -1.6280003441995412,
+      0.7716735188533486,
+      -0.29828023062399295,
+      0.10627361982706393,
+      0.11195560070106562,
+      -1.8186283525546372,
+      -0.2868571694219786,
+      3.0652602250785894,
+      0.5129582471343493
+     ]
+    },
+    {
+     "iter": 1,
+     "cost": 5062.314461677204,
+     "lambda": 0.01,
+     "u": [
+      -1.5239670755453274,
+      0.9930265762007568,
+      -0.3375399525170332,
+      0.21575471818595182,
+      -0.09535354818008344,
+      -2.05085732516251,
+      -0.1514625186968236,
+      3.585702065531442,
+      0.3923884856433057
+     ],
+     "accepted": true
+    },
+    {
+     "iter": 2,
+     "cost": 5062.172351464952,
+     "lambda": 0.001,
+     "u": [
+      -1.5224796727050978,
+      1.0040050057940189,
+      -0.3464074527418183,
+      0.2324507474925618,
+      -0.16177562728604575,
+      -2.068877970113063,
+      -0.13314054615517512,
+      3.5613925994097433,
+      0.44234397498571354
+     ],
+     "accepted": true
+    }
+   ]
+  }
+ },
+ "theta_refresh": {
+  "leaf_reflect_nir": 0.3156417912783803,
+  "leaf_angle_mean": 57.87179587655775,
+  "vcmax25": 31.694867618470205,
+  "stomatal_g1": 2.9973571398558976,
+  "stomatal_g0": 0.003836004488805809,
+  "z0m_ratio": 0.0590875915330079,
+  "wstress_sref_stomata": 0.7203555641141879,
+  "stomata_psi_onset": -0.22281599717024836,
+  "kappa": 0.7752998201221167
+ },
+ "weights_refresh": {
+  "cal1_2016/albedo": 0.5927516362845194,
+  "cal1_2016/lw_up": 0.1337553274964538,
+  "cal1_2016/le": 0.5696856762558844,
+  "cal1_2016/h": 0.170290362281042,
+  "cal1_2016/gpp": 0.6007625651579647,
+  "cal1_2016/ustar": 0.23027896748726037,
+  "cal2_2016/albedo": 0.2611021150389009,
+  "cal2_2016/lw_up": 0.07618099337748624,
+  "cal2_2016/le": 0.7673046594865442,
+  "cal2_2016/h": 0.15928475945336248,
+  "cal2_2016/gpp": 0.29225864466762635,
+  "cal2_2016/ustar": 0.28137379380309213,
+  "cal3_2017/albedo": 0.31880216343045403,
+  "cal3_2017/lw_up": 0.12033574672895823,
+  "cal3_2017/le": 0.84303387123253,
+  "cal3_2017/h": 0.20132048988796541,
+  "cal3_2017/gpp": 0.42923708503816627,
+  "cal3_2017/ustar": 0.23779333430825933,
+  "cal4_2015/albedo": 0.23989729392311052,
+  "cal4_2015/lw_up": 0.07958399017196681,
+  "cal4_2015/le": 0.31500357841188875,
+  "cal4_2015/h": 0.1730433178478982,
+  "cal4_2015/gpp": 0.5055819988456183,
+  "cal4_2015/ustar": 0.26121483181398175,
+  "cal5_2016/albedo": 0.3257535351800402,
+  "cal5_2016/lw_up": 0.18885591451037123,
+  "cal5_2016/le": 1.0,
+  "cal5_2016/h": 0.22741345008859978,
+  "cal5_2016/gpp": 0.7265884412535751,
+  "cal5_2016/ustar": 0.4307511526914631,
+  "cal6_2015/albedo": 0.4117630084924594,
+  "cal6_2015/lw_up": 0.1326957298424663,
+  "cal6_2015/le": 0.4863679190437597,
+  "cal6_2015/h": 0.21534582019700022,
+  "cal6_2015/gpp": 0.54698257058732,
+  "cal6_2015/ustar": 0.42083750620856436,
+  "cal7_2015/albedo": 0.2534938138208759,
+  "cal7_2015/lw_up": 0.13352872977592467,
+  "cal7_2015/le": 0.5057784623573702,
+  "cal7_2015/h": 0.20554234660699103,
+  "cal7_2015/gpp": 0.601506369112236,
+  "cal7_2015/ustar": 0.4250311817638353,
+  "cal8_2015/albedo": 0.6472241149793382,
+  "cal8_2015/lw_up": 0.05555140652510403,
+  "cal8_2015/le": 0.29037493055958075,
+  "cal8_2015/h": 0.13802380929119315,
+  "cal8_2015/gpp": 0.4938334976260609,
+  "cal8_2015/ustar": 0.2531307953213389,
+  "dry2016/le": 0.4579646869631303,
+  "dry2017/le": 0.483788787569378
+ },
+ "sigma_scale_refresh": {
+  "albedo": 1.3060175985658842,
+  "lw_up": 1.3309698510800736,
+  "le": 1.2547567010021097,
+  "h": 3.0,
+  "gpp": 1.1688831014573993,
+  "ustar": 1.0
+ },
+ "chi2_per_row": {
+  "albedo": 0.967250253528212,
+  "lw_up": 0.9654144170606567,
+  "le": 0.995579785087828,
+  "h": 1.3956351954601116,
+  "gpp": 0.9649573834760381,
+  "ustar": 0.2820555787322085
+ },
  "map": {
-  "leaf_reflect_nir": 0.3489021013255596,
-  "leaf_transmit_nir": 0.17196503366536237,
-  "leaf_clumping": 0.9997484765537008,
-  "leaf_angle_mean": 59.520765487757096,
-  "vcmax25": 25.014594131568327,
-  "stomatal_g1": 5.970934547992341,
-  "stomatal_g0": 0.0335789927867457,
-  "z0m_ratio": 0.05614086358716884,
-  "leaf_width": 0.04743665843808792,
-  "dsl_dmax": 0.04790442332442379,
-  "dewmx": 0.07539508099206771,
-  "intercept_k": 0.5,
-  "rd_vcmax_ratio": 0.008155089699468146
+  "leaf_reflect_nir": 0.3216386660731558,
+  "leaf_angle_mean": 61.229169705177156,
+  "vcmax25": 30.704382032195657,
+  "stomatal_g1": 3.334154169654877,
+  "stomatal_g0": 0.0023929421897379705,
+  "z0m_ratio": 0.051404441801078476,
+  "wstress_sref_stomata": 0.8580802191828049,
+  "stomata_psi_onset": -0.13807501528028165,
+  "kappa": 0.7652904466697507
  },
  "default": {
   "leaf_reflect_nir": 0.45,
-  "leaf_transmit_nir": 0.25,
-  "leaf_clumping": 0.8,
   "leaf_angle_mean": 45.0,
   "vcmax25": 45.0,
   "stomatal_g1": 3.0,
   "stomatal_g0": 0.01,
   "z0m_ratio": 0.13,
-  "leaf_width": 0.04,
-  "dsl_dmax": 0.015,
-  "dewmx": 0.1,
-  "intercept_k": 0.5,
-  "rd_vcmax_ratio": 0.015
+  "wstress_sref_stomata": 2.0,
+  "stomata_psi_onset": -0.857143,
+  "kappa": 0.65
+ },
+ "start": {
+  "leaf_reflect_nir": 0.45,
+  "leaf_angle_mean": 45.0,
+  "vcmax25": 41.00812154770578,
+  "stomatal_g1": 2.7973768351497585,
+  "stomatal_g0": 0.01,
+  "z0m_ratio": 0.13,
+  "wstress_sref_stomata": 2.0,
+  "stomata_psi_onset": -0.857143,
+  "kappa": 0.65
  },
  "fitted": [
   "leaf_reflect_nir",
-  "leaf_transmit_nir",
-  "leaf_clumping",
   "leaf_angle_mean",
   "vcmax25",
   "stomatal_g1",
   "stomatal_g0",
   "z0m_ratio",
-  "leaf_width",
-  "dsl_dmax",
-  "dewmx",
-  "rd_vcmax_ratio"
+  "wstress_sref_stomata",
+  "stomata_psi_onset",
+  "kappa"
  ],
+ "smoothness_map": {
+  "leaf_reflect_nir": 1.0294668388160997,
+  "leaf_angle_mean": 0.9791073871553,
+  "vcmax25": 1.0136675033272498,
+  "stomatal_g1": 1.0106820191021837,
+  "stomatal_g0": 1.0614924661164735,
+  "z0m_ratio": 1.0205039741636865,
+  "wstress_sref_stomata": 1.026579719669968,
+  "stomata_psi_onset": 0.9735208343816597,
+  "kappa": 0.9765600276035732
+ },
  "cov_theta": [
   [
-   0.0005043067102349801,
-   -0.000647443764876903,
-   5.029151196674645e-09,
-   0.028562079345107374,
-   -4.688757775438986e-06,
-   -1.5746878941183593e-05,
-   -2.292239167687951e-06,
-   -2.853510884001586e-07,
-   5.398373787265219e-06,
-   -5.752821487185246e-07,
-   1.8476137934126864e-06,
-   -2.8089778763244106e-09
+   1.0831198625461046e-05,
+   0.003445571880479239,
+   -0.0003363939126785396,
+   -1.7752041616369746e-05,
+   -7.08140590162463e-08,
+   -1.596681234922048e-07,
+   -5.769866052427157e-06,
+   -6.890683489419137e-06,
+   5.742863279883495e-06
   ],
   [
-   -0.000647443764876903,
-   0.0008542734345173737,
-   -8.599181090614762e-09,
-   -0.032846741555657435,
-   5.220928668427018e-06,
-   1.61496767049612e-05,
-   2.489304856078651e-06,
-   4.3274531281384243e-07,
-   -4.9842160677643714e-06,
-   6.033033671237269e-07,
-   -2.475382345111676e-06,
-   4.679734519864178e-09
+   0.0034455718804792387,
+   1.7587753545506473,
+   -0.1618654368494796,
+   -0.01054167855734719,
+   -3.204062383596781e-05,
+   -8.31836776198439e-05,
+   -0.003650891995596097,
+   -0.003467212335130181,
+   0.002831950325708264
   ],
   [
-   5.029151196674703e-09,
-   -8.599181090614836e-09,
-   2.1188062559298054e-07,
-   3.6541646620546976e-06,
-   1.0318320370730174e-09,
-   2.9594873737714862e-08,
-   1.5152617415784658e-09,
-   -2.17911928721601e-10,
-   -1.1948317610027104e-08,
-   7.263515092251043e-10,
-   -2.0974157540610192e-10,
-   -6.928878910269172e-12
+   -0.00033639391267854324,
+   -0.16186543684948151,
+   0.7363465224074673,
+   -0.0757777336296532,
+   0.00015284225125471003,
+   -0.00012278808107188947,
+   0.008526680229748684,
+   -0.0017051905988110586,
+   -0.021033143232842964
   ],
   [
-   0.028562079345107343,
-   -0.032846741555657394,
-   3.6541646620546946e-06,
-   2.588804694175002,
-   -0.00045401346206580973,
-   -0.0017814625489984896,
-   -0.00022024564800543077,
-   -5.461079285942164e-06,
-   0.0008027601223778494,
-   -6.191474697868628e-05,
-   0.00010239078968667254,
-   -2.1505031906189593e-09
+   -1.775204161637242e-05,
+   -0.010541678557348546,
+   -0.07577773362965277,
+   0.0614954394111314,
+   -5.071179590495245e-05,
+   1.9648626280105167e-05,
+   -2.89777256747305e-05,
+   0.01931256903960678,
+   0.002167787765605062
   ],
   [
-   -4.688757775438975e-06,
-   5.2209286684270025e-06,
-   1.031832037073018e-09,
-   -0.0004540134620658093,
-   0.0007118109197019394,
-   -5.542020499747862e-06,
-   -6.737776276583616e-07,
-   1.4090834848421446e-08,
-   7.435902234902798e-07,
-   -1.0150381647827782e-07,
-   -3.0386354717872525e-07,
-   -1.5841342903242304e-08
+   -7.081405901624917e-08,
+   -3.2040623835969276e-05,
+   0.00015284225125471035,
+   -5.0711795904952726e-05,
+   6.256633211758025e-07,
+   8.47663375730452e-08,
+   2.4285882641598243e-05,
+   4.113615768482318e-06,
+   -3.290079725710854e-06
   ],
   [
-   -1.5746878941183868e-05,
-   1.6149676704961473e-05,
-   2.9594873737715008e-08,
-   -0.001781462548998523,
-   -5.542020499747888e-06,
-   0.0027120214541581224,
-   -9.425819656568452e-06,
-   2.197032171158896e-06,
-   1.863887079928601e-06,
-   -1.0229149430915438e-06,
-   -8.15841865561432e-06,
-   1.2139710308273181e-07
+   -1.5966812349220465e-07,
+   -8.318367761984383e-05,
+   -0.00012278808107188947,
+   1.9648626280105198e-05,
+   8.476633757304522e-08,
+   3.3593033080186067e-06,
+   6.555413304924183e-06,
+   1.2728555498446807e-06,
+   4.639061150542533e-07
   ],
   [
-   -2.292239167688011e-06,
-   2.4893048560787307e-06,
-   1.5152617415784642e-09,
-   -0.00022024564800543386,
-   -6.73777627658361e-07,
-   -9.425819656568472e-06,
-   1.1899441064226152e-06,
-   3.354774129472942e-07,
-   1.6071075798637029e-06,
-   3.0178445459842243e-07,
-   -5.384873225875459e-07,
-   1.5476313585459687e-08
+   -5.769866052427117e-06,
+   -0.003650891995596076,
+   0.00852668022974863,
+   -2.8977725674685395e-05,
+   2.428588264159823e-05,
+   6.555413304924196e-06,
+   0.017725028778920116,
+   -0.0018308090280876094,
+   0.00011680079750775673
   ],
   [
-   -2.853510884001626e-07,
-   4.3274531281384773e-07,
-   -2.1791192872160078e-10,
-   -5.461079285942393e-06,
-   1.4090834848421615e-08,
-   2.1970321711588795e-06,
-   3.354774129472943e-07,
-   4.665601072734322e-06,
-   3.3058108051580092e-06,
-   7.71247672827271e-09,
-   5.691667381882768e-07,
-   -3.7050628444235893e-09
+   -6.890683489419452e-06,
+   -0.0034672123351303396,
+   -0.0017051905988109402,
+   0.019312569039606754,
+   4.1136157684824246e-06,
+   1.2728555498446675e-06,
+   -0.0018308090280876245,
+   0.008094515388022633,
+   9.706511227666291e-05
   ],
   [
-   5.398373787265107e-06,
-   -4.984216067764222e-06,
-   -1.1948317610027107e-08,
-   0.000802760122377844,
-   7.43590223490281e-07,
-   1.8638870799284945e-06,
-   1.6071075798637033e-06,
-   3.3058108051580096e-06,
-   3.0453786971118437e-05,
-   -9.544555747479433e-08,
-   -4.095389375773716e-07,
-   1.094735433272858e-09
-  ],
-  [
-   -5.752821487185338e-07,
-   6.03303367123739e-07,
-   7.26351509225104e-10,
-   -6.191474697868677e-05,
-   -1.0150381647827774e-07,
-   -1.022914943091547e-06,
-   3.0178445459842243e-07,
-   7.712476728272714e-09,
-   -9.544555747479438e-08,
-   1.3531825029474881e-05,
-   2.7842716605912764e-07,
-   4.671299107707878e-10
-  ],
-  [
-   1.8476137934126571e-06,
-   -2.475382345111638e-06,
-   -2.09741575406102e-10,
-   0.0001023907896866712,
-   -3.038635471787252e-07,
-   -8.15841865561428e-06,
-   -5.38487322587546e-07,
-   5.691667381882769e-07,
-   -4.0953893757737155e-07,
-   2.7842716605912764e-07,
-   4.7819689798682025e-05,
-   1.204474640143959e-08
-  ],
-  [
-   -2.8089778763245044e-09,
-   4.67973451986431e-09,
-   -6.9288789102691585e-12,
-   -2.1505031906244315e-09,
-   -1.5841342903242304e-08,
-   1.2139710308273203e-07,
-   1.5476313585459693e-08,
-   -3.7050628444235876e-09,
-   1.0947354332728745e-09,
-   4.671299107707884e-10,
-   1.2044746401439592e-08,
-   7.295284556961469e-08
+   5.74286327988355e-06,
+   0.0028319503257082925,
+   -0.021033143232842968,
+   0.0021677877656050694,
+   -3.2900797257108467e-06,
+   4.639061150542529e-07,
+   0.00011680079750775549,
+   9.706511227666611e-05,
+   0.001419109880944691
   ]
  ],
  "corr": [
   [
-   1.0,
-   -0.9864071889778052,
-   0.0004865211176720864,
-   0.7904834907911558,
-   -0.007825788399126548,
-   -0.013464820087873072,
-   -0.09357272444033951,
-   -0.0058827224535645236,
-   0.043560707614636554,
-   -0.006963945082780884,
-   0.011897629624030502,
-   -0.0004631053807433989
+   1.0000000000000002,
+   0.7894377113670339,
+   -0.11911562893717473,
+   -0.021751469005113794,
+   -0.02720262913744549,
+   -0.026470086005091223,
+   -0.013168429911280909,
+   -0.023271727092971647,
+   0.04632145634480489
   ],
   [
-   -0.9864071889778052,
+   0.7894377113670337,
    1.0,
-   -0.0006391650522867964,
-   -0.6984642770935648,
-   0.006695252895263122,
-   0.010610083987937117,
-   0.07807578411086462,
-   0.0068545685010909276,
-   -0.030901371666646804,
-   0.005611243453940261,
-   -0.012247302965013992,
-   0.0005927910629458153
+   -0.142235439156038,
+   -0.032054066172576265,
+   -0.03054396615283651,
+   -0.03422223132074874,
+   -0.020677609305409638,
+   -0.029058943924903234,
+   0.05668555898626197
   ],
   [
-   0.00048652111767209197,
-   -0.000639165052286802,
-   1.0,
-   0.004933928440906208,
-   8.401968746134857e-05,
-   0.0012345944143793849,
-   0.0030177186961627134,
-   -0.00021917023851912747,
-   -0.00470370939734872,
-   0.00042896615997929085,
-   -6.589243019795514e-05,
-   -5.573092227301415e-05
-  ],
-  [
-   0.790483490791155,
-   -0.698464277093564,
-   0.004933928440906204,
+   -0.11911562893717602,
+   -0.1422354391560397,
    0.9999999999999999,
-   -0.010576373118176458,
-   -0.021260843597361235,
-   -0.12548575001099763,
-   -0.0015713576240791406,
-   0.09040979698915001,
-   -0.010460833072871333,
-   0.009202543340871484,
-   -4.9484516276774545e-06
+   -0.356105792128969,
+   0.2251811112534714,
+   -0.07807113324439076,
+   0.07463548884670558,
+   -0.02208698229499612,
+   -0.6506614059954005
   ],
   [
-   -0.007825788399126529,
-   0.006695252895263103,
-   8.401968746134863e-05,
-   -0.01057637311817645,
+   -0.021751469005117072,
+   -0.032054066172580394,
+   -0.356105792128967,
    1.0,
-   -0.0039887722927668574,
-   -0.023151065419312635,
-   0.0002445122379543677,
-   0.005050457203890709,
-   -0.0010342412656619122,
-   -0.0016469973597577879,
-   -0.0021983080667110208
+   -0.25853371600961234,
+   0.043230088939972135,
+   -0.0008777066073200674,
+   0.8656118003400494,
+   0.23205305718240943
   ],
   [
-   -0.013464820087873308,
-   0.010610083987937299,
-   0.001234594414379391,
-   -0.021260843597361634,
-   -0.0039887722927668765,
-   1.0000000000000002,
-   -0.1659240289228166,
-   0.01953152054830954,
-   0.006485633223928512,
-   -0.005339674401613533,
-   -0.02265458182313619,
-   0.008630593156515237
+   -0.02720262913744659,
+   -0.0305439661528379,
+   0.2251811112534719,
+   -0.2585337160096137,
+   0.9999999999999998,
+   0.05846937650625726,
+   0.23061633697041867,
+   0.057804007632498294,
+   -0.1104149962773905
   ],
   [
-   -0.09357272444034197,
-   0.07807578411086712,
-   0.00301771869616271,
-   -0.12548575001099938,
-   -0.023151065419312614,
-   -0.16592402892281696,
-   1.0000000000000002,
-   0.1423790867694531,
-   0.26696911113376726,
-   0.0752065033090069,
-   -0.07138530589265811,
-   0.0525270633857864
-  ],
-  [
-   -0.005882722453564605,
-   0.006854568501091012,
-   -0.00021917023851912722,
-   -0.0015713576240792063,
-   0.0002445122379543706,
-   0.019531520548309395,
-   0.14237908676945316,
-   1.0000000000000002,
-   0.27733427171082153,
-   0.0009706482563486897,
-   0.038105032278104564,
-   -0.006350686281104309
-  ],
-  [
-   0.043560707614635645,
-   -0.030901371666645878,
-   -0.004703709397348721,
-   0.09040979698914939,
-   0.005050457203890717,
-   0.006485633223928142,
-   0.26696911113376737,
-   0.2773342717108216,
-   0.9999999999999999,
-   -0.004701721269078011,
-   -0.010731765375772301,
-   0.0007344587414838617
-  ],
-  [
-   -0.006963945082780996,
-   0.005611243453940374,
-   0.0004289661599792907,
-   -0.010460833072871416,
-   -0.0010342412656619113,
-   -0.005339674401613549,
-   0.07520650330900691,
-   0.0009706482563486903,
-   -0.004701721269078013,
+   -0.026470086005091195,
+   -0.03422223132074871,
+   -0.07807113324439076,
+   0.0432300889399722,
+   0.058469376506257276,
    1.0,
-   0.01094535981217324,
-   0.00047015209041187194
+   0.026864699987705274,
+   0.007718965239238099,
+   0.006718889156991625
   ],
   [
-   0.011897629624030313,
-   -0.012247302965013803,
-   -6.589243019795517e-05,
-   0.009202543340871363,
-   -0.0016469973597577875,
-   -0.022654581823136077,
-   -0.07138530589265812,
-   0.03810503227810457,
-   -0.0107317653757723,
-   0.01094535981217324,
+   -0.013168429911280817,
+   -0.020677609305409517,
+   0.07463548884670511,
+   -0.0008777066073187011,
+   0.23061633697041853,
+   0.026864699987705326,
    1.0,
-   0.00644871472063736
+   -0.152846023469161,
+   0.023288650409149094
   ],
   [
-   -0.0004631053807434144,
-   0.000592791062945832,
-   -5.573092227301404e-05,
-   -4.9484516276900465e-06,
-   -0.0021983080667110208,
-   0.008630593156515255,
-   0.05252706338578642,
-   -0.006350686281104306,
-   0.0007344587414838729,
-   0.00047015209041187264,
-   0.006448714720637361,
+   -0.02327172709297271,
+   -0.029058943924904563,
+   -0.022086982294994586,
+   0.8656118003400481,
+   0.05780400763249979,
+   0.0077189652392380195,
+   -0.1528460234691623,
+   1.0,
+   0.02863912353200251
+  ],
+  [
+   0.04632145634480534,
+   0.05668555898626254,
+   -0.6506614059954007,
+   0.2320530571824102,
+   -0.11041499627739026,
+   0.006718889156991618,
+   0.023288650409148848,
+   0.028639123532003454,
    1.0000000000000002
   ]
  ],
+ "intervals": {
+  "leaf_reflect_nir": {
+   "map": 0.3216386660731558,
+   "sd_u": 0.05596271160291196,
+   "i68": [
+    0.3184064766067391,
+    0.3249890384286841
+   ],
+   "i95": [
+    0.31541351063846607,
+    0.3283175755113626
+   ],
+   "sigma_ratio": 0.11192542320582392,
+   "prior_centre": 0.45,
+   "range": [
+    0.25,
+    0.65
+   ],
+   "kind": "trait"
+  },
+  "leaf_angle_mean": {
+   "map": 61.229169705177156,
+   "sd_u": 0.09653891761313686,
+   "i68": [
+    59.8736956402568,
+    62.5253404609421
+   ],
+   "i95": [
+    58.51903092401759,
+    63.71216852820456
+   ],
+   "sigma_ratio": 0.16894310582298952,
+   "prior_centre": 45.0,
+   "range": [
+    10.0,
+    80.0
+   ],
+   "kind": "trait"
+  },
+  "vcmax25": {
+   "map": 30.704382032195657,
+   "sd_u": 0.04253123996456455,
+   "i68": [
+    29.861312780458896,
+    31.57768785493807
+   ],
+   "i95": [
+    29.079939462876368,
+    32.44493695483489
+   ],
+   "sigma_ratio": 0.05748573870749389,
+   "prior_centre": 41.00812154770578,
+   "range": [
+    10.0,
+    150.0
+   ],
+   "kind": "trait"
+  },
+  "stomatal_g1": {
+   "map": 3.3341541696548784,
+   "sd_u": 0.08865788529232019,
+   "i68": [
+    3.094134590251545,
+    3.5900560364967937
+   ],
+   "i95": [
+    2.878685773661132,
+    3.8504405719334773
+   ],
+   "sigma_ratio": 0.15074798511275486,
+   "prior_centre": 2.7973768351497585,
+   "range": [
+    0.5,
+    15.0
+   ],
+   "kind": "trait"
+  },
+  "stomatal_g0": {
+   "map": 0.0023929421897379705,
+   "sd_u": 0.19266357488629177,
+   "i68": [
+    0.0017255161362007357,
+    0.0033355243777914135
+   ],
+   "i95": [
+    0.0012734565582371243,
+    0.0045841429090773475
+   ],
+   "sigma_ratio": 0.29574951699741175,
+   "prior_centre": 0.01,
+   "range": [
+    0.0001,
+    0.1
+   ],
+   "kind": "trait"
+  },
+  "z0m_ratio": {
+   "map": 0.051404441801078476,
+   "sd_u": 0.06573523156111866,
+   "i68": [
+    0.049617795148522506,
+    0.053284537809466764
+   ],
+   "i95": [
+    0.047987542408856186,
+    0.05518026426162066
+   ],
+   "sigma_ratio": 0.10975435983865346,
+   "prior_centre": 0.13,
+   "range": [
+    0.02,
+    0.3
+   ],
+   "kind": "effective"
+  },
+  "wstress_sref_stomata": {
+   "map": 0.8580802191828049,
+   "sd_u": 0.13536397249843315,
+   "i68": [
+    0.7354421904096287,
+    1.0025630922411064
+   ],
+   "i95": [
+    0.6358690865023078,
+    1.1641002401023297
+   ],
+   "sigma_ratio": 0.20245876919544026,
+   "prior_centre": 2.0,
+   "range": [
+    0.1,
+    10.0
+   ],
+   "kind": "effective"
+  },
+  "stomata_psi_onset": {
+   "map": -0.13807501528028165,
+   "sd_u": 0.6701037944286595,
+   "i68": [
+    -0.26292936181322535,
+    -0.07161257770584228
+   ],
+   "i95": [
+    -0.4776152840704002,
+    -0.03789387596081362
+   ],
+   "sigma_ratio": 0.9518210256569246,
+   "prior_centre": -0.857143,
+   "range": [
+    -5.0,
+    0.0
+   ],
+   "kind": "trait"
+  },
+  "kappa": {
+   "map": 0.7652904466697507,
+   "sd_u": 0.263627178161134,
+   "i68": [
+    0.7267363946892429,
+    0.8017061929338558
+   ],
+   "i95": [
+    0.688850343711245,
+    0.8337593252799929
+   ],
+   "sigma_ratio": 0.3844563014849871,
+   "prior_centre": 0.65,
+   "range": [
+    0.4,
+    1.0
+   ],
+   "kind": "observation"
+  }
+ },
  "sigma_ratio": {
-  "leaf_reflect_nir": 0.3116583881910086,
-  "leaf_transmit_nir": 0.7964006983960987,
-  "leaf_clumping": 0.9995675890318209,
-  "leaf_angle_mean": 0.19006260460415475,
-  "vcmax25": 0.9982097187601244,
-  "stomatal_g1": 0.9839540483061029,
-  "stomatal_g0": 0.049592667788296435,
-  "z0m_ratio": 0.20021870730752703,
-  "leaf_width": 0.12869954329967156,
-  "dsl_dmax": 0.9976608975623079,
-  "dewmx": 0.1581668062059955,
-  "rd_vcmax_ratio": 0.959499768841448
+  "leaf_reflect_nir": 0.11192542320582392,
+  "leaf_angle_mean": 0.16894310582298952,
+  "vcmax25": 0.05748573870749389,
+  "stomatal_g1": 0.15074798511275486,
+  "stomatal_g0": 0.29574951699741175,
+  "z0m_ratio": 0.10975435983865346,
+  "wstress_sref_stomata": 0.20245876919544026,
+  "stomata_psi_onset": 0.9518210256569246,
+  "kappa": 0.3844563014849871
+ },
+ "unconverged_sd": {
+  "leaf_reflect_nir": -0.22012028731755456,
+  "leaf_angle_mean": -0.3026057210044527,
+  "vcmax25": -0.05561016025403628,
+  "stomatal_g1": -0.3938511344512461,
+  "stomatal_g0": 0.4685621803950283,
+  "z0m_ratio": -0.5193739244180917,
+  "wstress_sref_stomata": -1.1359998242953455,
+  "stomata_psi_onset": -0.07969790045596077,
+  "kappa": -0.12845694210665098
  },
  "linearity": [
   {
-   "direction": 11,
-   "sigma_u": 1.831053797897416,
-   "predicted": 1.0024852962238506,
-   "delta_phi_plus": 8.050305720946199,
-   "delta_phi_minus": -0.490090205843444,
-   "ratio_plus": 8.030347927565613,
-   "ratio_minus": -0.4888752061396908,
+   "direction": 8,
+   "sigma_u": 0.6749718187017189,
+   "predicted": 0.9999999999999951,
+   "delta_phi_plus": 4.294096672661908,
+   "delta_phi_minus": 3.0406447466884856,
+   "ratio_plus": 4.294096672661929,
+   "ratio_minus": 3.0406447466885003,
+   "curvature_ratio": 3.6673707096752146,
+   "slope_ratio": 0.6267259629867146,
    "local_only": true,
    "loadings": {
-    "leaf_reflect_nir": 0.00023680297082275583,
-    "leaf_transmit_nir": -0.0008323781946855772,
-    "leaf_clumping": 0.9950483306364519,
-    "leaf_angle_mean": 0.0008796960552206322,
-    "vcmax25": -0.05153223384167818,
-    "stomatal_g1": 0.03298798491403127,
-    "stomatal_g0": 0.00023896845943286875,
-    "z0m_ratio": 8.856864753146895e-05,
-    "leaf_width": -0.0006606694447994448,
-    "dsl_dmax": 0.07817990616618316,
-    "dewmx": 2.875827907430459e-05,
-    "rd_vcmax_ratio": 0.0045736900109254125
+    "leaf_reflect_nir": -0.0019625793950470483,
+    "leaf_angle_mean": -0.004223552887508636,
+    "vcmax25": -0.0019038541403507314,
+    "stomatal_g1": 0.11405350146824737,
+    "stomatal_g0": 0.01585972381887145,
+    "z0m_ratio": 0.0008282327519754562,
+    "wstress_sref_stomata": -0.03123260878482661,
+    "stomata_psi_onset": 0.9927403628098396,
+    "kappa": 0.014330506374505579
    }
   },
   {
-   "direction": 10,
-   "sigma_u": 1.8292334268358446,
-   "predicted": 1.007176254120833,
-   "delta_phi_plus": 0.1030234554054914,
-   "delta_phi_minus": 8.257719444223767,
-   "ratio_plus": 0.10228940067239858,
-   "ratio_minus": 8.198882182177691,
-   "local_only": true,
+   "direction": 7,
+   "sigma_u": 0.26782141066681747,
+   "predicted": 1.0000000000000013,
+   "delta_phi_plus": 1.014487434646071,
+   "delta_phi_minus": 1.3116416363636745,
+   "ratio_plus": 1.0144874346460697,
+   "ratio_minus": 1.3116416363636727,
+   "curvature_ratio": 1.1630645355048712,
+   "slope_ratio": -0.1485771008588015,
+   "local_only": false,
    "loadings": {
-    "leaf_reflect_nir": -0.005494611321160116,
-    "leaf_transmit_nir": 0.013668158787935432,
-    "leaf_clumping": 0.07107302249640106,
-    "leaf_angle_mean": -0.0028698444037736697,
-    "vcmax25": 0.966195593683979,
-    "stomatal_g1": -0.0915072056241501,
-    "stomatal_g0": -0.0012456743650112556,
-    "z0m_ratio": -0.0002997907386992714,
-    "leaf_width": 0.0005901823173065315,
-    "dsl_dmax": -0.22671031188902005,
-    "dewmx": -0.00039358263557788623,
-    "rd_vcmax_ratio": -0.03763211254020478
+    "leaf_reflect_nir": -0.012684104037293661,
+    "leaf_angle_mean": -0.02628725105049184,
+    "vcmax25": 0.10798308584079144,
+    "stomatal_g1": -0.0806621263433835,
+    "stomatal_g0": 0.1789573473438338,
+    "z0m_ratio": -0.00015830693976781588,
+    "wstress_sref_stomata": 0.0007014042160758423,
+    "stomata_psi_onset": 0.020559397289789224,
+    "kappa": -0.973926296220008
    }
   },
   {
-   "direction": 9,
-   "sigma_u": 1.8284300489455712,
-   "predicted": 1.012814959831851,
-   "delta_phi_plus": 11.18592781605912,
-   "delta_phi_minus": 0.4135936366437818,
-   "ratio_plus": 11.044394346146134,
-   "ratio_minus": 0.40836051307185195,
-   "local_only": true,
+   "direction": 6,
+   "sigma_u": 0.1960015033383595,
+   "predicted": 0.9999999999999996,
+   "delta_phi_plus": 0.46158086905325035,
+   "delta_phi_minus": 0.6657800114771817,
+   "ratio_plus": 0.4615808690532506,
+   "ratio_minus": 0.665780011477182,
+   "curvature_ratio": 0.5636804402652162,
+   "slope_ratio": -0.10209957121196572,
+   "local_only": false,
    "loadings": {
-    "leaf_reflect_nir": 0.006251097636448962,
-    "leaf_transmit_nir": -0.015294311071980982,
-    "leaf_clumping": 0.05707627780407541,
-    "leaf_angle_mean": 0.0035793689635375847,
-    "vcmax25": -0.2067663473994082,
-    "stomatal_g1": 0.21091821175679865,
-    "stomatal_g0": -0.0050411286770356695,
-    "z0m_ratio": 0.0005880138875132621,
-    "leaf_width": 0.0006587650049170016,
-    "dsl_dmax": -0.9532484378159993,
-    "dewmx": -0.002350661573183989,
-    "rd_vcmax_ratio": 0.022436075213203267
+    "leaf_reflect_nir": 0.006534483949759945,
+    "leaf_angle_mean": 0.012584228904457543,
+    "vcmax25": -0.017781657703834258,
+    "stomatal_g1": 0.0986662577085111,
+    "stomatal_g0": -0.9348192769863167,
+    "z0m_ratio": -0.022217397190226532,
+    "wstress_sref_stomata": -0.28638606726604526,
+    "stomata_psi_onset": -0.002724351157749756,
+    "kappa": -0.18259963024338446
    }
   }
  ],
  "bounds": [
   {
-   "key": "leaf_clumping",
-   "theta": 0.9997484765537008,
+   "key": "stomata_psi_onset",
+   "theta": -0.13807501528028165,
    "range": [
-    0.5,
-    1.0
+    -5.0,
+    0.0
    ],
-   "pushed_by": "h"
-  },
-  {
-   "key": "vcmax25",
-   "theta": 25.014594131568327,
-   "range": [
-    25.0,
-    80.0
-   ],
-   "pushed_by": "gpp"
-  },
-  {
-   "key": "stomatal_g1",
-   "theta": 5.970934547992341,
-   "range": [
-    1.5,
-    6.0
-   ],
-   "pushed_by": "h"
-  },
-  {
-   "key": "z0m_ratio",
-   "theta": 0.05614086358716884,
-   "range": [
-    0.05,
-    0.2
-   ],
-   "pushed_by": "ustar"
-  },
-  {
-   "key": "dsl_dmax",
-   "theta": 0.04790442332442379,
-   "range": [
-    0.005,
-    0.05
-   ],
-   "pushed_by": "le"
-  },
-  {
-   "key": "rd_vcmax_ratio",
-   "theta": 0.008155089699468146,
-   "range": [
-    0.008,
-    0.025
-   ],
-   "pushed_by": "nee_night"
+   "pushed_by": "lw_up",
+   "kind": "trait"
   }
  ],
+ "prior_z": {
+  "leaf_reflect_nir": {
+   "z": -3.0449593454101955,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": 0.45,
+   "prior_source": "CLM5 broadleaf evergreen tropical 0.45; measured broadleaf NIR reflectance spans about 0.35-0.55 (+-2 sd). The range is what a leaf can do",
+   "pushed_by": "h"
+  },
+  "leaf_angle_mean": {
+   "z": 1.7570087601395334,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": 45.0,
+   "prior_source": "the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is what a canopy can do",
+   "pushed_by": "albedo"
+  },
+  "vcmax25": {
+   "z": -0.5823925184999986,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": 41.00812154770578,
+   "prior_source": "EEO: the coordination of the Rubisco- and light-limited rates at the site's growing-season daytime climate, with MEDS's own leaf (priors.py; Wang et al. 2017, Smith et al. 2019)",
+   "pushed_by": "h"
+  },
+  "stomatal_g1": {
+   "z": 0.3527869919870113,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": 2.7973768351497585,
+   "prior_source": "EEO: the least-cost optimum at the site's growing-season daytime climate (priors.py; Prentice et al. 2014, Stocker et al. 2020, beta 146)",
+   "pushed_by": "le"
+  },
+  "stomatal_g0": {
+   "z": -1.312355008671195,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": 0.01,
+   "prior_source": "the PFT file's value, a factor e either way: the residual conductance is poorly known",
+   "pushed_by": "lw_up"
+  },
+  "z0m_ratio": {
+   "z": -2.727461616838622,
+   "kind": "effective",
+   "scope": "site",
+   "prior_centre": 0.13,
+   "prior_source": "the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15 (Raupach 1994). Effective: it carries the canopy-air scheme's errors",
+   "pushed_by": "lw_up"
+  },
+  "wstress_sref_stomata": {
+   "z": -1.1283937055325481,
+   "kind": "effective",
+   "scope": "plant_type",
+   "prior_centre": 2.0,
+   "prior_source": "the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across species)",
+   "pushed_by": "le"
+  },
+  "stomata_psi_onset": {
+   "z": 2.820727071020605,
+   "kind": "trait",
+   "scope": "plant_type",
+   "prior_centre": -0.857143,
+   "prior_source": "half the PFT's turgor-loss point (the model's default), +-0.5 MPa",
+   "pushed_by": "lw_up"
+  },
+  "kappa": {
+   "z": 1.1357736419267672,
+   "kind": "observation",
+   "scope": "observation",
+   "prior_centre": 0.65,
+   "prior_source": "best-practice plan \u00a73.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)",
+   "pushed_by": "gpp"
+  }
+ },
  "cost": {
-  "default": 69762.21922006535,
-  "map": 27075.589431451066
+  "start": 17666.046977827238,
+  "map": 5062.172351464952
  },
  "scores_cal": {
-  "default": {
+  "start": {
    "albedo": {
-    "nrmse": 5.989862179934856,
-    "n": 701
+    "nrmse": 5.488361042156004,
+    "n": 1295,
+    "share": 0.3995069058642918
    },
    "lw_up": {
-    "nrmse": 2.0186187252172405,
-    "n": 1896
-   },
-   "rnet": {
-    "nrmse": 1.5575392587182195,
-    "n": 1896
+    "nrmse": 1.58088242208559,
+    "n": 3792,
+    "share": 0.10523162446196263
    },
    "le": {
-    "nrmse": 1.7391462153017705,
-    "n": 1766
+    "nrmse": 1.3222732270450057,
+    "n": 6691,
+    "share": 0.23004670631403068
    },
    "h": {
-    "nrmse": 2.4264762936828093,
-    "n": 1766
-   },
-   "ef": {
-    "nrmse": 3.7473760592590075,
-    "n": 80
+    "nrmse": 3.6387279923696103,
+    "n": 1782,
+    "share": 0.14516781994610303
    },
    "gpp": {
-    "nrmse": 2.6103917275036514,
-    "n": 866
-   },
-   "nee_night": {
-    "nrmse": 1.8551325384724735,
-    "n": 740
+    "nrmse": 1.3066370172931465,
+    "n": 1472,
+    "share": 0.05407226047558636
    },
    "ustar": {
-    "nrmse": 1.9874290958315748,
-    "n": 1766
+    "nrmse": 1.6477953978620343,
+    "n": 1782,
+    "share": 0.0659746829380256
    }
   },
   "map": {
    "albedo": {
-    "nrmse": 1.3917354394717723,
-    "n": 701
+    "nrmse": 0.983488817185133,
+    "n": 1295,
+    "share": 0.08612285212303548
    },
    "lw_up": {
-    "nrmse": 1.8692425126450674,
-    "n": 1896
-   },
-   "rnet": {
-    "nrmse": 1.0929306410680162,
-    "n": 1896
+    "nrmse": 0.9825550453082293,
+    "n": 3792,
+    "share": 0.09202891573741012
    },
    "le": {
-    "nrmse": 1.7554714928114603,
-    "n": 1766
+    "nrmse": 0.9977874448437543,
+    "n": 6691,
+    "share": 0.5689936159909144
    },
    "h": {
-    "nrmse": 2.005231018877349,
-    "n": 1766
-   },
-   "ef": {
-    "nrmse": 2.9004242885434186,
-    "n": 80
+    "nrmse": 1.1813700501790756,
+    "n": 1782,
+    "share": 0.0868396440083808
    },
    "gpp": {
-    "nrmse": 1.4312182117230567,
-    "n": 866
-   },
-   "nee_night": {
-    "nrmse": 1.185761929829879,
-    "n": 740
+    "nrmse": 0.9823224437403627,
+    "n": 1472,
+    "share": 0.133512627502156
    },
    "ustar": {
-    "nrmse": 0.646134721708382,
-    "n": 1766
+    "nrmse": 0.5310890497197325,
+    "n": 1782,
+    "share": 0.032502344638103135
    }
   }
+ },
+ "alternatives": {
+  "gpp_ustar": {
+   "what": "GPP u* >= 0.325 (the fit used 0.4)",
+   "keys": {
+    "leaf_reflect_nir": {
+     "map": 0.3216386660731558,
+     "linear": 0.3220550531314842,
+     "shift_sd": 0.12623364349707158
+    },
+    "leaf_angle_mean": {
+     "map": 61.229169705177156,
+     "linear": 61.43373662831946,
+     "shift_sd": 0.15478907150489055
+    },
+    "vcmax25": {
+     "map": 30.704382032195657,
+     "linear": 30.321286245875555,
+     "shift_sd": -0.4500027304198031
+    },
+    "stomatal_g1": {
+     "map": 3.3341541696548784,
+     "linear": 3.3723710472518786,
+     "shift_sd": 0.1533573931962856
+    },
+    "stomatal_g0": {
+     "map": 0.0023929421897379705,
+     "linear": 0.0023459813051384146,
+     "shift_sd": -0.05998877467451586
+    },
+    "z0m_ratio": {
+     "map": 0.051404441801078476,
+     "linear": 0.051529326343341536,
+     "shift_sd": 0.06801912216091086
+    },
+    "wstress_sref_stomata": {
+     "map": 0.8580802191828049,
+     "linear": 0.8505036703789254,
+     "shift_sd": -0.057176325936220525
+    },
+    "stomata_psi_onset": {
+     "map": -0.13807501528028165,
+     "linear": -0.13613469254012678,
+     "shift_sd": 0.021715069067482967
+    },
+    "kappa": {
+     "map": 0.7652904466697507,
+     "linear": 0.7582902592654137,
+     "shift_sd": -0.18487519073400102
+    }
+   },
+   "worst_shift_sd": 0.4500027304198031
+  },
+  "closure": {
+   "what": "Bowen (H and LE scaled together) against the fit's attribution shares",
+   "keys": {
+    "leaf_reflect_nir": {
+     "map": 0.3216386660731558,
+     "linear": 0.3216114616692471,
+     "shift_sd": -0.008267333112258786,
+     "refit": 0.3210969472137622,
+     "refit_shift_sd": -0.1650914084907029
+    },
+    "leaf_angle_mean": {
+     "map": 61.229169705177156,
+     "linear": 61.021328906984266,
+     "shift_sd": -0.15617557730614756,
+     "refit": 60.71805388239158,
+     "refit_shift_sd": -0.3821494060457943
+    },
+    "vcmax25": {
+     "map": 30.704382032195657,
+     "linear": 25.168216550347697,
+     "shift_sd": -7.363300384709246,
+     "refit": 26.337357513728193,
+     "refit_shift_sd": -5.628366215958233
+    },
+    "stomatal_g1": {
+     "map": 3.3341541696548784,
+     "linear": 4.948899650832262,
+     "shift_sd": 5.569221556178961,
+     "refit": 4.5201109207757515,
+     "refit_shift_sd": 4.228111756744203
+    },
+    "stomatal_g0": {
+     "map": 0.0023929421897379705,
+     "linear": 0.0005469463426515279,
+     "shift_sd": -4.974394079729142,
+     "refit": 0.001023312376018479,
+     "refit_shift_sd": -2.680301151286033
+    },
+    "z0m_ratio": {
+     "map": 0.051404441801078476,
+     "linear": 0.04834281418494661,
+     "shift_sd": -1.7466476443638994,
+     "refit": 0.048173681947647345,
+     "refit_shift_sd": -1.8479190672088788
+    },
+    "wstress_sref_stomata": {
+     "map": 0.8580802191828049,
+     "linear": 0.14731004571257278,
+     "shift_sd": -16.65546576778412,
+     "refit": 0.14533846212335835,
+     "refit_shift_sd": -16.940570837538196
+    },
+    "stomata_psi_onset": {
+     "map": -0.13807501528028165,
+     "linear": -0.0601782067287866,
+     "shift_sd": 1.263060544683011,
+     "refit": -0.10458904578987749,
+     "refit_shift_sd": 0.4247432813932103
+    },
+    "kappa": {
+     "map": 0.7652904466697507,
+     "linear": 0.7915636613466059,
+     "shift_sd": 0.7137749336974363,
+     "refit": 0.7819306085962252,
+     "refit_shift_sd": 0.44791149274923003
+    }
+   },
+   "refit": {
+    "cost": 7347.1983633517475,
+    "iterations": 3
+   },
+   "worst_shift_sd": 16.65546576778412
+  },
+  "partitioning": {
+   "note": "the site TOML declares no daytime partitioning (GPP_DT, RECO_DT)"
+  }
+ },
+ "ratios": {
+  "albedo": {
+   "overall": 0.9785174507056126,
+   "by_local_hour": {
+    "7": 0.865443374834074,
+    "8": 0.9335205137457461,
+    "9": 1.0021132967876463,
+    "10": 0.9947185841952043,
+    "11": 0.98325143094883,
+    "12": 0.9759503430114467,
+    "13": 0.9729559370097605,
+    "14": 0.9879817388239651,
+    "15": 1.005398572609066,
+    "16": 0.9775172574614354
+   },
+   "by_light": {
+    "SW quartile 1": 0.9177243729431362,
+    "SW quartile 2": 0.982966251268613,
+    "SW quartile 3": 1.006419525180474,
+    "SW quartile 4": 1.0165634083865802
+   }
+  },
+  "lw_up": {
+   "overall": 0.9893167811657576,
+   "by_local_hour": {
+    "0": 0.9863890366285314,
+    "1": 0.9861117404827766,
+    "2": 0.9863202628179983,
+    "3": 0.9862543017836738,
+    "4": 0.9858823506033945,
+    "5": 0.9855882409419296,
+    "6": 0.9850935999559844,
+    "7": 0.9823274045321828,
+    "8": 0.982644213876285,
+    "9": 0.985865931205659,
+    "10": 0.9887176825213773,
+    "11": 0.9927316054085412,
+    "12": 0.9951051054709831,
+    "13": 0.9976568482472256,
+    "14": 0.9990390586341226,
+    "15": 0.9985862815645822,
+    "16": 0.9955766888892699,
+    "17": 0.9935899574776109,
+    "18": 0.9916704905249668,
+    "19": 0.9890523255381496,
+    "20": 0.9874992504679793,
+    "21": 0.9863608142704184,
+    "22": 0.9863918843332398,
+    "23": 0.9861174487853631
+   },
+   "by_light": {
+    "SW quartile 2": 0.9868658476456567,
+    "SW quartile 3": 0.9895702978756099,
+    "SW quartile 4": 0.9936499853968426
+   }
+  },
+  "le": {
+   "overall": 0.9063100365428756,
+   "by_local_hour": {
+    "6": 1.5841559012549271,
+    "7": 1.031505998651703,
+    "8": 0.9934838176667482,
+    "9": 0.8740440579526875,
+    "10": 0.8634230186542691,
+    "11": 0.8645247268502038,
+    "12": 0.8635715556227515,
+    "13": 0.8868822323188807,
+    "14": 0.9227041863999881,
+    "15": 0.9450133458981969,
+    "16": 1.0044277188807476,
+    "17": 1.0151005771072386,
+    "18": 0.7685284543782074
+   },
+   "by_light": {
+    "SW quartile 1": 1.058923728799398,
+    "SW quartile 2": 0.9223810803319208,
+    "SW quartile 3": 0.8879704975724404,
+    "SW quartile 4": 0.8926744884070538
+   }
+  },
+  "h": {
+   "overall": 0.8637027870937954,
+   "by_local_hour": {
+    "6": 0.38035543702120306,
+    "7": 0.5786083073843876,
+    "8": 0.5873140521215896,
+    "9": 0.6376301676721923,
+    "10": 0.7008696986010677,
+    "11": 0.7846806175250121,
+    "12": 0.8189535629673442,
+    "13": 0.8608957972757145,
+    "14": 0.9009620066393516,
+    "15": 0.9814165536150368,
+    "16": 1.1497605075681634,
+    "17": 2.385239391622314,
+    "18": -6.505839978795043
+   },
+   "by_light": {
+    "SW quartile 1": 7.121589808064811,
+    "SW quartile 2": 0.9660593083970562,
+    "SW quartile 3": 0.8316369629429942,
+    "SW quartile 4": 0.773219561631283
+   }
+  },
+  "gpp": {
+   "overall": 0.9811825206802655,
+   "by_local_hour": {
+    "6": 0.705421720170304,
+    "7": 1.0386625035370232,
+    "8": 0.9553140165443641,
+    "9": 0.9412563901457135,
+    "10": 0.9659932124390924,
+    "11": 0.9700876235011572,
+    "12": 0.947803453228263,
+    "13": 0.9801897817379674,
+    "14": 0.9958518371542625,
+    "15": 1.040207041174487,
+    "16": 1.0512268815142953,
+    "17": 1.0372236395722112,
+    "18": 0.6341569869002278
+   },
+   "by_light": {
+    "SW quartile 1": 0.9549441333812887,
+    "SW quartile 2": 0.9312337052597247,
+    "SW quartile 3": 0.9506013465367944,
+    "SW quartile 4": 1.068608372198007
+   }
+  },
+  "ustar": {
+   "overall": 0.9344250694563819,
+   "by_local_hour": {
+    "6": 0.9366507371456845,
+    "7": 0.9031204282330133,
+    "8": 0.8765787413431706,
+    "9": 0.8661474382825269,
+    "10": 0.9127724045059805,
+    "11": 0.9331223205623955,
+    "12": 0.9377536737505748,
+    "13": 0.9501304646263663,
+    "14": 0.9488339052703622,
+    "15": 0.9516044904767161,
+    "16": 0.9555595264825459,
+    "17": 0.9777556039661167,
+    "18": 1.0160228619744003
+   },
+   "by_light": {
+    "SW quartile 1": 0.9998578497203807,
+    "SW quartile 2": 0.9524913733729828,
+    "SW quartile 3": 0.9120465703449827,
+    "SW quartile 4": 0.90279914448337
+   }
+  }
+ },
+ "kappa": {
+  "kappa": 0.7652904466697507,
+  "records": 60252,
+  "reco_tower": 3.2757317489014595,
+  "reco_implied": 4.280377160274485,
+  "gpp_tower": 7.541616301640184,
+  "gpp_implied": 8.54626171301321,
+  "gpp_tower_kgc_yr": 2.85856167562429,
+  "gpp_implied_kgc_yr": 3.2393607982100088,
+  "note": "means over the records with GPP and its respiration measured (daytime and night)"
  },
  "scores_val": {
   "default": {
    "albedo": {
-    "nrmse": 5.1250163793689465,
-    "n": 631
-   },
-   "rnet": {
-    "nrmse": 1.6020168582233396,
-    "n": 1892
+    "nrmse": 5.336526446486868,
+    "n": 894,
+    "share": 0.3598744957755021
    },
    "le": {
-    "nrmse": 1.8133667922509769,
-    "n": 1664
+    "nrmse": 1.1297345225363487,
+    "n": 1098,
+    "share": 0.03166452868507189
    },
    "h": {
-    "nrmse": 2.9208951506950216,
-    "n": 1664
-   },
-   "ef": {
-    "nrmse": 4.498429757168957,
-    "n": 77
+    "nrmse": 4.14055601698969,
+    "n": 1098,
+    "share": 0.24805565792088033
    },
    "gpp": {
-    "nrmse": 2.6048908294094684,
-    "n": 821
-   },
-   "nee_night": {
-    "nrmse": 1.5552461977257446,
-    "n": 646
+    "nrmse": 1.9967489520310706,
+    "n": 1363,
+    "share": 0.11853725996574202
    },
    "ustar": {
-    "nrmse": 2.3036365185495806,
-    "n": 1664
+    "nrmse": 1.9141556377460978,
+    "n": 1774,
+    "share": 0.14994817654458498
    },
    "lw_up": {
-    "nrmse": 2.9705213062017353,
-    "n": 948
+    "nrmse": 2.4599977346121094,
+    "n": 682,
+    "share": 0.09191988110821864
    }
   },
   "map": {
    "albedo": {
-    "nrmse": 1.5627036072531817,
-    "n": 631
-   },
-   "rnet": {
-    "nrmse": 1.2895276832999147,
-    "n": 1892
+    "nrmse": 1.3648221659904658,
+    "n": 894,
+    "share": 0.08330272746781008
    },
    "le": {
-    "nrmse": 1.6787560800788015,
-    "n": 1664
+    "nrmse": 1.1527245472319176,
+    "n": 1098,
+    "share": 0.07517305219485616
    },
    "h": {
-    "nrmse": 2.451769932253987,
-    "n": 1664
-   },
-   "ef": {
-    "nrmse": 2.991988999703004,
-    "n": 77
+    "nrmse": 4.1554849695625835,
+    "n": 1098,
+    "share": 0.5407503611443699
    },
    "gpp": {
-    "nrmse": 1.4748545994620457,
-    "n": 821
-   },
-   "nee_night": {
-    "nrmse": 1.0644964456838202,
-    "n": 646
+    "nrmse": 1.2463928657159067,
+    "n": 1363,
+    "share": 0.11466501794891996
    },
    "ustar": {
-    "nrmse": 0.785759175561918,
-    "n": 1664
+    "nrmse": 0.6238297401404728,
+    "n": 1774,
+    "share": 0.03821007911772404
    },
    "lw_up": {
-    "nrmse": 2.7564082075199656,
-    "n": 948
+    "nrmse": 2.023178200378535,
+    "n": 682,
+    "share": 0.14789876212631986
    }
   }
  },
  "cost_val": {
-  "default": 66984.94017173871,
-  "map": 30816.45932913735
+  "default": 40763.232991734854,
+  "map": 17900.13657203806
  },
  "local_only": true,
  "gates": {
+  "G3": {
+   "pass": true,
+   "dead": [],
+   "rough": [],
+   "note": "every fitted key has a non-zero, smooth gradient column (the triage fixes the others)"
+  },
   "G4": {
    "pass": true,
    "nrmse_change": {
-    "albedo": -0.6950831974812927,
-    "rnet": -0.1950598542826697,
-    "le": -0.07423247891568574,
-    "h": -0.1606100850040465,
-    "ef": -0.3348814672642608,
-    "gpp": -0.4338132781570747,
-    "nee_night": -0.3155447367494315,
-    "ustar": -0.658904879639324,
-    "lw_up": -0.07207930077281488
+    "albedo": -0.7442489642510901,
+    "le": 0.020349935526405405,
+    "h": 0.003605542954046914,
+    "gpp": -0.37578889702278806,
+    "ustar": -0.6740966471905978,
+    "lw_up": -0.17756907987659265
    }
   },
   "G5": {
    "pass": true,
    "near_bound": [
     {
-     "key": "leaf_clumping",
-     "theta": 0.9997484765537008,
+     "key": "stomata_psi_onset",
+     "theta": -0.13807501528028165,
      "range": [
-      0.5,
-      1.0
+      -5.0,
+      0.0
      ],
-     "pushed_by": "h"
-    },
-    {
-     "key": "vcmax25",
-     "theta": 25.014594131568327,
-     "range": [
-      25.0,
-      80.0
-     ],
-     "pushed_by": "gpp"
-    },
-    {
-     "key": "stomatal_g1",
-     "theta": 5.970934547992341,
-     "range": [
-      1.5,
-      6.0
-     ],
-     "pushed_by": "h"
-    },
-    {
-     "key": "z0m_ratio",
-     "theta": 0.05614086358716884,
-     "range": [
-      0.05,
-      0.2
-     ],
-     "pushed_by": "ustar"
-    },
-    {
-     "key": "dsl_dmax",
-     "theta": 0.04790442332442379,
-     "range": [
-      0.005,
-      0.05
-     ],
-     "pushed_by": "le"
-    },
-    {
-     "key": "rd_vcmax_ratio",
-     "theta": 0.008155089699468146,
-     "range": [
-      0.008,
-      0.025
-     ],
-     "pushed_by": "nee_night"
+     "pushed_by": "lw_up",
+     "kind": "trait"
     }
-   ]
+   ],
+   "note": "every key near a bound is listed with the target that pushed it"
   },
-  "G3": {
-   "pass": true,
-   "dead": [],
-   "rough": [
-    "intercept_k"
-   ]
+  "G7": {
+   "pass": null,
+   "note": "the full record with the slow tier on: run the calibrated configs (closed budgets; dry-season GPP and LE no worse than the default's)"
   },
-  "G6": {
+  "G10": {
    "pass": true,
-   "spread": 0.0010223392173820914
+   "shift_sd": {
+    "gpp_ustar": 0.4500027304198031,
+    "closure": 16.65546576778412
+   },
+   "refitted": [
+    "closure"
+   ],
+   "note": "every declared alternative's shift is under 1 posterior sd, or its refit is reported"
+  },
+  "G12": {
+   "pass": true,
+   "failed_trials": 0,
+   "note": "no scored output has a NaN: a trial with one fails (trials.finish) and never scores"
+  },
+  "G13": {
+   "pass": false,
+   "flagged": {
+    "leaf_reflect_nir": {
+     "z": -3.0449593454101955,
+     "kind": "trait",
+     "scope": "plant_type",
+     "prior_centre": 0.45,
+     "prior_source": "CLM5 broadleaf evergreen tropical 0.45; measured broadleaf NIR reflectance spans about 0.35-0.55 (+-2 sd). The range is what a leaf can do",
+     "pushed_by": "h"
+    },
+    "stomata_psi_onset": {
+     "z": 2.820727071020605,
+     "kind": "trait",
+     "scope": "plant_type",
+     "prior_centre": -0.857143,
+     "prior_source": "half the PFT's turgor-loss point (the model's default), +-0.5 MPa",
+     "pushed_by": "lw_up"
+    }
+   },
+   "note": "a trait key more than 2 prior sd from its evidence: diagnose it (plan \u00a75.1) or relabel it effective"
   }
  },
  "trials": {
-  "run": 10224,
+  "run": 966,
   "failed": 0,
-  "median_s": 16.494543194770813,
-  "wall_s": 2177.530100107193
+  "median_s": 12.149455189704895,
+  "wall_s": 1442.4742150306702
  }
 }

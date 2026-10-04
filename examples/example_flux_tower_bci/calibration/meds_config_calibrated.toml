@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # CALIBRATED by scripts/calibrate_fast (variant interception_off) from meds_config_eval.toml.
 # Every line is the base file's, comments included, except these keys the fit set
-# (calibrated value, the base file's value):
-#   aerodynamics.z0m_ratio         0.055768  (0.13)
-#   soil.dsl_dmax                  0.0483082  (0.015)
+# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
+# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
+#   aerodynamics.z0m_ratio         0.0516104  (0.13)  EFFECTIVE
+#   leaf_physiology.ds_vcmax       641.129  (650)  KATTGE & KNORR
+#   leaf_physiology.ds_jmax        640.592  (640)  KATTGE & KNORR
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
 #   trait_dynamics.trait_plasticity_on true
 #   fast.canopy_water_on           false
@@ -139,12 +141,13 @@ ea_rd     = 46390.0
 hd_vcmax  = 200000.0
 hd_jmax   = 200000.0
 hd_rd     = 200000.0
-ds_vcmax  = 650.0
-ds_jmax   = 640.0
+ds_vcmax  = 641.129
+ds_jmax   = 640.592
 ds_rd     = 490.0
 o2_mol_frac      = 0.209
 leaf_absorptance = 0.85
-phi_psii         = 0.85
+phi_psii         = 0.74    # the electron yield of linear transport in low light (#351): 0.37 electrons per absorbed
+                           #   photon, the measured maximum CO2 yield 0.093 at 4 electrons per CO2
 
 [site]
 latitude              = 9.1568        # AmeriFlux PA-Bar
@@ -192,7 +195,4 @@ bottom_bc = "dirichlet"
 deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08
 
 [aerodynamics]
-z0m_ratio = 0.055768   # set by calibrate_fast
-
-[soil]
-dsl_dmax = 0.0483082   # set by calibrate_fast
+z0m_ratio = 0.0516104   # set by calibrate_fast

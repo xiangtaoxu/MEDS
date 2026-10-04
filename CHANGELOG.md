@@ -146,6 +146,21 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **The BCI example's calibrated set, refitted by the best-practice protocol** (P7).
+  - **Leaf light use:** the example now uses #351's values, `phi_psii` 0.74 and θ_J 0.7.
+  - **The fit:** 906 trials in 23 minutes on three nodes. The revision's staged fit took 4,804
+    trials and 31.8 core-hours.
+  - **The keys:** `vcmax25` lands at 30.6 µmol m⁻² s⁻¹ inside its EEO prior (41; earlier fits hit
+    the floor of 25). `stomatal_g1` is 3.52 (EEO 2.80). κ is 0.75, which puts the tower's
+    respiration at 4.35 µmol m⁻² s⁻¹, about the soil chambers', and its GPP at 3.26 kgC m⁻² yr⁻¹.
+  - **G13** flags the NIR reflectance (z −3.1) and `stomata_psi_onset` (z +2.6) for a diagnosis.
+  - **Validation errors:** albedo 5.34 → 1.37, GPP 2.09 → 1.25 and u\* 1.92 → 0.63 σ; LE and H
+    unchanged.
+  - **The five-year run** (G7 passes): GPP 10.30 → 8.52 (the tower corrected for κ: 8.61); net
+    radiation 121 → 132 (tower 136) W m⁻²; LE 67.7 → 60.8 and H 68.1 → 81.4 W m⁻². April 2016's GPP
+    is 7.6 against the tower's 6.3 (the v0.3 set gave 4.1).
+  - **Example scripts:** `plot_evaluation.py` reads the tower through its site TOML, and
+    `plot_calibration.py` plots prior z (#364).
 - **`calibrate_fast` runs one joint fit** (best-practice plan P5).
   - **The steps:**
     1. the triage of the first central gradient matrix (dead, rough, uninformed or collinear keys

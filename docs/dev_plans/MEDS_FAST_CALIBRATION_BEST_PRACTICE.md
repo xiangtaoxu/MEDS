@@ -1,7 +1,7 @@
 # MEDS fast calibration: a cross-site protocol
 
 **Status:** revision 4, 2026-10-03. The owner and Claude reviewed it step by step, and every
-decision below is the owner's (§0). Not yet implemented; the phases are in §9.
+decision below is the owner's (§0). Implemented 2026-10-04 in #357–#362 and #364 (§9).
 - **What it replaces:** where the two plans differ from it, `MEDS_FAST_CALIBRATION_PLAN.md` (the
   method, the first fits) and `MEDS_FAST_CALIBRATION_REVISION_PLAN.md` (the staged fit). Their
   history stays in them.
@@ -408,7 +408,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P4 | **done (#360):** keys and priors (`priors.py`): kinds, scope tags, plant-type priors (`[fit].plant_type`), bounds apart, prior z and G13; EEO g1 (2.80 at BCI) and vcmax25 (MEDS's leaf: 41 at phi_psii 0.74, θ_J 0.7); Kattge & Knorr from the growth temperature | small–medium |
 | P5 | **done (#361):** the joint fit with one refresh (chains, weights, σ); one-sided differences with Broyden reuse (full every third step); the final central matrix; the triage; **removed:** the water stage, polish, kernel stages (`stages.py`), G8 and the stage settings | medium; removes code |
 | P6 | **done (#362):** uncertainty: declared alternatives (GPP u\*, closure, partitioning) with the refit rule; structural variants (`variants`); the report (`report.md`: χ²/n, σ scale, model/tower by hour and light, κ's implications, prior z) | small |
-| P7 | BCI: the examples with #351's values, the refit, the full-record run, the README | small; Slurm |
+| P7 | **done (#364):** BCI: the example with #351's values; the refit, both variants (906 and 966 trials, ~24 min on 3 nodes each; `vcmax25` 30.6 inside its EEO prior, κ 0.75, G13 flags the NIR reflectance and `stomata_psi_onset`, the Bowen alternative moves `vcmax25` 15 sd and was refitted); the full-record run (G7 passes); the README. It found the soil-water sub-step cap breach of the 2016 dry season (#363) | small; Slurm |
 
 P0 first; P1–P3 before P5; P7 last. Each phase adds or changes settings with documented defaults, and the tests change with it.
 

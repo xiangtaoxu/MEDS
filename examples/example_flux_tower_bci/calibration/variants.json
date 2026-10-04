@@ -1,0 +1,101 @@
+{
+ "variants": [
+  "interception_off",
+  "interception_on"
+ ],
+ "keys": {
+  "kappa": {
+   "map": {
+    "interception_off": 0.7537390250691822,
+    "interception_on": 0.7652904466697507
+   },
+   "spread_sd": 0.3081620031276657
+  },
+  "leaf_angle_mean": {
+   "map": {
+    "interception_off": 60.76567048897787,
+    "interception_on": 61.229169705177156
+   },
+   "spread_sd": 0.3492267621410896
+  },
+  "leaf_reflect_nir": {
+   "map": {
+    "interception_off": 0.3204176049598744,
+    "interception_on": 0.3216386660731558
+   },
+   "spread_sd": 0.3709987528595838
+  },
+  "stomata_psi_onset": {
+   "map": {
+    "interception_off": -0.15593357829568077,
+    "interception_on": -0.13807501528028165
+   },
+   "spread_sd": 0.18669102241835084
+  },
+  "stomatal_g0": {
+   "map": {
+    "interception_off": 0.002856043612022025,
+    "interception_on": 0.0023929421897379705
+   },
+   "spread_sd": 0.575278325068092
+  },
+  "stomatal_g1": {
+   "map": {
+    "interception_off": 3.524884193990219,
+    "interception_on": 3.3341541696548784
+   },
+   "spread_sd": 0.6304956068591221
+  },
+  "vcmax25": {
+   "map": {
+    "interception_off": 30.60043799056388,
+    "interception_on": 30.704382032195657
+   },
+   "spread_sd": 0.12112042778682126
+  },
+  "wstress_sref_stomata": {
+   "map": {
+    "interception_off": 1.153341896594595,
+    "interception_on": 0.8580802191828049
+   },
+   "spread_sd": 1.6811314179049193
+  },
+  "z0m_ratio": {
+   "map": {
+    "interception_off": 0.05161038747792353,
+    "interception_on": 0.051404441801078476
+   },
+   "spread_sd": 0.10721468269942722
+  }
+ },
+ "cost_val": {
+  "interception_off": {
+   "default": 41156.525880435074,
+   "map": 17781.293280865066
+  },
+  "interception_on": {
+   "default": 40763.232991734854,
+   "map": 17900.13657203806
+  }
+ },
+ "gates": {
+  "interception_off": {
+   "G3": true,
+   "G4": true,
+   "G5": true,
+   "G7": null,
+   "G10": true,
+   "G12": true,
+   "G13": false
+  },
+  "interception_on": {
+   "G3": true,
+   "G4": true,
+   "G5": true,
+   "G7": null,
+   "G10": true,
+   "G12": true,
+   "G13": false
+  }
+ }
+}
