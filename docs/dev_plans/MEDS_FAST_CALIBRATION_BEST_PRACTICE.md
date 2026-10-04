@@ -64,7 +64,7 @@ decision below is the owner's (§0). Not yet implemented; the phases are in §9.
 | L13 | Shape keys absorb a level error. | θ_J, Jmax/Vcmax and `vcmax25` all at their floors in fit 3. | Shape keys fixed (§4.3). |
 | L14 | The Laplace covariance is only local. | Curvature 3–9× the quadratic's. | Three uncertainties side by side (§7.1). |
 | L15 | The harness must prove each trial. | glibc math in Python, refused keys, stale states, idle-node timeouts. | Parameter record, bit-identity, digests (in place). |
-| L16 | A trial can fail without saying so. | 2017 dry season: H 631 W m⁻² under 12 W m⁻² SW, then NaN; "no NaNs" printed. | G12; file the bug. |
+| L16 | A run can fail without saying so. | A storm front on 2017-04-17: NaN u\*, H 500 W m⁻² under 12 W m⁻² SW, yet "no NaNs" printed; still on beta (#352). The model checks only cohort structure, and only at year ends. | The tool fails such a trial (G12, in place); #352. |
 | L17 | The 120-day runs inside the polish were the cost. | 31.8 core-hours, mostly the polish. | Fewer keys, cheaper iterations (§6.3). |
 | L18 | A paraphrased data note gets copied as fact. | "40–50 % below soil chambers" in four files; the provider wrote something else (§3.3). | Quote the provider in the site file; correct the four places (P0). |
 
@@ -293,7 +293,7 @@ A key is fitted only if every answer is yes.
 | neutral move of the forcing to patch tops | #350 |
 | single-slab canopy air; stiff sub-canopy conductance | #269, #265 |
 | Γ\* in Pa; `veg_coupling_floor` in ground units | #342, #349 |
-| the 2017 dry-season blow-up | to file (P0) |
+| the fast loop breaks at a storm front; the model's NaN check misses the fast loop | #352 (still on beta) |
 
 ### 5.3 Structural variants
 
@@ -375,7 +375,7 @@ So the fit should land `vcmax25` near its EEO value (54), not at its floor. The 
 | G5 | keys near a bound are reported with the target that pushed them |
 | G7 | the full record with the slow tier on: closed budgets; dry-season GPP and LE no worse than the default's |
 | G10 | every declared alternative's shift is under 1 posterior sd, or its refit is reported |
-| G12 | no scored output has a NaN |
+| G12 | no scored output has a NaN (the tool's output check, already in place) |
 | G13 | every trait key with \|prior z\| > 2 is diagnosed (§5.1) or relabelled effective |
 
 G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G11 is merged into G5.
@@ -401,7 +401,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 
 | phase | work | size |
 |---|---|---|
-| P0 | correct the misread respiration note (revision plan §1, §6; `site_reference.toml`; BCI `calibration.toml`); file the 2017 dry-season blow-up; G12 | small |
+| P0 | **done:** the misread respiration note corrected (revision plan §1, §6; `site_reference.toml`; BCI `calibration.toml`); the blow-up filed as #352, with a reproducer on beta; G12 found already in place (`trials.py`, `finish`) | small |
 | P1 | the adapter: one site TOML through `tower_inputs.py` (`[fluxes]`, `[provider]`, measured masks, metadata checks); the native interval; `calibrate_fast`'s reader removed; BCI's declarations moved into `bci_site.toml` | medium |
 | P2 | data rules: the u\* diagnostic with bootstrap; daytime-only turbulent targets; albedo rules; coverage-based fixing; window selection and coverage report; the water-deficit index and seasonal runs | medium |
 | P3 | errors: `obs_model` per target (identity, closure, respiration with κ); σ sources and smoothed evaluation; Huber by default; σ scaling at the refresh | medium |
