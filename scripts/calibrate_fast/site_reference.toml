@@ -232,10 +232,15 @@ min_process_records = 48          # a key that acts through one process (the reg
 
 [uncertainty]
 linearity_dirs = 3                # the linearity check: +-1 sd along this many leading directions
-# FREE: an alternative filter for the filter sensitivity (plan §8.5), target -> settings; the MAP's shift under it
-# is estimated from the final Jacobian with no new runs. Empty = no sensitivity.
-#   alternative = { gpp = { ustar_min = 0.3 } }
-alternative = {}
+# The declared alternatives (best-practice plan §7.1), the same at every site: each one's shift of the MAP is first the
+# linear estimate from the final gradient matrix (no new trials); beyond refit_sd posterior sd the fit is rerun from the
+# MAP under it and both MAPs are reported (gate G10).
+#   gpp_ustar     GPP's u* filter: the provider's threshold against the daytime plateau of GPP's own diagnostic
+#   closure       the closure shares: the attribution test's against Bowen
+#   partitioning  the provider's night-time partitioning against its daytime one, where the site TOML declares both
+alternatives   = ["gpp_ustar", "closure", "partitioning"]
+refit_sd       = 1.0
+refit_max_iter = 5
 
 # FREE: model config keys written into the calibrated main TOML (e.g. its output prefix).
 [calibrated]
