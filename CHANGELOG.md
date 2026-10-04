@@ -68,6 +68,20 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **`[leaf_physiology].phi_psii` 0.85 → 0.74 in the reference config, and its meaning.** It is the
+  electron yield of linear transport in low light (J's initial slope is 0.5·phi_psii per absorbed
+  photon), not Fv/Fm. With 0.85 and Aj's 4ci + 8Γ\*, a leaf fixed CO2 at most at 0.106 per absorbed
+  photon, the O2-evolution yield (Björkman & Demmig 1987); measured CO2 fixation is 0.093 (Long et
+  al. 1993), which 0.74 gives. In normal air (30 °C, ci 300 ppm) the leaf's yield goes from 0.064 to
+  0.056, against the measured 0.052 ± 0.003 (Skillman 2008). The examples keep their own values. The
+  Python leaf binding's default follows the reference config (#351).
+- **`theta_j` 0.85/0.90 → 0.70 for the reference C3 PFTs.** Every leaf of a cohort gets the cohort's
+  mean light, and a curve averaged over the light the leaves really see bends more than one leaf's,
+  so a mean-light cohort's effective curvature sits below a leaf's (0.6–0.95 measured, Ögren & Evans
+  1993). 0.7 is CLM5's and ED2's value. At the bend (absorbed light equal to the capacity), J goes from
+  0.76 Jmax (0.9) to 0.65 Jmax. To revisit with sunlit/shaded leaves (#343). The calibration registry
+  holds it fixed at the PFT file's value; the Python leaf binding's default follows. The examples keep
+  their own values (#351).
 - **The canopy films' water capacity is a plant trait** (breaking). `[soil].dewmx`, CLM's
   interception capacity, held only the leaf and wood films. It is replaced by the optional PFT
   traits `leaf_surf_water_max` [kg m⁻² leaf] and `wood_surf_water_max` [kg m⁻² wood], both 0.1 by

@@ -93,9 +93,10 @@ source = "top-of-canopy Vcmax25. The PFT mean and spread of Kattge et al. 2009 (
 file = "pft"
 key = "pft.theta_j"
 range = [0.70, 0.90]
-state = "fit"
+state = "fixed"
 stage = "photosynthesis"
 group = "photosynthesis"
+reason = "held at the PFT file's value (0.7 in the reference PFTs: the effective curvature of a mean-light cohort). A tower cannot tell it from the canopy's light distribution or from the error in its respiration; fit 3 drove it to its floor to absorb the GPP offset. Revisit with sunlit/shaded leaves (#343)"
 prior = { centre = 0.80, sd = 0.05, source = "the curvature of the electron-transport light response: CLM5 0.7, MEDS 0.9 (owner, 2026-10-02)" }
 source = "electron-transport curvature; plan §4.2. It trades with vcmax25: fit it only with a GPP target that samples the light response well"
 
@@ -116,7 +117,7 @@ range = [0.70, 0.88]
 state = "fixed"
 stage = "photosynthesis"
 group = "photosynthesis"
-reason = "the PSII quantum yield (0.85; Bjorkman & Demmig 1987, CLM5). Without a model of the tower GPP's respiration bias, fitting it absorbs that bias rather than the leaf's"
+reason = "the electron yield of linear transport in low light (0.74: 0.37 electrons per absorbed photon, the measured maximum CO2 yield 0.093 of Long et al. 1993 at 4 electrons per CO2). A tower's dim-light GPP cannot tell it from the error in the tower's respiration, so the leaf measurements set it"
 source = "plan §4.2"
 
 [ds_vcmax]

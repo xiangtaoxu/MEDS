@@ -84,7 +84,7 @@ class Params:
     g1: float = 4.0                # stomatal slope (units depend on the model)
     d0: float = 1500.0             # [Pa]         Leuning VPD sensitivity
     quantum_yield: float = 0.0     # [mol CO2/mol photon]  C4 light slope (0 for C3)
-    theta_j: float = 0.85          # [--]  C3 electron-transport curvature (NOT a co-limitation one)
+    theta_j: float = 0.70          # [--]  C3 electron-transport curvature (NOT a co-limitation one; meds_config_pft.toml)
     theta_cj_c3: float = 0.98      # [--]  C3 Ac/Aj co-limitation curvature
     theta_ip_c3: float = 0.95      # [--]  C3 (Ac,Aj)/Ap co-limitation curvature
     theta_cj_c4: float = 0.80      # [--]  C4 co-limitation curvature 1
@@ -111,7 +111,7 @@ class Params:
     ds_rd: float = 490.0
     o2_mol_frac: float = 0.209     # [mol/mol]  ambient O2
     absorptance: float = 0.85      # [--]  leaf PAR absorptance
-    phi_psii: float = 0.85         # [--]  quantum yield of PSII e-transport
+    phi_psii: float = 0.74         # [--]  electron yield of linear transport in low light (meds_config_main.toml)
 
 
 #----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
@@ -225,7 +225,7 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     return C3Rates(**result)
 
 
-def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.85, theta=0.85) -> float:
+def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.74, theta=0.70) -> float:
     """Electron-transport rate J from Jmax and incident PAR (the non-rectangular hyperbola)."""
     return _ffi.electron_transport_j(par, absorptance, phi_psii, jmax, theta)
 

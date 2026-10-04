@@ -339,7 +339,7 @@ def test_select_follows_the_site():
 
 def test_the_registry_menu():
     ps = {p.name: p for p in load_registry(REGISTRY, "interception_off")}
-    assert ps["theta_j"].state == "fit" and ps["phi_psii"].state == "fixed" and ps["ea_vcmax"].state == "optional"
+    assert ps["theta_j"].state == "fixed" and ps["phi_psii"].state == "fixed" and ps["ea_vcmax"].state == "optional"
     assert ps["leaf_clumping"].state == "fixed" and ps["leaf_width"].state == "fixed" and ps["ds_jmax"].state == "fit"
     assert ps["rd_vcmax_ratio"].state == "fixed" and ps["stomatal_g1"].prior["centre"] == 3.77
     assert {p.stage for p in ps.values()} <= {"optics", "photosynthesis", "energy", "water"}
