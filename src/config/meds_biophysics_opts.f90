@@ -58,7 +58,12 @@ module meds_biophysics_opts
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
       real(wp)    :: h_init = 900.0_wp                   !< [s] initial substep
-      integer(ik) :: max_substep = 200_ik
+      !----- The substep cap. A saturated top layer over soil near its residual water content (a
+      !      ponded storm on a dry-season soil) makes the Richards solve stiff: at Barro Colorado
+      !      Island in April 2016 it took up to ~500 sub-steps of a 15-min step, and at 200 the solve
+      !      stopped short, flagged unconverged, with a 6 g m-2 water error each time. The extra
+      !      sub-steps cost time only at such steps. --------------------------------------------!
+      integer(ik) :: max_substep = 2000_ik
       integer(ik) :: max_picard  = 5_ik
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
       real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency
