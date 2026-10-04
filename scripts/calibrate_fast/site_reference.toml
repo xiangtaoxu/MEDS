@@ -134,8 +134,8 @@ min_hours = 6                     # a day counts with at least this many measure
 on        = true
 sigma_abs = 2.5                   # [umol m-2 s-1] Recommended 2.5 for a tower whose GPP is built from ONE respiration
 sigma_rel = 0.15                  #   value per day (GPP = R_day - NEE). Such a respiration can be ~2 umol m-2 s-1 off at
-                                  #   EVERY daytime hour (BCI: reported 40-50 % below soil chambers), on top of the random
-                                  #   error (1.5 + 0.15 GPP). 2.5 + 0.15 GPP is the linear form of sqrt((1.5 + 0.15 GPP)^2
+                                  #   EVERY daytime hour (BCI: about the soil chambers' alone, without the above-ground
+                                  #   part), on top of the random error (1.5 + 0.15 GPP). 2.5 + 0.15 GPP is the linear form of sqrt((1.5 + 0.15 GPP)^2
                                   #   + 2^2): equal at GPP 0, 12 % wider at GPP 20. It down-weights the dim hours, where
                                   #   that error is largest relative to GPP; 1.5 is right for a GPP partitioned by hour.
 ustar_min = 0.4                   # [m s-1] Recommended 0.3-0.4, or the site's plateau value (§3.3 of the plan; printed by

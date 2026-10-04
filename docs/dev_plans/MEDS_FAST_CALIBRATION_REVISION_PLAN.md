@@ -54,7 +54,7 @@ Ten-day wet-season window (2015-09-11), onset build (#341), default parameters u
 | θ_J 0.9 (CLM5: 0.7) | ratio 1.42 at 0.7 | trades with `vcmax25`; optional key (§4) |
 | sunlit/shaded + clumping 1.0 + θ_J 0.7 | ratio 1.16; midday 1.01; dawn and dusk 1.3–1.4 | the left-over excess sits where tower GPP is smallest |
 | Vcmax plasticity | 45·e^(−0.118 L), matching the Panama gradient (top 40–46, understory ~27, as quoted in the diagnosis) | not a fit target |
-| tower GPP = daytime NEE + one respiration value per day | that respiration averages 4.0 µmol m⁻² s⁻¹, 40–50 % below soil chambers per the provider | tower GPP is low by a roughly constant amount, which weighs most in dim light: a larger σ (§6) |
+| tower GPP = daytime NEE + one respiration value per day | that respiration averages 4.0 µmol m⁻² s⁻¹, about what the soil chambers measure for the soil alone; the provider notes it "appeared underestimated", since above-ground respiration "can contribute up to 40-50%" of the total (corrected 2026-10-03: this read "40–50 % below soil chambers") | tower GPP is low by a roughly constant amount, which weighs most in dim light: a larger σ (§6) |
 | low turbulence in the morning | 7 h GPP/PAR +15 % (u* ≥ 0.3), +26 % (u* ≥ 0.5) over FLAG alone; no change from 9 h | a u* filter on GPP (§3) |
 | FLAG | removes every rain half-hour; gap-filled hours share the measured light response | keep FLAG = 1 |
 | energy-balance closure | daily median 0.72; 11 % of days within 0.8–1.2 | no closure-based day mask |
@@ -245,7 +245,7 @@ Weighted least squares, as today, with three changes:
 ```
 
 1. **GPP σ = 2.5 + 0.15·GPP µmol m⁻² s⁻¹** (decisions 1 and 12; was 1.5 + 0.15·GPP).
-   - **Why:** the tower's single daily respiration value is reported 40–50 % low. That is about
+   - **Why:** the tower's single daily respiration value is likely too low: the provider notes it "appeared underestimated" against soil chambers, since above-ground respiration "can contribute up to 40-50%" of the total (corrected 2026-10-03: this read "is reported 40–50 % low"). That is about
      2 µmol m⁻² s⁻¹ at **every** daytime hour, not only in dim light, on top of the random error.
    - **Why this form:** independent errors add in quadrature, √((1.5 + 0.15·GPP)² + 2²). The linear
      form that stands in for it keeps σ_rel and raises σ_abs to 2.5. It equals the quadrature sum at
