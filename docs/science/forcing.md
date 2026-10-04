@@ -349,11 +349,14 @@ e = e_{sat}(T_d)\ \text{(dewpoint)}, \qquad
 e = \mathrm{RH}\cdot e_{sat}(T)\ \text{(relative humidity)} \qquad(10)
 ```
 
-The file carries one total precipitation rate; the model needs rain and snow separately. The split is a
-linear ramp across a 1 K half-width band centred on the triple point (ED2's Jin 1999 form, simplified),
-mass-conserving by construction, on the *interpolated* sub-step air temperature rather than the record
-value — so the phase follows the diurnal cycle within an interval straddling freezing. Each patch redoes
-the split at its canopy-air top (§8, step 2), the temperature the precipitation's enthalpy is valued at.
+The file carries one total precipitation rate, and so does the forcing record; the model needs rain and
+snow separately. The split is made once, where each patch's forcing is filled, at that patch's
+canopy-air top (§8, step 2) — the air the precipitation falls through into the canopy, and the
+temperature its enthalpy is valued at. It is a linear ramp across a 1 K half-width band centred on the
+triple point (ED2's Jin 1999 form, simplified), mass-conserving by construction, on the *interpolated*
+sub-step temperature rather than the record value — so the phase follows the diurnal cycle within an
+interval straddling freezing. The forcing outputs report the split the patches received, area-weighted
+(`rainf_fast`, `snowfall_fast`, `snowfall_site`), beside the total (`precip_fast`, `precip_site`).
 
 ```math
 f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qquad
@@ -407,7 +410,7 @@ L^{\downarrow}_{site} = L^{\downarrow}_{grid}\,\frac{\varepsilon(T_{site},q_{sit
 about 6 % RH per K of warming, 20 % over 500 m. A file's `RHair` is used directly at the site; a
 dewpoint or a specific humidity gives its relative humidity at the cell first. $\varepsilon$ is the clear-sky emissivity of §11
 (`lw_clear_form`); a synthesized longwave is built afterwards from the lapsed $T$ and $q$ instead.
-Wind, shortwave and rain are unchanged, and the rain/snow split (§7) follows the lapsed temperature.
+Wind, shortwave and precipitation are unchanged; the rain/snow split (§7) is made later, at the canopy-air top.
 A region's polygons sit at their cells' own elevations, so there $\Delta z = 0$.
 
 ### Step 2. To the top of each patch's canopy air space
@@ -436,7 +439,7 @@ conserves potential temperature, $\theta = T + (g/c_p)\,z$. The aerodynamics the
 canopy air's potential temperature and this air's to $`z_c`$, where each equals its actual temperature
 ([canopy aerodynamics](canopy_aerodynamics.md) §2). Humidity, pressure, radiation, total precipitation and CO₂ are
 unchanged — pressure stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is
-re-derived. The rain/snow split (11) is redone at $`T(z_c)`$: precipitation enters the canopy there, and
+re-derived. The rain/snow split (11) is made at $`T(z_c)`$: precipitation enters the canopy there, and
 its enthalpy is valued there too (rain as liquid and snow as ice at that temperature, `precip_enthalpy`),
 so phase and enthalpy come from the same air.
 The aerodynamics then runs from $`z_c`$: there is no fixed reference height, and nothing has to clear the

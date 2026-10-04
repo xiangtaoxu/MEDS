@@ -226,10 +226,13 @@ before and after.
   bit-identical; snow sites change at round-off).
 - **The rain/snow split used a different temperature from the precipitation's enthalpy.** The split
   was made once at ingest, at the forcing's height (ERA5-Land's 2 m air, a clearing's), while the
-  enthalpy uses each patch's canopy-air top. Each patch now redoes the split there (`met_to_cas_top`),
-  so phase and enthalpy come from the same air; the total is kept. The ingest split remains for the
-  forcing outputs and for runs without forcing. At freezing, a 30 m canopy top 0.12 K cooler than
+  enthalpy uses each patch's canopy-air top. The forcing record now carries only the total
+  precipitation, and it is split once, where each patch's forcing is filled (`fill_forcing`), at the
+  patch's canopy-air top; the ingest split is gone. At freezing, a 30 m canopy top 0.12 K cooler than
   ERA5-Land's 2 m air turns 6 % of the rain to snow; BCI, never near freezing, is bit-identical.
+  - **Outputs:** `rainf_fast`, `snowfall_fast` and `snowfall_site` report the split the patches
+    received, area-weighted, instead of a split at the forcing's height that the model never used;
+    the new `precip_fast` gives the total at the sub-daily tier, beside `precip_site`.
 - **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
   the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
   check of the soil column: the end-of-run report prints a warning with the count, and

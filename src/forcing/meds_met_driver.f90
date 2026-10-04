@@ -43,7 +43,7 @@ module meds_met_driver
                                co2_series_end, co2_series_free
    use meds_forcing_kernels, only : interpolate_forcing, interpolate_wind_energy,                 &
                                     met_solar_cosz, cosz_reconstruct_factor, disaggregate_sw,     &
-                                    partition_shortwave, precip_phase, clearness_index,           &
+                                    partition_shortwave, clearness_index,                         &
                                     synthesize_lwdown, dewpoint_to_specific_humidity,             &
                                     rh_to_specific_humidity
    use meds_netcdf_c, only : nc_close, nc_check
@@ -297,7 +297,7 @@ contains
       type(met_forcing_t) :: met
       type(met_record_t)  :: mean_rec
       type(meds_time_t)   :: mws
-      real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec, precip_total
+      real(wp) :: now_sec, tprev, tnext, w_next, cosz_now, factor, win_start_sec
       associate (f => src%fcfg, p => cur%rec_prev, n => cur%rec_next)
 
       !----- solar zenith at `now` (UTC -> apparent solar seconds inside met_solar_cosz). ------!
@@ -347,11 +347,9 @@ contains
          !      Rain and shortwave both come from that record, so neither lags the other.              !
          mean_rec = interval_mean_record(src, cur)
 
-         !----- rainfall: the interval's total rate, held across it (never smeared), then split by  !
-         !      phase on the interpolated temperature. That is the split at the forcing's own height;   !
-         !      each patch redoes it at its canopy-air top (met_to_cas_top). -------------------------!
-         precip_total = mean_rec%rainf
-         call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
+         !----- precipitation: the interval's total rate, held across it (never smeared). It stays a  !
+         !      total here; each patch splits it into rain and snow at its canopy-air top.               !
+         met%precip = mean_rec%rainf
 
          !----- shortwave: that interval's mean streams, disaggregated by cosz(now)/<cosz>_win. ----!
          !----- reconstruction factor anchored on the MODEL window start (mws), so <cosz>_win aligns  !

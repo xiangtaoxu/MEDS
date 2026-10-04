@@ -56,8 +56,10 @@ module meds_forcing_types
       real(wp) :: tair_k       = 288.0_wp     !< [K]        air temperature at reference height
       real(wp) :: qair         = 0.008_wp     !< [kg/kg]    specific humidity
       real(wp) :: psurf_pa     = 101325.0_wp  !< [Pa]       surface pressure
-      real(wp) :: rainf        = 0.0_wp       !< [kg/m2/s]  liquid precipitation rate (post phase-split)
-      real(wp) :: snowfall        = 0.0_wp       !< [kg/m2/s]  frozen rainfall
+      !----- TOTAL precipitation. It is split into rain and snow once, where a column's forcing is    !
+      !      filled (meds_fast_dynamics%fill_forcing), at that record's own temperature: each patch's  !
+      !      canopy-air top, the temperature the precipitation's enthalpy is valued at too. -----------!
+      real(wp) :: precip       = 0.0_wp       !< [kg/m2/s]  total precipitation rate
       real(wp) :: wind         = 2.0_wp       !< [m/s]      wind speed at reference height
       !----- The wind VECTOR (§3.1, §5.3), carried beside the speed for a direction-aware consumer.  !
       !      Filled only when the source supplies components (has_wind_vector); aerodynamics reads   !

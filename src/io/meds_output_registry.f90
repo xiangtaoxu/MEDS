@@ -875,8 +875,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_NIR_BEAM)
       call add_variable(reg, 'nir_diffuse_site', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_NIR_DIFFUSE)
-      call add_variable(reg, 'snowfall_site', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_SNOWFALL)
+      call add_variable(reg, 'snowfall_site', 'frozen precipitation (mean rate, split at each patch''s canopy-air top)', &
+                        'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_SNOWFALL)
       call add_variable(reg, 'atm_co2_site', 'free-atmosphere CO2 (forcing)', 'umol/mol',         &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, DAY_MON_YR, FLD_PY_DIAG0 + PY_CO2)
       call add_variable(reg, 'cosz_site', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
@@ -909,10 +909,12 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_NIR_BEAM)
       call add_variable(reg, 'nir_diffuse_fast', 'diffuse NIR at canopy top (forcing)', 'W/m2',   &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_NIR_DIFFUSE)
-      call add_variable(reg, 'rainf_fast', 'liquid precipitation (mean rate, forcing)', 'kg/m2/s', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_RAINF)
-      call add_variable(reg, 'snowfall_fast', 'frozen precipitation (mean rate, forcing)', 'kg/m2/s', &
-                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_SNOWFALL)
+      call add_variable(reg, 'precip_fast', 'total precipitation (mean rate, forcing)', 'kg/m2/s', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_PRECIP)
+      call add_variable(reg, 'rainf_fast', 'liquid precipitation (mean rate, split at each patch''s canopy-air top)', &
+                        'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_RAINF)
+      call add_variable(reg, 'snowfall_fast', 'frozen precipitation (mean rate, split at each patch''s canopy-air top)', &
+                        'kg/m2/s', DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_SNOWFALL)
       call add_variable(reg, 'cosz_fast', 'cosine of the solar zenith angle (0 with the sun down)', '1', &
                         DIM_SCALAR, AGG_TMEAN, GRP_FORCING, FAST_ONLY, SRC_F_PY0 + PY_COSZ)
       call add_variable(reg, 'rho_air_fast', 'air density at the forcing''s own height', 'kg/m3',     &

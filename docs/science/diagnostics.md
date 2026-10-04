@@ -235,12 +235,13 @@ Resolution order — later wins:
 by default; `radiation` and `ecophys` off. `forcing` is the atmospheric boundary the run used, after
 the reader's shortwave partition, rain/snow split and optional corrections: site means at the daily,
 monthly and yearly tiers (`air_temp_site`, `qair_site`, `psurf_site`, `wind_site`, `lwdown_site`,
-the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `snowfall_site`, `atm_co2_site`,
-`cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins, and three patch rows at the daily and
+the four shortwave streams `par_beam_site` … `nir_diffuse_site`, `precip_site`, `snowfall_site`,
+`atm_co2_site`, `cosz_site`, `rho_air_site`) and their sub-daily `*_fast` twins (with `rainf_fast`; rain
+and snow are the split each patch made at its canopy-air top, area-weighted), and three patch rows at the daily and
 monthly tiers: the forcing each patch saw at its canopy-air top, `wind_cas_top_patch` and
 `air_temp_cas_top_patch`, and that top's height `cas_depth_patch` (with `rough_patch` and
 `displace_patch`, in `energy`, the move can be rebuilt; [`forcing.md`](forcing.md) §8). With `sw_in_*`
-and `precip_site`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
+and `precip_*`, it is what checks the sub-daily reconstruction against a tower. `ecophys` is the per-cohort leaf gas-exchange and hydraulics set —
 by far the highest-volume group and the one a production run most often wants off.
 
 `numerics` defaults **on** because it carries the energy and water budget residuals. A closure

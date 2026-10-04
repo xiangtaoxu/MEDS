@@ -647,7 +647,7 @@ contains
       real(wp), parameter :: ZC = 30.0_wp, D = 15.75_wp, Z0 = 3.25_wp, GC = grav / cp_air
       type(forcing_config_t) :: f
       type(met_forcing_t)    :: m, top
-      real(wp) :: fac, rain_top, snow_top
+      real(wp) :: fac, rain_top, snow_top, rain_ref, snow_ref
       print '(a)', '-- test: forcing to the canopy-air top --'
       !----- ERA5-Land: open-terrain 10 m wind, heights above the zero plane. -------------------!
       f%tq_height = 2.0_wp ; f%wind_height = 10.0_wp ; f%height_above = HEIGHT_ABOVE_ZERO_PLANE
@@ -685,14 +685,16 @@ contains
       call check('record: pressure stays at the ground', top%psurf_pa, 98000.0_wp, 1.0e-12_wp)
       call check('record: shortwave unchanged', top%swdown(), m%swdown(), 1.0e-12_wp)
       call check('record: air density re-derived', top%rho_air, air_density(top%tair_k, 98000.0_wp, 0.009_wp), 1.0e-12_wp)
-      !----- The rain/snow split is redone at the canopy-air top: at freezing, the cooler top air turns  !
-      !      some of the reference rain to snow, and the total is kept. ---------------------------------!
-      m%tair_k = t_3ple ; call precip_phase(1.0e-3_wp, m%tair_k, m%rainf, m%snowfall)
+      !----- The record carries total precipitation, unchanged by the move; the rain/snow split is made  !
+      !      from the moved temperature where the column's forcing is filled. At freezing, the cooler top  !
+      !      air turns some of the rain to snow. ---------------------------------------------------------!
+      m%tair_k = t_3ple ; m%precip = 1.0e-3_wp
       top = met_to_cas_top(m, f, ZC, D, Z0)
-      call precip_phase(1.0e-3_wp, top%tair_k, rain_top, snow_top)
-      call check('record: total precipitation kept', top%rainf + top%snowfall, 1.0e-3_wp, 1.0e-15_wp)
-      call check('record: phase split at the canopy-air top', top%snowfall, snow_top, 1.0e-15_wp)
-      call check_true('record: the cooler top air turns some rain to snow', top%snowfall > m%snowfall, top%snowfall - m%snowfall)
+      call check('record: total precipitation unchanged', top%precip, 1.0e-3_wp, 1.0e-15_wp)
+      call precip_phase(m%precip, m%tair_k, rain_ref, snow_ref)
+      call precip_phase(top%precip, top%tair_k, rain_top, snow_top)
+      call check_true('record: at freezing, the cooler top air turns some rain to snow', snow_top > snow_ref, &
+                      snow_top - snow_ref)
    end subroutine test_cas_top
 
    !----- Multi-year CALENDAR recycling + Feb-29 reconciliation (whole-year daily file). ----------!
