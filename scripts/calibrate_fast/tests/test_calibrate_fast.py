@@ -941,3 +941,15 @@ def test_the_variants_side_by_side(tmp_path, capsys):
     out = json.loads((tmp_path / "variants.json").read_text())
     assert out["keys"]["stomatal_g1"]["spread_sd"] == pytest.approx(2.0)   # 0.3 apart, sd 0.15
     assert "stomatal_g1" in capsys.readouterr().out
+
+def test_a_true_false_setting_from_the_parameter_record():
+    """The record holds a logical as text: "false" must read as false (it once switched off the
+    Kattge & Knorr values, as if the model's own acclimation were on)."""
+    site = CF.Site.__new__(CF.Site)
+    site.base = RunConfig({"leaf_physiology": {}}, {"pft": {}})
+    rec = {("main", "leaf_physiology.thermal_acclimation", 0): (False, "false")}
+    assert site.flag("leaf_physiology.thermal_acclimation", rec) is False
+    rec = {("main", "leaf_physiology.thermal_acclimation", 0): (True, "true")}
+    assert site.flag("leaf_physiology.thermal_acclimation", rec) is True
+    site.base = RunConfig({"leaf_physiology": {"thermal_acclimation": True}}, {"pft": {}})
+    assert site.flag("leaf_physiology.thermal_acclimation", None) is True
