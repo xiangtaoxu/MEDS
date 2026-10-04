@@ -93,9 +93,10 @@ source = "top-of-canopy Vcmax25. The PFT mean and spread of Kattge et al. 2009 (
 file = "pft"
 key = "pft.theta_j"
 range = [0.70, 0.90]
-state = "fit"
+state = "fixed"
 stage = "photosynthesis"
 group = "photosynthesis"
+reason = "held at the PFT file's value (0.7 in the reference PFTs: the effective curvature of a mean-light cohort). A tower cannot tell it from the canopy's light distribution or from the error in its respiration; fit 3 drove it to its floor to absorb the GPP offset. Revisit with sunlit/shaded leaves (#343)"
 prior = { centre = 0.80, sd = 0.05, source = "the curvature of the electron-transport light response: CLM5 0.7, MEDS 0.9 (owner, 2026-10-02)" }
 source = "electron-transport curvature; plan §4.2. It trades with vcmax25: fit it only with a GPP target that samples the light response well"
 
