@@ -158,14 +158,20 @@ contains
       call soil_energy_step_implicit(se, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
-      !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: theta is PASSED THROUGH (held at the   !
-      !      stage input = theta^n) and the AUTHORITATIVE end-of-step theta is committed once, from the     !
-      !      scratch advance_soil_water_column (frozen%hydrology%theta1), in column_fast_step_ark. Re-solving it here with a !
-      !      relief-free single-BE Richards drifted to saturation over long wet runs (no ponding/runoff),   !
-      !      then hung the next scratch solve; the robust ponding/runoff/free-drain solve is the SOLE       !
-      !      soil-water authority now (the ED2 "single soil-water authority" principle). theta feeds only   !
-      !      the t_ground diagnosis + the soil-energy thermal property above, both correctly at theta^n. ---!
-      y_out%theta(1:nsl) = y%theta(1:nsl)
+      !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: the AUTHORITATIVE end-of-step theta is !
+      !      committed once, from the scratch advance_soil_water_column (frozen%hydrology%theta1), in        !
+      !      column_fast_step_ark. Re-solving it here with a relief-free single-BE Richards drifted to        !
+      !      saturation over long wet runs (no ponding/runoff), then hung the next scratch solve; the robust  !
+      !      ponding/runoff/free-drain solve is the SOLE soil-water authority (the ED2 "single soil-water     !
+      !      authority" principle).                                                                          !
+      !                                                                                                      !
+      !      The stages move theta at that solve's steady rate rather than holding it at theta^n. The energy  !
+      !      step above carries the enthalpy of the water the faces move, at the same steady rates; with the !
+      !      water held back, the next stage read that enthalpy as heat in a dry layer: during heavy rain the !
+      !      top layer read tens of kelvin too warm late in a step (up to ~50 K at BCI, 2017), and the next   !
+      !      stage's ground skin saw it. A steady rate is integrated exactly by both the step and its error  !
+      !      estimate, so theta adds nothing to the error, and the step ends at theta1.                       !
+      y_out%theta(1:nsl) = y%theta(1:nsl) + dt * frozen%hydrology%theta_rate(1:nsl)
 
       !----- pond PASSED THROUGH. y_out is intent(out), so without this it would default-initialise !
       !      to 0 rather than carry state^n -- harmless today (nothing reads it in a stage and it is   !

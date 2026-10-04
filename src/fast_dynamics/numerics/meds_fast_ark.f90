@@ -17,7 +17,8 @@
 ! Nothing outside this module imports `meds_fast_ark` except the dispatcher and the RHS test.   !
 !                                                                                          !
 ! Soil water is committed ONCE per dt_fast from the scratch advance_soil_water_column solve (the ARK   !
-! stages pass theta through); the pond is carried in column_state_t but committed the same way.    !
+! stages move theta at that solve's steady rate); the pond is carried in column_state_t but committed !
+! the same way.                                                                                      !
 ! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !
 ! aquifer); see meds_budget_check and the ledgers at the end of column_fast_step_ark.              !
 !==========================================================================================!
@@ -418,8 +419,8 @@ contains
       !      solve on every ARK attempt. --------------------------------------------------------------!
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
-      !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
-      !      commit the AUTHORITATIVE end-of-step theta from the scratch advance_soil_water_column HERE, once,  !
+      !----- SOIL WATER is operator-split out: the ESDIRK stages only moved theta at the scratch solve's    !
+      !      steady rate; commit the AUTHORITATIVE end-of-step theta from that solve HERE, once,               !
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = frozen%hydrology%theta1(1:nsl)
@@ -511,6 +512,10 @@ contains
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)
       end do
+      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
+      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
+      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
+      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
       !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !

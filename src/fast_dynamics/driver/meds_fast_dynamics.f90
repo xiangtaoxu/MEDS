@@ -46,6 +46,7 @@ module meds_fast_dynamics
                                  root_available_water
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
+   use meds_forcing_kernels,  only : precip_phase
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
    use meds_canopy_aerodynamics, only : canopy_roughness
@@ -106,7 +107,12 @@ module meds_fast_dynamics
    integer(ik), parameter :: RED_PHENO_SOILT   = 14_ik   !< shallow soil temperature [K]   (cold-drop trigger)
    integer(ik), parameter :: RED_PHENO_SWATER  = 15_ik   !< root-weighted available water [-] (CUE_WATER)
    integer(ik), parameter :: RED_PHENO_RAD     = 16_ik   !< incident shortwave [W/m2]      (CUE_LIGHT)
-   integer(ik), parameter :: N_RED             = 16_ik
+   !----- The rain and snow each patch received, split at its canopy-air top (fill_forcing), area-  !
+   !      weighted: the forcing outputs report the split the model used, not one at the forcing's     !
+   !      own height. --------------------------------------------------------------------------------!
+   integer(ik), parameter :: RED_RAINF         = 17_ik   !< rain [kg/m2/s]
+   integer(ik), parameter :: RED_SNOWFALL      = 18_ik   !< snow [kg/m2/s]
+   integer(ik), parameter :: N_RED             = 18_ik
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -121,8 +127,7 @@ module meds_fast_dynamics
       real(wp) :: co2_atm  = 400.0_wp               !< [umol/mol] free-atmosphere CO2
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
-      real(wp) :: rainfall        = 0.0_wp            !< [kg/m2/s] ground-reaching rainfall
-      real(wp) :: snowfall         = 0.0_wp            !< [kg/m2/s] frozen rainfall (snowfall)
+      real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
       real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       !----- Threads for this polygon's patch loop: [run].n_threads in a site run, 1 in a region,   !
@@ -345,6 +350,7 @@ contains
       real(wp)    :: prow(N_PDIAG)                !< the patch block's row for one (patch, sub-step)
       real(wp)    :: z_top, rough_p, displace_p   !< [m] this patch's canopy-air top, roughness, displacement
       integer(ik) :: j, i, i0, ncoh, ith, kb
+      real(wp)    :: rain_s, snow_s, echo(N_PYDIAG)   !< the forcing echo's precipitation split, per sub-step
 
       !----- Live forcing drives the fast loop only when it is ON and a reader + step time are    !
       !      supplied; otherwise every sub-step reads the context's constant reference climate      !
@@ -477,25 +483,6 @@ contains
       if (do_fast) then
          do isub = 1_ik, nsub
             out_bufs%fast_time(isub) = time_advance_seconds(step_start, real(isub - 1_ik, wp) * cfg%dt_fast)
-         end do
-      end if
-      !----- The FAST tier's forcing echo (§6.7) is the sub-step's own sample: site-uniform, so it  !
-      !      is staged here, exactly, rather than area-summed over patches like the fluxes below, and  !
-      !      in the same table the polygon block keeps (forcing_echo). -------------------------------!
-      if (do_fast) then
-         do isub = 1_ik, nsub
-            call forcing_echo(met_sample(isub), out_bufs%fast_forcing(:, isub))
-         end do
-      end if
-      !----- The polygon's forcing (PY_*, §6.7), once per sub-step: the same everywhere in the     !
-      !      polygon, so it is not kept per patch. The reference climate stands in without a source. !
-      if (site%diag%active) then
-         do isub = 1_ik, nsub
-            if (do_forcing) then
-               call accumulate_polygon_diag(site%diag, cfg%dt_fast, met_sample(isub))
-            else
-               call accumulate_polygon_diag(site%diag, cfg%dt_fast, met_ref)
-            end if
          end do
       end if
 
@@ -634,6 +621,8 @@ contains
             !----- Accumulate the sub-step air temperature for the daily-mean phenology driver. ------!
             red_site(RED_PHENO_TAIR, isub, ip) = met%tair_k
             call fill_forcing(forc, col_cohort, met_top, sw_ground, sum_lai)
+            red_site(RED_RAINF,    isub, ip) = site%patch%area(ip) * forc%rainfall
+            red_site(RED_SNOWFALL, isub, ip) = site%patch%area(ip) * forc%snowfall
             !----- RT join (§6.3): when forcing is on, REPLACE the LAI-share SW split with real     !
             !      per-cohort absorbed SW/PAR from the two-stream canopy radiation. ----------------!
             !----- LW emission base = the CAS temperature: the leaf energy balance linearizes leaf LW  !
@@ -879,6 +868,26 @@ contains
             end do
          end do
       end if
+      !----- The forcing echo (PY_*, §6.7), once per sub-step: the sub-step's sample (the reference  !
+      !      climate without a source) with its precipitation split as the patches received it, at    !
+      !      their canopy-air tops, area-summed in patch order. The FAST tier stages it as is and the  !
+      !      polygon block accumulates it for the daily, monthly and yearly tiers. -------------------!
+      if (do_fast .or. site%diag%active) then
+         do isub = 1_ik, nsub
+            rain_s = 0.0_wp ; snow_s = 0.0_wp
+            do ip = 1_ik, npatch
+               rain_s = rain_s + red_site(RED_RAINF,    isub, ip)
+               snow_s = snow_s + red_site(RED_SNOWFALL, isub, ip)
+            end do
+            if (do_forcing) then
+               call forcing_echo(met_sample(isub), rain_s, snow_s, echo)
+            else
+               call forcing_echo(met_ref, rain_s, snow_s, echo)
+            end if
+            if (do_fast) out_bufs%fast_forcing(:, isub) = echo
+            if (site%diag%active) call accumulate_polygon_diag(site%diag, cfg%dt_fast, echo)
+         end do
+      end if
 
       if (present(worst_energy)) then
          worst_energy = 0.0_wp
@@ -966,8 +975,10 @@ contains
       forc%co2_atm       = met%co2
       forc%abs_sw_ground = sw_ground
       forc%abs_lw_ground = 0.0_wp
-      forc%rainfall        = met%rainf
-      forc%snowfall         = met%snowfall                 ! frozen rainfall -> snow accumulation
+      !----- The ONE rain/snow split: the record's total, at the record's own temperature -- with a    !
+      !      forcing source, the patch's canopy-air top (met_to_cas_top), where the precipitation's      !
+      !      enthalpy is valued too (precip_enthalpy, forc%air_temp below). -----------------------------!
+      call precip_phase(met%precip, met%tair_k, forc%rainfall, forc%snowfall)
       forc%air_temp          = met%tair_k                ! rainfall enthalpy reference (snow/rain-on-snow)
       forc%par_per_w     = 2.1_wp                    ! LAI-split path: total-SW->PAR blend (abs_par == abs_sw)
       !----- NO-FORCING FALLBACK: split the canopy-top shortwave across cohorts by LAI share.   !
@@ -993,7 +1004,7 @@ contains
       type(met_forcing_t) :: met
       met%tair_k   = ctx%air_temp ; met%qair = ctx%shv_atm ; met%psurf_pa = ctx%press
       met%rho_air  = ctx%rho_air  ; met%co2  = ctx%co2_atm ; met%wind     = ctx%u_ref
-      met%rainf    = ctx%rainfall ; met%snowfall = ctx%snowfall
+      met%precip   = ctx%precip
       met%par_beam = ctx%rad_sw_top
       met%par_diffuse = 0.0_wp ; met%nir_beam = 0.0_wp ; met%nir_diffuse = 0.0_wp
    end function reference_met
@@ -1267,12 +1278,10 @@ contains
 
    !----- The polygon's forcing for one sub-step (MEDS_FORCING_DESIGN.md §6.7), as the fast loop  !
    !      used it: after the reader's shortwave partition, phase split and optional corrections. --!
-   subroutine accumulate_polygon_diag(d, dt, met)
+   subroutine accumulate_polygon_diag(d, dt, f)
       type(polygon_diag_block), intent(inout) :: d
       real(wp),                 intent(in)    :: dt     !< [s] sample weight
-      type(met_forcing_t),      intent(in)    :: met
-      real(wp) :: f(N_PYDIAG)
-      call forcing_echo(met, f)
+      real(wp),                 intent(in)    :: f(N_PYDIAG)   !< the sub-step's forcing echo
       d%v = d%v + f * dt
       d%w = d%w + dt
    end subroutine accumulate_polygon_diag
@@ -1280,11 +1289,12 @@ contains
    !----- The forcing one sub-step used, in the polygon block's table (PY_*): the one list of the  !
    !      forcing echo, which the coarse tiers accumulate (accumulate_polygon_diag) and the FAST    !
    !      tier stages as it is. -------------------------------------------------------------------!
-   pure subroutine forcing_echo(met, f)
+   pure subroutine forcing_echo(met, rainf, snowfall, f)
       type(met_forcing_t), intent(in)  :: met
+      real(wp),            intent(in)  :: rainf, snowfall   !< [kg/m2/s] the split the patches used, area-weighted
       real(wp),            intent(out) :: f(N_PYDIAG)
       f(PY_SW_IN)       = met%swdown()
-      f(PY_PRECIP)      = met%rainf + met%snowfall
+      f(PY_PRECIP)      = met%precip
       f(PY_TAIR)        = met%tair_k
       f(PY_QAIR)        = met%qair
       f(PY_PSURF)       = met%psurf_pa
@@ -1294,11 +1304,11 @@ contains
       f(PY_PAR_DIFFUSE) = met%par_diffuse
       f(PY_NIR_BEAM)    = met%nir_beam
       f(PY_NIR_DIFFUSE) = met%nir_diffuse
-      f(PY_SNOWFALL)    = met%snowfall
+      f(PY_SNOWFALL)    = snowfall
       f(PY_CO2)         = met%co2
       f(PY_COSZ)        = met%cosz
       f(PY_RHO_AIR)     = met%rho_air
-      f(PY_RAINF)       = met%rainf
+      f(PY_RAINF)       = rainf
    end subroutine forcing_echo
 
 end module meds_fast_dynamics

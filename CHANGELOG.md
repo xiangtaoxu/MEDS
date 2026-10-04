@@ -167,6 +167,81 @@ before and after.
   - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
+- **The fast loop blew up when heavy rain hit dry soil** (#352). The ARK integrator takes each
+  step's soil water from a separate soil-water solve, and that solve went wrong at rain onset.
+  - **The cause:** after each linear solve, the solver recomputed the flows between layers with the
+    conductivity at the NEW water potentials. A top layer dried near residual holds almost no water
+    per metre of potential, so 30 mm/h of rain lifts its potential by hundreds of metres to
+    saturation within one sub-step. The saturated conductivity times that gradient drained the layer
+    *below residual* while it rained. Step-doubling could not see it, because the full step and the
+    two half-steps overshot alike. From there the potential clamped at −3e15 m, the solve ran out of
+    sub-steps, and the "flows" reached metres per second, clipped and floored back into ~1e7 kg m⁻² of
+    water. The soil-heat step turned that into a top-soil temperature of −1e10 K, then NaN. RK45 never
+    used these flows, so it survived.
+  - **The fix:** the flows keep the conductivities and bottom-flux slope the solve used, at the
+    solve's new potentials, so each layer changes by exactly the water the solve moved. Only the root
+    uptake is re-read at the new potentials: it stays within the plant's request, which is all the
+    plant side is credited (re-reading it linearly instead leaked water).
+  - **BCI 2017 (trial 7fe525… of the cross-site calibration):** the run that stopped at the
+    2017-04-17 storm now completes, with no energy or water budget breach and none under
+    `[energy].debug_error`. In normal weather the change is small. On another trial over Jan–Apr
+    2017, hourly LE moves by 0.33 W m⁻² RMS (mean 89), H by 0.09 W m⁻² and GPP by 0.0008
+    µmol m⁻² s⁻¹. That is 25–300 times smaller than the usual gap between ARK and RK45.
+  - **Test:** `test_column_hydrology` replays the failing solve's inputs from that patch (it failed
+    with flows of 5.8 m s⁻¹ and 2.5e7 kg m⁻² created by the floor).
+- **ARK's stages read the top soil too warm during rain** (found with #352). The stages carried the
+  enthalpy of the water moving between layers, but held the water itself at its start-of-step amount.
+  So the next stage read that enthalpy as heat in a dry layer: tens of kelvin late in a heavy-rain step
+  (up to ~50 K at BCI), which the ground skin then saw. The stages now move soil water at the soil
+  solve's steady rate, ending the step at the same committed amount as before. Over Jan–Aug 2017 at
+  BCI, the ARK − RK45 gap in rain hours shrinks from 0.52 to 0.23 K for top-soil temperature and from
+  6.1 to 5.5 W m⁻² for LE; dry hours are unchanged.
+- **The wood heated itself whenever it refilled with water** (#355). Root uptake brings water into the
+  wood and sapflow takes it out to the leaves, each carrying its liquid enthalpy, counted from the
+  liquid datum (~4.4e5 J/kg). The wood's heat store is its heat capacity times its temperature, with no
+  term for water mass coming or going. So whenever uptake exceeded sapflow, the arriving water's whole
+  enthalpy was read as heat; the leaves had the same error on a smaller scale.
+  - **At the BCI storm front of 2017-04-17,** wet soil refilled the dry-season wood with ~7 kg m⁻² in
+    a quarter hour. The wood went 13 K above the canopy air (313 K in 295 K air) and gave the heat
+    back as H ≈ +600 W m⁻² and LE ≈ +420 W m⁻² at zero net radiation, where the tower measured
+    H ≈ −17 W m⁻². Every night it added ~10 W m⁻² of heat as the wood refilled.
+  - **The fix** values each tissue's own water at the tissue's start-of-step temperature, the way the
+    canopy film is valued at the liquid enthalpy its water arrived with. The tissue's temperature now
+    sees only how far the arriving water's temperature is from its own, and both energy ledgers book
+    the water stores' enthalpy change. The leaf still pays the full vapour enthalpy of what it
+    transpires; its water store's outflow is counted at the step's transpiration demand.
+  - **BCI 2017:** at the storm front H falls from 581 to 118 W m⁻² at 18 UTC and from 363 to 35 at
+    19 UTC, and ARK and RK45 now agree. Over Jan–Jul, mean night-time H (01–09 UTC) goes from +2.5 to
+    −0.9 W m⁻² (tower −23), mean H from 72.1 to 70.5 W m⁻²; GPP is unchanged.
+  - **Test:** `test_column_ark` refills dried wood from moist soil at one temperature and checks the
+    wood gains no heat, and that what the soil gives up equals what the tissues and their water stores
+    gain.
+- **Rain on bare ground was valued at the canopy-air temperature** (#355). It falls through the air
+  above the canopy, so it now takes the air temperature at the canopy-air top (the forcing moved there),
+  the same value rain landing on a snowpack and sub-threshold snowfall already used. No recorded reason
+  for the old choice was found. At the BCI storm front the canopy air was 2.3 K warmer than that air;
+  the change lowers H by 2 W m⁻² and LE by 3 W m⁻² at 18 UTC, and Jan–Jul means by under 0.1 W m⁻².
+  With one rule for all precipitation, the snowpack and the bare ground now share one function for it
+  (`precip_enthalpy` in `meds_therm_lib`) instead of writing the same expression twice (BCI output
+  bit-identical; snow sites change at round-off).
+- **The rain/snow split used a different temperature from the precipitation's enthalpy.** The split
+  was made once at ingest, at the forcing's height (ERA5-Land's 2 m air, a clearing's), while the
+  enthalpy uses each patch's canopy-air top. The forcing record now carries only the total
+  precipitation, and it is split once, where each patch's forcing is filled (`fill_forcing`), at the
+  patch's canopy-air top; the ingest split is gone. At freezing, a 30 m canopy top 0.12 K cooler than
+  ERA5-Land's 2 m air turns 6 % of the rain to snow; BCI, never near freezing, is bit-identical.
+  - **Outputs:** `rainf_fast`, `snowfall_fast` and `snowfall_site` report the split the patches
+    received, area-weighted, instead of a split at the forcing's height that the model never used;
+    the new `precip_fast` gives the total at the sub-daily tier, beside `precip_site`.
+- **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
+  the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
+  check of the soil column: the end-of-run report prints a warning with the count, and
+  `[energy].debug_error` stops the run.
+- **The adaptive soil-water sub-stepping ignored whether its iteration converged.** Under
+  `[soil] linearize = "picard"`, a sub-step whose iteration did not converge was accepted when its
+  error estimate passed. It is now rejected and retried at a quarter of the size, like the fixed-count
+  path already did. The default single linear solve always counts as converged, so default runs are
+  unchanged by this.
 - **A NaN in the fast loop went unreported, and the run still ended "no NaNs"** (#352).
   - **The old guard:** four cohort-structure fields (diameter, density, AGB, wood carbon), and only on
     year boundaries. Meanwhile the fast loop's integrators commit a non-finite state when even their

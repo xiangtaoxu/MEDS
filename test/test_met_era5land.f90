@@ -410,8 +410,8 @@ contains
             call met_advance(region, cur(k), t) ; met = met_instant(region, cur(k), t)
             met_site = step_sample(site(k), cur_site(k), t)
             same = same .and. met%tair_k == met_site%tair_k .and. met%qair == met_site%qair       &
-                 .and. met%psurf_pa == met_site%psurf_pa .and. met%rainf == met_site%rainf      &
-                 .and. met%snowfall == met_site%snowfall .and. met%wind == met_site%wind        &
+                 .and. met%psurf_pa == met_site%psurf_pa .and. met%precip == met_site%precip    &
+                 .and. met%wind == met_site%wind                                                &
                  .and. met%wind_u == met_site%wind_u .and. met%wind_v == met_site%wind_v        &
                  .and. met%lwdown == met_site%lwdown .and. met%par_beam == met_site%par_beam    &
                  .and. met%par_diffuse == met_site%par_diffuse                                  &

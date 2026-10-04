@@ -22,7 +22,7 @@ module meds_therm_lib
    public :: sat_specific_humidity_temp_deriv
    public :: internal_energy_to_temp, temp_to_internal_energy
    public :: enthalpy_vapor, internal_energy_liquid, internal_energy_ice, cp_moist, air_density, cas_molar_density
-   public :: temp_of_liquid_enthalpy
+   public :: temp_of_liquid_enthalpy, precip_enthalpy
    public :: cas_enthalpy_of_temp, cas_temp_of_enthalpy
    !----- SOIL thermal properties (conductivity + volumetric heat capacity): thermal-property   !
    !      constitutive kernels, the thermal twin of the soil retention curves. -----------------!
@@ -185,6 +185,17 @@ contains
       real(wp)             :: u
       u = cp_ice * t_k
    end function internal_energy_ice
+
+   !----- Enthalpy falling precipitation carries: rain as liquid and snow as ice, both at the air       !
+   !      temperature above the canopy, snow no warmer than freezing. The one rule for precipitation,  !
+   !      wherever it lands -- a snowpack (snow_accumulate) or the ground (build_column_frozen). Rates  !
+   !      in give a flux [W/m2]; amounts in give an amount [J/m2]. ----------------------------------!
+   elemental function precip_enthalpy(rain, snow, t_air) result(h)
+      real(wp), intent(in) :: rain, snow   !< [kg/m2/s] or [kg/m2]
+      real(wp), intent(in) :: t_air        !< [K] air temperature above the canopy
+      real(wp)             :: h
+      h = snow * internal_energy_ice(min(t_3ple, t_air)) + rain * internal_energy_liquid(t_air)
+   end function precip_enthalpy
 
    !----- Moist-air specific heat [J/kg/K]. -------------------------------------------------!
    elemental function cp_moist(shv) result(cp)

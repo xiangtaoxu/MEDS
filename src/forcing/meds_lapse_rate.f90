@@ -132,7 +132,8 @@ contains
 
    !----- A forcing record at a patch's canopy-air top: wind (and its vector) by the patch's factor, !
    !      temperature along the dry adiabat, air density re-derived. Humidity is conserved and the   !
-   !      radiation, rain and pressure are unchanged.                                                 !
+   !      radiation, precipitation and pressure are unchanged; the rain/snow split is made from this   !
+   !      record's temperature where the column's forcing is filled (fill_forcing).                   !
    pure function met_to_cas_top(met, f, z_top, displace, rough) result(top)
       type(met_forcing_t),    intent(in) :: met
       type(forcing_config_t), intent(in) :: f

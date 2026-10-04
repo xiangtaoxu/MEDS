@@ -253,7 +253,8 @@ module meds_fast_types
       !      This is the number that DOES see it: per layer, |the mass that actually moved - the mass !
       !      the faces were charged for|, summed over layers. It is a pre-formed residual, so only    !
       !      `resid`/`worst`/`abs_sum`/`n_check`/`n_fail` are meaningful here -- there is no store-    !
-      !      versus-boundary pair to fill, and store0/store1/influx/outflux stay 0 by design.         !
+      !      versus-boundary pair to fill, and store0/store1/influx/outflux stay 0 by design. `n_fail` !
+      !      counts the soil-water solves that did not converge (meds_fast_frozen).                    !
       !                                                                                          !
       !      Provenance was previously protected by comment and convention only; what found the last  !
       !      instance was an implausible temperature, which is not a detector. --------------------!
@@ -446,8 +447,13 @@ module meds_fast_types
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
       real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
-      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
-      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
+      !----- Heat the moving plant water brings each tissue, counted against the tissue's OWN water   !
+      !      (valued at its start-of-step temperature; see build_column_frozen). water_store_enth is the !
+      !      enthalpy the leaf and wood water stores gain as their water mass changes, which the energy  !
+      !      ledgers add to the tissue store.                                                           !
+      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
+      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
+      real(wp) :: water_store_enth = 0.0_wp   !< [W/m2 ground] summed over cohorts
       !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
       !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
       !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
@@ -591,6 +597,9 @@ module meds_fast_types
       !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
       !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
+      !----- (theta1 - theta^n) / dt_fast: the steady rate at which the stages move soil water, so the   !
+      !      water a layer holds keeps pace with the enthalpy its faces carry in (see column_be_stage).  !
+      real(wp) :: theta_rate(n_soil_layer_max) = 0.0_wp   !< [1/s]
    end type soil_hydrology_t
 
    !----- ROOT ZONE: the realized aggregate uptake, where it is placed, and the soil-side hydraulic  !

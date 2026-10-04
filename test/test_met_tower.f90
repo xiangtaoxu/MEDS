@@ -319,13 +319,13 @@ contains
       call check_true('the file opens', st == MET_OK, real(st, wp))
       call met_cursor_init(src, cur, 1_ik, fc%latitude_deg, fc%longitude_deg, fc%elevation_m)
       met = sample(src, cur, t0 - 0.5_wp * DT)
-      call check('no rain in the interval before', met%rainf + met%snowfall, 0.0_wp, 1.0e-15_wp)
+      call check('no rain in the interval before', met%precip, 0.0_wp, 1.0e-15_wp)
       met = sample(src, cur, t0 + 0.25_wp * DT)
-      call check('the rain falls in its own interval (early)', met%rainf + met%snowfall, RAIN_RATE, 1.0e-15_wp)
+      call check('the rain falls in its own interval (early)', met%precip, RAIN_RATE, 1.0e-15_wp)
       met = sample(src, cur, t0 + 0.75_wp * DT)
-      call check('the rain falls in its own interval (late)', met%rainf + met%snowfall, RAIN_RATE, 1.0e-15_wp)
+      call check('the rain falls in its own interval (late)', met%precip, RAIN_RATE, 1.0e-15_wp)
       met = sample(src, cur, t0 + 1.5_wp * DT)
-      call check('no rain in the interval after', met%rainf + met%snowfall, 0.0_wp, 1.0e-15_wp)
+      call check('no rain in the interval after', met%precip, 0.0_wp, 1.0e-15_wp)
 
       !----- A midday interval, 17:00-17:30 UTC (about solar noon at BCI). -------------------------!
       t0 = 17.0_wp * 3600.0_wp
