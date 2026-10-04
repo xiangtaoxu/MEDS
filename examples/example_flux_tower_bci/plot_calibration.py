@@ -69,7 +69,7 @@ def main(argv=None):
         a1.axvline(z, color=GRID, lw=0.8, ls="--")
     a1.set(yticks=y, yticklabels=keys, xlabel="prior z at the MAP (whisker: posterior / prior sd)")
     a1.invert_yaxis()
-    a1.legend(frameon=False, fontsize=9, loc="lower right")
+    a1.legend(frameon=False, fontsize=9, loc="best")
     a1.set_title("fitted keys", color=INK, fontsize=10)
 
     targets = [t for t in TARGET_NAMES if any(t in r.get("scores_val", {}).get("default", {}) for r in fits.values())]

@@ -148,17 +148,23 @@ before and after.
 ### Changed
 - **The BCI example's calibrated set, refitted by the best-practice protocol** (P7).
   - **Leaf light use:** the example now uses #351's values, `phi_psii` 0.74 and θ_J 0.7.
-  - **The fit:** 906 trials in 23 minutes on three nodes. The revision's staged fit took 4,804
-    trials and 31.8 core-hours.
-  - **The keys:** `vcmax25` lands at 30.6 µmol m⁻² s⁻¹ inside its EEO prior (41; earlier fits hit
-    the floor of 25). `stomatal_g1` is 3.52 (EEO 2.80). κ is 0.75, which puts the tower's
-    respiration at 4.35 µmol m⁻² s⁻¹, about the soil chambers', and its GPP at 3.26 kgC m⁻² yr⁻¹.
-  - **G13** flags the NIR reflectance (z −3.1) and `stomata_psi_onset` (z +2.6) for a diagnosis.
-  - **Validation errors:** albedo 5.34 → 1.37, GPP 2.09 → 1.25 and u\* 1.92 → 0.63 σ; LE and H
-    unchanged.
-  - **The five-year run** (G7 passes): GPP 10.30 → 8.52 (the tower corrected for κ: 8.61); net
-    radiation 121 → 132 (tower 136) W m⁻²; LE 67.7 → 60.8 and H 68.1 → 81.4 W m⁻². April 2016's GPP
-    is 7.6 against the tower's 6.3 (the v0.3 set gave 4.1).
+  - **The owner's choices after the first fit:** the albedo target is off and the NIR reflectance
+    fixed at 0.45 (the fit took it to 0.32, z −3.1: the canopy's structure, not its leaves, makes
+    it reflect too much); `stomata_psi_onset` is fixed at half the turgor-loss point (the fit took
+    it to its bound).
+  - **The fit:** seven keys, 946 trials in 25 minutes on three nodes. The revision's staged fit took
+    4,804 trials and 31.8 core-hours.
+  - **The keys:** `vcmax25` lands at 29.2 µmol m⁻² s⁻¹ inside its EEO prior (41; earlier fits hit
+    the floor of 25). `stomatal_g1` is 3.35 (EEO 2.80). κ is 0.78, which puts the tower's
+    respiration at 4.20 µmol m⁻² s⁻¹, about the soil chambers', and its GPP at 3.21 kgC m⁻² yr⁻¹.
+    G13 passes.
+  - **The variants** (interception off and on) differ by 1.7–3.1 posterior sd on `stomatal_g1`,
+    `g0`, `vcmax25` and the leaf angle: a structural uncertainty the posterior sd does not carry.
+  - **Validation errors:** GPP 2.09 → 1.24, u\* 1.92 → 0.62 and upwelling longwave 2.49 → 2.10 σ;
+    LE unchanged, H 4.15 → 4.32.
+  - **The five-year run** (G7 passes): GPP 10.30 → 8.41 (the tower corrected for κ: 8.47); u\* at
+    night 0.86 → 0.49 (tower 0.41) m s⁻¹; LE 67.7 → 60.6 and H 68.1 → 74.4 W m⁻². April 2016's GPP
+    is 7.8 against the tower's 6.3 (the v0.3 set gave 4.1).
   - **Example scripts:** `plot_evaluation.py` reads the tower through its site TOML, and
     `plot_calibration.py` plots prior z (#364).
 - **`calibrate_fast` runs one joint fit** (best-practice plan P5).

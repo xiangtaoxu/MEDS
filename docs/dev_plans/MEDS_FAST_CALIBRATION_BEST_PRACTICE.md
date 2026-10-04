@@ -44,6 +44,7 @@ decision below is the owner's (§0). Implemented 2026-10-04 in #357–#362 and #
 | the fit | one joint fit of all keys; the separate water stage, the polish and the kernel stages go | 6.3 |
 | uncertainty | Laplace, declared alternatives (refit above 1 sd), structural variants | 7.1 |
 | acceptance | gates, validation, full record, diagnosis of conflicts, labels | 7.2 |
+| after the first BCI fit (2026-10-04) | the albedo target off for now and `leaf_reflect_nir` fixed: at realistic leaf optics the model's canopy reflects too much NIR, and the albedo took the reflectance to 0.32 (prior z −3.1); `stomata_psi_onset` fixed at half the turgor-loss point: set by the ten-day windows rather than the drought runs (T6), traded against g1 (r 0.91), at its bound; the Bowen closure alternative reported only; GPP's u\* plateau from the all-day diagnostic | 2.5, 4.3, 7.1 |
 
 ## 1. What the fits taught
 
@@ -122,7 +123,7 @@ At BCI: GPP filtered at 0.4; LE not filtered (LE/Rnet flat); H not filtered (han
 
 | target | observation model | hours |
 |---|---|---|
-| albedo (SW_out / SW_in) | identity | SW_in > 200 W m⁻², the sun at least 20° high, no snow |
+| albedo (SW_out / SW_in) | identity | SW_in > 200 W m⁻², the sun at least 20° high, no snow. **Off for now** (2026-10-04): the model's canopy is too bright in the NIR at realistic leaf optics |
 | upwelling longwave | identity | day and night |
 | H, LE | closure model (§3.3) | daytime |
 | GPP | respiration model (§3.3) | daytime, CO₂ u\* filter |
@@ -264,11 +265,11 @@ A key is fitted only if every answer is yes.
 
 | kind | fitted | fixed |
 |---|---|---|
-| optics | `leaf_reflect_nir`, `leaf_angle_mean` | NIR transmittance (moves with the reflectance), visible optics (unseen), `leaf_clumping` (the albedo can't separate it) |
+| optics | `leaf_angle_mean` (if the screening finds GPP and LE inform it) | `leaf_reflect_nir` and the NIR transmittance (with the albedo off, 2026-10-04), visible optics (unseen), `leaf_clumping` (the albedo can't separate it) |
 | photosynthesis | `vcmax25` | `phi_psii`, θ_J (#351); Jmax/Vcmax, `ds_vcmax`, `ds_jmax` (Kattge & Knorr at growth temperature); `rd_vcmax_ratio` |
 | stomata | `stomatal_g1`; `stomatal_g0` if the screening finds the daytime data inform it | |
 | aerodynamics | `z0m_ratio` (effective, flagged) | `d_ratio`, `leaf_width`, `dsl_dmax`, film capacities |
-| water stress | `wstress_sref_stomata`, `stomata_psi_onset` (only with a drawdown in the record) | `root_beta` (optional) |
+| water stress | `wstress_sref_stomata` (only with a drawdown in the record) | `stomata_psi_onset` (half the turgor-loss point, 2026-10-04: T6), `root_beta` (optional) |
 | observation | κ | closure shares (§3.3) |
 
 ## 5. Model structure
@@ -408,7 +409,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P4 | **done (#360):** keys and priors (`priors.py`): kinds, scope tags, plant-type priors (`[fit].plant_type`), bounds apart, prior z and G13; EEO g1 (2.80 at BCI) and vcmax25 (MEDS's leaf: 41 at phi_psii 0.74, θ_J 0.7); Kattge & Knorr from the growth temperature | small–medium |
 | P5 | **done (#361):** the joint fit with one refresh (chains, weights, σ); one-sided differences with Broyden reuse (full every third step); the final central matrix; the triage; **removed:** the water stage, polish, kernel stages (`stages.py`), G8 and the stage settings | medium; removes code |
 | P6 | **done (#362):** uncertainty: declared alternatives (GPP u\*, closure, partitioning) with the refit rule; structural variants (`variants`); the report (`report.md`: χ²/n, σ scale, model/tower by hour and light, κ's implications, prior z) | small |
-| P7 | **done (#364):** BCI: the example with #351's values; the refit, both variants (906 and 966 trials, ~24 min on 3 nodes each; `vcmax25` 30.6 inside its EEO prior, κ 0.75, G13 flags the NIR reflectance and `stomata_psi_onset`, the Bowen alternative moves `vcmax25` 15 sd and was refitted); the full-record run (G7 passes); the README. It found the soil-water sub-step cap breach of the 2016 dry season (#363) | small; Slurm |
+| P7 | **done (#364):** BCI: the example with #351's values; the refit, both variants. The first fit (906 and 966 trials, ~24 min on 3 nodes each) put `vcmax25` at 30.6 inside its EEO prior, and G13 flagged the NIR reflectance (z −3.1) and `stomata_psi_onset` (z +2.6). After the owner's choices (§0: albedo off, both keys fixed) the refit (946 and 616 trials) gives `vcmax25` 29.2, κ 0.78, and G13 passes. The variants then differ by up to 3.1 sd (`stomatal_g1`), and the Bowen alternative moves `stomatal_g1` 18 sd and was refitted. The full-record run passes G7, and the README is updated. P7 also found the soil-water sub-step cap breach of the 2016 dry season (#363) | small; Slurm |
 
 P0 first; P1–P3 before P5; P7 last. Each phase adds or changes settings with documented defaults, and the tests change with it.
 
