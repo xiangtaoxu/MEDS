@@ -15,6 +15,25 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **The targets' observation models** (`scripts/calibrate_fast/obsmodels.py`, best-practice plan P3):
+  - **The closure model for H and LE.** The daily closure factor over ±15 days, with shares from the
+    attribution test and Bowen as the alternative.
+  - **The respiration model for GPP.** κ is an observation key: never written to a config, and
+    never fitted beside a shape key.
+  - **σ from the provider's uncertainty or the paired days**, evaluated at a smoothed observation.
+  - **Huber loss by default**, and σ scaled by the model's misfit at the refresh (max(1, √χ²/n),
+    at most 3×).
+  - **`[fluxes]` may declare G, GPP_DT and RECO_DT.** κ's prior sd is then the gap between the
+    provider's two partitionings.
+
+  At BCI:
+  - daily closure median 0.75 (f = 1.33); the gap is H's;
+  - κ prior 0.65 ± 0.10;
+  - σ from the paired days: LE 10.5 + 0.29|LE|, H 7.5 + 0.14|H|, NEE 2.1 + 0.17|NEE|. These
+    replace H's 30 % σ and GPP's 2.5 + 0.15 GPP.
+
+  Net radiation, the evaporative fraction and night NEE are no longer targets, and the
+  `growth-resp` command and `[base].growth_resp` go (#359).
 - **The calibration's data rules** (`scripts/calibrate_fast/datarules.py`, best-practice plan P2):
   - **u\* per target.** A diagnostic on each turbulent target's own data, with a bootstrap over days.
     LE and H take its outcome (`ustar_min = "diagnostic"`). GPP takes the provider's threshold

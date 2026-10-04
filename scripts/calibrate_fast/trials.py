@@ -95,7 +95,8 @@ def with_params(base: RunConfig, params, theta, overrides: dict | None = None) -
     """A copy of the base configuration with a parameter set and the calibration's overrides."""
     cfg = base.copy()
     for p, v in zip(params, theta):
-        set_param(cfg, p, v)
+        if p.file != "obs":                    # an observation key enters the residuals, not the model
+            set_param(cfg, p, v)
     for k, v in (overrides or {}).items():
         cfg.set(k, v)
     return cfg
@@ -150,6 +151,8 @@ def check_record(tdir: Path, params, theta) -> None:
                       {tdir / "main.toml": "main", tdir / "pft.toml": "pft"})
     bad = []
     for p, v in zip(params, theta):
+        if p.file == "obs":
+            continue
         idx = p.pft if p.file == "pft" else 0
         hit = rec.get((p.file, p.key, idx))
         if hit is None:

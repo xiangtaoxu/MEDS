@@ -49,8 +49,10 @@ REPORT_VARIABLES = ("PAR",)
 
 # The fluxes a site TOML may declare in [fluxes] (the calibration's targets and the closure's inputs).
 # Each has a column and units, or (RECO only, for a provider who made GPP from it) the sum of other
-# declared fluxes: BCI's RECO is GPP + NEE.
-FLUX_VARIABLES = ("SW_out", "LW_out", "Rnet", "LE", "H", "NEE", "GPP", "RECO", "USTAR")
+# declared fluxes: BCI's RECO is GPP + NEE. RECO and GPP are the provider's night-time partitioning
+# (FLUXNET's *_NT_VUT_REF); RECO_DT and GPP_DT its daytime one, where it gives both. G is the
+# ground heat flux, where measured.
+FLUX_VARIABLES = ("SW_out", "LW_out", "Rnet", "LE", "H", "G", "NEE", "GPP", "RECO", "GPP_DT", "RECO_DT", "USTAR")
 # What [provider] may say: how GPP was made, in the provider's words; notes; the published u*
 # threshold for CO2 (one value, or a table of years); random-uncertainty columns by flux; and what the
 # provider's quality flag screened.
@@ -75,6 +77,9 @@ UNITS = {
     "NEE":    {"umol m-2 s-1": lambda x: x},
     "GPP":    {"umol m-2 s-1": lambda x: x},
     "RECO":   {"umol m-2 s-1": lambda x: x},
+    "GPP_DT": {"umol m-2 s-1": lambda x: x},
+    "RECO_DT": {"umol m-2 s-1": lambda x: x},
+    "G":      {"W m-2": lambda x: x},
     "USTAR":  {"m s-1": lambda x: x},
 }
 

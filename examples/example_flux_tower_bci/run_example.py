@@ -11,7 +11,7 @@ Steps (each skipped when its product already exists, unless --force):
   5. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
   6. run the five tower years from the census, with hourly output (meds_config_eval.toml)
   7. with --calibrate: fit the fast parameters to the tower (calibration.toml, scripts/calibrate_fast):
-     the stand's growth respiration from step 6, the fit, and the calibrated configs in calibration/
+     the fit and the calibrated configs in calibration/
   8. run the five years again with the calibrated parameters (calibration/meds_config_calibrated.toml),
      when those configs exist -- they ship with the example, so --calibrate is only to redo the fit
   9. compare with the tower in local time: mean diurnal and seasonal cycles, the default and the
@@ -83,8 +83,6 @@ def main(argv=None):
         run([py, CENSUS_TOOL, "--declaration", "bci_census.toml", "--out", CENSUS])
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
     if args.calibrate:
-        run([py, CALIBRATE_FAST, "growth-resp", "--daily", os.path.join(OUTPUT, "eval-D-*.nc"),
-             "--out", os.path.join(CALIB, "growth_resp_monthly.csv")])
         work = os.path.join(CALIB, f"run_{args.variant}")
         run([py, CALIBRATE_FAST, "fit", "--site", "calibration.toml", "--variant", args.variant, "--work", work,
              "--runner", args.meds_main, "--pool", "local", "--workers", str(args.workers)])

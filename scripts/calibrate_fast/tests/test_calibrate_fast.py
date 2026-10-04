@@ -16,12 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import calibrate_fast as CF   # noqa: E402  (puts the source tree's meds package on the path)
 import datarules as DR        # noqa: E402
+import obsmodels as OM        # noqa: E402
 import fit as F               # noqa: E402
 import residuals as R         # noqa: E402
 import settings as SET        # noqa: E402
 import stages as STG          # noqa: E402
 import tower as TW            # noqa: E402
 import trials as T            # noqa: E402
+import json                   # noqa: E402
 from meds.config import RunConfig, load_toml                     # noqa: E402
 
 try:
@@ -65,7 +67,7 @@ def test_registry_loads_and_filters_variants():
     on = {p.name for p in load_registry(REGISTRY, "interception_on")}
     assert "leaf_surf_water_max" not in off and "leaf_surf_water_max" in on and "stomatal_g1" in off
     for p in load_registry(REGISTRY, "interception_on"):
-        assert p.lo < p.hi and p.file in ("pft", "main")
+        assert p.lo < p.hi and p.file in ("pft", "main", "obs")
 
 
 def test_defaults_come_from_base_then_record():
@@ -137,16 +139,100 @@ def synthetic_tower(days=40, closure=0.8):
     return df
 
 
-def test_closure_restores_the_balance_and_keeps_the_bowen_ratio():
-    spec = TW.TowerSpec(site="", closure_days=31, daytime_sw=10.0)
-    out = TW.add_closure(synthetic_tower(), spec)
-    day = out["sw_in"] > 10.0
-    mid = out.index[(out.index > "2016-01-16") & (out.index < "2016-01-25")]
-    d = day & out.index.isin(mid)
-    assert np.allclose(out.loc[d, "closure_f"], 1.25)
-    assert np.allclose((out.loc[d, "h_c"] + out.loc[d, "le_c"]), out.loc[d, "rnet"])
-    assert np.allclose(out.loc[d, "h_c"] / out.loc[d, "le_c"], out.loc[d, "h"] / out.loc[d, "le"])
-    assert np.all(out.loc[~day, "closure_f"] == 1.0)
+def test_the_closure_factor_is_a_median_of_whole_days():
+    df = synthetic_tower(closure=0.8)                               # H + LE = 0.8 (Rnet), every day
+    values = pd.DataFrame({"Rnet": df["rnet"], "H": df["h"], "LE": df["le"]})
+    measured = pd.DataFrame(True, index=df.index, columns=["H", "LE"])
+    measured.iloc[24 * 10:24 * 11] = False                          # a day without measured turbulence
+    cfg = {"window_days": 15, "min_measured": 0.7, "min_days": 5}
+    f, rep = OM.closure_factor(values, measured, 0.0, cfg)
+    assert np.allclose(f.dropna(), 1.25) and rep["valid_days"] == 39 and rep["daily_closure_median"] == pytest.approx(0.8)
+    obs = df.assign(closure_f=f)
+    h_c, le_c = OM.corrected(obs, 1.0)                              # the gap is H's
+    assert np.allclose(le_c.dropna(), obs["le"][le_c.notna()]) and np.allclose((h_c + le_c).dropna(), 1.25 * (obs["h"] + obs["le"])[h_c.notna()])
+    h_b, le_b = OM.corrected(obs, None)                             # Bowen
+    d = h_b.notna() & (obs["le"] > 0)
+    assert np.allclose(h_b[d] / le_b[d], obs["h"][d] / obs["le"][d])
+
+
+@pytest.mark.parametrize("h,le,shares", [(0.5, -0.04, (1.0, 0.0)), (0.5, 0.3, (None, None)), (0.02, 0.3, (0.0, 1.0)),
+                                          (0.02, -0.04, (0.0, 0.0))])
+def test_the_attribution_test_gives_the_closure_shares(h, le, shares):
+    s_h, s_le, why = OM.closure_shares("attribution", {"rises": {"h": h, "le": le}}, 0.10)
+    assert (s_h, s_le) == shares and why
+    assert OM.closure_shares("bowen", {}, 0.1)[:2] == (None, None) and OM.closure_shares("none", {}, 0.1)[:2] == (0.0, 0.0)
+
+
+def test_the_attribution_test_finds_the_flux_that_rises_with_turbulence():
+    rng = np.random.default_rng(2)
+    n = 4000
+    idx = pd.date_range("2016-01-01", periods=n, freq="30min")
+    u, vpd, rnet = rng.uniform(0.1, 1.2, n), rng.uniform(100.0, 2000.0, n), rng.uniform(100.0, 700.0, n)
+    obs = pd.DataFrame({"sw_in": 500.0, "ustar": u, "vpd": vpd, "rnet": rnet,
+                        "h": rnet * (0.15 + 0.2 * u), "le": rnet * 0.45}, index=idx)
+    test = OM.attribution(obs, {"vpd_classes": 4}, 50.0, 10.0)
+    assert test["rises"]["h"] > 0.5 and abs(test["rises"]["le"]) < 1e-9
+    assert OM.closure_shares("attribution", test, 0.10)[:2] == (1.0, 0.0)
+
+
+def test_sigma_from_the_paired_days_at_a_smoothed_observation():
+    rng = np.random.default_rng(3)
+    idx = pd.date_range("2016-01-01", periods=48 * 200, freq="30min")
+    hour = idx.hour.to_numpy() + idx.minute.to_numpy() / 60.0
+    true = np.clip(300.0 * np.sin(np.pi * (hour - 6) / 12), 0, None)
+    sigma = 10.0 + 0.2 * true
+    obs = pd.DataFrame({"le": true + sigma * rng.standard_normal(len(idx)), "sw_in": 2 * true, "par": np.nan,
+                        "tair": 300.0, "vpd": 1000.0, "wind": 2.0}, index=idx)
+    a, b, rep = OM.paired_sigma(obs, "le", SCFG, 1800.0)
+    assert a == pytest.approx(10.0, abs=2.0) and b == pytest.approx(0.2, abs=0.03) and rep["pairs"] > 5000
+    sm = OM.smoothed(obs["le"], 0.0, 7)
+    noon = idx.hour == 12
+    assert np.allclose(sm[noon], 300.0, rtol=0.2)                   # the same time of day over +-7 days (noise / sqrt(15))
+    assert abs(sm[noon].mean() / 300.0 - 1.0) < 0.02
+    targets = {"le": {"sigma_abs": 99.0, "sigma_rel": 0.0}, "albedo": {"sigma": 0.01}}
+    rep = OM.set_sigmas(targets, obs, SCFG, 0.0, 1800.0)
+    assert rep["le"]["source"] == "paired days" and targets["le"]["sigma_at"] == "le_smooth" and "albedo" not in rep
+    obs["le_randunc"] = 5.0 + 0.1 * np.abs(obs["le"])
+    rep = OM.set_sigmas(targets, obs, SCFG, 0.0, 1800.0)
+    assert rep["le"]["source"] == "provider" and targets["le"]["sigma_abs"] == pytest.approx(5.0, abs=0.5)
+
+
+SCFG = {"smooth_days": 7, "paired_dpar": 75.0, "paired_dsw": 35.0, "paired_dt": 3.0, "paired_dvpd": 200.0,
+        "paired_dwind": 1.0, "min_pairs": 200, "bins": 10}
+
+
+def test_kappa_is_an_observation_key_of_the_gpp_residual(tmp_path):
+    idx = pd.date_range("2016-01-01", periods=4, freq="30min")
+    t = R.TargetRows("gpp", np.arange(4), np.full(4, 10.0), np.ones(4), reco=np.full(4, 4.0))
+    spec = R.WindowSpec("w", idx, [t], loss=("l2", 2.0))
+    df = pd.DataFrame({"gpp_rate_fast": np.full(4, 12.0)}, index=idx)
+    assert np.allclose(R.residual(spec, df, {"kappa": 1.0}), 2.0)
+    assert np.allclose(R.residual(spec, df, {"kappa": 2.0 / 3.0}), 0.0)    # 10 + (1.5 - 1) 4 = 12
+    #----- kappa is never written to a trial, and never fitted beside a shape key
+    base = RunConfig({"run": {}, "init": {}, "output": {"fast": {}}}, {"pft": {"stomatal_g1": [3.0]}})
+    kappa = Param("kappa", "obs", "kappa", 0.4, 1.0, prior={"centre": 0.65, "sd": 0.1})
+    g1 = Param("g1", "pft", "pft.stomatal_g1", 1.5, 6.0, "log", pft=1)
+    resolve_defaults([kappa], base)
+    assert kappa.default == 0.65
+    cfg = T.with_params(base, [g1, kappa], [4.0, 0.7])
+    assert cfg.pft["pft"]["stomatal_g1"] == [4.0] and "kappa" not in json.dumps(cfg.main)
+    jv = Param("jv", "pft", "pft.jmax_vcmax_ratio", 1.4, 2.2, shape=True)
+    with pytest.raises(ValueError, match="shape key"):
+        select([kappa, jv], {"keys": ["kappa", "jv"]}, {})
+
+
+def test_huber_is_undone_for_the_scores_and_sigma_is_scaled_by_the_misfit():
+    idx = pd.date_range("2016-01-01", periods=100, freq="1h")
+    spec = R.WindowSpec("w", idx, [R.TargetRows("h", np.arange(100), np.zeros(100), np.ones(100)),
+                                   R.TargetRows("le", np.arange(100), np.zeros(100), np.ones(100))])
+    df = pd.DataFrame({"h_flux_fast": np.r_[np.full(50, 3.0), np.full(50, -3.0)], "le_flux_fast": 0.5}, index=idx)
+    r = R.residual(spec, df)
+    assert np.allclose(np.abs(r[:100]), np.sqrt(2 * 2 * 3 - 4))      # Huber beyond c = 2
+    assert np.allclose(R.raw([spec], r)[:100] ** 2, 9.0)              # undone for chi^2
+    chi2 = R.chi2_per_row([spec], r)
+    assert chi2["h"] == pytest.approx(9.0) and chi2["le"] == pytest.approx(0.25)
+    scales = R.scale_sigma([spec], r, cap=2.5)
+    assert scales == {"h": 2.5, "le": 1.0} and np.allclose(spec.targets[0].sigma, 2.5)   # 3 capped at 2.5; never below 1
 
 
 SITE_TOML = """
@@ -196,7 +282,7 @@ def test_the_tower_is_its_site_toml_on_utc_starts(tmp_path):
     raw.loc[5, "Rnet"] = np.nan
     raw.to_csv(tmp_path / "t.csv", index=False)
     (tmp_path / "site.toml").write_text(SITE_TOML)
-    spec = TW.TowerSpec.from_site(tmp_path / "site.toml", closure="none")
+    spec = TW.TowerSpec.from_site(tmp_path / "site.toml")
     assert spec.step == 1800.0 and spec.utc_offset_h == -5.0 and spec.lat == 9.15
     obs = TW.observations(spec)
     assert len(obs) == 96 and obs.index[0] == pd.Timestamp("2016-01-01 05:00")     # the native interval, UTC starts
@@ -209,40 +295,42 @@ def test_the_tower_is_its_site_toml_on_utc_starts(tmp_path):
 
 # ----- the residuals ---------------------------------------------------------------------------
 TARGETS = {"albedo": {"sigma": 0.01, "min_sw": 200.0}, "lw_up": {"sigma": 5.0},
-           "rnet": {"sigma_abs": 10.0, "sigma_rel": 0.05}, "le": {"sigma_abs": 10.0, "sigma_rel": 0.15},
-           "h": {"sigma_abs": 10.0, "sigma_rel": 0.15}, "ef": {"sigma": 0.05},
-           "gpp": {"sigma_abs": 1.5, "sigma_rel": 0.15}, "nee_night": {"sigma": 2.0, "ustar_min": 0.2},
-           "ustar": {"sigma_abs": 0.1, "sigma_rel": 0.2}}
+           "le": {"sigma_abs": 10.0, "sigma_rel": 0.15}, "h": {"sigma_abs": 10.0, "sigma_rel": 0.15},
+           "gpp": {"sigma_abs": 1.5, "sigma_rel": 0.15}, "ustar": {"sigma_abs": 0.1, "sigma_rel": 0.2}}
 
 
-def model_like(obs, idx, gr=0.0):
+def with_closure(df, f=1.0, s_h=1.0):
+    """A synthetic tower with its closure factor, corrected H and LE, and a respiration."""
+    out = df.assign(closure_f=f, reco=4.0)
+    out["h_c"], out["le_c"] = OM.corrected(out, s_h)
+    return out
+
+
+def model_like(obs, idx, kappa=1.0):
     o = obs.reindex(idx)
     return pd.DataFrame({"sw_in_fast": o["sw_in"], "sw_up_fast": o["sw_up"], "lw_up_fast": o["lw_up"],
                          "rnet_fast": o["rnet"], "le_flux_fast": o["le_c"], "h_flux_fast": o["h_c"],
-                         "gpp_rate_fast": o["gpp"], "nee_fast": o["nee"] - gr, "ustar_fast": o["ustar"]},
-                        index=idx)
+                         "gpp_rate_fast": o["gpp"] + (1.0 / kappa - 1.0) * o["reco"], "nee_fast": o["nee"],
+                         "ustar_fast": o["ustar"]}, index=idx)
 
 
 def test_residual_is_zero_on_the_observations_and_rows_are_fixed():
-    spec_t = TW.TowerSpec(site="", closure_days=31)
-    obs = TW.add_closure(synthetic_tower(closure=1.0), spec_t)
+    obs = with_closure(synthetic_tower(closure=0.8), f=1.25)
     fok = pd.Series(True, index=obs.index)
     idx = R.window_index(dt.datetime(2016, 1, 10), 10, 3600.0)
     spec = R.build_spec("w", idx, obs, fok, TARGETS, skip_hours=3)
-    gr = {m: 1.5 for m in range(1, 13)}
-    r = R.residual(spec, model_like(obs, idx, gr=1.5), gr)
+    r = R.residual(spec, model_like(obs, idx, kappa=0.8), {"kappa": 0.8})
     assert np.allclose(r, 0.0)
     names = [t.name for t in spec.targets]
-    assert names == [n for n in R.TARGETS if n in names] and "ef" in names and "nee_night" in names
-    ef = next(t for t in spec.targets if t.name == "ef")
-    assert len(ef.obs) == 10 and np.allclose(ef.obs, 0.7)
-    # a model 10 % high in LE moves only the LE and EF rows
-    m = model_like(obs, idx, gr=1.5)
+    assert names == list(R.TARGETS)
+    day = obs.reindex(idx)["sw_in"].to_numpy() > 10.0
+    assert all(day[t.rows].all() for t in spec.targets if t.name in ("le", "h", "gpp", "ustar"))
+    # a model 10 % high in LE moves only the LE rows
+    m = model_like(obs, idx, kappa=0.8)
     m["le_flux_fast"] *= 1.1
-    r2 = R.residual(spec, m, gr)
-    sl = spec.slices()
-    for name, s in sl.items():
-        assert np.any(r2[s] != 0) == (name in ("le", "ef")), name
+    r2 = R.residual(spec, m, {"kappa": 0.8})
+    for name, s in spec.slices().items():
+        assert np.any(r2[s] != 0) == (name == "le"), name
 
 
 def test_ess_weights_follow_the_autocorrelation():
@@ -384,7 +472,10 @@ def test_select_follows_the_site():
 def test_the_registry_menu():
     ps = {p.name: p for p in load_registry(REGISTRY, "interception_off")}
     assert ps["theta_j"].state == "fixed" and ps["phi_psii"].state == "fixed" and ps["ea_vcmax"].state == "optional"
-    assert ps["leaf_clumping"].state == "fixed" and ps["leaf_width"].state == "fixed" and ps["ds_jmax"].state == "fit"
+    assert ps["leaf_clumping"].state == "fixed" and ps["leaf_width"].state == "fixed" and ps["ds_jmax"].state == "fixed"
+    assert ps["kappa"].state == "fit" and ps["kappa"].file == "obs"
+    assert {n for n, p in ps.items() if p.shape} == {"theta_j", "jmax_vcmax_ratio", "phi_psii", "ds_vcmax", "ds_jmax",
+                                                      "ea_vcmax", "ea_jmax"}
     assert ps["rd_vcmax_ratio"].state == "fixed" and ps["stomatal_g1"].prior["centre"] == 3.77
     assert {p.stage for p in ps.values()} <= {"optics", "photosynthesis", "energy", "water"}
     assert all(p.reason for p in ps.values() if p.state == "fixed")
@@ -402,11 +493,12 @@ def test_the_bci_declaration_is_complete_and_valid():
     assert site.fluxes["RECO"] == {"sum": ["GPP", "NEE"]} and site.provider["ustar_threshold"] == 0.4
     assert site.leaf_on_months == list(range(1, 13))
     assert all(site.fluxes[q]["measured"] == {"column": "FLAG", "equals": 1} for q in ("LE", "H", "NEE", "GPP", "USTAR"))
-    assert d["targets"]["gpp"]["ustar_min"] == "provider" and d["targets"]["gpp"]["sigma_abs"] == 2.5
-    assert d["targets"]["nee_night"]["on"] is False
-    assert d["tower"]["closure"] == "none" and not d["targets"]["rnet"]["on"] and not d["targets"]["ef"]["on"]
+    assert d["targets"]["gpp"]["ustar_min"] == "provider" and d["targets"]["gpp"]["sigma_abs"] == 1.5
+    assert set(d["targets"]) == set(R.TARGETS) and d["closure"]["shares"] == "attribution"
     assert d["targets"]["le"]["ustar_min"] == "diagnostic" and d["targets"]["h"]["ustar_min"] == "diagnostic"
-    assert "hours" not in d["targets"]["h"] and d["targets"]["h"]["sigma_rel"] == 0.30
+    assert d["targets"]["h"]["obs_model"] == "closure" and d["targets"]["gpp"]["obs_model"] == "respiration"
+    assert d["priors"]["kappa"] == {"centre": 0.65, "sd": 0.10, "range": [0.4, 1.0], "source": d["priors"]["kappa"]["source"]}
+    assert d["fit"]["loss"] == "huber"
     assert d["targets"]["albedo"]["min_solar_elevation"] == 20.0
     assert d["windows"]["list"] == [] and d["windows"]["seasonal"]["list"] == []       # chosen by the rule
     assert d["fit"]["stages"] == ["energy", "water", "polish"]
@@ -497,7 +589,7 @@ def tower_with(**cols):
                        "ustar": np.where(hour < 10, 0.2, 0.6), "par": 2.0 * sw}, index=idx)
     for k, v in cols.items():
         df[k] = v
-    return TW.add_closure(df, TW.TowerSpec(site="", closure_days=3))
+    return with_closure(df)
 
 
 def test_filters_apply_in_order_and_are_counted():
@@ -520,10 +612,6 @@ def test_filters_apply_in_order_and_are_counted():
     spec = R.build_spec("w", idx, obs, fok, {"albedo": {"sigma": 0.01, "min_sw": 50.0, "min_solar_elevation": 30.0}},
                         elev=elev)
     assert set(idx.hour.to_numpy()[spec.targets[0].rows]) == {12}
-    obs2 = obs.copy()
-    obs2["closure_day"] = np.where(idx.day == 1, 0.5, 0.95)
-    spec = R.build_spec("w", idx, obs2, fok, {"le": {"sigma": 10.0, "closure_range": [0.8, 1.2]}})
-    assert set(idx.day[spec.targets[0].rows]) == {2}
 
 
 def test_windows_and_hours_follow_the_towers_interval_and_clock():
@@ -561,10 +649,11 @@ def test_weights_huber_and_sigma_scales():
     w = R.set_weights([spec], x)
     assert spec.targets[0].weight == pytest.approx(np.sqrt(w["w/h"]))
     df = pd.DataFrame({"h_flux_fast": x}, index=idx)
+    spec.loss = ("l2", 2.0)
     r = R.residual(spec, df)
     assert np.allclose(r, x * spec.targets[0].weight)
-    assert np.allclose(R.unweighted([spec], r), x)
-    assert R.sigma_scales([spec], r)["h"] == pytest.approx(np.mean(x ** 2))
+    assert np.allclose(R.raw([spec], r), x)
+    assert R.chi2_per_row([spec], r)["h"] == pytest.approx(np.mean(x ** 2))
     z = np.array([-5.0, -1.0, 0.0, 1.5, 4.0])
     hz = R.huber(z, 2.0)
     assert np.allclose(hz[1:4], z[1:4]) and np.allclose(hz ** 2, np.where(np.abs(z) <= 2, z ** 2, 4 * np.abs(z) - 4))

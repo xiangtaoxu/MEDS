@@ -33,7 +33,7 @@ from meds.config import load_toml
 SIGMA_U = math.log(0.975 / 0.025) / 2.0     # 1.832: logit(0.975) / 2
 H_U = 0.04                                   # the central-difference step in u (~1 % of the range)
 TRANSFORMS = ("linear", "log")
-FILES = ("pft", "main")
+FILES = ("pft", "main", "obs")     # "obs": an observation key (kappa), never written to a MEDS config
 STATES = ("fit", "optional", "fixed")
 STAGES = ("optics", "photosynthesis", "energy", "water")
 PROCESSES = ("", "wet_canopy", "night", "snow", "drought")
@@ -58,6 +58,7 @@ class Param:
     stage: str = "energy"
     reason: str = ""           # why a fixed key is fixed
     process: str = ""          # the one process it acts through, if any (fixed without coverage)
+    shape: bool = False        # a shape key of the leaf's light response: never fitted beside kappa
     prior: dict = field(default_factory=dict)   # centre, sd or log_sd, source
     extra: dict = field(default_factory=dict)
 
@@ -152,7 +153,8 @@ def load_registry(path, variant: str | None = None) -> list[Param]:
                   default=None if e.get("default") is None else float(e["default"]),
                   group=e.get("group", ""), source=e.get("source", ""), variants=variants,
                   notes=e.get("notes", ""), state=e.get("state", "fit"), stage=e.get("stage", "energy"),
-                  reason=e.get("reason", ""), process=e.get("process", ""), prior=dict(e.get("prior", {})))
+                  reason=e.get("reason", ""), process=e.get("process", ""), shape=bool(e.get("shape", False)),
+                  prior=dict(e.get("prior", {})))
         _check(p)
         if p.file == "pft" and p.pft is None:
             p.pft = 1
@@ -199,6 +201,12 @@ def select(params: list[Param], fitcfg: dict, priors: dict) -> list[Param]:
             p.prior.pop("sd", None)
         _check(p)
         out.append(p)
+    #----- kappa takes up the level of the tower's GPP; a free shape key would trade with it
+    if any(p.file == "obs" and p.key == "kappa" for p in out):
+        shapes = [p.name for p in out if p.shape]
+        if shapes:
+            raise ValueError(f"[fit]: kappa (the GPP observation model's respiration error) is never fitted with "
+                             f"a shape key of the leaf's light response: {shapes}")
     return out
 
 
@@ -209,6 +217,8 @@ def resolve_defaults(params: list[Param], base, record: dict | None = None):
     misspelling, or a dead key. The prior's centre must lie strictly inside the range; the default
     need not (a base value at a bound is fine: the fit starts from the prior's centre)."""
     for p in params:
+        if p.default is None and p.file == "obs":
+            p.default = float(p.prior.get("centre", 1.0))       # an observation key: no config holds it
         if p.default is None:
             v = base.get(p.key, file=p.file, pft=p.pft if p.file == "pft" else None)
             if v is None and record is not None:

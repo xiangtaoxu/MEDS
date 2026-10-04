@@ -7,7 +7,6 @@
 [base]
 main        = "meds_config_eval.toml"                # with the PFT file it names, pft_parameters.toml
 registry    = "../../scripts/calibrate_fast/parameters.toml"
-growth_resp = "calibration/growth_resp_monthly.csv"   # calibrate_fast.py growth-resp, from the five-year run
 
 # Applied to every trial and every state chain.
 [overrides]
@@ -27,8 +26,6 @@ site         = "bci_site.toml"
 forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
 forcing_qc   = ["LWdown_qc", "Wind_qc"]
 forcing_grid = 1
-closure      = "none"          # H and LE as measured: the closure gap behaves like missing sensible heat
-                               #   (site_reference.toml [tower].closure), so H is filtered harder instead
 daytime_sw   = 10.0            # [W m-2]
 
 [targets.albedo]
@@ -38,42 +35,27 @@ min_sw = 200.0
 [targets.lw_up]
 sigma = 5.0
 
-# Rnet is the four radiation components summed (to 1e-11 W m-2), so the albedo and the upwelling
-# longwave already hold it; EF is biased high where closure is poor (site_reference.toml).
-[targets.rnet]
-on = false
-
-[targets.ef]
-on = false
-
-# LE and H as measured, daytime only, with the u* rule of the diagnostic: LE/Rnet is flat in u* and
-# H/Rnet still rises at the top classes, so neither is filtered (site_reference.toml). H keeps a
-# wider sigma: the tower misses sensible heat.
-[targets.le]
-sigma_abs = 10.0
-sigma_rel = 0.15
-closure = false
-
-[targets.h]
-sigma_abs = 10.0
-sigma_rel = 0.30
-closure = false
-
-# GPP: the tower's is built from one respiration value per day (GPP = R_day - NEE), about the soil
-# chambers' alone (without the above-ground part), so sigma carries ~2 umol m-2 s-1 of systematic
-# error; the provider's u* threshold (0.4, bci_site.toml) filters the calm morning hours.
-# site_reference.toml explains both.
-[targets.gpp]
-sigma_abs = 2.5
-sigma_rel = 0.15
-
-# Night NEE is out of the fast fit (revision plan decision 3): rd_vcmax_ratio is fixed instead.
-[targets.nee_night]
-on = false
-
+# LE and H: daytime, with the u* rule of the diagnostic (LE/Rnet flat in u*, H/Rnet still rising:
+# neither filtered) and the closure observation model. The attribution test gives the whole gap to
+# H (H/Rnet rises with turbulence in every VPD class, LE/Rnet does not), so H is raised to close the
+# daily energy balance and LE is kept as measured. Their sigma comes from the paired days.
+#
+# GPP: the provider made it from one respiration value per day, about the soil chambers' alone
+# (without the above-ground part), so the respiration observation model with kappa (below); the
+# provider's u* threshold (0.4, bci_site.toml) filters the calm morning hours.
 [targets.ustar]
 sigma_abs = 0.1
 sigma_rel = 0.2
+
+# The tower's respiration (4.09 umol m-2 s-1) is about the soil chambers' alone (1,613 gC m-2 yr-1,
+# about 4.3; Rubio & Detto 2017), and the provider's note says it "appeared underestimated ...
+# considering that RECO includes also above ground respiration which can contribute up to 40-50% of
+# total respiration" (bci_site.toml [provider]).
+[priors.kappa]
+centre = 0.65
+sd     = 0.10
+range  = [0.4, 1.0]
+source = "best-practice plan §3.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)"
 
 [fit]
 stages     = ["energy", "water", "polish"]   # optics and photosynthesis keys fitted with the coupled loop

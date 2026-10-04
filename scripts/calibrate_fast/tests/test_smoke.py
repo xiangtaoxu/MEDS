@@ -81,6 +81,7 @@ H = {{ column = "H", units = "W m-2", {flag} }}
 NEE = {{ column = "NEE", units = "umol m-2 s-1", {flag} }}
 GPP = {{ column = "gpp", units = "umol m-2 s-1", {flag} }}
 USTAR = {{ column = "ustar", units = "m s-1", {flag} }}
+RECO = {{ sum = ["GPP", "NEE"] }}
 [provider]
 ustar_threshold = 0.4
 """)
@@ -135,10 +136,6 @@ site = "site.toml"
 [targets.albedo]
 on = false
 [targets.lw_up]
-on = false
-[targets.rnet]
-on = false
-[targets.ef]
 on = false
 [targets.ustar]
 on = false

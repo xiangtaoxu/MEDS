@@ -40,7 +40,6 @@ class Model:
     pool: object
     root: Path
     step: float                      # the tower's interval [s]: the trials' output must match it
-    growth_resp: dict | None = None
     timeout: float = 900.0
     keep_netcdf: bool = False
     seconds: list = field(default_factory=list)
@@ -48,6 +47,13 @@ class Model:
     n_trials: int = 0
     n_failed: int = 0
     log: object = print
+    obs_fixed: dict = field(default_factory=dict)   # observation keys not fitted, at their values
+
+    def obs_keys(self, theta) -> dict:
+        """The observation keys (kappa) of a parameter set: they enter the residuals, never a trial."""
+        out = dict(self.obs_fixed)
+        out.update({p.key: float(v) for p, v in zip(self.params, theta) if p.file == "obs"})
+        return out
 
     def _timeout(self) -> float:
         """A runaway trial (the hydraulic cost cliff) is cut off; a slow one under a full node is
@@ -110,8 +116,8 @@ class Model:
                 out.append(None)
                 continue
             try:
-                out.append(np.concatenate([res.residual(self.specs[w.name], trials.load_series(td),
-                                                        self.growth_resp)
+                ok = self.obs_keys(th)
+                out.append(np.concatenate([res.residual(self.specs[w.name], trials.load_series(td), ok)
                                            for w, td in zip(windows, tds)]) if windows else np.zeros(0))
             except ValueError as e:
                 self.n_failed += 1
