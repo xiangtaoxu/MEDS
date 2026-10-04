@@ -942,3 +942,16 @@ def test_the_prior_z_and_who_pushes_a_key():
     for k, p in enumerate(prob.params):
         assert z[p.name]["z"] == pytest.approx((out["u"][k] - p.u0) / p.sigma_u)
         assert z[p.name]["pushed_by"] in ("le", "h")
+
+
+def test_a_true_false_setting_from_the_parameter_record():
+    """The record holds a logical as text: "false" must read as false (it once switched off the
+    Kattge & Knorr values, as if the model's own acclimation were on)."""
+    site = CF.Site.__new__(CF.Site)
+    site.base = RunConfig({"leaf_physiology": {}}, {"pft": {}})
+    rec = {("main", "leaf_physiology.thermal_acclimation", 0): (False, "false")}
+    assert site.flag("leaf_physiology.thermal_acclimation", rec) is False
+    rec = {("main", "leaf_physiology.thermal_acclimation", 0): (True, "true")}
+    assert site.flag("leaf_physiology.thermal_acclimation", rec) is True
+    site.base = RunConfig({"leaf_physiology": {"thermal_acclimation": True}}, {"pft": {}})
+    assert site.flag("leaf_physiology.thermal_acclimation", None) is True
