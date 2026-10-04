@@ -1,16 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The estimation (MEDS_FAST_CALIBRATION_PLAN.md §6; the revision plan §6-§8): Levenberg-Marquardt
-on the stacked, weighted residuals of every target in every window, with the Jacobian from central
-finite differences run in parallel, Gaussian priors in the transformed space (one sd per key), the
-screening from the first Jacobian, and the Laplace covariance at the MAP with a linearity check.
+"""The estimation (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md §6.3, §7.1): one joint
+Levenberg-Marquardt fit of every key on the stacked, weighted residuals of every target in every
+window, with Gaussian priors in the transformed space (one sd per key), the triage of the first
+gradient matrix, and the Laplace covariance at the MAP with a linearity check.
 
 The objective in u (free parameters only) is
 
     Phi(u) = || r_data(u) ||^2 + || (u - u_prior) / sigma_prior ||^2
 
-The data residuals come from a model's `residuals` method: `Model` runs one trial per (point,
-window) through the worker pool (every trial of a batch at once); the kernel models of stages.py
-evaluate the canopy kernels in-process.
+The data residuals come from `Model.residuals`, which runs one trial per (point, window) through the
+worker pool (every trial of a batch at once). The fit's iterations use one-sided differences, with
+the gradient matrix carried between full recomputations by Broyden's rank-one update; the screening
+at the start and the uncertainty at the end use central differences, which also measure each key's
+smoothness.
 """
 from __future__ import annotations
 
@@ -30,7 +32,7 @@ from registry import H_U, interval
 @dataclass
 class Model:
     """Runs candidate parameter sets over a set of windows and returns their data residuals."""
-    params: list                     # every fitted registry parameter (free in some stage)
+    params: list                     # every registry parameter the fit may move
     windows: list                    # trials.Window
     specs: dict                      # window name -> residuals.WindowSpec
     states: dict                     # window name -> state file
@@ -65,17 +67,16 @@ class Model:
             return self.timeout
         return max(3.0 * float(np.median(ok)), self.timeout)
 
-    def run(self, thetas: list, windows, kind: str = "trial") -> list:
+    def run(self, thetas: list, windows) -> list:
         """Run (or find cached) every (theta, window) trial; returns, per theta, a list of trial
-        directories, or None where a trial failed. kind "driver" also writes the canopy drivers."""
+        directories, or None where a trial failed."""
         dirs = [[trials.build_trial(self.base, self.params, th, w, self.states[w.name], self.root,
-                                    self.overrides, kind=kind)
+                                    self.overrides)
                  for w in windows] for th in thetas]
         todo, seen = [], set()
-        done = trials.DRIVERS_NPZ if kind == "driver" else "series.npz"
         for tds in dirs:
             for td in tds:
-                if td not in seen and not (td / done).exists():
+                if td not in seen and not (td / "series.npz").exists():
                     seen.add(td)
                     todo.append(Task(td.name, trials.command(self.runner, td / "main.toml"), str(td),
                                      str(td / "run.log"), self._timeout()))
@@ -94,7 +95,7 @@ class Model:
                         st = status.get(td.name, ("missing", 0.0))[0]
                         if st != "ok":
                             raise trials.TrialError(f"{td.name}: {st}")
-                        trials.finish(td, self.params, th, self.step, self.keep_netcdf, kind=kind)
+                        trials.finish(td, self.params, th, self.step, self.keep_netcdf)
                     ok.append(td)
                 except (trials.TrialError, ValueError) as e:
                     if "parameter record check failed" in str(e):
@@ -199,19 +200,54 @@ def jacobian(prob: Problem, u, r0, h=H_U, log=print):
     return J, smooth, pending
 
 
-def lm(prob: Problem, u_start, max_iter=15, rtol=1e-3, lam0=1e-2, max_step=2.0, log=print,
-       label="", jac0=None):
-    """Levenberg-Marquardt from u_start. Each iteration tries three damping values at once."""
+def jacobian_one_sided(prob: Problem, u, r0, h=H_U, log=print):
+    """Forward differences in u, every column's trial in one batch; a failed column is retried
+    backward. Returns the data Jacobian and the columns that failed both ways (set to zero)."""
+    k = len(u)
+    J = np.zeros((len(r0), k))
+    pending = list(range(k))
+    sign = np.ones(k)
+    for attempt in range(2):
+        pts = []
+        for j in pending:
+            e = np.zeros(k)
+            e[j] = sign[j] * h
+            pts.append(u + e)
+        R = prob.data(pts) if pts else []
+        retry = []
+        for n, j in enumerate(pending):
+            if R[n] is None:
+                retry.append(j)
+                continue
+            J[:, j] = (R[n] - r0) / (sign[j] * h)
+        pending = retry
+        sign[retry] = -1.0
+        if not pending:
+            break
+        log(f"  Jacobian: {len(pending)} column(s) failed; retrying backward")
+    return J, pending
+
+
+def lm(prob: Problem, u_start, max_iter=10, rtol=1e-3, lam0=1e-2, max_step=2.0, log=print, label="",
+       jac=None, r=None, refresh_every=3):
+    """Levenberg-Marquardt from u_start. The gradient matrix is the given one (or one-sided
+    differences at the start), carried by Broyden's rank-one update after each accepted step, and
+    recomputed in full every `refresh_every` accepted steps and whenever an updated matrix finds no
+    descent. Each iteration tries three damping values at once; a failed trial rejects its
+    candidate. It stops when the cost falls by less than rtol, or after max_iter iterations."""
     u = np.array(u_start, dtype=float)
-    r = prob.data([u])[0]
     if r is None:
-        raise RuntimeError(f"{label}: the starting point's trials failed")
+        r = prob.data([u])[0]
+        if r is None:
+            raise RuntimeError(f"{label}: the starting point's trials failed")
     cost = prob.cost(u, r)
-    J, smooth, failed = jac0 if jac0 is not None else jacobian(prob, u, r, log=log)
-    lam = lam0
+    J, fresh = (jac, True) if jac is not None else (jacobian_one_sided(prob, u, r, log=log)[0], True)
+    lam, since = lam0, 0
     hist = [{"iter": 0, "cost": cost, "lambda": lam, "u": u.tolist()}]
     log(f"{label} start: Phi = {cost:.6g}")
-    for it in range(1, max_iter + 1):
+    it = 0
+    while it < max_iter:
+        it += 1
         Jf = np.vstack([J, np.diag(1.0 / prob.sigma)])
         rf = np.concatenate([r, prob.prior_r(u)])
         A, g = Jf.T @ Jf, Jf.T @ rf
@@ -220,28 +256,37 @@ def lm(prob: Problem, u_start, max_iter=15, rtol=1e-3, lam0=1e-2, max_step=2.0, 
         for _ in range(4):
             lams = [lam / 10.0, lam, lam * 10.0]
             cands = []
-            for l in lams:
-                d = np.linalg.solve(A + l * D, -g)
+            for lm_ in lams:
+                d = np.linalg.solve(A + lm_ * D, -g)
                 s = np.max(np.abs(d))
                 cands.append(u + (d * max_step / s if s > max_step else d))
             R = prob.data(cands)
             costs = [prob.cost(c, rc) if rc is not None else np.inf for c, rc in zip(cands, R)]
             b = int(np.argmin(costs))
             if costs[b] < cost:
-                rel = (cost - costs[b]) / cost
-                u, r, cost, lam = cands[b], R[b], costs[b], lams[b]
                 accepted = True
                 break
             lam *= 100.0
-        hist.append({"iter": it, "cost": cost, "lambda": lam, "u": u.tolist(), "accepted": accepted})
         if not accepted:
-            log(f"{label} iter {it}: no descent at any damping; stopping")
-            break
+            hist.append({"iter": it, "cost": cost, "lambda": lam, "u": u.tolist(), "accepted": False})
+            if fresh:
+                log(f"{label} iter {it}: no descent at any damping; stopping")
+                break
+            log(f"{label} iter {it}: no descent with the updated gradient matrix; recomputing it")
+            J, fresh, since, lam = jacobian_one_sided(prob, u, r, log=log)[0], True, 0, lam0
+            continue
+        rel = (cost - costs[b]) / cost
+        du, dr = cands[b] - u, R[b] - r
+        J = J + np.outer(dr - J @ du, du) / float(du @ du)            # Broyden's rank-one update
+        u, r, cost, lam = cands[b], R[b], costs[b], lams[b]
+        fresh, since = False, since + 1
+        hist.append({"iter": it, "cost": cost, "lambda": lam, "u": u.tolist(), "accepted": True})
         log(f"{label} iter {it}: Phi = {cost:.6g} (drop {100 * rel:.2f} %, lambda {lam:.3g})")
-        J, smooth, failed = jacobian(prob, u, r, log=log)
         if rel < rtol:
             break
-    return {"u": u, "r": r, "cost": cost, "J": J, "smooth": smooth, "failed": failed, "history": hist}
+        if since >= refresh_every and it < max_iter:
+            J, fresh, since = jacobian_one_sided(prob, u, r, log=log)[0], True, 0
+    return {"u": u, "r": r, "cost": cost, "J": J, "history": hist, "iterations": it}
 
 
 def row_scales(specs, r, weighted: bool, sigma_scale: dict | None = None) -> np.ndarray:
@@ -285,22 +330,29 @@ def intervals(prob: Problem, u, cov_u) -> dict:
         sd = math.sqrt(cov_u[k, k])
         out[p.name] = {"map": float(p.to_theta(u[k])), "sd_u": sd, "i68": interval(p, u[k], sd, 1.0),
                        "i95": interval(p, u[k], sd, 1.96), "sigma_ratio": sd / p.sigma_u,
-                       "prior_centre": p.centre, "range": [p.lo, p.hi], "stage": p.stage}
+                       "prior_centre": p.centre, "range": [p.lo, p.hi], "kind": p.kind}
     return out
 
 
-def screening(prob: Problem, J, r0, smooth, failed, specs, max_free=20, min_teach=0.05,
-              mode="report", weighted=True):
-    """The first Jacobian's screening (§6.3): sensitivity per target, identifiability as each key's
-    posterior-to-prior sigma ratio, collinear pairs, dead columns and rough keys. In "report" mode
-    every key is kept and the report says which the "drop" mode would fix; in "drop" mode the
-    uninformed, dead and rough keys are fixed at the prior's centre."""
+def _posterior_of(J, sigma, w):
+    Jw = J * w[:, None]
+    return np.linalg.inv(Jw.T @ Jw + np.diag(1.0 / sigma ** 2))
+
+
+def triage(prob: Problem, J, r0, smooth, failed, specs, informed=0.9, max_corr=0.95, mode="triage",
+           weighted=True):
+    """The screening of the first gradient matrix (best-practice plan §4.1, §6.3): per key, its
+    sensitivity per target, its posterior-to-prior sigma ratio and its smoothness. In "triage" mode a
+    key is fixed at its prior's centre when its column is zero (dead), its response is rough (the
+    two one-sided slopes disagree by more than 3x), the data barely inform it (ratio >= informed),
+    or it is one of a pair correlated beyond max_corr (the less informed one goes). "report" keeps
+    every key. Returns (indices kept, report)."""
     params = prob.params
-    cov_u, _ = posterior(prob, J, r0, specs, weighted)
+    w = row_scales(specs, r0, weighted)
+    cov_u = _posterior_of(J, prob.sigma, w)
     ratio = np.sqrt(np.diag(cov_u)) / prob.sigma
     corr = correlation(cov_u)
-    sl = []
-    i = 0
+    sl, i = [], 0
     for spec in specs:
         for t in spec.targets:
             sl.append((t.name, slice(i, i + len(t.obs))))
@@ -314,26 +366,43 @@ def screening(prob: Problem, J, r0, smooth, failed, specs, max_free=20, min_teac
             acc[0] += float(col @ col)
             acc[1] += len(col)
         sens[p.name] = {k: math.sqrt(v[0] / v[1]) for k, v in per.items() if v[1]}
-    dead = [p.name for j, p in enumerate(params) if not np.any(J[:, j])]
-    rough = [p.name for j, p in enumerate(params)
-             if np.isfinite(smooth[j]) and (smooth[j] < 1 / 3 or smooth[j] > 3) and p.name not in dead]
-    rough += [params[j].name for j in failed]
-    candidates = [j for j, p in enumerate(params)
-                  if p.name not in dead and p.name not in rough and ratio[j] < 1.0 - min_teach]
-    candidates.sort(key=lambda j: ratio[j])
-    informed = sorted(candidates[:max_free])
-    keep = informed if mode == "drop" else list(range(len(params)))
+    why = {}
+    for j, p in enumerate(params):
+        if not np.any(J[:, j]):
+            why[j] = "dead: its gradient column is zero (a harness bug or a key the windows never use)"
+        elif j in failed or (np.isfinite(smooth[j]) and not 1 / 3 <= smooth[j] <= 3):
+            why[j] = f"rough: the two one-sided slopes disagree (smoothness {smooth[j]:.2f}); make the model continuous"
+        elif ratio[j] >= informed:
+            why[j] = f"uninformed: posterior/prior sd ratio {ratio[j]:.2f} >= {informed}"
+    keep = [j for j in range(len(params)) if j not in why]
+    #----- correlated pairs among the rest: fix the less informed one, until none is left
+    while len(keep) > 1:
+        sub = _posterior_of(J[:, keep], prob.sigma[keep], w)
+        c = correlation(sub)
+        np.fill_diagonal(c, 0.0)
+        a, b = np.unravel_index(np.argmax(np.abs(c)), c.shape)
+        if abs(c[a, b]) < max_corr:
+            break
+        ja, jb = keep[a], keep[b]
+        drop, other = (ja, jb) if ratio[ja] >= ratio[jb] else (jb, ja)
+        why[drop] = f"collinear with {params[other].name} (correlation {c[a, b]:+.3f}): the less informed of the two"
+        keep.remove(drop)
+    if mode == "report":
+        keep = list(range(len(params)))
+    elif mode != "triage":
+        raise ValueError(f'[fit].screening must be "triage" or "report", not {mode!r}')
     pairs = [(params[a].name, params[b].name, float(corr[a, b]))
              for a in range(len(params)) for b in range(a + 1, len(params)) if abs(corr[a, b]) > 0.9]
     sv = np.linalg.svd(J * prob.sigma, compute_uv=False) if J.size else np.zeros(0)
     report = {"mode": mode, "keys": [p.name for p in params],
               "sigma_ratio": {p.name: float(ratio[j]) for j, p in enumerate(params)},
               "smoothness": {p.name: float(smooth[j]) for j, p in enumerate(params)},
-              "sensitivity": sens, "dead": dead, "rough": rough, "collinear": pairs,
-              "singular_values": sv.tolist(),
-              "would_drop": [p.name for j, p in enumerate(params) if j not in informed],
+              "sensitivity": sens, "collinear": pairs, "singular_values": sv.tolist(),
+              "dead": [params[j].name for j, m in why.items() if m.startswith("dead")],
+              "rough": [params[j].name for j, m in why.items() if m.startswith("rough")],
+              "would_fix": {params[j].name: m for j, m in why.items()},
               "fitted": [params[j].name for j in keep],
-              "fixed": [p.name for j, p in enumerate(params) if j not in keep]}
+              "fixed": {params[j].name: why[j] for j in range(len(params)) if j not in keep}}
     return keep, report
 
 
@@ -384,25 +453,8 @@ def shift(prob: Problem, u, J, r, J_alt, r_alt) -> np.ndarray:
     return gn_step(prob, u, J_alt, r_alt) - gn_step(prob, u, J, r)
 
 
-def line_search(prob: Problem, u, j, grid=(-2.0, -1.0, 1.0, 2.0)):
-    """1-D search for a rough key j, others held: the best of u_j + g * sigma_prior."""
-    pts = []
-    for g in grid:
-        v = u.copy()
-        v[j] = u[j] + g * prob.sigma[j]
-        pts.append(v)
-    R = prob.data(pts)
-    base = prob.data([u])[0]
-    best_u, best_c = u, prob.cost(u, base)
-    for v, rv in zip(pts, R):
-        if rv is not None and prob.cost(v, rv) < best_c:
-            best_u, best_c = v, prob.cost(v, rv)
-    return best_u, best_c
-
-
 def bound_pushers(prob: Problem, u, J, r, specs, frac=0.05):
-    """Parameters within `frac` of a bound, with the target whose gradient pushes them there and
-    the stage that sets them."""
+    """Parameters within `frac` of a bound, with the target whose gradient pushes them there."""
     out = []
     sl = []
     i = 0
@@ -422,7 +474,7 @@ def bound_pushers(prob: Problem, u, J, r, specs, frac=0.05):
             toward_hi = pos > 0.5
             pusher = (min(push, key=lambda k: push[k]) if toward_hi else max(push, key=lambda k: push[k])) if push else None
             out.append({"key": p.name, "theta": th, "range": [p.lo, p.hi], "pushed_by": pusher,
-                        "stage": p.stage})
+                        "kind": p.kind})
     return out
 
 

@@ -134,6 +134,23 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **`calibrate_fast` runs one joint fit** (best-practice plan P5).
+  - **The steps:**
+    1. the triage of the first central gradient matrix (dead, rough, uninformed or collinear keys
+       fixed at their priors);
+    2. Levenberg–Marquardt on every key at once, over the calibration windows and the seasonal runs
+       (LE). It uses one-sided differences with Broyden's update between full recomputations (every
+       third step).
+    3. one refresh of the chains, weights and σ after its first convergence;
+    4. the final central gradient matrix for the uncertainty.
+  - **What goes:** the separate water stage and its grid search, the polish, the optics and
+    photosynthesis kernel stages (`stages.py`, the driver trials) and gate G8. With them go
+    `[fit].stages`, `--stages`, `--resume`, `[stages.*]`, `rough_keys`, `max_free` and the line
+    search.
+  - **Settings:** the registry's `stage` goes; the seasonal runs' targets move to
+    `[windows.seasonal].targets`.
+  - **Effect:** in a synthetic test with 8 keys, the Broyden updates reach the same minimum with 32
+    trials against 45 (#361).
 - **`calibrate_fast` reads the tower through its site TOML** (plan P1). `[tower].site` names it, and
   the facts it holds leave `calibration.toml`: `[tower].path`, `time_column`, `flag_column`,
   `flag_good`, `utc_offset_h` and `[tower.columns]` are gone (a site that still sets them is refused).

@@ -707,9 +707,9 @@ if(MEDS_BUILD_TESTS)
                           ${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_restart_exact.py)
          set_tests_properties(restart_exact PROPERTIES
                               ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1;MEDS_MAIN=$<TARGET_FILE:meds_main>")
-         #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests, #
-         #      and a smoke test that runs a chain, a trial and a Jacobian column through meds_main  #
-         #      and, when libmeds.so is built, through the Python API as well.                      #
+         #----- The fast-parameter calibration tool (scripts/calibrate_fast/tests): the unit tests,  #
+         #      a smoke test that runs a chain, a trial and a Jacobian column through meds_main (and, #
+         #      when libmeds.so is built, through the Python API), and a short end-to-end fit.        #
          set(meds_calib_env "PYTHONDONTWRITEBYTECODE=1" "MEDS_MAIN=$<TARGET_FILE:meds_main>")
          if (MEDS_BUILD_PYLIB)
             list(APPEND meds_calib_env "MEDS_LIB=$<TARGET_FILE:meds_py>")
