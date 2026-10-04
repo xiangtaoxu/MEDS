@@ -318,6 +318,9 @@ contains
       if (opts%debug_error .and. face_resid > opts%atol) then
          error stop 'advance_soil_water_column: per-face mass budget did not close (w_flux inconsistent)'
       end if
+      if (opts%debug_error .and. .not. ok) then
+         error stop 'advance_soil_water_column: the solve did not converge'
+      end if
    end subroutine advance_soil_water_column
 
    !=======================================================================================!
@@ -347,7 +350,7 @@ contains
       real(wp)    :: h, t, hmin, err, dr_b, up_b, dr_1, up_1, dr_2, up_2
       integer(ik) :: k, nfix
       real(wp), parameter :: safety = 0.9_wp, fmin = 0.25_wp, fmax = 4.0_wp
-      logical :: dum
+      logical :: dum, conv_b, conv_1, conv_2, converged
 
       drainage_tot = 0.0_wp
       uptake_tot = 0.0_wp
@@ -382,11 +385,12 @@ contains
       do while (t < dt - 1.0e-9_wp * dt .and. nsub < opts%max_substep)
          h = min(h, dt - t)
          call soil_water_step_implicit(theta, params, opts, rc, n, h,        q_top,              &
-                                       root_uptake, th_big, dr_b, up_b, wf_b, sk_b, dum)
+                                       root_uptake, th_big, dr_b, up_b, wf_b, sk_b, conv_b)
          call soil_water_step_implicit(theta, params, opts, rc, n, 0.5_wp*h, q_top,              &
-                                       root_uptake, th_h1, dr_1, up_1, wf_1, sk_1, dum)
+                                       root_uptake, th_h1, dr_1, up_1, wf_1, sk_1, conv_1)
          call soil_water_step_implicit(th_h1, params, opts, rc, n, 0.5_wp*h, q_top,              &
-                                       root_uptake, th_two, dr_2, up_2, wf_2, sk_2, dum)
+                                       root_uptake, th_two, dr_2, up_2, wf_2, sk_2, conv_2)
+         converged = conv_b .and. conv_1 .and. conv_2
          err = 1.0e-12_wp
          do k = 1_ik, n
             err = max(err, abs(th_two(k) - th_big(k)) / (opts%atol + opts%rtol * abs(th_two(k))))
@@ -401,7 +405,11 @@ contains
          if (err /= err .or. h /= h .or. any(th_two(1:n) /= th_two(1:n))) then
             ok = .false. ; exit
          end if
-         if (err <= 1.0_wp .or. h <= hmin * 1.0001_wp) then
+         !----- A trial whose Picard iteration did not converge is rejected like an inaccurate one;  !
+         !      one forced through at the smallest sub-step marks the whole solve unconverged, as the   !
+         !      fixed-count path above already does. (The flag used to be discarded here.) -----------!
+         if ((err <= 1.0_wp .and. converged) .or. h <= hmin * 1.0001_wp) then
+            ok = ok .and. converged
             theta(1:n)   = th_two(1:n)                         ! the more accurate (two half-steps)
             drainage_tot = drainage_tot + dr_1 + dr_2
             uptake_tot   = uptake_tot + up_1 + up_2
@@ -410,8 +418,10 @@ contains
             t    = t + h
             nsub = nsub + 1_ik
             h    = h * min(fmax, safety * err ** (-0.5_wp))
-         else
+         else if (converged) then
             h    = h * max(fmin, safety * err ** (-0.5_wp))    ! reject, shrink, retry
+         else
+            h    = h * fmin                                    ! not converged: shrink hard, retry
          end if
       end do
       if (t < dt - 1.0e-9_wp * dt) ok = .false.               ! ran out of sub-steps
@@ -419,8 +429,8 @@ contains
    end subroutine soil_water_advance
 
    !----- One implicit backward-Euler sub-step of length h. Frozen-coefficient (1 iterate) or  !
-   !      Celia (1990) modified-Picard (up to max_picard). Upstream K; retention-integral       !
-   !      conservative flux-divergence theta update. Returns                                     !
+   !      Celia (1990) modified-Picard (up to max_picard). Upstream K; conservative flux-       !
+   !      divergence theta update with the last solve's own conductances. Returns                !
    !      drainage + uptake AMOUNTS [kg/m2 over h], and the uptake per layer (sink_amt).         !
    !---------------------------------------------------------------------------------------!
    subroutine soil_water_step_implicit(theta_in, params, opts, rc, n, h, q_top, root_uptake,        &
@@ -437,7 +447,7 @@ contains
       real(wp),            intent(out) :: sink_amt(n_soil_layer_max)    !< [kg/m2] realized (psi-limited) root sink over h
       logical,             intent(out) :: ok
 
-      real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
+      real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface, kface_solve
       real(wp), dimension(n_soil_layer_max) :: a, b, c, rhs, dpsi, sk, dsk
       integer(ik) :: k, iter, maxit
       real(wp)    :: qbot, dqbot, in_k, out_k, err, theta_prev
@@ -498,13 +508,21 @@ contains
          end if
       end do
 
-      !----- Conservative theta update from the converged interior fluxes (telescoping). ----!
+      !----- Conservative theta update (telescoping). The layer fluxes keep the conductances and the  !
+      !      bottom-flux slope the last solve used, at the solve's new heads, so each layer changes by  !
+      !      the water that solve moved. Re-reading the conductances at the new heads broke on dry soil !
+      !      under heavy rain (#352): the solve lifts a dry top layer to a saturated head, and the      !
+      !      saturated conductivity times that head gradient drained the layer below residual in one    !
+      !      sub-step, after which the column never recovered. Only the root sink is re-read at the new !
+      !      heads: the wilting ramp keeps it within the plant's request, which is all the plant side   !
+      !      is ever credited. ---------------------------------------------------------------------!
+      kface_solve(1:n) = kface(1:n)
+      qbot = qbot + dqbot * dpsi(n)
       call face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
                          kk, cc, kface, gface, sk, dsk)
-      call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       wface_amt = 0.0_wp
       do k = 1_ik, n - 1_ik
-         qface(k)     = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
+         qface(k)     = kface_solve(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
          wface_amt(k) = qface(k) * h                             ! [m] downward depth crossing face k over h
       end do
       uptake_amt = 0.0_wp

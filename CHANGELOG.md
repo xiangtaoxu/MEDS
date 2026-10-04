@@ -167,6 +167,37 @@ before and after.
   - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
+- **The fast loop blew up when heavy rain hit dry soil** (#352). The ARK integrator takes each
+  step's soil water from a separate soil-water solve, and that solve went wrong at rain onset.
+  - **The cause:** after each linear solve, the solver recomputed the flows between layers with the
+    conductivity at the NEW water potentials. A top layer dried near residual holds almost no water
+    per metre of potential, so 30 mm/h of rain lifts its potential by hundreds of metres to
+    saturation within one sub-step. The saturated conductivity times that gradient drained the layer
+    *below residual* while it rained. Step-doubling could not see it, because the full step and the
+    two half-steps overshot alike. From there the potential clamped at −3e15 m, the solve ran out of
+    sub-steps, and the "flows" reached metres per second, clipped and floored back into ~1e7 kg m⁻² of
+    water. The soil-heat step turned that into a top-soil temperature of −1e10 K, then NaN. RK45 never
+    used these flows, so it survived.
+  - **The fix:** the flows keep the conductivities and bottom-flux slope the solve used, at the
+    solve's new potentials, so each layer changes by exactly the water the solve moved. Only the root
+    uptake is re-read at the new potentials: it stays within the plant's request, which is all the
+    plant side is credited (re-reading it linearly instead leaked water).
+  - **BCI 2017 (trial 7fe525… of the cross-site calibration):** the run that stopped at the
+    2017-04-17 storm now completes, with no energy or water budget breach and none under
+    `[energy].debug_error`. In normal weather the change is small. On another trial over Jan–Apr
+    2017, hourly LE moves by 0.33 W m⁻² RMS (mean 89), H by 0.09 W m⁻² and GPP by 0.0008
+    µmol m⁻² s⁻¹. That is 25–300 times smaller than the usual gap between ARK and RK45.
+  - **Test:** `test_column_hydrology` replays the failing solve's inputs from that patch (it failed
+    with flows of 5.8 m s⁻¹ and 2.5e7 kg m⁻² created by the floor).
+- **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
+  the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
+  check of the soil column: the end-of-run report prints a warning with the count, and
+  `[energy].debug_error` stops the run.
+- **The adaptive soil-water sub-stepping ignored whether its iteration converged.** Under
+  `[soil] linearize = "picard"`, a sub-step whose iteration did not converge was accepted when its
+  error estimate passed. It is now rejected and retried at a quarter of the size, like the fixed-count
+  path already did. The default single linear solve always counts as converged, so default runs are
+  unchanged by this.
 - **A NaN in the fast loop went unreported, and the run still ended "no NaNs"** (#352).
   - **The old guard:** four cohort-structure fields (diameter, density, AGB, wood carbon), and only on
     year boundaries. Meanwhile the fast loop's integrators commit a non-finite state when even their

@@ -352,6 +352,9 @@ contains
                poly%face_budget%worst, ' kg/m2   mean |resid| = ',                                  &
                poly%face_budget%abs_sum / max(real(poly%face_budget%n_check, wp), 1.0_wp),          &
                ' kg/m2   checks = ', poly%face_budget%n_check
+         if (poly%face_budget%n_fail > 0_ik)                                                       &
+            write(*,'(a,i0,a)') ' WARNING: ', poly%face_budget%n_fail,                               &
+               ' soil-water solves did not converge (see [energy].debug_error to make this fatal)'
          if (poly%energy_budget%n_fail + poly%water_budget%n_fail > 0_ik)                        &
             write(*,'(a,i0,a)') ' WARNING: ', poly%energy_budget%n_fail + poly%water_budget%n_fail, &
                ' whole-column budget checks breached tolerance (see [energy].debug_error to make this fatal)'

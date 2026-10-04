@@ -557,6 +557,10 @@ contains
       budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(hflux%face_mass_resid))
       budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(hflux%face_mass_resid)
       budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
+      !----- A solve that did not converge (it ran out of sub-steps, or its iteration failed) counts as !
+      !      a failed check of the column, so the end-of-run report says so. Its flag used to go       !
+      !      unread: at the #352 storm front 26 failed solves were used as if they were sound. ---------!
+      if (.not. hflux%converged) budget%soil_face_mass%n_fail = budget%soil_face_mass%n_fail + 1_ik
       do k = 1_ik, nsl
          frozen%hydrology%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
          frozen%hydrology%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))

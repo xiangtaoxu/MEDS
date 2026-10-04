@@ -253,7 +253,8 @@ module meds_fast_types
       !      This is the number that DOES see it: per layer, |the mass that actually moved - the mass !
       !      the faces were charged for|, summed over layers. It is a pre-formed residual, so only    !
       !      `resid`/`worst`/`abs_sum`/`n_check`/`n_fail` are meaningful here -- there is no store-    !
-      !      versus-boundary pair to fill, and store0/store1/influx/outflux stay 0 by design.         !
+      !      versus-boundary pair to fill, and store0/store1/influx/outflux stay 0 by design. `n_fail` !
+      !      counts the soil-water solves that did not converge (meds_fast_frozen).                    !
       !                                                                                          !
       !      Provenance was previously protected by comment and convention only; what found the last  !
       !      instance was an implausible temperature, which is not a detector. --------------------!
