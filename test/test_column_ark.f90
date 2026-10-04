@@ -16,7 +16,7 @@ program test_column_ark
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
-                                        sat_specific_humidity
+                                        sat_specific_humidity, internal_energy_liquid
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
@@ -201,6 +201,7 @@ program test_column_ark
    call test_ark_saturated()
    call test_ark_aquifer()
    call test_wood_prognostic(INTEG_ARK, 'ARK ')
+   call test_refilling_wood_isothermal()
 
    call test_report('test_column_ark')
 
@@ -241,6 +242,35 @@ contains
       call check_true(trim(tag)//' PROG-WOOD: wood temperature physical',                                             &
               biophys%wood_temp(1) > 200.0_wp .and. biophys%wood_temp(1) < 350.0_wp, biophys%wood_temp(1))
    end subroutine test_wood_prognostic
+
+   !----- #355: wood refilling from the soil must not heat itself. Dried wood over moist soil at night, !
+   !      with soil, wood and leaf at one temperature, refills -- and the water it takes in arrives at    !
+   !      its own temperature, so the wood's heat input must be zero. The water's whole enthalpy (~4.4e5  !
+   !      J/kg from the liquid datum) used to be counted as heat; at the 2017-04-17 BCI storm front that  !
+   !      put the wood 13 K above the canopy air. The water stores take that enthalpy instead, and what   !
+   !      the soil gives up must equal what the tissues and their water stores gain. --------------------!
+   subroutine test_refilling_wood_isothermal()
+      type(column_frozen_t) :: fz
+      type(column_state_t)  :: ys
+      real(wp) :: refill, gained, given
+      call reset_state()
+      call set_noon_forcing()
+      forc%abs_sw = 0.0_wp ; forc%abs_par = 0.0_wp ; forc%abs_sw_ground = 0.0_wp   ! night
+      forc%enthalpy_atm = cas_enthalpy_of_temp(t0, 0.008_wp)
+      biophys%wood_water_mass(1:n) = 0.8_wp * biophys%wood_water_mass(1:n)        ! dried wood
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               n, nsl, fz, ys)
+      refill = sum((fz%plant%uptake_frozen(1:n) - fz%plant%sapflow_frozen(1:n)) * col_cohort%nplant(1:n))
+      call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
+      call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &
+                      maxval(abs(fz%tissue%q_wood_net(1:n))) < 1.0e-9_wp * refill * internal_energy_liquid(t0), &
+                      maxval(abs(fz%tissue%q_wood_net(1:n))))
+      gained = sum(fz%tissue%q_wood_net(1:n)) + sum(fz%tissue%qwflux_wl(1:n)) + fz%tissue%water_store_enth
+      given  = sum(fz%roots%qloss_frozen(1:n))
+      call check_close(gained, given, 1.0e-12_wp * abs(given),                                                &
+                       'what the soil gives up = what the tissues and their water stores gain')
+      call reset_state()
+   end subroutine test_refilling_wood_isothermal
 
    subroutine test_ark_aquifer()
       integer(ik) :: istep

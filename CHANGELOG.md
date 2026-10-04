@@ -196,6 +196,26 @@ before and after.
   solve's steady rate, ending the step at the same committed amount as before. Over Jan–Aug 2017 at
   BCI, the ARK − RK45 gap in rain hours shrinks from 0.52 to 0.23 K for top-soil temperature and from
   6.1 to 5.5 W m⁻² for LE; dry hours are unchanged.
+- **The wood heated itself whenever it refilled with water** (#355). Root uptake brings water into the
+  wood and sapflow takes it out to the leaves, each carrying its liquid enthalpy, counted from the
+  liquid datum (~4.4e5 J/kg). The wood's heat store is its heat capacity times its temperature, with no
+  term for water mass coming or going. So whenever uptake exceeded sapflow, the arriving water's whole
+  enthalpy was read as heat; the leaves had the same error on a smaller scale.
+  - **At the BCI storm front of 2017-04-17,** wet soil refilled the dry-season wood with ~7 kg m⁻² in
+    a quarter hour. The wood went 13 K above the canopy air (313 K in 295 K air) and gave the heat
+    back as H ≈ +600 W m⁻² and LE ≈ +420 W m⁻² at zero net radiation, where the tower measured
+    H ≈ −17 W m⁻². Every night it added ~10 W m⁻² of heat as the wood refilled.
+  - **The fix** values each tissue's own water at the tissue's start-of-step temperature, the way the
+    canopy film is valued at the liquid enthalpy its water arrived with. The tissue's temperature now
+    sees only how far the arriving water's temperature is from its own, and both energy ledgers book
+    the water stores' enthalpy change. The leaf still pays the full vapour enthalpy of what it
+    transpires; its water store's outflow is counted at the step's transpiration demand.
+  - **BCI 2017:** at the storm front H falls from 581 to 118 W m⁻² at 18 UTC and from 363 to 35 at
+    19 UTC, and ARK and RK45 now agree. Over Jan–Jul, mean night-time H (01–09 UTC) goes from +2.5 to
+    −0.9 W m⁻² (tower −23), mean H from 72.1 to 70.5 W m⁻²; GPP is unchanged.
+  - **Test:** `test_column_ark` refills dried wood from moist soil at one temperature and checks the
+    wood gains no heat, and that what the soil gives up equals what the tissues and their water stores
+    gain.
 - **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
   the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
   check of the soil column: the end-of-run report prints a warning with the count, and

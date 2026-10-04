@@ -97,7 +97,7 @@ contains
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
       real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
-      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up
+      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up, u_liq_leaf, u_liq_wood
       real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
       logical     :: converged_b(n)
@@ -511,16 +511,34 @@ contains
       !      HR is disabled project-wide (uptake floored >=0), so qloss's upwind is unconditionally the       !
       !      root-frac-weighted mean soil temperature (weighted_mean is a generic weighted-sum, not      !
       !      psi-specific, so it is reused verbatim for temperature here). -------------------------------!
+      !                                                                                                  !
+      !      Each tissue's own WATER is valued at the tissue's start-of-step temperature, the way the        !
+      !      canopy film is valued at the liquid enthalpy its water arrived with. The tissue heat store is   !
+      !      cap*T with the step's frozen capacity, which has no term for water mass coming or going; so    !
+      !      the water the tissue gains or loses is booked at that value (water_store_enth, in the ledgers), !
+      !      and the tissue's temperature sees only how far the arriving water's temperature is from its   !
+      !      own. Counting the arriving water's whole enthalpy (~4.4e5 J/kg from the liquid datum) as heat   !
+      !      warmed the wood whenever it refilled: ~10 W/m2 every night at BCI, and at the 2017-04-17 storm  !
+      !      front, when wet soil refilled the dry-season wood with ~7 kg/m2 in a quarter hour, it put the  !
+      !      wood 13 K above the canopy air and drove H to +600 W/m2 at zero net radiation (#355). The leaf  !
+      !      still pays the full vapour enthalpy of what it transpires (surface_derivs); its water store's   !
+      !      outflow is counted at the pre-pass transpiration demand (sf0), frozen like everything here.     !
       soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), col_config%soil%root_frac, nsl)
       u_liq_soil = internal_energy_liquid(soil_temp_root)
+      frozen%tissue%water_store_enth = 0.0_wp
       do i = 1_ik, n
          t_up_wl   = merge(biophys%wood_temp(i), biophys%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
          u_liq_up  = internal_energy_liquid(t_up_wl)
+         u_liq_leaf = internal_energy_liquid(biophys%leaf_temp(i))
+         u_liq_wood = internal_energy_liquid(biophys%wood_temp(i))
          sapflow_gnd(i) = frozen%plant%sapflow_frozen(i) * col_cohort%nplant(i)   ! [kg/m2 ground/s]
          uptake_gnd(i)  = frozen%plant%uptake_frozen(i)  * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         frozen%tissue%qwflux_wl(i)  = sapflow_gnd(i) * u_liq_up
-         frozen%roots%qloss_frozen(i)    = uptake_gnd(i)  * u_liq_soil
-         frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - frozen%tissue%qwflux_wl(i)
+         frozen%roots%qloss_frozen(i) = uptake_gnd(i) * u_liq_soil          ! what the soil gives up, in full
+         frozen%tissue%qwflux_wl(i)   = sapflow_gnd(i) * u_liq_up - (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
+         frozen%tissue%q_wood_net(i)  = uptake_gnd(i) * (u_liq_soil - u_liq_wood) - sapflow_gnd(i) * (u_liq_up - u_liq_wood)
+         frozen%tissue%water_store_enth = frozen%tissue%water_store_enth                                     &
+                                        + (uptake_gnd(i) - sapflow_gnd(i)) * u_liq_wood                       &
+                                        + (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
       end do
 
       !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !

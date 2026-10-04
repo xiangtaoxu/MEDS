@@ -772,6 +772,10 @@ contains
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)
       end do
+      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
+      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
+      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
+      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER (design doc sec 8 gates 2/3 -- the headline           !
       !      deliverable): unlike ARK's per-kernel + whole ledger, RK45 checks the WHOLE-COLUMN        !

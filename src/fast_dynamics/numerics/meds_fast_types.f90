@@ -447,8 +447,13 @@ module meds_fast_types
       real(wp), allocatable :: wai(:)         !< [m2/m2]   cohort wood area index
       real(wp), allocatable :: leaf_hcap_per_dt(:), wood_hcap_per_dt(:)   !< [W/m2/K] cap/dt_fast
       real(wp), allocatable :: t_leaf0(:), t_wood0(:) !< [K]      start-of-step tissue temperatures
-      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] sapflow's advected enthalpy INTO the leaf (wood->leaf)
-      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] net advected enthalpy INTO wood (qloss - qwflux_wl)
+      !----- Heat the moving plant water brings each tissue, counted against the tissue's OWN water   !
+      !      (valued at its start-of-step temperature; see build_column_frozen). water_store_enth is the !
+      !      enthalpy the leaf and wood water stores gain as their water mass changes, which the energy  !
+      !      ledgers add to the tissue store.                                                           !
+      real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
+      real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
+      real(wp) :: water_store_enth = 0.0_wp   !< [W/m2 ground] summed over cohorts
       !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
       !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
       !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
