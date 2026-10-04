@@ -32,10 +32,12 @@ from netCDF4 import Dataset, num2date
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "prepare_flux_tower"))
 import tower_inputs as ti            # noqa: E402  (the one reader of tower files)
+import datarules as DR               # noqa: E402
 
 #: the calibration's quantities, from the site TOML's variables and fluxes
 QUANTITIES = {"sw_in": "SWdown", "sw_up": "SW_out", "lw_up": "LW_out", "rnet": "Rnet", "le": "LE", "h": "H",
-              "nee": "NEE", "gpp": "GPP", "reco": "RECO", "ustar": "USTAR", "par": "PAR"}
+              "nee": "NEE", "gpp": "GPP", "reco": "RECO", "ustar": "USTAR", "par": "PAR",
+              "tair": "Tair", "vpd": "VPD", "rain": "Rainf"}
 
 
 @dataclass
@@ -52,14 +54,19 @@ class TowerSpec:
     step: float = 3600.0              # the tower's interval [s], from the site TOML
     lat: float | None = None          # the site's coordinates, from the site TOML
     lon: float | None = None
+    leaf_on_months: list = field(default_factory=lambda: list(range(1, 13)))
+    provider: dict = field(default_factory=dict)  # the site TOML's [provider]
+    sensor_height: float = 0.0        # [m] the tower's temperature and humidity sensor
     report: dict = field(default_factory=dict)   # the reader's checks (tower_inputs.read_standard)
 
     @classmethod
     def from_site(cls, site_toml, **choices) -> "TowerSpec":
-        """The spec with the site TOML's clock, interval and coordinates filled in."""
+        """The spec with the site TOML's clock, interval, coordinates, leaf-on months and provider
+        filled in."""
         site = ti.read_site(str(site_toml))
         return cls(site=str(site_toml), utc_offset_h=site.utc_offset, step=site.timestep,
-                   lat=site.latitude, lon=site.longitude, **choices)
+                   lat=site.latitude, lon=site.longitude, leaf_on_months=site.leaf_on_months,
+                   provider=dict(site.provider), sensor_height=site.tq_height, **choices)
 
 
 def observations(spec: TowerSpec) -> pd.DataFrame:
@@ -74,6 +81,12 @@ def observations(spec: TowerSpec) -> pd.DataFrame:
             obs[q] = table.values[name].where(table.measured[name])
         else:
             obs[q] = np.nan
+    if obs["vpd"].isna().all() and "RH" in table.values:      # VPD from RH where the site gives no VPD
+        tc = obs["tair"] - 273.15
+        rh = table.values["RH"].where(table.measured["RH"])
+        obs["vpd"] = (1.0 - rh) * ti.SATURATION_CURVES["alduchov_eskridge"](tc)
+    if obs["tair"].notna().any():
+        obs["days_since_frost"] = DR.days_since_frost(obs["tair"], spec.utc_offset_h)
     return add_closure(obs, spec)
 
 
@@ -124,6 +137,16 @@ def solar_elevation(index_utc: pd.DatetimeIndex, lat: float, lon: float, step: f
     la = np.radians(lat)
     cosz = np.sin(la) * np.sin(dec) + np.cos(la) * np.cos(dec) * np.cos(ha)
     return np.degrees(np.arcsin(np.clip(cosz, -1.0, 1.0)))
+
+
+def forcing_span(spec: TowerSpec):
+    """The forcing file's first and last record (None without a forcing file)."""
+    if not spec.forcing:
+        return None
+    with Dataset(spec.forcing) as ds:
+        t = ds["time"]
+        first, last = num2date([t[0], t[-1]], t.units, only_use_cftime_datetimes=False)
+    return pd.Timestamp(first.strftime("%Y-%m-%d %H:%M:%S")), pd.Timestamp(last.strftime("%Y-%m-%d %H:%M:%S"))
 
 
 def forcing_observed(spec: TowerSpec, index: pd.DatetimeIndex, qc=None) -> pd.Series:

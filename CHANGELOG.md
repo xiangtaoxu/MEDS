@@ -15,6 +15,26 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **The calibration's data rules** (`scripts/calibrate_fast/datarules.py`, best-practice plan P2):
+  - **u\* per target.** A diagnostic on each turbulent target's own data, with a bootstrap over days.
+    LE and H take its outcome (`ustar_min = "diagnostic"`). GPP takes the provider's threshold
+    (`"provider"`, from the site TOML, one value or one per year).
+  - **Windows by rule.** One per 1.5-month slot in the leaf-on months, each the slot's best covered,
+    with validation windows in other years. Every window gets its own 180-day chain from the initial
+    stand.
+  - **Seasonal runs from a water-deficit index.** Rain minus Priestley–Taylor evaporation from the
+    forcing; the runs are scored on LE only.
+  - **Keys fixed from process coverage**, and the albedo's sun and frost rules.
+  - **The report** gives the share of the record's conditions the fit spans, and the share of area
+    whose canopy-air top is above the sensor.
+
+  At BCI:
+  - LE is flat in u\* and H still rising, so neither is filtered (they were at 0.4 and 0.6, with
+    H also cut to 9–16 h).
+  - The calibration windows are now picked by rule (they were picked by hand).
+  - The seasonal runs are again 2016 and 2017, chosen by rule.
+  - Daytime LE rows go from 17,737 (u\* ≥ 0.4, day and night) to 13,781, and H rows from 4,739 to
+    13,781 (#358).
 - **The site TOML's `[fluxes]` and `[provider]`** (`scripts/prepare_flux_tower`): each flux the
   calibration fits (SW_out, LW_out, Rnet, LE, H, NEE, GPP, RECO, USTAR) with its column, units and the
   rule that says when it was measured (`measured = { column, equals }`; without one, a FLUXNET flux's

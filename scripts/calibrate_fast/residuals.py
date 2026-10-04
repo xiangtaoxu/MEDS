@@ -27,11 +27,18 @@ interval (30 min at BCI) on UTC, the clock of the model's output:
 Then each target's own filters, in this order (FILTERS; every one is a setting of the target,
 documented with its default and reason in site_reference.toml):
 
-    ustar_min            u* at or above (not on the u* target: it would bias it)
+    ustar_min            u* at or above (not on the u* target: it would bias it); a number, or a
+                         table of years -- datarules.resolve_ustar turns "provider" and
+                         "diagnostic" into one before the rows are built
     par_min              incident PAR at or above (needs the site TOML's variables.PAR)
     hours                local hours [from, to), on the site TOML's clock
     closure_range        days whose own closure ratio sum(H+LE)/sum(Rnet) is inside [lo, hi]
     min_solar_elevation  the sun at least this high [degrees]
+    snow_free_days       no freezing air for this many days before (the tower has no snow sensor)
+
+H, LE and u* are daytime targets: at night they are set mostly by the model's numerical floors and
+by stable-air measurement problems. `night = true` keeps their night records too, at the provider's
+u* threshold.
 
 A frozen stand has no growth respiration (§3.3), so the model's night NEE is increased by the
 stand's monthly growth-respiration climatology from a run with the slow loop on (§5.3).
@@ -43,8 +50,10 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
 
+import datarules as DR
+
 TARGETS = ("albedo", "lw_up", "rnet", "le", "h", "ef", "gpp", "nee_night", "ustar")
-FILTERS = ("ustar_min", "par_min", "hours", "closure_range", "min_solar_elevation")
+FILTERS = ("ustar_min", "par_min", "hours", "closure_range", "min_solar_elevation", "snow_free_days")
 KGC_YR_TO_UMOL_S = 1000.0 / 12.011 * 1.0e6 / (365.25 * 86400.0)   # kgC m-2 yr-1 -> umol m-2 s-1
 
 
@@ -102,7 +111,9 @@ def filter_masks(c: dict, o: pd.DataFrame, elev: np.ndarray | None, utc_offset_h
     """The target's filters as (label, mask) in FILTERS order, for the records of `o`."""
     out = []
     if c.get("ustar_min") is not None:
-        out.append((f"u* >= {c['ustar_min']}", o["ustar"].to_numpy() >= float(c["ustar_min"])))
+        thr = c["ustar_min"]
+        label = f"u* >= {thr}" if not isinstance(thr, dict) else "u* >= the provider's yearly threshold"
+        out.append((label, o["ustar"].to_numpy() >= DR.threshold_at(o.index, thr)))
     if c.get("par_min") is not None and float(c["par_min"]) > 0:
         par = o["par"].to_numpy() if "par" in o else np.full(len(o), np.nan)
         out.append((f"PAR >= {c['par_min']}", par >= float(c["par_min"])))
@@ -118,6 +129,10 @@ def filter_masks(c: dict, o: pd.DataFrame, elev: np.ndarray | None, utc_offset_h
         if elev is None:
             raise ValueError("min_solar_elevation needs the site's latitude and longitude")
         out.append((f"sun >= {c['min_solar_elevation']} deg", elev >= float(c["min_solar_elevation"])))
+    if c.get("snow_free_days") is not None and int(c["snow_free_days"]) > 0:
+        if "days_since_frost" not in o:
+            raise ValueError("snow_free_days needs the tower's air temperature (variables.Tair)")
+        out.append((f"no frost in {c['snow_free_days']} d", o["days_since_frost"].to_numpy() > int(c["snow_free_days"])))
     return out
 
 
@@ -131,10 +146,14 @@ def base_masks(tname: str, c: dict, o: pd.DataFrame, daytime_sw: float):
         with np.errstate(divide="ignore", invalid="ignore"):
             v = o["sw_up"].to_numpy() / sw
         return [(f"sw_in > {c.get('min_sw', 200.0)}", sw > c.get("min_sw", 200.0))], v
-    if tname in ("lw_up", "rnet", "ustar"):
+    if tname in ("lw_up", "rnet"):
         return [], o[tname].to_numpy()
-    if tname in ("le", "h"):
-        return [], o[f"{tname}_c" if c.get("closure", True) else tname].to_numpy()
+    if tname in ("le", "h", "ustar"):
+        v = o[f"{tname}_c" if tname != "ustar" and c.get("closure", True) else tname].to_numpy()
+        if not c.get("night"):
+            return [("daytime", day)], v
+        thr = DR.threshold_at(o.index, c["night_ustar"])
+        return [(f"daytime, or night at u* >= the provider's", day | (o["ustar"].to_numpy() >= thr))], v
     if tname == "gpp":
         return [("daytime", day)], o["gpp"].to_numpy()
     if tname == "nee_night":
@@ -365,43 +384,3 @@ def record_report(obs: pd.DataFrame, forcing_ok: pd.Series, targets_cfg: dict, d
                               int(b.sum()), int(a.sum())]
         out[tname] = {"counts": counts, "diurnal": diurnal}
     return out
-
-
-def ustar_plateau(obs: pd.DataFrame, hours=(7, 9), daytime_sw: float = 10.0, utc_offset_h: float = 0.0,
-                  edges=(0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 3.0), min_n: int = 15,
-                  n_par: int = 4) -> dict:
-    """The tower's morning light-use efficiency GPP/PAR by u* class, and the u* threshold the
-    night-flux plateau test gives for it (Reichstein et al. 2005; Papale et al. 2006): the lowest
-    class within 95 % (99 %) of the mean of the classes above it. GPP/PAR falls as PAR rises and
-    the calm hours are the dim ones, so, as Reichstein's test does with temperature, the test runs
-    within n_par equal-count PAR classes and the threshold is their median."""
-    if "par" not in obs or obs["par"].notna().sum() == 0:
-        return {"note": "no PAR (the site TOML's variables.PAR): no plateau report"}
-    hr = local_hours(obs.index, utc_offset_h)
-    m = (hr >= hours[0]) & (hr < hours[1]) & (obs["sw_in"].to_numpy() > daytime_sw)
-    m &= np.isfinite(obs["gpp"].to_numpy()) & np.isfinite(obs["par"].to_numpy()) & np.isfinite(obs["ustar"].to_numpy())
-    g, p, u = obs["gpp"].to_numpy()[m], obs["par"].to_numpy()[m], obs["ustar"].to_numpy()[m]
-
-    def classes_of(sel):
-        out = []
-        for lo, hi in zip(edges[:-1], edges[1:]):
-            s = sel[(u[sel] >= lo) & (u[sel] < hi)]
-            out.append({"ustar": [lo, hi], "n": int(len(s)),
-                        "gpp_per_par": float(g[s].sum() / p[s].sum()) if len(s) >= min_n and p[s].sum() > 0 else None})
-        return out
-
-    def threshold(classes, crit):
-        valid = [c for c in classes if c["gpp_per_par"] is not None]
-        return next((c["ustar"][0] for i, c in enumerate(valid[:-1])
-                     if c["gpp_per_par"] >= crit * np.mean([x["gpp_per_par"] for x in valid[i + 1:]])), None)
-
-    strata = np.array_split(np.argsort(p, kind="stable"), n_par)
-    by_par = [{"par": [float(p[s].min()), float(p[s].max())] if len(s) else None, "classes": classes_of(s)}
-              for s in strata]
-    thr = {}
-    for crit in (0.95, 0.99):
-        for b in by_par:
-            b.setdefault("threshold", {})[str(crit)] = threshold(b["classes"], crit)
-        found = [b["threshold"][str(crit)] for b in by_par if b["threshold"][str(crit)] is not None]
-        thr[str(crit)] = float(np.median(found)) if found else None
-    return {"hours": list(hours), "classes": classes_of(np.arange(len(p))), "by_par": by_par, "threshold": thr}

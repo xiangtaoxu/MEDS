@@ -52,15 +52,45 @@ daytime_sw   = 10.0               # [W m-2] incoming shortwave above which a rec
 
 [windows]
 days       = 10                   # A calibration window's length [days]. Ten frozen days set the fast keys; the
-                                  #   water-stress keys need the seasonal runs of [stages.water].
+                                  #   water-stress keys need the seasonal runs ([windows.seasonal]).
 skip_hours = 0                    # Hours dropped at each window's start (the restart's first hours).
-# REQUIRED, FREE: chain name -> start date. A chain is a frozen run from the census that writes a state at each of its
-# windows' starts; every trial of a window restarts from that state.
-chains = { cal = "2015-04-01" }
-# REQUIRED: the windows: name, start (UTC date), role ("cal" or "val"), chain, and optionally days.
-list   = [ { name = "example", start = "2015-09-11", role = "cal", chain = "cal" } ]
-# For `select-windows`: the seasons to pick the best-covered window from.
-seasons = [ { name = "example", from = "2015-08-01", to = "2015-10-31", role = "cal", chain = "cal" } ]
+chain_lead_days = 180             # Every window restarts from its own state: a frozen run from the initial stand (the
+                                  #   base config's census or state) that starts this many days before the window, so
+                                  #   the soil water and temperature are the model's own. Half a year spans a wet season
+                                  #   before any dry-season window.
+# The windows are chosen by the rule (best-practice plan §6.2) unless the site lists them: one calibration window per
+# slot of the year (`slots` equal slots, 1.5 months for 8) inside the site TOML's leaf-on months, each the slot's
+# best covered -- the share of daytime records with H, LE and GPP measured, times the share with observed forcing --
+# and a validation window in the same slot of another year. `select-windows` prints the choice.
+slots      = 8
+min_score  = 0.5                  # a window's mean daily coverage must reach this
+# EXAMPLE: the site's own windows (name, start [UTC date], role "cal" or "val", optionally days); empty = the rule.
+list       = [ { name = "example", start = "2015-09-11", role = "cal" } ]
+
+# The seasonal runs (soil drying): frozen runs long enough for the soil to dry, scored on LE only (the water stage of
+# the fit). By the rule, up to max_runs runs, each ending at a year's deepest cumulative water deficit (rain minus
+# Priestley-Taylor evaporation, from the forcing file) inside the leaf-on months, the deepest years first; a year
+# whose deficit stays under min_deficit_mm gives none, and without any the drought keys are fixed.
+[windows.seasonal]
+days           = 120
+max_runs       = 2                # 0 = no seasonal runs
+min_deficit_mm = 100.0
+# EXAMPLE: the site's own runs (name, start, days); empty = the rule.
+list           = [ { name = "dry2016", start = "2016-01-01", days = 120 } ]
+
+# The u* diagnostic (best-practice plan §2.3): within classes of each target's driver (PAR for GPP, Rnet for LE and
+# H), the flux-to-driver ratio across u* classes; the plateau test finds the lowest class within `crit` of the mean
+# of the classes above (Papale et al. 2006), and a bootstrap over days its spread (Barr et al. 2013). Measured
+# daytime records only.
+[ustar]
+crit              = 0.95
+edges             = [0.0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 3.0]   # the u* classes [m s-1]
+driver_classes    = 4             # equal-count classes of the driver
+min_driver        = { par = 100.0, rnet = 50.0 }   # [umol m-2 s-1, W m-2] dimmer records make a ratio of small numbers
+min_class_records = 15            # a u* class with fewer records is skipped
+min_records       = 500           # fewer records in all: no diagnostic (GPP then takes the provider's threshold)
+n_boot            = 200
+seed              = 1
 
 # ----- TARGETS -------------------------------------------------------------------------------------------
 # Every target takes:
@@ -68,17 +98,25 @@ seasons = [ { name = "example", from = "2015-08-01", to = "2015-10-31", role = "
 #   sigma, or sigma_abs and sigma_rel   its observation error: sigma = sigma_abs + sigma_rel |obs|
 # and these FILTERS, applied in this order after the target's own definition (each documented in
 # residuals.py; a filter left out is off):
-#   ustar_min            u* at or above [m s-1]   (refused on the u* target: it would bias it)
+#   ustar_min            u* at or above [m s-1] (refused on the u* target: it would bias it): a number, "provider"
+#                        (the site TOML's [provider].ustar_threshold, one value or one per year) or "diagnostic"
+#                        (the target's own u* diagnostic: filtered at a plateau, not at all when the ratio is flat
+#                        or still rising)
 #   par_min              incident PAR at or above [umol m-2 s-1] (needs the site TOML's variables.PAR)
 #   hours                local hours [from, to)
 #   closure_range        days whose own closure ratio sum(H + LE) / sum(Rnet) lies in [lo, hi]. Off by default:
 #                        at BCI only 11 % of days fall in [0.8, 1.2], so it keeps too little and a skewed sample.
 #   min_solar_elevation  the sun at least this high [degrees]
+#   snow_free_days       no freezing air for this many days before (a tower has no snow sensor in its columns)
+# H, LE and u* are daytime targets (incoming shortwave above [tower].daytime_sw): at night they are set mostly by
+# the model's numerical floors and by stable-air measurement problems. `night = true` keeps their night records too,
+# at the provider's u* threshold.
 [targets.albedo]
 on       = true
 sigma    = 0.01
-min_sw   = 200.0                  # [W m-2] only hours with this much incoming shortwave (a ratio of small numbers is noise)
-min_solar_elevation = 0.0         # [deg] Recommended 0-30: low-sun albedo is the least reliable.
+min_sw   = 200.0                  # [W m-2] only records with this much incoming shortwave (a ratio of small numbers is noise)
+min_solar_elevation = 20.0        # [deg] low-sun albedo is the least reliable (the plan's albedo rule)
+snow_free_days = 7                # snow is a different surface from the one the keys describe
 
 [targets.lw_up]
 on    = true
@@ -97,8 +135,8 @@ on        = true
 sigma_abs = 10.0                  # [W m-2]; random error grows with the flux (Richardson et al. 2006)
 sigma_rel = 0.15
 closure   = false                 # true: compare with the closure-corrected LE ([tower].closure = "bowen")
-ustar_min = 0.4                   # [m s-1] the GPP target's: LE/Rnet does not change with u* at BCI (0.42-0.48), so a
-                                  #   light filter, against the calmest hours' poor eddy covariance
+ustar_min = "diagnostic"          # LE/Rnet is flat in u* at BCI, so no filter
+night     = false
 
 [targets.h]
 on        = true
@@ -106,10 +144,9 @@ sigma_abs = 10.0
 sigma_rel = 0.30                  # wider than LE's 0.15: no u* threshold recovers the missing sensible heat at BCI
                                   #   (H/Rnet still rises above u* 1.0), so H stays biased low by an unknown amount
 closure   = false
-ustar_min = 0.6                   # [m s-1] stricter than LE's: H is under-measured in low turbulence (H/Rnet 0.21 at
-                                  #   u* 0.3-0.4 against 0.27 at 0.6-0.7, within a VPD class)
-hours     = [9, 16]               # local hours [from, to): canopy heat storage holds H back in the morning (H/Rnet
-                                  #   -0.09 at 7 h, 0.22 at 8 h, 0.27-0.34 from 9 to 16 h at u* >= 0.4)
+ustar_min = "diagnostic"          # H/Rnet still rises at the top u* classes at BCI, so no filter: the missing sensible
+                                  #   heat is the observation model's to handle, not a filter's
+night     = false
 
 [targets.ef]
 on        = false                 # Off by default: the measured EF is biased high where closure is poor (at BCI 0.70
@@ -125,11 +162,9 @@ sigma_rel = 0.15                  #   value per day (GPP = R_day - NEE). Such a 
                                   #   part), on top of the random error (1.5 + 0.15 GPP). 2.5 + 0.15 GPP is the linear form of sqrt((1.5 + 0.15 GPP)^2
                                   #   + 2^2): equal at GPP 0, 12 % wider at GPP 20. It down-weights the dim hours, where
                                   #   that error is largest relative to GPP; 1.5 is right for a GPP partitioned by hour.
-ustar_min = 0.4                   # [m s-1] Recommended 0.3-0.4, or the site's plateau value (§3.3 of the plan; printed by
-                                  #   every fit): low turbulence after sunrise under-reads uptake. At BCI the 7 h GPP/PAR
-                                  #   rises 15 % from FLAG alone to u* >= 0.3 and 26 % to 0.5, and not at all from 9 h; 0.4
-                                  #   is the provider's own threshold and removes ~60 % of the deficit for 29 % of hours.
-plateau_hours = [7, 9]            # local hours of the u* plateau report (the morning transition)
+ustar_min = "provider"            # the provider's CO2 threshold (the ONEFlux convention; BCI 0.4): low turbulence after
+                                  #   sunrise under-reads uptake. The daytime plateau of the u* diagnostic is the
+                                  #   declared alternative.
 
 [targets.nee_night]
 on        = false                 # Off by default: night fluxes under-read in low turbulence, the frozen soil carbon makes
@@ -143,6 +178,7 @@ night_sw  = 5.0                   # [W m-2] incoming shortwave below which an ho
 on        = true
 sigma_abs = 0.1                   # [m s-1] loose: the tower measures u* in the roughness sublayer
 sigma_rel = 0.2
+night     = false
 
 # ----- THE FIT -------------------------------------------------------------------------------------------
 [fit]
@@ -168,6 +204,8 @@ timeout    = 900.0                # [s] the floor of a trial's timeout (3x the m
 rough_keys = "default"            # "default": a rough key (a step response) the screening drops stays at its default;
                                   #   "line_search": set by a 1-D search (at BCI that broke the five-year water budget)
 max_free   = 20                   # with screening = "drop": at most this many keys, the best informed
+min_process_records = 48          # a key that acts through one process (the registry's `process`: wet canopy, night,
+                                  #   snow, drought) is fixed when the kept records sample it fewer times than this
 
 # FREE (key names from the registry): a key's prior and range, over the registry's.
 #   [priors.vcmax25]
@@ -191,10 +229,9 @@ max_iter = 10                     # the coupled fast loop (Levenberg-Marquardt o
 rtol     = 1.0e-3
 
 [stages.water]
-# The seasonal runs: frozen runs long enough for soil water to draw down (the water-stress keys act through it).
-# Each needs its chain to pass its start. Empty = the stage is skipped.
-windows    = [ { name = "dry2016", start = "2016-01-01", days = 120, chain = "cal" } ]
-targets    = ["le", "gpp"]        # the targets these runs are scored on
+# The seasonal runs of [windows.seasonal]; none = the stage is skipped.
+targets    = ["le"]               # the targets these runs are scored on: LE only, since a GPP with a biased
+                                  #   respiration set the strongest stress when it scored them
 grid_sigma = 1.0                  # the first grid: the starting value (the prior centre) +- this many prior sds in u
 rounds     = 2                    # grids (each half the last's width around the best point), then a local quadratic
 

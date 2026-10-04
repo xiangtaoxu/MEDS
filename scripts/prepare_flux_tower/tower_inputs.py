@@ -113,6 +113,7 @@ class Site:
     gapfill: dict = field(default_factory=dict)
     fluxes: dict = field(default_factory=dict)
     provider: dict = field(default_factory=dict)
+    leaf_on_months: list = field(default_factory=lambda: list(range(1, 13)))
 
 
 def _require(table, key, where):
@@ -190,6 +191,14 @@ def read_site(path):
     for name in provider.get("uncertainty", {}):
         if name not in fluxes or "sum" in fluxes[name]:
             raise SystemExit(f"ERROR: provider.uncertainty.{name} names no declared flux with a column")
+    thr = provider.get("ustar_threshold")
+    if thr is not None and not isinstance(thr, (int, float)) and not (
+            isinstance(thr, dict) and all(str(k).isdigit() and isinstance(v, (int, float)) for k, v in thr.items())):
+        raise SystemExit("ERROR: provider.ustar_threshold is a number [m s-1], or a table of years "
+                         "{ 2013 = 0.35, ... } where the provider gives one per year")
+    leaf_on = site.get("leaf_on_months", list(range(1, 13)))
+    if not leaf_on or not all(isinstance(m, int) and 1 <= m <= 12 for m in leaf_on):
+        raise SystemExit("ERROR: site.leaf_on_months lists the months (1-12) the canopy is in leaf")
     gapfill = t.get("gapfill", {})
     for key in gapfill:
         if key != "short_gap_max":
@@ -207,7 +216,8 @@ def read_site(path):
         tq_height=float(_require(heights, "tq_height", "heights")),
         wind_height=float(_require(heights, "wind_height", "heights")),
         pressure_height=float(_require(heights, "pressure_height", "heights")),
-        variables=variables, gapfill=gapfill, fluxes=fluxes, provider=provider)
+        variables=variables, gapfill=gapfill, fluxes=fluxes, provider=provider,
+        leaf_on_months=sorted(set(leaf_on)))
 
 
 @dataclass

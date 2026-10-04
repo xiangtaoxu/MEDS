@@ -35,6 +35,7 @@ missing = ["NaN"]                  # BASE/FLUXNET: -9999 by default
 latitude = 9.1568
 longitude = -79.8486
 elevation = 150.0
+leaf_on_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # optional (all months): the calibration's windows
 
 [clock]
 utc_offset = -5.0                  # [h] the data's clock (AmeriFlux: local standard time)
@@ -73,7 +74,7 @@ USTAR  = { column = "ustar", units = "m s-1",        measured = { column = "FLAG
 
 [provider]                         # optional: what the provider did, in its own words
 gpp_method = "..."                 # how GPP was partitioned
-ustar_threshold = 0.4              # [m s-1] the published u* threshold for CO2
+ustar_threshold = 0.4              # [m s-1] the published u* threshold for CO2; or one per year, { 2013 = 0.35, ... }
 flag = "..."                       # what the quality flag screened
 # notes = "...";  uncertainty = { NEE = "NEE_RANDUNC" }   (random-uncertainty columns, by flux)
 ```

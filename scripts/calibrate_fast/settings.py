@@ -5,8 +5,8 @@
 site_reference.toml is the schema: a key a site file sets that is not there stops the tool (a
 misspelling would otherwise silently keep the default), and its values are the defaults -- except
 the REQUIRED keys, whose values there are examples, and the EXAMPLE lists, which default to empty.
-FREE tables take any keys: model config keys ([overrides], [variants.*], [calibrated]), the
-registry's key names ([priors.*]), or chain names ([windows].chains).
+FREE tables take any keys: model config keys ([overrides], [variants.*], [calibrated]) or the
+registry's key names ([priors.*]).
 """
 from __future__ import annotations
 
@@ -18,17 +18,14 @@ from residuals import FILTERS
 
 REFERENCE = Path(__file__).resolve().parent / "site_reference.toml"
 #: keys a site must set (their reference values are examples)
-REQUIRED = {("base", "main"), ("base", "registry"), ("tower", "site"), ("windows", "chains"),
-            ("windows", "list")}
+REQUIRED = {("base", "main"), ("base", "registry"), ("tower", "site")}
 #: lists whose reference entries are examples: the default is empty
-EXAMPLES = {("windows", "seasons"), ("stages", "water", "windows")}
+EXAMPLES = {("windows", "list"), ("windows", "seasonal", "list")}
 #: tables that take any keys
-FREE = {("overrides",), ("variants",), ("calibrated",), ("priors",), ("windows", "chains"),
-        ("uncertainty", "alternative")}
+FREE = {("overrides",), ("variants",), ("calibrated",), ("priors",), ("uncertainty", "alternative")}
 #: the keys of one entry of a list of tables
-LIST_ENTRY = {("windows", "list"): {"name", "start", "role", "chain", "days"},
-              ("windows", "seasons"): {"name", "from", "to", "role", "chain"},
-              ("stages", "water", "windows"): {"name", "start", "days", "chain"}}
+LIST_ENTRY = {("windows", "list"): {"name", "start", "role", "days"},
+              ("windows", "seasonal", "list"): {"name", "start", "days"}}
 PRIOR_ENTRY = {"centre", "sd", "log_sd", "source", "range"}
 #: every target takes the filters (residuals.FILTERS), whether or not its reference table lists them
 

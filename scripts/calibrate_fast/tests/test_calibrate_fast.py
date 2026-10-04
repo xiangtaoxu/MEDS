@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import calibrate_fast as CF   # noqa: E402  (puts the source tree's meds package on the path)
+import datarules as DR        # noqa: E402
 import fit as F               # noqa: E402
 import residuals as R         # noqa: E402
 import settings as SET        # noqa: E402
@@ -398,22 +399,25 @@ def test_the_bci_declaration_is_complete_and_valid():
     site = TW.ti.read_site(str(BCI.parent / d["tower"]["site"]))
     assert site.timestep == 1800 and site.utc_offset == -5.0
     assert site.fluxes["LW_out"]["column"] == "Rl_dn"                  # the file's longwave labels are swapped
-    assert site.fluxes["RECO"] == {"sum": ["GPP", "NEE"]}
+    assert site.fluxes["RECO"] == {"sum": ["GPP", "NEE"]} and site.provider["ustar_threshold"] == 0.4
+    assert site.leaf_on_months == list(range(1, 13))
     assert all(site.fluxes[q]["measured"] == {"column": "FLAG", "equals": 1} for q in ("LE", "H", "NEE", "GPP", "USTAR"))
-    assert d["targets"]["gpp"]["ustar_min"] == 0.4 and d["targets"]["gpp"]["sigma_abs"] == 2.5
+    assert d["targets"]["gpp"]["ustar_min"] == "provider" and d["targets"]["gpp"]["sigma_abs"] == 2.5
     assert d["targets"]["nee_night"]["on"] is False
     assert d["tower"]["closure"] == "none" and not d["targets"]["rnet"]["on"] and not d["targets"]["ef"]["on"]
-    assert d["targets"]["le"]["ustar_min"] == 0.4 and d["targets"]["h"]["ustar_min"] == 0.6
-    assert d["targets"]["h"]["hours"] == [9, 16] and d["targets"]["h"]["sigma_rel"] == 0.30
+    assert d["targets"]["le"]["ustar_min"] == "diagnostic" and d["targets"]["h"]["ustar_min"] == "diagnostic"
+    assert "hours" not in d["targets"]["h"] and d["targets"]["h"]["sigma_rel"] == 0.30
+    assert d["targets"]["albedo"]["min_solar_elevation"] == 20.0
+    assert d["windows"]["list"] == [] and d["windows"]["seasonal"]["list"] == []       # chosen by the rule
     assert d["fit"]["stages"] == ["energy", "water", "polish"]
-    assert d["stages"]["water"]["targets"] == ["le", "gpp"]
+    assert d["stages"]["water"]["targets"] == ["le"]
     assert d["stages"]["polish"]["max_iter"] == 10                      # a default the site left out
 
 
 def test_every_target_takes_the_filters():
     """A filter the reference does not list for a target is still accepted on it; a misspelt one is not."""
     good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"site": "site.toml"},
-            "windows": {"chains": {"cal": "2015-01-01"}, "list": []}, "targets": {"gpp": {"hours": [8, 17]}}}
+            "windows": {"days": 10}, "targets": {"gpp": {"hours": [8, 17]}}}
     assert SET.complete(good)["targets"]["gpp"]["hours"] == [8, 17]
     good["targets"]["gpp"]["hourz"] = [8, 17]
     with pytest.raises(ValueError, match="hourz"):
@@ -444,12 +448,13 @@ def test_which_keys_each_stage_moves():
 
 def test_settings_refuse_unknown_and_missing_keys():
     good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"site": "site.toml"},
-            "windows": {"chains": {"cal": "2015-01-01"}, "list": []}}
+            "windows": {"days": 10}}
     d = SET.complete(good)
-    assert d["targets"]["gpp"]["ustar_min"] == 0.4 and d["windows"]["seasons"] == []
-    assert d["stages"]["water"]["windows"] == []                         # the reference's entry is an example
+    assert d["targets"]["gpp"]["ustar_min"] == "provider" and d["windows"]["list"] == []
+    assert d["windows"]["seasonal"]["list"] == []                        # the reference's entry is an example
     for path, bad in ((("targets", "gpp"), {"ustar_minn": 0.3}), (("fit",), {"stage": ["polish"]}),
                       (("windows",), {"list": [{"name": "w", "begin": "2015-01-01"}]}),
+                      (("windows",), {"chains": {"cal": "2015-01-01"}}),
                       (("priors",), {"vcmax25": {"centre": 45, "width": 3}})):
         decl = {k: (dict(v) if isinstance(v, dict) else v) for k, v in good.items()}
         node = decl
@@ -472,12 +477,14 @@ def test_every_setting_the_tool_reads_is_documented():
         for key in re.findall(re.escape(var) + r'\["(\w+)"\]', src):
             assert key in table, f"{var}[{key!r}] is not documented"
     for stage, keys in (("optics", ["max_iter"]), ("photosynthesis", ["passes", "tol", "max_iter"]),
-                        ("energy", ["max_iter", "rtol"]), ("water", ["rounds", "grid_sigma", "targets", "windows"])):
+                        ("energy", ["max_iter", "rtol"]), ("water", ["rounds", "grid_sigma", "targets"])):
         assert set(keys) <= set(ref["stages"][stage]), stage
     for t in R.TARGETS:
         assert t in ref["targets"], t
     for f in R.FILTERS:
         assert f in (Path(SET.REFERENCE)).read_text(), f
+    for key in re.findall(r'(?:ucfg|cfg|wcfg|scfg)\["(\w+)"\]', Path(DR.__file__).read_text()):
+        assert key in ref["ustar"] or key in ref["windows"] or key in ref["windows"]["seasonal"], key
 
 
 # ----- the targets' filters and weights -------------------------------------------------------------
@@ -563,15 +570,149 @@ def test_weights_huber_and_sigma_scales():
     assert np.allclose(hz[1:4], z[1:4]) and np.allclose(hz ** 2, np.where(np.abs(z) <= 2, z ** 2, 4 * np.abs(z) - 4))
 
 
-def test_the_ustar_plateau_finds_the_threshold():
-    idx = pd.date_range("2016-01-01", periods=24 * 400, freq="1h")
+UCFG = {"crit": 0.95, "edges": [0.0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 3.0], "driver_classes": 4,
+        "min_driver": {"par": 100.0, "rnet": 50.0}, "min_class_records": 15, "min_records": 500,
+        "n_boot": 30, "seed": 1}
+
+
+def ustar_tower(shape, days=300):
+    """A daytime tower whose flux / driver ratio depends on u* by `shape`: deficit below 0.4, flat,
+    or rising to the top class."""
+    idx = pd.date_range("2016-01-01", periods=24 * days, freq="1h")
     rng = np.random.default_rng(1)
-    u = rng.uniform(0.05, 1.0, len(idx))
-    par = np.full(len(idx), 400.0)
-    gpp = par * np.where(u < 0.5, 0.02, 0.03)                       # the deficit stops at u* 0.5
-    obs = pd.DataFrame({"sw_in": 200.0, "gpp": gpp, "par": par, "ustar": u}, index=idx)
-    rep = R.ustar_plateau(obs, (7, 9))
-    assert rep["threshold"]["0.99"] == 0.5
+    u = rng.uniform(0.05, 1.5, len(idx))
+    par = rng.uniform(150.0, 1800.0, len(idx))
+    eff = {"plateau": np.where(u < 0.4, 0.02, 0.03), "flat": np.full(len(idx), 0.03),
+           "rising": 0.02 + 0.01 * u}[shape]
+    return pd.DataFrame({"sw_in": par / 2.0, "gpp": par * eff, "par": par, "ustar": u,
+                         "rnet": par / 3.0, "le": par / 3.0 * 0.5 * eff / 0.03, "h": par / 3.0 * eff}, index=idx)
+
+
+@pytest.mark.parametrize("shape,outcome", [("plateau", "plateau"), ("flat", "flat"), ("rising", "rising")])
+def test_the_ustar_diagnostic_tells_a_plateau_from_a_flat_or_rising_ratio(shape, outcome):
+    d = DR.ustar_diagnostic(ustar_tower(shape), "gpp", UCFG, 10.0, 0.0)
+    assert d["outcome"] == outcome
+    if outcome == "plateau":
+        assert d["threshold"] == 0.4 and d["bootstrap"]["outcome_share"]["plateau"] > 0.9
+    assert DR.ustar_diagnostic(ustar_tower(shape).iloc[:300], "gpp", UCFG, 10.0, 0.0)["outcome"] == "too_few"
+
+
+def test_each_target_gets_its_u_star_rule():
+    obs = ustar_tower("plateau")
+    cfg = {"gpp": {"ustar_min": "provider"}, "le": {"ustar_min": "diagnostic"}, "h": {"ustar_min": 0.6},
+           "ustar": {"night": True}, "albedo": {}}
+    out, rep = DR.resolve_ustar(cfg, obs, {2016: 0.35, 2017: 0.45}, UCFG, 10.0, 0.0)
+    assert out["gpp"]["ustar_min"] == {2016: 0.35, 2017: 0.45} and out["h"]["ustar_min"] == 0.6
+    assert out["le"]["ustar_min"] == 0.4 and rep["le"]["diagnostic"]["outcome"] == "plateau"
+    assert out["ustar"]["night_ustar"] == {2016: 0.35, 2017: 0.45} and "ustar_min" not in out["albedo"]
+    idx = pd.DatetimeIndex(["2016-05-01", "2017-05-01", "2018-05-01"])
+    assert DR.threshold_at(idx, {2016: 0.35, 2017: 0.45}).tolist() == [0.35, 0.45, 0.4]   # a missing year: the median
+    with pytest.raises(ValueError, match="provider"):
+        DR.resolve_ustar({"gpp": {"ustar_min": "provider"}}, obs, None, UCFG, 10.0, 0.0)
+    with pytest.raises(ValueError, match="must be a number"):
+        DR.resolve_ustar({"gpp": {"ustar_min": "auto"}}, obs, 0.4, UCFG, 10.0, 0.0)
+
+
+def test_turbulent_targets_are_daytime_unless_night_is_asked_for():
+    obs = tower_with()
+    idx = obs.index
+    fok = pd.Series(True, index=idx)
+    day = obs["sw_in"].to_numpy() > 10.0
+    spec = R.build_spec("w", idx, obs, fok, {"le": {"sigma": 10.0}, "ustar": {"sigma": 0.1}})
+    assert all(day[t.rows].all() for t in spec.targets)
+    spec = R.build_spec("w", idx, obs, fok, {"le": {"sigma": 10.0, "night": True, "night_ustar": 0.5}})
+    rows = spec.targets[0].rows
+    assert (~day[rows]).any() and (obs["ustar"].to_numpy()[rows][~day[rows]] >= 0.5).all()
+
+
+def test_the_albedo_waits_a_week_after_frost():
+    obs = tower_with()
+    t = pd.Series(280.0, index=obs.index)
+    t.iloc[5] = 270.0                                                # a freezing night on the first day
+    obs["days_since_frost"] = DR.days_since_frost(t)
+    spec = R.build_spec("w", obs.index, obs, pd.Series(True, index=obs.index),
+                        {"albedo": {"sigma": 0.01, "min_sw": 50.0, "snow_free_days": 1}})
+    assert spec.targets == []                                         # day 2 is 1 day after the frost: still out
+    obs["days_since_frost"] = 10.0
+    spec = R.build_spec("w", obs.index, obs, pd.Series(True, index=obs.index),
+                        {"albedo": {"sigma": 0.01, "min_sw": 50.0, "snow_free_days": 1}})
+    assert set(obs.index.day[spec.targets[0].rows]) == {1, 2} and spec.targets[0].counts[-1][0] == "no frost in 1 d"
+
+
+def test_keys_whose_process_the_data_never_sample_are_fixed():
+    obs = tower_with()
+    obs["rain"] = 0.0
+    obs.iloc[12, obs.columns.get_loc("rain")] = 1e-4                  # rain at noon of day 1
+    w = T.Window("w", dt.datetime(2016, 1, 1), 2, "cal", "w")
+    specs = {"w": R.build_spec("w", obs.index, obs, pd.Series(True, index=obs.index), {"le": {"sigma": 10.0}})}
+    cov = DR.process_coverage(specs, obs, [w], 10.0)
+    assert cov["wet_canopy"] == 2 and cov["night"] == 0 and cov["drought"] == 0
+    film = Param("film", "pft", "pft.leaf_surf_water_max", 0.05, 0.3, process="wet_canopy")
+    sref = Param("sref", "pft", "pft.wstress_sref_stomata", 0.5, 5.0, process="drought")
+    g1 = Param("g1", "pft", "pft.stomatal_g1", 1.5, 8.0)
+    fixed = DR.fix_by_coverage([film, sref, g1], cov, 2)
+    assert set(fixed) == {"sref"} and "drought" in fixed["sref"]
+
+
+def two_year_tower():
+    idx = pd.date_range("2015-01-01", "2016-12-31 23:00", freq="1h")
+    hour = idx.hour.to_numpy()
+    sw = np.clip(800 * np.sin(np.pi * (hour - 6) / 12), 0, None)
+    obs = pd.DataFrame({"sw_in": sw, "h": 1.0, "le": 1.0, "gpp": 1.0}, index=idx)
+    obs.loc[(obs.index.year == 2015) & (obs.index.month == 3), "h"] = np.nan    # March 2015 unmeasured
+    return obs
+
+
+def test_windows_one_per_slot_with_validation_in_another_year():
+    obs = two_year_tower()
+    fok = {"cal": pd.Series(True, index=obs.index), "val": pd.Series(True, index=obs.index)}
+    wcfg = {"days": 10, "slots": 8, "chain_lead_days": 0, "min_score": 0.5}
+    chosen, rep = DR.select_windows(obs, fok, wcfg, list(range(1, 13)), obs.index[0], 10.0, 0.0)
+    cal = [c for c in chosen if c[2] == "cal"]
+    val = [c for c in chosen if c[2] == "val"]
+    assert len(cal) == 8 and len(val) == 8
+    assert all(c[0].split("_")[1] != v[0].split("_")[1] for c, v in zip(cal, val))   # other years
+    assert not any(c[1].year == 2015 and c[1].month == 3 for c in chosen)
+    #----- leaf-on months: May to September only, and a chain lead that leaves out 2015
+    chosen, _ = DR.select_windows(obs, fok, {**wcfg, "chain_lead_days": 400}, [5, 6, 7, 8, 9], obs.index[0], 10.0, 0.0)
+    assert chosen and all(5 <= c[1].month <= 9 and c[1].year == 2016 for c in chosen)
+    assert not [c for c in chosen if c[2] == "val"]
+
+
+def test_seasonal_runs_end_at_the_deepest_water_deficit():
+    days = pd.date_range("2015-01-01", "2017-12-31", freq="D")
+    dry = days.month.isin([1, 2, 3, 4])
+    daily = pd.DataFrame({"rain_mm": np.where(dry, 0.0, 8.0), "pet_mm": 4.0}, index=days)
+    deficit = DR.water_deficit(daily)
+    assert deficit.max() == 0.0 and deficit.loc["2016-04-30"] == pytest.approx(-4.0 * 121)
+    scores = pd.Series(1.0, index=days)
+    scores.loc["2017"] = 0.0                                          # 2017 unmeasured
+    runs, rep = DR.seasonal_runs(deficit, {"days": 120, "max_runs": 2, "min_deficit_mm": 100.0},
+                                 list(range(1, 13)), pd.Timestamp("2015-01-01"), scores, 0.5)
+    assert [r[0] for r in runs] == ["dry2016"] and runs[0][1] == dt.datetime(2016, 1, 1)
+    assert {y["year"]: y["usable"] for y in rep["years"]} == {2015: False, 2016: True, 2017: False}
+    runs, rep = DR.seasonal_runs(deficit, {"days": 120, "max_runs": 2, "min_deficit_mm": 1000.0},
+                                 list(range(1, 13)), pd.Timestamp("2015-01-01"), scores, 0.5)
+    assert runs == [] and "drought keys are fixed" in rep["note"]
+
+
+def test_priestley_taylor_and_the_range_coverage():
+    pet = DR.priestley_taylor_mm(np.array([298.15]), np.array([200.0]), np.array([400.0]), np.array([1.0e5]))
+    assert 3.0 < pet[0] < 6.0                                          # a tropical day: ~4-5 mm
+    cov = DR.range_coverage({"t": np.arange(100.0)}, {"t": [10.0, 50.0]})
+    assert cov["t"]["share"] == pytest.approx(40.0 / (98.01 - 0.99))   # the record's 1-99 % range
+
+
+def test_the_share_of_area_whose_canopy_air_top_is_above_the_sensor(tmp_path):
+    from netCDF4 import Dataset
+    with Dataset(tmp_path / "s.nc", "w") as ds:
+        ds.createDimension("c", 3)
+        ds.createDimension("p", 2)
+        ds.createVariable("height", "f8", ("c",))[:] = [30.0, 40.0, 10.0]
+        ds.createVariable("owner_patch", "i4", ("c",))[:] = [1, 1, 2]
+        ds.createVariable("patch_area", "f8", ("p",))[:] = [0.25, 0.75]
+    out = DR.area_above_sensor(tmp_path / "s.nc", 5.0, 5.0, 41.0)
+    assert out["share_above"] == 0.25 and out["top_range"] == [15.0, 45.0]
 
 
 def test_solar_elevation():
