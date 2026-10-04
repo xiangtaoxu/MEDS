@@ -156,6 +156,10 @@ class Site:
         climate_priors(self, ps, record)
         return resolve_defaults(ps, self.base, record)
 
+    def flag(self, key, record=None) -> bool:
+        """A true/false model setting (the parameter record holds it as the text "true" or "false")."""
+        return str(self.setting(key, False, record)).strip().lower() in ("true", "1", "1.0")
+
     def setting(self, key, default=None, record=None, file="main", pft=None):
         """A model setting: the base config's, else the base run's parameter record, else default."""
         v = self.base.get(key, file=file, pft=pft)
@@ -192,7 +196,7 @@ def climate_priors(site, params, record):
     out = {"climate": clim}
     value = lambda key, default: site.setting(key, default, record)          # noqa: E731
     if need_kk:
-        if value("leaf_physiology.thermal_acclimation", False):
+        if site.flag("leaf_physiology.thermal_acclimation", record):
             out["kattge_knorr"] = "the model's own thermal acclimation sets them (leaf_physiology.thermal_acclimation)"
         else:
             kk = PR.kattge_knorr(clim["t_growth_c"])
