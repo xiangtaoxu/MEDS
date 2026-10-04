@@ -167,6 +167,15 @@ before and after.
   - A trial with non-finite residuals fails instead of entering the Jacobian.
 
 ### Fixed
+- **The soil-water solve's sub-step cap, 200 → 2000** (`[soil].max_substep`). A saturated top layer
+  over soil near its residual water content (a ponded storm on a dry-season soil) makes the Richards
+  solve stiff. At Barro Colorado Island, after the 40 mm storm of 2016-04-27 that ended the El Niño
+  dry season, the solve needed up to ~500 sub-steps of a 15-minute step. At 200 it stopped short,
+  flagged unconverged, with a 6 g m⁻² water error each time.
+  - **The symptom:** the example's default five-year run had 18 whole-column water-budget breaches
+    (worst 0.53 kg m⁻²) and 18 unconverged solves.
+  - **The effect on the calibration:** its 2016 dry-season run failed every trial.
+  - **With the new cap:** both close (worst 4e-13 kg m⁻²), and the run time does not change (#363).
 - **The fast loop blew up when heavy rain hit dry soil** (#352). The ARK integrator takes each
   step's soil water from a separate soil-water solve, and that solve went wrong at rain onset.
   - **The cause:** after each linear solve, the solver recomputed the flows between layers with the
