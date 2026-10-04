@@ -7,8 +7,12 @@ disagreement; V5 only reports.
   V2  the sun: under the declared clock and stamp convention, the shortwave envelope lines up with
       the model's own window-mean cos z, and almost no shortwave falls where the model sees night
   V3  the humidity: a provider VPD agrees with RH under the declared saturation curve
-  V4  physical bounds, after unit conversion (a wrong unit shows up here)
+  V4  physical bounds, after unit conversion (a wrong unit shows up here), for the fluxes too
   V5  reports: coverage and fill by year, annual rain, PAR/SW by year, the longwave fills
+  F1-F3  the fluxes' metadata (check_fluxes): net radiation against its four components, the
+      upwelling longwave above the downwelling at night (a swapped pair of columns), and the
+      reflected shortwave and upwelling longwave within physical bounds. They stop the forcing
+      build; the calibration reports them.
 """
 import numpy as np
 import pandas as pd
@@ -19,6 +23,18 @@ V2_MAX_SHIFT_MIN = 10.0        # [min] the envelope's best-fit shift may be at m
 V2_MAX_NIGHT_SW = 1.0e-3       # the shortwave fraction the model would zero may be at most this
 V3_MAX_RESIDUAL_PA = 1.0       # [Pa] 99th percentile of |VPD - (1 - RH) e_s(T)|
 V4_MAX_BAD_FRACTION = 0.05     # more than this out of bounds is a unit error, not a few spikes
+
+F1_MAX_MEDIAN_RESIDUAL = 25.0   # [W m-2] median |Rnet - (SW_in - SW_out + LW_in - LW_out)|. Two sensors
+                                #   (a net radiometer beside a four-component one) agree to ~10; a swapped
+                                #   or mislabelled component is off by ~2 x 30-100
+F3_MAX_BAD_FRACTION = 0.05      # SW_out above SW_in, or LW_out outside the band, at most this often
+F_MIN_RECORDS = 100             # a flux check needs at least this many records, or it is skipped
+
+FLUX_BOUNDS = {                 # MEDS units: wide, so only a unit error trips them
+    "SW_out": (0.0, 1200.0), "LW_out": (100.0, 800.0), "Rnet": (-300.0, 1200.0), "LE": (-300.0, 1200.0),
+    "H": (-500.0, 1200.0), "NEE": (-80.0, 80.0), "GPP": (-20.0, 100.0), "RECO": (-20.0, 80.0),
+    "USTAR": (0.0, 5.0),
+}
 
 BOUNDS = {                      # MEDS units
     "Tair": (170.0, 340.0), "RH": (0.0, 1.05), "VPD": (-50.0, 1.0e4), "PSurf": (3.0e4, 1.1e5),
@@ -69,6 +85,88 @@ def screen_bounds(values):
                              f"[{lo}, {hi}] in MEDS units. Check its declared units.")
         values[name] = x.where(~bad)
     return values, report
+
+
+def screen_flux_bounds(fluxes):
+    """V4 for the fluxes: a reflected shortwave below 0 (a night offset) is 0; values outside
+    FLUX_BOUNDS are missing, and a flux with many of them stops the build (a unit error)."""
+    report = {}
+    fluxes = fluxes.copy()
+    if "SW_out" in fluxes:
+        fluxes["SW_out"] = fluxes["SW_out"].where(~(fluxes["SW_out"] < 0.0), 0.0)
+    for name, (lo, hi) in FLUX_BOUNDS.items():
+        if name not in fluxes:
+            continue
+        x = fluxes[name]
+        present = x.notna()
+        bad = present & ((x < lo) | (x > hi))
+        n_present = int(present.sum())
+        report[name] = dict(present=n_present, out_of_bounds=int(bad.sum()))
+        if n_present and bad.sum() / n_present > V4_MAX_BAD_FRACTION:
+            raise SystemExit(f"ERROR (V4): {100.0 * bad.sum() / n_present:.1f}% of fluxes.{name} lies outside "
+                             f"[{lo}, {hi}] in MEDS units. Check its declared units.")
+        fluxes[name] = x.where(~bad)
+    return fluxes, report
+
+
+def check_fluxes(table, measured, strict=False):
+    """F1-F3 on the standard table (tower_inputs.read_standard). Each check runs where its inputs
+    are measured, on at least F_MIN_RECORDS records; a failed one stops a strict caller (the forcing
+    build) and is listed in the report's `failures` for the others (the calibration)."""
+    def m(*names):
+        if not all(n in table for n in names):
+            return None
+        ok = np.logical_and.reduce([measured[n].to_numpy() for n in names])
+        return ok if ok.sum() >= F_MIN_RECORDS else None
+
+    report, failures = {}, []
+    ok = m("Rnet", "SWdown", "SW_out", "LWdown", "LW_out")
+    if ok is not None:
+        t = table[ok]
+        resid = t["Rnet"] - (t["SWdown"] - t["SW_out"] + t["LWdown"] - t["LW_out"])
+        med = float(np.median(np.abs(resid)))
+        report["F1_rnet_components"] = dict(records=int(ok.sum()), median_abs_residual=med,
+                                            p95_abs_residual=float(np.percentile(np.abs(resid), 95)))
+        if med > F1_MAX_MEDIAN_RESIDUAL:
+            failures.append(f"F1: Rnet differs from SW_in - SW_out + LW_in - LW_out by {med:.1f} W m-2 (median); "
+                            f"a component is mislabelled, swapped or in the wrong sign")
+    ok = m("LWdown", "LW_out", "SWdown", "Tair")
+    if ok is not None:
+        night = ok & (table["SWdown"].to_numpy() < 5.0)
+        if night.sum() >= F_MIN_RECORDS:
+            t = table[night]
+            sigma_t4 = 5.670374419e-8 * t["Tair"] ** 4
+            diff = float(np.median(t["LW_out"] - t["LWdown"]))
+            report["F2_longwave_at_night"] = dict(records=int(night.sum()), median_lw_out_minus_lw_in=diff,
+                                                  lw_out_over_sigma_t4=float(np.median(t["LW_out"] / sigma_t4)),
+                                                  lw_in_over_sigma_t4=float(np.median(t["LWdown"] / sigma_t4)))
+            if diff <= 0.0:
+                failures.append(f"F2: at night the upwelling longwave is {-diff:.1f} W m-2 BELOW the downwelling "
+                                f"(median); the ground and canopy emit more than the sky, so the two columns "
+                                f"are probably swapped")
+    ok = m("SWdown", "SW_out")
+    if ok is not None:
+        t = table[ok & (table["SWdown"].to_numpy() > 200.0)]
+        if len(t) >= F_MIN_RECORDS:
+            above = float(np.mean(t["SW_out"] > t["SWdown"]))
+            report["F3_sw_out"] = dict(records=int(len(t)), median_albedo=float(np.median(t["SW_out"] / t["SWdown"])),
+                                       fraction_above_sw_in=above)
+            if above > F3_MAX_BAD_FRACTION:
+                failures.append(f"F3: the reflected shortwave exceeds the incoming in {100 * above:.1f}% of daytime "
+                                f"records; check SW_out's column")
+    ok = m("LW_out", "Tair")
+    if ok is not None:
+        t = table[ok]
+        lo, hi = 5.670374419e-8 * (t["Tair"] - 20.0) ** 4, 5.670374419e-8 * (t["Tair"] + 30.0) ** 4
+        out = float(np.mean((t["LW_out"] < lo) | (t["LW_out"] > hi)))
+        report["F3_lw_out"] = dict(records=int(len(t)), fraction_outside_band=out)
+        if out > F3_MAX_BAD_FRACTION:
+            failures.append(f"F3: the upwelling longwave is outside sigma (T_air - 20 K)^4 .. sigma (T_air + 30 K)^4 "
+                            f"in {100 * out:.1f}% of records; check LW_out's column and units")
+    report["failures"] = failures
+    if strict and failures:
+        raise SystemExit("ERROR (fluxes): " + " | ".join(failures))
+    return report
 
 
 def check_sun(stamps_utc, sw, site, shifts_min=range(-60, 61, 5)):

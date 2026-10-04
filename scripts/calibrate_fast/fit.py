@@ -39,7 +39,7 @@ class Model:
     runner: str                      # "python" (the Python API) or the meds_main executable
     pool: object
     root: Path
-    utc_offset_h: float
+    step: float                      # the tower's interval [s]: the trials' output must match it
     growth_resp: dict | None = None
     timeout: float = 900.0
     keep_netcdf: bool = False
@@ -88,7 +88,7 @@ class Model:
                         st = status.get(td.name, ("missing", 0.0))[0]
                         if st != "ok":
                             raise trials.TrialError(f"{td.name}: {st}")
-                        trials.finish(td, self.params, th, self.utc_offset_h, self.keep_netcdf, kind=kind)
+                        trials.finish(td, self.params, th, self.step, self.keep_netcdf, kind=kind)
                     ok.append(td)
                 except (trials.TrialError, ValueError) as e:
                     if "parameter record check failed" in str(e):

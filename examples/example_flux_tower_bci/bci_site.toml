@@ -45,3 +45,22 @@ PAR    = { column = "Par_tot", units = "umol m-2 s-1" }     # reports only
 
 [gapfill]
 short_gap_max = 4                           # [records] interpolate gaps up to 2 h
+
+# The tower's fluxes, for the calibration (scripts/calibrate_fast). FLAG is the provider's "QA/QC for
+# turbulent fluxes (1 good, 0 gap-filled)"; the radiation is measured wherever it is present.
+[fluxes]
+SW_out = { column = "Rs_dn", units = "W m-2" }
+LW_out = { column = "Rl_dn", units = "W m-2" }              # the upwelling: the labels are swapped (above)
+Rnet   = { column = "Rnet",  units = "W m-2" }
+LE     = { column = "LE",    units = "W m-2",        measured = { column = "FLAG", equals = 1 } }
+H      = { column = "H",     units = "W m-2",        measured = { column = "FLAG", equals = 1 } }
+NEE    = { column = "NEE",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+GPP    = { column = "gpp",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+RECO   = { sum = ["GPP", "NEE"] }                           # the respiration the provider's GPP was made from
+USTAR  = { column = "ustar", units = "m s-1",        measured = { column = "FLAG", equals = 1 } }
+
+[provider]
+gpp_method = "Not stated in the README. In the data, gpp + NEE is constant within each day: GPP = RECO - NEE with one RECO value per day."
+notes = "Dryad README on RECO: it 'appeared underestimated ... considering that RECO includes also above ground respiration which can contribute up to 40-50% of total respiration'."
+ustar_threshold = 0.4                       # [m s-1] the CO2 u* threshold (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md 2.3)
+flag = "FLAG: QA/QC for turbulent fluxes (1 good, 0 gap-filled). At BCI it also removes every rain half hour."

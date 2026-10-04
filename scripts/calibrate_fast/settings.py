@@ -18,7 +18,7 @@ from residuals import FILTERS
 
 REFERENCE = Path(__file__).resolve().parent / "site_reference.toml"
 #: keys a site must set (their reference values are examples)
-REQUIRED = {("base", "main"), ("base", "registry"), ("tower", "path"), ("windows", "chains"),
+REQUIRED = {("base", "main"), ("base", "registry"), ("tower", "site"), ("windows", "chains"),
             ("windows", "list")}
 #: lists whose reference entries are examples: the default is empty
 EXAMPLES = {("windows", "seasons"), ("stages", "water", "windows")}

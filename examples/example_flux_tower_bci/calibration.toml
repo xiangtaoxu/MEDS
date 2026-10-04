@@ -20,30 +20,16 @@ growth_resp = "calibration/growth_resp_monthly.csv"   # calibrate_fast.py growth
 [variants.interception_on]
 "fast.canopy_water_on" = true
 
+# The tower's facts (file, clock, columns, units, which values were measured) are bci_site.toml,
+# the forcing build's own; only the calibration's choices are here.
 [tower]
-path         = "data/BCI_v5.1.csv"
-time_column  = "date"          # local time (UTC-5), the start of each half hour
-flag_column  = "FLAG"          # 1 = measured; the turbulent fluxes are used only there
-flag_good    = 1
-utc_offset_h = -5.0
+site         = "bci_site.toml"
 forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
 forcing_qc   = ["LWdown_qc", "Wind_qc"]
 forcing_grid = 1
 closure      = "none"          # H and LE as measured: the closure gap behaves like missing sensible heat
                                #   (site_reference.toml [tower].closure), so H is filtered harder instead
 daytime_sw   = 10.0            # [W m-2]
-
-[tower.columns]
-sw_in = "Rs"
-sw_up = "Rs_dn"
-lw_up = "Rl_dn"                # the file labels the upwelling longwave Rl_dn (README, "Longwave")
-rnet  = "Rnet"
-le    = "LE"
-h     = "H"
-nee   = "NEE"
-gpp   = "gpp"
-ustar = "ustar"
-par   = "Par_tot"              # incident PAR: the u* plateau report
 
 [targets.albedo]
 sigma = 0.01

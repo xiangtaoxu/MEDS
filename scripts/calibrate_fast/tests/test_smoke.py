@@ -6,7 +6,8 @@ checked, one Jacobian column that must move the output, and a repeated trial tha
 byte for byte. It runs once with meds_main (MEDS_MAIN names it) and once through the Python API
 (MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is missing is skipped. The
 Python-API run also checks gate G8: the canopy of leaf solves (meds.canopy) on the window's own
-hourly drivers against the model's GPP (revision plan §7.2)."""
+drivers against the model's GPP (revision plan §7.2). The tower is half-hourly and the forcing
+hourly: the trials' output must come out on the tower's interval."""
 import os
 import subprocess
 import sys
@@ -35,14 +36,52 @@ RUNNERS = [pytest.param(MEDS_MAIN, id="meds_main",
 
 
 def synthetic_tower(path, start="2001-06-01", days=6):
+    """A half-hourly tower on UTC, begin-stamped, and its site TOML (site.toml beside it)."""
     idx = pd.date_range(start, periods=48 * days, freq="30min")
     h = idx.hour + idx.minute / 60.0
     sw = np.clip(800 * np.sin(np.pi * (h - 6) / 12), 0, None)
-    df = pd.DataFrame({"date": idx, "Rs": sw, "Rs_dn": 0.13 * sw, "Rl_dn": 450.0, "Rnet": 0.7 * sw - 40,
-                       "LE": np.where(sw > 0, 0.45 * sw, 5.0), "H": np.where(sw > 0, 0.2 * sw, -15.0),
-                       "NEE": np.where(sw > 0, -12.0, 6.0), "gpp": np.where(sw > 0, 18.0, 0.0),
-                       "ustar": 0.45, "FLAG": 1})
+    df = pd.DataFrame({"date": idx.strftime("%Y-%m-%d %H:%M"), "tair": 20.0, "RH": 70.0, "p_kpa": 100.0,
+                       "PPT": 0.0, "ubar": 2.5, "Rs": sw, "Rs_dn": 0.13 * sw, "Rl_up": 450.0,
+                       "Rnet": 0.7 * sw - 40, "LE": np.where(sw > 0, 0.45 * sw, 5.0),
+                       "H": np.where(sw > 0, 0.2 * sw, -15.0), "NEE": np.where(sw > 0, -12.0, 6.0),
+                       "gpp": np.where(sw > 0, 18.0, 0.0), "ustar": 0.45, "FLAG": 1})
     df.to_csv(path, index=False)
+    flag = 'measured = { column = "FLAG", equals = 1 }'
+    (path.parent / "site.toml").write_text(f"""
+[input]
+format = "csv"
+path = "{path.name}"
+timestamp = "date"
+timestamp_format = "%Y-%m-%d %H:%M"
+[site]
+latitude = 42.4
+longitude = -76.5
+elevation = 300.0
+[clock]
+utc_offset = 0.0
+stamp = "begin"
+timestep = 1800
+[heights]
+tq_height = 10.0
+wind_height = 10.0
+pressure_height = 10.0
+[variables]
+Tair = {{ column = "tair", units = "degC" }}
+RH = {{ column = "RH", units = "%" }}
+PSurf = {{ column = "p_kpa", units = "kPa" }}
+Rainf = {{ column = "PPT", units = "mm" }}
+SWdown = {{ column = "Rs", units = "W m-2" }}
+Wind = {{ column = "ubar", units = "m s-1" }}
+[fluxes]
+SW_out = {{ column = "Rs_dn", units = "W m-2" }}
+LW_out = {{ column = "Rl_up", units = "W m-2" }}
+Rnet = {{ column = "Rnet", units = "W m-2" }}
+LE = {{ column = "LE", units = "W m-2", {flag} }}
+H = {{ column = "H", units = "W m-2", {flag} }}
+NEE = {{ column = "NEE", units = "umol m-2 s-1", {flag} }}
+GPP = {{ column = "gpp", units = "umol m-2 s-1", {flag} }}
+USTAR = {{ column = "ustar", units = "m s-1", {flag} }}
+""")
 
 
 def synthetic_forcing(path, start="2001-05-31", days=7):
@@ -89,18 +128,7 @@ registry = "registry.toml"
 [overrides]
 "trait_dynamics.trait_plasticity_on" = true
 [tower]
-path = "tower.csv"
-utc_offset_h = 0.0
-[tower.columns]
-sw_in = "Rs"
-sw_up = "Rs_dn"
-lw_up = "Rl_dn"
-rnet = "Rnet"
-le = "LE"
-h = "H"
-nee = "NEE"
-gpp = "gpp"
-ustar = "ustar"
+site = "site.toml"
 # the synthetic sun is not the site's (its noon is 12 UTC at 76.5 W): only the three targets the smoke checks
 [targets.albedo]
 on = false

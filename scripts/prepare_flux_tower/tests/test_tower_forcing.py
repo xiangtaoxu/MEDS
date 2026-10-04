@@ -318,8 +318,9 @@ def test_fluxnet_provider_filled_values_are_flagged(tmp_path):
                         "TA_F": frame["tair"], "TA_F_QC": 0, "VPD_F": frame["vpd"] * 10.0, "VPD_F_QC": 0,
                         "PA_F": frame["p_kpa"], "PA_F_QC": 0, "P_F": frame["PPT"], "P_F_QC": 0,
                         "SW_IN_F": frame["Rs"], "SW_IN_F_QC": 0, "LW_IN_F": frame["Rl_dn"], "LW_IN_F_QC": 0,
-                        "WS_F": frame["ubar"], "WS_F_QC": 0})
+                        "WS_F": frame["ubar"], "WS_F_QC": 0, "LE_F_MDS": 0.4 * frame["Rs"], "LE_F_MDS_QC": 0})
     flx.loc[100:140, "TA_F_QC"] = 2                     # the provider filled these
+    flx.loc[200:220, "LE_F_MDS_QC"] = 1
     flx.to_csv(tmp_path / "flx.csv", index=False)
     toml = tmp_path / "flx.toml"
     toml.write_text(f'''
@@ -346,6 +347,8 @@ Rainf = {{ column = "P_F", units = "mm" }}
 SWdown = {{ column = "SW_IN_F", units = "W m-2" }}
 LWdown = {{ column = "LW_IN_F", units = "W m-2" }}
 Wind = {{ column = "WS_F", units = "m s-1" }}
+[fluxes]
+LE = {{ column = "LE_F_MDS", units = "W m-2" }}
 ''')
     ds, report = build(tmp_path, ti.read_site(str(toml)))
     qc = ds["Tair_qc"][:, 0]
@@ -356,6 +359,88 @@ Wind = {{ column = "WS_F", units = "m s-1" }}
     assert np.allclose(rh[1:], 0.5 * (rh_true[:-1] + rh_true[1:]), atol=1e-5)
     assert report["V3_humidity"]["rh_from_vpd_records"] == len(frame)
     assert (ds["RHair_qc"][1:, 0] == tg.QC_FROM_VPD).all()             # flagged, not "observed"
+    # in the standard table a provider-filled value is not measured, for a variable and a flux alike
+    measured = ti.read_standard(ti.read_site(str(toml))).measured
+    assert not measured["Tair"].iloc[100:141].any() and measured["Tair"].iloc[:100].all()
+    assert not measured["LE"].iloc[200:221].any() and measured["LE"].iloc[:200].all()
+
+
+# ---------------------------------------------------------------------------------------------
+# The fluxes: read under their declared rule onto UTC interval starts, and their metadata
+# checked (F1-F3).
+# ---------------------------------------------------------------------------------------------
+FLUXES = """
+[fluxes]
+SW_out = { column = "Rs_up", units = "W m-2" }
+LW_out = { column = "Rl_up", units = "W m-2" }
+Rnet   = { column = "Rnet",  units = "W m-2" }
+LE     = { column = "LE",    units = "W m-2",        measured = { column = "FLAG", equals = 1 } }
+NEE    = { column = "NEE",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+GPP    = { column = "gpp",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+RECO   = { sum = ["GPP", "NEE"] }
+"""
+
+
+def with_fluxes(frame):
+    """The synthetic tower with a four-component radiometer whose net radiation closes exactly,
+    turbulent fluxes flagged gap-filled one record in seven, and a GPP made from one RECO (5)."""
+    f = frame.copy()
+    day = f["Rs"] > 0
+    f["Rs_up"] = 0.13 * f["Rs"]
+    f["Rl_up"] = f["Rl_dn"] + 30.0                      # the canopy emits more than the sky
+    f["Rnet"] = f["Rs"] - f["Rs_up"] + f["Rl_dn"] - f["Rl_up"]
+    f["LE"] = 0.4 * f["Rs"]
+    f["NEE"] = np.where(day, -10.0, 5.0)
+    f["gpp"] = np.where(day, 15.0, 0.0)
+    f["FLAG"] = np.where(np.arange(len(f)) % 7 == 0, 0, 1)
+    return f
+
+
+def test_fluxes_follow_their_rule_on_utc_starts(tmp_path):
+    frame = with_fluxes(synthetic_tower())
+    table = ti.read_standard(write_site(tmp_path, frame, extra=FLUXES))
+    local = pd.to_datetime(frame["date"])
+    assert np.array_equal(table.values.index.values, (local - pd.Timedelta(hours=OFFSET)).values)
+    flag = frame["FLAG"].to_numpy() == 1
+    assert np.array_equal(table.measured["LE"].to_numpy(), flag)
+    assert table.measured["SW_out"].all()                   # no rule: measured wherever present
+    assert np.allclose(table.values["RECO"], 5.0) and np.array_equal(table.measured["RECO"].to_numpy(), flag)
+    assert np.allclose(table.values["LE"], 0.4 * frame["Rs"])
+    rep = table.report["fluxes"]
+    assert rep["failures"] == [] and rep["F1_rnet_components"]["median_abs_residual"] < 1e-6
+    assert rep["F2_longwave_at_night"]["median_lw_out_minus_lw_in"] == pytest.approx(30.0)
+
+
+def test_swapped_longwave_columns_are_reported_and_stop_the_build(tmp_path):
+    frame = with_fluxes(synthetic_tower())
+    frame["Rl_dn"], frame["Rl_up"] = frame["Rl_up"].copy(), frame["Rl_dn"].copy()   # mislabelled, as at BCI
+    site = write_site(tmp_path, frame, extra=FLUXES)
+    failures = ti.read_standard(site).report["fluxes"]["failures"]
+    assert any(f.startswith("F1") for f in failures) and any(f.startswith("F2") for f in failures)
+    with pytest.raises(SystemExit, match="F2"):
+        build(tmp_path, site)
+
+
+def test_reflected_shortwave_above_the_incoming_is_reported(tmp_path):
+    frame = with_fluxes(synthetic_tower())
+    frame["Rs_up"] = 1.2 * frame["Rs"]
+    failures = ti.read_standard(write_site(tmp_path, frame, extra=FLUXES)).report["fluxes"]["failures"]
+    assert any(f.startswith("F3: the reflected shortwave") for f in failures)
+
+
+@pytest.mark.parametrize("fluxes,message", [
+    ('NEE = { column = "NEE", units = "umol m-2 s-1" }\nRECO = { sum = ["GPP", "NEE"] }', "RECO sums 'GPP'"),
+    ('GPP = { sum = ["NEE"] }', "only RECO may be a sum"),
+    ('LE = { column = "LE", units = "W m-2", measured = 1 }', "measured is a table"),
+    ('LE = { column = "LE", units = "mm" }', "fluxes.LE.units"),
+    ('Le = { column = "LE", units = "W m-2" }', "fluxes.Le is not one of"),
+    ('LE = { column = "LE", units = "W m-2" }\n[provider]\nmethod = "x"', "provider.method is not one of"),
+    ('LE = { column = "LE", units = "W m-2" }\n[provider]\nuncertainty = { H = "H_RANDUNC" }',
+     "provider.uncertainty.H names no declared flux"),
+])
+def test_a_flux_declaration_is_checked(tmp_path, fluxes, message):
+    with pytest.raises(SystemExit, match=message):
+        write_site(tmp_path, with_fluxes(synthetic_tower(days=2)), extra="[fluxes]\n" + fluxes)
 
 
 # ---------------------------------------------------------------------------------------------

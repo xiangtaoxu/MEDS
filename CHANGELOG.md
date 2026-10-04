@@ -15,6 +15,18 @@ before and after.
 ## [Unreleased]
 
 ### Added
+- **The site TOML's `[fluxes]` and `[provider]`** (`scripts/prepare_flux_tower`): each flux the
+  calibration fits (SW_out, LW_out, Rnet, LE, H, NEE, GPP, RECO, USTAR) with its column, units and the
+  rule that says when it was measured (`measured = { column, equals }`; without one, a FLUXNET flux's
+  `_QC` = 0, any other flux wherever present), RECO optionally as a sum of declared fluxes, and what
+  the provider did. `tower_inputs.read_standard()` is the one table both tools read: UTC interval
+  starts, MEDS units, a measured mask for every column (#357).
+- **Flux metadata checks F1–F3** (`tower_checks.check_fluxes`): net radiation against its four
+  components (median residual within 25 W m-2), the upwelling longwave above the downwelling at night
+  (a swapped pair of columns), and the reflected shortwave and upwelling longwave within physical
+  bounds. They stop the forcing build and are reported by the calibration (`tower_checks` in the data
+  report). BCI passes with its swapped longwave labels declared: F1 median residual 0, night LW_out −
+  LW_in +32 W m-2 (#357).
 - **`[leaf_physiology].medlyn_vpd_min`** (0.05 kPa, optional): the least leaf-to-air VPD the
   Medlyn stomatal model uses, in the equation's own units (g1 is in kPa^0.5). It was a bare 50 Pa in
   the code; CLM5 uses the same 50 Pa. At BCI (one year) 1.8 % of the lit leaf-hours sit below it,
@@ -68,6 +80,15 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **`calibrate_fast` reads the tower through its site TOML** (plan P1). `[tower].site` names it, and
+  the facts it holds leave `calibration.toml`: `[tower].path`, `time_column`, `flag_column`,
+  `flag_good`, `utc_offset_h` and `[tower.columns]` are gone (a site that still sets them is refused).
+  BCI's declarations moved into `bci_site.toml`. The observations stay on the tower's own interval:
+  the tool sets `[output].fast_interval_steps` from the tower's interval and `fast.dt_fast` (2 at
+  BCI) and a trial whose output is at another spacing fails; the hourly pairing, which needed both
+  half hours measured, is gone. Local hours and days come from the site's clock. At BCI the rows left
+  after every filter go from hours to half hours: GPP 4990 → 10272, LE 8498 → 17737, H 2253 → 4739,
+  albedo 5448 → 10830, upwelling longwave 17078 → 34180 (#357).
 - **`[leaf_physiology].phi_psii` 0.85 → 0.74 in the reference config, and its meaning.** It is the
   electron yield of linear transport in low light (J's initial slope is 0.5·phi_psii per absorbed
   photon), not Fv/Fm. With 0.85 and Aj's 4ci + 8Γ\*, a leaf fixed CO2 at most at 0.106 per absorbed
