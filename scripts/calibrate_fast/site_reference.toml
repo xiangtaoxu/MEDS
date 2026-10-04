@@ -135,7 +135,9 @@ seed              = 1
 # the model's numerical floors and by stable-air measurement problems. `night = true` keeps their night records too,
 # at the provider's u* threshold.
 [targets.albedo]
-on       = true
+on       = false                  # Off for now (owner, 2026-10-04): at realistic leaf optics the model's canopy reflects too
+                                  #   much NIR, so the albedo can only be met by moving a leaf's optics past its evidence (BCI:
+                                  #   NIR reflectance 0.32, prior z -3.1). Back on once the canopy's structure is revisited.
 sigma    = 0.01
 min_sw   = 200.0                  # [W m-2] only records with this much incoming shortwave (a ratio of small numbers is noise)
 min_solar_elevation = 20.0        # [deg] low-sun albedo is the least reliable (the plan's albedo rule)

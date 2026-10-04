@@ -31,4 +31,4 @@ wind_cas_top_patch   = "D"   # the forcing wind at that top
 area_patch           = "D"
 sw_up_fast           = "F"   # shortwave leaving the canopy top  <-> Rs_dn
 lw_up_fast           = "F"   # longwave leaving the canopy top    <-> Rl_dn (the file swaps the two)
-growth_resp_site     = "D"   # growth respiration: the calibration adds it to the frozen night NEE
+growth_resp_site     = "D"   # growth respiration (the stand's; a frozen calibration trial has none)

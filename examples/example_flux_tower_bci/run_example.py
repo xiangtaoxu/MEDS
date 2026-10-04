@@ -22,7 +22,7 @@ Usage:
   python run_example.py --copy-from ~/BCI_flux   # take the data from a local copy
   python run_example.py --forcing-only           # steps 1-4: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
-  python run_example.py --calibrate --workers 40 # redo the fit: ~100 core-hours (scripts/calibrate_fast)
+  python run_example.py --calibrate --workers 40 # redo the fit: ~1 h on one 40-core node (scripts/calibrate_fast)
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
@@ -88,9 +88,9 @@ def main(argv=None):
              "--runner", args.meds_main, "--pool", "local", "--workers", str(args.workers)])
         run([py, CALIBRATE_FAST, "write-calibrated", "--site", "calibration.toml", "--variant", args.variant,
              "--fit", os.path.join(work, "fit.json"), "--out", CALIB])
-        with open(os.path.join(work, "fit.json")) as src, \
-                open(os.path.join(CALIB, f"fit_{args.variant}.json"), "w") as dst:
-            dst.write(src.read())
+        for name, out in (("fit.json", f"fit_{args.variant}.json"), ("report.md", f"report_{args.variant}.md")):
+            with open(os.path.join(work, name)) as src, open(os.path.join(CALIB, out), "w") as dst:
+                dst.write(src.read())
     calibrated = os.path.join(CALIB, "meds_config_calibrated.toml")
     if os.path.exists(calibrated):
         run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))

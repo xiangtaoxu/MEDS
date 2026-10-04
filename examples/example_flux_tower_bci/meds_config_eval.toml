@@ -133,7 +133,8 @@ ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209
 leaf_absorptance = 0.85
-phi_psii         = 0.85
+phi_psii         = 0.74    # the electron yield of linear transport in low light (#351): 0.37 electrons per absorbed
+                           #   photon, the measured maximum CO2 yield 0.093 at 4 electrons per CO2
 
 [site]
 latitude              = 9.1568        # AmeriFlux PA-Bar

@@ -38,8 +38,11 @@ silently fall back to the default.
 
 ### Targets, filters and error models
 
-- **Targets:** the albedo, the upwelling longwave, H, LE, GPP and u\*, on the records the tower
-  measured and the forcing observed.
+- **Targets:** the upwelling longwave, H, LE, GPP and u\*, on the records the tower measured and the
+  forcing observed.
+  - **The albedo is off for now** (`[targets.albedo].on`). At realistic leaf optics the model's canopy
+    reflects too much NIR, so the albedo could be met only by moving the leaf's NIR reflectance past
+    its evidence (at BCI to 0.32, prior z −3.1). The NIR reflectance is fixed with it.
   - **Not targets:** net radiation (an input to the closure model), the evaporative fraction (it
     repeats H and LE) and night NEE.
   - **H, LE and u\* are daytime targets.** At night they are set mostly by the model's numerical
@@ -58,8 +61,8 @@ silently fall back to the default.
   - **At BCI:** LE is flat and H rising, so neither is filtered; GPP takes the provider's 0.4. The
     all-day GPP diagnostic finds a plateau at 0.33 (bootstrap 0.15–0.35).
 - **The other filters** (`par_min`, `hours`, `min_solar_elevation`, `snow_free_days`) are per-target
-  settings. The albedo's defaults are the plan's rule: SW_in > 200 W m⁻², the sun at least 20° high,
-  a week without frost.
+  settings. The albedo's, for when it is on, are the plan's rule: SW_in > 200 W m⁻², the sun at least
+  20° high, a week without frost.
 - **Each target has an observation model** (`obsmodels.py`): how the tower's number relates to the
   true flux, each known bias as its own term.
   - **H and LE: closure.** The tower misses the same fraction of the turbulent flux at every hour.

@@ -40,7 +40,8 @@ key = "pft.leaf_reflect_nir"
 prior = { centre = 0.45, sd = 0.05, source = "CLM5 broadleaf evergreen tropical 0.45; measured broadleaf NIR reflectance spans about 0.35-0.55 (+-2 sd). The range is what a leaf can do" }
 kind = "trait"
 range = [0.25, 0.65]
-state = "fit"
+state = "fixed"
+reason = "held at the PFT file's value with the albedo target off (owner, 2026-10-04): at realistic leaf optics the model's canopy reflects too much NIR, and the albedo pushed the leaf's reflectance to 0.32 (prior z -3.1; reflectance + transmittance 0.57 against ~0.70 for tropical leaves) to make up for it. Revisit with the canopy's structure (clumping, wood optics)"
 group = "radiation"
 source = "broadleaf NIR reflectance; CLM5 broadleaf evergreen tropical 0.45; plan §4.1"
 
@@ -319,7 +320,8 @@ prior = { sd = 0.5, source = "half the PFT's turgor-loss point (the model's defa
 kind = "trait"
 range = [-5.0, 0.0]
 default = -0.857143
-state = "fit"
+state = "fixed"
+reason = "held at half the PFT's turgor-loss point (owner, 2026-10-04): the BCI fit took it to its bound (-0.16 MPa, prior z +2.6), set by the ten-day windows' upwelling longwave and LE rather than the drought runs (test T6), and traded it against stomatal_g1 (correlation 0.91). wstress_sref_stomata carries the drought response"
 process = "drought"
 group = "water stress"
 source = "predawn leaf potential where the stomatal stress begins [MPa] (#341). The model's default is half the PFT's turgor-loss point; -0.857143 is that at the shipped leaf_pi0 (-1.5 MPa) and leaf_elastic_mod (12 MPa). A PFT with other pressure-volume traits sets [priors.stomata_psi_onset].centre"
