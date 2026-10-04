@@ -28,10 +28,6 @@ forcing_qc   = ["LWdown_qc", "Wind_qc"]
 forcing_grid = 1
 daytime_sw   = 10.0            # [W m-2]
 
-[targets.albedo]
-sigma = 0.01
-min_sw = 200.0
-
 [targets.lw_up]
 sigma = 5.0
 
