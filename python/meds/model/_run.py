@@ -79,7 +79,7 @@ class Run:
             #----- The Fortran driver RETURNS these rather than `error stop`ping, which is
             #      the only reason a bad state is an exception here instead of a dead
             #      interpreter. See the meds_driver module header.
-            raise RuntimeError(f"MEDS: NaN detected in state at {self.date}")
+            raise RuntimeError(f"MEDS: NaN in the state or the energy/water ledger at {self.date}")
         if status == ERR_SOILC:
             #----- A CENTURY pool went negative or past the divergence ceiling. The Fortran
             #      side has already printed which pool and patch; the slow ledger's report

@@ -38,7 +38,7 @@ module meds_diagnostic_reduce
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : dbh_class_index
    use meds_output_types,       only : MISSING_VALUE
-   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan, ieee_is_finite
    implicit none
    private
 
@@ -547,7 +547,10 @@ contains
       nc = site%cohort%n
    end function count_cohorts
 
-   !----- True if any diameter, density, AGB, or wood carbon is NaN. -----------------------!
+   !----- True if any diameter, density, AGB or wood carbon is NaN, or any cohort's leaf or wood !
+   !      temperature, or any patch's canopy air, is not finite. The fast loop's integrators      !
+   !      commit a non-finite state rather than hang when even their smallest step fails, and the !
+   !      canopy air and the tissue temperatures are where such a failure lands. ------------------!
    pure logical function has_nan(site) result(bad)
       type(site_t), intent(in) :: site
       integer(ik) :: i
@@ -556,7 +559,20 @@ contains
          if (ieee_is_nan(site%cohort%dbh(i))    .or. ieee_is_nan(site%cohort%nplant(i)) .or.   &
              ieee_is_nan(site%cohort%agb(i))    .or. ieee_is_nan(site%cohort%wood_carbon(i)))  &
             bad = .true.
+         if (allocated(site%cohort%leaf_temp)) then
+            if (.not. ieee_is_finite(site%cohort%leaf_temp(i))) bad = .true.
+         end if
+         if (allocated(site%cohort%wood_temp)) then
+            if (.not. ieee_is_finite(site%cohort%wood_temp(i))) bad = .true.
+         end if
       end do
+      if (allocated(site%patch%cas)) then
+         do i = 1_ik, site%patch%n
+            if (.not. (ieee_is_finite(site%patch%cas(i)%can_enthalpy) .and.                      &
+                       ieee_is_finite(site%patch%cas(i)%can_shv)      .and.                      &
+                       ieee_is_finite(site%patch%cas(i)%can_co2))) bad = .true.
+         end do
+      end if
    end function has_nan
 
    !----- Human-readable one-line summary. ------------------------------------------------!
