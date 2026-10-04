@@ -10,7 +10,10 @@ parameter record (<prefix>_parameters.csv) must show every key the trial set, ma
 file, with the value written: a key that is missing or defaulted means a misspelling or a key the
 model does not read, and the trial fails rather than silently running the default.
 
-A DRIVER trial (kind = "driver") is the same run writing more: the hourly shortwave streams, the
+A trial writes its fast output at the tower's own interval (the site sets [output].fast_interval_steps
+on the base configuration), stamped by each record's UTC start, the index the observations are on.
+
+A DRIVER trial (kind = "driver") is the same run writing more: the fast shortwave streams, the
 per-cohort leaf-solve drivers (the gx_*_cohort_fast outputs), the daily wood area, and its end
 state. finish() packs them into drivers.npz with the stand's geometry, for the kernel stages
 (stages.py), which then evaluate the radiation solver and the leaf solve without the model.
@@ -34,12 +37,12 @@ from netCDF4 import Dataset
 
 from meds.config import RunConfig, read_record
 
-#: the hourly variables a trial writes: every target's model side (residuals.py)
+#: the fast variables a trial writes: every target's model side (residuals.py)
 TRIAL_VARIABLES = ("sw_in_fast", "sw_up_fast", "lw_up_fast", "rnet_fast", "le_flux_fast",
                    "h_flux_fast", "gpp_rate_fast", "nee_fast", "ustar_fast")
-#: the extra hourly site variables of a driver trial: the shortwave the canopy received
+#: the extra fast site variables of a driver trial: the shortwave the canopy received
 DRIVER_SITE = ("cosz_fast", "par_beam_fast", "par_diffuse_fast", "nir_beam_fast", "nir_diffuse_fast")
-#: the per-cohort hourly drivers of the leaf solve (meds_output_registry: gx_*_cohort_fast)
+#: the per-cohort fast drivers of the leaf solve (meds_output_registry: gx_*_cohort_fast)
 DRIVER_COHORT = ("gx_par_cohort_fast", "gx_leaf_temp_cohort_fast", "gx_vpd_cohort_fast", "gx_ca_cohort_fast",
                  "gx_pressure_cohort_fast", "gx_psi_leaf_cohort_fast", "gx_psi_predawn_cohort_fast",
                  "gx_gb_cohort_fast", "gx_agross_cohort_fast")
@@ -160,25 +163,29 @@ def check_record(tdir: Path, params, theta) -> None:
 
 
 # ----- the output --------------------------------------------------------------------------------
-def read_hourly(out_dir: Path, utc_offset_h: float) -> pd.DataFrame:
-    """The trial's hourly records on LOCAL time (the start of each hour)."""
+def read_series(out_dir: Path, step: float) -> pd.DataFrame:
+    """The trial's fast records on the UTC start of each record; they must be `step` seconds apart,
+    the tower's interval, or the pairing with the observations would be wrong."""
     frames = []
     for path in sorted(out_dir.glob(f"{PREFIX}-F-*.nc")):
         with NC_LOCK, Dataset(path) as ds:
             cols = {v: np.asarray(ds[v][:], dtype=float).squeeze() for v in TRIAL_VARIABLES}
             when = pd.to_datetime(dict(year=ds["year"][:], month=ds["month"][:], day=ds["day"][:],
                                        hour=ds["hour"][:], minute=ds["minute"][:]))
-        frames.append(pd.DataFrame(cols, index=when + pd.Timedelta(hours=utc_offset_h)))
+        frames.append(pd.DataFrame(cols, index=when))
     if not frames:
-        raise TrialError(f"no hourly output in {out_dir}")
+        raise TrialError(f"no fast output in {out_dir}")
     df = pd.concat(frames).sort_index()
+    gaps = np.unique(np.diff(df.index.values).astype("timedelta64[s]").astype(float))
+    if len(df) > 1 and not np.allclose(gaps, step):
+        raise TrialError(f"{out_dir}: the fast output is {gaps} s apart, not the tower's {step:g} s")
     return df.where(df.abs() < 1e30)
 
 
-def finish(tdir: Path, params, theta, utc_offset_h: float, keep_netcdf: bool = False,
+def finish(tdir: Path, params, theta, step: float, keep_netcdf: bool = False,
            kind: str = "trial") -> pd.DataFrame:
-    """Check a completed trial and cache its hourly series (series.npz) -- and, for a driver trial,
-    its drivers (drivers.npz); raise TrialError if it failed."""
+    """Check a completed trial and cache its fast series (series.npz) -- and, for a driver trial,
+    its drivers (drivers.npz); raise TrialError if it failed. `step` is the tower's interval."""
     log = (tdir / "run.log").read_text(errors="replace") if (tdir / "run.log").exists() else ""
     if COMPLETED not in log:
         tail = "\n".join(log.splitlines()[-15:])
@@ -188,9 +195,9 @@ def finish(tdir: Path, params, theta, utc_offset_h: float, keep_netcdf: bool = F
         if int(fails) > 0:
             raise TrialError(f"{tdir.name}: the {which} budget breached tolerance {fails} times")
     check_record(tdir, params, theta)
-    df = read_hourly(tdir / "out", utc_offset_h)
+    df = read_series(tdir / "out", step)
     if df.isna().any().any():
-        raise TrialError(f"{tdir.name}: missing or non-finite values in the hourly output")
+        raise TrialError(f"{tdir.name}: missing or non-finite values in the fast output")
     if kind == "driver":
         pack_drivers(tdir, df.index)
     np.savez(tdir / "series.npz", index=df.index.values.astype("datetime64[s]").astype(np.int64),
@@ -202,7 +209,7 @@ def finish(tdir: Path, params, theta, utc_offset_h: float, keep_netcdf: bool = F
 
 
 def pack_drivers(tdir: Path, index: pd.DatetimeIndex) -> None:
-    """drivers.npz: the hourly shortwave streams, the per-cohort leaf drivers (hours x cohorts), the
+    """drivers.npz: the fast shortwave streams, the per-cohort leaf drivers (records x cohorts), the
     stand's geometry from the end state, and each cohort's wood area index (its first day's)."""
     site = {v: [] for v in DRIVER_SITE}
     coh = {v: [] for v in DRIVER_COHORT}

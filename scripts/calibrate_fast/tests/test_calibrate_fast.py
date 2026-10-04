@@ -137,7 +137,7 @@ def synthetic_tower(days=40, closure=0.8):
 
 
 def test_closure_restores_the_balance_and_keeps_the_bowen_ratio():
-    spec = TW.TowerSpec(path="", columns={}, closure_days=31, daytime_sw=10.0)
+    spec = TW.TowerSpec(site="", closure_days=31, daytime_sw=10.0)
     out = TW.add_closure(synthetic_tower(), spec)
     day = out["sw_in"] > 10.0
     mid = out.index[(out.index > "2016-01-16") & (out.index < "2016-01-25")]
@@ -148,19 +148,62 @@ def test_closure_restores_the_balance_and_keeps_the_bowen_ratio():
     assert np.all(out.loc[~day, "closure_f"] == 1.0)
 
 
-def test_hourly_needs_both_half_hours(tmp_path):
-    idx = pd.date_range("2016-01-01", periods=8, freq="30min")
-    raw = pd.DataFrame({"date": idx, "Rs": 100.0, "Rs_dn": 13.0, "Rl_dn": 450.0, "Rnet": 60.0,
-                        "LE": 40.0, "H": 10.0, "NEE": -5.0, "gpp": 10.0, "ustar": 0.3,
-                        "FLAG": [1, 1, 1, 0, 1, 1, 1, 1]})
+SITE_TOML = """
+[input]
+format = "csv"
+path = "t.csv"
+timestamp = "date"
+timestamp_format = "%Y-%m-%d %H:%M"
+[site]
+latitude = 9.15
+longitude = -79.85
+elevation = 100.0
+[clock]
+utc_offset = -5.0
+stamp = "begin"
+timestep = 1800
+[heights]
+tq_height = 30.0
+wind_height = 30.0
+pressure_height = 30.0
+[variables]
+Tair = { column = "tair", units = "degC" }
+RH = { column = "RH", units = "%" }
+PSurf = { column = "p_kpa", units = "kPa" }
+Rainf = { column = "PPT", units = "mm" }
+SWdown = { column = "Rs", units = "W m-2" }
+Wind = { column = "ubar", units = "m s-1" }
+[fluxes]
+SW_out = { column = "Rs_dn", units = "W m-2" }
+LW_out = { column = "Rl_up", units = "W m-2" }
+Rnet = { column = "Rnet", units = "W m-2" }
+LE = { column = "LE", units = "W m-2", measured = { column = "FLAG", equals = 1 } }
+H = { column = "H", units = "W m-2", measured = { column = "FLAG", equals = 1 } }
+NEE = { column = "NEE", units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+GPP = { column = "gpp", units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+RECO = { sum = ["GPP", "NEE"] }
+USTAR = { column = "ustar", units = "m s-1", measured = { column = "FLAG", equals = 1 } }
+"""
+
+
+def test_the_tower_is_its_site_toml_on_utc_starts(tmp_path):
+    local = pd.date_range("2016-01-01", periods=96, freq="30min")
+    raw = pd.DataFrame({"date": local.strftime("%Y-%m-%d %H:%M"), "tair": 25.0, "RH": 80.0, "p_kpa": 99.0,
+                        "PPT": 0.0, "Rs": 100.0, "ubar": 2.0, "Rs_dn": 13.0, "Rl_up": 450.0, "Rnet": 60.0,
+                        "LE": 40.0, "H": 10.0, "NEE": -5.0, "gpp": 10.0, "ustar": 0.3, "FLAG": 1})
+    raw.loc[3, "FLAG"] = 0
     raw.loc[5, "Rnet"] = np.nan
     raw.to_csv(tmp_path / "t.csv", index=False)
-    cols = dict(sw_in="Rs", sw_up="Rs_dn", lw_up="Rl_dn", rnet="Rnet", le="LE", h="H", nee="NEE",
-                gpp="gpp", ustar="ustar")
-    obs = TW.load_tower(TW.TowerSpec(path=str(tmp_path / "t.csv"), columns=cols))
-    assert len(obs) == 4
-    assert np.isfinite(obs["le"].iloc[0]) and np.isnan(obs["le"].iloc[1])   # a FLAG = 0 half hour
-    assert np.isfinite(obs["rnet"].iloc[1]) and np.isnan(obs["rnet"].iloc[2])  # a missing half hour
+    (tmp_path / "site.toml").write_text(SITE_TOML)
+    spec = TW.TowerSpec.from_site(tmp_path / "site.toml", closure="none")
+    assert spec.step == 1800.0 and spec.utc_offset_h == -5.0 and spec.lat == 9.15
+    obs = TW.observations(spec)
+    assert len(obs) == 96 and obs.index[0] == pd.Timestamp("2016-01-01 05:00")     # the native interval, UTC starts
+    assert np.isnan(obs["le"].iloc[3]) and np.isfinite(obs["le"].iloc[2])          # FLAG = 0: not measured
+    assert np.isnan(obs["reco"].iloc[3]) and obs["reco"].iloc[2] == pytest.approx(5.0)   # RECO = GPP + NEE
+    assert np.isnan(obs["rnet"].iloc[5]) and np.isfinite(obs["rnet"].iloc[3])      # radiation: wherever present
+    assert obs["par"].isna().all()                                                  # not declared
+    assert spec.report["fluxes"]["failures"] == []
 
 
 # ----- the residuals ---------------------------------------------------------------------------
@@ -180,10 +223,10 @@ def model_like(obs, idx, gr=0.0):
 
 
 def test_residual_is_zero_on_the_observations_and_rows_are_fixed():
-    spec_t = TW.TowerSpec(path="", columns={}, closure_days=31)
+    spec_t = TW.TowerSpec(site="", closure_days=31)
     obs = TW.add_closure(synthetic_tower(closure=1.0), spec_t)
     fok = pd.Series(True, index=obs.index)
-    idx = R.window_index(dt.datetime(2016, 1, 10), 10, 0.0)
+    idx = R.window_index(dt.datetime(2016, 1, 10), 10, 3600.0)
     spec = R.build_spec("w", idx, obs, fok, TARGETS, skip_hours=3)
     gr = {m: 1.5 for m in range(1, 13)}
     r = R.residual(spec, model_like(obs, idx, gr=1.5), gr)
@@ -352,6 +395,11 @@ BCI = Path(__file__).resolve().parents[3] / "examples/example_flux_tower_bci/cal
 
 def test_the_bci_declaration_is_complete_and_valid():
     d = SET.complete(load_toml(BCI))
+    site = TW.ti.read_site(str(BCI.parent / d["tower"]["site"]))
+    assert site.timestep == 1800 and site.utc_offset == -5.0
+    assert site.fluxes["LW_out"]["column"] == "Rl_dn"                  # the file's longwave labels are swapped
+    assert site.fluxes["RECO"] == {"sum": ["GPP", "NEE"]}
+    assert all(site.fluxes[q]["measured"] == {"column": "FLAG", "equals": 1} for q in ("LE", "H", "NEE", "GPP", "USTAR"))
     assert d["targets"]["gpp"]["ustar_min"] == 0.4 and d["targets"]["gpp"]["sigma_abs"] == 2.5
     assert d["targets"]["nee_night"]["on"] is False
     assert d["tower"]["closure"] == "none" and not d["targets"]["rnet"]["on"] and not d["targets"]["ef"]["on"]
@@ -364,7 +412,7 @@ def test_the_bci_declaration_is_complete_and_valid():
 
 def test_every_target_takes_the_filters():
     """A filter the reference does not list for a target is still accepted on it; a misspelt one is not."""
-    good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"path": "t.csv"},
+    good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"site": "site.toml"},
             "windows": {"chains": {"cal": "2015-01-01"}, "list": []}, "targets": {"gpp": {"hours": [8, 17]}}}
     assert SET.complete(good)["targets"]["gpp"]["hours"] == [8, 17]
     good["targets"]["gpp"]["hourz"] = [8, 17]
@@ -395,7 +443,7 @@ def test_which_keys_each_stage_moves():
 
 
 def test_settings_refuse_unknown_and_missing_keys():
-    good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"path": "t.csv"},
+    good = {"base": {"main": "m.toml", "registry": "r.toml"}, "tower": {"site": "site.toml"},
             "windows": {"chains": {"cal": "2015-01-01"}, "list": []}}
     d = SET.complete(good)
     assert d["targets"]["gpp"]["ustar_min"] == 0.4 and d["windows"]["seasons"] == []
@@ -442,7 +490,7 @@ def tower_with(**cols):
                        "ustar": np.where(hour < 10, 0.2, 0.6), "par": 2.0 * sw}, index=idx)
     for k, v in cols.items():
         df[k] = v
-    return TW.add_closure(df, TW.TowerSpec(path="", columns={}, closure_days=3))
+    return TW.add_closure(df, TW.TowerSpec(site="", closure_days=3))
 
 
 def test_filters_apply_in_order_and_are_counted():
@@ -452,9 +500,9 @@ def test_filters_apply_in_order_and_are_counted():
     cfg = {"gpp": {"sigma_abs": 2.5, "sigma_rel": 0.15, "ustar_min": 0.4, "par_min": 100.0, "hours": [8, 16]}}
     spec = R.build_spec("w", idx, obs, fok, cfg)
     t = spec.targets[0]
-    hours = idx.hour.to_numpy()[t.hours]
+    hours = idx.hour.to_numpy()[t.rows]
     assert np.all(hours >= 10) and np.all(hours < 16)                 # u* >= 0.4 only from 10 h; the hours window
-    assert np.all(obs["par"].to_numpy()[t.hours] >= 100.0)
+    assert np.all(obs["par"].to_numpy()[t.rows] >= 100.0)
     labels = [c[0] for c in t.counts]
     assert labels == ["measured", "forcing observed", "daytime", "u* >= 0.4", "PAR >= 100.0", "local hours [8, 16)"]
     assert all(a[1] >= b[1] for a, b in zip(t.counts, t.counts[1:]))
@@ -464,11 +512,36 @@ def test_filters_apply_in_order_and_are_counted():
     elev = np.where(idx.hour.to_numpy() == 12, 80.0, 10.0)
     spec = R.build_spec("w", idx, obs, fok, {"albedo": {"sigma": 0.01, "min_sw": 50.0, "min_solar_elevation": 30.0}},
                         elev=elev)
-    assert set(idx.hour.to_numpy()[spec.targets[0].hours]) == {12}
+    assert set(idx.hour.to_numpy()[spec.targets[0].rows]) == {12}
     obs2 = obs.copy()
     obs2["closure_day"] = np.where(idx.day == 1, 0.5, 0.95)
     spec = R.build_spec("w", idx, obs2, fok, {"le": {"sigma": 10.0, "closure_range": [0.8, 1.2]}})
-    assert set(idx.day[spec.targets[0].hours]) == {2}
+    assert set(idx.day[spec.targets[0].rows]) == {2}
+
+
+def test_windows_and_hours_follow_the_towers_interval_and_clock():
+    idx = R.window_index(dt.datetime(2016, 1, 1, 5), 10, 1800.0)
+    assert len(idx) == 480 and idx[1] - idx[0] == pd.Timedelta(minutes=30)
+    obs = tower_with()                                               # an hourly tower on UTC starts
+    spec = R.build_spec("w", obs.index, obs, pd.Series(True, index=obs.index),
+                        {"le": {"sigma": 10.0, "hours": [12, 13]}}, utc_offset_h=-5.0)
+    assert set(obs.index.hour.to_numpy()[spec.targets[0].rows]) == {17}   # local noon at UTC-5
+    assert [CF.seconds(d) for d in ("900s", "15min", "1h", 900)] == [900.0, 900.0, 3600.0, 900.0]
+
+
+def test_the_trial_output_must_be_on_the_towers_interval(tmp_path):
+    from netCDF4 import Dataset
+    when = pd.date_range("2016-01-01", periods=6, freq="1h")
+    with Dataset(tmp_path / f"{T.PREFIX}-F-2016-01-01.nc", "w") as ds:
+        ds.createDimension("time", len(when))
+        for name, x in (("year", when.year), ("month", when.month), ("day", when.day), ("hour", when.hour),
+                        ("minute", when.minute)):
+            ds.createVariable(name, "i4", ("time",))[:] = np.asarray(x)
+        for v in T.TRIAL_VARIABLES:
+            ds.createVariable(v, "f8", ("time",))[:] = 1.0
+    assert len(T.read_series(tmp_path, 3600.0)) == 6
+    with pytest.raises(T.TrialError, match="not the tower's 1800 s"):
+        T.read_series(tmp_path, 1800.0)
 
 
 def test_weights_huber_and_sigma_scales():
@@ -502,8 +575,8 @@ def test_the_ustar_plateau_finds_the_threshold():
 
 
 def test_solar_elevation():
-    idx = pd.DatetimeIndex(["2016-03-20 11:30", "2016-03-20 23:30"])
-    e = TW.solar_elevation(idx, 0.0, 0.0, 0.0)                        # mid-hour: 12:00 and 00:00 UTC
+    idx = pd.DatetimeIndex(["2016-03-20 11:45", "2016-03-20 23:45"])
+    e = TW.solar_elevation(idx, 0.0, 0.0, 1800.0)                     # mid-record: 12:00 and 00:00 UTC
     assert e[0] > 85.0 and e[1] < -85.0
 
 

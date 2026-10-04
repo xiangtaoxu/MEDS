@@ -8,18 +8,19 @@ its own keys with the upstream results fixed and the downstream drivers taken fr
 
   optics          the two-stream alone (meds.canopy) over each window's stand and shortwave, against
                   the albedo: seconds per evaluation, no model run.
-  photosynthesis  a canopy of leaf solves (meds.canopy) over each window's hourly per-cohort drivers,
+  photosynthesis  a canopy of leaf solves (meds.canopy) over each window's per-cohort drivers (one
+                  record per tower interval),
                   against GPP; outer passes re-run the windows with the new keys and refresh the
                   drivers (the leaf-temperature feedback).
   energy, polish  the coupled fast loop: fit.Model on the 10-day windows.
   water           frozen seasonal runs, searched without derivatives (a grid, then a quadratic).
 
 Both kernel models are ANCHORED to the full run they take their drivers from: their value for a
-parameter set is the kernel's, times, per hour, the model's over the kernel's at the drivers'
+parameter set is the kernel's, times, per record, the model's over the kernel's at the drivers'
 parameters. At the anchor they reproduce the model exactly; elsewhere the kernel carries the
-response. The anchor removes what the kernel cannot see -- the hourly output averages four 15-min
-steps, and the kernel evaluates the hour's mean drivers once (gate G8 measures that error, before
-the anchor).
+response. The anchor removes what the kernel cannot see -- a record averages the model's 15-min steps
+(two in a 30-min record), and the kernel evaluates the record's mean drivers once (gate G8 measures
+that error, before the anchor).
 
 Both expose `residuals(thetas, windows)` like fit.Model, so fit.lm and fit.jacobian drive them.
 """
@@ -48,14 +49,14 @@ class KernelBase:
         self.windows = windows
         self.specs = specs                      # window name -> WindowSpec (this stage's target only)
         self.drivers = drivers                  # window name -> trials.load_drivers(...)
-        self.series = series                    # window name -> the driver run's hourly DataFrame
+        self.series = series                    # window name -> the driver run's fast series
         self.make_config = make_config          # theta -> path of a main TOML with those parameters
         self.log = log
-        self.ratio = {}                         # window name -> per-hour anchor ratio
+        self.ratio = {}                         # window name -> per-record anchor ratio
         self.n_evals = 0
 
     def set_anchor(self, theta_anchor):
-        """The per-hour ratio of the full run's value to the kernel's at the drivers' parameters."""
+        """The per-record ratio of the full run's value to the kernel's at the drivers' parameters."""
         cfg = self.make_config(theta_anchor)
         for w in self.windows:
             k = self.kernel(cfg, w.name)
@@ -99,8 +100,8 @@ class OpticsModel(KernelBase):
 
 
 class PhotoModel(KernelBase):
-    """Stage 2: the site's GPP from a canopy of leaf solves over the hourly per-cohort drivers,
-    against the GPP target's hours (only those hours are computed)."""
+    """Stage 2: the site's GPP from a canopy of leaf solves over the per-cohort drivers, against
+    the GPP target's records (only those records are computed)."""
     column = "gpp_rate_fast"
 
     def __init__(self, *a, **k):
@@ -109,10 +110,10 @@ class PhotoModel(KernelBase):
         for w in self.windows:
             d = self.drivers[w.name]
             spec = self.specs[w.name]
-            hours = np.unique(np.concatenate([t.hours for t in spec.targets])) if spec.targets else np.zeros(0, int)
+            rows = np.unique(np.concatenate([t.rows for t in spec.targets])) if spec.targets else np.zeros(0, int)
             lai = d["stand_nplant"] * d["stand_leaf_area"]
-            hh, jj = np.meshgrid(hours, np.flatnonzero(lai > 0), indexing="ij")
-            self.rows[w.name] = (hours, hh.ravel(), jj.ravel(),
+            hh, jj = np.meshgrid(rows, np.flatnonzero(lai > 0), indexing="ij")
+            self.rows[w.name] = (rows, hh.ravel(), jj.ravel(),
                                  d["stand_patch_area"][d["stand_owner_patch"].astype(int) - 1] * lai)
 
     def model_value(self, name):
@@ -121,7 +122,7 @@ class PhotoModel(KernelBase):
     def kernel(self, cfg, name):
         from meds.canopy import Canopy
         d = self.drivers[name]
-        hours, h, j, w = self.rows[name]
+        rows, h, j, w = self.rows[name]
         c = Canopy(cfg)
         pft = d["stand_pft"].astype(int)
         vc, rd = c.plastic_traits(pft, d["stand_overtopping_lai"])
@@ -130,28 +131,28 @@ class PhotoModel(KernelBase):
                    ca=d["gx_ca_cohort_fast"][h, j], pressure=d["gx_pressure_cohort_fast"][h, j],
                    psi_leaf=d["gx_psi_leaf_cohort_fast"][h, j], gb=d["gx_gb_cohort_fast"][h, j],
                    psi=d["gx_psi_predawn_cohort_fast"][h, j])
-        gpp = self.model_value(name).astype(float).copy()       # hours outside the target keep the model's
+        gpp = self.model_value(name).astype(float).copy()       # records outside the target keep the model's
         acc = np.zeros(len(gpp))
         np.add.at(acc, h, a["A_gross"] * w[j])
-        gpp[hours] = acc[hours]
+        gpp[rows] = acc[rows]
         return gpp
 
     def g8(self, theta_anchor) -> dict:
-        """Gate G8: the kernel, BEFORE the anchor, against the full run's hourly GPP on the target's
-        hours (GPP > 1 umol m-2 s-1): median and largest relative difference, and the mean bias."""
+        """Gate G8: the kernel, BEFORE the anchor, against the full run's GPP on the target's records
+        (GPP > 1 umol m-2 s-1): median and largest relative difference, and the mean bias."""
         cfg = self.make_config(theta_anchor)
         rel = []
         for w in self.windows:
-            hours = self.rows[w.name][0]
-            k, m = self.kernel(cfg, w.name)[hours], self.model_value(w.name)[hours]
+            rows = self.rows[w.name][0]
+            k, m = self.kernel(cfg, w.name)[rows], self.model_value(w.name)[rows]
             ok = m > 1.0
             rel.append(k[ok] / m[ok] - 1.0)
         rel = np.concatenate(rel) if rel else np.zeros(0)
         if not len(rel):
-            return {"pass": False, "note": "no GPP hours"}
+            return {"pass": False, "note": "no GPP records"}
         med = float(np.median(np.abs(rel)))
         return {"pass": med <= 0.01, "median_abs_rel": med, "max_abs_rel": float(np.max(np.abs(rel))),
-                "mean_rel": float(np.mean(rel)), "hours": int(len(rel))}
+                "mean_rel": float(np.mean(rel)), "records": int(len(rel))}
 
 
 def config_writer(base, params, overrides, root: Path):

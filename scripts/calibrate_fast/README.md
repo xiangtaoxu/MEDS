@@ -39,6 +39,23 @@ silently fall back to the default.
   writes a state there. The windows' soil water and temperature are then a spun-up run's. Before the
   polish the chains are re-run with the stage values (`[stages.polish].refresh`).
 
+### The tower
+
+- **The site TOML holds the facts, `calibration.toml` the choices.** `[tower].site` names the
+  tower's site TOML, the file the forcing build reads
+  ([`../prepare_flux_tower`](../prepare_flux_tower/README.md)). It declares the file, the clock, the
+  columns and their units, and in `[fluxes]` each target's column with the rule that says when it
+  was measured (BCI: `FLAG = 1`). Both tools read it through one reader, `tower_inputs.read_standard`.
+- **The tower's own interval, on UTC starts.** The observations stay on the tower's interval (30 min
+  at BCI). The tool sets `[output].fast_interval_steps` so each trial writes one record per tower
+  interval (2 × 900 s), and stops if the interval is not a whole number of `fast.dt_fast`. A trial
+  whose output is at another spacing fails. The `hours` filter reads local hours, and the closure
+  and EF local days, from the site's clock.
+- **The metadata checks** (F1–F3): net radiation against its four components, the upwelling longwave
+  above the downwelling at night (a swapped pair of columns), and the reflected shortwave and
+  upwelling longwave within bounds. The forcing build stops on a failure; `report` and `fit` list
+  it under `tower_checks`.
+
 ### Targets and filters
 
 - **Targets.** On by default: the albedo, upwelling longwave, LE, H, daytime GPP and u\*.
@@ -50,7 +67,7 @@ silently fall back to the default.
       longwave;
     - the daily evaporative fraction: biased high where closure is poor;
     - night NEE.
-  - Each target uses only the hours the tower measured and the forcing observed. Its observation
+  - Each target uses only the records the tower measured and the forcing observed. Its observation
     error is σ = `sigma_abs` + `sigma_rel` |obs|.
 - **Filters are per-target settings:** `ustar_min`, `par_min`, `hours`, `closure_range` and
   `min_solar_elevation`, each off unless set. The recommended values, with the reasons, are in
@@ -91,7 +108,7 @@ own keys with the cheapest model that can see them, keeping the upstream stages'
 | stage | model | target | method |
 |---|---|---|---|
 | `optics` | the two-stream alone (`meds.canopy`), over each window's stand and shortwave | albedo | Levenberg–Marquardt; seconds per evaluation |
-| `photosynthesis` | a canopy of leaf solves (`meds.canopy`), over each window's hourly per-cohort drivers | GPP | Levenberg–Marquardt; outer passes re-run the windows and refresh the drivers |
+| `photosynthesis` | a canopy of leaf solves (`meds.canopy`), over each window's per-cohort drivers | GPP | Levenberg–Marquardt; outer passes re-run the windows and refresh the drivers |
 | `energy` | the coupled fast loop on the 10-day windows | every target | Levenberg–Marquardt |
 | `water` | frozen seasonal runs (`[stages.water].windows`, e.g. 120 dry-season days) | LE, GPP | a grid in u, then a local quadratic (the responses can be rough) |
 | `polish` | the coupled loop, every fitted key, from the stage values | every target (plus the seasonal runs) | Levenberg–Marquardt, up to `[stages.polish].max_iter` (10) iterations |
@@ -102,12 +119,13 @@ own keys with the cheapest model that can see them, keeping the upstream stages'
   it to its ceiling.
 
 - **The kernels are anchored** to the full run they take their drivers from. Their value for a
-  parameter set is the kernel's, times, per hour, the model's over the kernel's at the drivers'
+  parameter set is the kernel's, times, per record, the model's over the kernel's at the drivers'
   parameters. At the anchor they reproduce the model exactly; elsewhere the kernel carries the
   response.
 - **Gate G8** checks the photosynthesis kernel before the anchor. With the full run's own
-  parameters, the canopy of leaf solves must match that run's hourly GPP within 1 % (median). The
-  hourly output averages four 15-minute steps, and the kernel solves the hour's mean drivers once.
+  parameters, the canopy of leaf solves must match that run's GPP within 1 % (median). A record
+  averages the 15-minute steps in it (two at BCI), and the kernel solves the record's mean drivers
+  once.
 - **`["polish"]` alone** is the original joint fit of every key at once.
 - **The stage values** are saved in `stages.json` after each stage. `--resume` continues from it,
   and `--stages` runs some stages only.
@@ -218,9 +236,9 @@ trial about 2.5× slower than an idle node does: 16 s against 6.4 s at BCI.
 | `parameters.toml` | the registry: each key's state, stage, file, TOML key, range, transform, prior and source |
 | `registry.py` | the transforms, the priors, the key selection |
 | `stages.py` | the optics and photosynthesis kernel models, gate G8, the water stage's grid search |
-| `trials.py` | the trial writer and runner, the parameter-record check, the hourly reader, the driver trials |
+| `trials.py` | the trial writer and runner, the parameter-record check, the fast-series reader (on the tower's interval), the driver trials |
 | `states.py` | the state chains |
-| `tower.py` | the tower's hours, the closure correction, the observed-forcing mask, the sun's elevation |
+| `tower.py` | the tower's records (through `tower_inputs`), the closure correction, the observed-forcing mask, the sun's elevation |
 | `residuals.py` | the targets, the filters, the residual vector, the weights, the data report, the u\* plateau |
 | `fit.py` | Levenberg–Marquardt, the Jacobian, screening, the covariance and intervals, the linearity check, the filter shift |
 | `pool.py` | the local pool and the directory queue |

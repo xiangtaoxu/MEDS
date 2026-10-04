@@ -2,7 +2,7 @@
 """Targets, their filters, and the residual vector (MEDS_FAST_CALIBRATION_PLAN.md §5.2-§5.4; the
 revision plan MEDS_FAST_CALIBRATION_REVISION_PLAN.md §2, §3, §6).
 
-For each window, the rows a target contributes -- which hours, the observed value and its
+For each window, the rows a target contributes -- which records, the observed value and its
 observation error sigma -- depend only on the observations, so they are fixed once
 (`WindowSpec`) and every trial's residual vector has the same rows in the same order:
 
@@ -11,10 +11,11 @@ observation error sigma -- depend only on the observations, so they are fixed on
 with w_t the target's effective-sample weight in that window (1 until the fit sets it) and rho the
 identity, or the Huber transform when the fit asks for a robust loss.
 
-The targets, each on the hours the tower measured (FLAG) and the forcing observed, after the
-first `skip_hours` of a window:
+The targets, each on the records the tower measured (the site TOML's rule, BCI: FLAG = 1) and the
+forcing observed, after the first `skip_hours` of a window. A window's records are the tower's own
+interval (30 min at BCI) on UTC, the clock of the model's output:
 
-    albedo     sw_up / sw_in, hours with sw_in > min_sw         sigma = abs
+    albedo     sw_up / sw_in, records with sw_in > min_sw       sigma = abs
     lw_up      upwelling longwave                               sigma = abs
     rnet       net radiation                                    sigma = abs + rel |obs|
     le, h      closure-corrected (tower.py)                     sigma = abs + rel |obs|
@@ -27,8 +28,8 @@ Then each target's own filters, in this order (FILTERS; every one is a setting o
 documented with its default and reason in site_reference.toml):
 
     ustar_min            u* at or above (not on the u* target: it would bias it)
-    par_min              incident PAR at or above (needs the tower's `par` column)
-    hours                local hours [from, to)
+    par_min              incident PAR at or above (needs the site TOML's variables.PAR)
+    hours                local hours [from, to), on the site TOML's clock
     closure_range        days whose own closure ratio sum(H+LE)/sum(Rnet) is inside [lo, hi]
     min_solar_elevation  the sun at least this high [degrees]
 
@@ -50,10 +51,10 @@ KGC_YR_TO_UMOL_S = 1000.0 / 12.011 * 1.0e6 / (365.25 * 86400.0)   # kgC m-2 yr-1
 @dataclass
 class TargetRows:
     name: str
-    hours: np.ndarray           # positions in the window's hourly index (or, for ef, day groups)
+    rows: np.ndarray            # positions in the window's index (for ef, each day's first record)
     obs: np.ndarray
     sigma: np.ndarray
-    groups: list = field(default_factory=list)   # ef: per row, the hour positions of that day
+    groups: list = field(default_factory=list)   # ef: per row, the record positions of that day
     months: np.ndarray | None = None             # nee_night: calendar month of each row
     weight: float = 1.0                          # the effective-sample weight sqrt(n_eff / n)
     counts: list = field(default_factory=list)   # (step, rows left) through the base mask and filters
@@ -62,7 +63,7 @@ class TargetRows:
 @dataclass
 class WindowSpec:
     name: str
-    index: pd.DatetimeIndex      # the window's local hours, as the trial writes them
+    index: pd.DatetimeIndex      # the window's records (UTC starts), as the trial writes them
     targets: list                # TargetRows, in TARGETS order (empty targets dropped)
     loss: tuple = ("l2", 2.0)    # ("l2" | "huber", Huber's c)
 
@@ -82,17 +83,23 @@ class WindowSpec:
         return replace(self, targets=[t for t in self.targets if t.name in names])
 
 
-def window_index(start_utc, days: int, utc_offset_h: float) -> pd.DatetimeIndex:
-    t0 = pd.Timestamp(start_utc) + pd.Timedelta(hours=utc_offset_h)
-    return pd.date_range(t0, periods=24 * days, freq="1h")
+def window_index(start_utc, days: int, step: float) -> pd.DatetimeIndex:
+    """A window's records: the UTC start of each of the tower's intervals (`step` seconds)."""
+    return pd.date_range(pd.Timestamp(start_utc), periods=int(round(days * 86400.0 / step)),
+                         freq=f"{int(round(step))}s")
+
+
+def local_hours(index: pd.DatetimeIndex, utc_offset_h: float) -> np.ndarray:
+    """The local clock hour of each record's start."""
+    return (index + pd.Timedelta(hours=utc_offset_h)).hour.to_numpy()
 
 
 def _sigma(cfg: dict, obs: np.ndarray) -> np.ndarray:
     return cfg.get("sigma_abs", cfg.get("sigma", 0.0)) + cfg.get("sigma_rel", 0.0) * np.abs(obs)
 
 
-def filter_masks(c: dict, o: pd.DataFrame, elev: np.ndarray | None) -> list:
-    """The target's filters as (label, mask) in FILTERS order, for the hours of `o`."""
+def filter_masks(c: dict, o: pd.DataFrame, elev: np.ndarray | None, utc_offset_h: float = 0.0) -> list:
+    """The target's filters as (label, mask) in FILTERS order, for the records of `o`."""
     out = []
     if c.get("ustar_min") is not None:
         out.append((f"u* >= {c['ustar_min']}", o["ustar"].to_numpy() >= float(c["ustar_min"])))
@@ -101,7 +108,7 @@ def filter_masks(c: dict, o: pd.DataFrame, elev: np.ndarray | None) -> list:
         out.append((f"PAR >= {c['par_min']}", par >= float(c["par_min"])))
     if c.get("hours") is not None:
         a, b = c["hours"]
-        hr = o.index.hour.to_numpy()
+        hr = local_hours(o.index, utc_offset_h)
         out.append((f"local hours [{a}, {b})", (hr >= a) & (hr < b)))
     if c.get("closure_range") is not None:
         lo, hi = c["closure_range"]
@@ -136,14 +143,16 @@ def base_masks(tname: str, c: dict, o: pd.DataFrame, daytime_sw: float):
 
 
 def build_spec(name, index, obs: pd.DataFrame, forcing_ok: pd.Series, targets_cfg: dict,
-               skip_hours: int = 0, daytime_sw: float = 10.0, elev: np.ndarray | None = None) -> WindowSpec:
+               skip_hours: int = 0, daytime_sw: float = 10.0, elev: np.ndarray | None = None,
+               utc_offset_h: float = 0.0) -> WindowSpec:
     """The window's rows: each target's base rows (measured, observed forcing, after skip_hours,
     and the target's own definition), then its filters, with the rows left after every step kept
     in TargetRows.counts for the filter report. `elev` is the sun's elevation at the window's
-    hours (for min_solar_elevation)."""
+    records (for min_solar_elevation); `utc_offset_h` the site's clock (local hours and days)."""
     o = obs.reindex(index)
     ok = np.array(forcing_ok.reindex(index, fill_value=False).to_numpy(), dtype=bool)
-    ok[:skip_hours] = False
+    step = (index[1] - index[0]).total_seconds() if len(index) > 1 else 3600.0
+    ok[:int(round(skip_hours * 3600.0 / step))] = False
     sw = o["sw_in"].to_numpy()
     day = sw > daytime_sw
     rows = []
@@ -156,12 +165,13 @@ def build_spec(name, index, obs: pd.DataFrame, forcing_ok: pd.Series, targets_cf
         if tname == "ef":
             h, le = o["h"].to_numpy(), o["le"].to_numpy()
             use = day & ok & np.isfinite(h) & np.isfinite(le)
-            for _, m in filter_masks(c, o, elev):
+            for _, m in filter_masks(c, o, elev, utc_offset_h):
                 use &= m
             groups, vals = [], []
-            for d in np.unique(index.normalize()[use]):
-                g = np.flatnonzero(use & (index.normalize() == d))
-                if len(g) >= c.get("min_hours", 6):
+            days = (index + pd.Timedelta(hours=utc_offset_h)).normalize()
+            for d in np.unique(days[use]):
+                g = np.flatnonzero(use & (days == d))
+                if len(g) * step / 3600.0 >= c.get("min_hours", 6):
                     sh, sl = h[g].sum(), le[g].sum()
                     if sh + sl > 0:
                         groups.append(g)
@@ -176,7 +186,7 @@ def build_spec(name, index, obs: pd.DataFrame, forcing_ok: pd.Series, targets_cf
         counts = [("measured", int(mask.sum()))]
         mask &= ok
         counts.append(("forcing observed", int(mask.sum())))
-        for label, m in steps + filter_masks(c, o, elev):
+        for label, m in steps + filter_masks(c, o, elev, utc_offset_h):
             mask &= m
             counts.append((label, int(mask.sum())))
         pos = np.flatnonzero(mask)
@@ -192,22 +202,22 @@ def build_spec(name, index, obs: pd.DataFrame, forcing_ok: pd.Series, targets_cf
 def model_values(t: TargetRows, df: pd.DataFrame, growth_resp=None) -> np.ndarray:
     """The model side of one target, on its rows."""
     if t.name == "albedo":
-        return df["sw_up_fast"].to_numpy()[t.hours] / df["sw_in_fast"].to_numpy()[t.hours]
+        return df["sw_up_fast"].to_numpy()[t.rows] / df["sw_in_fast"].to_numpy()[t.rows]
     if t.name == "lw_up":
-        return df["lw_up_fast"].to_numpy()[t.hours]
+        return df["lw_up_fast"].to_numpy()[t.rows]
     if t.name == "rnet":
-        return df["rnet_fast"].to_numpy()[t.hours]
+        return df["rnet_fast"].to_numpy()[t.rows]
     if t.name == "le":
-        return df["le_flux_fast"].to_numpy()[t.hours]
+        return df["le_flux_fast"].to_numpy()[t.rows]
     if t.name == "h":
-        return df["h_flux_fast"].to_numpy()[t.hours]
+        return df["h_flux_fast"].to_numpy()[t.rows]
     if t.name == "gpp":
-        return df["gpp_rate_fast"].to_numpy()[t.hours]
+        return df["gpp_rate_fast"].to_numpy()[t.rows]
     if t.name == "ustar":
-        return df["ustar_fast"].to_numpy()[t.hours]
+        return df["ustar_fast"].to_numpy()[t.rows]
     if t.name == "nee_night":
         gr = 0.0 if growth_resp is None else np.array([growth_resp[m] for m in t.months])
-        return df["nee_fast"].to_numpy()[t.hours] + gr
+        return df["nee_fast"].to_numpy()[t.rows] + gr
     if t.name == "ef":
         h, le = df["h_flux_fast"].to_numpy(), df["le_flux_fast"].to_numpy()
         return np.array([le[g].sum() / (h[g].sum() + le[g].sum()) for g in t.groups])
@@ -228,7 +238,7 @@ def residual(spec: WindowSpec, df: pd.DataFrame, growth_resp=None, weighted: boo
     m = df.reindex(spec.index)
     need = [c for c in m.columns]
     if m[need].isna().any().any():
-        raise ValueError(f"{spec.name}: the trial's hourly output does not cover the window")
+        raise ValueError(f"{spec.name}: the trial's output does not cover the window")
     parts = []
     for t in spec.targets:
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -325,12 +335,12 @@ def load_growth_resp(path) -> dict | None:
 # the filter report (revision plan §2): the whole record, every target, every filter in turn
 # ------------------------------------------------------------------------------------------------
 def record_report(obs: pd.DataFrame, forcing_ok: pd.Series, targets_cfg: dict, daytime_sw: float,
-                  elev: np.ndarray | None) -> dict:
-    """For each target over the whole tower record: the hours left after each step, and the
+                  elev: np.ndarray | None, utc_offset_h: float = 0.0) -> dict:
+    """For each target over the whole tower record: the records left after each step, and the
     diurnal mean of the observation (by local hour) before and after the filters."""
     out = {}
     ok = forcing_ok.reindex(obs.index, fill_value=False).to_numpy()
-    hr = obs.index.hour.to_numpy()
+    hr = local_hours(obs.index, utc_offset_h)
     for tname in TARGETS:
         if tname == "ef" or tname not in targets_cfg or not targets_cfg[tname].get("on", True):
             continue
@@ -344,7 +354,7 @@ def record_report(obs: pd.DataFrame, forcing_ok: pd.Series, targets_cfg: dict, d
             mask &= m
             counts.append((label, int(mask.sum())))
         before = mask.copy()
-        for label, m in filter_masks(c, obs, elev):
+        for label, m in filter_masks(c, obs, elev, utc_offset_h):
             mask &= m
             counts.append((label, int(mask.sum())))
         diurnal = {}
@@ -357,7 +367,7 @@ def record_report(obs: pd.DataFrame, forcing_ok: pd.Series, targets_cfg: dict, d
     return out
 
 
-def ustar_plateau(obs: pd.DataFrame, hours=(7, 9), daytime_sw: float = 10.0,
+def ustar_plateau(obs: pd.DataFrame, hours=(7, 9), daytime_sw: float = 10.0, utc_offset_h: float = 0.0,
                   edges=(0, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5, 0.6, 0.8, 3.0), min_n: int = 15,
                   n_par: int = 4) -> dict:
     """The tower's morning light-use efficiency GPP/PAR by u* class, and the u* threshold the
@@ -366,8 +376,8 @@ def ustar_plateau(obs: pd.DataFrame, hours=(7, 9), daytime_sw: float = 10.0,
     the calm hours are the dim ones, so, as Reichstein's test does with temperature, the test runs
     within n_par equal-count PAR classes and the threshold is their median."""
     if "par" not in obs or obs["par"].notna().sum() == 0:
-        return {"note": "no PAR column ([tower.columns].par): no plateau report"}
-    hr = obs.index.hour.to_numpy()
+        return {"note": "no PAR (the site TOML's variables.PAR): no plateau report"}
+    hr = local_hours(obs.index, utc_offset_h)
     m = (hr >= hours[0]) & (hr < hours[1]) & (obs["sw_in"].to_numpy() > daytime_sw)
     m &= np.isfinite(obs["gpp"].to_numpy()) & np.isfinite(obs["par"].to_numpy()) & np.isfinite(obs["ustar"].to_numpy())
     g, p, u = obs["gpp"].to_numpy()[m], obs["par"].to_numpy()[m], obs["ustar"].to_numpy()[m]

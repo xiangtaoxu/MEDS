@@ -8,8 +8,10 @@ What it does, in order:
   1. reads the site TOML, which DECLARES the file, the location, the clock (UTC offset and which
      end of each interval a stamp marks), the sensor heights and every variable's column and units;
   2. converts every variable to MEDS units and screens physical bounds (V4);
-  3. checks the time axis (V1), the clock against the sun (V2) and a provider VPD against RH under
-     its declared saturation curve (V3), and stops on any disagreement;
+  3. checks the time axis (V1), the clock against the sun (V2), a provider VPD against RH under
+     its declared saturation curve (V3) and, when the site declares [fluxes], the fluxes' metadata
+     (F1-F3: net radiation against its components, swapped longwave columns, bounds), and stops on
+     any disagreement;
   4. moves the stamps to UTC, and brings the barometer's pressure down to the ground;
   5. fills every gap explicitly -- short gaps by interpolation, long ones by the mean diurnal
      variation, and the longwave by the model's own synthesis regressed onto the tower -- and flags
@@ -33,6 +35,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import tower_checks as tc    # noqa: E402
@@ -55,6 +58,10 @@ def prepare(site, short_gap_max=4, lw_holdout=None):
     report = {"site": site.name, "input": os.path.basename(site.input_path), "format": site.input_format}
     report["V1_axis"] = tc.check_axis(data.values.index.values, site.timestep)
     values, report["V4_bounds"] = tc.screen_bounds(data.values)
+    if site.fluxes:                                     # the calibration's data, checked where the build can stop
+        fluxes, report["V4_flux_bounds"] = tc.screen_flux_bounds(data.fluxes)
+        report["fluxes"] = tc.check_fluxes(pd.concat([values, fluxes], axis=1),
+                                           ti.measured_mask(data, values, fluxes), strict=True)
     stamps = ti.to_utc(values.index.values, site.utc_offset)
     starts, _ = ti.interval_bounds(stamps, site.stamp, site.timestep)
     mean_cosz = conv.window_mean_cosz(starts, site.timestep, site.latitude, site.longitude)

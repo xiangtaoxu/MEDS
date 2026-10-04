@@ -402,7 +402,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | phase | work | size |
 |---|---|---|
 | P0 | **done:** the misread respiration note corrected (revision plan §1, §6; `site_reference.toml`; BCI `calibration.toml`); the blow-up filed as #352, with a reproducer on beta; G12 found already in place (`trials.py`, `finish`) | small |
-| P1 | the adapter: one site TOML through `tower_inputs.py` (`[fluxes]`, `[provider]`, measured masks, metadata checks); the native interval; `calibrate_fast`'s reader removed; BCI's declarations moved into `bci_site.toml` | medium |
+| P1 | **done (#357):** the adapter: one site TOML through `tower_inputs.py` (`[fluxes]`, `[provider]`, measured masks, metadata checks F1–F3 in `tower_checks.py`); the native interval (`fast_interval_steps` set by the tool, the spacing checked); `calibrate_fast`'s reader removed; BCI's declarations moved into `bci_site.toml` | medium |
 | P2 | data rules: the u\* diagnostic with bootstrap; daytime-only turbulent targets; albedo rules; coverage-based fixing; window selection and coverage report; the water-deficit index and seasonal runs | medium |
 | P3 | errors: `obs_model` per target (identity, closure, respiration with κ); σ sources and smoothed evaluation; Huber by default; σ scaling at the refresh | medium |
 | P4 | keys and priors: kinds, scope tags, plant-type priors, bounds apart, prior z and G13; EEO g1 and vcmax25 (MEDS's leaf); Kattge & Knorr from growth temperature | small–medium |

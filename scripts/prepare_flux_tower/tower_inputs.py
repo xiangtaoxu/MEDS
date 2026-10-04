@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""tower_inputs.py -- read a flux tower's meteorology as its site TOML declares it.
+"""tower_inputs.py -- read a flux tower's data as its site TOML declares it: the ONE reader of tower
+files, for the forcing build (make_tower_forcing.py) and the calibration (scripts/calibrate_fast).
 
 The site TOML DECLARES what the data are: the file and its format, the location, the clock (UTC
-offset and which end of each interval a stamp marks), the sensor heights, and for every variable
-its column and units. This module reads the file under that declaration and converts every
-variable to MEDS units; tower_checks.py then VALIDATES the declaration against the sun and the data.
-Nothing is sniffed: a missing declaration is an error naming the key.
+offset and which end of each interval a stamp marks), the sensor heights, for every meteorological
+variable its column and units, and optionally the tower's fluxes ([fluxes], each with the rule that
+says when it was measured) and what the provider did ([provider]). This module reads the file under
+that declaration and converts every value to MEDS units; tower_checks.py then VALIDATES the
+declaration against the sun and the data. Nothing is sniffed: a missing declaration is an error
+naming the key. read_standard() gives the one table both tools use: UTC interval starts, MEDS units,
+and a measured mask per column.
 
 Three input formats share one column map and differ only in their defaults:
   csv             any delimited table with one timestamp column (e.g. Barro Colorado Island)
@@ -43,6 +47,15 @@ TIMESTAMP_STAMP = {"TIMESTAMP_START": "begin", "TIMESTAMP_END": "end"}
 FORCING_VARIABLES = ("Tair", "RH", "VPD", "PSurf", "Rainf", "SWdown", "LWdown", "Wind")
 REPORT_VARIABLES = ("PAR",)
 
+# The fluxes a site TOML may declare in [fluxes] (the calibration's targets and the closure's inputs).
+# Each has a column and units, or (RECO only, for a provider who made GPP from it) the sum of other
+# declared fluxes: BCI's RECO is GPP + NEE.
+FLUX_VARIABLES = ("SW_out", "LW_out", "Rnet", "LE", "H", "NEE", "GPP", "RECO", "USTAR")
+# What [provider] may say: how GPP was made, in the provider's words; notes; the published u*
+# threshold for CO2 (one value, or a table of years); random-uncertainty columns by flux; and what the
+# provider's quality flag screened.
+PROVIDER_KEYS = ("gpp_method", "notes", "ustar_threshold", "uncertainty", "flag")
+
 # Unit conversions to MEDS units. Rain per interval needs the interval length, applied by the caller.
 UNITS = {
     "Tair":   {"degC": lambda x: x + 273.15, "K": lambda x: x},
@@ -54,6 +67,15 @@ UNITS = {
     "LWdown": {"W m-2": lambda x: x},
     "Wind":   {"m s-1": lambda x: x},
     "PAR":    {"umol m-2 s-1": lambda x: x},
+    "SW_out": {"W m-2": lambda x: x},
+    "LW_out": {"W m-2": lambda x: x},
+    "Rnet":   {"W m-2": lambda x: x},
+    "LE":     {"W m-2": lambda x: x},
+    "H":      {"W m-2": lambda x: x},
+    "NEE":    {"umol m-2 s-1": lambda x: x},
+    "GPP":    {"umol m-2 s-1": lambda x: x},
+    "RECO":   {"umol m-2 s-1": lambda x: x},
+    "USTAR":  {"m s-1": lambda x: x},
 }
 
 # The saturation curves a provider may have made its VPD with [Pa, T in degC]. V3 checks the
@@ -89,6 +111,8 @@ class Site:
     pressure_height: float
     variables: dict
     gapfill: dict = field(default_factory=dict)
+    fluxes: dict = field(default_factory=dict)
+    provider: dict = field(default_factory=dict)
 
 
 def _require(table, key, where):
@@ -137,6 +161,35 @@ def read_site(path):
         curve = _require(variables["VPD"], "curve", "variables.VPD")
         if curve not in SATURATION_CURVES:
             raise SystemExit(f"ERROR: variables.VPD.curve = {curve!r}; choose from {list(SATURATION_CURVES)}")
+    fluxes = t.get("fluxes", {})
+    for name, spec in fluxes.items():
+        if name not in FLUX_VARIABLES:
+            raise SystemExit(f"ERROR: fluxes.{name} is not one of {FLUX_VARIABLES}")
+        if "sum" in spec:
+            if name != "RECO" or set(spec) != {"sum"}:
+                raise SystemExit(f"ERROR: fluxes.{name}: only RECO may be a sum, written RECO = {{ sum = [...] }}")
+            for part in spec["sum"]:
+                if part not in fluxes or "sum" in fluxes[part]:
+                    raise SystemExit(f"ERROR: fluxes.RECO sums {part!r}, which is not a declared flux with a column")
+            continue
+        _require(spec, "column", f"fluxes.{name}")
+        units = _require(spec, "units", f"fluxes.{name}")
+        if units not in UNITS[name]:
+            raise SystemExit(f"ERROR: fluxes.{name}.units = {units!r}; choose from {list(UNITS[name])}")
+        rule = spec.get("measured")
+        if rule is not None and (not isinstance(rule, dict) or set(rule) != {"column", "equals"}):
+            raise SystemExit(f"ERROR: fluxes.{name}.measured is a table {{ column = ..., equals = ... }}: the "
+                             f"flux was measured where that column equals that value")
+        if set(spec) - {"column", "units", "measured"}:
+            raise SystemExit(f"ERROR: fluxes.{name} takes column, units and measured, not "
+                             f"{sorted(set(spec) - {'column', 'units', 'measured'})}")
+    provider = t.get("provider", {})
+    for key in provider:
+        if key not in PROVIDER_KEYS:
+            raise SystemExit(f"ERROR: provider.{key} is not one of {PROVIDER_KEYS}")
+    for name in provider.get("uncertainty", {}):
+        if name not in fluxes or "sum" in fluxes[name]:
+            raise SystemExit(f"ERROR: provider.uncertainty.{name} names no declared flux with a column")
     gapfill = t.get("gapfill", {})
     for key in gapfill:
         if key != "short_gap_max":
@@ -154,33 +207,59 @@ def read_site(path):
         tq_height=float(_require(heights, "tq_height", "heights")),
         wind_height=float(_require(heights, "wind_height", "heights")),
         pressure_height=float(_require(heights, "pressure_height", "heights")),
-        variables=variables, gapfill=gapfill)
+        variables=variables, gapfill=gapfill, fluxes=fluxes, provider=provider)
 
 
 @dataclass
 class TowerData:
-    """The tower's variables in MEDS units on the SOURCE clock, one row per stamp.
+    """The tower's data in MEDS units on the SOURCE clock, one row per stamp.
 
-    values    DataFrame: Tair [K], RH [1], VPD [Pa], PSurf [Pa, at the barometer], Rainf [kg m-2 s-1],
-              SWdown, LWdown [W m-2], Wind [m s-1], PAR [umol m-2 s-1]; NaN where missing
-    provider  DataFrame of the same columns: True where the provider filled the value (FLUXNET _QC > 0)
+    values       DataFrame: Tair [K], RH [1], VPD [Pa], PSurf [Pa, at the barometer], Rainf [kg m-2 s-1],
+                 SWdown, LWdown [W m-2], Wind [m s-1], PAR [umol m-2 s-1]; NaN where missing
+    provider     DataFrame of the same columns: True where the provider filled the value (FLUXNET _QC > 0)
+    fluxes       DataFrame of the declared [fluxes] in MEDS units, NaN where missing
+    measured     DataFrame of the same columns: True where the flux was measured (its declared rule)
+    uncertainty  DataFrame: the provider's random uncertainty of a flux, by flux name, where given
     """
     site: Site
     values: pd.DataFrame
     provider: pd.DataFrame
+    fluxes: pd.DataFrame = None
+    measured: pd.DataFrame = None
+    uncertainty: pd.DataFrame = None
+
+
+def _numeric(raw, col, missing):
+    x = pd.to_numeric(raw[col], errors="coerce").to_numpy(dtype=float, copy=True)
+    for m in missing:
+        x[x == float(m)] = np.nan
+    return x
 
 
 def read_tower(site):
-    """Read the declared columns of the input file and convert them to MEDS units."""
+    """Read the declared columns of the input file and convert them to MEDS units.
+
+    A flux is measured where its value is present and, when the site declares
+    `measured = { column, equals }`, that column equals that value (BCI: FLAG = 1). Without a rule a
+    FLUXNET flux is measured where its _QC column is 0 (the provider did not fill it), and any other
+    flux wherever it is present (an AmeriFlux BASE file is not gap-filled)."""
     if not os.path.exists(site.input_path):
         raise SystemExit(f"ERROR: the tower file {site.input_path} does not exist")
     columns = {name: spec["column"] for name, spec in site.variables.items()}
     qc_columns = {}
     if site.input_format == "fluxnet":
         qc_columns = {name: col + "_QC" for name, col in columns.items() if col.endswith("_F")}
-    wanted = [site.timestamp] + list(columns.values()) + list(qc_columns.values())
+    flux_columns = {name: spec["column"] for name, spec in site.fluxes.items() if "column" in spec}
+    rule_columns = {spec["measured"]["column"] for spec in site.fluxes.values() if "measured" in spec}
+    uncertainty_columns = dict(site.provider.get("uncertainty", {}))
+    flux_qc = {}
+    if site.input_format == "fluxnet":
+        flux_qc = {name: col + "_QC" for name, col in flux_columns.items() if "measured" not in site.fluxes[name]}
+    wanted = ([site.timestamp] + list(columns.values()) + list(qc_columns.values()) + list(flux_columns.values())
+              + sorted(rule_columns) + list(uncertainty_columns.values()))
+    optional = set(flux_qc.values())                      # a FLUXNET flux without a _QC column: present = measured
     raw = pd.read_csv(site.input_path, comment=site.comment, na_values=[str(m) for m in site.missing],
-                      usecols=lambda c: c in wanted, dtype={site.timestamp: str}, low_memory=False)
+                      usecols=lambda c: c in wanted or c in optional, dtype={site.timestamp: str}, low_memory=False)
     missing_cols = [c for c in wanted if c not in raw.columns]
     if missing_cols:
         raise SystemExit(f"ERROR: {site.input_path} has no column(s) {missing_cols}")
@@ -188,9 +267,7 @@ def read_tower(site):
     values = pd.DataFrame(index=pd.DatetimeIndex(stamps, name="stamp"))
     provider = pd.DataFrame(index=values.index)
     for name, col in columns.items():
-        x = pd.to_numeric(raw[col], errors="coerce").to_numpy(dtype=float, copy=True)
-        for m in site.missing:
-            x[x == float(m)] = np.nan
+        x = _numeric(raw, col, site.missing)
         convert = UNITS[name][site.variables[name]["units"]]
         if convert is None:                              # rain per interval -> a mean rate
             x = x / site.timestep
@@ -202,7 +279,70 @@ def read_tower(site):
             q = pd.to_numeric(raw[qc_columns[name]], errors="coerce").to_numpy()
             flags = np.nan_to_num(q, nan=0.0) > 0
         provider[name] = flags
-    return TowerData(site=site, values=values, provider=provider)
+    fluxes = pd.DataFrame(index=values.index)
+    measured = pd.DataFrame(index=values.index)
+    for name, col in flux_columns.items():
+        x = UNITS[name][site.fluxes[name]["units"]](_numeric(raw, col, site.missing))
+        ok = np.isfinite(x)
+        rule = site.fluxes[name].get("measured")
+        if rule is not None:
+            ok &= pd.to_numeric(raw[rule["column"]], errors="coerce").to_numpy() == float(rule["equals"])
+        elif name in flux_qc and flux_qc[name] in raw.columns:
+            ok &= pd.to_numeric(raw[flux_qc[name]], errors="coerce").to_numpy() == 0
+        fluxes[name] = x
+        measured[name] = ok
+    for name, spec in site.fluxes.items():                 # a sum (BCI's RECO = GPP + NEE), after its parts
+        if "sum" in spec:
+            fluxes[name] = sum(fluxes[part] for part in spec["sum"])
+            measured[name] = np.logical_and.reduce([measured[part].to_numpy() for part in spec["sum"]])
+    uncertainty = pd.DataFrame(index=values.index)
+    for name, col in uncertainty_columns.items():
+        uncertainty[name] = UNITS[name][site.fluxes[name]["units"]](_numeric(raw, col, site.missing))
+    return TowerData(site=site, values=values, provider=provider, fluxes=fluxes, measured=measured,
+                     uncertainty=uncertainty)
+
+
+@dataclass
+class StandardTable:
+    """The tower as both tools read it (read_standard).
+
+    values       DataFrame on the UTC START of each interval: the meteorological variables (screened
+                 for physical bounds, V4) and the fluxes, in MEDS units
+    measured     DataFrame of the same columns: True where the value was measured -- present and not
+                 filled by the provider for a variable, present and passing its rule for a flux
+    uncertainty  the provider's random uncertainty of a flux, where given
+    report       the checks: the axis (V1), the bounds (V4), the fluxes (tower_checks.check_fluxes)
+    """
+    site: Site
+    values: pd.DataFrame
+    measured: pd.DataFrame
+    uncertainty: pd.DataFrame
+    report: dict
+
+
+def read_standard(site, strict=False):
+    """The one table of a tower: UTC interval starts, MEDS units, a measured mask per column. The
+    flux checks stop a strict caller (the forcing build) and are reported to the others (the
+    calibration)."""
+    import tower_checks as tc                              # (tower_checks imports this module)
+    data = read_tower(site)
+    report = {"V1_axis": tc.check_axis(data.values.index.values, site.timestep)}
+    values, report["V4_bounds"] = tc.screen_bounds(data.values)
+    fluxes, report["V4_flux_bounds"] = tc.screen_flux_bounds(data.fluxes)
+    stamps = to_utc(values.index.values, site.utc_offset)
+    starts, _ = interval_bounds(stamps, site.stamp, site.timestep)
+    index = pd.DatetimeIndex(starts, name="start_utc")
+    table = pd.concat([values, fluxes], axis=1).set_axis(index)
+    measured = measured_mask(data, values, fluxes).set_axis(index)
+    report["fluxes"] = tc.check_fluxes(table, measured, strict=strict)
+    return StandardTable(site=site, values=table, measured=measured,
+                         uncertainty=data.uncertainty.set_axis(index), report=report)
+
+
+def measured_mask(data, values, fluxes):
+    """True where a value was measured: present and not filled by the provider for a variable,
+    present (after the bounds screen) and passing its declared rule for a flux."""
+    return pd.concat([values.notna() & ~data.provider, data.measured & fluxes.notna()], axis=1)
 
 
 def interval_bounds(stamps_utc, stamp, timestep):

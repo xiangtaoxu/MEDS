@@ -99,14 +99,20 @@ class Site:
             if variant not in d.get("variants", {}):
                 raise SystemExit(f"unknown variant '{variant}'; declared: {list(d.get('variants', {}))}")
             self.overrides.update(d["variants"][variant])
+        #----- the tower: the facts from its site TOML (the forcing builder's), the choices from [tower]
         tw = d["tower"]
-        self.tower = TW.TowerSpec(path=str(self._p(tw["path"])), columns=dict(tw["columns"]),
-                                  time_column=tw["time_column"], flag_column=tw["flag_column"],
-                                  flag_good=tw["flag_good"], utc_offset_h=float(tw["utc_offset_h"]),
-                                  forcing=str(self._p(tw["forcing"])) if tw.get("forcing") else None,
-                                  forcing_qc=tuple(tw["forcing_qc"]), forcing_qc_val=tuple(tw["forcing_qc_val"]),
-                                  forcing_grid=int(tw["forcing_grid"]), closure_days=int(tw["closure_days"]),
-                                  closure=tw["closure"], daytime_sw=float(tw["daytime_sw"]))
+        self.tower = TW.TowerSpec.from_site(
+            self._p(tw["site"]), forcing=str(self._p(tw["forcing"])) if tw.get("forcing") else None,
+            forcing_qc=tuple(tw["forcing_qc"]), forcing_qc_val=tuple(tw["forcing_qc_val"]),
+            forcing_grid=int(tw["forcing_grid"]), closure_days=int(tw["closure_days"]),
+            closure=tw["closure"], daytime_sw=float(tw["daytime_sw"]))
+        #----- the trials write their fast output at the tower's own interval (30 min at BCI)
+        dt_fast = seconds(self.base.get("fast.dt_fast"))
+        steps = self.tower.step / dt_fast
+        if abs(steps - round(steps)) > 1e-9 or round(steps) < 1:
+            raise SystemExit(f"the tower's interval ({self.tower.step:g} s) is not a whole number of the model's "
+                             f"fast steps (fast.dt_fast = {dt_fast:g} s)")
+        self.base.set("output.fast_interval_steps", int(round(steps)))
         w = d["windows"]
         self.days = int(w["days"])
         self.skip_hours = int(w["skip_hours"])
@@ -121,8 +127,7 @@ class Site:
         self.fitcfg = d["fit"]
         self.stagecfg = d["stages"]
         self.uncertainty = d["uncertainty"]
-        self.lat = self.base.get("site.latitude")
-        self.lon = self.base.get("site.longitude")
+        self.lat, self.lon = self.tower.lat, self.tower.lon
 
     def _p(self, rel) -> Path:
         return (self.dir / rel).resolve()
@@ -144,6 +149,14 @@ class Site:
         return (self.fitcfg["loss"], float(self.fitcfg["huber_c"]))
 
 
+def seconds(duration) -> float:
+    """A model duration ("900s", "15min", "1h", or a number of seconds) in seconds."""
+    m = re.fullmatch(r"\s*([0-9.]+)\s*(s|min|h)?\s*", str(duration))
+    if not m:
+        raise SystemExit(f"cannot read the duration {duration!r}")
+    return float(m.group(1)) * {"s": 1.0, None: 1.0, "min": 60.0, "h": 3600.0}[m.group(2)]
+
+
 def log_to(path):
     fh = open(path, "a")
     lock = threading.Lock()
@@ -158,30 +171,30 @@ def log_to(path):
 
 
 def observations(site: Site):
-    """The tower's hours, the observed-forcing masks for calibration and validation windows, and
-    the sun's elevation at every hour (None without the site's coordinates)."""
-    obs = TW.load_tower(site.tower)
+    """The tower's records, the observed-forcing masks for calibration and validation windows, and
+    the sun's elevation at every record (None without the site's coordinates)."""
+    obs = TW.observations(site.tower)
     fok = {"cal": TW.forcing_observed(site.tower, obs.index),
            "val": TW.forcing_observed(site.tower, obs.index, site.tower.forcing_qc_val)}
     fok["water"] = fok["cal"]
     elev = None
     if site.lat is not None and site.lon is not None:
-        elev = pd.Series(TW.solar_elevation(obs.index, float(site.lat), float(site.lon),
-                                            site.tower.utc_offset_h), index=obs.index)
+        elev = pd.Series(TW.solar_elevation(obs.index, float(site.lat), float(site.lon), site.tower.step),
+                         index=obs.index)
     return obs, fok, elev
 
 
 def specs_for(site: Site, windows, obs, fok, elev, targets=None, log=print):
     out = {}
     for w in windows:
-        idx = R.window_index(w.start, w.days, site.tower.utc_offset_h)
+        idx = R.window_index(w.start, w.days, site.tower.step)
         e = None if elev is None else elev.reindex(idx).to_numpy()
         tcfg = site.targets if targets is None else {k: v for k, v in site.targets.items() if k in targets}
         out[w.name] = R.build_spec(w.name, idx, obs, fok[w.role], tcfg, site.skip_hours,
-                                   site.tower.daytime_sw, e)
+                                   site.tower.daytime_sw, e, site.tower.utc_offset_h)
         out[w.name].loss = site.loss()
         if out[w.name].n == 0:
-            log(f"WARNING: window {w.name} has no usable hours; it contributes nothing")
+            log(f"WARNING: window {w.name} has no usable records; it contributes nothing")
     return out
 
 
@@ -293,11 +306,12 @@ def data_report(site, obs, fok, elev, log) -> dict:
     """The filter report (revision plan §2): every target's rows over the whole record through each
     step, its diurnal mean before and after the filters, and the GPP u* plateau."""
     rep = R.record_report(obs, fok["cal"], site.targets, site.tower.daytime_sw,
-                          None if elev is None else elev.reindex(obs.index).to_numpy())
+                          None if elev is None else elev.reindex(obs.index).to_numpy(), site.tower.utc_offset_h)
     for t, r in rep.items():
         log(f"data {t:9s} " + " -> ".join(f"{label} {n}" for label, n in r["counts"]))
     g = site.targets.get("gpp", {})
-    plateau = R.ustar_plateau(obs, tuple(g.get("plateau_hours", (7, 9))), site.tower.daytime_sw)
+    plateau = R.ustar_plateau(obs, tuple(g.get("plateau_hours", (7, 9))), site.tower.daytime_sw,
+                              site.tower.utc_offset_h)
     if "threshold" in plateau:
         cells = " ".join(f"{c['ustar'][0]:.2f}:{c['gpp_per_par']:.4f}" for c in plateau["classes"]
                          if c["gpp_per_par"] is not None)
@@ -313,7 +327,10 @@ def data_report(site, obs, fok, elev, log) -> dict:
         log("data gpp diurnal mean (before -> after the filters): "
             + " ".join(f"{h}h {v[0]:.1f}->{v[1]:.1f}" for h, v in sorted(di.items())
                        if 6 <= h <= 18 and v[1] is not None))
-    return {"filters": rep, "ustar_plateau": plateau, "closure": TW.closure_summary(obs)}
+    checks = site.tower.report.get("fluxes", {})
+    for failure in checks.get("failures", []):
+        log(f"data WARNING the tower's fluxes fail a check: {failure}")
+    return {"filters": rep, "ustar_plateau": plateau, "closure": TW.closure_summary(obs), "tower_checks": checks}
 
 
 def cmd_report(args):
@@ -342,7 +359,7 @@ def setup_model(site, args, work, pool, log, windows=None, params=None, theta=No
     if gr is None and site.targets.get("nee_night", {}).get("on"):
         log("note: no growth-respiration climatology; night NEE is compared without it")
     model = F.Model(params, windows, specs, states, site.base, site.overrides,
-                    args.runner, pool, work / "trials", site.tower.utc_offset_h, gr,
+                    args.runner, pool, work / "trials", site.tower.step, gr,
                     float(site.fitcfg["timeout"]), args.keep_netcdf, log=log)
     return model, params, theta, obs, fok, elev
 
@@ -374,7 +391,7 @@ def cmd_check(args):
                          work / "repeat", site.overrides)
     pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
                    str(tdir / "run.log"), 3600)])
-    df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
+    df2 = T.finish(tdir, params, theta, site.tower.step)
     df1 = T.load_series(T.build_trial(site.base, params, theta, cal[0],
                                       model.states[cal[0].name], work / "trials", site.overrides))
     same = all(np.array_equal(df1[v].values, df2[v].values) for v in T.TRIAL_VARIABLES)
@@ -431,7 +448,7 @@ def cmd_smoke(args):
                          work / "repeat", site.overrides)
     pool.run([Task("repeat", T.command(args.runner, tdir / "main.toml"), str(tdir),
                    str(tdir / "run.log"), 3600)])
-    df2 = T.finish(tdir, params, theta, site.tower.utc_offset_h)
+    df2 = T.finish(tdir, params, theta, site.tower.step)
     df1 = T.load_series(T.build_trial(site.base, params, theta, w,
                                       model.states[w.name], work / "trials", site.overrides))
     same = all(np.array_equal(df1[v].values, df2[v].values) for v in T.TRIAL_VARIABLES)
@@ -450,7 +467,7 @@ def cmd_smoke(args):
 # the stages
 # ------------------------------------------------------------------------------------------------
 def driver_data(model, theta, windows):
-    """Run (or find) each window's driver trial at theta: {name: drivers}, {name: hourly series}."""
+    """Run (or find) each window's driver trial at theta: {name: drivers}, {name: fast series}."""
     dirs = model.run([theta], windows, kind="driver")[0]
     if dirs is None:
         raise RuntimeError("a driver trial failed; see the trial logs")

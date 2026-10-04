@@ -25,14 +25,15 @@ growth_resp = ""                        # Monthly growth-respiration climatology
 #   "fast.canopy_water_on" = true
 [variants]
 
+# The tower. Its FACTS -- the file, format, clock, sensor heights, every column and its units, which
+# values were measured, and what the provider did -- are its site TOML, the one the forcing build
+# reads (scripts/prepare_flux_tower; [fluxes] and [provider] there). Only the calibration's CHOICES
+# about the data are here.
 [tower]
-path         = "data/tower.csv"   # REQUIRED. The tower's half-hourly CSV.
-time_column  = "date"             # The time column: local time, the START of each half hour.
-flag_column  = "FLAG"             # The quality flag of the turbulent fluxes (H, LE, NEE, GPP, u*).
-flag_good    = 1                  # The flag value of a MEASURED half hour. Recommended: measured only. A gap-filled
-                                  #   half hour is a gap-filling model's prediction, not data, even when (as at BCI) it
-                                  #   carries the same light response. At BCI the flag also removes every rain half hour.
-utc_offset_h = 0.0                # Local time minus UTC [h].
+site         = "bci_site.toml"    # REQUIRED. The tower's site TOML (scripts/prepare_flux_tower/README.md). Its
+                                  #   [fluxes] give the targets' data and the rule that says which values were measured;
+                                  #   recommended: measured only. A gap-filled value is a gap-filling model's prediction,
+                                  #   not data, even when (as at BCI) it carries the same light response.
 forcing      = ""                 # The run's forcing file, for the observed-forcing mask ("" = no mask).
 forcing_qc   = ["LWdown_qc", "Wind_qc"]   # Forcing qc variables that must be 0 (observed) in calibration windows: a
                                           #   trial driven by gap-filled forcing scores the gap filling.
@@ -46,22 +47,8 @@ closure      = "none"             # "none": H and LE as measured. "bowen": FLUXN
                                   #   midday gap grows with H, not LE (gap = 0.30 H - 0.26 LE + 165 W m-2). The Bowen
                                   #   correction would raise LE by ~39 % that the data do not show; instead H is
                                   #   filtered harder and given a wider sigma ([targets.h]).
-closure_days = 31                 # The "bowen" correction's sliding window [days], centred.
-daytime_sw   = 10.0               # [W m-2] incoming shortwave above which an hour is daytime (every daytime target).
-
-# The quantities, mapped to the tower file's column names. `par` (incident PAR, umol m-2 s-1) is
-# optional: the GPP target's par_min filter and the u* plateau report need it.
-[tower.columns]
-sw_in = "Rs"
-sw_up = "Rs_dn"
-lw_up = "Rl_up"
-rnet  = "Rnet"
-le    = "LE"
-h     = "H"
-nee   = "NEE"
-gpp   = "gpp"
-ustar = "ustar"
-par   = ""
+closure_days = 31                 # The "bowen" correction's sliding window [local days], centred.
+daytime_sw   = 10.0               # [W m-2] incoming shortwave above which a record is daytime (every daytime target).
 
 [windows]
 days       = 10                   # A calibration window's length [days]. Ten frozen days set the fast keys; the
@@ -82,7 +69,7 @@ seasons = [ { name = "example", from = "2015-08-01", to = "2015-10-31", role = "
 # and these FILTERS, applied in this order after the target's own definition (each documented in
 # residuals.py; a filter left out is off):
 #   ustar_min            u* at or above [m s-1]   (refused on the u* target: it would bias it)
-#   par_min              incident PAR at or above [umol m-2 s-1] (needs [tower.columns].par)
+#   par_min              incident PAR at or above [umol m-2 s-1] (needs the site TOML's variables.PAR)
 #   hours                local hours [from, to)
 #   closure_range        days whose own closure ratio sum(H + LE) / sum(Rnet) lies in [lo, hi]. Off by default:
 #                        at BCI only 11 % of days fall in [0.8, 1.2], so it keeps too little and a skewed sample.
