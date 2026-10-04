@@ -463,19 +463,22 @@ contains
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
-      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, air_temp) --   !
-      !      the same valuation snow_accumulate gives snowfall that does form a pack -- and the mixture   !
-      !      enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of              !
-      !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the    !
-      !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas, as this     !
-      !      used to, created the fusion enthalpy L_f per kg of sub-threshold snow at the boundary        !
-      !      (ledger-consistent, physically wrong; 2026-09 review). -----------------------------------!
+      !      rain arrives as liquid at the air temperature above the canopy (forc%air_temp, the forcing   !
+      !      moved to the canopy-air top), snow as ICE at min(t_3ple, air_temp) -- the same valuations     !
+      !      snow_accumulate gives rain and snow that land on a pack -- and the mixture enthalpy per kg is  !
+      !      expressed through temp_of_liquid_enthalpy (exact inverse of internal_energy_liquid; below    !
+      !      t_3ple it represents water that must still melt, which the pond/soil plateau then does with  !
+      !      soil heat). Valuing the snow as liquid at tcas, as this used to, created the fusion enthalpy  !
+      !      L_f per kg of sub-threshold snow at the boundary (ledger-consistent, physically wrong; 2026-09 !
+      !      review). Rain was valued at the canopy-air temperature until #355: the rain falls through the  !
+      !      air above the canopy, and at a cold front the canopy air is still warm (BCI 2017-04-17: rain   !
+      !      at 297.2 K into 294.9 K air), which handed the canopy and soil the rain's missing cooling. ---!
       hforc%t_pond_inflow = tcas
       if (snow_st%exists) then
          hforc%t_pond_inflow = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
          hforc%t_pond_inflow = temp_of_liquid_enthalpy(                                                    &
-              (forc%rainfall * internal_energy_liquid(tcas)                                            &
+              (forc%rainfall * internal_energy_liquid(forc%air_temp)                                   &
                + forc%snowfall * internal_energy_ice(min(t_3ple, forc%air_temp))) / (forc%rainfall + forc%snowfall))
       end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !

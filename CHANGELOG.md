@@ -216,6 +216,11 @@ before and after.
   - **Test:** `test_column_ark` refills dried wood from moist soil at one temperature and checks the
     wood gains no heat, and that what the soil gives up equals what the tissues and their water stores
     gain.
+- **Rain on bare ground was valued at the canopy-air temperature** (#355). It falls through the air
+  above the canopy, so it now takes the air temperature at the canopy-air top (the forcing moved there),
+  the same value rain landing on a snowpack and sub-threshold snowfall already used. No recorded reason
+  for the old choice was found. At the BCI storm front the canopy air was 2.3 K warmer than that air;
+  the change lowers H by 2 W m⁻² and LE by 3 W m⁻² at 18 UTC, and Jan–Jul means by under 0.1 W m⁻².
 - **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
   the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
   check of the soil column: the end-of-run report prints a warning with the count, and
