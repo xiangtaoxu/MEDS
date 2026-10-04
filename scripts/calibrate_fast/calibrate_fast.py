@@ -58,6 +58,7 @@ os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, [str(ROOT / "python"),
 import datarules as DR               # noqa: E402
 import fit as F                      # noqa: E402
 import obsmodels as OM               # noqa: E402
+import priors as PR                  # noqa: E402
 import residuals as R                # noqa: E402
 import settings as SET               # noqa: E402
 import stages as STG                 # noqa: E402
@@ -125,6 +126,8 @@ class Site:
         self.water_windows = [T.Window(e["name"], dt.datetime.fromisoformat(e["start"]),
                                        int(e.get("days", w["seasonal"]["days"])), "water", e["name"])
                               for e in w["seasonal"]["list"]]
+        self.derived = {}                     # (file, key, pft) -> value: the Kattge & Knorr shape keys
+        self.derived_was = {}                 # ... and the base config's value they replaced
         self.targets_declared = d["targets"]
         self.targets = d["targets"]           # with the u* rules made numbers by load_data
         self.data = None                      # load_data's cache
@@ -155,7 +158,20 @@ class Site:
                 p.prior = {**p.prior, "sd": sd, "source": "the gap between the provider's night-time and daytime "
                                                           "partitionings (RECO against RECO_DT)"}
                 p.prior.pop("log_sd", None)
+        climate_priors(self, ps, record)
         return resolve_defaults(ps, self.base, record)
+
+    def flag(self, key, record=None) -> bool:
+        """A true/false model setting (the parameter record holds it as the text "true" or "false")."""
+        return str(self.setting(key, False, record)).strip().lower() in ("true", "1", "1.0")
+
+    def setting(self, key, default=None, record=None, file="main", pft=None):
+        """A model setting: the base config's, else the base run's parameter record, else default."""
+        v = self.base.get(key, file=file, pft=pft)
+        if v is None and record is not None:
+            hit = record.get((file, key, pft or 0)) or record.get((file, key, 0))
+            v = None if hit is None else hit[1]
+        return default if v is None else v
 
     def obs_fixed(self, params) -> dict:
         """The observation keys this fit does not move, at their prior centres (kappa enters the GPP
@@ -165,6 +181,58 @@ class Site:
 
     def loss(self):
         return (self.fitcfg["loss"], float(self.fitcfg["huber_c"]))
+
+
+def climate_priors(site, params, record):
+    """The priors from the site's climate (priors.py): the Kattge & Knorr shape keys set in the base
+    config (so in every trial and chain), and the EEO centres of stomatal_g1 and vcmax25. The values
+    go to site.data["climate_priors"]."""
+    menu = site.menu()
+    fitted = {p.name for p in params}
+    need_kk = [p for p in menu if p.fixed_at == "kattge_knorr" and p.name not in fitted]
+    eeo_keys = [p for p in params if p.prior.get("centre") == "eeo"]
+    if not need_kk and not eeo_keys:
+        return
+    if not site.tower.forcing:
+        raise SystemExit("the climate priors (Kattge & Knorr, EEO) need the forcing file ([tower].forcing), or set "
+                         "the keys' prior centres in [priors]")
+    clim = PR.growth_climate(site.tower.forcing, site.tower.forcing_grid, site.tower.leaf_on_months,
+                             site.tower.daytime_sw)
+    out = {"climate": clim}
+    value = lambda key, default: site.setting(key, default, record)          # noqa: E731
+    if need_kk:
+        if site.flag("leaf_physiology.thermal_acclimation", record):
+            out["kattge_knorr"] = "the model's own thermal acclimation sets them (leaf_physiology.thermal_acclimation)"
+        else:
+            kk = PR.kattge_knorr(clim["t_growth_c"])
+            for p in need_kk:
+                where = (p.file, p.key, p.pft if p.file == "pft" else None)
+                site.derived_was.setdefault(where, float(site.setting(p.key, float("nan"), record, p.file, where[2])))
+                site.base.set(p.key, float(kk[p.key]), file=p.file, pft=where[2])
+                site.derived[where] = float(kk[p.key])
+            out["kattge_knorr"] = {p.name: float(kk[p.key]) for p in need_kk}
+    if eeo_keys:
+        lp = PR.leaf_settings(value)
+        ca = PR.co2_ppm(site.base, clim["years"])
+        out["co2_ppm"] = ca
+        for p in eeo_keys:
+            if p.key == "pft.stomatal_g1":
+                v = PR.eeo_g1(lp, clim)
+            else:
+                pft = {k: float(site.setting(f"pft.{k}", None, record, file="pft", pft=p.pft))
+                       for k in ("theta_j", "jmax_vcmax_ratio")}
+                v = PR.eeo_vcmax25(lp, pft, clim, ca, str(value("leaf_physiology.temp_response_form", "peaked")))
+            p.prior = {**p.prior, "centre": float(v), "source": "EEO: " + p.prior.get("source", "")}
+            entry = {"eeo": float(v)}
+            pt = site.fitcfg.get("plant_type", "")
+            meta = p.meta.get(pt)
+            if meta:
+                sd = meta.get("log_sd") or (meta.get("sd", 0.0) / meta["centre"])
+                entry["meta"] = meta
+                entry["meta_apart_sd"] = float(abs(math.log(v / meta["centre"])) / sd) if sd else None
+            out.setdefault("eeo", {})[p.name] = entry
+    if site.data is not None:
+        site.data["climate_priors"] = out
 
 
 def seconds(duration) -> float:
@@ -712,10 +780,20 @@ def cmd_fit(args):
     states_start = dict(model.states)
     report = {"variant": site.variant, "site": str(site.path), "stages_run": stages,
               "windows": {w.name: [str(w.start), w.role, w.days] for w in site.windows + water},
-              "menu": {p.name: {"state": p.state, "stage": p.stage, "reason": p.reason} for p in site.menu()},
-              "keys": {p.name: {"stage": p.stage, "range": [p.lo, p.hi], "default": p.default,
-                                "prior_centre": p.centre, "prior_sigma_u": p.sigma_u,
-                                "prior_source": p.prior.get("source", p.source)} for p in params}}
+              "menu": {p.name: {"state": p.state, "stage": p.stage, "kind": p.kind, "scope": p.scope,
+                                "reason": p.reason} for p in site.menu()},
+              "keys": {p.name: {"stage": p.stage, "kind": p.kind, "scope": p.scope, "range": [p.lo, p.hi],
+                                "default": p.default, "prior_centre": p.centre, "prior_sigma_u": p.sigma_u,
+                                "prior_source": p.prior.get("source", p.source)} for p in params},
+              "climate_priors": site.data.get("climate_priors"),
+              "derived": [[f, k, i, v] for (f, k, i), v in site.derived.items()]}
+    cp = site.data.get("climate_priors") or {}
+    if cp.get("kattge_knorr"):
+        log(f"Kattge & Knorr at the growth temperature {cp['climate']['t_growth_c']:.1f} C: {cp['kattge_knorr']}")
+    for k, e in (cp.get("eeo") or {}).items():
+        log(f"EEO prior centre of {k}: {e['eeo']:.4g}" + (f" (the {site.fitcfg.get('plant_type')} meta-analysis: "
+            f"{e['meta']['centre']:.4g}, {e['meta_apart_sd']:.1f} sd apart{' -- FLAGGED' if e['meta_apart_sd'] > 2 else ''})"
+            if e.get("meta") else ""))
     report["data"] = data_report(site, obs, fok, elev, log, model.specs)
     #----- keys whose process the kept data never sample are fixed (best-practice plan §2.5)
     coverage = DR.process_coverage(model.specs, obs, cal + water, site.tower.daytime_sw)
@@ -889,6 +967,11 @@ def post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_st
             + ("a trial failed" if c is None else f"curvature {c:.2f} x the quadratic's, slope left {s:+.2f}")
             + (" (local only)" if d["local_only"] else ""))
     report["bounds"] = F.bound_pushers(prob, u_map, J_map, r_map, pspecs)
+    #----- each key's prior z at the MAP; a trait key more than 2 sd from its evidence is a question (§5.1)
+    report["prior_z"] = F.prior_z(prob, u_map, J_map, r_map, pspecs)
+    for k, v in report["prior_z"].items():
+        flag = abs(v["z"]) > 2.0
+        log(f"  prior z of {k:22s} {v['z']:+.2f} ({v['kind']}){' pushed by ' + str(v['pushed_by']) if flag else ''}")
     report["cost"] = {"start": report.get("cost_start"), "map": prob.cost(u_map, r_map)}
     report["scores_cal"] = {"start": report.get("scores_cal_start"), "map": R.target_scores(pspecs, r_map)}
     report["filter_sensitivity"] = filter_sensitivity(site, model, prob, u_map, pwin, cov_u, J_map, r_map, log)
@@ -928,6 +1011,9 @@ def post_fit(site, model, params, theta_base, theta0, theta_map, pwin, states_st
                     if fs.get("keys") else {"pass": None, "note": fs.get("note")})
     gates["G11"] = {"pass": True, "near_bound": report["bounds"],
                     "note": "every key near a bound is listed with the target that pushed it and its stage"}
+    flagged = {k: v for k, v in report["prior_z"].items() if v["kind"] == "trait" and abs(v["z"]) > 2.0}
+    gates["G13"] = {"pass": not flagged, "flagged": flagged,
+                    "note": "a trait key more than 2 prior sd from its evidence: diagnose it (plan §5.1) or relabel it effective"}
     report["local_only"] = any(d["local_only"] for d in report["linearity"])
     report["gates"] = gates
     write_calibrated(site, params, theta_map, work)
@@ -1059,11 +1145,14 @@ def set_toml_text(text: str, key: str, value, index=None) -> str:
 
 
 def calibrated_header(site: Site, base: Path, changed: list, settings: dict | None = None) -> str:
-    """The comment block that opens a calibrated file: where it came from and what the fit set."""
+    """The comment block that opens a calibrated file: where it came from and what the fit set. An
+    effective key (a scheme property, not a measurable trait) is labelled so."""
     lines = [f"# CALIBRATED by scripts/calibrate_fast (variant {site.variant or 'none'}) from {base.name}.",
              "# Every line is the base file's, comments included, except these keys the fit set",
-             "# (calibrated value, the base file's value):"]
-    lines += [f"#   {key:30s} {v:.6g}  ({d:.6g})" for key, v, d in changed] or ["#   (none)"]
+             "# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;",
+             "# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):"]
+    lines += [f"#   {key:30s} {v:.6g}  ({d:.6g}){'  ' + label if label else ''}"
+              for key, v, d, label in changed] or ["#   (none)"]
     if settings:
         lines.append("# and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):")
         lines += [f"#   {key:30s} {json.dumps(v)}" for key, v in settings.items()]
@@ -1078,7 +1167,8 @@ def with_header(text: str, header: str) -> str:
     return header + text
 
 
-def write_calibrated(site: Site, params, theta, work: Path):
+def write_calibrated(site: Site, params, theta, work: Path, derived=None):
+    """The base main and PFT files with the MAP (and the Kattge & Knorr shape keys) written in."""
     main_text = site.main_path.read_text()
     pft_text = site.pft_path.read_text()
     changed = {"pft": [], "main": []}
@@ -1089,7 +1179,15 @@ def write_calibrated(site: Site, params, theta, work: Path):
             pft_text = set_toml_text(pft_text, p.key, v, index=p.pft - 1)
         else:
             main_text = set_toml_text(main_text, p.key, v)
-        changed["pft" if p.file == "pft" else "main"].append((p.key, float(v), float(p.default)))
+        changed["pft" if p.file == "pft" else "main"].append((p.key, float(v), float(p.default),
+                                                              "EFFECTIVE" if p.kind == "effective" else ""))
+    for (file, key, pft), v in (site.derived if derived is None else derived).items():
+        old = site.derived_was.get((file, key, pft), site.setting(key, float("nan"), file=file, pft=pft))
+        if file == "pft":
+            pft_text = set_toml_text(pft_text, key, v, index=pft - 1)
+        else:
+            main_text = set_toml_text(main_text, key, v)
+        changed[file].append((key, float(v), float(old), "KATTGE & KNORR"))
     #----- the declaration's overrides (the variant's among them: the calibrated set was fitted
     #      with them), then its [calibrated] keys, e.g. the calibrated PFT file and an output prefix
     settings = dict(site.overrides) | dict(site.decl.get("calibrated", {}))
@@ -1111,7 +1209,7 @@ def cmd_write_calibrated(args):
     theta = np.array([rep["map"][p.name] for p in params])
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    write_calibrated(site, params, theta, out)
+    write_calibrated(site, params, theta, out, {(f, k, i): v for f, k, i, v in rep.get("derived", [])})
     print(f"wrote {out / 'pft_parameters_calibrated.toml'} and {out / 'meds_config_calibrated.toml'}")
     return 0
 

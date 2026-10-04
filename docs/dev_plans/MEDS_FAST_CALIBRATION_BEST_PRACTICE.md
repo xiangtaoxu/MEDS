@@ -215,7 +215,7 @@ PEcAn samples each target's variance; ORCHIDEE sets it to the prior model's misf
   5. the range alone.
 - **EEO centres with a wide range** (log-sd 0.5), so one rule covers plant types:
   - **`stomatal_g1`:** the least-cost value. Medlyn's g1 equals ξ = √(β(K + Γ\*)/1.6η\*), with β = 146 (Prentice et al. 2014; Stocker et al. 2020). **BCI: 2.83 kPa^0.5.**
-  - **`vcmax25`:** the coordination condition (Wang et al. 2017; Smith et al. 2019), solved with **MEDS's own leaf equations**. That is, the vcmax25 at which MEDS's Rubisco-limited and light-limited rates are equal at the site's growing-season daytime climate, with the configured `phi_psii` and θ_J, converted to 25 °C by MEDS's temperature response. **BCI: 54.**
+  - **`vcmax25`:** the coordination condition (Wang et al. 2017; Smith et al. 2019), solved with **MEDS's own leaf equations**. That is, the vcmax25 at which MEDS's Rubisco-limited and light-limited rates are equal at the site's growing-season daytime climate, with the configured `phi_psii` and θ_J, converted to 25 °C by MEDS's temperature response at the Kattge & Knorr optima. **BCI: 41** (with phi_psii 0.74 and θ_J 0.7; the 54 of revision 4 used the model's default optima, 650/640, and the tower's measured daytime records).
 - **Jmax/Vcmax, `ds_vcmax`, `ds_jmax`:** fixed at Kattge & Knorr (2007) for the site's growth temperature, computed from the forcing, not hard-coded.
 - **Plant types:** the PFT file names its class, and the registry holds a prior per class.
 - **Bounds apart from priors:** the hard bound is what is physically possible, the prior what the evidence says. Each key's prior z is reported; |z| > 2 is flagged (G13).
@@ -309,7 +309,7 @@ The same keys, priors and filters under the structures declared in `[variants]`:
 | κ = 0.65 raises the tower | ~1.16 (estimated) |
 | sunlit/shaded leaves (not in) | ~1.03 (estimated) |
 
-So the fit should land `vcmax25` near its EEO value (54), not at its floor. The first BCI run will tell.
+So the fit should land `vcmax25` near its EEO value (41 with the Kattge & Knorr optima; §3.5), not at its floor. The first BCI run will tell.
 
 ## 6. The fit
 
@@ -405,7 +405,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P1 | **done (#357):** the adapter: one site TOML through `tower_inputs.py` (`[fluxes]`, `[provider]`, measured masks, metadata checks F1–F3 in `tower_checks.py`); the native interval (`fast_interval_steps` set by the tool, the spacing checked); `calibrate_fast`'s reader removed; BCI's declarations moved into `bci_site.toml` | medium |
 | P2 | **done (#358):** data rules (`datarules.py`): the u\* diagnostic with bootstrap; daytime-only turbulent targets; albedo rules; coverage-based fixing; window selection (per-window chains) and coverage report; the water-deficit index and seasonal runs. At BCI the all-day GPP diagnostic finds a plateau at 0.33, not the morning-only 0.5 | medium |
 | P3 | **done (#359):** errors (`obsmodels.py`): `obs_model` per target (identity, closure with the attribution test, respiration with κ); σ from the provider or paired days at a smoothed observation; Huber by default; σ scaling at the refresh. BCI: f 1.33, s_H = 1, κ 0.65 ± 0.10 | medium |
-| P4 | keys and priors: kinds, scope tags, plant-type priors, bounds apart, prior z and G13; EEO g1 and vcmax25 (MEDS's leaf); Kattge & Knorr from growth temperature | small–medium |
+| P4 | **done (#360):** keys and priors (`priors.py`): kinds, scope tags, plant-type priors (`[fit].plant_type`), bounds apart, prior z and G13; EEO g1 (2.80 at BCI) and vcmax25 (MEDS's leaf: 41 at phi_psii 0.74, θ_J 0.7); Kattge & Knorr from the growth temperature | small–medium |
 | P5 | the joint fit with one refresh; one-sided differences and gradient reuse; the final central matrix; **removal** of the water stage, polish, kernel stages, G8 and default multi-start | medium; removes code |
 | P6 | uncertainty: declared alternatives with the refit rule, structural variants, the report | small |
 | P7 | BCI: the examples with #351's values, the refit, the full-record run, the README | small; Slurm |

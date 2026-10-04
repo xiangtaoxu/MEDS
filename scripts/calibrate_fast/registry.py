@@ -17,7 +17,20 @@ Each key has a state, the registry's recommendation:
   fit       in the default fitted set
   optional  available, fitted only when the site declaration asks for it
   fixed     not tunable in the fast fit (`reason` says why); a site may still ask for it
-and a stage, the part of the staged fit that sets it (stages.py). A key that acts only through
+and a stage, the part of the staged fit that sets it (stages.py).
+
+Each key also has a kind (best-practice plan §4.2):
+  trait        a measurable property, with a prior from evidence
+  effective    a scheme property: its value belongs to this model structure (labelled as such)
+  numerical    never calibrated
+  observation  a term of a target's observation model (kappa), never written to a MEDS config
+and a scope: "plant_type" (shared by every tower of that type), "site", or "observation".
+
+The prior's centre may be "eeo": the eco-evolutionary optimality value from the site's climate
+(priors.py), for stomatal_g1 and vcmax25. `meta` holds a meta-analysis prior per plant type
+([fit].plant_type): the prior of a key without an EEO centre, reported beside the EEO one
+otherwise. `fixed_at = "kattge_knorr"` fixes a shape key at Kattge & Knorr's value for the site's
+growth temperature, set in every run of the calibration. A key that acts only through
 one process (the wet canopy, night, snow, drought) names it in `process`: the fit fixes it when the
 kept data sample that process in too few records (datarules.process_coverage).
 """
@@ -37,6 +50,10 @@ FILES = ("pft", "main", "obs")     # "obs": an observation key (kappa), never wr
 STATES = ("fit", "optional", "fixed")
 STAGES = ("optics", "photosynthesis", "energy", "water")
 PROCESSES = ("", "wet_canopy", "night", "snow", "drought")
+KINDS = ("trait", "effective", "numerical", "observation")
+SCOPES = ("plant_type", "site", "observation")
+FIXED_AT = ("", "kattge_knorr")
+EEO_KEYS = ("pft.stomatal_g1", "pft.vcmax25")
 PRIOR_KEYS = ("centre", "sd", "log_sd", "source")
 
 
@@ -59,6 +76,10 @@ class Param:
     reason: str = ""           # why a fixed key is fixed
     process: str = ""          # the one process it acts through, if any (fixed without coverage)
     shape: bool = False        # a shape key of the leaf's light response: never fitted beside kappa
+    kind: str = "trait"
+    scope: str = "plant_type"
+    fixed_at: str = ""         # "kattge_knorr": fixed at the growth temperature's value (priors.py)
+    meta: dict = field(default_factory=dict)    # plant type -> a meta-analysis prior {centre, sd | log_sd, source}
     prior: dict = field(default_factory=dict)   # centre, sd or log_sd, source
     extra: dict = field(default_factory=dict)
 
@@ -91,8 +112,11 @@ class Param:
     # ----- the prior ----------------------------------------------------------------------------
     @property
     def centre(self) -> float:
-        """The prior's centre in theta: prior.centre, else the default."""
+        """The prior's centre in theta: prior.centre, else the default. An "eeo" centre must have
+        been resolved from the site's climate first (calibrate_fast: Site.params)."""
         c = self.prior.get("centre")
+        if c == "eeo":
+            raise ValueError(f"{self.name}: its EEO prior centre is not resolved (it needs the forcing file)")
         return float(self.default if c is None else c)
 
     @property
@@ -123,6 +147,19 @@ def _check(p: Param):
         raise ValueError(f"{p.name}: stage must be one of {STAGES}")
     if p.process not in PROCESSES:
         raise ValueError(f"{p.name}: process must be one of {PROCESSES[1:]}")
+    if p.kind not in KINDS:
+        raise ValueError(f"{p.name}: kind must be one of {KINDS}")
+    if p.scope not in SCOPES:
+        raise ValueError(f"{p.name}: scope must be one of {SCOPES}")
+    if p.fixed_at not in FIXED_AT:
+        raise ValueError(f"{p.name}: fixed_at must be one of {FIXED_AT[1:]}")
+    if (p.kind == "observation") != (p.file == "obs"):
+        raise ValueError(f"{p.name}: an observation key, and only one, has file = \"obs\"")
+    if p.prior.get("centre") == "eeo" and p.key not in EEO_KEYS:
+        raise ValueError(f"{p.name}: an EEO centre exists only for {EEO_KEYS}")
+    for t, m in p.meta.items():
+        if not isinstance(m, dict) or set(m) - set(PRIOR_KEYS):
+            raise ValueError(f"{p.name}: meta.{t} is a prior table {{ centre, sd | log_sd, source }}")
     if not p.lo < p.hi:
         raise ValueError(f"{p.name}: range must be increasing")
     if p.transform == "log" and p.lo <= 0.0:
@@ -154,7 +191,8 @@ def load_registry(path, variant: str | None = None) -> list[Param]:
                   group=e.get("group", ""), source=e.get("source", ""), variants=variants,
                   notes=e.get("notes", ""), state=e.get("state", "fit"), stage=e.get("stage", "energy"),
                   reason=e.get("reason", ""), process=e.get("process", ""), shape=bool(e.get("shape", False)),
-                  prior=dict(e.get("prior", {})))
+                  kind=e.get("kind", "trait"), scope=e.get("scope", "plant_type"), fixed_at=e.get("fixed_at", ""),
+                  meta={k: dict(v) for k, v in e.get("meta", {}).items()}, prior=dict(e.get("prior", {})))
         _check(p)
         if p.file == "pft" and p.pft is None:
             p.pft = 1
@@ -169,6 +207,7 @@ def select(params: list[Param], fitcfg: dict, priors: dict) -> list[Param]:
       [fit].keys       the exact list (any state, a fixed key included)
       [fit].add        keys added to the registry's default set (state "fit")
       [fit].remove     keys removed from it
+      [fit].plant_type the plant type whose meta-analysis prior a key without an EEO centre takes
       [priors.<key>]   a key's prior and range: centre, sd or log_sd, source, range
 
     An unknown name is an error, so a misspelling cannot silently drop a key."""
@@ -187,10 +226,16 @@ def select(params: list[Param], fitcfg: dict, priors: dict) -> list[Param]:
     else:
         chosen = {p.name for p in params if p.state == "fit"} | set(fitcfg.get("add", []))
         chosen -= set(fitcfg.get("remove", []))
+    numerical = [p.name for p in params if p.name in chosen and p.kind == "numerical"]
+    if numerical:
+        raise ValueError(f"[fit]: {numerical} are numerical keys: never calibrated")
+    plant_type = fitcfg.get("plant_type", "")
     out = []
     for p in params:
         if p.name not in chosen:
             continue
+        if plant_type and plant_type in p.meta and p.prior.get("centre") != "eeo":
+            p.prior = {**p.meta[plant_type]}
         over = dict(priors.get(p.name, {}))
         if "range" in over:
             p.lo, p.hi = (float(x) for x in over.pop("range"))

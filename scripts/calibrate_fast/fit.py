@@ -426,6 +426,29 @@ def bound_pushers(prob: Problem, u, J, r, specs, frac=0.05):
     return out
 
 
+def prior_z(prob: Problem, u, J, r, specs) -> dict:
+    """Each key's prior z at u -- (u - u_prior) / sigma_prior in the transformed space -- with its
+    kind, scope and prior source, and the target whose data gradient pushes it furthest from its
+    prior (gate G13 asks for a diagnosis of any trait key beyond 2)."""
+    sl, i = [], 0
+    for spec in specs:
+        for t in spec.targets:
+            sl.append((t.name, slice(i, i + len(t.obs))))
+            i += len(t.obs)
+    out = {}
+    for j, p in enumerate(prob.params):
+        z = float((u[j] - p.u0) / p.sigma_u)
+        push = {}
+        for name, s in sl:
+            push[name] = push.get(name, 0.0) + float(J[s, j] @ r[s])
+        #----- descending the data cost moves u_j by minus its gradient: away from the prior is z's sign
+        away = {k: -g * np.sign(z) for k, g in push.items()}
+        out[p.name] = {"z": z, "kind": p.kind, "scope": p.scope, "prior_centre": p.centre,
+                       "prior_source": p.prior.get("source", p.source),
+                       "pushed_by": max(away, key=away.get) if away and z != 0.0 else None}
+    return out
+
+
 def save_json(path, obj):
     def conv(o):
         if isinstance(o, np.ndarray):
