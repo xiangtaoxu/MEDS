@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """The parameter registry: which keys the fit may move, where each lives, its range, its prior,
-its stage, and how it is transformed (MEDS_FAST_CALIBRATION_PLAN.md §4, §6.1; the revision plan
-MEDS_FAST_CALIBRATION_REVISION_PLAN.md §4).
+its kind and scope, and how it is transformed (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md §3.5, §4).
 
 A parameter bounded to [a, b] is fitted as u = logit((g(theta) - g(a)) / (g(b) - g(a))), with g the
 identity for a "linear" key and log for a "log" key (a positive scale). The fit is unconstrained in
@@ -17,7 +16,6 @@ Each key has a state, the registry's recommendation:
   fit       in the default fitted set
   optional  available, fitted only when the site declaration asks for it
   fixed     not tunable in the fast fit (`reason` says why); a site may still ask for it
-and a stage, the part of the staged fit that sets it (stages.py).
 
 Each key also has a kind (best-practice plan §4.2):
   trait        a measurable property, with a prior from evidence
@@ -48,7 +46,6 @@ H_U = 0.04                                   # the central-difference step in u 
 TRANSFORMS = ("linear", "log")
 FILES = ("pft", "main", "obs")     # "obs": an observation key (kappa), never written to a MEDS config
 STATES = ("fit", "optional", "fixed")
-STAGES = ("optics", "photosynthesis", "energy", "water")
 PROCESSES = ("", "wet_canopy", "night", "snow", "drought")
 KINDS = ("trait", "effective", "numerical", "observation")
 SCOPES = ("plant_type", "site", "observation")
@@ -72,7 +69,6 @@ class Param:
     variants: tuple = ()       # empty: every variant; else only these
     notes: str = ""
     state: str = "fit"
-    stage: str = "energy"
     reason: str = ""           # why a fixed key is fixed
     process: str = ""          # the one process it acts through, if any (fixed without coverage)
     shape: bool = False        # a shape key of the leaf's light response: never fitted beside kappa
@@ -143,8 +139,6 @@ def _check(p: Param):
         raise ValueError(f"{p.name}: transform must be one of {TRANSFORMS}")
     if p.state not in STATES:
         raise ValueError(f"{p.name}: state must be one of {STATES}")
-    if p.stage not in STAGES:
-        raise ValueError(f"{p.name}: stage must be one of {STAGES}")
     if p.process not in PROCESSES:
         raise ValueError(f"{p.name}: process must be one of {PROCESSES[1:]}")
     if p.kind not in KINDS:
@@ -189,7 +183,7 @@ def load_registry(path, variant: str | None = None) -> list[Param]:
                   transform=e.get("transform", "linear"), pft=e.get("pft"),
                   default=None if e.get("default") is None else float(e["default"]),
                   group=e.get("group", ""), source=e.get("source", ""), variants=variants,
-                  notes=e.get("notes", ""), state=e.get("state", "fit"), stage=e.get("stage", "energy"),
+                  notes=e.get("notes", ""), state=e.get("state", "fit"),
                   reason=e.get("reason", ""), process=e.get("process", ""), shape=bool(e.get("shape", False)),
                   kind=e.get("kind", "trait"), scope=e.get("scope", "plant_type"), fixed_at=e.get("fixed_at", ""),
                   meta={k: dict(v) for k, v in e.get("meta", {}).items()}, prior=dict(e.get("prior", {})))

@@ -22,7 +22,6 @@ import priors as PR           # noqa: E402
 import fit as F               # noqa: E402
 import residuals as R         # noqa: E402
 import settings as SET        # noqa: E402
-import stages as STG          # noqa: E402
 import tower as TW            # noqa: E402
 import trials as T            # noqa: E402
 import json                   # noqa: E402
@@ -406,7 +405,7 @@ def test_lm_finds_the_linear_map_and_its_covariance():
     assert ratio[3] > 0.8 and ratio[0] < 0.1
 
 
-def test_screening_flags_dead_and_uninformed_keys():
+def test_the_triage_fixes_dead_uninformed_and_collinear_keys():
     prob, A, u_true, e = linear_problem()
     A = A.copy()
     A[:, 2] = 0.0                                   # a dead key
@@ -416,13 +415,44 @@ def test_screening_flags_dead_and_uninformed_keys():
     J, smooth, failed = F.jacobian(prob, u0, r0, log=lambda *_: None)
     spec = R.WindowSpec("w", pd.date_range("2016-01-01", periods=A.shape[0], freq="1h"),
                         [R.TargetRows("h", np.arange(A.shape[0]), np.zeros(A.shape[0]), np.ones(A.shape[0]))])
-    keep, rep = F.screening(prob, J, r0, smooth, failed, [spec], max_free=20, mode="drop", weighted=False)
-    assert rep["dead"] == ["p2"]
-    assert "p0" in rep["fitted"] and "p2" in rep["fixed"]
+    keep, rep = F.triage(prob, J, r0, smooth, failed, [spec], weighted=False)
+    assert rep["dead"] == ["p2"] and "uninformed" in rep["fixed"]["p3"]   # p3's column is 0.005: the data barely see it
+    assert [prob.params[k].name for k in keep] == ["p0", "p1"] and rep["fitted"] == ["p0", "p1"]
     assert all(abs(s - 1.0) < 1e-6 for n, s in rep["smoothness"].items() if n != "p2")
-    # the report mode (the default) keeps every requested key and says what the drop mode would fix
-    keep, rep = F.screening(prob, J, r0, smooth, failed, [spec], max_free=20, mode="report", weighted=False)
-    assert keep == list(range(4)) and rep["fixed"] == [] and "p2" in rep["would_drop"]
+    #----- the report mode keeps every requested key and says what the triage would fix
+    keep, rep = F.triage(prob, J, r0, smooth, failed, [spec], mode="report", weighted=False)
+    assert keep == list(range(4)) and rep["fixed"] == {} and set(rep["would_fix"]) == {"p2", "p3"}
+    #----- two keys the data cannot tell apart: the less informed one goes
+    A[:, 1] = A[:, 0] * 1.001 + 1e-4
+    keep, rep = F.triage(prob, A, r0, smooth, failed, [spec], weighted=False)
+    assert "collinear" in rep["fixed"][[n for n in ("p0", "p1") if n in rep["fixed"]][0]]
+
+
+def test_broyden_reaches_a_nonlinear_minimum_with_fewer_trials():
+    """At the fit's own stopping rule (the cost falling by under 0.1 %), Broyden's updates between
+    full gradient matrices reach the same minimum as a full matrix every iteration, with fewer trials."""
+    rng = np.random.default_rng(3)
+    k = 8
+    params = [Param(f"p{j}", "main", f"a.p{j}", 0.0, 10.0, default=5.0) for j in range(k)]
+    A = rng.standard_normal((300, k)) * np.linspace(3.0, 0.3, k)
+    u_true, e = rng.uniform(-1.0, 1.0, k), 0.3 * rng.standard_normal(300)
+
+    class Curved(LinearModel):
+        def residuals(self, thetas, windows=None):
+            self.calls += len(thetas)
+            out = []
+            for th in thetas:
+                d = np.array([p.to_u(t) for p, t in zip(self.params, th)]) - self.u_true
+                out.append(self.A @ (d + 0.2 * d ** 2) + self.e)
+            return out
+    runs = {}
+    for every in (1, 3):
+        m = Curved(params, A, u_true, e)
+        prob = F.Problem(m, list(range(k)), np.full(k, 5.0))
+        out = F.lm(prob, prob.u_prior, max_iter=30, rtol=1e-3, log=lambda *_: None, refresh_every=every)
+        runs[every] = (m.calls, out["cost"])
+    assert runs[3][1] == pytest.approx(runs[1][1], rel=1e-6)
+    assert runs[3][0] < runs[1][0]
 
 
 def test_linearity_is_exact_for_a_linear_model():
@@ -484,7 +514,6 @@ def test_the_registry_menu():
     assert {p.kind for p in ps.values()} <= {"trait", "effective", "observation"} and ps["z0m_ratio"].kind == "effective"
     assert {n for n, p in ps.items() if p.fixed_at} == {"jmax_vcmax_ratio", "ds_vcmax", "ds_jmax"}
     assert all(p.prior.get("sd") or p.prior.get("log_sd") for p in ps.values() if p.state == "fit")   # bounds apart
-    assert {p.stage for p in ps.values()} <= {"optics", "photosynthesis", "energy", "water"}
     assert all(p.reason for p in ps.values() if p.state == "fixed")
 
 
@@ -508,9 +537,8 @@ def test_the_bci_declaration_is_complete_and_valid():
     assert d["fit"]["loss"] == "huber"
     assert d["targets"]["albedo"]["min_solar_elevation"] == 20.0
     assert d["windows"]["list"] == [] and d["windows"]["seasonal"]["list"] == []       # chosen by the rule
-    assert d["fit"]["stages"] == ["energy", "water", "polish"]
-    assert d["stages"]["water"]["targets"] == ["le"]
-    assert d["stages"]["polish"]["max_iter"] == 10                      # a default the site left out
+    assert d["windows"]["seasonal"]["targets"] == ["le"] and d["fit"]["screening"] == "triage"
+    assert d["fit"]["max_iter"] == 10 and d["fit"]["refresh"] is True    # defaults the site left out
 
 
 def test_every_target_takes_the_filters():
@@ -521,28 +549,6 @@ def test_every_target_takes_the_filters():
     good["targets"]["gpp"]["hourz"] = [8, 17]
     with pytest.raises(ValueError, match="hourz"):
         SET.complete(good)
-
-
-def test_which_keys_each_stage_moves():
-    ps = []
-    for name, stage in (("rho", "optics"), ("vc", "photosynthesis"), ("g1", "energy"), ("sref", "water")):
-        p = Param(name, "main", f"a.{name}", 0.0, 1.0)
-        p.stage = stage
-        ps.append(p)
-    names = lambda idx: [ps[i].name for i in idx]                                      # noqa: E731
-    full = list(CF.STAGE_ORDER)
-    assert names(CF.free_of(ps, "energy", full)) == ["g1"]
-    #----- a kernel stage not run has its keys fitted in the coupled stage
-    assert names(CF.free_of(ps, "energy", ["energy", "water", "polish"])) == ["rho", "vc", "g1"]
-    assert names(CF.free_of(ps, "energy", ["photosynthesis", "energy"])) == ["rho", "g1"]
-    #----- the polish moves every key, the water keys only with seasonal runs
-    assert names(CF.free_of(ps, "polish", ["polish"])) == ["rho", "vc", "g1", "sref"]
-    assert names(CF.free_of(ps, "polish", ["polish"], seasonal=False)) == ["rho", "vc", "g1"]
-    assert names(CF.free_of(ps, "polish", full, skipped=["optics"])) == ["vc", "g1", "sref"]
-    #----- a fit without a polish: every run stage's keys together
-    assert names(CF.fitted_keys(ps, ["energy"], [], seasonal=False)) == ["rho", "vc", "g1"]
-    ps[2].stage = "dropped"
-    assert names(CF.free_of(ps, "polish", ["polish"])) == ["rho", "vc", "sref"]
 
 
 def test_settings_refuse_unknown_and_missing_keys():
@@ -567,17 +573,14 @@ def test_settings_refuse_unknown_and_missing_keys():
 
 
 def test_every_setting_the_tool_reads_is_documented():
-    """Each [fit], [stages.*], [uncertainty] and [targets.*] key calibrate_fast.py reads is in
+    """Each [fit], [uncertainty] and [targets.*] key calibrate_fast.py reads is in
     site_reference.toml (so the reference can neither miss a setting nor document a dead one)."""
     import re
     ref = SET.reference()
     src = (Path(CF.__file__)).read_text() + (Path(R.__file__)).read_text()
-    for var, table in (("fc", ref["fit"]), ("pc", ref["stages"]["polish"]), ("site.uncertainty", ref["uncertainty"])):
+    for var, table in (("fc", ref["fit"]), ("site.uncertainty", ref["uncertainty"])):
         for key in re.findall(re.escape(var) + r'\["(\w+)"\]', src):
             assert key in table, f"{var}[{key!r}] is not documented"
-    for stage, keys in (("optics", ["max_iter"]), ("photosynthesis", ["passes", "tol", "max_iter"]),
-                        ("energy", ["max_iter", "rtol"]), ("water", ["rounds", "grid_sigma", "targets"])):
-        assert set(keys) <= set(ref["stages"][stage]), stage
     for t in R.TARGETS:
         assert t in ref["targets"], t
     for f in R.FILTERS:
@@ -817,42 +820,7 @@ def test_solar_elevation():
     assert e[0] > 85.0 and e[1] < -85.0
 
 
-# ----- the kernel models' anchor, the water stage's search, the filter sensitivity -------------------
-class ToyKernel(STG.KernelBase):
-    column = "gpp_rate_fast"
-
-    def model_value(self, name):
-        return self.series[name]["gpp_rate_fast"].to_numpy()
-
-    def kernel(self, cfg, name):
-        a = float(cfg)
-        return 0.9 * a * self.drivers[name]["light"]                   # the kernel is 10 % low everywhere
-
-
-def test_the_anchor_makes_the_kernel_exact_there():
-    idx = pd.date_range("2016-01-01", periods=24, freq="1h")
-    light = np.linspace(0.0, 1.0, 24)
-    ps = [Param("a", "main", "x.a", 0.1, 10.0, default=2.0)]
-    obs = 2.0 * light
-    spec = R.WindowSpec("w", idx, [R.TargetRows("gpp", np.arange(1, 24), obs[1:], np.ones(23))])
-    w = T.Window("w", dt.datetime(2016, 1, 1), 1, "cal", "cal")
-    km = ToyKernel(ps, [w], {"w": spec}, {"w": {"light": light}},
-                   {"w": pd.DataFrame({"gpp_rate_fast": 2.0 * light}, index=idx)}, make_config=lambda th: th[0])
-    km.set_anchor(np.array([2.0]))
-    assert np.allclose(km.residuals([np.array([2.0])])[0], 0.0)    # exact at the anchor
-    prob = F.Problem(km, [0], np.array([2.0]))
-    out = F.lm(prob, np.array([ps[0].to_u(1.0)]), max_iter=30, rtol=1e-14, log=lambda *_: None)
-    assert prob.theta(out["u"])[0] == pytest.approx(2.0, rel=1e-3)  # the prior is weak; the data win
-
-
-def test_grid_search_finds_a_quadratic_minimum():
-    prob, A, u_true, e = linear_problem(k=2, n=200)
-    best_u, best_c, hist = STG.grid_search(prob, prob.u_prior, rounds=3, width=1.0, log=lambda *_: None)
-    H = A.T @ A + np.eye(2) / SIGMA_U ** 2
-    u_map = np.linalg.solve(H, A.T @ (A @ u_true - e) + prob.u_prior / SIGMA_U ** 2)
-    assert np.allclose(best_u, u_map, atol=1e-3)                     # a quadratic's minimum, found exactly
-
-
+# ----- the filter sensitivity ------------------------------------------------------------------------
 def test_the_filter_shift_is_the_linear_maps_move():
     prob, A, u_true, e = linear_problem(k=3, n=300)
     out = F.lm(prob, prob.u_prior, max_iter=30, rtol=1e-14, log=lambda *_: None)
@@ -868,19 +836,6 @@ def test_the_filter_shift_is_the_linear_maps_move():
     u_short = out["u"] + np.array([0.3, -0.2, 0.1])
     du = F.shift(prob, u_short, A, A @ (u_short - u_true) + e, A2, A2 @ (u_short - u_true) + e2)
     assert np.allclose(du, u_map2 - out["u"], atol=1e-8)
-
-
-def test_a_driver_trial_is_its_own_directory_and_writes_the_drivers(tmp_path):
-    base = RunConfig({"run": {}, "init": {}, "output": {"fast": {}}}, {"pft": {"stomatal_g1": [3.0]}})
-    ps = [Param("g1", "pft", "pft.stomatal_g1", 1.5, 6.0, "log", pft=1)]
-    w = T.Window("w1", dt.datetime(2016, 3, 5), 10, "cal", "cal")
-    a = T.build_trial(base, ps, [3.0], w, "/x/state.nc", tmp_path)
-    b = T.build_trial(base, ps, [3.0], w, "/x/state.nc", tmp_path, kind="driver")
-    assert a != b
-    text = (b / "output_variables.toml").read_text()
-    assert all(v in text for v in T.DRIVER_COHORT + T.DRIVER_SITE) and 'wai_cohort = "D"' in text
-    m = load_toml(b / "main.toml")
-    assert m["state"]["write_state"] is True and m["output"]["daily"]["enabled"] is True
 
 
 # ----- keys and priors (best-practice plan §3.5, §4) ------------------------------------------------

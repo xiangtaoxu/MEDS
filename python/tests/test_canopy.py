@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
-"""meds.canopy and meds.plant.leaf.gas_exchange_batch (needs libmeds.so; skipped without it).
-That the canopy kernels reproduce the model's own leaves and albedo is checked against a model
-run by the calibration tool's smoke test (gate G8, scripts/calibrate_fast/tests/test_smoke.py)."""
+"""meds.canopy and meds.plant.leaf.gas_exchange_batch (needs libmeds.so; skipped without it): the
+canopy's fast pieces on their own, the same ones the model's fast loop uses."""
 from pathlib import Path
 
 import numpy as np

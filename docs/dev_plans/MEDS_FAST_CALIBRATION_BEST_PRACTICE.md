@@ -406,7 +406,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P2 | **done (#358):** data rules (`datarules.py`): the u\* diagnostic with bootstrap; daytime-only turbulent targets; albedo rules; coverage-based fixing; window selection (per-window chains) and coverage report; the water-deficit index and seasonal runs. At BCI the all-day GPP diagnostic finds a plateau at 0.33, not the morning-only 0.5 | medium |
 | P3 | **done (#359):** errors (`obsmodels.py`): `obs_model` per target (identity, closure with the attribution test, respiration with κ); σ from the provider or paired days at a smoothed observation; Huber by default; σ scaling at the refresh. BCI: f 1.33, s_H = 1, κ 0.65 ± 0.10 | medium |
 | P4 | **done (#360):** keys and priors (`priors.py`): kinds, scope tags, plant-type priors (`[fit].plant_type`), bounds apart, prior z and G13; EEO g1 (2.80 at BCI) and vcmax25 (MEDS's leaf: 41 at phi_psii 0.74, θ_J 0.7); Kattge & Knorr from the growth temperature | small–medium |
-| P5 | the joint fit with one refresh; one-sided differences and gradient reuse; the final central matrix; **removal** of the water stage, polish, kernel stages, G8 and default multi-start | medium; removes code |
+| P5 | **done (#361):** the joint fit with one refresh (chains, weights, σ); one-sided differences with Broyden reuse (full every third step); the final central matrix; the triage; **removed:** the water stage, polish, kernel stages (`stages.py`), G8 and the stage settings | medium; removes code |
 | P6 | uncertainty: declared alternatives with the refit rule, structural variants, the report | small |
 | P7 | BCI: the examples with #351's values, the refit, the full-record run, the README | small; Slurm |
 

@@ -73,7 +73,7 @@ min_pairs    = 200                # fewer pairs: the next source
 bins         = 10                 # equal-count bins of |x| for the fit of sigma_abs and sigma_rel
 
 [windows]
-days       = 10                   # A calibration window's length [days]. Ten frozen days set the fast keys; the
+days       = 10                   # A calibration window's length [days]. Ten frozen days inform the fast keys; the
                                   #   water-stress keys need the seasonal runs ([windows.seasonal]).
 skip_hours = 0                    # Hours dropped at each window's start (the restart's first hours).
 chain_lead_days = 180             # Every window restarts from its own state: a frozen run from the initial stand (the
@@ -89,12 +89,13 @@ min_score  = 0.5                  # a window's mean daily coverage must reach th
 # EXAMPLE: the site's own windows (name, start [UTC date], role "cal" or "val", optionally days); empty = the rule.
 list       = [ { name = "example", start = "2015-09-11", role = "cal" } ]
 
-# The seasonal runs (soil drying): frozen runs long enough for the soil to dry, scored on LE only (the water stage of
-# the fit). By the rule, up to max_runs runs, each ending at a year's deepest cumulative water deficit (rain minus
+# The seasonal runs (soil drying): frozen runs long enough for the soil to dry, scored on LE only, rows of the joint
+# fit beside the ten-day windows. By the rule, up to max_runs runs, each ending at a year's deepest cumulative water deficit (rain minus
 # Priestley-Taylor evaporation, from the forcing file) inside the leaf-on months, the deepest years first; a year
 # whose deficit stays under min_deficit_mm gives none, and without any the drought keys are fixed.
 [windows.seasonal]
 days           = 120
+targets        = ["le"]           # LE only: a GPP with a biased respiration set the strongest stress when it scored them
 max_runs       = 2                # 0 = no seasonal runs
 min_deficit_mm = 100.0
 # EXAMPLE: the site's own runs (name, start, days); empty = the rule.
@@ -193,27 +194,28 @@ plant_type = ""                   # the plant type of the fitted PFT, for the re
                                   #   e.g. "tropical_evergreen_broadleaf". A key without an EEO centre takes its type's
                                   #   prior; an EEO centre is reported beside it and flagged when more than 2 sd apart.
                                   #   (The PFT file would hold it, but its schema refuses unknown keys.)
-stages     = ["energy", "water", "polish"]   # the staged fit (plan §7, §13), in this order. "optics" (the two-stream
-                                  #   alone, against the albedo) and "photosynthesis" (a canopy of leaf solves, against
-                                  #   GPP) are optional: a kernel stage not listed has its keys fitted in "energy", with
-                                  #   every target. Recommended without them: at BCI the albedo alone sent clumping to
-                                  #   its floor, and the joint fit then moved it to its ceiling. ["polish"] alone is the
-                                  #   joint fit of every key at once (the original method)
-screening  = "report"             # "report": the first Jacobian's screening is reported, every requested key is fitted;
-                                  #   "drop": keys the tower cannot inform (sigma ratio >= 0.95), dead or rough are fixed
+screening  = "triage"             # the first gradient matrix, at the prior centres (best-practice plan §4.1): "triage" fixes
+                                  #   at its prior's centre a key that is dead (a zero column), rough (the two one-sided
+                                  #   slopes disagree 3x: make the model continuous), uninformed (posterior/prior sd ratio
+                                  #   >= informed_ratio) or the less informed of a pair correlated beyond max_corr;
+                                  #   "report": every requested key is fitted, the triage only reported
+informed_ratio = 0.9
+max_corr   = 0.95
 weights    = "ess"                # "ess": each target's rows weighted by its effective sample size, from the lag-1
-                                  #   autocorrelation of its residuals, in the fit as in the covariance; "none": every row 1
+                                  #   autocorrelation of its residuals, set at the start and at the refresh; "none": 1
 loss       = "huber"              # "huber" (robust: a row's pull is capped at huber_c sigma; half-hourly errors are heavy-
                                   #   tailed, Lasslop et al. 2008) or "l2" (least squares). chi^2 is reported on the plain
                                   #   residuals either way
 huber_c    = 2.0
 sigma_scale_max = 3.0             # at the refresh each target's sigma is multiplied by max(1, sqrt(chi^2 per row)), at most
                                   #   this: a target the model structurally cannot fit stops bending the keys (§3.4)
-seed       = 1
+max_iter   = 10                   # Levenberg-Marquardt iterations before and again after the refresh (§6.3)
+rtol       = 1.0e-3               # ... and each stops when the cost falls by less than this (0.1 %)
+jacobian_refresh = 3              # the gradient matrix (one-sided differences) is recomputed in full every this many
+                                  #   accepted steps and after a rejected one; Broyden's update carries it in between
+refresh    = true                 # once, after the first convergence: re-run the state chains at the current values,
+                                  #   refresh the weights, scale sigma by the misfit, then continue to convergence
 timeout    = 900.0                # [s] the floor of a trial's timeout (3x the median of completed trials, if longer)
-rough_keys = "default"            # "default": a rough key (a step response) the screening drops stays at its default;
-                                  #   "line_search": set by a 1-D search (at BCI that broke the five-year water budget)
-max_free   = 20                   # with screening = "drop": at most this many keys, the best informed
 min_process_records = 48          # a key that acts through one process (the registry's `process`: wet canopy, night,
                                   #   snow, drought) is fixed when the kept records sample it fewer times than this
 
@@ -227,33 +229,6 @@ min_process_records = 48          # a key that acts through one process (the reg
 #   source = "site leaf data"
 # A narrow prior holds a key near its centre but lets strong evidence nudge it; a wide one lets the data decide.
 [priors]
-
-[stages.optics]
-max_iter = 15                     # the radiation solver alone against the albedo (meds.canopy): seconds per iteration
-
-[stages.photosynthesis]
-passes   = 3                      # outer passes: re-run the windows with the new leaf keys, refresh the leaf drivers, refit
-tol      = 0.01                   # stop when no key moves by more than this fraction between passes
-max_iter = 20                     # the canopy of leaf kernels against GPP (meds.canopy), per pass
-
-[stages.energy]
-max_iter = 10                     # the coupled fast loop (Levenberg-Marquardt on 10-day trials)
-rtol     = 1.0e-3
-
-[stages.water]
-# The seasonal runs of [windows.seasonal]; none = the stage is skipped.
-targets    = ["le"]               # the targets these runs are scored on: LE only, since a GPP with a biased
-                                  #   respiration set the strongest stress when it scored them
-grid_sigma = 1.0                  # the first grid: the starting value (the prior centre) +- this many prior sds in u
-rounds     = 2                    # grids (each half the last's width around the best point), then a local quadratic
-
-[stages.polish]
-max_iter      = 10                # every fitted key together from the stage values, then the final Jacobian. rtol
-                                  #   ends it sooner; at BCI 3 iterations left it still falling 4 % per iteration, a
-                                  #   Gauss-Newton step of up to 19 posterior sd short of its optimum
-rtol          = 1.0e-3
-include_water = true              # the seasonal runs enter as residual blocks too
-refresh       = true              # re-run the state chains with the stage values first
 
 [uncertainty]
 linearity_dirs = 3                # the linearity check: +-1 sd along this many leading directions

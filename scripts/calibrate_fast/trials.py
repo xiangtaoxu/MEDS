@@ -12,11 +12,6 @@ model does not read, and the trial fails rather than silently running the defaul
 
 A trial writes its fast output at the tower's own interval (the site sets [output].fast_interval_steps
 on the base configuration), stamped by each record's UTC start, the index the observations are on.
-
-A DRIVER trial (kind = "driver") is the same run writing more: the fast shortwave streams, the
-per-cohort leaf-solve drivers (the gx_*_cohort_fast outputs), the daily wood area, and its end
-state. finish() packs them into drivers.npz with the stand's geometry, for the kernel stages
-(stages.py), which then evaluate the radiation solver and the leaf solve without the model.
 """
 from __future__ import annotations
 
@@ -40,15 +35,6 @@ from meds.config import RunConfig, read_record
 #: the fast variables a trial writes: every target's model side (residuals.py)
 TRIAL_VARIABLES = ("sw_in_fast", "sw_up_fast", "lw_up_fast", "rnet_fast", "le_flux_fast",
                    "h_flux_fast", "gpp_rate_fast", "nee_fast", "ustar_fast")
-#: the extra fast site variables of a driver trial: the shortwave the canopy received
-DRIVER_SITE = ("cosz_fast", "par_beam_fast", "par_diffuse_fast", "nir_beam_fast", "nir_diffuse_fast")
-#: the per-cohort fast drivers of the leaf solve (meds_output_registry: gx_*_cohort_fast)
-DRIVER_COHORT = ("gx_par_cohort_fast", "gx_leaf_temp_cohort_fast", "gx_vpd_cohort_fast", "gx_ca_cohort_fast",
-                 "gx_pressure_cohort_fast", "gx_psi_leaf_cohort_fast", "gx_psi_predawn_cohort_fast",
-                 "gx_gb_cohort_fast", "gx_agross_cohort_fast")
-#: the stand's geometry, read from a driver trial's end state
-STAND = ("pft", "nplant", "leaf_area", "overtopping_lai", "owner_patch", "patch_area", "height")
-DRIVERS_NPZ = "drivers.npz"
 PREFIX = "t"
 #: the runner that runs a config through the Python API instead of an executable
 PYTHON_RUNNER = "python"
@@ -103,9 +89,8 @@ def with_params(base: RunConfig, params, theta, overrides: dict | None = None) -
 
 
 def build_trial(base: RunConfig, params, theta, window: Window, state_file: str, root: Path,
-                overrides: dict | None = None, write_state: bool = False, kind: str = "trial") -> Path:
-    """Write a trial directory (or find the finished one) and return its path. kind "driver" also
-    writes the canopy drivers and its end state (the module docstring)."""
+                overrides: dict | None = None, write_state: bool = False) -> Path:
+    """Write a trial directory (or find the finished one) and return its path."""
     cfg = with_params(base, params, theta, overrides)
     run = {"run.start_time": stamp(window.start), "run.end_time": stamp(window.end),
            "run.slow_on": False, "run.n_threads": 1,
@@ -117,19 +102,13 @@ def build_trial(base: RunConfig, params, theta, window: Window, state_file: str,
            "output.annual.enabled": False}
     for k, v in run.items():
         cfg.set(k, v)
-    if kind == "driver":
-        cfg.set("state.write_state", True)
-        cfg.set("output.daily.enabled", True)
-        cfg.set("output.daily.file_chunk", "run")
-    tag = digest(cfg.main, cfg.pft) if kind == "trial" else digest(cfg.main, cfg.pft, kind)
+    tag = digest(cfg.main, cfg.pft)
     tdir = root / f"{window.name}-{tag[:16]}"
-    if (tdir / ("series.npz" if kind == "trial" else DRIVERS_NPZ)).exists():
+    if (tdir / "series.npz").exists():
         return tdir
     (tdir / "out").mkdir(parents=True, exist_ok=True)
-    names = TRIAL_VARIABLES + ((DRIVER_SITE + DRIVER_COHORT) if kind == "driver" else ())
     (tdir / "output_variables.toml").write_text(
-        "[variables]\n" + "".join(f'{v} = "F"\n' for v in names)
-        + ('wai_cohort = "D"\n' if kind == "driver" else ""))
+        "[variables]\n" + "".join(f'{v} = "F"\n' for v in TRIAL_VARIABLES))
     for k, v in {"output.dir": str(tdir / "out"), "state.output_dir": str(tdir / "out"),
                  "output.io_config": str(tdir / "output_variables.toml")}.items():
         cfg.set(k, v)
@@ -185,10 +164,9 @@ def read_series(out_dir: Path, step: float) -> pd.DataFrame:
     return df.where(df.abs() < 1e30)
 
 
-def finish(tdir: Path, params, theta, step: float, keep_netcdf: bool = False,
-           kind: str = "trial") -> pd.DataFrame:
-    """Check a completed trial and cache its fast series (series.npz) -- and, for a driver trial,
-    its drivers (drivers.npz); raise TrialError if it failed. `step` is the tower's interval."""
+def finish(tdir: Path, params, theta, step: float, keep_netcdf: bool = False) -> pd.DataFrame:
+    """Check a completed trial and cache its fast series (series.npz); raise TrialError if it
+    failed. `step` is the tower's interval."""
     log = (tdir / "run.log").read_text(errors="replace") if (tdir / "run.log").exists() else ""
     if COMPLETED not in log:
         tail = "\n".join(log.splitlines()[-15:])
@@ -201,54 +179,12 @@ def finish(tdir: Path, params, theta, step: float, keep_netcdf: bool = False,
     df = read_series(tdir / "out", step)
     if df.isna().any().any():
         raise TrialError(f"{tdir.name}: missing or non-finite values in the fast output")
-    if kind == "driver":
-        pack_drivers(tdir, df.index)
     np.savez(tdir / "series.npz", index=df.index.values.astype("datetime64[s]").astype(np.int64),
              **{v: df[v].values for v in TRIAL_VARIABLES})
     if not keep_netcdf:
-        for f in list((tdir / "out").glob(f"{PREFIX}-F-*.nc")) + list((tdir / "out").glob(f"{PREFIX}-D-*.nc")):
+        for f in (tdir / "out").glob(f"{PREFIX}-F-*.nc"):
             f.unlink()
     return df
-
-
-def pack_drivers(tdir: Path, index: pd.DatetimeIndex) -> None:
-    """drivers.npz: the fast shortwave streams, the per-cohort leaf drivers (records x cohorts), the
-    stand's geometry from the end state, and each cohort's wood area index (its first day's)."""
-    site = {v: [] for v in DRIVER_SITE}
-    coh = {v: [] for v in DRIVER_COHORT}
-    with NC_LOCK:
-        for path in sorted((tdir / "out").glob(f"{PREFIX}-F-*.nc")):
-            with Dataset(path) as ds:
-                for v in DRIVER_SITE:
-                    site[v].append(np.asarray(ds[v][:], dtype=float).squeeze(axis=tuple(range(1, ds[v].ndim))))
-                for v in DRIVER_COHORT:
-                    coh[v].append(np.asarray(ds[v][:], dtype=float))
-        states = sorted((tdir / "out").glob(f"{PREFIX}-S-*.nc"))
-        if not states:
-            raise TrialError(f"{tdir.name}: a driver trial wrote no end state")
-        with Dataset(states[-1]) as ds:
-            stand = {v: np.asarray(ds[v][:], dtype=float) for v in STAND}
-        daily = sorted((tdir / "out").glob(f"{PREFIX}-D-*.nc"))
-        if not daily:
-            raise TrialError(f"{tdir.name}: a driver trial wrote no daily output (wai_cohort)")
-        with Dataset(daily[0]) as ds:
-            wai = np.asarray(ds["wai_cohort"][0, :], dtype=float)
-    n = len(stand["nplant"])
-    out = {v: np.concatenate(site[v]) for v in DRIVER_SITE}
-    out.update({v: np.concatenate(coh[v])[:, :n] for v in DRIVER_COHORT})
-    out.update({f"stand_{k}": v for k, v in stand.items()})
-    out["stand_wai"] = wai[:n]
-    bad = [k for k, v in out.items() if np.any(np.abs(v) >= 1e30)]
-    if bad:
-        raise TrialError(f"{tdir.name}: missing values in the drivers {bad}")
-    np.savez(tdir / DRIVERS_NPZ, index=index.values.astype("datetime64[s]").astype(np.int64), **out)
-
-
-def load_drivers(tdir: Path) -> dict:
-    z = np.load(tdir / DRIVERS_NPZ)
-    out = {k: z[k] for k in z.files}
-    out["index"] = pd.to_datetime(out["index"], unit="s")
-    return out
 
 
 def load_series(tdir: Path) -> pd.DataFrame:

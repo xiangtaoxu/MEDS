@@ -59,11 +59,6 @@ source = "best-practice plan §3.3: the tower's respiration is about the soil ch
 
 [fit]
 plant_type = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
-stages     = ["energy", "water", "polish"]   # optics and photosynthesis keys fitted with the coupled loop
-screening  = "report"
-weights    = "ess"
-seed       = 20260929
-rough_keys = "default"       # a key the screening finds rough stays at its default ("line_search" to move it)
 timeout    = 300             # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
 
 [uncertainty]

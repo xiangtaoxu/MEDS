@@ -81,12 +81,12 @@ def ustar_diagnostic(obs: pd.DataFrame, target: str, cfg: dict, daytime_sw: floa
     drv_name = DRIVERS[target]
     edges = list(cfg["edges"])
     if drv_name not in obs or obs[drv_name].notna().sum() == 0:
-        return {"outcome": "too_few", "note": f"no {drv_name} (the site TOML declares none)"}
+        return {"outcome": "too_few", "driver": drv_name, "note": f"no {drv_name} (the site TOML declares none)"}
     flux, drv, u = (obs[c].to_numpy() for c in (target, drv_name, "ustar"))
     ok = (obs["sw_in"].to_numpy() > daytime_sw) & np.isfinite(flux) & np.isfinite(drv) & np.isfinite(u)
     ok &= drv >= float(cfg["min_driver"][drv_name])
     if ok.sum() < int(cfg["min_records"]):
-        return {"outcome": "too_few", "records": int(ok.sum()),
+        return {"outcome": "too_few", "driver": drv_name, "records": int(ok.sum()),
                 "note": f"fewer than {cfg['min_records']} measured daytime records"}
     day = (obs.index + pd.Timedelta(hours=utc_offset_h)).floor("D").to_numpy()[ok]
     flux, drv, u = flux[ok], drv[ok], u[ok]
