@@ -352,7 +352,8 @@ e = \mathrm{RH}\cdot e_{sat}(T)\ \text{(relative humidity)} \qquad(10)
 The file carries one total precipitation rate; the model needs rain and snow separately. The split is a
 linear ramp across a 1 K half-width band centred on the triple point (ED2's Jin 1999 form, simplified),
 mass-conserving by construction, on the *interpolated* sub-step air temperature rather than the record
-value — so the phase follows the diurnal cycle within an interval straddling freezing.
+value — so the phase follows the diurnal cycle within an interval straddling freezing. Each patch redoes
+the split at its canopy-air top (§8, step 2), the temperature the precipitation's enthalpy is valued at.
 
 ```math
 f_{liq} = \left[\frac{T-(T_3-1\,\mathrm{K})}{2\,\mathrm{K}}\right]_{0}^{1}, \qquad
@@ -433,8 +434,11 @@ $`2z_0`$ like the aerodynamics' own reference height, and $`z_T = d + `$`tq_heig
 or `tq_height` above the ground. A local wind (`"local"`) skips the first factor. The move
 conserves potential temperature, $\theta = T + (g/c_p)\,z$. The aerodynamics then references both the
 canopy air's potential temperature and this air's to $`z_c`$, where each equals its actual temperature
-([canopy aerodynamics](canopy_aerodynamics.md) §2). Humidity, pressure, radiation, rain and CO₂ are unchanged — pressure
-stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is re-derived.
+([canopy aerodynamics](canopy_aerodynamics.md) §2). Humidity, pressure, radiation, total precipitation and CO₂ are
+unchanged — pressure stays at the ground, where the canopy air, ground and leaves use it — and $`\rho_{air}`$ is
+re-derived. The rain/snow split (11) is redone at $`T(z_c)`$: precipitation enters the canopy there, and
+its enthalpy is valued there too (rain as liquid and snow as ice at that temperature, `precip_enthalpy`),
+so phase and enthalpy come from the same air.
 The aerodynamics then runs from $`z_c`$: there is no fixed reference height, and nothing has to clear the
 canopy.
 

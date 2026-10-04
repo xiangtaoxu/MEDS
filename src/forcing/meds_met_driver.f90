@@ -348,7 +348,8 @@ contains
          mean_rec = interval_mean_record(src, cur)
 
          !----- rainfall: the interval's total rate, held across it (never smeared), then split by  !
-         !      phase on the interpolated temperature. ------------------------------------------------!
+         !      phase on the interpolated temperature. That is the split at the forcing's own height;   !
+         !      each patch redoes it at its canopy-air top (met_to_cas_top). -------------------------!
          precip_total = mean_rec%rainf
          call precip_phase(precip_total, met%tair_k, met%rainf, met%snowfall)
 

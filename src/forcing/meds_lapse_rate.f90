@@ -24,7 +24,7 @@ module meds_lapse_rate
    use meds_constants,       only : grav, r_dry, cp_air
    use meds_therm_lib,       only : sat_vapor_pressure, air_density
    use meds_forcing_config,  only : forcing_config_t, HEIGHT_ABOVE_ZERO_PLANE, WIND_EXPOSURE_OPEN_TERRAIN
-   use meds_forcing_kernels, only : clear_sky_emissivity, rh_to_specific_humidity
+   use meds_forcing_kernels, only : clear_sky_emissivity, rh_to_specific_humidity, precip_phase
    use meds_forcing_types,   only : met_forcing_t
    implicit none
    private
@@ -131,8 +131,10 @@ contains
    end function cas_top_air_temperature
 
    !----- A forcing record at a patch's canopy-air top: wind (and its vector) by the patch's factor, !
-   !      temperature along the dry adiabat, air density re-derived. Humidity is conserved and the   !
-   !      radiation, rain and pressure are unchanged.                                                 !
+   !      temperature along the dry adiabat, air density re-derived, and the rain/snow split redone at !
+   !      that temperature -- the one the precipitation's enthalpy is valued at (precip_enthalpy), so   !
+   !      phase and enthalpy come from the same air. Humidity is conserved and the radiation, the total !
+   !      precipitation and the pressure are unchanged.                                                !
    pure function met_to_cas_top(met, f, z_top, displace, rough) result(top)
       type(met_forcing_t),    intent(in) :: met
       type(forcing_config_t), intent(in) :: f
@@ -148,6 +150,7 @@ contains
       end if
       top%tair_k  = cas_top_air_temperature(f, met%tair_k, z_top, displace)
       top%rho_air = air_density(top%tair_k, top%psurf_pa, top%qair)
+      call precip_phase(met%rainf + met%snowfall, top%tair_k, top%rainf, top%snowfall)
    end function met_to_cas_top
 
 end module meds_lapse_rate
