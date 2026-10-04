@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """plot_evaluation.py -- MEDS at Barro Colorado Island against the tower it was driven by.
 
-The model's hourly records are stamped at the START of their hour in UTC; the tower's half hours
-at their start in Panama time (UTC-5). This moves the model to local time -- the post-processing
-step that UTC-only forcing leaves to the user -- and averages the tower's two half hours of each
-model hour. Turbulent fluxes (and the tower's GPP, partitioned from them) are compared only where
-the tower's FLAG says they were measured; net radiation wherever the tower has it.
+The tower is read through its site TOML (bci_site.toml) by the one reader of tower files,
+scripts/prepare_flux_tower/tower_inputs.py: its half hours on their UTC start, each flux only where
+the site TOML's rule says it was measured (the turbulent fluxes and the GPP partitioned from them
+where FLAG = 1; net radiation wherever present). The model's hourly records are stamped at the
+start of their hour in UTC. The tower's two half hours of each model hour are averaged, and both are
+moved to local time -- the post-processing step that UTC-only forcing leaves to the user.
 
 The figure: for carbon (GPP, NEE), water (LE) and energy (H, net radiation), the mean diurnal cycle
 in local time over the evaluation years (top), and the mean seasonal cycle by calendar month
@@ -24,6 +25,7 @@ import argparse
 import glob
 import json
 import os
+import sys
 
 import matplotlib
 matplotlib.use("Agg")
@@ -33,20 +35,21 @@ import pandas as pd  # noqa: E402
 from netCDF4 import Dataset  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-UTC_OFFSET_H = -5.0
+sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "prepare_flux_tower"))
+import tower_inputs as ti  # noqa: E402  (the one reader of tower files)
 MIN_MONTH_HOURS = 240          # a calendar month needs at least ten days of hours the tower measured
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 MODEL, TOWER, CALIBRATED = "#2a78d6", INK, "#d4661c"
-#        model variable    tower column  group      name             units            measured only
-PAIRS = [("gpp_rate_fast", "gpp",   "carbon", "GPP",             "µmol m⁻² s⁻¹", True),
-         ("nee_fast",      "NEE",   "carbon", "NEE",             "µmol m⁻² s⁻¹", True),
-         ("le_flux_fast",  "LE",    "water",  "latent heat",     "W m⁻²",        True),
-         ("h_flux_fast",   "H",     "energy", "sensible heat",   "W m⁻²",        True),
-         ("rnet_fast",     "Rnet",  "energy", "net radiation",   "W m⁻²",        False)]
+#        model variable    tower flux  group      name             units
+PAIRS = [("gpp_rate_fast", "GPP",   "carbon", "GPP",             "µmol m⁻² s⁻¹"),
+         ("nee_fast",      "NEE",   "carbon", "NEE",             "µmol m⁻² s⁻¹"),
+         ("le_flux_fast",  "LE",    "water",  "latent heat",     "W m⁻²"),
+         ("h_flux_fast",   "H",     "energy", "sensible heat",   "W m⁻²"),
+         ("rnet_fast",     "Rnet",  "energy", "net radiation",   "W m⁻²")]
 MONTHS = "JFMAMJJASOND"
 
 
-def read_model(pattern):
+def read_model(pattern, utc_offset_h):
     """The hourly records as a DataFrame on LOCAL time (the start of each hour)."""
     frames = []
     for path in sorted(glob.glob(pattern)):
@@ -54,23 +57,21 @@ def read_model(pattern):
             cols = {v: np.asarray(ds[v][:], dtype=float).squeeze() for v, *_ in PAIRS}
             stamp = pd.to_datetime(dict(year=ds["year"][:], month=ds["month"][:], day=ds["day"][:],
                                         hour=ds["hour"][:], minute=ds["minute"][:]))
-        frames.append(pd.DataFrame(cols, index=stamp + pd.Timedelta(hours=UTC_OFFSET_H)))
+        frames.append(pd.DataFrame(cols, index=stamp + pd.Timedelta(hours=utc_offset_h)))
     if not frames:
         raise SystemExit(f"ERROR: no model output matches {pattern}; run the model first")
     model = pd.concat(frames).sort_index()
     return model.where(model.abs() < 1e30)
 
 
-def read_tower(path):
-    """The tower's half hours averaged to local clock hours; turbulent fluxes only where measured."""
-    tower = pd.read_csv(path, parse_dates=["date"], index_col="date")
-    for _, col, *_rest, measured_only in PAIRS:
-        if measured_only:
-            tower[col] = tower[col].where(tower["FLAG"] == 1)
+def read_tower(site):
+    """The tower's measured half hours (the site TOML's reader), averaged to the model's UTC hours
+    -- an hour counts when both its half hours were measured -- and moved to local time."""
+    table = ti.read_standard(site)
     cols = [col for _, col, *_ in PAIRS]
-    hourly = tower[cols].resample("1h").mean()
-    counts = tower[cols].resample("1h").count()
-    return hourly.where(counts == 2)
+    tower = table.values[cols].where(table.measured[cols])
+    hourly = tower.resample("1h").mean().where(tower.resample("1h").count() == 2)
+    return hourly.set_axis(hourly.index + pd.Timedelta(hours=site.utc_offset))
 
 
 def stats(m, t):
@@ -83,14 +84,15 @@ def stats(m, t):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=os.path.join(HERE, "output", "eval-F-*.nc"))
-    ap.add_argument("--tower", default=os.path.join(HERE, "data", "BCI_v5.1.csv"))
+    ap.add_argument("--site", default=os.path.join(HERE, "bci_site.toml"), help="the tower's site TOML")
     ap.add_argument("--out", default=os.path.join(HERE, "evaluation.png"))
     ap.add_argument("--stats", default=os.path.join(HERE, "output", "evaluation_stats.json"))
     ap.add_argument("--calibrated", default=None, help="the calibrated run's hourly files (a glob)")
     args = ap.parse_args(argv)
-    model = read_model(args.model)
-    tower = read_tower(args.tower).reindex(model.index)
-    cal = read_model(args.calibrated).reindex(model.index) if args.calibrated else None
+    site = ti.read_site(args.site)
+    model = read_model(args.model, site.utc_offset)
+    tower = read_tower(site).reindex(model.index)
+    cal = read_model(args.calibrated, site.utc_offset).reindex(model.index) if args.calibrated else None
 
     plt.rcParams.update({"axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED,
                          "ytick.color": MUTED, "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.6,
@@ -98,7 +100,7 @@ def main(argv=None):
     fig, ax = plt.subplots(2, len(PAIRS), figsize=(3.3 * len(PAIRS), 6.8))
     hour, month = model.index.hour, model.index.month
     out, out_cal = {}, {}
-    for i, (mv, tv, group, name, units, _) in enumerate(PAIRS):
+    for i, (mv, tv, group, name, units) in enumerate(PAIRS):
         both = model[mv].notna() & tower[tv].notna()
         if cal is not None:
             both &= cal[mv].notna()
@@ -116,7 +118,7 @@ def main(argv=None):
             cd = c.groupby(hour[both]).mean()
             sc["r_diurnal"] = float(np.corrcoef(cd, td)[0, 1])
             a.plot(cd.index + 0.5, cd.values, color=CALIBRATED, lw=1.8, label="MEDS calibrated")
-        a.set(title=f"{group}: {name}\n({units})", xlabel=f"local time (UTC{UTC_OFFSET_H:+g})",
+        a.set(title=f"{group}: {name}\n({units})", xlabel=f"local time (UTC{site.utc_offset:+g})",
               xticks=range(0, 25, 6))
         note = f"bias {s['bias']:+.2f}\nr (hourly) {s['r_hourly']:.2f}"
         if sc is not None:
