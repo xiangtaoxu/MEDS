@@ -55,7 +55,7 @@ ustar, by light: SW quartile 1 0.99, SW quartile 2 0.94, SW quartile 3 0.90, SW 
 
 ## kappa
 
-kappa = 0.724: the tower's respiration 3.28 -> 4.53 umol m-2 s-1; GPP 7.54 -> 8.79 (2.86 -> 3.33 kgC m-2 yr-1), means over the records with GPP and its respiration measured (daytime and night).
+kappa = 0.724: the tower's respiration 3.28 -> 4.53 umol m-2 s-1; GPP 7.54 -> 8.29 (2.86 -> 3.14 kgC m-2 yr-1), means over the records with GPP and its respiration measured, day and night; GPP gains the scaled respiration by day only.
 
 ## Uncertainty
 

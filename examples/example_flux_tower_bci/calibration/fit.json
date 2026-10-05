@@ -2849,10 +2849,10 @@
   "reco_tower": 3.2757317489014595,
   "reco_implied": 4.525899490510042,
   "gpp_tower": 7.541616301640184,
-  "gpp_implied": 8.791784043248768,
+  "gpp_implied": 8.285401238117037,
   "gpp_tower_kgc_yr": 2.85856167562429,
-  "gpp_implied_kgc_yr": 3.3324231731240834,
-  "note": "means over the records with GPP and its respiration measured (daytime and night)"
+  "gpp_implied_kgc_yr": 3.1404846785032587,
+  "note": "means over the records with GPP and its respiration measured, day and night; GPP gains the scaled respiration by day only"
  },
  "map": {
   "leaf_angle_mean": 51.28806201793396,

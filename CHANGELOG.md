@@ -151,8 +151,10 @@ before and after.
     (`[fast].canopy_water_on`) and fuses the census strictly, the demography calibration's choice:
     `patch_light_tol` 0.10 → 0.04, `patch_light_tol_max` 0.15 → 0.08 and `max_patch` 12 → 60. The
     census now starts as 130 patches and 1,924 cohorts instead of 25 and 419, so the gaps stay apart
-    from the closed forest. A five-year run takes 26 min on one core (was 6) and 4.7 min on eight
-    threads (was 1.4). The fusion barely moves the stand's fluxes, and with the interception the
+    from the closed forest. A five-year run takes 26 min on one core (was 6) and 4.6 min on eight
+    threads (was 1.4), and the example now asks for eight (`[run].n_threads = 8`; the output is
+    byte-identical to one thread's, all 2,436 output variables checked). `docs/building.md`'s timings
+    are remeasured on this stand: 16 threads run 8× faster than one. The fusion barely moves the stand's fluxes, and with the interception the
     default run goes from GPP 10.30 to 10.22 µmol m⁻² s⁻¹, LE 67.7 to 71.6 and H 68.1 to 64.6 W m⁻².
   - **One fit, no variants.** `calibration.toml` drops `[variants]` and a redundant `[overrides]`
     entry. One `fit.json` and `report.md` replace the two variants' files and `variants.json`.
@@ -162,9 +164,15 @@ before and after.
     0.78. Every key is within one posterior sd of the same fit with the old fusion. The validation
     passes, in σ, default against calibrated: GPP 2.05 → 1.44, u\* 1.73 → 0.67, upwelling longwave
     3.81 → 3.54, LE 1.65 → 1.58, H 4.16 → 4.28.
-  - **The five years, calibrated** (was the interception-off set): GPP 8.60 µmol m⁻² s⁻¹ (was 8.41;
-    the tower corrected for κ: 8.69); LE 64.0 (60.6) and H 69.8 (74.4) W m⁻²; u\* at night 0.48
-    (0.49) m s⁻¹, tower 0.41.
+  - **The five years, calibrated** (was the interception-off set): GPP 8.60 µmol m⁻² s⁻¹ (was 8.41)
+    against the fit's target of 8.19 (the tower's GPP with its respiration divided by κ, by day);
+    LE 64.0 (60.6) W m⁻²; H by day 141 against the closure-corrected tower's 167; u\* at night 0.48
+    (0.49) m s⁻¹, tower 0.42.
+  - **The evaluation compares with what the calibration scores.** `plot_evaluation.py` draws the
+    tower as the calibration scores it (dashed, by day: GPP with κ, H and LE with the closure gap),
+    from the calibration's own observation models and `fit.json`, and each panel's bias and r are
+    against it. The README's table gives the tower both as measured and as the fit's target, and
+    the calibration figure's axes say in words what prior z and its whisker are.
   - **The README** is rewritten around the pipeline and its results.
   - **`calibrate_fast`'s registry no longer ties a key to a variant's name.** The wet-canopy keys
     (`leaf_surf_water_max`, `wood_surf_water_max`, `intercept_k`) loaded only under a variant called
@@ -172,6 +180,9 @@ before and after.
     They are always in the registry: with interception off they have no effect, and the triage fixes
     such a key. The report, the fit's log and the calibrated files name a variant only when there is
     one.
+  - **`calibrate_fast`'s κ summary added the scaled respiration to GPP at night too,** where there
+    is no GPP; GPP's observation model adds it by day only. At BCI the GPP that κ implies is 8.29
+    µmol m⁻² s⁻¹ (3.14 kgC m⁻² yr⁻¹), not 8.79 (3.33). The fit itself was right.
 - **`calibrate_fast`, cleaned up after its review** (#365; `docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
   the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
   (below).

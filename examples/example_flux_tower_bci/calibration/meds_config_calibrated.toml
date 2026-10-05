@@ -19,6 +19,7 @@
 dt_slow    = "1d"
 start_time = "2012-08-01"
 end_time   = "2017-08-01"      # the recycle window itself, so every model year reads its own tower year
+n_threads  = 8                 # threads over the patches; the output is the same at any count
 
 [fast]
 fast_biophysics_on  = true

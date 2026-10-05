@@ -19,8 +19,9 @@ python run_example.py --calibrate --workers 40  # ... and redo the calibration f
 ```
 
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main`, default
-`../../build-ifx/meds_main`). A five-year run takes about 26 minutes on one core, or 5 minutes with
-`[run].n_threads = 8` (`docs/building.md`). The calibration takes about 5 hours on one 40-core node;
+`../../build-ifx/meds_main`). A five-year run takes about 5 minutes on the example's 8 threads
+(`[run].n_threads`; 3 minutes on 16, 26 on one), and gives the same output at any thread count
+(`docs/building.md`). The calibration takes about 5 hours on one 40-core node;
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md) runs it across a cluster.
 
 ## The data
@@ -105,10 +106,12 @@ calibrated configs, `fit.json`, and [`report.md`](calibration/report.md).
   by κ (prior 0.65 ± 0.10).
 
 **The keys.** Seven are fitted. `vcmax25` and `stomatal_g1` take their prior centres from the site's
-climate (eco-evolutionary optimality), the others from the PFT file. Prior z is how far the fit moved
-a key, in prior standard deviations:
+climate (eco-evolutionary optimality), the others from the PFT file. The calibrated value is the MAP
+(maximum a posteriori): the most probable value given both the tower and the prior. The 68 % range
+is the posterior's. Prior z is how far the fit moved a key from its prior centre, in prior standard
+deviations; in the figure, a whisker short against 1 marks a key the tower pinned down.
 
-| key | calibrated | 68 % | prior centre | prior z |
+| key | calibrated (MAP) | 68 % | prior centre | prior z |
 |---|---|---|---|---|
 | `vcmax25` [µmol m⁻² s⁻¹] | 31.4 | 30.4–32.3 | 41.0 (climate) | −0.54 |
 | `stomatal_g1` [kPa^0.5] | 3.00 | 2.88–3.11 | 2.80 (climate) | +0.14 |
@@ -140,7 +143,7 @@ Fixed:
 | all (the objective) | 61,251 | 51,377 |
 
 - **κ = 0.72** puts the tower's respiration at 4.53 µmol m⁻² s⁻¹ instead of 3.28, and its
-  GPP at 3.33 kgC m⁻² yr⁻¹ instead of 2.86.
+  GPP, which gains the extra respiration by day only, at 3.14 kgC m⁻² yr⁻¹ instead of 2.86.
 - **The closure is the largest uncertainty.** Sharing the gap between H and LE (the Bowen ratio)
   instead moves `stomatal_g1` to 4.59 and `wstress_sref_stomata` to 0.11.
 - **The intervals are rough:** they are local (Laplace), and the fit stops when an iteration gains
@@ -150,27 +153,32 @@ Fixed:
 
 ![MEDS against the BCI tower: mean diurnal and seasonal cycles of carbon, water and energy](evaluation.png)
 
-Over the tower's measured hours, 2012-08 to 2017-07:
+The dashed lines are the tower as the calibration scores it, by day: GPP with its respiration
+divided by κ, and H with the energy-closure gap added (LE takes none of it, so it is as measured).
+The table gives both, over the tower's measured hours, 2012-08 to 2017-07; each row uses the same
+hours in every column.
 
-| | tower | default | calibrated |
-|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 (8.69 with κ) | 10.22 | 8.60 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.03 | −3.34 |
-| LE [W m⁻²] | 75.5 | 71.6 | 64.0 |
-| H [W m⁻²] | 32.4 (as measured) | 64.6 | 69.8 |
-| net radiation [W m⁻²] | 136.3 | 121.7 | 121.7 |
-| albedo, shortwave above 200 W m⁻² | 0.129 | 0.183 | 0.176 |
-| u\* at night / at midday [m s⁻¹] | 0.41 / 0.71 | 0.84 / 1.12 | 0.48 / 0.69 |
-| midday (11–14 h) GPP, LE, H | 21.8, 243, 173 | 28.3, 208, 236 | 23.5, 188, 241 |
-| stand at the end: LAI, AGB [kgC m⁻²] | | 5.40, 17.8 | 5.48, 17.2 |
+| | tower, measured | tower, the fit's target | default | calibrated |
+|---|---|---|---|---|
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.19 | 10.22 | 8.60 |
+| LE [W m⁻²] | 75.5 | 75.5 | 71.6 | 64.0 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 135.9 | 140.8 |
+| H at night [W m⁻²] | −24.0 | −24.0 | −3.9 | 1.4 |
+| midday (11–14 h) GPP, LE, H | 21.8, 243, 174 | 23.3, 243, 307 | 28.3, 208, 238 | 23.5, 188, 242 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | | −4.03 | −3.34 |
+| net radiation [W m⁻²] | 136.3 | | 121.7 | 121.7 |
+| albedo, shortwave above 200 W m⁻² | 0.129 | | 0.183 | 0.176 |
+| u\* at night / at midday [m s⁻¹] | 0.42 / 0.71 | 0.42 / 0.71 | 0.85 / 1.12 | 0.48 / 0.69 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | | 5.40, 17.8 | 5.48, 17.2 |
 
-- **Carbon:** calibrated GPP matches the tower's corrected for κ, and u\* is close to the tower's.
-- **Energy:** the model's canopy reflects too much, so net radiation is 15 W m⁻² short. Against
-  the closure-corrected tower (H about 68 W m⁻² overall), the model's H is too high at night (about
-  0 against −24 W m⁻²) and too low by day (0.77 of it in the fit's windows).
-- **Water:** the calibration lowers LE, from 71.6 to 64.0 W m⁻² against the tower's 75.5. In the
-  dry season (January to April) its errors are smaller than the default's: GPP RMSE 3.98 against
-  6.36 µmol m⁻² s⁻¹, and LE RMSE 35.3 against 38.7 W m⁻².
+- **Carbon:** the calibration brings GPP from 25 % above its target to 5 % above (midday: 23.5
+  against 23.3), and u\* close to the tower's.
+- **Energy:** the model's canopy reflects too much, so net radiation is 15 W m⁻² short, and by day
+  its H is 0.85 of the target (242 against 307 at midday). At night its H is near 0 against the
+  tower's −24 W m⁻².
+- **Water:** the calibration lowers LE, from 71.6 to 64.0 W m⁻² against the tower's 75.5.
+- **The dry season** (January to April), RMSE against the targets: GPP 3.42 against the default's
+  5.71 µmol m⁻² s⁻¹, LE 35.3 against 38.7, H 71.2 against 68.3 W m⁻².
 - **Budgets:** whole-site energy and water close in every check of both runs.
 
 ## Files
