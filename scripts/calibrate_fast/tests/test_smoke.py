@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The calibration tool's smoke test with MEDS itself (MEDS_FAST_CALIBRATION_PLAN.md §7 P3): a
-self-contained site -- the demography example's census, a synthetic forcing file and tower -- through
-`calibrate_fast.py smoke`: a state chain, a trial restarted from it with its parameter record
-checked, one Jacobian column that must move the output, and a repeated trial that must reproduce it
-byte for byte. It runs once with meds_main (MEDS_MAIN names it) and once through the Python API
+"""The calibration tool with MEDS itself: a self-contained site -- the demography example's census,
+a synthetic forcing file and tower -- through `calibrate_fast.py check` (a state chain, a trial
+restarted from it with its parameter record checked, one gradient column that must move the output,
+a repeated trial that must match byte for byte, and a stand unchanged at the trial's end) and through
+a whole `fit`. The check runs once with meds_main (MEDS_MAIN names it) and once through the Python API
 (MEDS_LIB names libmeds.so); CTest sets both, and a run whose model is missing is skipped. The tower
 is half-hourly and the forcing hourly: the trials' output must come out on the tower's interval."""
 import os
@@ -126,11 +126,14 @@ def make_site(tmp_path, windows, head=""):
     decl = f"""{head}
 [base]
 main = "main.toml"
-registry = "registry.toml"
+parameters = "registry.toml"
 [overrides]
 "trait_dynamics.trait_plasticity_on" = true
 [tower]
 site = "site.toml"
+forcing_qc = []                    # the synthetic forcing has no qc variables
+[seasonal_runs]
+max_runs = 0
 # the synthetic sun is not the site's (its noon is 12 UTC at 76.5 W): only the three targets the smoke checks
 [targets.albedo]
 on = false
@@ -148,33 +151,34 @@ sigma_rel = 0.15
 sigma_abs = 1.5
 sigma_rel = 0.15
 [windows]
-days = 3
+days = 2
+chain_lead_days = 1
 {windows}"""
     (tmp_path / "calibration.toml").write_text(decl)
 
 
 @pytest.mark.parametrize("runner", RUNNERS)
-def test_smoke(tmp_path, runner):
+def test_check(tmp_path, runner):
     make_site(tmp_path, '''[[windows.list]]
 name = "w"
 start = "2001-06-02"
 role = "cal"
 ''')
-    res = subprocess.run([sys.executable, str(HERE / "calibrate_fast.py"), "smoke", "--site",
+    res = subprocess.run([sys.executable, str(HERE / "calibrate_fast.py"), "check", "--config",
                           str(tmp_path / "calibration.toml"), "--work", str(tmp_path / "work"),
-                          "--runner", runner, "--days", "2", "--key", "stomatal_g1"],
+                          "--runner", runner, "--workers", "3", "--key", "stomatal_g1"],
                          capture_output=True, text=True, timeout=1200)
     assert res.returncode == 0, res.stdout[-4000:] + res.stderr[-4000:]
-    assert "repeat byte-identical: True; Jacobian column moves the output: True" in res.stdout
+    for line in ("the gradient column of stomatal_g1 moves the output: True", "a repeated trial is byte-identical: True",
+                 "the stand is unchanged at the trial's end: True"):
+        assert line in res.stdout, line
 
 
 @pytest.mark.skipif(not MEDS_MAIN or not Path(MEDS_MAIN).exists(), reason="MEDS_MAIN is not set to a meds_main executable")
 def test_fit_end_to_end(tmp_path):
     """The whole joint fit on the synthetic site: the data report, the screening, Levenberg-Marquardt
-    before and after the refresh, the final gradient matrix, the validation, the gates and the
-    calibrated configs."""
-    make_site(tmp_path, '''chain_lead_days = 1
-[[windows.list]]
+    before and after the refresh, the final gradient matrix, the validation and the calibrated configs."""
+    make_site(tmp_path, '''[[windows.list]]
 name = "w"
 start = "2001-06-02"
 days = 2
@@ -184,8 +188,8 @@ name = "v"
 start = "2001-06-04"
 days = 2
 role = "val"
-''', head="[fit]\nscreening = \"report\"\nmax_iter = 2\n")
-    res = subprocess.run([sys.executable, str(HERE / "calibrate_fast.py"), "fit", "--site",
+''', head="[fit]\nmax_iter = 2\n")
+    res = subprocess.run([sys.executable, str(HERE / "calibrate_fast.py"), "fit", "--config",
                           str(tmp_path / "calibration.toml"), "--work", str(tmp_path / "work"),
                           "--runner", MEDS_MAIN, "--workers", "4"],
                          capture_output=True, text=True, timeout=1800)
@@ -193,9 +197,9 @@ role = "val"
     import json
     rep = json.loads((tmp_path / "work" / "fit.json").read_text())
     assert rep["fitted"] == ["stomatal_g1"] and "after_refresh" in rep["lm"] and rep["sigma_scale_refresh"]
-    assert {"G3", "G4", "G5", "G7", "G10", "G12", "G13"} <= set(rep["gates"]) and "G8" not in rep["gates"]
+    assert "pass" in rep["validation"] and "gates" not in rep and "stomatal_g1" in rep["key_table"]
     assert "stomatal_g1" in rep["intervals"] and rep["scores_val"]["map"]
     assert (tmp_path / "work" / "pft_parameters_calibrated.toml").exists()
     assert set(rep["alternatives"]) == {"gpp_ustar", "closure", "partitioning"} and "gpp" in rep["ratios"]
     text = (tmp_path / "work" / "report.md").read_text()
-    assert "## Gates" in text and "stomatal_g1" in text and "alternative closure" in text
+    assert "## Validation" in text and "stomatal_g1" in text and "alternative closure" in text

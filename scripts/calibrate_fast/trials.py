@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
-"""One trial: a frozen MEDS run over one window, restarted from that window's shared state with
-a candidate parameter set (MEDS_FAST_CALIBRATION_PLAN.md §5.1, §7 P1 "trials").
+"""Trials: frozen MEDS runs over one window, each restarted from that window's state with one set of
+key values (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md §6).
 
 A trial is a directory holding its own main and PFT TOML, made from the base configuration with
-meds.config by setting keys. Its name is a hash of the two, so a repeated candidate reuses the
+meds.config by setting keys. Its name is a hash of the two, so a repeated set of values reuses the
 finished run. A trial runs through the Python API (`python -m meds.model`) or the meds_main
-executable, whichever the fit's runner names; both write the same files. After the run the trial's
-parameter record (<prefix>_parameters.csv) must show every key the trial set, marked as set in the
-file, with the value written: a key that is missing or defaulted means a misspelling or a key the
-model does not read, and the trial fails rather than silently running the default.
+executable; both write the same files.
 
-A trial writes its fast output at the tower's own interval (the site sets [output].fast_interval_steps
-on the base configuration), stamped by each record's UTC start, the index the observations are on.
+A trial passes only when:
+  - the run ends with "OK: simulation completed";
+  - no whole-site budget breached its tolerance;
+  - the model's parameter record lists every key the trial set, read from the trial's file, with
+    the value written (a misspelt key or one the model does not read fails here, rather than
+    silently running the default);
+  - its fast output is on the tower's interval, with no missing or non-finite value.
+A trial that fails stops the fit with its log: a model that cannot run a set of values inside the
+keys' ranges has a bug to fix.
 """
 from __future__ import annotations
 
@@ -20,19 +24,19 @@ import hashlib
 import json
 import math
 import re
-import shutil
 import sys
-import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from netCDF4 import Dataset
 
+import targets
 from meds.config import RunConfig, read_record
+from workers import Task
 
-#: the fast variables a trial writes: every target's model side (residuals.py)
+#: the fast variables a trial writes: every target's model side (targets.py)
 TRIAL_VARIABLES = ("sw_in_fast", "sw_up_fast", "lw_up_fast", "rnet_fast", "le_flux_fast",
                    "h_flux_fast", "gpp_rate_fast", "nee_fast", "ustar_fast")
 PREFIX = "t"
@@ -40,8 +44,9 @@ PREFIX = "t"
 PYTHON_RUNNER = "python"
 #: the line meds_main and meds.model print when a run ends well (meds.model.COMPLETED)
 COMPLETED = "OK: simulation completed"
-#: netCDF4 and HDF5 are not thread-safe, and the fit's starts run in threads: every read takes this
-NC_LOCK = threading.RLock()
+#: the variables that describe the stand in a state file (the stand must not change in a trial)
+STAND_VARIABLES = ("pft", "nplant", "dbh", "height", "leaf_area", "leaf_carbon", "fineroot_carbon",
+                   "wood_carbon", "overtopping_lai", "patch_area")
 
 
 class TrialError(RuntimeError):
@@ -53,8 +58,7 @@ class Window:
     name: str
     start: dt.datetime          # UTC, the run's start_time
     days: int
-    role: str                   # "cal" or "val"
-    chain: str
+    role: str                   # "cal" (calibration), "val" (validation) or "seasonal" (a seasonal run)
 
     @property
     def end(self) -> dt.datetime:
@@ -72,26 +76,28 @@ def digest(*objs) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
 
 
-def set_param(cfg: RunConfig, p, value: float) -> None:
-    """Set one registry parameter in a run's configuration."""
-    cfg.set(p.key, float(value), file=p.file, pft=p.pft if p.file == "pft" else None)
+def timeout_for(days: float, per_day: float) -> float:
+    """A run's timeout [s]: per_day for each simulated day, at least ten days' worth so a short run's
+    start-up (reading the census) fits."""
+    return float(per_day) * max(float(days), 10.0)
 
 
-def with_params(base: RunConfig, params, theta, overrides: dict | None = None) -> RunConfig:
-    """A copy of the base configuration with a parameter set and the calibration's overrides."""
+def with_keys(base: RunConfig, keys, values, overrides: dict | None = None) -> RunConfig:
+    """A copy of the base configuration with the keys set to these values, then the calibration's
+    overrides. An observation key (kappa) enters the residuals, never a run."""
     cfg = base.copy()
-    for p, v in zip(params, theta):
-        if p.file != "obs":                    # an observation key enters the residuals, not the model
-            set_param(cfg, p, v)
+    for p, v in zip(keys, values):
+        if p.file != "obs":
+            cfg.set(p.key, float(v), file=p.file, pft=p.pft if p.file == "pft" else None)
     for k, v in (overrides or {}).items():
         cfg.set(k, v)
     return cfg
 
 
-def build_trial(base: RunConfig, params, theta, window: Window, state_file: str, root: Path,
+def build_trial(base: RunConfig, keys, values, window: Window, state_file, root: Path,
                 overrides: dict | None = None, write_state: bool = False) -> Path:
     """Write a trial directory (or find the finished one) and return its path."""
-    cfg = with_params(base, params, theta, overrides)
+    cfg = with_keys(base, keys, values, overrides)
     run = {"run.start_time": stamp(window.start), "run.end_time": stamp(window.end),
            "run.slow_on": False, "run.n_threads": 1,
            "init.init_mode": 2, "init.restart_file": str(state_file), "init.reacclimate_traits": True,
@@ -124,16 +130,20 @@ def command(runner: str, config: Path) -> list[str]:
     return [runner, str(config)]
 
 
+def log_tail(path: Path, n: int = 15) -> str:
+    text = path.read_text(errors="replace") if path.exists() else ""
+    return "\n".join(text.splitlines()[-n:])
+
+
 # ----- the parameter record ---------------------------------------------------------------------
-def check_record(tdir: Path, params, theta) -> None:
+def check_record(tdir: Path, keys, values) -> None:
     rec = read_record(tdir / "out" / f"{PREFIX}_parameters.csv",
                       {tdir / "main.toml": "main", tdir / "pft.toml": "pft"})
     bad = []
-    for p, v in zip(params, theta):
+    for p, v in zip(keys, values):
         if p.file == "obs":
             continue
-        idx = p.pft if p.file == "pft" else 0
-        hit = rec.get((p.file, p.key, idx))
+        hit = rec.get((p.file, p.key, p.pft if p.file == "pft" else 0))
         if hit is None:
             bad.append(f"{p.name} ({p.key}): not read by the model")
         elif not hit[0]:
@@ -141,7 +151,7 @@ def check_record(tdir: Path, params, theta) -> None:
         elif not math.isclose(hit[1], float(v), rel_tol=1e-14, abs_tol=0.0):
             bad.append(f"{p.name} ({p.key}): the model read {hit[1]!r}, the trial wrote {float(v)!r}")
     if bad:
-        raise TrialError(f"{tdir.name}: parameter record check failed:\n  " + "\n  ".join(bad))
+        raise TrialError(f"{tdir.name}: the parameter record does not match the trial:\n  " + "\n  ".join(bad))
 
 
 # ----- the output --------------------------------------------------------------------------------
@@ -150,7 +160,7 @@ def read_series(out_dir: Path, step: float) -> pd.DataFrame:
     the tower's interval, or the pairing with the observations would be wrong."""
     frames = []
     for path in sorted(out_dir.glob(f"{PREFIX}-F-*.nc")):
-        with NC_LOCK, Dataset(path) as ds:
+        with Dataset(path) as ds:
             cols = {v: np.asarray(ds[v][:], dtype=float).squeeze() for v in TRIAL_VARIABLES}
             when = pd.to_datetime(dict(year=ds["year"][:], month=ds["month"][:], day=ds["day"][:],
                                        hour=ds["hour"][:], minute=ds["minute"][:]))
@@ -164,18 +174,17 @@ def read_series(out_dir: Path, step: float) -> pd.DataFrame:
     return df.where(df.abs() < 1e30)
 
 
-def finish(tdir: Path, params, theta, step: float, keep_netcdf: bool = False) -> pd.DataFrame:
-    """Check a completed trial and cache its fast series (series.npz); raise TrialError if it
+def finish(tdir: Path, keys, values, step: float, keep_netcdf: bool = False) -> pd.DataFrame:
+    """Check a completed trial and keep its fast series (series.npz); raise TrialError if it
     failed. `step` is the tower's interval."""
     log = (tdir / "run.log").read_text(errors="replace") if (tdir / "run.log").exists() else ""
     if COMPLETED not in log:
-        tail = "\n".join(log.splitlines()[-15:])
-        raise TrialError(f"{tdir.name}: the run did not complete\n{tail}")
-    #----- a set that breaks conservation is not a good run, however well it fits
+        raise TrialError(f"{tdir.name}: the run did not complete\n{log_tail(tdir / 'run.log')}")
+    #----- a set of values that breaks conservation is not a good run, however well it fits
     for which, fails in re.findall(r"budget\[(whole_\w+)\].*fails = (\d+)/", log):
         if int(fails) > 0:
-            raise TrialError(f"{tdir.name}: the {which} budget breached tolerance {fails} times")
-    check_record(tdir, params, theta)
+            raise TrialError(f"{tdir.name}: the {which} budget breached its tolerance {fails} times")
+    check_record(tdir, keys, values)
     df = read_series(tdir / "out", step)
     if df.isna().any().any():
         raise TrialError(f"{tdir.name}: missing or non-finite values in the fast output")
@@ -193,5 +202,80 @@ def load_series(tdir: Path) -> pd.DataFrame:
     return pd.DataFrame({v: z[v] for v in TRIAL_VARIABLES}, index=idx)
 
 
-def clean(tdir: Path) -> None:
-    shutil.rmtree(tdir, ignore_errors=True)
+def stand_unchanged(state_a, state_b) -> list:
+    """The stand variables that differ between two state files (none: the trial left the stand as
+    it found it)."""
+    with Dataset(state_a) as a, Dataset(state_b) as b:
+        return [v for v in STAND_VARIABLES if v in a.variables
+                and not np.array_equal(np.asarray(a[v][:]), np.asarray(b[v][:]))]
+
+
+# ----- the runner -------------------------------------------------------------------------------
+@dataclass
+class TrialRunner:
+    """Runs sets of key values over windows and returns their residuals."""
+    keys: list                       # every key the fit may move (parameters.Param)
+    windows: list                    # the windows residuals() runs by default
+    rows: dict                       # window name -> targets.WindowRows
+    states: dict                     # window name -> its state file
+    base: RunConfig                  # the base main and PFT files
+    overrides: dict
+    runner: str                      # "python" (the Python API) or a meds_main executable
+    workers: object
+    root: Path
+    step: float                      # the tower's interval [s]: the trials' output must match it
+    timeout_per_day: float
+    fixed_observation_keys: dict = field(default_factory=dict)   # observation keys not fitted
+    keep_netcdf: bool = False
+    log: object = print
+    seconds: list = field(default_factory=list)
+    n_trials: int = 0
+
+    def observation_keys(self, values) -> dict:
+        """The observation keys (kappa) of a set of values: they enter the residuals, never a run."""
+        out = dict(self.fixed_observation_keys)
+        out.update({p.key: float(v) for p, v in zip(self.keys, values) if p.file == "obs"})
+        return out
+
+    def run(self, value_sets: list, windows) -> list:
+        """Run (or find finished) every (values, window) trial; returns, per set of values, its
+        trial directories. A failed trial raises TrialError."""
+        dirs = [[build_trial(self.base, self.keys, vals, w, self.states[w.name], self.root, self.overrides)
+                 for w in windows] for vals in value_sets]
+        todo, seen = [], set()
+        for vals, tds in zip(value_sets, dirs):
+            for w, td in zip(windows, tds):
+                if td not in seen and not (td / "series.npz").exists():
+                    seen.add(td)
+                    todo.append((td, vals, Task(td.name, command(self.runner, td / "main.toml"), str(td),
+                                                str(td / "run.log"), timeout_for(w.days, self.timeout_per_day))))
+        status = self.workers.run([t for _, _, t in todo]) if todo else {}
+        self.n_trials += len(todo)
+        for td, vals, task in todo:
+            st, secs = status[task.id]
+            self.seconds.append(secs)
+            if st != "ok":
+                raise TrialError(f"{td.name}: {st}\n{self.describe(vals)}\n{log_tail(td / 'run.log')}")
+            try:
+                finish(td, self.keys, vals, self.step, self.keep_netcdf)
+            except TrialError as e:
+                raise TrialError(f"{e}\n{self.describe(vals)}") from None
+        return dirs
+
+    def residuals(self, value_sets: list, windows=None) -> list:
+        """One stacked residual vector per set of values (over self.keys)."""
+        windows = self.windows if windows is None else windows
+        out = []
+        for vals, tds in zip(value_sets, self.run(value_sets, windows)):
+            ok = self.observation_keys(vals)
+            parts = []
+            for w, td in zip(windows, tds):
+                try:
+                    parts.append(targets.residual(self.rows[w.name], load_series(td), ok))
+                except ValueError as e:
+                    raise TrialError(f"{td.name}: {e}\n{self.describe(vals)}") from None
+            out.append(np.concatenate(parts) if parts else np.zeros(0))
+        return out
+
+    def describe(self, values) -> str:
+        return "the values: " + ", ".join(f"{p.name} {float(v):.6g}" for p, v in zip(self.keys, values))

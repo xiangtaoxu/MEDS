@@ -146,6 +146,46 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **`calibrate_fast`, cleaned up after its review** (`docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
+  the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
+  (below).
+  - **No gates.** G3, G5, G7, G10 and G12 could not fail, or only reported. G4 is now the report's one
+    verdict: the validation passes when the calibrated cost is below the default's and no target is
+    more than 10 % worse. G13 and G5 are marks in the report's key table. G1 and G2 are tested by
+    `check`, which CTest runs.
+  - **A failed trial stops the fit** with its values and log, instead of being absorbed by retries and
+    rejected steps. The timeout is `[fit].timeout_per_day`.
+  - **Errors instead of silent drops:**
+    - the closure model without Rnet, H or LE;
+    - the GPP observation model without RECO;
+    - a declared forcing qc variable the file lacks (a misspelt name used to switch the mask off);
+    - a window with no usable record.
+
+    The tower's flux checks (F1–F3) now stop the calibration as they stop the forcing build.
+  - **Removed:**
+    - the commands `analyze` (a re-run of `fit` replays its trials from the cache) and
+      `write-calibrated` (`fit` writes the configs);
+    - `smoke`, merged into `check`, and `select-windows`, folded into `report`;
+    - the options the protocol had decided: `[fit].weights`, `refresh`, `screening` and `loss`, and
+      `[targets.*].obs_model`, `sigma_source`, `night` and `sigma`;
+    - `[tower].forcing` and `forcing_grid`: the forcing is now the base config's own;
+    - `[tower].forcing_qc_val`: one qc list for every window;
+    - the BCI-only diagnostic of the canopy-air tops above the sensor (#350), and nine unused
+      helpers.
+  - **Renamed for a reader who knows towers and forests rather than Python:**
+    - the calibration's settings: `--config` (was `--site`); `calibration_reference.toml` (was
+      `site_reference.toml`); `[base].parameters`; `[seasonal_runs]` (was `[windows.seasonal]`);
+      `[ustar].plateau_fraction` and `classes`; `[closure].min_rise`; `[windows].per_year` and
+      `min_coverage`; `[fit].min_cost_drop`, `recompute_every`, `uninformed_sd_ratio` and
+      `max_correlation`; `[uncertainty].refit_beyond_sd`;
+    - the modules: `data_rules.py`, `observation_models.py`, `targets.py`, `parameters.py`,
+      `chains.py`, `workers.py`, and the new `calibration.py`, `uncertainty.py`, `report.py` and
+      `calibrated_files.py`, imported by their names.
+  - **The registry:** the keys fixed only by BCI's screening (VIS optics, NIR transmittance,
+    `d_ratio`, `leaf_width`, `dsl_dmax`, `intercept_k`) are `optional`, with their reasons stated as
+    rules. An unknown registry field is an error.
+  - **The BCI example:** `calibration.toml` holds only its choices. With one forcing-qc list, its
+    validation windows are in 2015–2017, the years with observed longwave, instead of 2013–2015.
 - **The BCI example's calibrated set, refitted by the best-practice protocol** (P7).
   - **Leaf light use:** the example now uses #351's values, `phi_psii` 0.74 and θ_J 0.7.
   - **The owner's choices after the first fit:** the albedo target is off and the NIR reflectance

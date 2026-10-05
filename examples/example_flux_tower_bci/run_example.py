@@ -28,6 +28,7 @@ Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 
@@ -84,13 +85,11 @@ def main(argv=None):
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
     if args.calibrate:
         work = os.path.join(CALIB, f"run_{args.variant}")
-        run([py, CALIBRATE_FAST, "fit", "--site", "calibration.toml", "--variant", args.variant, "--work", work,
-             "--runner", args.meds_main, "--pool", "local", "--workers", str(args.workers)])
-        run([py, CALIBRATE_FAST, "write-calibrated", "--site", "calibration.toml", "--variant", args.variant,
-             "--fit", os.path.join(work, "fit.json"), "--out", CALIB])
-        for name, out in (("fit.json", f"fit_{args.variant}.json"), ("report.md", f"report_{args.variant}.md")):
-            with open(os.path.join(work, name)) as src, open(os.path.join(CALIB, out), "w") as dst:
-                dst.write(src.read())
+        run([py, CALIBRATE_FAST, "fit", "--config", "calibration.toml", "--variant", args.variant, "--work", work,
+             "--runner", args.meds_main, "--workers", str(args.workers)])
+        for name, out in (("fit.json", f"fit_{args.variant}.json"), ("report.md", f"report_{args.variant}.md"),
+                          ("meds_config_calibrated.toml", None), ("pft_parameters_calibrated.toml", None)):
+            shutil.copyfile(os.path.join(work, name), os.path.join(CALIB, out or name))
     calibrated = os.path.join(CALIB, "meds_config_calibrated.toml")
     if os.path.exists(calibrated):
         run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))

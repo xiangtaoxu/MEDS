@@ -1,30 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 """The data rules (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md §2.3, §2.5, §6.2). Each works at any
-tower from its own data and forcing; the site's calibration.toml can override every outcome.
+tower from its own data and forcing; the calibration's settings can override every outcome.
 
   u* per target      within classes of the target's driver (PAR for GPP, Rnet for LE and H), the
                      flux-to-driver ratio across u* classes. The plateau test (Papale et al. 2006)
-                     finds the lowest class within `crit` of the mean of the classes above; a
-                     bootstrap over days gives its spread (Barr et al. 2013). The outcome:
+                     finds the lowest class within `plateau_fraction` of the mean of the classes
+                     above; a bootstrap over days gives its spread (Barr et al. 2013). The outcome:
                        plateau   filter at the threshold
                        flat      the lowest class already passes: no filter
                        rising    still rising at the top classes: no filter (the target's
                                  observation model has to handle it)
-                     For CO2 the provider's threshold is the default and the plateau the
-                     alternative; a diagnostic with too few records falls back to the provider's
-                     threshold on CO2 only.
+                       too_few   too few records for the test: no filter
   processes          for each process a key acts through (wet canopy, night, snow, drought), the
                      kept records that sample it. A key whose process has almost none is fixed.
-  windows            one ten-day calibration window per 1.5-month slot of the year inside the
+  windows            `per_year` ten-day calibration windows, one per slot of the year inside the
                      leaf-on months, each the slot's best covered (measured turbulent fluxes,
                      observed forcing); validation windows in the same slots of other years.
   seasonal runs      up to two 120-day runs, each ending at a year's deepest cumulative water
                      deficit (rain minus Priestley-Taylor evaporation, from the forcing).
 """
 from __future__ import annotations
-
-import datetime as dt
-import math
 
 import numpy as np
 import pandas as pd
@@ -38,7 +33,7 @@ SIGMA_SB = 5.670374419e-8
 # ------------------------------------------------------------------------------------------------
 # u*: a diagnostic per target
 # ------------------------------------------------------------------------------------------------
-def _plateau(ratios: np.ndarray, valid: np.ndarray, crit: float):
+def _plateau(ratios: np.ndarray, valid: np.ndarray, fraction: float):
     """The plateau test on one driver class's ratios by u* class: (outcome, index of the class).
     Classes with too few records are skipped."""
     idx = np.flatnonzero(valid)
@@ -46,7 +41,7 @@ def _plateau(ratios: np.ndarray, valid: np.ndarray, crit: float):
         return "too_few", None
     r = ratios[idx]
     for k in range(len(idx) - 1):
-        if r[k] >= crit * r[k + 1:].mean():
+        if r[k] >= fraction * r[k + 1:].mean():
             if k == 0:
                 return "flat", idx[0]
             if k >= len(idx) - 2:                 # only the top pair passes: still rising
@@ -55,16 +50,16 @@ def _plateau(ratios: np.ndarray, valid: np.ndarray, crit: float):
     return "rising", None
 
 
-def _classify(sums: np.ndarray, edges, min_n: int, crit: float):
+def _classify(sums: np.ndarray, classes, min_n: int, fraction: float):
     """Outcome and threshold from per-(driver class, u* class) sums [flux, driver, n]."""
     outcomes, thresholds = [], []
     for d in range(sums.shape[0]):
         flux, drv, n = sums[d, :, 0], sums[d, :, 1], sums[d, :, 2]
         with np.errstate(divide="ignore", invalid="ignore"):
             ratios = np.where(drv > 0, flux / drv, np.nan)
-        out, k = _plateau(ratios, (n >= min_n) & np.isfinite(ratios), crit)
+        out, k = _plateau(ratios, (n >= min_n) & np.isfinite(ratios), fraction)
         outcomes.append(out)
-        thresholds.append(None if k is None else (0.0 if out == "flat" else float(edges[k])))
+        thresholds.append(None if k is None else (0.0 if out == "flat" else float(classes[k])))
     usable = [o for o in outcomes if o != "too_few"]
     if not usable:
         return "too_few", None, outcomes
@@ -74,27 +69,27 @@ def _classify(sums: np.ndarray, edges, min_n: int, crit: float):
     return ("flat" if thr == 0.0 else "plateau"), thr, outcomes
 
 
-def ustar_diagnostic(obs: pd.DataFrame, target: str, cfg: dict, daytime_sw: float,
+def ustar_diagnostic(obs: pd.DataFrame, target: str, settings: dict, daytime_sw: float,
                      utc_offset_h: float) -> dict:
     """The u* diagnostic of one target on the whole record (measured daytime records): its outcome,
     threshold, the bootstrap's 5-50-95 % thresholds and outcome shares, and the ratio table."""
-    drv_name = DRIVERS[target]
-    edges = list(cfg["edges"])
-    if drv_name not in obs or obs[drv_name].notna().sum() == 0:
-        return {"outcome": "too_few", "driver": drv_name, "note": f"no {drv_name} (the site TOML declares none)"}
-    flux, drv, u = (obs[c].to_numpy() for c in (target, drv_name, "ustar"))
+    driver = DRIVERS[target]
+    classes = list(settings["classes"])
+    if obs[driver].notna().sum() == 0:
+        return {"outcome": "too_few", "driver": driver, "note": f"no {driver} (the site TOML declares none)"}
+    flux, drv, u = (obs[c].to_numpy() for c in (target, driver, "ustar"))
     ok = (obs["sw_in"].to_numpy() > daytime_sw) & np.isfinite(flux) & np.isfinite(drv) & np.isfinite(u)
-    ok &= drv >= float(cfg["min_driver"][drv_name])
-    if ok.sum() < int(cfg["min_records"]):
-        return {"outcome": "too_few", "driver": drv_name, "records": int(ok.sum()),
-                "note": f"fewer than {cfg['min_records']} measured daytime records"}
+    ok &= drv >= float(settings["min_driver"][driver])
+    if ok.sum() < int(settings["min_records"]):
+        return {"outcome": "too_few", "driver": driver, "records": int(ok.sum()),
+                "note": f"fewer than {settings['min_records']} measured daytime records"}
     day = (obs.index + pd.Timedelta(hours=utc_offset_h)).floor("D").to_numpy()[ok]
     flux, drv, u = flux[ok], drv[ok], u[ok]
-    n_dc = int(cfg["driver_classes"])
+    n_dc = int(settings["driver_classes"])
     dclass = np.minimum((pd.Series(drv).rank(method="first").to_numpy() - 1) * n_dc // len(drv), n_dc - 1).astype(int)
-    uclass = np.clip(np.searchsorted(edges, u, side="right") - 1, 0, len(edges) - 2)
+    uclass = np.clip(np.searchsorted(classes, u, side="right") - 1, 0, len(classes) - 2)
     days, day_id = np.unique(day, return_inverse=True)
-    n_uc = len(edges) - 1
+    n_uc = len(classes) - 1
     #----- per (day, driver class, u* class): the sums the test needs, so a bootstrap is a re-weighting
     cell = (day_id * n_dc + dclass) * n_uc + uclass
     size = len(days) * n_dc * n_uc
@@ -102,13 +97,13 @@ def ustar_diagnostic(obs: pd.DataFrame, target: str, cfg: dict, daytime_sw: floa
                         np.bincount(cell, weights=drv, minlength=size),
                         np.bincount(cell, minlength=size).astype(float)], axis=-1)
     per_day = per_day.reshape(len(days), n_dc, n_uc, 3)
-    min_n, crit = int(cfg["min_class_records"]), float(cfg["crit"])
-    outcome, thr, by_driver = _classify(per_day.sum(axis=0), edges, min_n, crit)
-    rng = np.random.default_rng(int(cfg["seed"]))
+    min_n, fraction = int(settings["min_class_records"]), float(settings["plateau_fraction"])
+    outcome, thr, by_driver = _classify(per_day.sum(axis=0), classes, min_n, fraction)
+    rng = np.random.default_rng(int(settings["seed"]))
     boot_thr, boot_out = [], []
-    for _ in range(int(cfg["n_boot"])):
+    for _ in range(int(settings["n_boot"])):
         w = np.bincount(rng.integers(0, len(days), len(days)), minlength=len(days)).astype(float)
-        o, t, _ = _classify(np.einsum("d,dcuk->cuk", w, per_day), edges, min_n, crit)
+        o, t, _ = _classify(np.einsum("d,dcuk->cuk", w, per_day), classes, min_n, fraction)
         boot_out.append(o)
         boot_thr.append(np.nan if t is None else t)
     boot_thr = np.array(boot_thr)
@@ -117,18 +112,19 @@ def ustar_diagnostic(obs: pd.DataFrame, target: str, cfg: dict, daytime_sw: floa
         table = [[None if total[d, k, 2] < min_n else float(total[d, k, 0] / total[d, k, 1])
                   for k in range(n_uc)] for d in range(n_dc)]
     finite = boot_thr[np.isfinite(boot_thr)]
-    return {"outcome": outcome, "threshold": thr, "records": int(len(flux)), "driver": drv_name,
-            "by_driver_class": by_driver, "ratio": table, "edges": edges,
+    return {"outcome": outcome, "threshold": thr, "records": int(len(flux)), "driver": driver,
+            "by_driver_class": by_driver, "ratio": table, "classes": classes,
             "driver_class_edges": [float(np.min(drv[dclass == d])) for d in range(n_dc)] + [float(np.max(drv))],
-            "bootstrap": {"n": int(cfg["n_boot"]),
+            "bootstrap": {"n": int(settings["n_boot"]),
                           "threshold_p05_p50_p95": ([float(np.percentile(finite, q)) for q in (5, 50, 95)]
                                                     if len(finite) else None),
                           "outcome_share": {o: boot_out.count(o) / len(boot_out) for o in sorted(set(boot_out))}}}
 
 
-def provider_threshold(site_provider: dict):
-    """The provider's CO2 u* threshold: a number, or {year: number}; None when it gives none."""
-    v = site_provider.get("ustar_threshold")
+def provider_threshold(provider: dict):
+    """The provider's CO2 u* threshold (the site TOML's [provider]): a number, or {year: number};
+    None when it gives none."""
+    v = provider.get("ustar_threshold")
     if v is None:
         return None
     if isinstance(v, dict):
@@ -136,30 +132,29 @@ def provider_threshold(site_provider: dict):
     return float(v)
 
 
-def resolve_ustar(targets_cfg: dict, obs: pd.DataFrame, provider, ucfg: dict, daytime_sw: float,
+def resolve_ustar(targets: dict, obs: pd.DataFrame, provider, settings: dict, daytime_sw: float,
                   utc_offset_h: float):
     """The targets' settings with every u* rule made a number (or a table of years, or None), and
-    the report: each target's diagnostic, choice and reason. A target's ustar_min is a number,
-    "provider" (the provider's CO2 threshold), "diagnostic" (its own diagnostic's outcome), or absent
-    (no filter). `night = true` keeps night records at the provider's threshold."""
-    out = {k: dict(v) for k, v in targets_cfg.items()}
+    the report: each target's diagnostic, rule and reason. A target's ustar_min is a number,
+    "provider" (the provider's CO2 threshold), "diagnostic" (its own diagnostic's outcome), or
+    absent (no filter)."""
+    out = {k: dict(v) for k, v in targets.items()}
     report = {}
     for t, c in out.items():
-        if not c.get("on", True):
+        if not c["on"]:
             continue
         rule = c.get("ustar_min")
-        diag = ustar_diagnostic(obs, t, ucfg, daytime_sw, utc_offset_h) if t in DRIVERS else None
+        diag = ustar_diagnostic(obs, t, settings, daytime_sw, utc_offset_h) if t in DRIVERS else None
         entry = {"rule": rule, "diagnostic": diag}
-        if rule == "provider" or (rule == "diagnostic" and t == "gpp" and diag["outcome"] == "too_few"):
+        if rule == "provider":
             if provider is None:
-                raise ValueError(f"[targets.{t}].ustar_min = {rule!r} needs the provider's u* threshold "
+                raise ValueError(f"[targets.{t}].ustar_min = \"provider\" needs the provider's u* threshold "
                                  "(the site TOML's [provider].ustar_threshold)")
             c["ustar_min"] = provider
-            entry["reason"] = ("the provider's CO2 threshold" if rule == "provider" else
-                               "the diagnostic had too few records: the provider's CO2 threshold")
+            entry["reason"] = "the provider's CO2 threshold"
         elif rule == "diagnostic":
             if diag is None:
-                raise ValueError(f"[targets.{t}].ustar_min = 'diagnostic': the diagnostic runs on gpp, le and h only")
+                raise ValueError(f"[targets.{t}].ustar_min = \"diagnostic\": the diagnostic runs on gpp, le and h only")
             c["ustar_min"] = diag["threshold"] if diag["outcome"] == "plateau" else None
             entry["reason"] = {"plateau": "a plateau: filtered at it", "flat": "the ratio is flat: no filter",
                                "rising": "still rising at the top u* classes: no filter (the observation model's job)",
@@ -167,11 +162,7 @@ def resolve_ustar(targets_cfg: dict, obs: pd.DataFrame, provider, ucfg: dict, da
         elif rule is not None and not isinstance(rule, (int, float, dict)):
             raise ValueError(f"[targets.{t}].ustar_min must be a number, \"provider\" or \"diagnostic\", not {rule!r}")
         else:
-            entry["reason"] = "set by the site" if rule is not None else "no u* filter"
-        if c.get("night"):
-            if provider is None:
-                raise ValueError(f"[targets.{t}].night needs the provider's u* threshold for its night records")
-            c["night_ustar"] = provider
+            entry["reason"] = "set in the calibration's settings" if rule is not None else "no u* filter"
         entry["ustar_min"] = c.get("ustar_min")
         report[t] = entry
     return out, report
@@ -193,31 +184,30 @@ PROCESSES = ("wet_canopy", "night", "snow", "drought")
 TURBULENT = ("le", "h", "gpp", "ustar")
 
 
-def process_coverage(specs: dict, obs: pd.DataFrame, windows, daytime_sw: float) -> dict:
+def process_coverage(rows: dict, obs: pd.DataFrame, windows, daytime_sw: float) -> dict:
     """For each process, the kept records that sample it, over the given windows:
       wet_canopy  turbulent-target records with rain in them or the record before
       night       turbulent-target records at night
       snow        albedo records within a week of freezing air
       drought     LE records of the seasonal runs (the soil-drying runs)"""
     counts = {p: 0 for p in PROCESSES}
-    rain = obs["rain"] if "rain" in obs else pd.Series(np.nan, index=obs.index)
-    wet = (rain.fillna(0.0) > 0.0)
+    wet = obs["rain"].fillna(0.0) > 0.0
     wet = wet | wet.shift(WET_LAG_RECORDS, fill_value=False)
-    frost = (obs["days_since_frost"] <= 7) if "days_since_frost" in obs else pd.Series(False, index=obs.index)
+    frost = obs["days_since_frost"] <= 7
     for w in windows:
-        spec = specs[w.name]
-        rows = set()
-        for t in spec.targets:
+        wr = rows[w.name]
+        kept = set()
+        for t in wr.targets:
             if t.name in TURBULENT:
-                rows.update(int(i) for i in t.rows)
+                kept.update(int(i) for i in t.rows)
             if t.name == "albedo":
-                counts["snow"] += int(frost.reindex(spec.index, fill_value=False).to_numpy()[t.rows].sum())
-            if t.name == "le" and w.role == "water":
+                counts["snow"] += int(frost.reindex(wr.index, fill_value=False).to_numpy()[t.rows].sum())
+            if t.name == "le" and w.role == "seasonal":
                 counts["drought"] += len(t.rows)
-        rows = np.array(sorted(rows), dtype=int)
-        if len(rows):
-            counts["wet_canopy"] += int(wet.reindex(spec.index, fill_value=False).to_numpy()[rows].sum())
-            sw = obs["sw_in"].reindex(spec.index).to_numpy()[rows]
+        kept = np.array(sorted(kept), dtype=int)
+        if len(kept):
+            counts["wet_canopy"] += int(wet.reindex(wr.index, fill_value=False).to_numpy()[kept].sum())
+            sw = obs["sw_in"].reindex(wr.index).to_numpy()[kept]
             counts["night"] += int((sw <= daytime_sw).sum())
     return counts
 
@@ -234,14 +224,13 @@ def days_since_frost(tair: pd.Series, utc_offset_h: float = 0.0) -> pd.Series:
     return pd.Series(since.reindex(local.floor("D")).to_numpy(), index=tair.index)
 
 
-def fix_by_coverage(params, coverage: dict, min_records: int) -> dict:
+def fix_by_coverage(keys, coverage: dict, min_records: int) -> dict:
     """Fix every key whose process the kept data sample in fewer than min_records records; returns
     {key: reason}."""
     fixed = {}
-    for p in params:
-        proc = getattr(p, "process", "")
-        if proc and coverage.get(proc, 0) < min_records:
-            fixed[p.name] = (f"the kept data sample its process ({proc}) in {coverage.get(proc, 0)} "
+    for p in keys:
+        if p.process and coverage[p.process] < min_records:
+            fixed[p.name] = (f"the kept data sample its process ({p.process}) in {coverage[p.process]} "
                              f"records, fewer than {min_records}")
     return fixed
 
@@ -249,25 +238,25 @@ def fix_by_coverage(params, coverage: dict, min_records: int) -> dict:
 # ------------------------------------------------------------------------------------------------
 # the windows
 # ------------------------------------------------------------------------------------------------
-def day_scores(obs: pd.DataFrame, forcing_ok: pd.Series, daytime_sw: float, utc_offset_h: float) -> pd.Series:
+def day_scores(obs: pd.DataFrame, forcing_observed: pd.Series, daytime_sw: float, utc_offset_h: float) -> pd.Series:
     """Each local day's coverage: the share of its daytime records with H, LE and GPP measured,
     times the share of all its records with observed forcing."""
     day = (obs.index + pd.Timedelta(hours=utc_offset_h)).floor("D")
     daytime = obs["sw_in"] > daytime_sw
     turb = daytime & obs[["h", "le", "gpp"]].notna().all(axis=1)
     frac_turb = turb.groupby(day).sum() / daytime.groupby(day).sum().replace(0, np.nan)
-    frac_forc = forcing_ok.reindex(obs.index, fill_value=False).astype(float).groupby(day).mean()
+    frac_forc = forcing_observed.reindex(obs.index, fill_value=False).astype(float).groupby(day).mean()
     s = (frac_turb * frac_forc).fillna(0.0)
     return s.asfreq("D", fill_value=0.0)
 
 
-def slot_of(doy: int, n_slots: int) -> int:
-    return min(int((doy - 1) * n_slots / 365.25), n_slots - 1)
+def slot_of(doy: int, per_year: int) -> int:
+    return min(int((doy - 1) * per_year / 365.25), per_year - 1)
 
 
-def candidate_windows(scores: pd.Series, days: int, n_slots: int, leaf_on: list, first_start) -> pd.DataFrame:
-    """Every ten-day span inside one slot and inside the leaf-on months, starting on or after
-    first_start: its start, year, slot and mean daily score."""
+def candidate_windows(scores: pd.Series, days: int, per_year: int, leaf_on: list, first_start) -> pd.DataFrame:
+    """Every span of `days` inside one slot and inside the leaf-on months, starting on or after
+    first_start: its start, year, slot and mean daily coverage."""
     roll = scores.rolling(days).mean().shift(-(days - 1))
     rows = []
     for start, sc in roll.dropna().items():
@@ -276,39 +265,34 @@ def candidate_windows(scores: pd.Series, days: int, n_slots: int, leaf_on: list,
         end = start + pd.Timedelta(days=days - 1)
         if end.year != start.year:
             continue
-        s0, s1 = slot_of(start.dayofyear, n_slots), slot_of(end.dayofyear, n_slots)
+        s0, s1 = slot_of(start.dayofyear, per_year), slot_of(end.dayofyear, per_year)
         span = pd.date_range(start, end, freq="D")
         if s0 != s1 or not set(span.month) <= set(leaf_on):
             continue
         rows.append((start, start.year, s0, float(sc)))
-    return pd.DataFrame(rows, columns=["start", "year", "slot", "score"])
+    return pd.DataFrame(rows, columns=["start", "year", "slot", "coverage"])
 
 
-def select_windows(obs: pd.DataFrame, fok: dict, wcfg: dict, leaf_on: list, record_start, daytime_sw: float,
-                   utc_offset_h: float):
-    """The calibration and validation windows by the rule (module docstring), and the report.
-    Returns (list of (name, start, role)), report)."""
-    days, n_slots = int(wcfg["days"]), int(wcfg["slots"])
-    first = pd.Timestamp(record_start).floor("D") + pd.Timedelta(days=int(wcfg["chain_lead_days"]))
-    min_score = float(wcfg["min_score"])
-    cal = candidate_windows(day_scores(obs, fok["cal"], daytime_sw, utc_offset_h), days, n_slots, leaf_on, first)
-    val = candidate_windows(day_scores(obs, fok["val"], daytime_sw, utc_offset_h), days, n_slots, leaf_on, first)
+def select_windows(scores: pd.Series, settings: dict, leaf_on: list, first_start):
+    """The calibration and validation windows by the rule (module docstring), from each day's
+    coverage (day_scores), and the report. Returns ([(name, start, role)], report)."""
+    days, per_year, need = int(settings["days"]), int(settings["per_year"]), float(settings["min_coverage"])
+    cand = candidate_windows(scores, days, per_year, leaf_on, first_start)
+    cand = cand[cand["coverage"] >= need]
     chosen, report = [], {"slots": {}}
-    years = sorted(set(cal["year"]) | set(val["year"]))
-    for s in range(n_slots):
-        c = cal[(cal["slot"] == s) & (cal["score"] >= min_score)]
+    for s in range(per_year):
+        c = cand[cand["slot"] == s].sort_values(["coverage", "start"], ascending=[False, True])
         if c.empty:
-            report["slots"][s + 1] = {"note": f"no window scores {min_score} or more"}
+            report["slots"][s + 1] = {"note": f"no window covers {need} or more"}
             continue
-        best = c.sort_values(["score", "start"], ascending=[False, True]).iloc[0]
+        best = c.iloc[0]
         chosen.append((f"cal{s + 1}_{best['year']}", best["start"].to_pydatetime(), "cal"))
-        entry = {"cal": [str(best["start"].date()), round(best["score"], 3)]}
-        if len(years) >= 2:
-            v = val[(val["slot"] == s) & (val["year"] != best["year"]) & (val["score"] >= min_score)]
-            if not v.empty:
-                bv = v.sort_values(["score", "start"], ascending=[False, True]).iloc[0]
-                chosen.append((f"val{s + 1}_{bv['year']}", bv["start"].to_pydatetime(), "val"))
-                entry["val"] = [str(bv["start"].date()), round(bv["score"], 3)]
+        entry = {"cal": [str(best["start"].date()), round(best["coverage"], 3)]}
+        v = c[c["year"] != best["year"]]
+        if not v.empty:
+            bv = v.iloc[0]
+            chosen.append((f"val{s + 1}_{bv['year']}", bv["start"].to_pydatetime(), "val"))
+            entry["val"] = [str(bv["start"].date()), round(bv["coverage"], 3)]
         report["slots"][s + 1] = entry
     return chosen, report
 
@@ -339,14 +323,13 @@ def water_deficit(daily: pd.DataFrame) -> pd.Series:
     return pd.Series(out, index=daily.index, name="deficit_mm")
 
 
-def forcing_daily(path: str, grid: int) -> pd.DataFrame:
+def forcing_daily(path, grid: int) -> pd.DataFrame:
     """Daily means of the forcing file (UTC days): air temperature, radiation, pressure, and the
     day's rain [mm] and Priestley-Taylor evaporation [mm]."""
-    from netCDF4 import Dataset, num2date
+    from netCDF4 import Dataset
+    from tower import forcing_times
     with Dataset(path) as ds:
-        t = ds["time"]
-        when = pd.to_datetime([d.strftime("%Y-%m-%d %H:%M:%S")
-                               for d in num2date(t[:], t.units, only_use_cftime_datetimes=False)])
+        when = forcing_times(ds)
         col = {v: np.asarray(ds[v][:, grid - 1], dtype=float) for v in ("Tair", "SWdown", "LWdown", "PSurf", "Rainf")}
     df = pd.DataFrame(col, index=when).resample("1D").mean().dropna()
     df["rain_mm"] = df["Rainf"] * 86400.0
@@ -354,14 +337,13 @@ def forcing_daily(path: str, grid: int) -> pd.DataFrame:
     return df
 
 
-def seasonal_runs(deficit: pd.Series, scfg: dict, leaf_on: list, first_start, scores: pd.Series,
-                  min_score: float):
+def seasonal_runs(deficit: pd.Series, settings: dict, leaf_on: list, first_start, scores: pd.Series,
+                  min_coverage: float):
     """Up to max_runs runs of `days` days, each ending at a year's deepest deficit inside the
     leaf-on months, deepest years first. A year is skipped when its deepest deficit is under
-    min_deficit_mm, or when the run's mean daily coverage (day_scores: measured turbulent fluxes,
-    observed forcing) is under min_score -- a run the data barely see scores nothing.
-    Returns ([(name, start, days)], report)."""
-    days, n_max, need = int(scfg["days"]), int(scfg["max_runs"]), float(scfg["min_deficit_mm"])
+    min_deficit_mm, or when the run's mean daily coverage (day_scores) is under min_coverage -- a
+    run the data barely see scores nothing. Returns ([(name, start, days)], report)."""
+    days, n_max, need = int(settings["days"]), int(settings["max_runs"]), float(settings["min_deficit_mm"])
     d = deficit[deficit.index.month.isin(leaf_on)]
     found = []
     for year, g in d.groupby(d.index.year):
@@ -372,16 +354,16 @@ def seasonal_runs(deficit: pd.Series, scfg: dict, leaf_on: list, first_start, sc
         found.append({"year": int(year), "end": str(end.date()), "deficit_mm": float(-g.min()),
                       "coverage": round(cover, 3),
                       "usable": bool(-g.min() >= need and start >= first_start and set(span.month) <= set(leaf_on)
-                                     and cover >= min_score),
+                                     and cover >= min_coverage),
                       "start": start})
     usable = sorted([f for f in found if f["usable"]], key=lambda f: -f["deficit_mm"])[:n_max]
-    runs = [(f"dry{f['year']}", f["start"].to_pydatetime(), days) for f in sorted(usable, key=lambda f: f["start"])]
+    runs = [(f"seasonal_{f['year']}", f["start"].to_pydatetime(), days)
+            for f in sorted(usable, key=lambda f: f["start"])]
     report = {"years": [{k: v for k, v in f.items() if k != "start"} for f in found],
-              "deepest_mm": max((f["deficit_mm"] for f in found), default=0.0),
               "runs": [[n, str(s.date()), dd] for n, s, dd in runs]}
     if not runs:
         report["note"] = (f"no year's deficit reaches {need:g} mm inside the leaf-on months, after the chains' lead "
-                          f"and with coverage {min_score:g}: no seasonal runs, the drought keys are fixed")
+                          f"and with coverage {min_coverage:g}: no seasonal runs, the drought keys are fixed")
     return runs, report
 
 
@@ -404,23 +386,3 @@ def range_coverage(record: dict, kept: dict) -> dict:
         out[k] = {"record": [float(lo), float(hi)], "kept": [float(y.min()), float(y.max())],
                   "share": float(max(0.0, b - a) / (hi - lo)) if hi > lo else 1.0}
     return out
-
-
-def area_above_sensor(state_file, freeboard: float, min_depth: float, sensor_height: float) -> dict:
-    """The share of the stand's area whose canopy-air top (tallest cohort + freeboard, at least
-    min_depth) is above the tower's sensor: the forcing is moved there along a neutral profile (#350)."""
-    from netCDF4 import Dataset
-    with Dataset(state_file) as ds:
-        h = np.asarray(ds["height"][:], float)
-        owner = np.asarray(ds["owner_patch"][:], int)
-        area = np.asarray(ds["patch_area"][:], float)
-    tops = np.array([max(min_depth, (h[owner == i + 1].max() if np.any(owner == i + 1) else 0.0) + freeboard)
-                     for i in range(len(area))])
-    above = float(area[tops > sensor_height].sum() / area.sum()) if area.sum() > 0 else math.nan
-    return {"sensor_height": sensor_height, "share_above": above,
-            "top_mean_area_weighted": float((tops * area).sum() / area.sum()),
-            "top_range": [float(tops.min()), float(tops.max())]}
-
-
-def to_datetime(x) -> dt.datetime:
-    return pd.Timestamp(x).to_pydatetime()
