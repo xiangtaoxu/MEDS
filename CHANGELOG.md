@@ -146,7 +146,7 @@ before and after.
   are in the plan's §13.
 
 ### Changed
-- **`calibrate_fast`, cleaned up after its review** (`docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
+- **`calibrate_fast`, cleaned up after its review** (#365; `docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
   the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
   (below).
   - **No gates.** G3, G5, G7, G10 and G12 could not fail, or only reported. G4 is now the report's one
