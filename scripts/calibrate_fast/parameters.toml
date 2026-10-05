@@ -17,7 +17,6 @@
 #   process   = "wet_canopy", "night", "snow" or "drought": the one process the key acts through. The
 #               fit fixes it when the kept data sample that process in fewer than
 #               [fit].min_process_records records (best-practice plan §2.5)
-#   variants  = only in these variants of the calibration
 #   shape     = true for a shape key of the leaf's light response: never fitted beside kappa
 #   kind      = "trait" (measurable, a prior from evidence), "effective" (a scheme property, labelled in the
 #               calibrated files), "numerical" (never calibrated) or "observation" (best-practice plan §4.2)
@@ -251,7 +250,6 @@ range = [0.05, 0.3]
 transform = "log"
 state = "fixed"
 process = "wet_canopy"
-variants = ["interception_on"]
 reason = "the tower does not see the wet canopy: at BCI FLAG gap-fills every raining hour and 56 % of the three hours after (an open-path analyser's usual loss), so a fit tunes it on dry hours only (owner, 2026-10-02). A tower that measures through rain may fit it"
 source = "leaf film capacity [kg m-2 leaf] (the old soil.dewmx, CLM5 0.1); plan §4.3 (interception on)"
 
@@ -263,7 +261,6 @@ range = [0.05, 0.3]
 transform = "log"
 state = "fixed"
 process = "wet_canopy"
-variants = ["interception_on"]
 reason = "as leaf_surf_water_max; the tower cannot tell the wood film from the leaf film"
 source = "woody-surface film capacity [kg m-2 wood] (the old soil.dewmx, CLM5 0.1)"
 
@@ -275,7 +272,6 @@ kind = "effective"
 range = [0.3, 0.8]
 state = "optional"
 process = "wet_canopy"
-variants = ["interception_on"]
 reason = "it acts only through the wet canopy, which a tower that gap-fills its rain hours never samples, and its response can be rough"
 source = "interception extinction coefficient; plan §4.3 (interception on)"
 

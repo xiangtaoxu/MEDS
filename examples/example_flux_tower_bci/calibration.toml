@@ -8,17 +8,6 @@
 main       = "meds_config_eval.toml"     # with the PFT file it names (pft_parameters.toml) and its forcing
 parameters = "../../scripts/calibrate_fast/parameters.toml"
 
-# Applied to every trial and every state chain.
-[overrides]
-"trait_dynamics.trait_plasticity_on" = true   # the traits follow the canopy light gradient
-
-# Canopy interception both ways: the structural variants.
-[variants.interception_off]
-"fast.canopy_water_on" = false
-
-[variants.interception_on]
-"fast.canopy_water_on" = true
-
 # The tower's facts (file, clock, columns, units, which values were measured) are bci_site.toml, the
 # forcing build's own. Its forcing qc variables (LWdown_qc, Wind_qc: the defaults) keep every window
 # on observed longwave and wind, so the windows fall in 2015-2017, the years the tower measured
@@ -39,7 +28,7 @@ source = "best-practice plan §3.3: the tower's respiration is about the soil ch
 
 [fit]
 plant_type      = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
-timeout_per_day = 30.0         # [s] a 10-day trial takes 8-60 s by the node's load
+timeout_per_day = 30.0         # [s] over 10x a trial on a busy node (median 2.5 s a day)
 
 # The windows and seasonal runs are chosen by the rules (best-practice plan §6.2; `calibrate_fast.py
 # report` prints them): eight ten-day windows, one per 1.5-month slot, each the slot's best covered,

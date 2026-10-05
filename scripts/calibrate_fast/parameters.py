@@ -54,7 +54,7 @@ EEO_KEYS = ("pft.stomatal_g1", "pft.vcmax25")
 PRIOR_KEYS = ("centre", "sd", "log_sd", "source")
 #: every field a registry entry may hold
 ENTRY_KEYS = {"file", "key", "pft", "range", "transform", "state", "reason", "process", "shape", "kind",
-              "scope", "fixed_at", "meta", "prior", "default", "variants", "source"}
+              "scope", "fixed_at", "meta", "prior", "default", "source"}
 
 
 @dataclass
@@ -159,9 +159,9 @@ def _check(p: Param):
         raise ValueError(f"{p.name}: prior.log_sd needs a log transform")
 
 
-def load(path, variant: str | None = None) -> list[Param]:
-    """Read the registry: one table per key. Keys restricted to other variants are dropped; an
-    unknown field is an error, so a misspelt one cannot be silently ignored."""
+def load(path) -> list[Param]:
+    """Read the registry: one table per key. An unknown field is an error, so a misspelt one cannot
+    be silently ignored."""
     out = []
     for name, e in load_toml(path).items():
         if not isinstance(e, dict):
@@ -169,9 +169,6 @@ def load(path, variant: str | None = None) -> list[Param]:
         bad = set(e) - ENTRY_KEYS
         if bad:
             raise ValueError(f"{name}: unknown registry fields {sorted(bad)}; known: {sorted(ENTRY_KEYS)}")
-        variants = tuple(e.get("variants", ()))
-        if variants and variant not in variants:
-            continue
         lo, hi = (float(x) for x in e["range"])
         p = Param(name=name, file=e["file"], key=e["key"], lo=lo, hi=hi, transform=e.get("transform", "linear"),
                   pft=e.get("pft", 1 if e["file"] == "pft" else None),
@@ -199,10 +196,10 @@ def select(registry: list[Param], fit_settings: dict, priors: dict) -> list[Para
     for k in ("keys", "add", "remove"):
         unknown = [n for n in fit_settings.get(k, []) if n not in names]
         if unknown:
-            raise ValueError(f"[fit].{k}: {unknown} are not in the registry (or not in this variant)")
+            raise ValueError(f"[fit].{k}: {unknown} are not in the registry")
     unknown = [n for n in priors if n not in names]
     if unknown:
-        raise ValueError(f"[priors]: {unknown} are not in the registry (or not in this variant)")
+        raise ValueError(f"[priors]: {unknown} are not in the registry")
     if "keys" in fit_settings and ("add" in fit_settings or "remove" in fit_settings):
         raise ValueError("[fit]: give `keys` (the exact list) or `add`/`remove`, not both")
     if "keys" in fit_settings:

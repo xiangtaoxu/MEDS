@@ -204,8 +204,8 @@ def cmd_fit(args):
     cal.load_data()
     fit_windows, val_windows = cal.fit_windows(), cal.validation_windows()
     all_windows = cal.windows + cal.seasonal_runs
-    log(f"variant {cal.variant}: {len(fit_windows) - len(cal.seasonal_runs)} calibration, {len(val_windows)} "
-        f"validation windows and {len(cal.seasonal_runs)} seasonal runs")
+    log(f"{f'variant {cal.variant}: ' if cal.variant else ''}{len(fit_windows) - len(cal.seasonal_runs)} "
+        f"calibration, {len(val_windows)} validation windows and {len(cal.seasonal_runs)} seasonal runs")
     base_record(cal, work, workers, args.runner, log)
     keys = cal.keys()
     start = np.array([p.centre for p in keys])
@@ -339,7 +339,7 @@ def after_the_fit(cal, fk, values_map, fit_rows, out, log):
     out["alternatives"] = uncertainty.alternatives(cal, fk, u_map, runner.windows, cov_u, J_map, r_map,
                                                    out["sigma_scale_refresh"], log)
     out["ratios"] = report.ratio_tables(cal, runner, values_map, runner.windows)
-    out["kappa"] = report.kappa_report(cal.data.obs, runner.keys, values_map)
+    out["kappa"] = report.kappa_report(cal.data.obs, runner.keys, values_map, cal.daytime_sw)
     if out["kappa"]:
         kr = out["kappa"]
         log(f"kappa {kr['kappa']:.3f}: the tower's respiration {kr['reco_tower']:.2f} -> {kr['reco_implied']:.2f}, "

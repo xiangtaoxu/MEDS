@@ -123,20 +123,20 @@ fast-loop target, **and it adds the per-compiler "all locals on the stack" flag*
 places local arrays and derived types in static storage shared by every thread; without that flag
 the kernels race and return plausible, silently thread-count-dependent numbers.
 
-**What threads buy.** The BCI census example (25 patches falling to 14), ifx Release, each run alone
-on an idle `R128C40` node, the second of two runs:
+**What threads buy.** The BCI flux-tower example (130 census patches, falling to about 57 over the
+five years), ifx Release, each run alone on an idle `R128C40` node; the 60-day times are the second
+of two runs:
 
 | `n_threads` | 60 days | five years |
 |---|---|---|
-| 1 | 25.5 s | 6 min 43 s |
-| 4 | 15.1 s | 2 min 23 s |
-| 8 | 12.3 s | 1 min 36 s |
-| 16 | 12.1 s | 1 min 25 s |
+| 1 | 82 s | 26 min 0 s |
+| 4 | 30 s | 7 min 53 s |
+| 8 | 20 s | 4 min 34 s |
+| 16 | 16 s | 3 min 12 s |
+| 32 | 14 s | 2 min 37 s |
 
-- **Sixty days is mostly start-up:** the serial census read and restructuring, and the forcing read,
-  take about 8 s.
-- **A site run gains little past about 14 threads,** because the patches are the parallel axis
-  and BCI keeps 14–25 of them.
+- **The patches are the parallel axis,** so a site run gains while it has more patches than
+  threads: at BCI 16 threads run 8× faster than one, and 32 only 20 % faster than 16.
 - **v0.3.1 was slower above four threads** (#325: 41.5 s at 8 threads and 56.7 s at 16 on the
   60-day case). ifx allocates a lock-guarded record on every call of a routine that hands one of
   its contained functions to another routine, and two such routines sat in the fast loop. No MEDS

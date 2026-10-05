@@ -72,11 +72,10 @@ def test_prior_band_is_the_range():
     assert p.to_value(p.u0 + GRADIENT_STEP_U) - 0.5 == pytest.approx(0.01, abs=1e-3)
 
 
-def test_registry_loads_filters_variants_and_refuses_unknown_fields(tmp_path):
-    off = {p.name for p in load(REGISTRY, "interception_off")}
-    on = {p.name for p in load(REGISTRY, "interception_on")}
-    assert "leaf_surf_water_max" not in off and "leaf_surf_water_max" in on and "stomatal_g1" in off
-    for p in load(REGISTRY, "interception_on"):
+def test_registry_loads_and_refuses_unknown_fields(tmp_path):
+    ps = load(REGISTRY)
+    assert {"leaf_surf_water_max", "intercept_k", "stomatal_g1"} <= {p.name for p in ps}
+    for p in ps:
         assert p.lo < p.hi and p.file in ("pft", "main", "obs")
     (tmp_path / "r.toml").write_text('[g1]\nfile = "pft"\nkey = "pft.stomatal_g1"\nrange = [1.0, 9.0]\ngroup = "x"\n')
     with pytest.raises(ValueError, match="unknown registry fields"):
@@ -856,6 +855,14 @@ def test_the_validation_verdict():
     assert not report.validation_verdict(scores, {"default": 10.0, "map": 8.0})["pass"]
 
 
+def test_kappa_scales_the_respiration_always_and_gpp_by_day_only():
+    """GPP gains the scaled respiration only by day: at night there is no GPP to correct."""
+    obs = pd.DataFrame({"gpp": [10.0, 0.0], "reco": [4.0, 4.0], "sw_in": [500.0, 0.0]})
+    kr = report.kappa_report(obs, [Param("kappa", "obs", "kappa", 0.4, 1.0)], [0.5], daytime_sw=10.0)
+    assert kr["reco_implied"] == pytest.approx(8.0)              # 4 / 0.5, day and night
+    assert kr["gpp_implied"] == pytest.approx((10.0 + 4.0) / 2)  # +4 by day, +0 at night
+
+
 def test_the_variants_side_by_side(tmp_path, capsys):
     for v, g1 in (("interception_off", 3.0), ("interception_on", 3.3)):
         (tmp_path / v).mkdir()
@@ -907,7 +914,7 @@ def test_select_follows_the_calibration():
 
 
 def test_the_registry():
-    ps = {p.name: p for p in load(REGISTRY, "interception_off")}
+    ps = {p.name: p for p in load(REGISTRY)}
     assert ps["theta_j"].state == "fixed" and ps["phi_psii"].state == "fixed" and ps["ea_vcmax"].state == "optional"
     assert ps["leaf_clumping"].state == "fixed" and ps["ds_jmax"].state == "fixed"
     assert all(ps[k].state == "optional" for k in ("leaf_width", "dsl_dmax", "d_ratio", "leaf_transmit_nir",
@@ -921,7 +928,7 @@ def test_the_registry():
     assert {n for n, p in ps.items() if p.fixed_at} == {"jmax_vcmax_ratio", "ds_vcmax", "ds_jmax"}
     assert all(p.prior.get("sd") or p.prior.get("log_sd") for p in ps.values() if p.state == "fit")   # bounds apart
     assert all(p.reason for p in ps.values() if p.state in ("fixed", "optional") and p.name not in ("ea_vcmax", "ea_jmax", "root_beta"))
-    assert {p.name: p for p in load(REGISTRY, "interception_on")}["intercept_k"].state == "optional"
+    assert ps["intercept_k"].state == "optional" and ps["intercept_k"].process == "wet_canopy"
 
 
 def test_kinds_scopes_and_plant_type_priors():

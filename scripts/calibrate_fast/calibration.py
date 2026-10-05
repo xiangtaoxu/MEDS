@@ -116,9 +116,9 @@ class Calibration:
 
     # ----- the keys --------------------------------------------------------------------------------
     def registry(self):
-        """Every registry key of this variant, with its state."""
+        """Every registry key, with its state."""
         try:
-            return parameters.load(self.parameters_path, self.variant)
+            return parameters.load(self.parameters_path)
         except ValueError as e:
             raise SystemExit(str(e))
 

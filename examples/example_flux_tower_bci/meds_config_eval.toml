@@ -9,6 +9,7 @@
 dt_slow    = "1d"
 start_time = "2012-08-01"
 end_time   = "2017-08-01"      # the recycle window itself, so every model year reads its own tower year
+n_threads  = 8                 # threads over the patches; the output is the same at any count
 
 [fast]
 fast_biophysics_on  = true
@@ -16,6 +17,7 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
+canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
 
 [demography]
 demography_on             = true
@@ -32,10 +34,10 @@ negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
 enable_cohort_fission     = true
 n_height_layers           = 16
-max_patch                 = 12
+max_patch                 = 60
 n_patch_fusion_iter       = 6
-patch_light_tol           = 0.10
-patch_light_tol_max       = 0.15
+patch_light_tol           = 0.04    # strict: the census's gaps stay apart from the closed forest
+patch_light_tol_max       = 0.08    #   (130 patches and 1,924 cohorts at the start)
 patch_light_maxdev_factor = 1.5
 patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4

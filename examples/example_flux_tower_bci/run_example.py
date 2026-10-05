@@ -22,7 +22,7 @@ Usage:
   python run_example.py --copy-from ~/BCI_flux   # take the data from a local copy
   python run_example.py --forcing-only           # steps 1-4: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
-  python run_example.py --calibrate --workers 40 # redo the fit: ~1 h on one 40-core node (scripts/calibrate_fast)
+  python run_example.py --calibrate --workers 40 # redo the fit: ~5 h on one 40-core node (scripts/calibrate_fast)
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
@@ -61,7 +61,6 @@ def main(argv=None):
     ap.add_argument("--forcing-only", action="store_true", help="stop after the forcing and its figures")
     ap.add_argument("--force", action="store_true", help="redo every step")
     ap.add_argument("--calibrate", action="store_true", help="redo the fast-parameter fit (step 7)")
-    ap.add_argument("--variant", default="interception_off", help="the calibration's variant (calibration.toml)")
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="trials at once for --calibrate")
     args = ap.parse_args(argv)
     py = sys.executable
@@ -84,12 +83,11 @@ def main(argv=None):
         run([py, CENSUS_TOOL, "--declaration", "bci_census.toml", "--out", CENSUS])
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
     if args.calibrate:
-        work = os.path.join(CALIB, f"run_{args.variant}")
-        run([py, CALIBRATE_FAST, "fit", "--config", "calibration.toml", "--variant", args.variant, "--work", work,
+        work = os.path.join(CALIB, "run")
+        run([py, CALIBRATE_FAST, "fit", "--config", "calibration.toml", "--work", work,
              "--runner", args.meds_main, "--workers", str(args.workers)])
-        for name, out in (("fit.json", f"fit_{args.variant}.json"), ("report.md", f"report_{args.variant}.md"),
-                          ("meds_config_calibrated.toml", None), ("pft_parameters_calibrated.toml", None)):
-            shutil.copyfile(os.path.join(work, name), os.path.join(CALIB, out or name))
+        for name in ("fit.json", "report.md", "meds_config_calibrated.toml", "pft_parameters_calibrated.toml"):
+            shutil.copyfile(os.path.join(work, name), os.path.join(CALIB, name))
     calibrated = os.path.join(CALIB, "meds_config_calibrated.toml")
     if os.path.exists(calibrated):
         run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))
