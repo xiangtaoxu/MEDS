@@ -204,8 +204,8 @@ def cmd_fit(args):
     cal.load_data()
     fit_windows, val_windows = cal.fit_windows(), cal.validation_windows()
     all_windows = cal.windows + cal.seasonal_runs
-    log(f"variant {cal.variant}: {len(fit_windows) - len(cal.seasonal_runs)} calibration, {len(val_windows)} "
-        f"validation windows and {len(cal.seasonal_runs)} seasonal runs")
+    log(f"{f'variant {cal.variant}: ' if cal.variant else ''}{len(fit_windows) - len(cal.seasonal_runs)} "
+        f"calibration, {len(val_windows)} validation windows and {len(cal.seasonal_runs)} seasonal runs")
     base_record(cal, work, workers, args.runner, log)
     keys = cal.keys()
     start = np.array([p.centre for p in keys])
