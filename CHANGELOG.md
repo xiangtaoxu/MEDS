@@ -146,7 +146,7 @@ before and after.
   are in the plan's §13.
 
 ### Changed
-- **The BCI example has one structure: the canopy's interception on.** The example's own config
+- **The BCI example has one structure: the canopy's interception on** (#366). The example's own config
   switches it on (`[fast].canopy_water_on = true`), so the default and the calibrated runs differ
   only by what the fit sets. `calibration.toml` drops its `[variants]`, and an `[overrides]` entry
   the base config already set.
