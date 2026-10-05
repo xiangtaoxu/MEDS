@@ -33,7 +33,7 @@ config; the Python driver reads the PFT table, the demographic settings and the 
 and the `[carbon]` / `[fast]` keys are required by the loader but unused here.
 
 (For the standalone leaf-level photosynthesis example, see
-[`../example_leaf_gas_exchange/`](../example_leaf_gas_exchange/); for the coupled carbon–water
+[`../example01_leaf_gas_exchange/`](../example01_leaf_gas_exchange/); for the coupled carbon–water
 biophysics, [`../example_biophysics/`](../example_biophysics/).)
 
 ## Reproduce
