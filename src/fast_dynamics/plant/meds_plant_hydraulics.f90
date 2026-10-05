@@ -65,7 +65,7 @@ contains
       real(wp), intent(in) :: nplant      !< [pl/m2] plant density
       real(wp) :: rai
       rai = broot * sra * root_frac * nplant                     ! root area index [m2/m2]
-      gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny(1.0_wp))
+      gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny_num)
    end function rhizosphere_cond
 
    !----- Reduce the root boundary to an effective (conductance, soil potential) at the wood node.    !
@@ -188,7 +188,7 @@ contains
             call exact_substep(ml,    mw,    0.5_wp*h,   xl2, xw2)                                       ! second half
             errl = abs(xl2 - xl) / (o%atol + o%rtol*abs(xl2))
             errw = abs(xw2 - xw) / (o%atol + o%rtol*abs(xw2))
-            err  = max(errl, errw, 1.0e-12_wp)
+            err  = max(errl, errw, 1.0e-12_wp)   ! clamp-ok: the step controller's error floor
             !----- A non-finite error (or trial state) means the linearised 2x2 advance itself blew up;  !
             !      accepting it would poison psi, and rejecting it forever is the hang guarded above.     !
             !      Stop here with the last good psi and let the caller see converged = .false. -----------!

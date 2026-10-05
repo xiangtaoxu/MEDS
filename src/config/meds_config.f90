@@ -33,7 +33,7 @@ module meds_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
-   public :: pft_leaf_psi_tlp
+   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -384,7 +384,10 @@ module meds_config
       real(wp) :: acclim_window_days = 30.0_wp   !< [day] growth-temperature running-mean window
       real(wp) :: o2_mol_frac                           !< [mol/mol] atmospheric O2 mole fraction
       real(wp) :: leaf_absorptance                      !< [--] leaf PAR absorptance (for electron transport)
-      real(wp) :: phi_psii                              !< [--] PSII quantum yield (electrons/photon)
+      real(wp) :: phi_psii                              !< [--] low-light electron yield (J slope 0.5*phi_psii/photon)
+      !< [kPa] the leaf-to-air VPD the Medlyn stomatal model uses at least: g1/sqrt(D) is undefined at D = 0.
+      !< CLM5's value (PhotosynthesisMod floors the Medlyn VPD at 50 Pa).
+      real(wp) :: medlyn_vpd_min = 0.05_wp
 
       !----- Carbon growth: the model's demographic growth is carbon-prognostic (wood_carbon is  !
       !       the size anchor, driven by NPP). gpp_ref is the stub GPP when the fast loop is off.  !
@@ -542,6 +545,19 @@ contains
       end if
       psi_tlp = pv_psi_tlp(pi0, elastic_mod)
    end function pft_leaf_psi_tlp
+
+   !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !
+   !      stomata_psi_onset where given, else half the PFT's turgor-loss point. Above the onset the    !
+   !      stomata feel no stress, so the predawn potential a tall tree has in wet soil -- its height's  !
+   !      gravity head, -0.34 MPa at 35 m -- does not read as drought. -------------------------------!
+   pure real(wp) function pft_stomata_psi_onset(cfg, ipft) result(psi_onset)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_onset = 0.5_wp * pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%stomata_psi_onset)) then
+         if (cfg%pft%stomata_psi_onset(ipft) > HYD_UNSET) psi_onset = cfg%pft%stomata_psi_onset(ipft)
+      end if
+   end function pft_stomata_psi_onset
 
    !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
@@ -989,6 +1005,7 @@ contains
       if (cfg%o2_mol_frac <= 0.0_wp)     error stop tag//'o2_mol_frac <= 0'
       if (cfg%leaf_absorptance <= 0.0_wp) error stop tag//'leaf_absorptance <= 0'
       if (cfg%phi_psii <= 0.0_wp)        error stop tag//'phi_psii <= 0'
+      if (cfg%medlyn_vpd_min <= 0.0_wp)  error stop tag//'medlyn_vpd_min <= 0 [kPa]'
       !----- Leaf physiology: per-PFT traits. ---------------------------------------------!
       if (any(cfg%pft%photosynthetic_pathway /= PATH_C3 .and.                              &
               cfg%pft%photosynthetic_pathway /= PATH_C4)) error stop tag//'photosynthetic_pathway not in {1,2}'
@@ -1006,7 +1023,11 @@ contains
       if (any(cfg%pft%wstress_psi_close >= cfg%pft%wstress_psi_open))                      &
          error stop tag//'wstress_psi_close must be below wstress_psi_open'
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
-         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*psi))'
+         error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
+      if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &
+         error stop tag//'stomata_psi_onset must be <= 0 (a predawn leaf water potential)'
+      if (any(cfg%pft%leaf_surf_water_max < 0.0_wp) .or. any(cfg%pft%wood_surf_water_max < 0.0_wp)) &
+         error stop tag//'leaf_surf_water_max and wood_surf_water_max must be >= 0 [kg/m2 of surface]'
       !----- C3 uses theta_j (the J hyperbola / co-limitation curvature); C4 does not. -----!
       if (any(cfg%pft%photosynthetic_pathway == PATH_C3 .and.                              &
               (cfg%pft%theta_j <= 0.0_wp .or. cfg%pft%theta_j >= 1.0_wp)))                 &

@@ -44,6 +44,7 @@ program test_column_hydrology
    call test_evap_moisture_response()
    call test_clip_layer_decomposition()
    call test_face_check_wilting_sink()
+   call test_storm_on_dry_column()
 
    call test_report('test_column_hydrology')
 
@@ -122,6 +123,57 @@ contains
                       flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
       call check_true('and the column still closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
    end subroutine test_face_check_wilting_sink
+
+   !=======================================================================================!
+   !----- #352: a storm front on a dry column. The BCI blow-up of 2017-04-17 began in this solve; the  !
+   !      inputs below are the failing patch's, as the model passed them (29 mm/h of rain onto soil    !
+   !      dried near residual). The solve lifts the top layer's head by hundreds of metres to         !
+   !      saturation, and flows recomputed with the saturated conductivity drained that layer below   !
+   !      residual while it rained; the solve then degenerated (flows of 5.8 m/s, 2.5e7 kg/m2 created  !
+   !      by the floor). Smaller details decide whether a trial lands there, so these inputs are kept !
+   !      exactly. The flows must stay of the order of the rain, every solve must converge, and the   !
+   !      residual floor must create nothing.                                                        !
+   subroutine test_storm_on_dry_column()
+      type(soil_params_t)    :: params
+      type(soil_column_t)    :: col
+      type(chydro_forcing_t) :: forcing
+      type(soil_opts_t)      :: opts
+      type(chydro_flux_t)    :: flux
+      real(wp), parameter    :: dt = 900.0_wp                ! [s]
+      real(wp)    :: worst_face, worst_resid, created
+      integer(ik) :: step
+      logical     :: all_converged
+      print '(a)', 'test_storm_on_dry_column:'
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:10) = [9.017520795042515e-2_wp, 0.103196883042764_wp, 0.107787579185886_wp, 0.110078507137199_wp, &
+                         0.112671145368482_wp, 0.116493938712866_wp, 0.121348889181499_wp, 0.127507998331339_wp, &
+                         0.135569397983017_wp, 0.146274259403085_wp]
+      forcing%precip_ground = 8.081108944879390e-3_wp
+      forcing%root_uptake   = 0.0_wp
+      forcing%root_uptake(1:10) = [2.078297836390911e-7_wp, 3.859314039081995e-7_wp, 3.304553805533053e-7_wp, &
+           4.153045473049217e-7_wp, 5.239953579953231e-7_wp, 7.518089022134535e-7_wp, 1.117384211929535e-6_wp, &
+           1.689737918658047e-6_wp, 2.604320743707848e-6_wp, 4.012800333863115e-6_wp]
+      forcing%t_ground = 300.355443509471_wp ; forcing%q_air = 1.948634043335493e-2_wp
+      forcing%rho_air = 1.14861995931181_wp ; forcing%r_aero = 356.932008612889_wp
+      forcing%soil_temp(1:10) = [300.355443509471_wp, 300.444067766771_wp, 300.503640426817_wp, 300.598025142391_wp, &
+           300.568270431751_wp, 300.355563614938_wp, 300.093159697853_wp, 299.810222055966_wp, 299.530624111926_wp, &
+           299.275379633752_wp]
+      forcing%t_pond_inflow = 299.307126030235_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN ; opts%dsl_dmax = 4.561387026804054e-2_wp
+      worst_face = 0.0_wp ; worst_resid = 0.0_wp ; created = 0.0_wp ; all_converged = .true.
+      do step = 1_ik, 4_ik                                   ! the first hour of the storm
+         call advance_soil_water_column(col, forcing, params, opts, dt, flux)
+         worst_face    = max(worst_face, maxval(abs(flux%w_flux(1:9))))
+         worst_resid   = max(worst_resid, abs(flux%mass_resid))
+         created       = created + sum(flux%floor_layer(1:10)) * dt
+         all_converged = all_converged .and. flux%converged
+      end do
+      call check_true('every solve converges', all_converged)
+      call check_true('flows between layers stay of the order of the rain',                        &
+                      worst_face < 10.0_wp * forcing%precip_ground / 1000.0_wp, worst_face)
+      call check_true('the residual floor creates no water', created < 1.0e-12_wp, created)
+      call check_true('and the column closes', worst_resid < 1.0e-9_wp, worst_resid)
+   end subroutine test_storm_on_dry_column
 
    subroutine test_mass_conservation()
       type(soil_params_t)  :: params
@@ -219,15 +271,15 @@ contains
       dt = 600.0_wp ; rain = 1.0e-4_wp
       !----- Dry canopy fills below capacity: no drip, exact balance. -----!
       lw = 0.0_wp
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       bal = tf + lw / dt + 0.0_wp                       ! throughfall + storage-rate + evap
       call check('interception water balance', bal, rain, 1.0e-12_wp)
       call check_true('no drip below capacity', dr < 1.0e-30_wp, dr)
       call check_true('leaf_water within capacity', lw <= 0.1_wp * 2.5_wp + 1.0e-12_wp, lw)
       !----- Saturated canopy overflows: drip appears, storage capped. -----!
-      lw = 0.25_wp                                       ! = dewmx * pai (full)
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      lw = 0.25_wp                                       ! = 0.1*LAI + 0.1*SAI (full)
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       call check_true('drip when full', dr > 0.0_wp, dr)
       call check_true('capacity respected', lw <= 0.25_wp + 1.0e-12_wp, lw)
@@ -235,7 +287,7 @@ contains
       !----- #333: a film already ABOVE capacity (leaf area lost under a full film) drips the excess:  !
       !      storage capped, and throughfall + storage change = rain -- nothing discarded. ---------!
       lw = 0.30_wp                                       ! capacity is 0.25: 0.05 too much
-      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.5_wp, 1.0_wp,&
+      call intercept_canopy_layer(lw, rain, 2.0_wp, 0.5_wp, 0.0_wp, dt, 0.1_wp, 0.1_wp, 0.5_wp, 1.0_wp,&
                                   tf, dr, sw)
       call check_true('over capacity: storage capped', lw <= 0.25_wp + 1.0e-12_wp, lw)
       bal = tf + (lw - 0.30_wp) / dt

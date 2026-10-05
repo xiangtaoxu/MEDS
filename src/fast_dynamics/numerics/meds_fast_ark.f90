@@ -17,7 +17,8 @@
 ! Nothing outside this module imports `meds_fast_ark` except the dispatcher and the RHS test.   !
 !                                                                                          !
 ! Soil water is committed ONCE per dt_fast from the scratch advance_soil_water_column solve (the ARK   !
-! stages pass theta through); the pond is carried in column_state_t but committed the same way.    !
+! stages move theta at that solve's steady rate); the pond is carried in column_state_t but committed !
+! the same way.                                                                                      !
 ! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !
 ! aquifer); see meds_budget_check and the ledgers at the end of column_fast_step_ark.              !
 !==========================================================================================!
@@ -229,7 +230,7 @@ contains
          !      let a pathological step balloon to ~1.8e5 sub-steps and stall the march; t_end/64 caps it at !
          !      64 and degrades gracefully. (Also surfaces a genuine non-finite state promptly rather than   !
          !      grinding at the floor forever.) -----------------------------------------------------------!
-         dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
+         dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
          call state_init(y0, n, nsl, y)
          t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
@@ -418,8 +419,8 @@ contains
       !      solve on every ARK attempt. --------------------------------------------------------------!
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
-      !----- SOIL WATER is operator-split out: the ESDIRK stages passed theta through unchanged (=theta^n); !
-      !      commit the AUTHORITATIVE end-of-step theta from the scratch advance_soil_water_column HERE, once,  !
+      !----- SOIL WATER is operator-split out: the ESDIRK stages only moved theta at the scratch solve's    !
+      !      steady rate; commit the AUTHORITATIVE end-of-step theta from that solve HERE, once,               !
       !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
       !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
       y_out%theta(1:nsl) = frozen%hydrology%theta1(1:nsl)
@@ -446,8 +447,9 @@ contains
       !      canopy_water_on per the P1 nvfortran lesson. -------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%soil_water_opts%dewmx, n, surf_overflow, &
-                                surf_deficit)
+         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
+                                col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
+                                col_config%wood_surf_water_max(col_cohort%pft(1:n)), n, surf_overflow, surf_deficit)
       end if
 
       !----- unpack into biophys + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
@@ -510,6 +512,10 @@ contains
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)
       end do
+      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
+      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
+      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
+      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER: close the same 7 budgets the split closes, using the     !
       !      b-weighted boundary-flux AMOUNTS accumulated over the substeps (acc). The flux-form CAS    !

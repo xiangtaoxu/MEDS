@@ -8,71 +8,42 @@ bit for bit. MEDS_MAIN names the executable; CTest sets it.
 """
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # py3.10 and older
-    import tomli as tomllib
 from netCDF4 import Dataset
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "python"))
+from meds.config import RunConfig  # noqa: E402
+
 MEDS_MAIN = os.environ.get("MEDS_MAIN", str(ROOT / "build-ifx" / "meds_main"))
-
-
-def _fmt(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, str):
-        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    if isinstance(v, (int, float)):
-        return repr(v)
-    if isinstance(v, (list, tuple)):
-        return "[" + ", ".join(_fmt(x) for x in v) + "]"
-    raise TypeError(type(v).__name__)
-
-
-def dumps(d, prefix=""):
-    out = []
-    scalars = {k: v for k, v in d.items() if not isinstance(v, dict)}
-    if prefix:
-        out.append(f"[{prefix}]")
-    out += [f"{k} = {_fmt(v)}" for k, v in scalars.items()] + [""]
-    for k, v in d.items():
-        if isinstance(v, dict):
-            out.append(dumps(v, f"{prefix}.{k}" if prefix else k))
-    return "\n".join(out)
 
 
 def base_config(run_dir, start, end, *, slow_on, restart_file=None, reacclimate=False,
                 plasticity=True, canopy_water=False):
-    cfg = tomllib.loads((ROOT / "meds_config_main.toml").read_text())
-    cfg["run"].update(start_time=start, end_time=end, slow_on=slow_on, n_threads=1)
-    cfg["fast"]["fast_biophysics_on"] = True
-    cfg["fast"]["canopy_water_on"] = canopy_water
-    cfg.setdefault("forcing", {})["forcing_on"] = False
-    cfg["init"].update(init_mode=2 if restart_file else 1, restart_file=restart_file or "none",
-                       census_file=str(ROOT / "examples/example_demography/census_example.csv"),
-                       pft_config=str(run_dir / "pft.toml"))
+    cfg = RunConfig.load(ROOT / "meds_config_main.toml")
+    for key, value in {"run.start_time": start, "run.end_time": end, "run.slow_on": slow_on,
+                       "run.n_threads": 1, "fast.fast_biophysics_on": True,
+                       "fast.canopy_water_on": canopy_water, "forcing.forcing_on": False,
+                       "init.init_mode": 2 if restart_file else 1,
+                       "init.restart_file": restart_file or "none",
+                       "init.census_file": str(ROOT / "examples/example_demography/census_example.csv"),
+                       "state.output_dir": str(run_dir / "out"), "state.output_prefix": "s",
+                       "state.write_state": True, "output.enabled": False,
+                       "trait_dynamics.trait_plasticity_on": plasticity}.items():
+        cfg.set(key, value)
     if reacclimate:
-        cfg["init"]["reacclimate_traits"] = True
-    cfg["state"].update(output_dir=str(run_dir / "out"), output_prefix="s", write_state=True)
-    cfg["output"]["enabled"] = False
-    cfg.setdefault("trait_dynamics", {})["trait_plasticity_on"] = plasticity
+        cfg.set("init.reacclimate_traits", True)
     return cfg
 
 
 def run(run_dir, cfg, pft_edit=None):
-    run_dir.mkdir(parents=True, exist_ok=True)
-    pft = (ROOT / "meds_config_pft.toml").read_text()
     if pft_edit:
-        pft = pft_edit(pft)
-    (run_dir / "pft.toml").write_text(pft)
-    (run_dir / "main.toml").write_text(dumps(cfg))
-    res = subprocess.run([MEDS_MAIN, str(run_dir / "main.toml")], cwd=run_dir, capture_output=True,
+        pft_edit(cfg)
+    res = subprocess.run([MEDS_MAIN, str(cfg.write(run_dir))], cwd=run_dir, capture_output=True,
                          text=True, timeout=600)
     assert res.returncode == 0, res.stdout[-3000:] + res.stderr[-3000:]
     states = sorted((run_dir / "out").glob("s-S-*.nc"))
@@ -95,18 +66,9 @@ def assert_same_state(a, b):
 
 
 def vcmax_times(factor):
-    """A PFT-file edit scaling every PFT's vcmax25."""
-    def edit(text):
-        out = []
-        for line in text.splitlines():
-            key = line.split("=")[0].strip()
-            if key == "vcmax25" and "[" in line:
-                head, rest = line.split("[", 1)
-                vals, tail = rest.split("]", 1)
-                new = ", ".join(repr(float(x) * factor) for x in vals.split(","))
-                line = f"{head}[{new}]{tail}"
-            out.append(line)
-        return "\n".join(out) + "\n"
+    """A change to the PFT file: every PFT's vcmax25 times `factor`."""
+    def edit(cfg):
+        cfg.set("pft.vcmax25", [v * factor for v in cfg.get("pft.vcmax25", file="pft")], file="pft")
     return edit
 
 

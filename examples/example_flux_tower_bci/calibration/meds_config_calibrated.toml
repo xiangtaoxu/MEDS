@@ -1,17 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# CALIBRATED by scripts/calibrate_fast (variant interception_off) from meds_config_eval.toml.
+# CALIBRATED by scripts/calibrate_fast from meds_config_eval.toml.
 # Every line is the base file's, comments included, except these keys the fit set
-# (calibrated value, the base file's value):
-#   leaf_physiology.ds_vcmax       651.732  (650)
-#   aerodynamics.z0m_ratio         0.0510911  (0.13)
-#   aerodynamics.d_ratio           0.663277  (0.63)
-#   aerodynamics.canopy_freeboard  2.02569  (5)
-#   aerodynamics.ustmin            0.156304  (0.1)
-#   soil.dsl_dmax                  0.042051  (0.015)
-#   hydraulics.root_beta           0.148875  (0.0183156)
+# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
+# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
+#   aerodynamics.z0m_ratio         0.0515494  (0.13)  EFFECTIVE
+#   leaf_physiology.ds_vcmax       641.129  (650)  KATTGE & KNORR
+#   leaf_physiology.ds_jmax        640.592  (640)  KATTGE & KNORR
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
-#   trait_dynamics.trait_plasticity_on true
-#   fast.canopy_water_on           false
 #   init.pft_config                "calibration/pft_parameters_calibrated.toml"
 #   output.prefix                  "cal"
 # MEDS example_flux_tower_bci: the five tower years, 2012-08-01 to 2017-08-01 UTC, started from the
@@ -24,6 +19,7 @@
 dt_slow    = "1d"
 start_time = "2012-08-01"
 end_time   = "2017-08-01"      # the recycle window itself, so every model year reads its own tower year
+n_threads  = 8                 # threads over the patches; the output is the same at any count
 
 [fast]
 fast_biophysics_on  = true
@@ -31,8 +27,8 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
+canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
 
-canopy_water_on = false   # set by calibrate_fast
 [demography]
 demography_on             = true
 do_cohort_fissfuse        = true
@@ -48,10 +44,10 @@ negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
 enable_cohort_fission     = true
 n_height_layers           = 16
-max_patch                 = 12
+max_patch                 = 60
 n_patch_fusion_iter       = 6
-patch_light_tol           = 0.10
-patch_light_tol_max       = 0.15
+patch_light_tol           = 0.04    # strict: the census's gaps stay apart from the closed forest
+patch_light_tol_max       = 0.08    #   (130 patches and 1,924 cohorts at the start)
 patch_light_maxdev_factor = 1.5
 patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
@@ -144,12 +140,13 @@ ea_rd     = 46390.0
 hd_vcmax  = 200000.0
 hd_jmax   = 200000.0
 hd_rd     = 200000.0
-ds_vcmax  = 651.732
-ds_jmax   = 640.0
+ds_vcmax  = 641.129
+ds_jmax   = 640.592
 ds_rd     = 490.0
 o2_mol_frac      = 0.209
 leaf_absorptance = 0.85
-phi_psii         = 0.85
+phi_psii         = 0.74    # the electron yield of linear transport in low light (#351): 0.37 electrons per absorbed
+                           #   photon, the measured maximum CO2 yield 0.093 at 4 electrons per CO2
 
 [site]
 latitude              = 9.1568        # AmeriFlux PA-Bar
@@ -197,13 +194,4 @@ bottom_bc = "dirichlet"
 deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08
 
 [aerodynamics]
-z0m_ratio = 0.0510911   # set by calibrate_fast
-d_ratio = 0.663277   # set by calibrate_fast
-canopy_freeboard = 2.02569   # set by calibrate_fast
-ustmin = 0.156304   # set by calibrate_fast
-
-[soil]
-dsl_dmax = 0.042051   # set by calibrate_fast
-
-[hydraulics]
-root_beta = 0.148875   # set by calibrate_fast
+z0m_ratio = 0.0515494   # set by calibrate_fast

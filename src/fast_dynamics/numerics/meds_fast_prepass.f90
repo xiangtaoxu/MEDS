@@ -21,7 +21,8 @@ module meds_fast_prepass
    use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
                                      CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
-                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE
+                                     CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
+                                     CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
    use meds_water_retention,  only : soil_psi_from_theta, psi_from_water_content
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
@@ -45,7 +46,7 @@ module meds_fast_prepass
    private
 
    public :: column_prepass
-   public :: refresh_canopy_aerodynamics, canopy_leaf_gas_exchange, canopy_maintenance_respiration
+   public :: refresh_canopy_aerodynamics, canopy_leaf_gas_exchange, canopy_maintenance_respiration, cohort_leaf_par
    public :: root_zone_environment, patch_heterotrophic_respiration, cas_capacities_and_conductances
    public :: aero_bottom_to_top
 
@@ -176,7 +177,7 @@ contains
    ! psi_leaf for gs stays FROZEN (Category-0, ED2-faithful): diagnosed ONCE per dt_fast from the   !
    ! prognostic leaf_water_mass^n -- never refreshed per stage.                                     !
    !                                                                                                !
-   ! STOMATAL WATER STRESS (issue #95): beta_stomata = min(1, exp(sref*psi)) is driven by           !
+   ! STOMATAL WATER STRESS (issue #95): beta_stomata = min(1, exp(sref*(psi - psi_onset))) is driven by !
    ! YESTERDAY's daily-maximum leaf water potential -- the model's predawn potential.               !
    ! DMAX_PSI_LEAF_UNSET (positive, so unmistakable) means the cohort has no history yet: a recruit, !
    ! or the first step of a run. It is seeded from the SURFACE-LAYER soil potential so it starts at  !
@@ -223,7 +224,7 @@ contains
       e_air = qcas * press / (0.622_wp + 0.378_wp * qcas)          ! loop-invariant
       do i = 1_ik, n
          rho_mol_arr(i)  = press / (r_gas * biophys%leaf_temp(i))
-         par_arr(i)      = forc%abs_par(i) / max(col_cohort%lai(i), 0.1_wp) * forc%par_per_w
+         par_arr(i)      = cohort_leaf_par(forc%abs_par(i), col_cohort%lai(i), forc%par_per_w)
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
          psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hyd_table%pft(col_cohort%pft(i))%leaf_curve, &
@@ -266,6 +267,11 @@ contains
             cdiag(CD_WIND,         i) = aero%wind(i)
             cdiag(CD_LEAF_WATER,   i) = biophys%leaf_water_mass(i)
             cdiag(CD_WOOD_WATER,   i) = biophys%wood_water_mass(i)
+            cdiag(CD_LEAF_PAR,     i) = par_arr(i)
+            cdiag(CD_GB_MOL,       i) = gb_arr(i)
+            cdiag(CD_PSI_PREDAWN,  i) = dmax_psi_arr(i)
+            cdiag(CD_CA,           i) = biophys%cas%can_co2
+            cdiag(CD_PRESSURE,     i) = press
          end do
       else
          call leaf_gas_exchange_batch(n, par_arr, biophys%leaf_temp(1:n), vpd_arr, biophys%cas%can_co2, press, &
@@ -287,6 +293,18 @@ contains
          g_transp_leaf(i)    = leaf_transp_coeff(veg_thermal%effarea_transp, col_cohort%lai(i), aero%leaf_gbw(i), gsw_ms)
       end do
    end subroutine canopy_leaf_gas_exchange
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's leaf PAR: the PAR its leaves absorb per unit of its OWN leaf area. The guard only    !
+   ! keeps a leafless cohort, which absorbs nothing, at 0. It used to be max(LAI, 0.1), which spread !
+   ! a thin cohort's light over leaf area it does not have (#346).                                   !
+   !---------------------------------------------------------------------------------------!
+   elemental real(wp) function cohort_leaf_par(abs_par, lai, par_per_w) result(par)
+      real(wp), intent(in) :: abs_par    !< [W/m2 ground] PAR the cohort's leaves absorb
+      real(wp), intent(in) :: lai        !< [m2 leaf/m2 ground] the cohort's leaf area index
+      real(wp), intent(in) :: par_per_w  !< [umol/J] PAR photons per joule
+      par = abs_par / max(lai, tiny_num) * par_per_w
+   end function cohort_leaf_par
 
    !---------------------------------------------------------------------------------------!
    ! canopy_maintenance_respiration -- stem and fine-root maintenance respiration, per cohort     !

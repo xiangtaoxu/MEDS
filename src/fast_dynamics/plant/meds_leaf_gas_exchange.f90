@@ -30,13 +30,12 @@ module meds_leaf_gas_exchange
 
    public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda, low_psi_gs_factor
 
-   real(wp), parameter :: vpd_floor_pa = 50.0_wp     !< [Pa] VPD floor (avoid 1/sqrt(0) in Medlyn)
    real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
    !----- from meds_leaf_solver.f90 ------------------------------------------------------!
 
    public :: solve_leaf_gas_exchange
-   public :: leaf_gas_exchange_batch
+   public :: leaf_gas_exchange_batch, leaf_params_at_capacity
 
    real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
    real(wp),    parameter :: lo_eps_ppm = 1.0e-3_wp    !< [umol/mol] offset of the lower bracket above Gamma*
@@ -64,6 +63,7 @@ module meds_leaf_gas_exchange
       logical     :: boundary_layer                           !< draw leaf-surface CO2 down through gb
       real(wp)    :: vpd, ddef                                !< [Pa], [mol/mol] water deficit
       real(wp)    :: g0, g1, d0, lambda                       !< the stomatal model's parameters
+      real(wp)    :: vpd_min                                  !< [kPa] the Medlyn model's least VPD
       real(wp)    :: f_lwp                                    !< low-water-potential factor on gs
       real(wp)    :: gs_pin = 0.0_wp                          !< [mol/m2/s] the GS_PINNED conductance
    end type ci_problem_t
@@ -80,7 +80,7 @@ contains
    elemental pure function electron_transport_j(par, absorptance, phi_psii, jmax, theta) result(j)
       real(wp), intent(in) :: par         !< [umol photon/m2/s] incident PAR
       real(wp), intent(in) :: absorptance !< [--] leaf PAR absorptance
-      real(wp), intent(in) :: phi_psii    !< [--] PSII quantum yield (electrons/photon)
+      real(wp), intent(in) :: phi_psii    !< [--] electron yield of linear transport in low light
       real(wp), intent(in) :: jmax        !< [umol/m2/s] electron-transport capacity (T-scaled)
       real(wp), intent(in) :: theta       !< [--] curvature (0 < theta < 1)
       real(wp)             :: j, i2
@@ -186,17 +186,18 @@ contains
       end if
    end function low_psi_gs_factor
 
-   pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1) result(gs)
+   pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1, vpd_min) result(gs)
       real(wp), intent(in) :: a_net   !< [umol/m2/s] net assimilation
       real(wp), intent(in) :: cs      !< [umol/mol]  leaf-surface CO2
       real(wp), intent(in) :: vpd     !< [Pa]        leaf-to-air VPD
       real(wp), intent(in) :: g0, g1  !< [mol/m2/s], [kPa^0.5]
+      real(wp), intent(in) :: vpd_min !< [kPa]       the VPD used at least (g1/sqrt(D) is undefined at 0)
       real(wp)             :: gs, vpd_kpa
       if (a_net <= 0.0_wp) then
          gs = g0
          return
       end if
-      vpd_kpa = max(vpd, vpd_floor_pa) * 1.0e-3_wp
+      vpd_kpa = max(vpd * 1.0e-3_wp, vpd_min)
       gs = g0 + gsw_2_gsc * (1.0_wp + g1 / sqrt(vpd_kpa)) * a_net / max(cs, tiny_num)
    end function stomata_gs_medlyn
 
@@ -272,7 +273,8 @@ contains
       !----- Water stress, split into two independently-tunable limbs (Sabot 2022 / Zhou 2013): !
       !   beta_nonstomata -- capacity limb: a linear psi_LEAF ramp downregulating Vcmax/Jmax/TPU, !
       !     applied to ALL stomatal models (a leaf-biochemistry effect, scheme-independent).      !
-      !   beta_stomata    -- stomatal limb: min(1, exp(sref*psi_SOIL)) downregulating the         !
+      !   beta_stomata    -- stomatal limb: 1 above the onset potential psi_onset and             !
+      !     exp(sref*(psi - psi_onset)) below it, downregulating the                               !
       !     Leuning/Medlyn slope g1 and the Katul marginal WUE lambda (lambda ~                   !
       !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
       !----- The capacity limb is OFF by default (issue #47): rarely measured directly, weakly  !
@@ -286,7 +288,10 @@ contains
          jmax  = jmax  * beta_nonstomata
          tpu   = tpu   * beta_nonstomata
       end if
-      beta_stomata = min(1.0_wp, exp(p%sref_stomata * env%psi))
+      !----- No stress above the onset (Sabot et al. 2022 Eq. 5 has none while the soil is at field     !
+      !      capacity), so a tall tree in wet soil, whose predawn potential is its gravity head, keeps   !
+      !      its full g1. Below the onset the decline is exponential, at the rate sref. ---------------!
+      beta_stomata = min(1.0_wp, exp(p%sref_stomata * (env%psi - p%psi_onset)))
       !----- LOW-WATER-POTENTIAL CONTROL (#332). The Sabot beta above scales g1 only, so as it goes to  !
       !      0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured at ~2.6       !
       !      mm/day of transpiration still leaving a plant whose wood store was empty and whose predawn  !
@@ -342,6 +347,7 @@ contains
                           theta_cj_c4 = p%theta_cj_c4, theta_ic_c4 = p%theta_ic_c4,                   &
                           ca = ca_ppm, gb = env%gb, boundary_layer = do_boundary_layer,               &
                           vpd = env%vpd, ddef = ddef, g0 = p%g0, g1 = g1_eff, d0 = p%d0,              &
+                          vpd_min = p%medlyn_vpd_min,                                                 &
                           lambda = lambda_eff, f_lwp = f_lwp)
 
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
@@ -523,7 +529,7 @@ contains
             gs = prob%f_lwp * stomata_gs_leuning(An_loc, cs_surf, prob%gstar, prob%vpd, prob%g0,       &
                                                  prob%g1, prob%d0)
          else
-            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1)
+            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1, prob%vpd_min)
          end if
       end select
       !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so     !
@@ -546,7 +552,7 @@ contains
       if (prob%boundary_layer) cs_surf = prob%ca - gbw_2_gbc * An_loc / prob%gb
       !----- Marginal demand A' = dA/dCi by central difference (A(Ci) is the co-limited FvCB      !
       !       envelope, so the slope is taken numerically; dci is a relative step, abs-floored). --!
-      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)
+      dci     = max(1.0e-3_wp * abs(ci), 1.0e-2_wp)   ! clamp-ok: the finite-difference step [umol/mol]
       dAn_dci = (ci_net_assimilation(prob, ci + dci) - ci_net_assimilation(prob, ci - dci))          &
                 / (2.0_wp * dci)
       !----- First-order optimality: A'(Cs-Ci)^2 = gsw_2_gsc * D * lambda * (A'(Cs-Ci) + A). ----!
@@ -592,6 +598,21 @@ contains
    ! are mandatory; the remaining leaf_flux_t fields are OPTIONAL outputs for DIAGNOSTICS only --    !
    ! absent means the caller does not report per-cohort ecophysiology, and nothing extra is copied.  !
    !---------------------------------------------------------------------------------------!
+   !----- leaf_params_at_capacity -- a PFT's table entry with one leaf's plastic capacities on top:   !
+   !      Jmax25 and TPU25 scale with the overriding Vcmax25. The one place a cohort's capacities meet !
+   !      the table: leaf_gas_exchange_batch and the canopy C API (meds_c_api_canopy) both take it. --!
+   pure function leaf_params_at_capacity(table, ipft, vcmax25, rd25) result(p)
+      type(leaf_photo_table_t), intent(in) :: table
+      integer(ik),              intent(in) :: ipft
+      real(wp),                 intent(in) :: vcmax25, rd25
+      type(leaf_photo_params_t)            :: p
+      p         = table%pft(ipft)
+      p%vcmax25 = vcmax25
+      p%jmax25  = table%jmax_vcmax_ratio(ipft) * vcmax25
+      p%tpu25   = table%tpu_vcmax_ratio(ipft)  * vcmax25
+      p%rd25    = rd25
+   end function leaf_params_at_capacity
+
    subroutine leaf_gas_exchange_batch(n, par, leaf_temp, vpd, ca, pressure, psi_leaf, gb,      &
                                       table, pft, vcmax25, rd25, a_gross, gs, rd, psi,        &
                                       a_net, ci, cs, transp, limitation, beta_stom, beta_nonstom)
@@ -615,13 +636,7 @@ contains
          env%par = par(i) ; env%leaf_temp = leaf_temp(i) ; env%vpd = vpd(i)
          env%ca = ca ; env%pressure = pressure ; env%psi_leaf = psi_leaf(i) ; env%gb = gb(i)
          if (present(psi)) then ; env%psi = psi(i) ; else ; env%psi = 0.0_wp ; end if
-         !----- the PFT's table entry with this leaf's plastic capacities on top (Jmax25/TPU25 scale   !
-         !      with the overriding Vcmax25) -- the same record leaf_gas_exchange builds per call. ----!
-         p         = table%pft(pft(i))
-         p%vcmax25 = vcmax25(i)
-         p%jmax25  = table%jmax_vcmax_ratio(pft(i)) * vcmax25(i)
-         p%tpu25   = table%tpu_vcmax_ratio(pft(i))  * vcmax25(i)
-         p%rd25    = rd25(i)
+         p = leaf_params_at_capacity(table, pft(i), vcmax25(i), rd25(i))
          call solve_leaf_gas_exchange(env, p, table%stomatal_model, table%temp_response_form,   &
                                       table%colimitation, table%use_boundary_layer, flux)
          a_gross(i) = flux%A_gross ; gs(i) = flux%gs ; rd(i) = flux%rd

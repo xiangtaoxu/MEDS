@@ -129,10 +129,9 @@ substep        = "adaptive"   # adaptive | fixed                 (substep contro
 rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
 atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
 h_init         = 900.0        # [s]      initial substep
-max_substep    = 200          # [-]      substep cap
+max_substep    = 2000         # [-]      substep cap: a ponded storm on dry soil needs hundreds (BCI, April 2016)
 max_picard     = 5            # [-]      modified-Picard iteration cap
 w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
-dewmx          = 0.1          # [kg/m2 per PAI] canopy interception storage capacity
 intercept_alpha = 1.0         # [-]      Beer interception efficiency
 intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
 dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
@@ -430,7 +429,14 @@ ds_jmax   = 640.0
 ds_rd     = 490.0
 o2_mol_frac      = 0.209   # [mol/mol] atmospheric O2 mole fraction
 leaf_absorptance = 0.85    # [--] leaf PAR absorptance (for electron transport)
-phi_psii         = 0.85    # [--] PSII quantum yield (electrons/photon)
+phi_psii         = 0.74    # [--] electron yield of linear transport in low light: J's initial slope is
+                           #   0.5*phi_psii electrons per absorbed photon. 0.74 gives 0.37, the measured
+                           #   maximum CO2 yield of C3 leaves (0.093 per absorbed photon, Long et al. 1993)
+                           #   at 4 electrons per CO2 (Aj's 4ci + 8 Gamma*). Not Fv/Fm (0.85): with it the
+                           #   leaf would fix CO2 at the O2-evolution yield (0.106, Bjorkman & Demmig 1987)
+# medlyn_vpd_min   = 0.05    # [kPa] OPTIONAL: the leaf-to-air VPD the Medlyn stomatal model uses at least
+                            #   (g1/sqrt(D) is undefined at D = 0); it caps gs on humid nights and rainy hours.
+                            #   CLM5's value (PhotosynthesisMod: VPD at least 50 Pa)
 # Thermal acclimation (#176, Kattge & Knorr 2007): ds_vcmax, ds_jmax and Jmax/Vcmax follow the
 # running-mean growth temperature Tg [degC]: ds = a - b*Tg, Jmax/Vcmax = a - b*Tg. Only with
 # temp_response_form = "peaked". Every key optional, at the published values shown.

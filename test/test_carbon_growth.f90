@@ -13,6 +13,7 @@ program test_carbon_growth
    use meds_stepper,                only : advance_one_step
    use meds_diagnostic_reduce,     only : has_nan
    use meds_test_support, only : banner, build_test_config, check, check_close
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_positive_inf
    implicit none
 
    type(meds_config_t) :: cfg
@@ -67,6 +68,25 @@ program test_carbon_growth
    call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * cfg%pft%sla(3_ik),   &
                     1.0e-9_wp, 'carbon-mode leaf_area /= leaf_carbon*sla')
    call check(.not. has_nan(site), 'carbon-mode step produced NaN')
+
+   !----- has_nan sees the fast loop's states too: a non-finite canopy air or leaf temperature is  !
+   !      what the integrators commit when even their smallest step fails (#352). -----------------!
+   block
+      real(wp) :: keep
+      if (allocated(site%patch%cas)) then
+         keep = site%patch%cas(1)%can_shv
+         site%patch%cas(1)%can_shv = ieee_value(keep, ieee_quiet_nan)
+         call check(has_nan(site), 'has_nan missed a NaN canopy-air humidity')
+         site%patch%cas(1)%can_shv = keep
+      end if
+      if (allocated(site%cohort%leaf_temp)) then
+         keep = site%cohort%leaf_temp(1)
+         site%cohort%leaf_temp(1) = ieee_value(keep, ieee_positive_inf)
+         call check(has_nan(site), 'has_nan missed an infinite leaf temperature')
+         site%cohort%leaf_temp(1) = keep
+      end if
+      call check(.not. has_nan(site), 'has_nan still true after the state was restored')
+   end block
 
    !=== 3b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!
    !        wood_area / sapwood_carbon / sapwood_area are derived once per size change rather    !

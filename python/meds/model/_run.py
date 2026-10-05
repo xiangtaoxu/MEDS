@@ -79,7 +79,7 @@ class Run:
             #----- The Fortran driver RETURNS these rather than `error stop`ping, which is
             #      the only reason a bad state is an exception here instead of a dead
             #      interpreter. See the meds_driver module header.
-            raise RuntimeError(f"MEDS: NaN detected in state at {self.date}")
+            raise RuntimeError(f"MEDS: NaN in the state or the energy/water ledger at {self.date}")
         if status == ERR_SOILC:
             #----- A CENTURY pool went negative or past the divergence ceiling. The Fortran
             #      side has already printed which pool and patch; the slow ledger's report
@@ -232,3 +232,20 @@ class Run:
             return "<Run closed>"
         return (f"<Run {self.date} step={self.istep} "
                 f"cohorts={self.n_cohort} patches={self.n_patch}>")
+
+
+#: the line meds_main prints when a run ends well; a tool that checks a run's log looks for it
+COMPLETED = " OK: simulation completed, area conserved, no NaNs."
+
+
+def run(config, verbose=True):
+    """Run a config from its start to its ``end_time``, as the ``meds_main`` executable does: the
+    same steps, the same output files and the same closing line on stdout. Returns the number of
+    slow steps. A NaN in the state, an impossible soil-carbon pool or a site whose area is not
+    conserved raises RuntimeError, where the executable would stop."""
+    with Run(config, verbose=verbose) as r:
+        n = r.run_to_end()
+        r.finalize()
+    if verbose:
+        print(COMPLETED, flush=True)
+    return n

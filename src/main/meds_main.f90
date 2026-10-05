@@ -66,7 +66,7 @@ program meds_main
          if (.not. ok) error stop 'meds_main: could not open the region run'
          do while (.not. region_done(reg))
             call region_step_month(reg, status)
-            if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN detected in a polygon''s state'
+            if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN in a polygon''s state or energy/water ledger'
             if (status == DRIVER_ERR_SOILC) error stop 'meds_main: impossible soil-carbon pool in a polygon'
          end do
          call region_finalize(reg, status)
@@ -84,7 +84,7 @@ program meds_main
       call driver_step(run, status)
       !----- The driver RETURNS what this program used to `error stop` on, so that a library      !
       !      caller (Python) survives it. In the executable it is still fatal.  -------------------!
-      if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN detected in state'
+      if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN in the state or the energy/water ledger'
       if (status == DRIVER_ERR_SOILC) error stop 'meds_main: impossible soil-carbon pool'
    end do
 

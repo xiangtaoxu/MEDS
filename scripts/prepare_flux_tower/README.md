@@ -5,7 +5,9 @@ meteorology: AmeriFlux BASE, FLUXNET/ONEFlux, or any CSV. A site TOML **declares
 are. The tool **checks** each declaration against the sun and the data, converts everything to
 MEDS's own conventions, fills gaps explicitly with a flag on every value, and states the tower's
 heights in the file. MEDS then moves each sample from those heights to every patch's canopy-air top.
-The worked example is [`examples/example_flux_tower_bci/`](../../examples/example_flux_tower_bci/);
+The same site TOML declares the tower's fluxes (`[fluxes]`) for the fast calibration
+([`../calibrate_fast`](../calibrate_fast/README.md)): `tower_inputs.py` is the one reader of tower
+files for both tools. The worked example is [`examples/example_flux_tower_bci/`](../../examples/example_flux_tower_bci/);
 the design record is
 [`docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md`](../../docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md).
 
@@ -33,6 +35,7 @@ missing = ["NaN"]                  # BASE/FLUXNET: -9999 by default
 latitude = 9.1568
 longitude = -79.8486
 elevation = 150.0
+leaf_on_months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]   # optional (all months): the calibration's windows
 
 [clock]
 utc_offset = -5.0                  # [h] the data's clock (AmeriFlux: local standard time)
@@ -57,6 +60,23 @@ PAR    = { column = "Par_tot", units = "umol m-2 s-1" }   # optional, reports on
 
 [gapfill]
 short_gap_max = 4                  # [records] interpolate gaps up to this long
+
+[fluxes]                           # optional: the calibration's data (column, units, and when measured)
+SW_out = { column = "Rs_dn", units = "W m-2" }
+LW_out = { column = "Rl_dn", units = "W m-2" }
+Rnet   = { column = "Rnet",  units = "W m-2" }
+LE     = { column = "LE",    units = "W m-2",        measured = { column = "FLAG", equals = 1 } }
+H      = { column = "H",     units = "W m-2",        measured = { column = "FLAG", equals = 1 } }
+NEE    = { column = "NEE",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+GPP    = { column = "gpp",   units = "umol m-2 s-1", measured = { column = "FLAG", equals = 1 } }
+RECO   = { sum = ["GPP", "NEE"] }                    # the provider made GPP from it
+USTAR  = { column = "ustar", units = "m s-1",        measured = { column = "FLAG", equals = 1 } }
+
+[provider]                         # optional: what the provider did, in its own words
+gpp_method = "..."                 # how GPP was partitioned
+ustar_threshold = 0.4              # [m s-1] the published u* threshold for CO2; or one per year, { 2013 = 0.35, ... }
+flag = "..."                       # what the quality flag screened
+# notes = "...";  uncertainty = { NEE = "NEE_RANDUNC" }   (random-uncertainty columns, by flux)
 ```
 
 `LWdown` points at `Rl_up` because the BCI file labels its two longwave columns the wrong way round
@@ -65,16 +85,26 @@ variable at its column, e.g. `TA_1_1_1` or `TA_F`.
 With `timestamp = "TIMESTAMP_END"`, `stamp` must be `"end"`. FLUXNET's `_QC` columns mark the values
 the provider filled.
 
+A flux is **measured** where its value is present and its `measured` rule holds (BCI: `FLAG = 1`; at
+BCI the flag also removes every rain half hour). Without a rule, a FLUXNET flux is measured where its
+`_QC` column is 0, and any other flux wherever it is present. `RECO` may instead be the sum of other
+declared fluxes, for a provider who made GPP as RECO − NEE. `read_standard()` gives the table both
+tools read: UTC interval starts, MEDS units, and a measured mask for every column.
+
 ## What it checks
 
-The checks stop the build; V5 only reports.
+The checks stop the build; V5 only reports. F1–F3 run when the site declares `[fluxes]`; the
+calibration reports them instead of stopping.
 
 | | Check |
 |---|---|
 | V1 | the time axis is uniform at `timestep`, sorted, without duplicates |
 | V2 | under the declared clock and stamp, the shortwave fits the model's own sun within 10 min, and less than 0.1 % of it falls where the model sees night. This catches a local-time file declared UTC and a stamp at the wrong end of the interval, errors that keep daily totals right and scramble the sub-daily phase |
 | V3 | with RH and VPD both given, the VPD is (1 − RH)·e_s(T) under the declared curve to 1 Pa. A wrong declaration is answered with the curve that fits |
-| V4 | physical bounds in MEDS units. Out-of-bounds values become missing; more than 5 % of a variable is taken as a unit error |
+| V4 | physical bounds in MEDS units, for the fluxes too. Out-of-bounds values become missing; more than 5 % of a variable is taken as a unit error |
+| F1 | net radiation against its four components: the median of \|Rnet − (SW_in − SW_out + LW_in − LW_out)\| within 25 W m⁻² |
+| F2 | at night the upwelling longwave is above the downwelling (median). Below it, the two columns are swapped |
+| F3 | the reflected shortwave above the incoming in at most 5 % of records with SW_in > 200 W m⁻², and the upwelling longwave within σ(T_air − 20 K)⁴ … σ(T_air + 30 K)⁴ in at least 95 % |
 | V5 | the JSON report beside the file: fill shares and rain by year, and the PAR/SW ratio by year (sensor drift) |
 
 ## What the file carries
@@ -114,8 +144,8 @@ such as ERA5-Land or a nearby station, is the user's to do in the tower file bef
 | File | What it does |
 |---|---|
 | `make_tower_forcing.py` | the build (the CLI) |
-| `tower_inputs.py` | the site TOML and the three input formats, in MEDS units |
-| `tower_checks.py` | V1–V5 |
+| `tower_inputs.py` | the site TOML and the three input formats, in MEDS units; `read_standard()`, the table both tools read |
+| `tower_checks.py` | V1–V5, F1–F3 |
 | `tower_gapfill.py` | the fills, the longwave predictors, re-centring |
 | `compare_longwave_fill.py` | the longwave comparison |
 | `tests/test_tower_forcing.py` | synthetic towers from a known sun and known humidity |

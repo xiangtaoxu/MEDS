@@ -13,7 +13,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "meds"
-version = "0.3.2"
+version = "0.3.3"
 description = "Modular Ecosystem Dynamics Simulator — Python interface"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -32,7 +32,8 @@ maintainers = [{ name = "Xiangtao Xu" }]
 #      Site` fails without it. It was listed only under the `plot` extra, which a clean-venv
 #      install of the wheel caught immediately -- the leaf and phenology sub-modules import no
 #      third-party package at all, so nothing before this ever noticed.
-dependencies = ["netCDF4", "numpy"]
+#      tomli: meds.config reads TOML with the standard library's tomllib, new in Python 3.11.
+dependencies = ["netCDF4", "numpy", "tomli; python_version < '3.11'"]
 
 [project.optional-dependencies]
 plot = ["matplotlib"]          # numpy is a hard dependency above

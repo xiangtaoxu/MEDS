@@ -30,7 +30,7 @@ from . import _ffi
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
     "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
-    "gas_exchange", "assimilation_demand_c3", "electron_transport_j",
+    "gas_exchange", "gas_exchange_batch", "assimilation_demand_c3", "electron_transport_j",
     "peaked", "arrhenius", "self_test",
 ]
 
@@ -84,7 +84,7 @@ class Params:
     g1: float = 4.0                # stomatal slope (units depend on the model)
     d0: float = 1500.0             # [Pa]         Leuning VPD sensitivity
     quantum_yield: float = 0.0     # [mol CO2/mol photon]  C4 light slope (0 for C3)
-    theta_j: float = 0.85          # [--]  C3 electron-transport curvature (NOT a co-limitation one)
+    theta_j: float = 0.70          # [--]  C3 electron-transport curvature (NOT a co-limitation one; meds_config_pft.toml)
     theta_cj_c3: float = 0.98      # [--]  C3 Ac/Aj co-limitation curvature
     theta_ip_c3: float = 0.95      # [--]  C3 (Ac,Aj)/Ap co-limitation curvature
     theta_cj_c4: float = 0.80      # [--]  C4 co-limitation curvature 1
@@ -111,7 +111,7 @@ class Params:
     ds_rd: float = 490.0
     o2_mol_frac: float = 0.209     # [mol/mol]  ambient O2
     absorptance: float = 0.85      # [--]  leaf PAR absorptance
-    phi_psii: float = 0.85         # [--]  quantum yield of PSII e-transport
+    phi_psii: float = 0.74         # [--]  electron yield of linear transport in low light (meds_config_main.toml)
 
 
 #----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
@@ -185,6 +185,24 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
     return Flux(**result)
 
 
+def gas_exchange_batch(par, leaf_temp, vpd, ca, params, *,
+                       pressure=101325.0, psi_leaf=0.0, gb=0.0, psi=0.0,
+                       stomata=Stomata.MEDLYN, temp_response=TempResponse.PEAKED,
+                       colimitation=Colimitation.QUADRATIC, boundary_layer=False) -> dict:
+    """`gas_exchange` for many leaves sharing one Params, in one library call: the drivers are
+    arrays (or scalars) that broadcast together. Returns a dict of numpy arrays with the Flux
+    fields (limitation as integer codes of Limitation, converged as booleans)."""
+    import numpy as np
+    cols = np.broadcast_arrays(*(np.asarray(x, dtype=float) for x in
+                                 (par, leaf_temp, vpd, ca, pressure, psi_leaf, gb, psi)))
+    shape = cols[0].shape
+    env = dict(zip(("par", "leaf_temp", "vpd", "ca", "pressure", "psi_leaf", "gb", "psi"),
+                   (c.ravel() for c in cols)))
+    result = _ffi.solve_batch(env, asdict(params), int(stomata), int(temp_response),
+                              int(colimitation), boundary_layer)
+    return {k: np.asarray(v).reshape(shape) for k, v in result.items()}
+
+
 def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
                     colimitation=Colimitation.MINIMUM, theta_cj=0.98, theta_ip=0.95) -> C3Rates:
     """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling).
@@ -207,7 +225,7 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     return C3Rates(**result)
 
 
-def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.85, theta=0.85) -> float:
+def electron_transport_j(par, jmax, *, absorptance=0.85, phi_psii=0.74, theta=0.70) -> float:
     """Electron-transport rate J from Jmax and incident PAR (the non-rectangular hyperbola)."""
     return _ffi.electron_transport_j(par, absorptance, phi_psii, jmax, theta)
 

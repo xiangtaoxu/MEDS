@@ -17,7 +17,8 @@
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, pft_leaf_psi_tlp, CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
+   use meds_config,      only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset,              &
+                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
@@ -26,11 +27,15 @@ module meds_fast_config
                                 GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_LEAF_W, GRP_WOOD_W,        &
                                 GRP_THETA, N_TOL_GROUP
    use meds_fast_control, only : default_tol_set, default_error_control
+   use meds_canopy_types,     only : rad_pft_optics_t, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW
+   use meds_canopy_radiation, only : derive_rad_optics
+   use meds_optics_lib,       only : beta_params_from_mean
    implicit none
    private
 
    public :: leaf_photo_params_for_pft, build_leaf_photo_table, leaf_gas_exchange
    public :: acclimate_leaf_photo_table
+   public :: build_rad_optics
    public :: build_tol_set, build_error_control, build_integrator_opts
 
 contains
@@ -66,6 +71,7 @@ contains
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
          p%psi_tlp        = pft_leaf_psi_tlp(cfg, ipft)   ! the PFT's own pressure-volume curve
+         p%psi_onset      = pft_stomata_psi_onset(cfg, ipft)
       end associate
       p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
       p%low_psi_control     = cfg%low_water_potential_control
@@ -76,6 +82,7 @@ contains
       p%hd_vcmax = cfg%hd_vcmax ; p%hd_jmax = cfg%hd_jmax ; p%hd_rd = cfg%hd_rd
       p%ds_vcmax = cfg%ds_vcmax ; p%ds_jmax = cfg%ds_jmax ; p%ds_rd = cfg%ds_rd
       p%o2_mol_frac = cfg%o2_mol_frac ; p%absorptance = cfg%leaf_absorptance ; p%phi_psii = cfg%phi_psii
+      p%medlyn_vpd_min = cfg%medlyn_vpd_min
    end subroutine leaf_photo_params_for_pft
 
    !----- build_leaf_photo_table -- every PFT's parameters plus the run-level solver selectors,     !
@@ -125,6 +132,45 @@ contains
          table%jmax_vcmax_ratio(ipft) = kattge_knorr_jv_ratio(cfg%acclim_jv_a, cfg%acclim_jv_b, t_growth)
       end do
    end subroutine acclimate_leaf_photo_table
+
+   !----- build_rad_optics -- the canopy two-stream's per-PFT optics table, from the [pft] trait     !
+   !      table, once per run. Per-PFT, so two PFTs can differ in how they intercept light. The fast  !
+   !      loop builds it in build_fast_context; the canopy C API (meds.canopy) builds the same. -----!
+   subroutine build_rad_optics(cfg, optics)
+      type(meds_config_t),    intent(in)  :: cfg
+      type(rad_pft_optics_t), intent(out) :: optics
+      integer(ik), parameter :: NB = N_RAD_BAND_DEFAULT
+      integer(ik) :: np, ipf
+      real(wp), allocatable :: rl(:,:), tl(:,:), rw(:,:), tw(:,:), cl(:), cw(:), bp(:), bq(:)
+      logical  :: hb(NB), he(NB)
+      real(wp) :: bpp, bqq
+      np = cfg%pft%n
+      allocate(rl(NB,np), tl(NB,np), rw(NB,np), tw(NB,np), cl(np), cw(np), bp(np), bq(np))
+      !----- PER-PFT now, from the [pft] table. Shortwave arrives as reflectance and           !
+      !      transmittance; LONGWAVE arrives as emissivity, and the band's reflectance is       !
+      !      1 - emissivity with zero transmittance, because a leaf is opaque at thermal        !
+      !      wavelengths. That is physics, so it is derived here rather than offered as two     !
+      !      more knobs a user could set inconsistently. ---------------------------------------!
+      associate (t => cfg%pft)
+         rl(RAD_VIS,1:np) = t%leaf_reflect_vis(1:np) ; tl(RAD_VIS,1:np) = t%leaf_transmit_vis(1:np)
+         rl(RAD_NIR,1:np) = t%leaf_reflect_nir(1:np) ; tl(RAD_NIR,1:np) = t%leaf_transmit_nir(1:np)
+         rl(RAD_LW ,1:np) = 1.0_wp - t%leaf_emissivity(1:np) ; tl(RAD_LW,1:np) = 0.0_wp
+         rw(RAD_VIS,1:np) = t%wood_reflect_vis(1:np) ; tw(RAD_VIS,1:np) = t%wood_transmit_vis(1:np)
+         rw(RAD_NIR,1:np) = t%wood_reflect_nir(1:np) ; tw(RAD_NIR,1:np) = t%wood_transmit_nir(1:np)
+         rw(RAD_LW ,1:np) = 1.0_wp - t%wood_emissivity(1:np) ; tw(RAD_LW,1:np) = 0.0_wp
+         cl(1:np) = t%leaf_clumping(1:np) ; cw(1:np) = t%wood_clumping(1:np)
+         !----- The Beta leaf-angle shape is a TRANSFORM of (mean, std), so it is derived per  !
+         !      PFT rather than configured: the two shape parameters are not quantities anyone  !
+         !      measures, and an inconsistent pair has no leaf-angle distribution behind it. ---!
+         do ipf = 1_ik, np
+            call beta_params_from_mean(t%leaf_angle_mean(ipf), t%leaf_angle_std(ipf), bpp, bqq)
+            bp(ipf) = bpp ; bq(ipf) = bqq
+         end do
+      end associate
+      hb = [.true.,  .true.,  .false.]                         ! VIS/NIR have a beam; LW does not
+      he = [.false., .false., .true. ]                         ! only LW emits
+      call derive_rad_optics(NB, np, rl, tl, rw, tw, cl, cw, bp, bq, hb, he, optics)
+   end subroutine build_rad_optics
 
    subroutine leaf_gas_exchange(env, cfg, ipft, flux, vcmax25, rd25)
       type(leaf_env_t),    intent(in)  :: env

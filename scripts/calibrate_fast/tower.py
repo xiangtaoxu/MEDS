@@ -1,103 +1,107 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The observations (MEDS_FAST_CALIBRATION_PLAN.md §5.2): the tower's half hours averaged to local
-clock hours, the energy-balance closure correction, and the hours whose forcing was observed.
+"""The observations (MEDS_FAST_CALIBRATION_BEST_PRACTICE.md §2): the tower as its site TOML declares
+it, read by the one reader of tower files (scripts/prepare_flux_tower/tower_inputs.py), on its own
+interval and the UTC start of each record -- the clock the model's output is on.
 
-The tower's half hours are stamped at their start in local time; an hour is used only when both
-of its half hours are there. The turbulent fluxes (H, LE, NEE, GPP, u*) are kept only where the
-tower's flag says they were measured.
-
-Closure (§5.2.1, FLUXNET2015's correction, Bowen ratio preserved): over a sliding window of
-daytime hours, f = sum Rnet / sum (H + LE); daytime H and LE are multiplied by f. Night hours are
-not corrected. The ground heat flux is taken as 0 when the file has none.
+A flux is used only where the site TOML's rule says it was measured (BCI: FLAG = 1), the radiation
+wherever it is present. Each record also carries the closure factor f_d of its day
+(observation_models.py), the provider's random uncertainty of a flux where the site TOML declares one
+(<flux>_randunc), and the days since the air last froze. The reader's flux checks (F1-F3) stop the
+calibration as they stop the forcing build.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from netCDF4 import Dataset, num2date
 
-#: the quantities a declaration maps onto its file's column names
-QUANTITIES = ("sw_in", "sw_up", "lw_up", "rnet", "le", "h", "nee", "gpp", "ustar")
-FLAGGED = ("le", "h", "nee", "gpp", "ustar")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "prepare_flux_tower"))
+import tower_inputs                  # noqa: E402  (the one reader of tower files)
+import data_rules                    # noqa: E402
+import observation_models            # noqa: E402
+
+#: the calibration's names for the site TOML's variables and fluxes
+QUANTITIES = {"sw_in": "SWdown", "sw_up": "SW_out", "lw_up": "LW_out", "rnet": "Rnet", "le": "LE", "h": "H",
+              "nee": "NEE", "gpp": "GPP", "reco": "RECO", "ustar": "USTAR", "par": "PAR",
+              "tair": "Tair", "vpd": "VPD", "rain": "Rainf", "wind": "Wind",
+              "gpp_dt": "GPP_DT", "reco_dt": "RECO_DT"}
 
 
-@dataclass
-class TowerSpec:
-    path: str
-    columns: dict                     # quantity -> column name
-    time_column: str = "date"
-    flag_column: str = "FLAG"
-    flag_good: int = 1
-    utc_offset_h: float = 0.0
-    forcing: str | None = None        # the forcing file, for the observed-hours mask
-    forcing_qc: tuple = ("LWdown_qc", "Wind_qc")
-    forcing_qc_val: tuple = ("Wind_qc",)   # validation windows: a tower year without longwave still validates
-    forcing_grid: int = 1
-    closure_days: int = 31            # the sliding window, centred
-    daytime_sw: float = 10.0          # [W m-2] daytime = incoming shortwave above this
-    extra: dict = field(default_factory=dict)
+def observations(site, closure: dict) -> tuple[pd.DataFrame, dict]:
+    """The tower's records on the UTC start of each interval: one column per quantity, NaN where not
+    measured; the day's closure factor (closure_f, unless [closure].shares is "none"); the provider's
+    random uncertainty of a flux (<flux>_randunc); and the days since frost. `site` is the site TOML
+    (tower_inputs.read_site). Returns the table and the reader's report."""
+    table = tower_inputs.read_standard(site, strict=True)
+    report = dict(table.report)
+    obs = pd.DataFrame(index=table.values.index)
+    for q, name in QUANTITIES.items():
+        obs[q] = table.values[name].where(table.measured[name]) if name in table.values else np.nan
+    if obs["vpd"].isna().all() and "RH" in table.values:      # VPD from RH where the site gives no VPD
+        rh = table.values["RH"].where(table.measured["RH"])
+        obs["vpd"] = (1.0 - rh) * tower_inputs.SATURATION_CURVES["alduchov_eskridge"](obs["tair"] - 273.15)
+    obs["days_since_frost"] = data_rules.days_since_frost(obs["tair"], site.utc_offset)
+    names = {v: k for k, v in QUANTITIES.items()}
+    for flux in table.uncertainty.columns:
+        obs[f"{names[flux]}_randunc"] = table.uncertainty[flux]
+    if closure["shares"] != "none":
+        obs["closure_f"], report["closure"] = observation_models.closure_factor(
+            table.values, table.measured, site.utc_offset, closure)
+    return obs, report
 
 
-def load_tower(spec: TowerSpec) -> pd.DataFrame:
-    """Hourly local-time observations: one column per quantity, NaN where not usable, plus the
-    closure-corrected h_c and le_c and the closure factor."""
-    raw = pd.read_csv(spec.path, parse_dates=[spec.time_column], index_col=spec.time_column)
-    good = raw[spec.flag_column] == spec.flag_good
-    half = pd.DataFrame(index=raw.index)
-    for q in QUANTITIES:
-        col = spec.columns.get(q)
-        if col is None:
-            half[q] = np.nan
-            continue
-        x = pd.to_numeric(raw[col], errors="coerce")
-        half[q] = x.where(good) if q in FLAGGED else x
-    hourly = half.resample("1h").mean().where(half.resample("1h").count() == 2)
-    return add_closure(hourly, spec)
+def solar_elevation(index_utc: pd.DatetimeIndex, lat: float, lon: float, step: float) -> np.ndarray:
+    """The sun's elevation [degrees] at the middle of each record (NOAA's approximation:
+    declination and equation of time from the fractional year; well within a degree)."""
+    t = index_utc + pd.Timedelta(seconds=step / 2.0)
+    doy = t.dayofyear.to_numpy()
+    hour = t.hour.to_numpy() + t.minute.to_numpy() / 60.0 + t.second.to_numpy() / 3600.0
+    g = 2.0 * np.pi / 365.0 * (doy - 1 + (hour - 12.0) / 24.0)
+    eot = 229.18 * (0.000075 + 0.001868 * np.cos(g) - 0.032077 * np.sin(g) - 0.014615 * np.cos(2 * g)
+                    - 0.040849 * np.sin(2 * g))
+    dec = (0.006918 - 0.399912 * np.cos(g) + 0.070257 * np.sin(g) - 0.006758 * np.cos(2 * g)
+           + 0.000907 * np.sin(2 * g) - 0.002697 * np.cos(3 * g) + 0.00148 * np.sin(3 * g))
+    tst = hour * 60.0 + eot + 4.0 * lon                                                 # true solar time [min]
+    ha = np.radians(tst / 4.0 - 180.0)
+    la = np.radians(lat)
+    cosz = np.sin(la) * np.sin(dec) + np.cos(la) * np.cos(dec) * np.cos(ha)
+    return np.degrees(np.arcsin(np.clip(cosz, -1.0, 1.0)))
 
 
-def add_closure(hourly: pd.DataFrame, spec: TowerSpec) -> pd.DataFrame:
-    day = hourly["sw_in"] > spec.daytime_sw
-    both = day & hourly[["rnet", "h", "le"]].notna().all(axis=1)
-    rn = hourly["rnet"].where(both).resample("1D").sum(min_count=1)
-    tf = (hourly["h"] + hourly["le"]).where(both).resample("1D").sum(min_count=1)
-    rn = rn.rolling(spec.closure_days, center=True, min_periods=spec.closure_days // 3).sum()
-    tf = tf.rolling(spec.closure_days, center=True, min_periods=spec.closure_days // 3).sum()
-    f_daily = (rn / tf).where(tf > 0)
-    f = f_daily.reindex(hourly.index.floor("D")).to_numpy()
-    f = np.where(day.to_numpy(), f, 1.0)
-    out = hourly.copy()
-    out["closure_f"] = f
-    out["h_c"] = out["h"] * f
-    out["le_c"] = out["le"] * f
-    return out
+def forcing_times(ds) -> pd.DatetimeIndex:
+    t = ds["time"]
+    return pd.to_datetime([d.strftime("%Y-%m-%d %H:%M:%S")
+                           for d in num2date(t[:], t.units, only_use_cftime_datetimes=False)])
 
 
-def forcing_observed(spec: TowerSpec, index: pd.DatetimeIndex, qc=None) -> pd.Series:
-    """True for local hours whose forcing half hours are both observed (qc 0 in every listed
-    variable, `qc` or the spec's calibration list); all True when no forcing file is declared."""
-    if not spec.forcing:
-        return pd.Series(True, index=index)
-    qc = spec.forcing_qc if qc is None else qc
-    with Dataset(spec.forcing) as ds:
+def forcing_start(path) -> pd.Timestamp:
+    """The forcing file's first record."""
+    with Dataset(path) as ds:
         t = ds["time"]
-        when = pd.to_datetime([d.strftime("%Y-%m-%d %H:%M:%S")
-                               for d in num2date(t[:], t.units, only_use_cftime_datetimes=False)])
+        first = num2date(t[0], t.units, only_use_cftime_datetimes=False)
+    return pd.Timestamp(first.strftime("%Y-%m-%d %H:%M:%S"))
+
+
+def forcing_observed(path, grid: int, index: pd.DatetimeIndex, step: float, qc) -> pd.Series:
+    """True for tower records whose forcing was observed: qc 0 in every listed variable, in every
+    forcing record inside the tower's interval (or in the one forcing record containing it, when the
+    forcing is coarser). A listed qc variable the forcing file lacks is an error."""
+    with Dataset(path) as ds:
+        when = forcing_times(ds)
+        missing = [v for v in qc if v not in ds.variables]
+        if missing:
+            raise SystemExit(f"[tower].forcing_qc: the forcing file {path} has no {missing}")
         ok = np.ones(len(when), dtype=bool)
         for v in qc:
-            if v in ds.variables:
-                ok &= np.asarray(ds[v][:, spec.forcing_grid - 1]) == 0
-    local = when + pd.Timedelta(hours=spec.utc_offset_h)
-    half = pd.Series(ok.astype(float), index=local)
-    hour = half.resample("1h").agg(["sum", "count"])
-    obs = (hour["sum"] == 2) & (hour["count"] == 2)
-    return obs.reindex(index, fill_value=False)
-
-
-def closure_summary(obs: pd.DataFrame) -> dict:
-    day = obs["closure_f"] != 1.0
-    f = obs.loc[day, "closure_f"].dropna()
-    return {"median_f": float(f.median()) if len(f) else None,
-            "p10_f": float(f.quantile(0.1)) if len(f) else None,
-            "p90_f": float(f.quantile(0.9)) if len(f) else None}
+            ok &= np.asarray(ds[v][:, grid - 1]) == 0
+    fstep = float(np.median(np.diff(when.values).astype("timedelta64[s]").astype(float)))
+    if fstep >= step:                            # a coarser (or equal) forcing: the record containing each tower record
+        f = pd.Series(ok, index=when)
+        return pd.Series(f.reindex(index.floor(f"{int(fstep)}s")).to_numpy() == True, index=index)  # noqa: E712
+    bins = pd.Series(ok.astype(float), index=when).groupby(when.floor(f"{int(step)}s")).agg(["sum", "count"])
+    need = int(round(step / fstep))
+    observed = (bins["sum"] == need) & (bins["count"] == need)
+    return observed.reindex(index, fill_value=False)

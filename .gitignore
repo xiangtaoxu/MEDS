@@ -84,7 +84,7 @@ python/build/
 examples/example_flux_tower_bci/data/
 examples/example_flux_tower_bci/output/
 # The calibration's trials and states (calibrate_fast.py --work); its results are committed.
-examples/example_flux_tower_bci/calibration/run_*/
+examples/example_flux_tower_bci/calibration/run/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md

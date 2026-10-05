@@ -36,7 +36,7 @@ module meds_fast_frozen
    use meds_soil_water, only : advance_soil_water_column
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
    use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_therm_lib, only : internal_energy_liquid, internal_energy_ice, temp_of_liquid_enthalpy
+   use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
    use meds_column_state_types, only : snow_column_t
@@ -97,12 +97,12 @@ contains
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
       real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
-      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up
+      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up, u_liq_leaf, u_liq_wood
       real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
       logical     :: converged_b(n)
       !----- Canopy-SURFACE water pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c). ------------!
-      real(wp) :: rain_above, combined_w, pai_i, throughfall_i, drip_i, throughfall_total
+      real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
 
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n),                  &
@@ -195,15 +195,21 @@ contains
       if (col_config%canopy_water_on .and. .not. snow_st%exists) then
          rain_above = forc%rainfall + forc%snowfall
          do i = 1_ik, n
-            pai_i      = col_cohort%lai(i) + col_cohort%wai(i)
             combined_w = biophys%leaf_surf_water(i) + biophys%wood_surf_water(i)
+            leaf_cap_i = col_config%leaf_surf_water_max(col_cohort%pft(i)) * col_cohort%lai(i)
+            wood_cap_i = col_config%wood_surf_water_max(col_cohort%pft(i)) * col_cohort%wai(i)
             call intercept_canopy_layer(combined_w, rain_above, col_cohort%lai(i), col_cohort%wai(i), 0.0_wp, dt_fast, &
-                                        col_config%soil_water_opts%dewmx, col_config%soil_water_opts%intercept_k, &
+                                        col_config%leaf_surf_water_max(col_cohort%pft(i)),                  &
+                                        col_config%wood_surf_water_max(col_cohort%pft(i)),                  &
+                                        col_config%soil_water_opts%intercept_k, &
                                              col_config%soil_water_opts%intercept_alpha, &
                                         throughfall_i, drip_i, frozen%film%f_wet_c(i))
-            if (pai_i > tiny_num) then
-               frozen%film%intercept_leaf(i) = (combined_w*col_cohort%lai(i)/pai_i - biophys%leaf_surf_water(i)) / dt_fast
-               frozen%film%intercept_wood(i) = (combined_w*col_cohort%wai(i)/pai_i - biophys%wood_surf_water(i)) / dt_fast
+            !----- the combined film shared by capacity, so neither film is left above its own cap -------!
+            if (leaf_cap_i + wood_cap_i > tiny_num) then
+               frozen%film%intercept_leaf(i) = (combined_w*leaf_cap_i/(leaf_cap_i + wood_cap_i)                 &
+                                               - biophys%leaf_surf_water(i)) / dt_fast
+               frozen%film%intercept_wood(i) = (combined_w*wood_cap_i/(leaf_cap_i + wood_cap_i)                 &
+                                               - biophys%wood_surf_water(i)) / dt_fast
             else
                frozen%film%intercept_leaf(i) = -biophys%leaf_surf_water(i) / dt_fast
                frozen%film%intercept_wood(i) = -biophys%wood_surf_water(i) / dt_fast
@@ -457,20 +463,22 @@ contains
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
-      !      rain arrives as liquid at the canopy-air temperature, snow as ICE at min(t_3ple, air_temp) --   !
-      !      the same valuation snow_accumulate gives snowfall that does form a pack -- and the mixture   !
-      !      enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of              !
-      !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the    !
-      !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas, as this     !
-      !      used to, created the fusion enthalpy L_f per kg of sub-threshold snow at the boundary        !
-      !      (ledger-consistent, physically wrong; 2026-09 review). -----------------------------------!
+      !      precip_enthalpy values both at the air temperature above the canopy (forc%air_temp, the      !
+      !      forcing moved to the canopy-air top), exactly as snow_accumulate does for a pack, and the    !
+      !      mixture enthalpy per kg is                                                                   !
+      !      expressed through temp_of_liquid_enthalpy (exact inverse of internal_energy_liquid; below    !
+      !      t_3ple it represents water that must still melt, which the pond/soil plateau then does with  !
+      !      soil heat). Valuing the snow as liquid at tcas, as this used to, created the fusion enthalpy  !
+      !      L_f per kg of sub-threshold snow at the boundary (ledger-consistent, physically wrong; 2026-09 !
+      !      review). Rain was valued at the canopy-air temperature until #355: the rain falls through the  !
+      !      air above the canopy, and at a cold front the canopy air is still warm (BCI 2017-04-17: rain   !
+      !      at 297.2 K into 294.9 K air), which handed the canopy and soil the rain's missing cooling. ---!
       hforc%t_pond_inflow = tcas
       if (snow_st%exists) then
          hforc%t_pond_inflow = snow_st%t_melt
       else if (forc%rainfall + forc%snowfall > tiny_num) then
-         hforc%t_pond_inflow = temp_of_liquid_enthalpy(                                                    &
-              (forc%rainfall * internal_energy_liquid(tcas)                                            &
-               + forc%snowfall * internal_energy_ice(min(t_3ple, forc%air_temp))) / (forc%rainfall + forc%snowfall))
+         hforc%t_pond_inflow = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
+                                                       / (forc%rainfall + forc%snowfall))
       end if
       !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
       !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
@@ -505,16 +513,34 @@ contains
       !      HR is disabled project-wide (uptake floored >=0), so qloss's upwind is unconditionally the       !
       !      root-frac-weighted mean soil temperature (weighted_mean is a generic weighted-sum, not      !
       !      psi-specific, so it is reused verbatim for temperature here). -------------------------------!
+      !                                                                                                  !
+      !      Each tissue's own WATER is valued at the tissue's start-of-step temperature, the way the        !
+      !      canopy film is valued at the liquid enthalpy its water arrived with. The tissue heat store is   !
+      !      cap*T with the step's frozen capacity, which has no term for water mass coming or going; so    !
+      !      the water the tissue gains or loses is booked at that value (water_store_enth, in the ledgers), !
+      !      and the tissue's temperature sees only how far the arriving water's temperature is from its   !
+      !      own. Counting the arriving water's whole enthalpy (~4.4e5 J/kg from the liquid datum) as heat   !
+      !      warmed the wood whenever it refilled: ~10 W/m2 every night at BCI, and at the 2017-04-17 storm  !
+      !      front, when wet soil refilled the dry-season wood with ~7 kg/m2 in a quarter hour, it put the  !
+      !      wood 13 K above the canopy air and drove H to +600 W/m2 at zero net radiation (#355). The leaf  !
+      !      still pays the full vapour enthalpy of what it transpires (surface_derivs); its water store's   !
+      !      outflow is counted at the pre-pass transpiration demand (sf0), frozen like everything here.     !
       soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), col_config%soil%root_frac, nsl)
       u_liq_soil = internal_energy_liquid(soil_temp_root)
+      frozen%tissue%water_store_enth = 0.0_wp
       do i = 1_ik, n
          t_up_wl   = merge(biophys%wood_temp(i), biophys%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
          u_liq_up  = internal_energy_liquid(t_up_wl)
+         u_liq_leaf = internal_energy_liquid(biophys%leaf_temp(i))
+         u_liq_wood = internal_energy_liquid(biophys%wood_temp(i))
          sapflow_gnd(i) = frozen%plant%sapflow_frozen(i) * col_cohort%nplant(i)   ! [kg/m2 ground/s]
          uptake_gnd(i)  = frozen%plant%uptake_frozen(i)  * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         frozen%tissue%qwflux_wl(i)  = sapflow_gnd(i) * u_liq_up
-         frozen%roots%qloss_frozen(i)    = uptake_gnd(i)  * u_liq_soil
-         frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - frozen%tissue%qwflux_wl(i)
+         frozen%roots%qloss_frozen(i) = uptake_gnd(i) * u_liq_soil          ! what the soil gives up, in full
+         frozen%tissue%qwflux_wl(i)   = sapflow_gnd(i) * u_liq_up - (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
+         frozen%tissue%q_wood_net(i)  = uptake_gnd(i) * (u_liq_soil - u_liq_wood) - sapflow_gnd(i) * (u_liq_up - u_liq_wood)
+         frozen%tissue%water_store_enth = frozen%tissue%water_store_enth                                     &
+                                        + (uptake_gnd(i) - sapflow_gnd(i)) * u_liq_wood                       &
+                                        + (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
       end do
 
       !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
@@ -551,6 +577,10 @@ contains
       budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(hflux%face_mass_resid))
       budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(hflux%face_mass_resid)
       budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
+      !----- A solve that did not converge (it ran out of sub-steps, or its iteration failed) counts as !
+      !      a failed check of the column, so the end-of-run report says so. Its flag used to go       !
+      !      unread: at the #352 storm front 26 failed solves were used as if they were sound. ---------!
+      if (.not. hflux%converged) budget%soil_face_mass%n_fail = budget%soil_face_mass%n_fail + 1_ik
       do k = 1_ik, nsl
          frozen%hydrology%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
          frozen%hydrology%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))
@@ -565,6 +595,7 @@ contains
       !      advance_soil_water_column above, so its theta IS the end-of-step (relieved) soil water. -----------!
       allocate(frozen%hydrology%theta1(nsl))
       frozen%hydrology%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
+      frozen%hydrology%theta_rate(1:nsl) = (soil_w_scratch%theta(1:nsl) - biophys%soil_w%theta(1:nsl)) / dt_fast
 
       !----- pack the prognostic state: plant water MASS is now NATIVE (MEDS_ED2_RK45_DESIGN.md sec 4, !
       !      P2) -- a direct copy from the persisted state, no psi round-trip needed any more. ----------!

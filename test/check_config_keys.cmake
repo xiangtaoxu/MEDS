@@ -13,17 +13,17 @@ include(${CMAKE_CURRENT_LIST_DIR}/../cmake/meds_config_keys.cmake)
 meds_toml_keys("${MAIN_TOML}" main_keys)
 meds_toml_keys("${PFT_TOML}" pft_keys)
 
-# The keys the loader reads: the literal second argument of every toml_* / req_* reader call
-# outside a comment (a key read through toml_has alone only refuses or gates on it).
+# The keys the loader reads: the literal second argument of every toml_* / req_* / opt_* reader
+# call outside a comment (a key read through toml_has alone only refuses or gates on it).
 set(read_keys "")
 file(GLOB sources "${SRC_DIR}/config/*.f90" "${SRC_DIR}/main/*.f90")
 foreach(source IN LISTS sources)
-   file(STRINGS "${source}" lines REGEX "(toml_|req_)[a-z_]+ *\\( *[a-z]+ *, *'")
+   file(STRINGS "${source}" lines REGEX "(toml_|req_|opt_)[a-z_]+ *\\( *[a-z]+ *, *'")
    foreach(line IN LISTS lines)
       if(line MATCHES "^[ \t]*!")
          continue()
       endif()
-      string(REGEX MATCHALL "(toml_|req_)[a-z_]+ *\\( *[a-z]+ *, *'[^']+'" calls "${line}")
+      string(REGEX MATCHALL "(toml_|req_|opt_)[a-z_]+ *\\( *[a-z]+ *, *'[^']+'" calls "${line}")
       foreach(call IN LISTS calls)
          if(call MATCHES "^toml_has")
             continue()

@@ -65,10 +65,10 @@ contains
    end function interpolate_forcing
 
    !----- Wind interpolates as SQUARED quantities (kinetic-energy-conserving, ED2 vels). ----!
-   elemental function interpolate_wind_energy(prev, next, w_next, u_min) result(u)
-      real(wp), intent(in) :: prev, next, w_next, u_min
+   elemental function interpolate_wind_energy(prev, next, w_next) result(u)
+      real(wp), intent(in) :: prev, next, w_next
       real(wp) :: u
-      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, u_min * u_min))
+      u = sqrt(max((1.0_wp - w_next) * prev * prev + w_next * next * next, 0.0_wp))
    end function interpolate_wind_energy
 
    !=======================================================================================!
@@ -287,7 +287,7 @@ contains
                / max(0.622_wp + 0.378_wp * max(qair, 0.0_wp), tiny_num)
          eps   = 1.24_wp * (max(e_hpa, tiny_num) / max(tair_k, tiny_num)) ** (1.0_wp / 7.0_wp)
       end select
-      eps = min(1.0_wp, max(0.5_wp, eps))               ! physical bounds; a sky is not a mirror
+      eps = min(1.0_wp, max(0.5_wp, eps))   ! clamp-ok: the formulas give >~0.6; 0.5 only guards malformed input
    end function clear_sky_emissivity
 
    !----- The synthesis itself. `kt < 0` (night, from clearness_index) means the cloud term has  !

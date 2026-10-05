@@ -61,8 +61,9 @@ module meds_plant_types
       real(wp) :: gb         !< [mol H2O/m2/s] boundary-layer conductance (<= 0 => skip, Cs = Ca)
       !----- THE WATER-STATUS POTENTIAL DRIVING THE STOMATAL LIMB (<= 0; default 0 = well-watered).  !
       !                                                                                          !
-      !      Deliberately just `psi`, not `psi_soil`. Sabot et al. (2022) write the stomatal limb as   !
-      !      beta_stomata = min(1, exp(s_ref * psi)) with psi the SOIL (equivalently predawn) water     !
+      !      Deliberately just `psi`, not `psi_soil`. Sabot et al. (2022, Eq. 5) write the stomatal     !
+      !      limb as beta_stomata = 1 while the soil is at field capacity and exp(s_ref * psi) below,   !
+      !      with psi the SOIL (equivalently predawn) water                                              !
       !      potential -- the plant's water supply, as opposed to `psi_leaf` a few lines up, which is   !
       !      its instantaneous demand-side tension and drives the separate NON-stomatal (capacity)      !
       !      limb. This field is the supply term. Naming it `psi_soil` claimed more than the kernel     !
@@ -74,7 +75,9 @@ module meds_plant_types
       !      parameterizations actually is (a pre-sunrise leaf sample), and it is the plant's own       !
       !      integration over its whole rooted profile -- so it already contains rooting depth, per-PFT !
       !      vulnerability, and the ~0.3 MPa gravity head between a 30 m tree and a sapling, none of    !
-      !      which any single soil layer's psi carries.                                                 !
+      !      which any single soil layer's psi carries. Because that head is there even in wet soil,    !
+      !      the stress begins only below an onset (leaf_photo_params_t%psi_onset), which stands in for !
+      !      Sabot's field-capacity threshold.                                                          !
       !                                                                                          !
       !      The two agree only in WET soil, where the plant re-equilibrates with the soil overnight.   !
       !      They do NOT agree under drought: the wood<->soil relaxation time tau_w = C_wood/rhizo is   !
@@ -105,7 +108,7 @@ module meds_plant_types
       !      inert: env%psi defaulted to 0 and beta_stomata was identically 1 for the whole life    !
       !      of the feature until issue #95 caught it. Reporting them makes that failure mode        !
       !      visible in the output file instead of only in a code read.                              !
-      real(wp)    :: beta_stomata    = 1.0_wp  !< [-] stomatal limb min(1, exp(sref*psi))  (1 = unstressed)
+      real(wp)    :: beta_stomata    = 1.0_wp  !< [-] stomatal limb min(1, exp(sref*(psi-psi_onset))) (1 = unstressed)
       real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] capacity limb, the psi_leaf ramp on Vcmax/Jmax/TPU
    end type leaf_flux_t
 
@@ -128,6 +131,12 @@ module meds_plant_types
       !      stomatal conductance is scaled down linearly, to zero at TWICE it -- see              !
       !      low_psi_gs_factor in meds_leaf_gas_exchange. ---------------------------------------!
       real(wp) :: psi_tlp = -2.0_wp
+      !----- Predawn leaf potential [MPa] below which the stomatal water stress begins: beta_stomata  !
+      !      is 1 above it and exp(sref_stomata*(psi - psi_onset)) below. A MEDS run sets it per PFT   !
+      !      (pft_stomata_psi_onset: half the turgor-loss point unless the PFT file gives it); the 0    !
+      !      here, stress from any negative potential, is what a caller building the record by hand   !
+      !      gets. --------------------------------------------------------------------------------!
+      real(wp) :: psi_onset = 0.0_wp
       !----- LWP_CONTROL_* selector (meds_config): 1 = linear decline, the only option (#332). ----!
       integer(ik) :: low_psi_control = 1_ik
       !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
@@ -139,6 +148,7 @@ module meds_plant_types
       real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd
       real(wp) :: hd_vcmax, hd_jmax, hd_rd, ds_vcmax, ds_jmax, ds_rd
       real(wp) :: o2_mol_frac, absorptance, phi_psii
+      real(wp) :: medlyn_vpd_min = 0.05_wp   !< [kPa] the VPD the Medlyn model uses at least ([leaf_physiology])
    end type leaf_photo_params_t
 
    !----- leaf_photo_table_t -- the leaf-photosynthesis parameters of EVERY PFT, assembled ONCE at   !

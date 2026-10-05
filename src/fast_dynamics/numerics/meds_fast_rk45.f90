@@ -419,7 +419,7 @@ contains
       !      (RK45 is explicit), but the sec 6 stability estimate already bounds normal operation      !
       !      to ~3 substeps, so a stiffness-driven runaway signals a genuinely pathological step,      !
       !      not routine behaviour; degrade gracefully rather than grind at a tiny floor forever). ---!
-      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)
+      dt_floor = max(1.0e-2_wp, t_end / 64.0_wp)   ! clamp-ok: the smallest sub-step [s] (above)
 
       call state_init(y0, n, nsl, y)
       t = 0.0_wp ; dt = min(dt_init, t_end) ; nsteps = 0_ik ; nrej = 0_ik
@@ -625,8 +625,9 @@ contains
       !      of surf_overflow's sign. ---------------------------------------------------------------------------!
       surf_overflow = 0.0_wp ; surf_deficit = 0.0_wp
       if (col_config%canopy_water_on) then
-         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai, col_config%soil_water_opts%dewmx, n, surf_overflow, &
-                                surf_deficit)
+         call clamp_canopy_film(y_out, col_cohort%lai, col_cohort%wai,                                  &
+                                col_config%leaf_surf_water_max(col_cohort%pft(1:n)),                    &
+                                col_config%wood_surf_water_max(col_cohort%pft(1:n)), n, surf_overflow, surf_deficit)
       end if
 
       !----- unpack into biophys + re-derive the diagnostic soil/leaf/wood temperatures. -----------!
@@ -771,6 +772,10 @@ contains
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)
       end do
+      !----- ...plus what the tissue WATER stores gained as their water mass changed, valued at each    !
+      !      tissue's start-of-step temperature (build_column_frozen). The tissue temperatures never saw  !
+      !      that part, so cap*T alone would leave it unbooked. -------------------------------------------!
+      tissue_store1 = tissue_store1 + frozen%tissue%water_store_enth * dt_fast
 
       !----- WHOLE-COLUMN CONSERVATION LEDGER (design doc sec 8 gates 2/3 -- the headline           !
       !      deliverable): unlike ARK's per-kernel + whole ledger, RK45 checks the WHOLE-COLUMN        !

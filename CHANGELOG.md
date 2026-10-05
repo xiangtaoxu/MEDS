@@ -14,6 +14,541 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-10-05
+
+A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily
+parameters to a flux tower by rules that work at any tower. It reads the tower through the forcing
+build's own site TOML, sets each target's filters and errors from the tower's own records, models
+the tower's known biases (an energy-closure model, and κ on the tower's respiration), takes its
+priors from the site's climate, and runs one joint fit. It then scores the fit on windows it never
+saw, refits under the declared alternatives, and writes a report (#353, #357–#362, #365). Every trial
+runs through the Python API (#340). The BCI example is its first application: the 2010 census with
+strict patch fusion, canopy interception on, and the evaluation against what the calibration scores
+(#364, #366). Fixed on the way, mostly found by the calibration:
+- **Storms on dry soil.** The fast loop no longer blows up when heavy rain hits dry soil (#352), the
+  soil-water solve may take up to 2000 sub-steps (#363), and a NaN anywhere in the fast loop now
+  stops the run instead of ending "no NaNs".
+- **Heat in plant water.** Wood that refills with water no longer heats itself (+600 W m⁻² of H at a
+  BCI storm front, and ~10 W m⁻² every night), and rain on bare ground takes the air's temperature
+  (#355).
+- **Leaf light and water stress.** A thin cohort's leaf light is its own, so the biophysics
+  example's spin-up from bare ground grows again (#347); the stomatal water stress begins at an
+  onset (#341); and the reference leaf's light use follows measurements (`phi_psii` 0.74, θ_J 0.70;
+  #351).
+
+**Upgrading from v0.3.2:**
+- **`[soil].dewmx` is refused** (#347). Set the PFT traits `leaf_surf_water_max` and
+  `wood_surf_water_max` instead (kg m⁻² of leaf and of wood; 0.1 by default, the old `dewmx`).
+- **Results move.** The reference config's `phi_psii` (0.85 → 0.74) and the reference C3 PFTs'
+  `theta_j` (→ 0.70) lower GPP; a config that sets them keeps its values. The water stress now
+  begins at half the PFT's turgor-loss point unless `pft.stomata_psi_onset` says otherwise. The
+  plant-water heat, the soil-water fixes and the thin cohorts' light move H, LE and GPP, each by the
+  amount given below.
+- **`calibrate_fast`'s settings were renamed** (#365). `--config` replaces `--site`,
+  `calibration_reference.toml` replaces `site_reference.toml`, and `--runner` replaces
+  `--meds-main`. The tower's facts move to its site TOML (`[tower].site`), and a calibration that
+  still sets the old keys is refused. The commands are `report`, `check`, `fit`, `variants` and
+  `worker`.
+- **Precipitation outputs.** `rainf_fast`, `snowfall_fast` and `snowfall_site` report the split the
+  patches received, and `precip_fast` is new.
+
+### Added
+- **The calibration's uncertainty and report** (best-practice plan P6):
+  - **Declared alternatives, the same at every site:** GPP u\* provider against the daytime
+    plateau, the closure attribution shares against Bowen, and night-time against daytime
+    partitioning. Each alternative's shift is estimated from the final gradient matrix with no new
+    trials, and the fit is rerun from the MAP when it exceeds 1 posterior sd (`[uncertainty]`).
+  - **`calibrate_fast.py variants`:** the structural variants' MAPs side by side, with their spread.
+  - **`report.md`:** per target, χ²/n, the σ scale and the model/tower ratio by hour and by light
+    class; per key, kind, scope, prior source and z, and σ ratio; κ with the respiration and GPP it
+    implies.
+
+  `[uncertainty].alternative` is replaced by `alternatives`, `refit_sd` and `refit_max_iter`. The
+  closure model's "as measured" case no longer gave LE the whole gap (#362).
+- **Keys and priors** (`scripts/calibrate_fast/priors.py`, best-practice plan P4):
+  - **Key kinds** (trait, effective, numerical, observation) and scopes (plant type, site,
+    observation).
+  - **Physical bounds kept apart from the evidence priors**, with an sd for every fitted key.
+  - **The prior z at the MAP**, and gate G13 for trait keys beyond 2 sd.
+  - **EEO prior centres from the forcing:** the least-cost `stomatal_g1`, and the coordination
+    `vcmax25` with MEDS's own leaf.
+  - **Jmax/Vcmax and the two ds** fixed at Kattge & Knorr for the growth temperature.
+  - **Meta-analysis priors by plant type** (`[fit].plant_type`).
+  - **Effective and Kattge & Knorr keys labelled** in the calibrated files.
+
+  At BCI:
+  - g1 2.80 (Lin et al. 3.77, 0.9 sd apart);
+  - vcmax25 41 at #351's leaf light use (94 at the example's);
+  - JV 1.70, ds 641.1 and 640.6 (they were fitted against GPP) (#360).
+- **The targets' observation models** (`scripts/calibrate_fast/obsmodels.py`, best-practice plan P3):
+  - **The closure model for H and LE.** The daily closure factor over ±15 days, with shares from the
+    attribution test and Bowen as the alternative.
+  - **The respiration model for GPP.** κ is an observation key: never written to a config, and
+    never fitted beside a shape key.
+  - **σ from the provider's uncertainty or the paired days**, evaluated at a smoothed observation.
+  - **Huber loss by default**, and σ scaled by the model's misfit at the refresh (max(1, √χ²/n),
+    at most 3×).
+  - **`[fluxes]` may declare G, GPP_DT and RECO_DT.** κ's prior sd is then the gap between the
+    provider's two partitionings.
+
+  At BCI:
+  - daily closure median 0.75 (f = 1.33); the gap is H's;
+  - κ prior 0.65 ± 0.10;
+  - σ from the paired days: LE 10.5 + 0.29|LE|, H 7.5 + 0.14|H|, NEE 2.1 + 0.17|NEE|. These
+    replace H's 30 % σ and GPP's 2.5 + 0.15 GPP.
+
+  Net radiation, the evaporative fraction and night NEE are no longer targets, and the
+  `growth-resp` command and `[base].growth_resp` go (#359).
+- **The calibration's data rules** (`scripts/calibrate_fast/datarules.py`, best-practice plan P2):
+  - **u\* per target.** A diagnostic on each turbulent target's own data, with a bootstrap over days.
+    LE and H take its outcome (`ustar_min = "diagnostic"`). GPP takes the provider's threshold
+    (`"provider"`, from the site TOML, one value or one per year).
+  - **Windows by rule.** One per 1.5-month slot in the leaf-on months, each the slot's best covered,
+    with validation windows in other years. Every window gets its own 180-day chain from the initial
+    stand.
+  - **Seasonal runs from a water-deficit index.** Rain minus Priestley–Taylor evaporation from the
+    forcing; the runs are scored on LE only.
+  - **Keys fixed from process coverage**, and the albedo's sun and frost rules.
+  - **The report** gives the share of the record's conditions the fit spans, and the share of area
+    whose canopy-air top is above the sensor.
+
+  At BCI:
+  - LE is flat in u\* and H still rising, so neither is filtered (they were at 0.4 and 0.6, with
+    H also cut to 9–16 h).
+  - The calibration windows are now picked by rule (they were picked by hand).
+  - The seasonal runs are again 2016 and 2017, chosen by rule.
+  - Daytime LE rows go from 17,737 (u\* ≥ 0.4, day and night) to 13,781, and H rows from 4,739 to
+    13,781 (#358).
+- **The site TOML's `[fluxes]` and `[provider]`** (`scripts/prepare_flux_tower`): each flux the
+  calibration fits (SW_out, LW_out, Rnet, LE, H, NEE, GPP, RECO, USTAR) with its column, units and the
+  rule that says when it was measured (`measured = { column, equals }`; without one, a FLUXNET flux's
+  `_QC` = 0, any other flux wherever present), RECO optionally as a sum of declared fluxes, and what
+  the provider did. `tower_inputs.read_standard()` is the one table both tools read: UTC interval
+  starts, MEDS units, a measured mask for every column (#357).
+- **Flux metadata checks F1–F3** (`tower_checks.check_fluxes`): net radiation against its four
+  components (median residual within 25 W m-2), the upwelling longwave above the downwelling at night
+  (a swapped pair of columns), and the reflected shortwave and upwelling longwave within physical
+  bounds. They stop the forcing build and are reported by the calibration (`tower_checks` in the data
+  report). BCI passes with its swapped longwave labels declared: F1 median residual 0, night LW_out −
+  LW_in +32 W m-2 (#357).
+- **`[leaf_physiology].medlyn_vpd_min`** (0.05 kPa, optional): the least leaf-to-air VPD the
+  Medlyn stomatal model uses, in the equation's own units (g1 is in kPa^0.5). It was a bare 50 Pa in
+  the code; CLM5 uses the same 50 Pa. At BCI (one year) 1.8 % of the lit leaf-hours sit below it,
+  with 0.6 % of the gross assimilation; 0.02 or 0.1 kPa moves the year's GPP by at most 0.01 % and LE
+  by at most 0.05 % (#347).
+- **ctest `clamps_named`** (`scripts/lint/check_clamps.py`): a `max`/`min` against a real literal
+  other than 0 or ±1 fails the suite unless the line says why (`! clamp-ok: <reason>`). A guard uses
+  `tiny_num` or `safe_exp`; a physical threshold is a named setting with its source (CLAUDE.md, "No
+  bare thresholds") (#347).
+- **`meds.config`**, the Python API's view of a run's configuration: it reads the main TOML and the
+  PFT (plant trait) TOML that `[init].pft_config` names, sets keys (one PFT's element of a trait
+  array included), writes the pair for a run, and reads back the run's parameter record. It needs no
+  compiled library (#340).
+- **`meds.model.run(config)` and `python -m meds.model CONFIG`** run a config to its end through the
+  Python API, in place of `meds_main CONFIG`: the same output files and the same closing line
+  (#340).
+- **ctest `python_api`** (with `MEDS_BUILD_PYLIB`): the package's tests, among them a run through
+  `meds.model` compared with the same run of `meds_main`, bit for bit, and two runs in one process
+  (#340).
+- **`meds.canopy`**, the canopy's fast pieces on their own through the Python API: the two-stream
+  radiation over a stand of cohorts, the light-plastic Vcmax25 and Rd25 per cohort, and a batch of
+  leaf solves with every driver given. A new C API module (`meds_c_api_canopy.f90`) opens a config
+  once and serves all three. `meds.plant.leaf.gas_exchange_batch` solves many leaves in one call
+  (#345).
+- **The leaf solve's per-cohort drivers as hourly outputs** (FAST tier, off unless listed):
+  `gx_par_cohort_fast`, `gx_leaf_temp_cohort_fast`, `gx_vpd_cohort_fast`, `gx_ca_cohort_fast`,
+  `gx_pressure_cohort_fast`, `gx_psi_leaf_cohort_fast`, `gx_psi_predawn_cohort_fast`,
+  `gx_gb_cohort_fast`, `gx_agross_cohort_fast` and `abs_par_cohort_fast`, with the cohort's wood
+  area `wai_cohort`. With them a canopy of leaf solves reproduces a run's hourly GPP: at BCI to
+  0.43 % (median hour, 745 hours) from the hourly means of the four 15-minute steps. With the new
+  outputs off, a run is bit-identical to one before (#345).
+- **calibrate_fast: a staged, user-controlled fit** (`MEDS_FAST_CALIBRATION_REVISION_PLAN.md`,
+  #345). The fit runs optics, then photosynthesis, energy, water stress and a joint polish:
+  - optics uses the two-stream alone against the albedo;
+  - photosynthesis uses a canopy of leaf solves against GPP (gate G8 checks it against the model);
+  - water stress uses frozen 120-day dry-season runs and a grid search.
+
+  It also adds:
+  - `site_reference.toml`: every site setting with its default and the reason, checked against
+    each site file;
+  - per-target data filters (`ustar_min`, `par_min`, `hours`, `closure_range`,
+    `min_solar_elevation`);
+  - a `report` command: each target's rows through each filter, and the morning u* plateau test;
+  - a rough uncertainty: σ-scaled Laplace intervals in physical units, and the MAP's shift under an
+    alternative filter from the final Jacobian (gate G10).
+
+  At BCI it ran 4,804 trials (31.8 core-hours), against 10,224 (about 43) for the joint fit shipped
+  with #340. Over the five years its set gives GPP 7.52 µmol m⁻² s⁻¹ (tower 7.46; the shipped set's
+  7.49), and April GPP of 6.6, 5.0 and 7.0 in 2014, 2016 and 2017 (tower 6.9, 6.3 and 7.0; shipped
+  set 5.1, 3.7 and 5.3). The example still ships the joint fit's set; the decisions the run raises
+  are in the plan's §13.
+
+### Changed
+- **The BCI example: interception on, strict patch fusion, one calibration** (#366).
+  - **The model:** the example's config switches the canopy's interception on
+    (`[fast].canopy_water_on`) and fuses the census strictly, the demography calibration's choice:
+    `patch_light_tol` 0.10 → 0.04, `patch_light_tol_max` 0.15 → 0.08 and `max_patch` 12 → 60. The
+    census now starts as 130 patches and 1,924 cohorts instead of 25 and 419, so the gaps stay apart
+    from the closed forest. A five-year run takes 26 min on one core (was 6) and 4.6 min on eight
+    threads (was 1.4), and the example now asks for eight (`[run].n_threads = 8`; the output is
+    byte-identical to one thread's, all 2,436 output variables checked). `docs/building.md`'s timings
+    are remeasured on this stand: 16 threads run 8× faster than one. The fusion barely moves the stand's fluxes, and with the interception the
+    default run goes from GPP 10.30 to 10.22 µmol m⁻² s⁻¹, LE 67.7 to 71.6 and H 68.1 to 64.6 W m⁻².
+  - **One fit, no variants.** `calibration.toml` drops `[variants]` and a redundant `[overrides]`
+    entry. One `fit.json` and `report.md` replace the two variants' files and `variants.json`.
+    `plot_calibration.py` draws one fit, and `run_example.py` loses `--variant`. The fit took 646
+    trials, 59 min on five 40-core nodes. It gives `vcmax25` 31.4, `stomatal_g1` 3.00, `g0` 0.0030,
+    leaf angle 51.3° and κ 0.72; the shipped interception-off set had 29.2, 3.35, 0.0012, 60.8° and
+    0.78. Every key is within one posterior sd of the same fit with the old fusion. The validation
+    passes, in σ, default against calibrated: GPP 2.05 → 1.44, u\* 1.73 → 0.67, upwelling longwave
+    3.81 → 3.54, LE 1.65 → 1.58, H 4.16 → 4.28.
+  - **The five years, calibrated** (was the interception-off set): GPP 8.60 µmol m⁻² s⁻¹ (was 8.41)
+    against the fit's target of 8.19 (the tower's GPP with its respiration divided by κ, by day);
+    LE 64.0 (60.6) W m⁻²; H by day 141 against the closure-corrected tower's 167; u\* at night 0.48
+    (0.49) m s⁻¹, tower 0.42.
+  - **The evaluation compares with what the calibration scores.** `plot_evaluation.py` draws the
+    tower as the calibration scores it (dashed, by day: GPP with κ, H and LE with the closure gap),
+    from the calibration's own observation models and `fit.json`, and each panel's bias and r are
+    against it. The README's table gives the tower both as measured and as the fit's target, and
+    the calibration figure's axes say in words what prior z and its whisker are.
+  - **The README** is rewritten around the pipeline and its results.
+  - **`calibrate_fast`'s registry no longer ties a key to a variant's name.** The wet-canopy keys
+    (`leaf_surf_water_max`, `wood_surf_water_max`, `intercept_k`) loaded only under a variant called
+    `interception_on`, so a calibration with interception on in its base config could not name them.
+    They are always in the registry: with interception off they have no effect, and the triage fixes
+    such a key. The report, the fit's log and the calibrated files name a variant only when there is
+    one.
+  - **`calibrate_fast`'s κ summary added the scaled respiration to GPP at night too,** where there
+    is no GPP; GPP's observation model adds it by day only. At BCI the GPP that κ implies is 8.29
+    µmol m⁻² s⁻¹ (3.14 kgC m⁻² yr⁻¹), not 8.79 (3.33). The fit itself was right.
+- **`calibrate_fast`, cleaned up after its review** (#365; `docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
+  the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
+  (below).
+  - **No gates.** G3, G5, G7, G10 and G12 could not fail, or only reported. G4 is now the report's one
+    verdict: the validation passes when the calibrated cost is below the default's and no target is
+    more than 10 % worse. G13 and G5 are marks in the report's key table. G1 and G2 are tested by
+    `check`, which CTest runs.
+  - **A failed trial stops the fit** with its values and log, instead of being absorbed by retries and
+    rejected steps. The timeout is `[fit].timeout_per_day`.
+  - **Errors instead of silent drops:**
+    - the closure model without Rnet, H or LE;
+    - the GPP observation model without RECO;
+    - a declared forcing qc variable the file lacks (a misspelt name used to switch the mask off);
+    - a window with no usable record.
+
+    The tower's flux checks (F1–F3) now stop the calibration as they stop the forcing build.
+  - **Removed:**
+    - the commands `analyze` (a re-run of `fit` replays its trials from the cache) and
+      `write-calibrated` (`fit` writes the configs);
+    - `smoke`, merged into `check`, and `select-windows`, folded into `report`;
+    - the options the protocol had decided: `[fit].weights`, `refresh`, `screening` and `loss`, and
+      `[targets.*].obs_model`, `sigma_source`, `night` and `sigma`;
+    - `[tower].forcing` and `forcing_grid`: the forcing is now the base config's own;
+    - `[tower].forcing_qc_val`: one qc list for every window;
+    - the BCI-only diagnostic of the canopy-air tops above the sensor (#350), and nine unused
+      helpers.
+  - **Renamed for a reader who knows towers and forests rather than Python:**
+    - the calibration's settings: `--config` (was `--site`); `calibration_reference.toml` (was
+      `site_reference.toml`); `[base].parameters`; `[seasonal_runs]` (was `[windows.seasonal]`);
+      `[ustar].plateau_fraction` and `classes`; `[closure].min_rise`; `[windows].per_year` and
+      `min_coverage`; `[fit].min_cost_drop`, `recompute_every`, `uninformed_sd_ratio` and
+      `max_correlation`; `[uncertainty].refit_beyond_sd`;
+    - the modules: `data_rules.py`, `observation_models.py`, `targets.py`, `parameters.py`,
+      `chains.py`, `workers.py`, and the new `calibration.py`, `uncertainty.py`, `report.py` and
+      `calibrated_files.py`, imported by their names.
+  - **The registry:** the keys fixed only by BCI's screening (VIS optics, NIR transmittance,
+    `d_ratio`, `leaf_width`, `dsl_dmax`, `intercept_k`) are `optional`, with their reasons stated as
+    rules. An unknown registry field is an error.
+  - **The BCI example:** `calibration.toml` holds only its choices. The refit with the cleaned-up
+    tool reproduces the fitted values and intervals of both variants bit for bit (946 and 616
+    trials). With one forcing-qc list, the validation windows are in 2015–2017, the years with
+    observed longwave, instead of 2013–2015, so the upwelling longwave is validated too. The
+    validation passes. In σ, default against calibrated: GPP 2.09 → 1.44, u\* 1.76 → 0.68, upwelling
+    longwave 3.75 → 3.44, LE 1.50 → 1.45, H 4.05 → 4.26.
+- **The BCI example's calibrated set, refitted by the best-practice protocol** (P7).
+  - **Leaf light use:** the example now uses #351's values, `phi_psii` 0.74 and θ_J 0.7.
+  - **The owner's choices after the first fit:** the albedo target is off and the NIR reflectance
+    fixed at 0.45 (the fit took it to 0.32, z −3.1: the canopy's structure, not its leaves, makes
+    it reflect too much); `stomata_psi_onset` is fixed at half the turgor-loss point (the fit took
+    it to its bound).
+  - **The fit:** seven keys, 946 trials in 25 minutes on three nodes. The revision's staged fit took
+    4,804 trials and 31.8 core-hours.
+  - **The keys:** `vcmax25` lands at 29.2 µmol m⁻² s⁻¹ inside its EEO prior (41; earlier fits hit
+    the floor of 25). `stomatal_g1` is 3.35 (EEO 2.80). κ is 0.78, which puts the tower's
+    respiration at 4.20 µmol m⁻² s⁻¹, about the soil chambers', and its GPP at 3.21 kgC m⁻² yr⁻¹.
+    G13 passes.
+  - **The variants** (interception off and on) differ by 1.7–3.1 posterior sd on `stomatal_g1`,
+    `g0`, `vcmax25` and the leaf angle: a structural uncertainty the posterior sd does not carry.
+  - **Validation errors:** GPP 2.09 → 1.24, u\* 1.92 → 0.62 and upwelling longwave 2.49 → 2.10 σ;
+    LE unchanged, H 4.15 → 4.32.
+  - **The five-year run** (G7 passes): GPP 10.30 → 8.41 (the tower corrected for κ: 8.47); u\* at
+    night 0.86 → 0.49 (tower 0.41) m s⁻¹; LE 67.7 → 60.6 and H 68.1 → 74.4 W m⁻². April 2016's GPP
+    is 7.8 against the tower's 6.3 (the v0.3 set gave 4.1).
+  - **Example scripts:** `plot_evaluation.py` reads the tower through its site TOML, and
+    `plot_calibration.py` plots prior z (#364).
+- **`calibrate_fast` runs one joint fit** (best-practice plan P5).
+  - **The steps:**
+    1. the triage of the first central gradient matrix (dead, rough, uninformed or collinear keys
+       fixed at their priors);
+    2. Levenberg–Marquardt on every key at once, over the calibration windows and the seasonal runs
+       (LE). It uses one-sided differences with Broyden's update between full recomputations (every
+       third step).
+    3. one refresh of the chains, weights and σ after its first convergence;
+    4. the final central gradient matrix for the uncertainty.
+  - **What goes:** the separate water stage and its grid search, the polish, the optics and
+    photosynthesis kernel stages (`stages.py`, the driver trials) and gate G8. With them go
+    `[fit].stages`, `--stages`, `--resume`, `[stages.*]`, `rough_keys`, `max_free` and the line
+    search.
+  - **Settings:** the registry's `stage` goes; the seasonal runs' targets move to
+    `[windows.seasonal].targets`.
+  - **Effect:** in a synthetic test with 8 keys, the Broyden updates reach the same minimum with 32
+    trials against 45 (#361).
+- **`calibrate_fast` reads the tower through its site TOML** (plan P1). `[tower].site` names it, and
+  the facts it holds leave `calibration.toml`: `[tower].path`, `time_column`, `flag_column`,
+  `flag_good`, `utc_offset_h` and `[tower.columns]` are gone (a site that still sets them is refused).
+  BCI's declarations moved into `bci_site.toml`. The observations stay on the tower's own interval:
+  the tool sets `[output].fast_interval_steps` from the tower's interval and `fast.dt_fast` (2 at
+  BCI) and a trial whose output is at another spacing fails; the hourly pairing, which needed both
+  half hours measured, is gone. Local hours and days come from the site's clock. At BCI the rows left
+  after every filter go from hours to half hours: GPP 4990 → 10272, LE 8498 → 17737, H 2253 → 4739,
+  albedo 5448 → 10830, upwelling longwave 17078 → 34180 (#357).
+- **`[leaf_physiology].phi_psii` 0.85 → 0.74 in the reference config, and its meaning.** It is the
+  electron yield of linear transport in low light (J's initial slope is 0.5·phi_psii per absorbed
+  photon), not Fv/Fm. With 0.85 and Aj's 4ci + 8Γ\*, a leaf fixed CO2 at most at 0.106 per absorbed
+  photon, the O2-evolution yield (Björkman & Demmig 1987); measured CO2 fixation is 0.093 (Long et
+  al. 1993), which 0.74 gives. In normal air (30 °C, ci 300 ppm) the leaf's yield goes from 0.064 to
+  0.056, against the measured 0.052 ± 0.003 (Skillman 2008). The examples keep their own values. The
+  Python leaf binding's default follows the reference config (#351).
+- **`theta_j` 0.85/0.90 → 0.70 for the reference C3 PFTs.** Every leaf of a cohort gets the cohort's
+  mean light, and a curve averaged over the light the leaves really see bends more than one leaf's,
+  so a mean-light cohort's effective curvature sits below a leaf's (0.6–0.95 measured, Ögren & Evans
+  1993). 0.7 is CLM5's and ED2's value. At the bend (absorbed light equal to the capacity), J goes from
+  0.76 Jmax (0.9) to 0.65 Jmax. To revisit with sunlit/shaded leaves (#343). The calibration registry
+  holds it fixed at the PFT file's value; the Python leaf binding's default follows. The examples keep
+  their own values (#351).
+- **The canopy films' water capacity is a plant trait** (breaking). `[soil].dewmx`, CLM's
+  interception capacity, held only the leaf and wood films. It is replaced by the optional PFT
+  traits `leaf_surf_water_max` [kg m⁻² leaf] and `wood_surf_water_max` [kg m⁻² wood], both 0.1 by
+  default (the old `dewmx`). A config that sets `soil.dewmx` stops with a message naming them. The
+  calibration registry's `dewmx` is `leaf_surf_water_max`, fixed. Output is bit-identical with
+  interception off; with it on, the means agree to round-off (LE −0.0007 W m⁻²) (#347).
+- **The stomatal water stress begins at an onset** (`pft.stomata_psi_onset`, new and optional).
+  β_stomata is 1 while the predawn leaf potential stays above the onset and
+  exp(sref · (ψ − onset)) below it; before, it fell from any negative potential. Without the key the
+  onset is half the PFT's leaf turgor-loss point (−0.857 MPa at the reference leaf traits), the
+  recommended value. Sabot et al. (2022, Eq. 5) apply no stress while the soil is at field
+  capacity, and MEDS's predawn leaf potential carries a tree's gravity head even in wet soil: at
+  BCI the top of the canopy sat at β = 0.51 in the wet season (predawn −0.34 MPa at 35 m), the
+  middle at 0.67, the understory at 0.76; all three are now 1. On the BCI five-year run with the
+  default parameters: LE 56.4 → 71.8 W m⁻² (tower 75.5; RMSE 50.1 → 38.9), H 77.3 → 66.8 (tower
+  32.4), GPP 10.70 → 11.61 µmol m⁻² s⁻¹ (tower 7.46), April 2016 GPP 9.7 → 7.3 (tower 6.3); the
+  budgets still close. The calibrated set shipped with the example was fitted without the onset
+  (#341).
+- **The fast calibration runs through the Python API** (`scripts/calibrate_fast`). Every trial,
+  state chain and base record is built with `meds.config` and run by `python -m meds.model`;
+  `--runner <meds_main>` runs the executable instead, and replaces `--meds-main`. The tool's own
+  TOML module (`tomlio.py`) is gone, and the site declaration's `[base].pft` is refused: the PFT
+  file is the one the main file names. `test/python/test_restart_exact.py` builds its configs with
+  `meds.config` too, in place of its own TOML writer (#340).
+- **The fast-calibration registry holds the 11 keys a ten-day window can set** (13 with canopy
+  interception), down from 28 (plan §14). Left at their defaults: the eight keys the tower cannot
+  inform, the three that act through soil water a ten-day window does not draw down
+  (`wstress_sref_stomata`, `root_beta`, `leaf_pi0`), `d_ratio` (it repeats `z0m_ratio`), the
+  numerical `ustmin` and `canopy_freeboard`, and the leaf biochemistry `jmax_vcmax_ratio`, `theta_j`
+  and `ds_vcmax` (#340).
+- **The BCI example's calibration is refitted** on v0.3.2 with the 11 keys, through the Python API.
+  Against the 28-key registry refitted on v0.3.2: half the trials (9,824 against 18,504), 66
+  core-hours against 151, and a validation objective 4 % higher (30,969 against 29,862), the loss in
+  GPP and the evaporative fraction. Over the five years the new set does as well or better: GPP 7.56
+  against the tower's 7.46 (the 28-key set's 6.77; v0.3.1's shipped set 6.83), NEE −3.63 (−3.31;
+  −3.14), LE 80.5 (81.9), and April 2016 GPP 4.1 (3.9) against the tower's 6.3. The interception-on
+  set now passes the five-year water budget (v0.3.1's had 53 breaches) (#340).
+
+- **The fast-calibration registry is a menu the site chooses from** (#345). Each key is `fit`
+  (the default set), `optional` or `fixed` (with the reason), has a stage and a prior, and a site
+  edits the set (`[fit].keys`, `add`, `remove`) and any prior (`[priors.<key>]`). The default set
+  changes:
+  - in: `wstress_sref_stomata` and `stomata_psi_onset`, fitted on the dry-season runs;
+  - out: `leaf_transmit_nir` (collinear with `leaf_reflect_nir`), `intercept_k` (rough) and
+    `rd_vcmax_ratio` (fixed at 0.015 with night NEE out);
+  - optional: `theta_j` (0.7–0.9) and `jmax_vcmax_ratio`.
+
+  Default priors come from syntheses where there is one: `stomatal_g1` 3.77 kPa^0.5 (Lin et al.
+  2015, tropical rainforest trees) in place of the base value with the range as its ±2 sd. The
+  fit starts at the priors' centres.
+- **calibrate_fast fits the optics and photosynthesis keys in the coupled stage, against the
+  turbulent fluxes as measured** (#348, plan §13.4):
+  - The default stages are `energy`, `water` and `polish`. A kernel stage (`optics`,
+    `photosynthesis`) that is not listed has its keys fitted in `energy`.
+  - No closure correction (`[tower].closure = "none"`, was `"bowen"`). At BCI the gap behaves like
+    missing sensible heat.
+  - LE is kept at u\* ≥ 0.4 m s⁻¹. H is kept at u\* ≥ 0.6 m s⁻¹ and 9–16 h only, with
+    σ 10 W m⁻² + 30 % (was 15 %).
+  - Net radiation and the evaporative fraction are off. The water stage scores LE and GPP.
+  - Every target accepts every filter.
+  - Registry:
+    - fixed: `leaf_clumping` (0.80), `leaf_width` and `dsl_dmax`;
+    - fitted: `theta_j`, `jmax_vcmax_ratio` (prior 1.70 ± 0.15), `ds_vcmax` (641 ± 5) and the
+      new `ds_jmax` (640 ± 4);
+    - new and optional: `ea_vcmax` and `ea_jmax`.
+
+    The temperature priors are Kattge & Knorr (2007) acclimated at BCI's 25.5 °C. Slot & Winter
+    (2017) put four Panama species' Vcmax optima at 32.9–39.7 °C; the default `ds_vcmax`, 650,
+    peaks at 31.7 °C.
+  - Two quick BCI fits of the coupled stage leave `vcmax25` at its floor (25.1, 25.3). `theta_j` and
+    Jmax/Vcmax go to their floors too. At `vcmax25` 45 the model's GPP stays 1.44 times the tower's
+    at every hour.
+- **calibrate_fast's default targets and weights** (#345):
+  - GPP's σ is 2.5 + 0.15 GPP (was 1.5 + 0.15 GPP), and its hours need u* ≥ 0.4 m s⁻¹ (was no
+    filter): the tower's GPP carries its one-per-day respiration's error at every daytime hour, and
+    calm mornings under-read uptake.
+  - Night NEE is off (was on), with `rd_vcmax_ratio` fixed.
+  - The screening reports by default and fixes nothing (was: fix the keys the tower cannot inform);
+    `[fit].screening = "drop"` restores it.
+  - The effective-sample-size weights apply in the fit itself (`[fit].weights = "ess"`), not only
+    in the covariance.
+  - A target the model cannot fit (χ² per row above 1) has its σ scaled up in the covariance.
+  - A trial with non-finite residuals fails instead of entering the Jacobian.
+
+### Fixed
+- **The soil-water solve's sub-step cap, 200 → 2000** (`[soil].max_substep`). A saturated top layer
+  over soil near its residual water content (a ponded storm on a dry-season soil) makes the Richards
+  solve stiff. At Barro Colorado Island, after the 40 mm storm of 2016-04-27 that ended the El Niño
+  dry season, the solve needed up to ~500 sub-steps of a 15-minute step. At 200 it stopped short,
+  flagged unconverged, with a 6 g m⁻² water error each time.
+  - **The symptom:** the example's default five-year run had 18 whole-column water-budget breaches
+    (worst 0.53 kg m⁻²) and 18 unconverged solves.
+  - **The effect on the calibration:** its 2016 dry-season run failed every trial.
+  - **With the new cap:** both close (worst 4e-13 kg m⁻²), and the run time does not change (#363).
+- **The fast loop blew up when heavy rain hit dry soil** (#352). The ARK integrator takes each
+  step's soil water from a separate soil-water solve, and that solve went wrong at rain onset.
+  - **The cause:** after each linear solve, the solver recomputed the flows between layers with the
+    conductivity at the NEW water potentials. A top layer dried near residual holds almost no water
+    per metre of potential, so 30 mm/h of rain lifts its potential by hundreds of metres to
+    saturation within one sub-step. The saturated conductivity times that gradient drained the layer
+    *below residual* while it rained. Step-doubling could not see it, because the full step and the
+    two half-steps overshot alike. From there the potential clamped at −3e15 m, the solve ran out of
+    sub-steps, and the "flows" reached metres per second, clipped and floored back into ~1e7 kg m⁻² of
+    water. The soil-heat step turned that into a top-soil temperature of −1e10 K, then NaN. RK45 never
+    used these flows, so it survived.
+  - **The fix:** the flows keep the conductivities and bottom-flux slope the solve used, at the
+    solve's new potentials, so each layer changes by exactly the water the solve moved. Only the root
+    uptake is re-read at the new potentials: it stays within the plant's request, which is all the
+    plant side is credited (re-reading it linearly instead leaked water).
+  - **BCI 2017 (trial 7fe525… of the cross-site calibration):** the run that stopped at the
+    2017-04-17 storm now completes, with no energy or water budget breach and none under
+    `[energy].debug_error`. In normal weather the change is small. On another trial over Jan–Apr
+    2017, hourly LE moves by 0.33 W m⁻² RMS (mean 89), H by 0.09 W m⁻² and GPP by 0.0008
+    µmol m⁻² s⁻¹. That is 25–300 times smaller than the usual gap between ARK and RK45.
+  - **Test:** `test_column_hydrology` replays the failing solve's inputs from that patch (it failed
+    with flows of 5.8 m s⁻¹ and 2.5e7 kg m⁻² created by the floor).
+- **ARK's stages read the top soil too warm during rain** (found with #352). The stages carried the
+  enthalpy of the water moving between layers, but held the water itself at its start-of-step amount.
+  So the next stage read that enthalpy as heat in a dry layer: tens of kelvin late in a heavy-rain step
+  (up to ~50 K at BCI), which the ground skin then saw. The stages now move soil water at the soil
+  solve's steady rate, ending the step at the same committed amount as before. Over Jan–Aug 2017 at
+  BCI, the ARK − RK45 gap in rain hours shrinks from 0.52 to 0.23 K for top-soil temperature and from
+  6.1 to 5.5 W m⁻² for LE; dry hours are unchanged.
+- **The wood heated itself whenever it refilled with water** (#355). Root uptake brings water into the
+  wood and sapflow takes it out to the leaves, each carrying its liquid enthalpy, counted from the
+  liquid datum (~4.4e5 J/kg). The wood's heat store is its heat capacity times its temperature, with no
+  term for water mass coming or going. So whenever uptake exceeded sapflow, the arriving water's whole
+  enthalpy was read as heat; the leaves had the same error on a smaller scale.
+  - **At the BCI storm front of 2017-04-17,** wet soil refilled the dry-season wood with ~7 kg m⁻² in
+    a quarter hour. The wood went 13 K above the canopy air (313 K in 295 K air) and gave the heat
+    back as H ≈ +600 W m⁻² and LE ≈ +420 W m⁻² at zero net radiation, where the tower measured
+    H ≈ −17 W m⁻². Every night it added ~10 W m⁻² of heat as the wood refilled.
+  - **The fix** values each tissue's own water at the tissue's start-of-step temperature, the way the
+    canopy film is valued at the liquid enthalpy its water arrived with. The tissue's temperature now
+    sees only how far the arriving water's temperature is from its own, and both energy ledgers book
+    the water stores' enthalpy change. The leaf still pays the full vapour enthalpy of what it
+    transpires; its water store's outflow is counted at the step's transpiration demand.
+  - **BCI 2017:** at the storm front H falls from 581 to 118 W m⁻² at 18 UTC and from 363 to 35 at
+    19 UTC, and ARK and RK45 now agree. Over Jan–Jul, mean night-time H (01–09 UTC) goes from +2.5 to
+    −0.9 W m⁻² (tower −23), mean H from 72.1 to 70.5 W m⁻²; GPP is unchanged.
+  - **Test:** `test_column_ark` refills dried wood from moist soil at one temperature and checks the
+    wood gains no heat, and that what the soil gives up equals what the tissues and their water stores
+    gain.
+- **Rain on bare ground was valued at the canopy-air temperature** (#355). It falls through the air
+  above the canopy, so it now takes the air temperature at the canopy-air top (the forcing moved there),
+  the same value rain landing on a snowpack and sub-threshold snowfall already used. No recorded reason
+  for the old choice was found. At the BCI storm front the canopy air was 2.3 K warmer than that air;
+  the change lowers H by 2 W m⁻² and LE by 3 W m⁻² at 18 UTC, and Jan–Jul means by under 0.1 W m⁻².
+  With one rule for all precipitation, the snowpack and the bare ground now share one function for it
+  (`precip_enthalpy` in `meds_therm_lib`) instead of writing the same expression twice (BCI output
+  bit-identical; snow sites change at round-off).
+- **The rain/snow split used a different temperature from the precipitation's enthalpy.** The split
+  was made once at ingest, at the forcing's height (ERA5-Land's 2 m air, a clearing's), while the
+  enthalpy uses each patch's canopy-air top. The forcing record now carries only the total
+  precipitation, and it is split once, where each patch's forcing is filled (`fill_forcing`), at the
+  patch's canopy-air top; the ingest split is gone. At freezing, a 30 m canopy top 0.12 K cooler than
+  ERA5-Land's 2 m air turns 6 % of the rain to snow; BCI, never near freezing, is bit-identical.
+  - **Outputs:** `rainf_fast`, `snowfall_fast` and `snowfall_site` report the split the patches
+    received, area-weighted, instead of a split at the forcing's height that the model never used;
+    the new `precip_fast` gives the total at the sub-daily tier, beside `precip_site`.
+- **A soil-water solve that failed was used without a word.** Its `converged` flag went unread; on
+  the #352 storm day 26 failed solves went into the state. A failed solve now counts as a failed
+  check of the soil column: the end-of-run report prints a warning with the count, and
+  `[energy].debug_error` stops the run.
+- **The adaptive soil-water sub-stepping ignored whether its iteration converged.** Under
+  `[soil] linearize = "picard"`, a sub-step whose iteration did not converge was accepted when its
+  error estimate passed. It is now rejected and retried at a quarter of the size, like the fixed-count
+  path already did. The default single linear solve always counts as converged, so default runs are
+  unchanged by this.
+- **A NaN in the fast loop went unreported, and the run still ended "no NaNs"** (#352).
+  - **The old guard:** four cohort-structure fields (diameter, density, AGB, wood carbon), and only on
+    year boundaries. Meanwhile the fast loop's integrators commit a non-finite state when even their
+    smallest step fails.
+  - **The new guard runs every step,** on:
+    - the stand;
+    - every cohort's leaf and wood temperature;
+    - every patch's canopy air (enthalpy, humidity, CO2);
+    - the run's energy and water ledgers, whose running residual turns non-finite the step a NaN
+      enters them.
+
+    It names the step it fired in.
+  - **The #352 case** (BCI, a storm front on 2017-04-17) now stops in the step ending 2017-04-18
+    00:00 instead of finishing with NaN fluxes and NaN budgets. `meds.model` raises the same.
+- **The BCI provider's note on the tower's respiration was misquoted** in `site_reference.toml`
+  (`[targets.gpp]`), the BCI `calibration.toml` and the calibration revision plan (§1, §6) as "40–50 %
+  below soil chambers". The note says the respiration "appeared underestimated" against soil chambers,
+  "considering that RECO includes also above ground respiration which can contribute up to 40-50% of
+  total respiration". The tower's mean (4.09 µmol m⁻² s⁻¹) is about what the chambers measure for
+  the soil alone (≈ 4.3; Rubio & Detto 2017). No setting changes.
+- **A cohort with less than 0.1 m² m⁻² of leaf got too little light per leaf** (since v0.1.0). Its
+  leaf PAR was its absorbed PAR divided by max(LAI, 0.1), so a cohort of LAI 0.01 saw a tenth of its
+  light. It now divides by the cohort's own LAI. A stand of seedlings could not grow:
+  - The biophysics example's spin-up from bare ground (Ithaca) grew nothing after #321 halved the
+    leaf-area scale: under the floor, that halved a seedling's light per leaf as well as its leaf.
+    At the end of its 50 years: LAI 0.000 → 3.76, AGB 0.001 → 9.42 kgC m⁻², cohorts 2 → 28 (before
+    #321: LAI 4.1, AGB 9.6). After five years: LAI 0.000 → 0.048, cohorts 2 → 8.
+  - BCI, five years from the 2010 census, default parameters: GPP 11.24 → 11.28 µmol m⁻² s⁻¹
+    (+0.33 %), LE 68.56 → 68.68 W m⁻², H 66.79 → 66.73 W m⁻², LAI at the end 5.72 → 5.76.
+
+  With it (#347):
+  - the within-canopy wind treated a crown smaller than 1 % of the ground as 1 %; it now uses the
+    crown's own area;
+  - the forcing's wind had a 0.1 m s⁻¹ floor of its own under the 0.65 m s⁻¹
+    (`aerodynamics.ubmin`) that every use applies; only `ubmin` is left.
+- **A run through the Python API did not match `meds_main`** in an Intel build. Inside Python,
+  `libmeds.so`'s calls to `exp`, `sin`, `pow` and the other math functions reached glibc's versions,
+  which Python had loaded first, instead of Intel's. A ten-day BCI trial differed by up to 7e-4 W
+  m⁻² in LE and 2e-5 µmol m⁻² s⁻¹ in GPP; the two-day test case differs in 38 output variables.
+  `libmeds.so` now links Intel's runtime into itself and keeps its names inside (`-static-intel`,
+  `--exclude-libs,ALL`), and both runs are bit-identical. The library grows from 2.5 to 4.0 MB
+  (#340).
+- **A second run in one process wrote the first run's settings into its parameter record**, and the
+  record would have stopped growing after 4,096 rows. Loading a config now starts a new record
+  (#340).
+- **24 optional per-PFT keys could not be set since v0.3.2** (N-10): the per-PFT plant-hydraulics
+  overrides (`pft.leaf_pi0`, `pft.wood_psi50`, `pft.k_plant_max` and ten more),
+  `pft.storage_turnover_rate`, `pft.retained_carbon_fraction`, and the nine optional WATER, HYDRO
+  and LIGHT phenology-cue keys. The loader reads them, but `meds_config_pft.toml` did not list them,
+  so a config that set one stopped at the start. They are listed now, and the check that the
+  references match the loader (`config_keys_listed`) reads the `opt_*` readers too; it had matched
+  only `toml_*` and `req_*` calls. The calibration registry's `pft.leaf_pi0` is one of them, so the
+  BCI calibration as shipped could not start on v0.3.2 (#340).
+
 ## [0.3.2] — 2026-10-01
 
 An **efficiency and consolidation** release. The fast loop no longer slows down past four
@@ -3172,7 +3707,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...beta
+[0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0

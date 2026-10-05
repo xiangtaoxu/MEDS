@@ -26,7 +26,12 @@ stomatal_g0        = [0.01, 0.01, 0.04]             # [mol/m2/s] cuticular/resid
 stomatal_g1        = [4.0, 3.0, 1.6]                # Medlyn [kPa^0.5] (Leuning would use ~8-12)
 stomatal_d0        = [1500.0, 1500.0, 1500.0]       # [Pa] Leuning humidity sensitivity
 quantum_yield_c4   = [0.0, 0.0, 0.04]               # [mol CO2/mol photon] C4 light slope (0 for C3)
-theta_j            = [0.85, 0.90, 0.85]             # [--] curvature of the J hyperbola ONLY (C3 co-limitation is theta_*_c3)
+theta_j            = [0.70, 0.70, 0.85]             # [--] curvature of the J hyperbola ONLY (C3 co-limitation is theta_*_c3;
+                                                    #   C4 does not use it). 0.7, as CLM5 and ED2: every leaf of a cohort
+                                                    #   gets the cohort's mean light, and averaging a leaf's curve over the
+                                                    #   light its leaves really see bends it more than one leaf's (a leaf's
+                                                    #   own value moves with its light and CO2: 0.6-0.95, Ogren & Evans
+                                                    #   1993). Revisit with sunlit/shaded leaves (#343)
 theta_cj_c3        = [0.98, 0.98, 0.98]            # [--] C3 Ac/Aj co-limitation curvature (#118; NOT theta_j)
 theta_ip_c3        = [0.95, 0.95, 0.95]            # [--] C3 (Ac,Aj)/Ap co-limitation curvature (#118)
 theta_cj_c4        = [0.80, 0.80, 0.80]             # [--] C4 co-limitation curvature 1 (C4 only)
@@ -35,7 +40,15 @@ katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul m
 wstress_psi_open   = [-0.5, -0.5, -0.5]             # [MPa] leaf potential at which beta = 1 (no stress)
 wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at which beta = 0 (full stress)
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
-wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*psi_soil))
+wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*(psi-psi_onset)))
+# stomata_psi_onset = [-0.857, -0.857, -0.857]      # [MPa] OPTIONAL predawn leaf potential where the stomatal stress begins
+                                                    #   (beta_stomata = 1 above it). Absent: half the PFT's leaf turgor-loss
+                                                    #   point, the recommended value (-0.857 at the [hydraulics] leaf_pi0 and
+                                                    #   leaf_elastic_mod). It clears the gravity head of a tree up to ~85 m in wet soil.
+# leaf_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 leaf] OPTIONAL film capacity of a leaf (intercepted rain and dew)
+# wood_surf_water_max = [0.1, 0.1, 0.1]             # [kg/m2 wood] OPTIONAL film capacity of the woody surface. Absent: 0.1 each,
+                                                    #   CLM5's dewmx. Used with [fast].canopy_water_on; a cohort holds
+                                                    #   leaf_surf_water_max*LAI + wood_surf_water_max*WAI before it drips.
 # Carbon-dynamics traits (meds_plant_carbon_dynamics). All state is CARBON; conversions folded in here.
 # Consumed once the carbon-allocation engine is wired; size2leaf_carbon/size2wood_carbon use sla/aboveground_frac.
 sla                    = [16.0, 13.0, 10.0]         # [m2/kgC] specific leaf area (pioneer high -> climax low)
@@ -89,6 +102,9 @@ leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (spheric
 leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+# OPTIONAL carbon traits; absent, each is 0 for every PFT.
+# storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
+# retained_carbon_fraction = [0.0, 0.0, 0.0]       # [--] shed leaf carbon kept (resorbed) rather than littered
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
@@ -98,6 +114,22 @@ evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppre
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
+# OPTIONAL per-PFT plant hydraulics. Each overrides the [hydraulics] value of the main file for the
+# PFTs it lists, so one trait can be made per-PFT without restating the others; absent, every PFT
+# takes the [hydraulics] value (shown here).
+# leaf_pi0           = [-1.5, -1.5, -1.5]          # [MPa] leaf osmotic potential at full turgor
+# leaf_elastic_mod   = [12.0, 12.0, 12.0]          # [MPa] leaf bulk elastic modulus
+# leaf_apoplast_frac = [0.30, 0.30, 0.30]          # [--]  leaf apoplastic fraction
+# leaf_water_sat     = [2.0, 2.0, 2.0]             # [kg H2O/kgC] leaf saturated water content
+# wood_pi0           = [-1.0, -1.0, -1.0]          # [MPa] wood osmotic potential at full turgor
+# wood_elastic_mod   = [8.0, 8.0, 8.0]             # [MPa] wood bulk elastic modulus
+# wood_apoplast_frac = [0.20, 0.20, 0.20]          # [--]  wood apoplastic fraction
+# wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
+# wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
+# wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
+# k_plant_max        = [6.0e-4, 6.0e-4, 6.0e-4]    # [kg/s/MPa/m2 leaf] whole-plant conductance
+# wood_kmax          = [8.0, 8.0, 8.0]             # [kg/m/s/MPa] sapwood specific conductivity
+# vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
@@ -175,4 +207,13 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # bare_snap_frac      = [0.02, 0.02, 0.02]         # [--]    below this leaf fraction the canopy snaps bare
 #
 # The WATER / HYDRO / LIGHT cue parameters are OPTIONAL (those cues are opt-in via the masks);
-# absent keys keep the table defaults. See docs/configuration.md for the full list.
+# absent keys keep the defaults shown. See docs/configuration.md for what each does.
+# water_off_threshold = [0.2, 0.2, 0.2]            # [--]    WATER cue: available soil water at which shedding is full
+# water_on_threshold  = [0.5, 0.5, 0.5]            # [--]    WATER cue: available soil water at which flushing is full
+# water_window        = [10.0, 10.0, 10.0]         # [day]   WATER cue: soil-water running-mean window
+# water_width         = [0.1, 0.1, 0.1]            # [--]    WATER cue: logistic transition width
+# low_psi_threshold   = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: dry days below the turgor-loss point to full shed
+# high_psi_threshold  = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: wet days to full flush
+# light_on_threshold  = [200.0, 200.0, 200.0]      # [W/m2]  LIGHT cue: radiation at which shedding starts
+# light_width         = [50.0, 50.0, 50.0]         # [W/m2]  LIGHT cue: shedding transition width
+# light_window        = [10.0, 10.0, 10.0]         # [day]   LIGHT cue: radiation running-mean window
