@@ -1,98 +1,78 @@
-# Leaf-physiology example — Slot & Winter (2017), driven from Python
+# Example 01 — Leaf gas exchange (Slot & Winter 2017)
 
-This example exercises the **leaf-level photosynthesis + stomatal-conductance** module
-(`src/fast_dynamics/plant/`) — the FvCB C3 / Collatz C4 demand, the Leuning / Medlyn / Katul stomatal
-models, the Arrhenius/peaked temperature response, and the coupled A–gs–Ci solver — by reproducing
-Figures 1(b) and 2 of **Slot & Winter (2017, *Plant Cell Environ.* 40:3055–3068)** in one figure, a study of the
-temperature responses of photosynthesis in four lowland tropical tree species. The module is a self-contained leaf gas-exchange calculator, and the **same compiled kernels run
-inside the coupled model**, driven there by the canopy radiative transfer, the leaf energy balance
-and plant hydraulics. Isolating them here is what makes the response curves clean. For the
-demographic spin-up, see [`../example_demography/`](../example_demography/).
+The leaf gas-exchange module of MEDS on its own: C3 photosynthesis (Farquhar–von Caemmerer–Berry),
+stomatal conductance, and their coupled solution for the intercellular CO₂ Cᵢ. A Python script sets
+every parameter and driver; there is no site, config file or canopy. The same compiled kernels
+([`meds_leaf_gas_exchange.f90`](../../src/fast_dynamics/plant/meds_leaf_gas_exchange.f90)) run inside
+the coupled model, where canopy radiation, the leaf energy balance and plant hydraulics supply their
+drivers. The equations are in [`docs/science/leaf_gas_exchange.md`](../../docs/science/leaf_gas_exchange.md).
 
-**Everything runs from Python.** The species parameters (the paper's Table 2), the temperature-response
-conversion, the humidity assumption and the sweeps all live in
-[`reproduce_slot2017.py`](reproduce_slot2017.py), while the actual photosynthesis kernels are the
-**same compiled Fortran** the demographic engine uses, reached through the
-[`meds.plant.leaf`](../../python/meds/plant/leaf.py) package (a clean, ctypes-free API over the `bind(c)`
-shared library [`src/c_api/meds_c_api_leaf.f90`](../../src/c_api/meds_c_api_leaf.f90)
-→ the single `libmeds.so`). That is the point of the example: one model, no parameters hard-coded in Fortran,
-the whole experiment a plain Python script.
+The example reproduces Figs 1(b) and 2 of Slot, M. & Winter, K. (2017) In situ temperature
+relationships of biochemical and stomatal controls of photosynthesis in four lowland tropical tree
+species. *Plant, Cell & Environment* 40: 3055–3068, <https://doi.org/10.1111/pce.13071>.
 
-## Reproduce
+## Run
 
-Either install the package (it compiles the backend for you) or point it at a CMake build.
+Build the Python library once, then run the script from the repository root (a few seconds):
 
 ```bash
-# EITHER: install -- scikit-build-core runs CMake and bundles libmeds.so into the wheel,
-#         and the installed library needs no LD_LIBRARY_PATH (its RPATH is baked at build time).
-source /opt/intel/oneapi/setvars.sh                     # so CMake finds ifx
-CMAKE_PREFIX_PATH=$CONDA_PREFIX pip install python/
-python examples/example_leaf_gas_exchange/reproduce_slot2017.py   # both figures + CSVs
-
-# OR: build in the source tree and run without installing.
+source /opt/intel/oneapi/setvars.sh
 cmake -S . -B build-py -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DMEDS_BUILD_PYLIB=ON -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
-cmake --build build-py --target meds_py                 # -> build-py/libmeds.so
-source /opt/intel/oneapi/setvars.sh
-PYTHONPATH=python python -m meds.plant                  # round-trip self-test
-PYTHONPATH=python python examples/example_leaf_gas_exchange/reproduce_slot2017.py
+cmake --build build-py --target meds_py                     # -> build-py/libmeds.so
+PYTHONPATH=python python examples/example01_leaf_gas_exchange/reproduce_slot2017.py
 ```
 
-The script prefers an INSTALLED `meds` and falls back to `python/` on `sys.path`, so both paths work.
-There is ONE shared library now (`libmeds.so`) behind every sub-module — see
-[`python/README.md`](../../python/README.md).
+With the package installed (`CMAKE_PREFIX_PATH=$CONDA_PREFIX pip install python/`, see
+[`python/README.md`](../../python/README.md)) the script runs without `PYTHONPATH`. It writes the
+CSVs in `slot2017/` and the figure `slot2017.png`.
 
-![Slot & Winter 2017 reproduced with the MEDS model](slot2017.png)
+## Setup
 
-The single figure `slot2017.png` has two parts.
+All settings are at the top of [`reproduce_slot2017.py`](reproduce_slot2017.py); everything else is
+a default of [`meds.plant.leaf`](../../python/meds/plant/leaf.py).
 
-## (a) A–Cᵢ demand curve (F. insipida)
+| Input | Value |
+|---|---|
+| Capacities | The paper's Table 2: peaked temperature fits of Vcmax and Jmax for four species, converted exactly to the model's peaked form (k25, Eₐ, H_d, ΔS) |
+| Drivers | PAR 1500 µmol m⁻² s⁻¹, Cₐ 400 µmol mol⁻¹, 101.3 kPa, leaf temperature 25–42 °C, no water stress |
+| Humidity | 70 % relative humidity at leaf temperature, so the leaf VPD rises from 0.95 to 2.5 kPa. A fixed vapour pressure would push it past 5 kPa by 40 °C, and gₛ would fall from the start of the sweep. |
+| Stomata | Medlyn, g₀ = 0.02 mol m⁻² s⁻¹, g₁ = 4.0 kPa^0.5 (not fitted to the paper) |
+| Respiration | R_d at 25 °C = 0.5 % of Vcmax25, Arrhenius with Eₐ = 46.39 kJ mol⁻¹ |
+| Co-limitation | Smooth (quadratic) in the coupled solve; a sharp min(A_c, A_j) in the A–Cᵢ curve |
+| A–Cᵢ curve | *F. insipida* at 25 °C with the paper's corrected in-situ Vcmax = 161 and Jmax = 238 µmol m⁻² s⁻¹ (no temperature correction), Bernacchi et al. (2001) kinetics, and J = 196 µmol m⁻² s⁻¹ from the model's default light use |
 
-The large left panel is a **Figure 1(b)-style A–Cᵢ demand curve** for *F. insipida*, drawn from the
-paper's **corrected in-situ capacities Vcmax = 161, Jmax = 238 µmol m⁻² s⁻¹ used DIRECTLY** (no
-capacity temperature-correction — the curve is at a single temperature). It **composes the model
-kernels**: the mole-fraction Rubisco kinetics via `meds.plant.leaf.arrhenius`, the electron-transport rate J
-from Jmax via `meds.plant.leaf.electron_transport_j`, then `meds.plant.leaf.assimilation_demand_c3` with a **sharp
-minimum**. So the net **limiting rate A_net** (black) exactly coincides with the lower of the
-**RuBP-carboxylation-limited A_c** (red) and **RuBP-regeneration-limited A_j** (blue) *net* curves —
-Rubisco-limited at low Cᵢ, RuBP-regeneration-limited at high Cᵢ, with the crossover starred and the CO₂
-compensation point Γ marked. (Kinetics are Bernacchi-2001 at 25 °C; the exact transition Cᵢ depends on
-the measurement temperature, which the paper's inset does not state.)
+The other model choices are arguments of the same call: C4 (`leaf.c4_params`), Leuning or Katul
+stomata (`leaf.Stomata`), and a plain Arrhenius temperature response (`leaf.TempResponse`).
+`leaf.gas_exchange_batch` solves an array of leaves in one call.
 
-## (b–f) Leaf-temperature responses
+## Results
 
-The five stacked right panels reproduce the paper's **Figure 2** — Vcmax, Jmax, gₛ, A_net and R_light
-versus leaf temperature, the **four species distinguished by colour** (modelled lines only).
+![Slot & Winter 2017 reproduced with the MEDS leaf model](slot2017.png)
 
-**What is exact vs. modelled.** The measured **Vcmax and Jmax** peaked temperature-response parameters
-(the paper's Table 2, corrected 4-parameter fits, in the Medlyn-2002 `TOpt/kOpt/Ha/Hd` form) drive the
-reproduction. `reproduce_slot2017.py` converts them to the model's `(k25, Ea, Hd, ΔS)` peaked form — an
-*exact* reparameterization (verified to ~1e-14) — so the **Vcmax and Jmax panels reproduce the paper's
-fitted curves exactly**. **gₛ and A_net** are then genuine **outputs of the coupled A–gs–Ci solver**
-(Medlyn stomata) at PAR = 1500 µmol m⁻² s⁻¹, Cₐ = 400 ppm; **R_light** is the model's Rd(T). (These
-Table-2 peaked capacities differ from the panel-(a) inset values, which are that one A–Cᵢ curve's
-in-situ fit.)
+**(a) A–Cᵢ curve.** Net assimilation is limited by RuBP carboxylation (A_c, red) below
+Cᵢ ≈ 187 µmol mol⁻¹ and by RuBP regeneration (A_j, blue) above it (star). The compensation point is
+Γ = 47 µmol mol⁻¹, and A reaches 44 µmol m⁻² s⁻¹ at Cᵢ = 1400. The transition Cᵢ depends on the
+measurement temperature, which the paper's inset does not give.
 
-**Reproducing the paper's coordinated gₛ/A optima.** The paper's central finding is that net
-photosynthesis and stomatal conductance both peak **near ambient temperature (~30–33 °C)** even though
-the biochemical capacities peak higher (~35–40 °C). Getting the *coupled* gₛ and A_net to show that
-pattern turned out to hinge not on the Medlyn parameters but on the **assumed leaf VPD(T)**: with a
-*fixed air vapour pressure*, leaf-to-air VPD climbs to ~4.6 kPa by 40 °C and drags gₛ down
-monotonically no matter what `g1`/`g0` are (a sweep confirmed gₛ then peaks at the 25 °C boundary for
-3 of 4 species). Using instead a **constant relative humidity (70 %)** — representative of the humid
-tropical environment — keeps VPD moderate (0.95 → 2.5 kPa over 25–42 °C), so the semi-empirical Medlyn
-gₛ tracks A and both peak near ambient. The example therefore uses `REL_HUMIDITY = 0.70`,
-`g1 = 4.0`, `g0 = 0.02` (Medlyn); with these the modelled gₛ peaks interior for all four species and
-A_net peaks near ~32–34 °C, close to the measured A₄₀₀ optima (Table 3).
+**(b–f) Temperature responses.** Vcmax and Jmax are the paper's fits drawn with the model's peaked
+function, so they match the paper exactly. gₛ, A_net and R_light are outputs of the coupled solver.
+
+| Species | Vcmax25 | Jmax25 | Vcmax T_opt | Jmax T_opt | gₛ T_opt | A_net T_opt | A_net max |
+|---|---|---|---|---|---|---|---|
+| *F. insipida* | 77.9 | 127.9 | 36.0 | 34.5 | 29.5 | 33.5 | 21.4 |
+| *L. speciosa* | 79.5 | 88.1 | 39.7 | 37.5 | 34.5 | 36.5 | 21.0 |
+| *C. longifolium* | 18.1 | 65.5 | 32.9 | 33.5 | 32.0 | 32.5 | 18.1 |
+| *G. madruno* | 26.8 | 32.8 | 37.1 | 35.3 | 29.0 | 32.5 | 7.6 |
+
+Rates in µmol m⁻² s⁻¹, temperatures in °C (gₛ and A_net optima on the 0.5 °C sweep). As in the
+paper, gₛ and A_net peak below the biochemical capacities. A_net peaks at 32.5–33.5 °C in three
+species, near the 30–32 °C optimum the paper cites for Panamanian lowland tropical trees, and at
+36.5 °C in *L. speciosa*, whose capacities peak highest.
 
 ## Files
 
-- **`slot2017.png`** — the consolidated figure (rendered by
-  [`../../post_proc/plot_slot2017.py`](../../post_proc/plot_slot2017.py)).
-- **`slot2017/slot2017_aci.csv`** — the F. insipida A–Cᵢ curve (columns `ci, ac, aj, anet`; net rates).
-- **`slot2017/slot2017_<species>.csv`** — leaf-temperature sweep (columns
-  `tleaf_c, vcmax, jmax, rlight, gs, anet`).
-
-`meds.plant.leaf` is a reusable, model-agnostic API (`gas_exchange(...)`, `assimilation_demand_c3(...)`,
-`electron_transport_j(...)`, `peaked(...)`, `arrhenius(...)`) — any Python code can drive the MEDS leaf
-model; this Slot reproduction is just its first client.
+- [`reproduce_slot2017.py`](reproduce_slot2017.py) — parameters, drivers and the two experiments.
+- [`plot_slot2017.py`](plot_slot2017.py) — the figure.
+- `slot2017/slot2017_aci.csv` — the A–Cᵢ curve: `ci, ac, aj, anet` (net rates).
+- `slot2017/slot2017_<species>.csv` — the temperature sweep: `tleaf_c, vcmax, jmax, rlight, gs, anet`.

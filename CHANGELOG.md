@@ -14,6 +14,19 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **The leaf example is `examples/example01_leaf_gas_exchange/`**, the first of the examples
+  renumbered so that each exercises one module of MEDS. Its plot script moved in from `post_proc/`,
+  and the script and README were cut to the experiment and its current results.
+  - **Outputs regenerated.** They predated the reference light use of v0.3.3 (`phi_psii` 0.74,
+    θ_J 0.70; #351), which lowers the light-limited rate: A at Cᵢ = 1400 in the A–Cᵢ curve falls
+    from 48.7 to 44.0 µmol m⁻² s⁻¹, and the peak A_net from 22.3 to 21.4 (*F. insipida*), 22.3 to
+    21.0 (*L. speciosa*) and 19.0 to 18.1 (*C. longifolium*). The A_net optima are unchanged; the
+    gₛ optima of *F. insipida* and *L. speciosa* move 0.5 °C cooler, to 29.5 and 34.5 °C.
+  - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
+    of the two curves below the compensation point.
+
 ## [0.3.3] — 2026-10-05
 
 A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily
