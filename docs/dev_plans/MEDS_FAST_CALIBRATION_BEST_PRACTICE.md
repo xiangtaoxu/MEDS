@@ -24,8 +24,8 @@ decision below is the owner's (§0). Implemented 2026-10-04 in #357–#362 and #
 | step | decision | § |
 |---|---|---|
 | layers | one site TOML per tower (the forcing builder's), one reader (`tower_inputs.py`); facts in the site file, choices in `calibration.toml` | 2.1 |
-| metadata | checks in the adapter; the forcing build stops on a mismatch, the calibration reports | 2.1 |
-| hours used | measured hours only; observed forcing only in calibration windows | 2.2 |
+| metadata | checks in the adapter; a mismatch stops the forcing build and the calibration | 2.1 |
+| hours used | measured hours only; observed forcing only, in every window | 2.2 |
 | u\* | per target, by its own diagnostic; for CO₂ the provider's threshold by default, the daytime plateau as the alternative | 2.3 |
 | transitions | cut hours only for a measurement or definition reason; no transition cut for H and LE; every tower flux treated as turbulent (storage ignored) | 2.4 |
 | heights | fluxes compared as they are; the forcing's neutral move to each patch's canopy-air top is #350, no model change now | 2.4 |
@@ -43,8 +43,9 @@ decision below is the owner's (§0). Implemented 2026-10-04 in #357–#362 and #
 | keys | the default set of §4.3, with kinds and scope tags | 4 |
 | the fit | one joint fit of all keys; the separate water stage, the polish and the kernel stages go | 6.3 |
 | uncertainty | Laplace, declared alternatives (refit above 1 sd), structural variants | 7.1 |
-| acceptance | gates, validation, full record, diagnosis of conflicts, labels | 7.2 |
+| acceptance | validation, full record, diagnosis of conflicts, labels | 7.2 |
 | after the first BCI fit (2026-10-04) | the albedo target off for now and `leaf_reflect_nir` fixed: at realistic leaf optics the model's canopy reflects too much NIR, and the albedo took the reflectance to 0.32 (prior z −3.1); `stomata_psi_onset` fixed at half the turgor-loss point: set by the ten-day windows rather than the drought runs (T6), traded against g1 (r 0.91), at its bound; the Bowen closure alternative reported only; GPP's u\* plateau from the all-day diagnostic | 2.5, 4.3, 7.1 |
+| the clean-up (2026-10-04) | a failed trial stops the fit; the keys the BCI screening fixed become `optional` (the screening decides at another tower); one forcing-qc list for every window, so validation scores only observed forcing; every rename of the review (`--config`, `calibration_reference.toml`, plain setting and code names); no gates (§7.2) | 7.2 |
 
 ## 1. What the fits taught
 
@@ -158,7 +159,7 @@ The fit runs at the tower's native interval: 30 minutes at BCI and FLUXNET's hal
 - **σ is evaluated at a smoothed observation:** the mean of the measured values at the same time of day within ±7 days.
   - **Why:** weighting each row by σ(its own observation) gives randomly low values more weight.
   - **Its size:** a simulation put the fitted GPP 6–14 % low (7 % at GPP 10 with BCI's old 2.5 + 0.15·GPP).
-- **Loss:** Huber (c = 2), since half-hourly errors are heavy-tailed (Lasslop et al. 2008; PEcAn uses a Laplace likelihood). Least squares stays an option. The χ² report uses raw residuals.
+- **Loss:** Huber (c = 2), since half-hourly errors are heavy-tailed (Lasslop et al. 2008; PEcAn uses a Laplace likelihood). The χ² report uses raw residuals.
 
 ### 3.2 Autocorrelation
 
@@ -219,7 +220,7 @@ PEcAn samples each target's variance; ORCHIDEE sets it to the prior model's misf
   - **`vcmax25`:** the coordination condition (Wang et al. 2017; Smith et al. 2019), solved with **MEDS's own leaf equations**. That is, the vcmax25 at which MEDS's Rubisco-limited and light-limited rates are equal at the site's growing-season daytime climate, with the configured `phi_psii` and θ_J, converted to 25 °C by MEDS's temperature response at the Kattge & Knorr optima. **BCI: 41** (with phi_psii 0.74 and θ_J 0.7; the 54 of revision 4 used the model's default optima, 650/640, and the tower's measured daytime records).
 - **Jmax/Vcmax, `ds_vcmax`, `ds_jmax`:** fixed at Kattge & Knorr (2007) for the site's growth temperature, computed from the forcing, not hard-coded.
 - **Plant types:** the PFT file names its class, and the registry holds a prior per class.
-- **Bounds apart from priors:** the hard bound is what is physically possible, the prior what the evidence says. Each key's prior z is reported; |z| > 2 is flagged (G13).
+- **Bounds apart from priors:** the hard bound is what is physically possible, the prior what the evidence says. Each key's prior z is reported; a trait key beyond 2 is flagged in the report's key table.
 
 ### 3.6 Leaf light use (#351)
 
@@ -336,7 +337,7 @@ So the fit should land `vcmax25` near its EEO value (41 with the Kattge & Knorr 
    - **Rows:** the 8 windows (all targets) plus the seasonal runs (LE only).
    - **Start:** the prior centres, one start.
    - **Iterations:** one-sided differences, with the gradient matrix reused between iterations (a Broyden update) and recomputed in full every third iteration or after a rejected step.
-   - **Failures:** a failed trial rejects its step; a NaN fails the trial (G12).
+   - **Failures:** a failed trial (a NaN, a budget breach, a timeout) stops the fit with its log: a model that cannot run a set of values inside the keys' ranges has a bug to fix.
 3. **Once, after the first convergence:**
    - re-run the chains with the current values;
    - refresh the effective-sample weights;
@@ -365,37 +366,34 @@ So the fit should land `vcmax25` near its EEO value (41 with the Kattge & Knorr 
    Each alternative's shift is first estimated from the final gradient matrix. Above 1 posterior sd, the fit is rerun from the MAP with that alternative, and both MAPs are reported.
 3. **Structural variants** (§5.3).
 
-### 7.2 Gates and acceptance
+### 7.2 Acceptance
 
-| gate | requirement |
-|---|---|
-| G1 | the stand is identical at the start and end of every trial |
-| G2 | the same parameters give byte-identical output |
-| G3 | every fitted key has a non-zero, smooth gradient column (reported) |
-| G4 | on validation windows the MAP beats the default; no target more than 10 % worse |
-| G5 | keys near a bound are reported with the target that pushed them |
-| G7 | the full record with the slow tier on: closed budgets; dry-season GPP and LE no worse than the default's |
-| G10 | every declared alternative's shift is under 1 posterior sd, or its refit is reported |
-| G12 | no scored output has a NaN (the tool's output check, already in place) |
-| G13 | every trait key with \|prior z\| > 2 is diagnosed (§5.1) or relabelled effective |
+The clean-up of 2026-10-04 (`MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`) replaced the gates G1–G13. Most of them were pass/fail labels that could not fail. The checks that remain are these.
 
-G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G11 is merged into G5.
+- **Validation**, the one verdict in the report: on windows the fit never saw, the calibrated cost is below the default's, and no target's RMSE is more than 10 % worse.
+- **The key table** marks two things for a diagnosis (§5.1):
+  - a trait key more than 2 prior sd from its evidence, with the target that pushes it (diagnose it, or relabel it effective);
+  - a key near a bound, with the target that pushes it there.
+- **The full record** with the slow tier on: the budgets close, and the dry-season GPP and LE are no worse than the default's.
+- **The tool's own checks:**
+  - a trial that fails stops the fit;
+  - `check` (CTest) tests a byte-identical repeat, an unchanged stand and the parameter record.
 
-**A calibrated set ships when** G1–G13 pass, any conflict has been diagnosed, the effective keys are labelled in the calibrated files, and the report carries the three uncertainties.
+**A calibrated set ships when** the validation passes, the full record passes, any flagged key has been diagnosed, the effective keys are labelled in the calibrated files, and the report carries the three uncertainties.
 
 **The report also gives:**
 - per target: χ²/n, the σ scale, and the model/tower ratio by hour and by light class;
 - per key: kind, scope, prior source and z, posterior/prior σ ratio;
 - κ, with the respiration and full-record GPP it implies;
-- the data report (§2): rows through each filter, the u\* diagnostics, the closure attribution, the window coverage, and the share of area above the sensor.
+- the data report (§2): rows through each filter, the u\* diagnostics, the closure attribution and the window coverage.
 
 ## 8. For a new tower
 
 1. Write the site TOML (format, clock, heights, variables, `[fluxes]`, `[provider]` with quotes, leaf-on months, the initial stand) and build the forcing.
 2. `report`: read the metadata checks, u\* diagnostics, closure attribution, σ estimates and window coverage. Override a rule only with a reason.
-3. `check`: trial integrity (G1, G2, the parameter record).
+3. `check`: the tool and the model's restart (a repeated trial matches byte for byte, the stand is unchanged, the parameter record).
 4. `fit`: screening, then the joint fit.
-5. Read the report. Any key at a bound or with \|z\| > 2 goes through §5.1.
+5. Read the report: the validation's verdict, and the key table. Any key near a bound or a trait key beyond 2 prior sd goes through §5.1.
 6. Run the full record with the slow tier on; ship with the labels.
 
 ## 9. Work
@@ -411,6 +409,7 @@ G6 (multiple starts) is only on request; G8 is removed with the kernel stages; G
 | P6 | **done (#362):** uncertainty: declared alternatives (GPP u\*, closure, partitioning) with the refit rule; structural variants (`variants`); the report (`report.md`: χ²/n, σ scale, model/tower by hour and light, κ's implications, prior z) | small |
 | P7 | **done (#364):** BCI: the example with #351's values; the refit, both variants. The first fit (906 and 966 trials, ~24 min on 3 nodes each) put `vcmax25` at 30.6 inside its EEO prior, and G13 flagged the NIR reflectance (z −3.1) and `stomata_psi_onset` (z +2.6). After the owner's choices (§0: albedo off, both keys fixed) the refit (946 and 616 trials) gives `vcmax25` 29.2, κ 0.78, and G13 passes. The variants then differ by up to 3.1 sd (`stomatal_g1`), and the Bowen alternative moves `stomatal_g1` 18 sd and was refitted. The full-record run passes G7, and the README is updated. P7 also found the soil-water sub-step cap breach of the 2016 dry season (#363) | small; Slurm |
 
+| P8 | **done (#365):** the clean-up review (`MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`) and its execution: the gates replaced by the validation's verdict and the key table; a failed trial stops the fit; four commands and eight decided options removed; the forcing read from the base config; the modules renamed; BCI refitted with one forcing-qc list (the fitted values reproduced bit for bit; the validation, now in 2015–2017, passes) | medium; Slurm |
 P0 first; P1–P3 before P5; P7 last. Each phase adds or changes settings with documented defaults, and the tests change with it.
 
 ## 10. Later

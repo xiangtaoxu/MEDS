@@ -1,52 +1,36 @@
 # SPDX-License-Identifier: Apache-2.0
 # The fast-parameter calibration at Barro Colorado Island (scripts/calibrate_fast;
-# docs/dev_plans/MEDS_FAST_CALIBRATION_PLAN.md and MEDS_FAST_CALIBRATION_REVISION_PLAN.md).
-# run_example.py --calibrate runs it. Every setting, its default and why: scripts/calibrate_fast/site_reference.toml.
-# Paths are relative to this file.
+# docs/dev_plans/MEDS_FAST_CALIBRATION_BEST_PRACTICE.md). run_example.py --calibrate runs it. Every
+# setting, its default and why: scripts/calibrate_fast/calibration_reference.toml. Only the choices
+# that differ from the defaults are here. Paths are relative to this file.
 
 [base]
-main        = "meds_config_eval.toml"                # with the PFT file it names, pft_parameters.toml
-registry    = "../../scripts/calibrate_fast/parameters.toml"
+main       = "meds_config_eval.toml"     # with the PFT file it names (pft_parameters.toml) and its forcing
+parameters = "../../scripts/calibrate_fast/parameters.toml"
 
 # Applied to every trial and every state chain.
 [overrides]
-"trait_dynamics.trait_plasticity_on" = true   # D6: the traits follow the canopy light gradient
+"trait_dynamics.trait_plasticity_on" = true   # the traits follow the canopy light gradient
 
-# Canopy interception both ways (D9).
+# Canopy interception both ways: the structural variants.
 [variants.interception_off]
 "fast.canopy_water_on" = false
 
 [variants.interception_on]
 "fast.canopy_water_on" = true
 
-# The tower's facts (file, clock, columns, units, which values were measured) are bci_site.toml,
-# the forcing build's own; only the calibration's choices are here.
+# The tower's facts (file, clock, columns, units, which values were measured) are bci_site.toml, the
+# forcing build's own. Its forcing qc variables (LWdown_qc, Wind_qc: the defaults) keep every window
+# on observed longwave and wind, so the windows fall in 2015-2017, the years the tower measured
+# longwave.
 [tower]
-site         = "bci_site.toml"
-forcing      = "data/bci_forcing.nc"          # the hours whose forcing was observed
-forcing_qc   = ["LWdown_qc", "Wind_qc"]
-forcing_grid = 1
-daytime_sw   = 10.0            # [W m-2]
-
-[targets.lw_up]
-sigma = 5.0
-
-# LE and H: daytime, with the u* rule of the diagnostic (LE/Rnet flat in u*, H/Rnet still rising:
-# neither filtered) and the closure observation model. The attribution test gives the whole gap to
-# H (H/Rnet rises with turbulence in every VPD class, LE/Rnet does not), so H is raised to close the
-# daily energy balance and LE is kept as measured. Their sigma comes from the paired days.
-#
-# GPP: the provider made it from one respiration value per day, about the soil chambers' alone
-# (without the above-ground part), so the respiration observation model with kappa (below); the
-# provider's u* threshold (0.4, bci_site.toml) filters the calm morning hours.
-[targets.ustar]
-sigma_abs = 0.1
-sigma_rel = 0.2
+site = "bci_site.toml"
 
 # The tower's respiration (4.09 umol m-2 s-1) is about the soil chambers' alone (1,613 gC m-2 yr-1,
 # about 4.3; Rubio & Detto 2017), and the provider's note says it "appeared underestimated ...
 # considering that RECO includes also above ground respiration which can contribute up to 40-50% of
-# total respiration" (bci_site.toml [provider]).
+# total respiration" (bci_site.toml [provider]). So kappa, the GPP observation model's respiration
+# error, gets a prior below 1.
 [priors.kappa]
 centre = 0.65
 sd     = 0.10
@@ -54,15 +38,14 @@ range  = [0.4, 1.0]
 source = "best-practice plan §3.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)"
 
 [fit]
-plant_type = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
-timeout    = 300             # [s] the floor of the trial timeout; a 10-day trial takes 8-60 s by load
+plant_type      = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
+timeout_per_day = 30.0         # [s] a 10-day trial takes 8-60 s by the node's load
 
-# The windows and seasonal runs are chosen by the rule (best-practice plan §6.2; `calibrate_fast.py
-# select-windows` prints them): eight ten-day windows, one per 1.5-month slot, each the slot's best
-# covered, with validation windows in the same slots of other years; and the soil-drying runs from
-# the years' deepest water deficits (2016's is the El Nino drought).
+# The windows and seasonal runs are chosen by the rules (best-practice plan §6.2; `calibrate_fast.py
+# report` prints them): eight ten-day windows, one per 1.5-month slot, each the slot's best covered,
+# with validation windows in the same slots of other years; and the soil-drying runs from the years'
+# deepest water deficits (2016's is the El Nino drought).
 [windows]
-days       = 10
 skip_hours = 3                 # the first hours after a restart with changed traits are not scored
 
 # Set in the calibrated main config the fit writes (meds_config_calibrated.toml), beside the MAP.

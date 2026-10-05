@@ -1,17 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The worker pool that runs trials (MEDS_FAST_CALIBRATION_PLAN.md §7 P1 "workers").
+"""The workers that run trials and chains: each is one single-threaded MEDS process, and a fit runs
+hundreds at a time.
 
-A trial is one single-threaded meds_main process, and the fit runs hundreds at a time.
+- LocalWorkers: N processes at once on this machine (a workstation, or one node).
+- QueueWorkers: a directory queue shared by workers on many nodes. The driver writes one task file
+  per run; each node's `calibrate_fast.py worker` (one per node, started inside the same Slurm
+  allocation) claims tasks by an atomic rename, runs them on its own cores and writes a done file.
+  One allocation holds the workers for the whole fit, so no run waits in the Slurm queue.
 
-- LocalPool: N concurrent subprocesses on this machine (a workstation, or one node).
-- QueuePool: a directory queue shared by workers on many nodes. The driver writes one task file
-  per trial; each worker (`calibrate_fast.py worker`, one per node, started inside the same Slurm
-  allocation) claims tasks by an atomic rename and runs them on its own cores, writing a done
-  file. One allocation holds the workers for the whole fit, so no trial waits in the Slurm queue,
-  and no per-trial job step loads the scheduler.
-
-Both run a batch of tasks and return {task id: (status, seconds)}; status is "ok", "timeout" or
-"exit <code>". A task is (id, argv, cwd, log path, timeout seconds).
+Both run a batch of tasks and return {task id: (status, seconds)}, status "ok", "timeout" or
+"exit <code>". A task is (id, command, directory, log file, timeout in seconds).
 """
 from __future__ import annotations
 
@@ -48,13 +46,11 @@ def run_task(t: Task) -> tuple[str, float]:
     return status, time.time() - t0
 
 
-class LocalPool:
-    """One executor for the pool's life, so concurrent callers (the fit's parallel starts) share
-    its workers instead of multiplying them."""
+class LocalWorkers:
+    """N processes at once on this machine, shared by every caller (the chains start together)."""
 
-    def __init__(self, workers: int):
-        self.workers = max(1, int(workers))
-        self.ex = ThreadPoolExecutor(self.workers)
+    def __init__(self, n: int):
+        self.ex = ThreadPoolExecutor(max(1, int(n)))
 
     def run(self, tasks: list[Task]) -> dict:
         futures = [self.ex.submit(run_task, t) for t in tasks]
@@ -64,7 +60,7 @@ class LocalPool:
         self.ex.shutdown(wait=True)
 
 
-class QueuePool:
+class QueueWorkers:
     """The driver's side of the directory queue at `root` (queue/, claimed/, done/)."""
 
     def __init__(self, root, poll: float = 0.5):
@@ -103,7 +99,7 @@ class QueuePool:
         (self.root / "STOP").write_text("stop\n")
 
 
-def worker(root, slots: int, poll: float = 0.5) -> None:
+def queue_worker(root, slots: int, poll: float = 0.5) -> None:
     """A node's worker: claim tasks from root/queue until root/STOP exists."""
     root = Path(root)
     me = f"{socket.gethostname()}-{os.getpid()}"
@@ -135,9 +131,10 @@ def worker(root, slots: int, poll: float = 0.5) -> None:
             time.sleep(poll)
 
 
-def make_pool(kind: str, workers: int, root=None):
+def make_workers(kind: str, n: int, queue_dir=None):
+    """"local": n processes on this machine; "queue": the directory queue at queue_dir."""
     if kind == "local":
-        return LocalPool(workers)
+        return LocalWorkers(n)
     if kind == "queue":
-        return QueuePool(root)
-    raise ValueError(f"unknown pool '{kind}'")
+        return QueueWorkers(queue_dir)
+    raise ValueError(f"unknown workers '{kind}'")

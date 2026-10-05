@@ -201,13 +201,15 @@ velocity from 0.78 to 0.87 m s⁻¹ and moved GPP, NEE, latent heat and net radi
 [`calibration.toml`](calibration.toml) fits MEDS's sub-daily parameters to this tower with
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md), by the cross-site protocol of
 [`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_BEST_PRACTICE.md).
-Every rule works at any tower; this tower's numbers come from its own data and forcing. The shipped
-set in [`calibration/`](calibration) is the interception-off fit of 2026-10-04.
+Every rule works at any tower; this tower's numbers come from its own data and forcing, and
+`calibration.toml` holds only the choices that differ from the tool's defaults. The shipped set in
+[`calibration/`](calibration) is the interception-off fit of 2026-10-04.
 
 ### What the rules chose at BCI
 
 - **The data.** The tower is read through [`bci_site.toml`](bci_site.toml), on its own half hours.
-  The turbulent fluxes count where FLAG = 1, and every target only where the forcing was observed.
+  The turbulent fluxes count where FLAG = 1, and every target only where the forcing's longwave and
+  wind were observed.
 - **u\* per target.** LE/Rnet is flat in u\*, and H/Rnet still rises at the top classes, so neither
   is filtered. GPP takes the provider's threshold, 0.4. Its own all-day diagnostic finds a plateau at
   0.33 (bootstrap 0.15–0.35): the declared alternative.
@@ -216,9 +218,9 @@ set in [`calibration/`](calibration) is the interception-off fit of 2026-10-04.
   LE/Rnet does not. The closure model therefore gives the whole gap to H, and LE stays as measured.
 - **σ from the paired days:** LE 10.5 + 0.29 |LE|, H 8.9 + 0.14 |H|, and GPP's (NEE's) 2.2 +
   0.17 |NEE|, at the smoothed observation.
-- **The windows.** There are eight ten-day calibration windows, one per 1.5-month slot, in 2015–2017
-  (the years the tower measured longwave), and eight validation windows in the same slots of other
-  years.
+- **The windows.** Observed longwave confines every window to 2015–2017, the years the tower measured
+  it. There are eight ten-day calibration windows, one per 1.5-month slot, and eight validation
+  windows in the same slots of another of those years.
 - **The seasonal runs** are the 2016 and 2017 dry seasons, 120 days each, ending at those years'
   deepest water deficits: 1,331 mm (the El Niño drought) and 698 mm. They are scored on LE only.
 - **Fixed from coverage.** The flag removes every rain half hour, so the wet canopy is never sampled
@@ -276,9 +278,9 @@ and the interception-on fit 616 trials in 16 minutes. The revision's staged fit 
 - **`vcmax25` lands at 29.2, inside its prior** (z −0.7), not at its floor as in every fit before
   this protocol. θ_J 0.7, `phi_psii` 0.74 and κ removed the level error the earlier fits pushed onto
   it.
-- **Gate G13 passes:** no trait key is more than 2 prior sd from its evidence. `stomatal_g0` comes
-  closest (z −1.95). The roughness length is 2.8 sd below ED2's 0.13, but it is an effective key: it
-  stands in for the canopy's structure, and G13 does not apply to it.
+- **The report flags no key.** No trait key is more than 2 prior sd from its evidence, and none is
+  near a bound. `stomatal_g0` comes closest (z −1.95). The roughness length is 2.8 sd below ED2's
+  0.13, but it is an effective key: it stands in for the canopy's structure.
 - **The covariance is local only:** along its leading direction the objective rises 5.9× the
   quadratic's prediction. `vcmax25` is correlated with `stomatal_g1` (−0.68) and κ (−0.65), and
   `stomatal_g1` with `g0` (−0.69).
@@ -299,20 +301,21 @@ and the interception-on fit 616 trials in 16 minutes. The revision's staged fit 
   interception is now a structural uncertainty on the stomatal keys that their posterior sd does not
   carry.
 
-**On the validation windows** (RMSE in units of each target's σ, never fitted):
+**On the validation windows** (RMSE in units of each target's σ, never fitted), the validation
+passes: the calibrated cost is lower, and no target is more than 10 % worse.
 
 | target | default | calibrated |
 |---|---|---|
-| u\* | 1.92 | **0.62** |
-| GPP (with κ) | 2.09 | **1.24** |
-| upwelling longwave | 2.49 | **2.10** |
-| LE (as measured) | 1.08 | 1.09 |
-| H (closure-corrected) | 4.15 | 4.32 |
-| objective | 26,487 | **17,271** |
+| u\* | 1.76 | **0.68** |
+| GPP (with κ) | 2.09 | **1.44** |
+| upwelling longwave | 3.75 | **3.44** |
+| LE (as measured) | 1.50 | 1.45 |
+| H (closure-corrected) | 4.05 | 4.26 (+5 %) |
+| objective | 60,347 | **50,273** |
 
 The albedo is no longer scored (the first fit took its RMSE from 5.34 to 1.37 σ through the NIR
-reflectance). H and LE do not improve, and H is a little worse. At the end of the fit H's χ² per row
-is 1.7, even with its σ tripled (the cap). By day the model's sensible heat is 0.78 of the
+reflectance). LE improves a little, and H is a little worse. At the end of the fit H's χ² per row is
+1.7, even with its σ tripled (the cap). By day the model's sensible heat is 0.78 of the
 closure-corrected tower's, against 0.86 in the first fit: with the NIR reflectance back at 0.45 the
 canopy absorbs less. The fit's reports are
 [`calibration/report_interception_off.md`](calibration/report_interception_off.md) and
@@ -339,7 +342,8 @@ so it is not in them. `evaluation.png` draws the calibrated run beside the defau
 | midday GPP, LE, H | 21.8, 243, 173 | 28.5, 207, 238 | 23.2, 191, 242 |
 | stand at the end: LAI, AGB [kgC m⁻²] | | 5.38, 17.8 | 5.59, 17.2 |
 
-- **G7 passes.** The budgets close: whole-site energy and water have no failed check in 3.0 million.
+- **The full-record check passes.** The budgets close: whole-site energy and water have no failed
+  check in 3.0 million.
   The dry season (January to April) is better than the default's: GPP RMSE 3.81 against 6.49 µmol m⁻² s⁻¹,
   and LE RMSE 34.1 against 35.6 W m⁻².
 - **GPP matches the tower corrected for κ** (8.41 against 8.47), and u\* is close to the tower's.

@@ -1,14 +1,14 @@
 {
  "variant": "interception_on",
- "site": "/home/xx286/projects/MEDS/.claude/worktrees/cal-p1/examples/example_flux_tower_bci/calibration.toml",
+ "config": "/home/xx286/projects/MEDS/.claude/worktrees/cal-clean/examples/example_flux_tower_bci/calibration.toml",
  "windows": {
   "cal1_2016": [
    "2016-01-01 00:00:00",
    "cal",
    10
   ],
-  "val1_2014": [
-   "2014-02-05 00:00:00",
+  "val1_2017": [
+   "2017-02-01 00:00:00",
    "val",
    10
   ],
@@ -18,7 +18,7 @@
    10
   ],
   "val2_2017": [
-   "2017-03-14 00:00:00",
+   "2017-03-13 00:00:00",
    "val",
    10
   ],
@@ -27,8 +27,8 @@
    "cal",
    10
   ],
-  "val3_2013": [
-   "2013-04-22 00:00:00",
+  "val3_2016": [
+   "2016-04-09 00:00:00",
    "val",
    10
   ],
@@ -37,8 +37,8 @@
    "cal",
    10
   ],
-  "val4_2013": [
-   "2013-06-02 00:00:00",
+  "val4_2017": [
+   "2017-06-13 00:00:00",
    "val",
    10
   ],
@@ -47,8 +47,8 @@
    "cal",
    10
   ],
-  "val5_2015": [
-   "2015-07-25 00:00:00",
+  "val5_2017": [
+   "2017-08-01 00:00:00",
    "val",
    10
   ],
@@ -57,8 +57,8 @@
    "cal",
    10
   ],
-  "val6_2013": [
-   "2013-09-10 00:00:00",
+  "val6_2016": [
+   "2016-08-26 00:00:00",
    "val",
    10
   ],
@@ -67,8 +67,8 @@
    "cal",
    10
   ],
-  "val7_2013": [
-   "2013-11-04 00:00:00",
+  "val7_2016": [
+   "2016-10-13 00:00:00",
    "val",
    10
   ],
@@ -77,23 +77,23 @@
    "cal",
    10
   ],
-  "val8_2013": [
-   "2013-12-21 00:00:00",
+  "val8_2016": [
+   "2016-12-14 00:00:00",
    "val",
    10
   ],
-  "dry2016": [
+  "seasonal_2016": [
    "2016-01-10 00:00:00",
-   "water",
+   "seasonal",
    120
   ],
-  "dry2017": [
+  "seasonal_2017": [
    "2016-12-30 00:00:00",
-   "water",
+   "seasonal",
    120
   ]
  },
- "menu": {
+ "registry": {
   "leaf_reflect_nir": {
    "state": "fixed",
    "kind": "trait",
@@ -101,22 +101,22 @@
    "reason": "held at the PFT file's value with the albedo target off (owner, 2026-10-04): at realistic leaf optics the model's canopy reflects too much NIR, and the albedo pushed the leaf's reflectance to 0.32 (prior z -3.1; reflectance + transmittance 0.57 against ~0.70 for tropical leaves) to make up for it. Revisit with the canopy's structure (clumping, wood optics)"
   },
   "leaf_transmit_nir": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "trait",
    "scope": "plant_type",
-   "reason": "collinear with leaf_reflect_nir (correlation -0.996): the albedo sees their sum"
+   "reason": "the albedo sees the leaf's NIR reflectance and transmittance only as their sum: fit one of the two"
   },
   "leaf_reflect_vis": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "trait",
    "scope": "plant_type",
-   "reason": "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+   "reason": "a tower barely sees the visible optics: the leaf absorbs most of the PAR at any value in the range"
   },
   "leaf_transmit_vis": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "trait",
    "scope": "plant_type",
-   "reason": "the tower cannot inform it (posterior/prior sd ratio 0.94-1.00)"
+   "reason": "a tower barely sees the visible optics: the leaf absorbs most of the PAR at any value in the range"
   },
   "leaf_clumping": {
    "state": "fixed",
@@ -197,22 +197,22 @@
    "reason": ""
   },
   "d_ratio": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "effective",
    "scope": "site",
-   "reason": "moves the fluxes as z0m_ratio does (correlation -0.996)"
+   "reason": "it moves the fluxes as z0m_ratio does: fit one of the two"
   },
   "leaf_width": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "trait",
    "scope": "plant_type",
-   "reason": "held at the base value: the fits drove it to its ceiling (0.143 of 0.15, pushed by H) with a posterior/prior sd ratio of 0.94, so the tower barely informs it (owner, 2026-10-02)"
+   "reason": "it sets only the leaves' boundary-layer conductance, which a tower's fluxes barely inform"
   },
   "dsl_dmax": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "effective",
    "scope": "site",
-   "reason": "the tower does not inform it: it sets only soil evaporation, a small part of LE under a closed canopy, and its posterior/prior sd ratio was 0.97-0.99; the fits drove it to its ceiling to trim LE (owner, 2026-10-02)"
+   "reason": "it sets only soil evaporation, a small part of LE under a closed canopy"
   },
   "leaf_surf_water_max": {
    "state": "fixed",
@@ -227,10 +227,10 @@
    "reason": "as leaf_surf_water_max; the tower cannot tell the wood film from the leaf film"
   },
   "intercept_k": {
-   "state": "fixed",
+   "state": "optional",
    "kind": "effective",
    "scope": "site",
-   "reason": "its response is rough (smoothness -0.85) and the tower barely informs it (sd ratio 0.89)"
+   "reason": "it acts only through the wet canopy, which a tower that gap-fills its rain hours never samples, and its response can be rough"
   },
   "wstress_sref_stomata": {
    "state": "fit",
@@ -273,7 +273,7 @@
    ],
    "default": 45.0,
    "prior_centre": 45.0,
-   "prior_sigma_u": 0.5714285714285714,
+   "prior_sd_u": 0.5714285714285714,
    "prior_source": "the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is what a canopy can do"
   },
   "vcmax25": {
@@ -285,7 +285,7 @@
    ],
    "default": 45.0,
    "prior_centre": 41.00812154770578,
-   "prior_sigma_u": 0.7398572397404044,
+   "prior_sd_u": 0.7398572397404044,
    "prior_source": "EEO: the coordination of the Rubisco- and light-limited rates at the site's growing-season daytime climate, with MEDS's own leaf (priors.py; Wang et al. 2017, Smith et al. 2019)"
   },
   "stomatal_g1": {
@@ -297,7 +297,7 @@
    ],
    "default": 3.0,
    "prior_centre": 2.7973768351497585,
-   "prior_sigma_u": 0.588119869237435,
+   "prior_sd_u": 0.588119869237435,
    "prior_source": "EEO: the least-cost optimum at the site's growing-season daytime climate (priors.py; Prentice et al. 2014, Stocker et al. 2020, beta 146)"
   },
   "stomatal_g0": {
@@ -309,7 +309,7 @@
    ],
    "default": 0.01,
    "prior_centre": 0.01,
-   "prior_sigma_u": 0.6514417228548774,
+   "prior_sd_u": 0.6514417228548774,
    "prior_source": "the PFT file's value, a factor e either way: the residual conductance is poorly known"
   },
   "z0m_ratio": {
@@ -321,7 +321,7 @@
    ],
    "default": 0.13,
    "prior_centre": 0.13,
-   "prior_sigma_u": 0.5989304812834225,
+   "prior_sd_u": 0.5989304812834225,
    "prior_source": "the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15 (Raupach 1994). Effective: it carries the canopy-air scheme's errors"
   },
   "wstress_sref_stomata": {
@@ -333,7 +333,7 @@
    ],
    "default": 2.0,
    "prior_centre": 2.0,
-   "prior_sigma_u": 0.668600194678462,
+   "prior_sd_u": 0.668600194678462,
    "prior_source": "the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across species)"
   },
   "kappa": {
@@ -345,7 +345,7 @@
    ],
    "default": 0.65,
    "prior_centre": 0.65,
-   "prior_sigma_u": 0.6857142857142857,
+   "prior_sd_u": 0.6857142857142857,
    "prior_source": "best-practice plan \u00a73.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)"
   }
  },
@@ -400,7 +400,7 @@
    }
   }
  },
- "derived": [
+ "kattge_knorr": [
   [
    "pft",
    "pft.jmax_vcmax_ratio",
@@ -1039,7 +1039,7 @@
        0.3742978100339468
       ]
      ],
-     "edges": [
+     "classes": [
       0.0,
       0.15,
       0.2,
@@ -1138,7 +1138,7 @@
        0.38169715316468417
       ]
      ],
-     "edges": [
+     "classes": [
       0.0,
       0.15,
       0.2,
@@ -1232,7 +1232,7 @@
        0.011751551059949539
       ]
      ],
-     "edges": [
+     "classes": [
       0.0,
       0.15,
       0.2,
@@ -1282,8 +1282,8 @@
       0.986
      ],
      "val": [
-      "2014-02-05",
-      0.996
+      "2017-02-01",
+      0.974
      ]
     },
     "2": {
@@ -1292,7 +1292,7 @@
       1.0
      ],
      "val": [
-      "2017-03-14",
+      "2017-03-13",
       0.938
      ]
     },
@@ -1302,8 +1302,8 @@
       0.992
      ],
      "val": [
-      "2013-04-22",
-      1.0
+      "2016-04-09",
+      0.988
      ]
     },
     "4": {
@@ -1312,8 +1312,8 @@
       0.944
      ],
      "val": [
-      "2013-06-02",
-      0.866
+      "2017-06-13",
+      0.86
      ]
     },
     "5": {
@@ -1322,8 +1322,8 @@
       0.883
      ],
      "val": [
-      "2015-07-25",
-      0.922
+      "2017-08-01",
+      0.828
      ]
     },
     "6": {
@@ -1332,8 +1332,8 @@
       0.911
      ],
      "val": [
-      "2013-09-10",
-      0.892
+      "2016-08-26",
+      0.849
      ]
     },
     "7": {
@@ -1342,8 +1342,8 @@
       0.902
      ],
      "val": [
-      "2013-11-04",
-      0.933
+      "2016-10-13",
+      0.872
      ]
     },
     "8": {
@@ -1352,12 +1352,12 @@
       0.987
      ],
      "val": [
-      "2013-12-21",
-      0.983
+      "2016-12-14",
+      0.948
      ]
     }
    },
-   "source": "the rule (datarules.select_windows)"
+   "source": "the rule (data_rules.select_windows)"
   },
   "seasonal": {
    "years": [
@@ -1404,15 +1404,14 @@
      "usable": true
     }
    ],
-   "deepest_mm": 1331.417866199733,
    "runs": [
     [
-     "dry2016",
+     "seasonal_2016",
      "2016-01-10",
      120
     ],
     [
-     "dry2017",
+     "seasonal_2017",
      "2016-12-30",
      120
     ]
@@ -1602,36 +1601,110 @@
    }
   },
   "tower_checks": {
-   "F1_rnet_components": {
-    "records": 35130,
-    "median_abs_residual": 6.963318810448982e-13,
-    "p95_abs_residual": 3.8194836833331403
+   "V1_axis": {
+    "records": 90528,
+    "first": "2012-07-03T00:00:00",
+    "last": "2017-08-31T23:30:00"
    },
-   "F2_longwave_at_night": {
-    "records": 17671,
-    "median_lw_out_minus_lw_in": 32.267666666667026,
-    "lw_out_over_sigma_t4": 1.0209174793266138,
-    "lw_in_over_sigma_t4": 0.9518288343009096
+   "V4_bounds": {
+    "Tair": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "RH": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "VPD": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "PSurf": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "Rainf": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "SWdown": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "LWdown": {
+     "present": 35147,
+     "out_of_bounds": 0
+    },
+    "Wind": {
+     "present": 77730,
+     "out_of_bounds": 212
+    },
+    "PAR": {
+     "present": 34711,
+     "out_of_bounds": 0
+    }
    },
-   "F3_sw_out": {
-    "records": 21979,
-    "median_albedo": 0.13025090779859425,
-    "fraction_above_sw_in": 0.0
+   "V4_flux_bounds": {
+    "SW_out": {
+     "present": 68300,
+     "out_of_bounds": 0
+    },
+    "LW_out": {
+     "present": 35147,
+     "out_of_bounds": 0
+    },
+    "Rnet": {
+     "present": 68300,
+     "out_of_bounds": 0
+    },
+    "LE": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "H": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "NEE": {
+     "present": 60252,
+     "out_of_bounds": 0
+    },
+    "GPP": {
+     "present": 90528,
+     "out_of_bounds": 0
+    },
+    "RECO": {
+     "present": 60252,
+     "out_of_bounds": 0
+    },
+    "USTAR": {
+     "present": 77730,
+     "out_of_bounds": 102
+    }
    },
-   "F3_lw_out": {
-    "records": 35147,
-    "fraction_outside_band": 0.0
-   },
-   "failures": []
-  },
-  "area_above_sensor": {
-   "sensor_height": 41.0,
-   "share_above": 0.3416,
-   "top_mean_area_weighted": 37.980007786601064,
-   "top_range": [
-    24.8184573371024,
-    51.0
-   ]
+   "fluxes": {
+    "F1_rnet_components": {
+     "records": 35130,
+     "median_abs_residual": 6.963318810448982e-13,
+     "p95_abs_residual": 3.8194836833331403
+    },
+    "F2_longwave_at_night": {
+     "records": 17671,
+     "median_lw_out_minus_lw_in": 32.267666666667026,
+     "lw_out_over_sigma_t4": 1.0209174793266138,
+     "lw_in_over_sigma_t4": 0.9518288343009096
+    },
+    "F3_sw_out": {
+     "records": 21979,
+     "median_albedo": 0.13025090779859425,
+     "fraction_above_sw_in": 0.0
+    },
+    "F3_lw_out": {
+     "records": 35147,
+     "fraction_outside_band": 0.0
+    },
+    "failures": []
+   }
   }
  },
  "process_coverage": {
@@ -1682,11 +1755,10 @@
   "cal8_2015/h": 0.12814398259317572,
   "cal8_2015/gpp": 0.43137327362200134,
   "cal8_2015/ustar": 0.25967203853175536,
-  "dry2016/le": 0.3417578472533847,
-  "dry2017/le": 0.4235868927775691
+  "seasonal_2016/le": 0.3417578472533847,
+  "seasonal_2017/le": 0.4235868927775691
  },
  "screening": {
-  "mode": "triage",
   "keys": [
    "leaf_angle_mean",
    "vcmax25",
@@ -1775,9 +1847,6 @@
    4.0545369840469325,
    2.963725386108103
   ],
-  "dead": [],
-  "rough": [],
-  "would_fix": {},
   "fitted": [
    "leaf_angle_mean",
    "vcmax25",
@@ -1934,7 +2003,7 @@
    ]
   }
  },
- "theta_refresh": {
+ "values_refresh": {
   "leaf_angle_mean": 54.71892471395675,
   "vcmax25": 31.80200098789994,
   "stomatal_g1": 2.732084081733308,
@@ -1984,8 +2053,8 @@
   "cal8_2015/h": 0.1231490271265979,
   "cal8_2015/gpp": 0.4817032045414296,
   "cal8_2015/ustar": 0.25366882244961536,
-  "dry2016/le": 0.4333862425488336,
-  "dry2017/le": 0.476952264720498
+  "seasonal_2016/le": 0.4333862425488336,
+  "seasonal_2017/le": 0.476952264720498
  },
  "sigma_scale_refresh": {
   "lw_up": 1.4162954554536649,
@@ -2000,33 +2069,6 @@
   "h": 1.6216310574980224,
   "gpp": 0.9796037493947247,
   "ustar": 0.28694344282203693
- },
- "map": {
-  "leaf_angle_mean": 54.024371986971175,
-  "vcmax25": 30.937872407466685,
-  "stomatal_g1": 2.9916046365129643,
-  "stomatal_g0": 0.003154449034303603,
-  "z0m_ratio": 0.051645411790646245,
-  "wstress_sref_stomata": 1.2304996974904219,
-  "kappa": 0.7383503536720613
- },
- "default": {
-  "leaf_angle_mean": 45.0,
-  "vcmax25": 45.0,
-  "stomatal_g1": 3.0,
-  "stomatal_g0": 0.01,
-  "z0m_ratio": 0.13,
-  "wstress_sref_stomata": 2.0,
-  "kappa": 0.65
- },
- "start": {
-  "leaf_angle_mean": 45.0,
-  "vcmax25": 41.00812154770578,
-  "stomatal_g1": 2.7973768351497585,
-  "stomatal_g0": 0.01,
-  "z0m_ratio": 0.13,
-  "wstress_sref_stomata": 2.0,
-  "kappa": 0.65
  },
  "fitted": [
   "leaf_angle_mean",
@@ -2046,7 +2088,7 @@
   "wstress_sref_stomata": 0.9416635602189004,
   "kappa": 0.9791118187860829
  },
- "cov_theta": [
+ "covariance": [
   [
    15.933038626755494,
    -1.492554511163957,
@@ -2111,7 +2153,7 @@
    0.0013348739219670505
   ]
  ],
- "corr": [
+ "correlation": [
   [
    1.0000000000000002,
    -0.40227732685672013,
@@ -2332,12 +2374,10 @@
  "linearity": [
   {
    "direction": 6,
-   "sigma_u": 0.270426889949914,
+   "sd_u": 0.270426889949914,
    "predicted": 0.9999999999999999,
-   "delta_phi_plus": 3.87260380133921,
-   "delta_phi_minus": -1.290004004697039,
-   "ratio_plus": 3.8726038013392103,
-   "ratio_minus": -1.2900040046970391,
+   "delta_cost_plus": 3.87260380133921,
+   "delta_cost_minus": -1.290004004697039,
    "curvature_ratio": 1.2912998983210855,
    "slope_ratio": 2.581303903018125,
    "local_only": false,
@@ -2353,12 +2393,10 @@
   },
   {
    "direction": 5,
-   "sigma_u": 0.22403776817747548,
+   "sd_u": 0.22403776817747548,
    "predicted": 0.9999999999999984,
-   "delta_phi_plus": 1.3083608872539116,
-   "delta_phi_minus": 1.4394828954846162,
-   "ratio_plus": 1.3083608872539136,
-   "ratio_minus": 1.4394828954846184,
+   "delta_cost_plus": 1.3083608872539116,
+   "delta_cost_minus": 1.4394828954846162,
    "curvature_ratio": 1.3739218913692661,
    "slope_ratio": -0.06556100411535237,
    "local_only": false,
@@ -2374,12 +2412,10 @@
   },
   {
    "direction": 4,
-   "sigma_u": 0.20650228750261052,
+   "sd_u": 0.20650228750261052,
    "predicted": 0.9999999999999994,
-   "delta_phi_plus": 1.249392609395727,
-   "delta_phi_minus": -0.3559477758790308,
-   "ratio_plus": 1.2493926093957277,
-   "ratio_minus": -0.35594777587903104,
+   "delta_cost_plus": 1.249392609395727,
+   "delta_cost_minus": -0.3559477758790308,
    "curvature_ratio": 0.44672241675834834,
    "slope_ratio": 0.8026701926373794,
    "local_only": true,
@@ -2394,15 +2430,21 @@
    }
   }
  ],
- "bounds": [],
- "prior_z": {
+ "local_only": true,
+ "key_table": {
   "leaf_angle_mean": {
    "z": 0.9232731813799235,
    "kind": "trait",
    "scope": "plant_type",
    "prior_centre": 45.0,
    "prior_source": "the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is what a canopy can do",
-   "pushed_by": "le"
+   "pushed_by": "le",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    10.0,
+    80.0
+   ]
   },
   "vcmax25": {
    "z": -0.5668250647093604,
@@ -2410,7 +2452,13 @@
    "scope": "plant_type",
    "prior_centre": 41.00812154770578,
    "prior_source": "EEO: the coordination of the Rubisco- and light-limited rates at the site's growing-season daytime climate, with MEDS's own leaf (priors.py; Wang et al. 2017, Smith et al. 2019)",
-   "pushed_by": "h"
+   "pushed_by": "h",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    10.0,
+    150.0
+   ]
   },
   "stomatal_g1": {
    "z": 0.13439167723697792,
@@ -2418,7 +2466,13 @@
    "scope": "plant_type",
    "prior_centre": 2.7973768351497585,
    "prior_source": "EEO: the least-cost optimum at the site's growing-season daytime climate (priors.py; Prentice et al. 2014, Stocker et al. 2020, beta 146)",
-   "pushed_by": "le"
+   "pushed_by": "le",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    0.5,
+    15.0
+   ]
   },
   "stomatal_g0": {
    "z": -1.0662235312319313,
@@ -2426,7 +2480,13 @@
    "scope": "plant_type",
    "prior_centre": 0.01,
    "prior_source": "the PFT file's value, a factor e either way: the residual conductance is poorly known",
-   "pushed_by": "lw_up"
+   "pushed_by": "lw_up",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    0.0001,
+    0.1
+   ]
   },
   "z0m_ratio": {
    "z": -2.713079939515648,
@@ -2434,7 +2494,13 @@
    "scope": "site",
    "prior_centre": 0.13,
    "prior_source": "the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15 (Raupach 1994). Effective: it carries the canopy-air scheme's errors",
-   "pushed_by": "lw_up"
+   "pushed_by": "lw_up",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    0.02,
+    0.3
+   ]
   },
   "wstress_sref_stomata": {
    "z": -0.6590649805515387,
@@ -2442,7 +2508,13 @@
    "scope": "plant_type",
    "prior_centre": 2.0,
    "prior_source": "the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across species)",
-   "pushed_by": "le"
+   "pushed_by": "le",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    0.1,
+    10.0
+   ]
   },
   "kappa": {
    "z": 0.8655904883869193,
@@ -2450,7 +2522,13 @@
    "scope": "observation",
    "prior_centre": 0.65,
    "prior_source": "best-practice plan \u00a73.3: the tower's respiration is about the soil chambers' alone; the provider's note on the above-ground share (40-50 %)",
-   "pushed_by": "gpp"
+   "pushed_by": "gpp",
+   "near_bound": null,
+   "bound_pushed_by": null,
+   "range": [
+    0.4,
+    1.0
+   ]
   }
  },
  "cost": {
@@ -2761,119 +2839,107 @@
   "gpp_implied_kgc_yr": 3.2985580813768633,
   "note": "means over the records with GPP and its respiration measured (daytime and night)"
  },
+ "map": {
+  "leaf_angle_mean": 54.024371986971175,
+  "vcmax25": 30.937872407466685,
+  "stomatal_g1": 2.9916046365129643,
+  "stomatal_g0": 0.003154449034303603,
+  "z0m_ratio": 0.051645411790646245,
+  "wstress_sref_stomata": 1.2304996974904219,
+  "kappa": 0.7383503536720613
+ },
+ "default": {
+  "leaf_angle_mean": 45.0,
+  "vcmax25": 45.0,
+  "stomatal_g1": 3.0,
+  "stomatal_g0": 0.01,
+  "z0m_ratio": 0.13,
+  "wstress_sref_stomata": 2.0,
+  "kappa": 0.65
+ },
+ "start": {
+  "leaf_angle_mean": 45.0,
+  "vcmax25": 41.00812154770578,
+  "stomatal_g1": 2.7973768351497585,
+  "stomatal_g0": 0.01,
+  "z0m_ratio": 0.13,
+  "wstress_sref_stomata": 2.0,
+  "kappa": 0.65
+ },
  "scores_val": {
   "default": {
+   "lw_up": {
+    "nrmse": 3.8221146057326254,
+    "n": 3792,
+    "share": 0.555966474892582
+   },
    "le": {
-    "nrmse": 1.1297345220006882,
-    "n": 1098,
-    "share": 0.04946612585749514
+    "nrmse": 1.6517572803497316,
+    "n": 1700,
+    "share": 0.06147049239639301
    },
    "h": {
-    "nrmse": 4.140556016003341,
-    "n": 1098,
-    "share": 0.38751097537456175
+    "nrmse": 4.158719834542614,
+    "n": 1700,
+    "share": 0.22788028524385046
    },
    "gpp": {
-    "nrmse": 1.996748937188822,
-    "n": 1363,
-    "share": 0.1851781534931759
+    "nrmse": 2.056073949119328,
+    "n": 1294,
+    "share": 0.07738697232027064
    },
    "ustar": {
-    "nrmse": 1.914155637992062,
-    "n": 1774,
-    "share": 0.23424809055504078
-   },
-   "lw_up": {
-    "nrmse": 2.459997727325652,
-    "n": 682,
-    "share": 0.14359665471972646
+    "nrmse": 1.7428182821149807,
+    "n": 1700,
+    "share": 0.07729577514690388
    }
   },
   "map": {
+   "lw_up": {
+    "nrmse": 3.5451337367282454,
+    "n": 3792,
+    "share": 0.5800668499669285
+   },
    "le": {
-    "nrmse": 1.1572050479508718,
-    "n": 1098,
-    "share": 0.07872014788613199
+    "nrmse": 1.5742940828912946,
+    "n": 1700,
+    "share": 0.06665546768473722
    },
    "h": {
-    "nrmse": 4.229101155976223,
-    "n": 1098,
-    "share": 0.5910315991202509
+    "nrmse": 4.303776363550877,
+    "n": 1700,
+    "share": 0.2907939391399683
    },
    "gpp": {
-    "nrmse": 1.2586495313973938,
-    "n": 1363,
-    "share": 0.1207393592415431
+    "nrmse": 1.4454289796810214,
+    "n": 1294,
+    "share": 0.04808211865145085
    },
    "ustar": {
-    "nrmse": 0.6207713797142151,
-    "n": 1774,
-    "share": 0.039175773561438934
-   },
-   "lw_up": {
-    "nrmse": 2.1454534454823357,
-    "n": 682,
-    "share": 0.1703331201906349
+    "nrmse": 0.6674662304709434,
+    "n": 1700,
+    "share": 0.014401624556915191
    }
   }
  },
  "cost_val": {
-  "default": 26093.584986364815,
-  "map": 17288.43397516788
+  "default": 61507.189437572735,
+  "map": 51650.00340196057
  },
- "local_only": true,
- "gates": {
-  "G3": {
-   "pass": true,
-   "dead": [],
-   "rough": [],
-   "note": "every fitted key has a non-zero, smooth gradient column (the triage fixes the others)"
+ "validation": {
+  "pass": true,
+  "nrmse_change": {
+   "lw_up": -0.07246796540034361,
+   "le": -0.04689744575670074,
+   "h": 0.03488009165787331,
+   "gpp": -0.2969956259111509,
+   "ustar": -0.617019033297639
   },
-  "G4": {
-   "pass": true,
-   "nrmse_change": {
-    "le": 0.02431591264603905,
-    "h": 0.021384842912558932,
-    "gpp": -0.36965058152507735,
-    "ustar": -0.6756944067696602,
-    "lw_up": -0.1278636473316047
-   }
-  },
-  "G5": {
-   "pass": true,
-   "near_bound": [],
-   "note": "every key near a bound is listed with the target that pushed it"
-  },
-  "G7": {
-   "pass": null,
-   "note": "the full record with the slow tier on: run the calibrated configs (closed budgets; dry-season GPP and LE no worse than the default's)"
-  },
-  "G10": {
-   "pass": true,
-   "shift_sd": {
-    "gpp_ustar": 0.5225790765319789,
-    "closure": 16.722890758622857
-   },
-   "refitted": [
-    "closure"
-   ],
-   "note": "every declared alternative's shift is under 1 posterior sd, or its refit is reported"
-  },
-  "G12": {
-   "pass": true,
-   "failed_trials": 0,
-   "note": "no scored output has a NaN: a trial with one fails (trials.finish) and never scores"
-  },
-  "G13": {
-   "pass": true,
-   "flagged": {},
-   "note": "a trait key more than 2 prior sd from its evidence: diagnose it (plan \u00a75.1) or relabel it effective"
-  }
+  "rule": "the calibrated cost below the default's, and no target's RMSE more than 10% worse"
  },
  "trials": {
   "run": 616,
-  "failed": 0,
-  "median_s": 17.194790840148926,
-  "wall_s": 952.3096253871918
+  "median_s": 16.24486517906189,
+  "wall_s": 946.9526410102844
  }
 }

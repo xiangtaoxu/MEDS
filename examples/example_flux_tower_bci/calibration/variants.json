@@ -56,32 +56,16 @@
  },
  "cost_val": {
   "interception_off": {
-   "default": 26486.877929971753,
-   "map": 17270.671413322547
+   "default": 60347.40887862159,
+   "map": 50273.12161528614
   },
   "interception_on": {
-   "default": 26093.584986364815,
-   "map": 17288.43397516788
+   "default": 61507.189437572735,
+   "map": 51650.00340196057
   }
  },
- "gates": {
-  "interception_off": {
-   "G3": true,
-   "G4": true,
-   "G5": true,
-   "G7": null,
-   "G10": true,
-   "G12": true,
-   "G13": true
-  },
-  "interception_on": {
-   "G3": true,
-   "G4": true,
-   "G5": true,
-   "G7": null,
-   "G10": true,
-   "G12": true,
-   "G13": true
-  }
+ "validation": {
+  "interception_off": true,
+  "interception_on": true
  }
 }

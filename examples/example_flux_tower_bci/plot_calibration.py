@@ -56,7 +56,7 @@ def main(argv=None):
         shift, err = [], []
         for k in keys:
             if k in rep["fitted"]:
-                shift.append(rep["prior_z"][k]["z"])
+                shift.append(rep["key_table"][k]["z"])
                 err.append(rep["sigma_ratio"][k])
             else:
                 shift.append(np.nan)
