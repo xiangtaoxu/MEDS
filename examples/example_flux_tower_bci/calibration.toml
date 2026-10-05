@@ -28,7 +28,7 @@ source = "best-practice plan §3.3: the tower's respiration is about the soil ch
 
 [fit]
 plant_type      = "tropical_evergreen_broadleaf"   # the meta-analysis priors beside the EEO centres
-timeout_per_day = 30.0         # [s] a 10-day trial takes 8-60 s by the node's load
+timeout_per_day = 30.0         # [s] over 10x a trial on a busy node (median 2.5 s a day)
 
 # The windows and seasonal runs are chosen by the rules (best-practice plan §6.2; `calibrate_fast.py
 # report` prints them): eight ten-day windows, one per 1.5-month slot, each the slot's best covered,

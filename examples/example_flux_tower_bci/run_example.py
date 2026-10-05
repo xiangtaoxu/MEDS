@@ -22,7 +22,7 @@ Usage:
   python run_example.py --copy-from ~/BCI_flux   # take the data from a local copy
   python run_example.py --forcing-only           # steps 1-4: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
-  python run_example.py --calibrate --workers 40 # redo the fit: ~1 h on one 40-core node (scripts/calibrate_fast)
+  python run_example.py --calibrate --workers 40 # redo the fit: ~5 h on one 40-core node (scripts/calibrate_fast)
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """

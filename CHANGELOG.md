@@ -146,24 +146,32 @@ before and after.
   are in the plan's §13.
 
 ### Changed
-- **The BCI example has one structure: the canopy's interception on** (#366). The example's own config
-  switches it on (`[fast].canopy_water_on = true`), so the default and the calibrated runs differ
-  only by what the fit sets. `calibration.toml` drops its `[variants]`, and an `[overrides]` entry
-  the base config already set.
-  - **The fit** is the interception-on variant's, reproduced bit for bit (616 trials): `vcmax25`
-    30.9, `stomatal_g1` 2.99, `g0` 0.0032, leaf angle 54.0°, κ 0.74. The validation passes (in σ,
-    default against calibrated: GPP 2.06 → 1.45, u\* 1.74 → 0.67, upwelling longwave 3.82 → 3.55,
-    LE 1.65 → 1.57, H 4.16 → 4.30). One `fit.json` and `report.md` replace the two variants' files
-    and `variants.json`, and `plot_calibration.py` draws one fit.
-  - **The five years**, default → calibrated: GPP 10.21 → 8.54 µmol m⁻² s⁻¹ (the tower corrected
-    for κ: 8.61); LE 71.5 → 64.1 and H 65.0 → 70.4 W m⁻²; u\* at night 0.86 → 0.49 m s⁻¹ (tower
-    0.41). Interception moved the default run's LE from 67.7 to 71.5 and H from 68.1 to 65.0 W m⁻²
-    (tower 75.5 and 32.4).
+- **The BCI example: interception on, strict patch fusion, one calibration** (#366).
+  - **The model:** the example's config switches the canopy's interception on
+    (`[fast].canopy_water_on`) and fuses the census strictly, the demography calibration's choice:
+    `patch_light_tol` 0.10 → 0.04, `patch_light_tol_max` 0.15 → 0.08 and `max_patch` 12 → 60. The
+    census now starts as 130 patches and 1,924 cohorts instead of 25 and 419, so the gaps stay apart
+    from the closed forest. A five-year run takes 26 min on one core (was 6) and 4.7 min on eight
+    threads (was 1.4). The fusion barely moves the stand's fluxes, and with the interception the
+    default run goes from GPP 10.30 to 10.22 µmol m⁻² s⁻¹, LE 67.7 to 71.6 and H 68.1 to 64.6 W m⁻².
+  - **One fit, no variants.** `calibration.toml` drops `[variants]` and a redundant `[overrides]`
+    entry. One `fit.json` and `report.md` replace the two variants' files and `variants.json`.
+    `plot_calibration.py` draws one fit, and `run_example.py` loses `--variant`. The fit took 646
+    trials, 59 min on five 40-core nodes. It gives `vcmax25` 31.4, `stomatal_g1` 3.00, `g0` 0.0030,
+    leaf angle 51.3° and κ 0.72; the shipped interception-off set had 29.2, 3.35, 0.0012, 60.8° and
+    0.78. Every key is within one posterior sd of the same fit with the old fusion. The validation
+    passes, in σ, default against calibrated: GPP 2.05 → 1.44, u\* 1.73 → 0.67, upwelling longwave
+    3.81 → 3.54, LE 1.65 → 1.58, H 4.16 → 4.28.
+  - **The five years, calibrated** (was the interception-off set): GPP 8.60 µmol m⁻² s⁻¹ (was 8.41;
+    the tower corrected for κ: 8.69); LE 64.0 (60.6) and H 69.8 (74.4) W m⁻²; u\* at night 0.48
+    (0.49) m s⁻¹, tower 0.41.
+  - **The README** is rewritten around the pipeline and its results.
   - **`calibrate_fast`'s registry no longer ties a key to a variant's name.** The wet-canopy keys
     (`leaf_surf_water_max`, `wood_surf_water_max`, `intercept_k`) loaded only under a variant called
     `interception_on`, so a calibration with interception on in its base config could not name them.
     They are always in the registry: with interception off they have no effect, and the triage fixes
-    such a key. The report and the calibrated files name a variant only when there is one.
+    such a key. The report, the fit's log and the calibrated files name a variant only when there is
+    one.
 - **`calibrate_fast`, cleaned up after its review** (#365; `docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
   the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
   (below).

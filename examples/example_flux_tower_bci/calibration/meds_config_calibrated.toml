@@ -3,7 +3,7 @@
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
 # KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   aerodynamics.z0m_ratio         0.0516454  (0.13)  EFFECTIVE
+#   aerodynamics.z0m_ratio         0.0515494  (0.13)  EFFECTIVE
 #   leaf_physiology.ds_vcmax       641.129  (650)  KATTGE & KNORR
 #   leaf_physiology.ds_jmax        640.592  (640)  KATTGE & KNORR
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
@@ -43,10 +43,10 @@ negligible_nplant         = 1.0e-8
 split_eps                 = 1.0e-4
 enable_cohort_fission     = true
 n_height_layers           = 16
-max_patch                 = 12
+max_patch                 = 60
 n_patch_fusion_iter       = 6
-patch_light_tol           = 0.10
-patch_light_tol_max       = 0.15
+patch_light_tol           = 0.04    # strict: the census's gaps stay apart from the closed forest
+patch_light_tol_max       = 0.08    #   (130 patches and 1,924 cohorts at the start)
 patch_light_maxdev_factor = 1.5
 patch_diff_age_tol        = 1.0
 min_patch_area            = 1.0e-4
@@ -193,4 +193,4 @@ bottom_bc = "dirichlet"
 deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08
 
 [aerodynamics]
-z0m_ratio = 0.0516454   # set by calibrate_fast
+z0m_ratio = 0.0515494   # set by calibrate_fast
