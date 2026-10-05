@@ -1,28 +1,32 @@
 # Fast calibration: example_flux_tower_bci, variant interception_off
 
-## Gates
+## Validation
 
-| gate | pass | note |
-|---|---|---|
-| G3 | True | every fitted key has a non-zero, smooth gradient column (the triage fixes the others) |
-| G4 | True |  |
-| G5 | True | every key near a bound is listed with the target that pushed it |
-| G7 | None | the full record with the slow tier on: run the calibrated configs (closed budgets; dry-season GPP and LE no worse than t |
-| G10 | True | every declared alternative's shift is under 1 posterior sd, or its refit is reported |
-| G12 | True | no scored output has a NaN: a trial with one fails (trials.finish) and never scores |
-| G13 | True | a trait key more than 2 prior sd from its evidence: diagnose it (plan §5.1) or relabel it effective |
+**Passed**: the calibrated cost below the default's, and no target's RMSE more than 10% worse.
+
+| target | default | calibrated | change |
+|---|---|---|---|
+| lw_up | 3.75 | 3.44 | -8% |
+| le | 1.50 | 1.45 | -3% |
+| h | 4.05 | 4.26 | +5% |
+| gpp | 2.09 | 1.44 | -31% |
+| ustar | 1.76 | 0.68 | -61% |
+
+RMSE in units of each target's sigma. Cost: default 60347.4, calibrated 50273.1.
+
+The full record with the slow tier on is the next check: run the calibrated configs (budgets closed; dry-season GPP and LE no worse than the default's).
 
 ## Keys
 
-| key | kind | scope | MAP | 68 % | prior centre | prior z | sd ratio | prior source |
-|---|---|---|---|---|---|---|---|---|
-| leaf_angle_mean | trait | plant_type | 60.77 | 56.77-64.31 | 45 | +1.70 | 0.47 | the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is  |
-| vcmax25 | trait | plant_type | 29.17 | 28.38-30 | 41.01 | -0.69 | 0.06 | EEO: the coordination of the Rubisco- and light-limited rates at the site's grow |
-| stomatal_g1 | trait | plant_type | 3.347 | 3.242-3.456 | 2.797 | +0.36 | 0.06 | EEO: the least-cost optimum at the site's growing-season daytime climate (priors |
-| stomatal_g0 | trait | plant_type | 0.001199 | 0.0007018-0.002166 | 0.01 | -1.95 | 0.55 | the PFT file's value, a factor e either way: the residual conductance is poorly  |
-| z0m_ratio | effective | site | 0.05056 | 0.04869-0.05255 | 0.13 | -2.78 | 0.12 | the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15  |
-| wstress_sref_stomata | effective | plant_type | 1.28 | 1.005-1.62 | 2 | -0.61 | 0.32 | the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across  |
-| kappa | observation | observation | 0.7801 | 0.7394-0.8179 | 0.65 | +1.29 | 0.41 | best-practice plan §3.3: the tower's respiration is about the soil chambers' alo |
+| key | kind | scope | MAP | 68 % | prior centre | prior z | sd ratio | note | prior source |
+|---|---|---|---|---|---|---|---|---|---|
+| leaf_angle_mean | trait | plant_type | 60.77 | 56.77-64.31 | 45 | +1.70 | 0.47 |  | the PFT file's value, +-10 degrees; spherical leaves average 57.3. The range is  |
+| vcmax25 | trait | plant_type | 29.17 | 28.38-30 | 41.01 | -0.69 | 0.06 |  | EEO: the coordination of the Rubisco- and light-limited rates at the site's grow |
+| stomatal_g1 | trait | plant_type | 3.347 | 3.242-3.456 | 2.797 | +0.36 | 0.06 |  | EEO: the least-cost optimum at the site's growing-season daytime climate (priors |
+| stomatal_g0 | trait | plant_type | 0.001199 | 0.0007018-0.002166 | 0.01 | -1.95 | 0.55 |  | the PFT file's value, a factor e either way: the residual conductance is poorly  |
+| z0m_ratio | effective | site | 0.05056 | 0.04869-0.05255 | 0.13 | -2.78 | 0.12 |  | the base value (ED2 0.13), +-0.04: closed canopies give z0/h of about 0.06-0.15  |
+| wstress_sref_stomata | effective | plant_type | 1.28 | 1.005-1.62 | 2 | -0.61 | 0.32 |  | the PFT file's value, a factor 2 either way (Sabot et al. 2022 fit 0.5-5 across  |
+| kappa | observation | observation | 0.7801 | 0.7394-0.8179 | 0.65 | +1.29 | 0.41 |  | best-practice plan §3.3: the tower's respiration is about the soil chambers' alo |
 
 ## Targets
 
@@ -59,5 +63,3 @@ Laplace, from the final gradient matrix -- LOCAL ONLY (the linearity check faile
 - alternative gpp_ustar (GPP u* >= 0.325 (the fit used 0.4)): largest linear shift 0.44 sd
 - alternative closure (Bowen (H and LE scaled together) against the fit's attribution shares): largest linear shift 18.10 sd -- refitted: leaf_angle_mean 60.77->56.78, vcmax25 29.17->26.82, stomatal_g1 3.347->4.773, stomatal_g0 0.001199->0.0004139, z0m_ratio 0.05056->0.04921, wstress_sref_stomata 1.28->0.198, kappa 0.7801->0.7892
 - alternative partitioning: the site TOML declares no daytime partitioning (GPP_DT, RECO_DT)
-
-Validation cost: default 26486.9, MAP 17270.7.

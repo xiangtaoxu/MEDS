@@ -184,8 +184,12 @@ before and after.
   - **The registry:** the keys fixed only by BCI's screening (VIS optics, NIR transmittance,
     `d_ratio`, `leaf_width`, `dsl_dmax`, `intercept_k`) are `optional`, with their reasons stated as
     rules. An unknown registry field is an error.
-  - **The BCI example:** `calibration.toml` holds only its choices. With one forcing-qc list, its
-    validation windows are in 2015–2017, the years with observed longwave, instead of 2013–2015.
+  - **The BCI example:** `calibration.toml` holds only its choices. The refit with the cleaned-up
+    tool reproduces the fitted values and intervals of both variants bit for bit (946 and 616
+    trials). With one forcing-qc list, the validation windows are in 2015–2017, the years with
+    observed longwave, instead of 2013–2015, so the upwelling longwave is validated too. The
+    validation passes. In σ, default against calibrated: GPP 2.09 → 1.44, u\* 1.76 → 0.68, upwelling
+    longwave 3.75 → 3.44, LE 1.50 → 1.45, H 4.05 → 4.26.
 - **The BCI example's calibrated set, refitted by the best-practice protocol** (P7).
   - **Leaf light use:** the example now uses #351's values, `phi_psii` 0.74 and θ_J 0.7.
   - **The owner's choices after the first fit:** the albedo target is off and the NIR reflectance
