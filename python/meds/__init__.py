@@ -21,5 +21,5 @@ that needs no library:
 Importing `meds` is cheap and does NOT load any compiled library; each sub-module loads the
 shared library lazily on first import, so `import meds` works even without it built.
 """
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 __all__ = ["plant", "demography", "model", "config", "canopy"]

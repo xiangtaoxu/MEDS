@@ -14,6 +14,44 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-10-05
+
+A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily
+parameters to a flux tower by rules that work at any tower. It reads the tower through the forcing
+build's own site TOML, sets each target's filters and errors from the tower's own records, models
+the tower's known biases (an energy-closure model, and κ on the tower's respiration), takes its
+priors from the site's climate, and runs one joint fit. It then scores the fit on windows it never
+saw, refits under the declared alternatives, and writes a report (#353, #357–#362, #365). Every trial
+runs through the Python API (#340). The BCI example is its first application: the 2010 census with
+strict patch fusion, canopy interception on, and the evaluation against what the calibration scores
+(#364, #366). Fixed on the way, mostly found by the calibration:
+- **Storms on dry soil.** The fast loop no longer blows up when heavy rain hits dry soil (#352), the
+  soil-water solve may take up to 2000 sub-steps (#363), and a NaN anywhere in the fast loop now
+  stops the run instead of ending "no NaNs".
+- **Heat in plant water.** Wood that refills with water no longer heats itself (+600 W m⁻² of H at a
+  BCI storm front, and ~10 W m⁻² every night), and rain on bare ground takes the air's temperature
+  (#355).
+- **Leaf light and water stress.** A thin cohort's leaf light is its own, so the biophysics
+  example's spin-up from bare ground grows again (#347); the stomatal water stress begins at an
+  onset (#341); and the reference leaf's light use follows measurements (`phi_psii` 0.74, θ_J 0.70;
+  #351).
+
+**Upgrading from v0.3.2:**
+- **`[soil].dewmx` is refused** (#347). Set the PFT traits `leaf_surf_water_max` and
+  `wood_surf_water_max` instead (kg m⁻² of leaf and of wood; 0.1 by default, the old `dewmx`).
+- **Results move.** The reference config's `phi_psii` (0.85 → 0.74) and the reference C3 PFTs'
+  `theta_j` (→ 0.70) lower GPP; a config that sets them keeps its values. The water stress now
+  begins at half the PFT's turgor-loss point unless `pft.stomata_psi_onset` says otherwise. The
+  plant-water heat, the soil-water fixes and the thin cohorts' light move H, LE and GPP, each by the
+  amount given below.
+- **`calibrate_fast`'s settings were renamed** (#365). `--config` replaces `--site`,
+  `calibration_reference.toml` replaces `site_reference.toml`, and `--runner` replaces
+  `--meds-main`. The tower's facts move to its site TOML (`[tower].site`), and a calibration that
+  still sets the old keys is refused. The commands are `report`, `check`, `fit`, `variants` and
+  `worker`.
+- **Precipitation outputs.** `rainf_fast`, `snowfall_fast` and `snowfall_site` report the split the
+  patches received, and `precip_fast` is new.
+
 ### Added
 - **The calibration's uncertainty and report** (best-practice plan P6):
   - **Declared alternatives, the same at every site:** GPP u\* provider against the daytime
@@ -3669,7 +3707,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...beta
+[0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/xiangtaoxu/MEDS/compare/v0.2.2...v0.3.0

@@ -60,7 +60,7 @@ same output stream, not three separate studies:
 Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
 threaded and the output is byte-identical at any thread count.
 
-**Status: v0.3.2, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
+**Status: v0.3.3, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
 been compared flux-for-flux, and no output has been scored against observations. What is verified is
 internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
 Treat the numbers a MEDS run produces as a working model's numbers.
