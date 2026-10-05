@@ -150,7 +150,8 @@ def validation_verdict(scores: dict, cost: dict, max_worse: float = 0.10) -> dic
 
 def write_report(report: dict, path: Path):
     """report.md: the fit's results for a reader."""
-    L = [f"# Fast calibration: {Path(report['config']).parent.name}, variant {report.get('variant')}", ""]
+    variant = f", variant {report['variant']}" if report.get("variant") else ""
+    L = [f"# Fast calibration: {Path(report['config']).parent.name}{variant}", ""]
     v = report.get("validation")
     L += ["## Validation", ""]
     if v:

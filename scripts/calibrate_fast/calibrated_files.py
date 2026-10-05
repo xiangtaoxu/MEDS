@@ -57,7 +57,8 @@ def set_toml_text(text: str, key: str, value, index=None) -> str:
 
 def header(variant, base: Path, changed: list, settings: dict | None = None) -> str:
     """The comment block that opens a calibrated file: where it came from and what the fit set."""
-    lines = [f"# CALIBRATED by scripts/calibrate_fast (variant {variant or 'none'}) from {base.name}.",
+    variant = f" (variant {variant})" if variant else ""
+    lines = [f"# CALIBRATED by scripts/calibrate_fast{variant} from {base.name}.",
              "# Every line is the base file's, comments included, except these keys the fit set",
              "# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;",
              "# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):"]
