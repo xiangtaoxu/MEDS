@@ -41,7 +41,7 @@ change is a build failure in a default build rather than a silent break in an op
 Exposed through process-oriented packages in `python/meds/`:
 
 - `meds.plant.leaf` — leaf gas exchange. Reproduces Slot & Winter (2017) in
-  [`examples/example_leaf_gas_exchange/`](../../../examples/example_leaf_gas_exchange/).
+  [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/).
 - `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is in `slow_dynamics/plant/`).
   The four phenology strategies are in
   [`examples/example_phenology/`](../../../examples/example_phenology/).

@@ -3,13 +3,13 @@
 Self-contained example runs of MEDS, each in its own folder with the config, outputs, figures, and a
 README that shows how to reproduce it (run from the repository root):
 
+- **[`example01_leaf_gas_exchange/`](example01_leaf_gas_exchange/)** — the leaf gas-exchange module
+  on its own, driven from Python: C3 photosynthesis, Medlyn stomata and the coupled Cᵢ solve
+  reproduce the A–Cᵢ curve and the leaf-temperature responses of four tropical tree species in
+  Slot & Winter (2017).
 - **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
   ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
   stand-structure figures.
-- **[`example_leaf_gas_exchange/`](example_leaf_gas_exchange/)** — the standalone leaf-level
-  photosynthesis + stomatal-conductance module: A–Ci, A–PAR, A–temperature and gs–VPD response curves
-  (FvCB C3 / Collatz C4; Leuning / Medlyn / Katul stomata), driven standalone from Python. The same
-  kernels run inside the coupled model; this example isolates them so the response curves are clean.
 - **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
   a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
   tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing
