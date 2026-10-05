@@ -339,7 +339,7 @@ def after_the_fit(cal, fk, values_map, fit_rows, out, log):
     out["alternatives"] = uncertainty.alternatives(cal, fk, u_map, runner.windows, cov_u, J_map, r_map,
                                                    out["sigma_scale_refresh"], log)
     out["ratios"] = report.ratio_tables(cal, runner, values_map, runner.windows)
-    out["kappa"] = report.kappa_report(cal.data.obs, runner.keys, values_map)
+    out["kappa"] = report.kappa_report(cal.data.obs, runner.keys, values_map, cal.daytime_sw)
     if out["kappa"]:
         kr = out["kappa"]
         log(f"kappa {kr['kappa']:.3f}: the tower's respiration {kr['reco_tower']:.2f} -> {kr['reco_implied']:.2f}, "

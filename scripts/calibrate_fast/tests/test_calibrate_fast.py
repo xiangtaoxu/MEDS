@@ -855,6 +855,14 @@ def test_the_validation_verdict():
     assert not report.validation_verdict(scores, {"default": 10.0, "map": 8.0})["pass"]
 
 
+def test_kappa_scales_the_respiration_always_and_gpp_by_day_only():
+    """GPP gains the scaled respiration only by day: at night there is no GPP to correct."""
+    obs = pd.DataFrame({"gpp": [10.0, 0.0], "reco": [4.0, 4.0], "sw_in": [500.0, 0.0]})
+    kr = report.kappa_report(obs, [Param("kappa", "obs", "kappa", 0.4, 1.0)], [0.5], daytime_sw=10.0)
+    assert kr["reco_implied"] == pytest.approx(8.0)              # 4 / 0.5, day and night
+    assert kr["gpp_implied"] == pytest.approx((10.0 + 4.0) / 2)  # +4 by day, +0 at night
+
+
 def test_the_variants_side_by_side(tmp_path, capsys):
     for v, g1 in (("interception_off", 3.0), ("interception_on", 3.3)):
         (tmp_path / v).mkdir()

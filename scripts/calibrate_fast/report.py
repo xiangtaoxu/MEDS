@@ -123,20 +123,24 @@ def ratio_tables(cal, runner, values, windows) -> dict:
     return out
 
 
-def kappa_report(obs: pd.DataFrame, keys, values) -> dict | None:
-    """kappa, and the respiration and GPP it implies over the tower's measured records."""
+def kappa_report(obs: pd.DataFrame, keys, values, daytime_sw: float) -> dict | None:
+    """kappa, and the respiration and GPP it implies over the tower's measured records. The
+    respiration is scaled at every hour; GPP gains the scaled respiration only by day, as in GPP's
+    observation model (there is no GPP at night)."""
     names = [p.name for p in keys]
     if "kappa" not in names:
         return None
     k = float(values[names.index("kappa")])
     m = obs["gpp"].notna() & obs["reco"].notna()
+    day = obs.loc[m, "sw_in"] > daytime_sw
     reco, gpp = obs.loc[m, "reco"].mean(), obs.loc[m, "gpp"].mean()
     to_kgc = 12.011e-9 * 365.25 * 86400.0
-    gpp_implied = gpp + (1.0 / k - 1.0) * reco
+    gpp_implied = (obs.loc[m, "gpp"] + (1.0 / k - 1.0) * obs.loc[m, "reco"].where(day, 0.0)).mean()
     return {"kappa": k, "records": int(m.sum()), "reco_tower": float(reco), "reco_implied": float(reco / k),
             "gpp_tower": float(gpp), "gpp_implied": float(gpp_implied),
             "gpp_tower_kgc_yr": float(gpp * to_kgc), "gpp_implied_kgc_yr": float(gpp_implied * to_kgc),
-            "note": "means over the records with GPP and its respiration measured (daytime and night)"}
+            "note": "means over the records with GPP and its respiration measured, day and night; GPP gains "
+                    "the scaled respiration by day only"}
 
 
 def validation_verdict(scores: dict, cost: dict, max_worse: float = 0.10) -> dict:
