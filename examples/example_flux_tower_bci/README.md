@@ -56,12 +56,12 @@ must be downloaded in a browser because Dryad refuses scripts.
 cd examples/example_flux_tower_bci
 python run_example.py --forcing-only        # fetch, build the forcing, score the longwave fill, figures
 python run_example.py                       # ... then the census file, the five tower years, the comparison
-python run_example.py --calibrate --workers 40   # ... and redo the calibration first (about 100 core-hours)
+python run_example.py --calibrate --workers 40   # ... and redo the calibration first (about an hour on one 40-core node)
 ```
 
 `run_example.py` needs numpy, pandas, netCDF4 and matplotlib, and for the model run a built
 `meds_main` (`--meds-main`, default `../../build-ifx/meds_main`). The forcing build takes about
-ten seconds, the census file about a minute, and each five-year run about 7 minutes on one core, or
+ten seconds, the census file about a minute, and each five-year run about 6 minutes on one core, or
 1.5 minutes with `[run].n_threads = 8` in an OpenMP build (`docs/building.md`). It runs the five
 years twice, with the default parameters and with the calibrated ones in `calibration/`.
 
@@ -135,6 +135,10 @@ receive that much too much.
 - **The leaf traits follow the canopy's light gradient** (`[trait_dynamics].trait_plasticity_on =
   true`). Each cohort's Vcmax25, Rd25, SLA and leaf lifespan are the PFT's top-of-canopy values
   scaled by the leaf area above it.
+- **The canopy intercepts rain and dew** (`[fast].canopy_water_on = true`): leaves and wood hold a
+  film of the water they catch, and it evaporates from them. The tower never measures a wet canopy,
+  because its flag removes every raining half hour, so the calibration leaves the film capacities
+  at the PFT's values.
 
 `[forcing]` declares `tq_height = wind_height = 41`, `height_above = "ground"` and
 `wind_exposure = "local"`. Each patch's forcing is moved from 41 m to its own canopy-air top.
@@ -156,7 +160,7 @@ count stays above `max_patch = 12` because `patch_light_tol_max` keeps dissimila
 and the run says so at the end. The energy and water budgets close to machine precision.
 
 **The stand over the five years:** LAI ends at 5.4 and AGB rises from 16.1 to 17.8 kgC m⁻², and
-the patches fuse down to 14. Before the traits followed the light, every leaf had the canopy top's
+the patches fuse down to 15. Before the traits followed the light, every leaf had the canopy top's
 traits, and LAI fell to 4.8.
 
 **Against the tower**, over its measured hours (the site TOML's rule: FLAG = 1 for the turbulent
@@ -164,14 +168,14 @@ fluxes), 2012-08 to 2017-07, with the leaf's light use at #351's values (`phi_ps
 
 | | tower mean | MEDS mean | bias | r, hourly | r, mean seasonal cycle |
 |---|---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.30 | +2.83 | 0.94 | 0.45 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.00 | +0.24 | 0.91 | 0.51 |
-| latent heat [W m⁻²] | 75.5 | 67.7 | −7.8 | 0.93 | 0.72 |
-| sensible heat [W m⁻²] | 32.4 | 68.1 | +35.7 | 0.94 | 0.95 |
-| net radiation [W m⁻²] | 136.3 | 121.2 | −15.1 | 1.00 | 0.98 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 10.21 | +2.74 | 0.94 | 0.49 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.02 | +0.22 | 0.91 | 0.59 |
+| latent heat [W m⁻²] | 75.5 | 71.5 | −4.0 | 0.92 | 0.74 |
+| sensible heat [W m⁻²] | 32.4 | 65.0 | +32.5 | 0.94 | 0.96 |
+| net radiation [W m⁻²] | 136.3 | 121.7 | −14.6 | 1.00 | 0.98 |
 
 - **The diurnal cycles** are closely followed in shape (r ≥ 0.98 for every flux) and differ in size.
-  Midday (11–14 h) GPP is 28.5 against the tower's 21.8 µmol m⁻² s⁻¹, and latent heat 207 against
+  Midday (11–14 h) GPP is 28.3 against the tower's 21.8 µmol m⁻² s⁻¹, and latent heat 207 against
   243 W m⁻².
 - **Net radiation falls short by day because the canopy reflects too much:** the model's albedo,
   at incoming shortwave above 200 W m⁻², is 0.18 against the tower's 0.13.
@@ -179,7 +183,7 @@ fluxes), 2012-08 to 2017-07, with the leaf's light use at #351's values (`phi_ps
   W m⁻² against the tower's 173: a Bowen ratio of 1.15 against 0.71. The tower's own fluxes close
   only 0.75 of its net radiation over whole days, and the gap behaves like missing sensible heat
   (the calibration's closure model), so part of the difference in H is the tower's. The model's
-  friction velocity is about twice the tower's: 0.86 against 0.41 m s⁻¹ at night, and 1.13 against
+  friction velocity is about twice the tower's: 0.86 against 0.41 m s⁻¹ at night, and 1.14 against
   0.71 at midday.
 
 **Before the longwave columns were corrected** the forcing carried the canopy's emission, 37 W m⁻²
@@ -203,7 +207,8 @@ velocity from 0.78 to 0.87 m s⁻¹ and moved GPP, NEE, latent heat and net radi
 [`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md`](../../docs/dev_plans/MEDS_FAST_CALIBRATION_BEST_PRACTICE.md).
 Every rule works at any tower; this tower's numbers come from its own data and forcing, and
 `calibration.toml` holds only the choices that differ from the tool's defaults. The shipped set in
-[`calibration/`](calibration) is the interception-off fit of 2026-10-04.
+[`calibration/`](calibration) is the fit of 2026-10-04, with the canopy's interception on as in the
+runs above.
 
 ### What the rules chose at BCI
 
@@ -254,72 +259,63 @@ Levenberg–Marquardt on the seven remaining keys at once, from their priors' ce
 - `wstress_sref_stomata`;
 - κ.
 
-It ran 3 iterations, then one refresh of the chains, weights and σ, then 5 more. The cost went from
-10,648 to 4,756. The screening's triage fixed no key. Without the albedo the leaf angle is informed
-chiefly by GPP, then by LE and H, and less tightly (posterior/prior σ 0.47, against 0.17 with the
-albedo). The interception-off fit took 946 trials (none failed), 25 minutes on three 40-core nodes,
-and the interception-on fit 616 trials in 16 minutes. The revision's staged fit took 4,804 trials and
-31.8 core-hours.
+It ran 3 iterations, then one refresh of the chains, weights and σ, then 2 more. The cost went from
+10,608 to 4,647. The screening's triage fixed no key. Without the albedo the leaf angle is informed
+chiefly by GPP, then by LE and H, and less tightly (posterior/prior σ 0.43, against 0.17 with the
+albedo). The fit took 616 trials (none failed), 16 minutes on three 40-core nodes. The revision's
+staged fit took 4,804 trials and 31.8 core-hours.
 
 | key | calibrated | 68 % | prior centre | prior z | posterior / prior σ |
 |---|---|---|---|---|---|
-| `vcmax25` [µmol m⁻² s⁻¹] | 29.2 | 28.4–30.0 | 41.0 (EEO) | −0.69 | 0.06 |
-| `stomatal_g1` [kPa^0.5] | 3.35 | 3.24–3.46 | 2.80 (EEO) | +0.36 | 0.06 |
-| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0012 | 0.0007–0.0022 | 0.01 | −1.95 | 0.55 |
-| `leaf_angle_mean` [°] | 60.8 | 56.8–64.3 | 45 | +1.70 | 0.47 |
-| `z0m_ratio` (effective) | 0.051 | 0.049–0.053 | 0.13 | −2.78 | 0.12 |
-| `wstress_sref_stomata` (effective) [MPa⁻¹] | 1.28 | 1.01–1.62 | 2.0 | −0.61 | 0.32 |
-| κ (observation) | 0.780 | 0.739–0.818 | 0.65 | +1.29 | 0.41 |
+| `vcmax25` [µmol m⁻² s⁻¹] | 30.9 | 30.0–31.9 | 41.0 (EEO) | −0.57 | 0.06 |
+| `stomatal_g1` [kPa^0.5] | 2.99 | 2.88–3.11 | 2.80 (EEO) | +0.13 | 0.08 |
+| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0032 | 0.0024–0.0041 | 0.01 | −1.07 | 0.24 |
+| `leaf_angle_mean` [°] | 54.0 | 49.9–57.9 | 45 | +0.92 | 0.43 |
+| `z0m_ratio` (effective) | 0.052 | 0.050–0.054 | 0.13 | −2.71 | 0.11 |
+| `wstress_sref_stomata` (effective) [MPa⁻¹] | 1.23 | 0.97–1.55 | 2.0 | −0.66 | 0.31 |
+| κ (observation) | 0.738 | 0.701–0.774 | 0.65 | +0.87 | 0.36 |
 | `leaf_reflect_nir` | 0.45, fixed | | | | |
 | `stomata_psi_onset` [MPa] | −0.86, fixed | | | | |
 
-- **κ = 0.78 makes the tower's respiration 4.20 µmol m⁻² s⁻¹ instead of 3.28**, close to the soil
-  chambers' ~4.3 alone. Its GPP becomes 3.21 kgC m⁻² yr⁻¹ instead of 2.86 over the measured records.
-- **`vcmax25` lands at 29.2, inside its prior** (z −0.7), not at its floor as in every fit before
+- **κ = 0.74 makes the tower's respiration 4.44 µmol m⁻² s⁻¹ instead of 3.28**, about the soil
+  chambers' ~4.3 alone. Its GPP becomes 3.30 kgC m⁻² yr⁻¹ instead of 2.86 over the measured records.
+- **`vcmax25` lands at 30.9, inside its prior** (z −0.6), not at its floor as in every fit before
   this protocol. θ_J 0.7, `phi_psii` 0.74 and κ removed the level error the earlier fits pushed onto
   it.
 - **The report flags no key.** No trait key is more than 2 prior sd from its evidence, and none is
-  near a bound. `stomatal_g0` comes closest (z −1.95). The roughness length is 2.8 sd below ED2's
+  near a bound. `stomatal_g0` comes closest (z −1.07). The roughness length is 2.7 sd below ED2's
   0.13, but it is an effective key: it stands in for the canopy's structure.
-- **The covariance is local only:** along its leading direction the objective rises 5.9× the
-  quadratic's prediction. `vcmax25` is correlated with `stomatal_g1` (−0.68) and κ (−0.65), and
-  `stomatal_g1` with `g0` (−0.69).
+- **The covariance is local only:** along the direction that is mostly `wstress_sref_stomata` the
+  objective curves 0.45× as much as the quadratic predicts. `vcmax25` is correlated with
+  `stomatal_g1` (−0.63) and κ (−0.66), and `stomatal_g1` with `g0` (−0.76).
+- **The MAP is placed to about the width of its intervals.** The fit stops when an iteration lowers
+  the cost by less than 0.1 %, about 5 here, while one posterior sd moves it by 1. The step a further
+  iteration would take is 0.5–1.1 posterior sd on every key but `g0`, and 2.2 on `g0`.
 - **The declared alternatives:**
-  - **GPP u\* at the plateau's 0.33:** every key moves under 0.5 posterior sd.
-  - **Bowen closure instead of the attribution's:** `stomatal_g1` moves 18 sd in the linear estimate,
-    so the fit was rerun under Bowen. There `vcmax25` is 26.8, `stomatal_g1` 4.77 and
-    `wstress_sref_stomata` 0.20. The closure choice is still this site's largest uncertainty.
+  - **GPP u\* at the plateau's 0.33:** every key moves under 0.6 posterior sd.
+  - **Bowen closure instead of the attribution's:** `wstress_sref_stomata` and `stomatal_g1` move
+    about 16 sd in the linear estimate, so the fit was rerun under Bowen. There `vcmax25` is 27.9,
+    `stomatal_g1` 4.51 and `wstress_sref_stomata` 0.11. The closure choice is still this site's
+    largest uncertainty.
   - **Partitioning:** not applicable; the provider gives one partitioning.
-- **The two variants** (interception off and on) now disagree by more than a posterior sd on four
-  keys (`calibration/variants.json`):
-  - `stomatal_g1` 3.35 against 2.99 (3.1 sd);
-  - `g0` 0.0012 against 0.0032 (2.3 sd);
-  - `vcmax25` 29.2 against 30.9 (1.9 sd);
-  - the leaf angle 60.8° against 54.0° (1.7 sd).
-
-  With the albedo on they agreed within 0.6 sd on every key but `wstress_sref_stomata`. The canopy's
-  interception is now a structural uncertainty on the stomatal keys that their posterior sd does not
-  carry.
 
 **On the validation windows** (RMSE in units of each target's σ, never fitted), the validation
 passes: the calibrated cost is lower, and no target is more than 10 % worse.
 
 | target | default | calibrated |
 |---|---|---|
-| u\* | 1.76 | **0.68** |
-| GPP (with κ) | 2.09 | **1.44** |
-| upwelling longwave | 3.75 | **3.44** |
-| LE (as measured) | 1.50 | 1.45 |
-| H (closure-corrected) | 4.05 | 4.26 (+5 %) |
-| objective | 60,347 | **50,273** |
+| u\* | 1.74 | **0.67** |
+| GPP (with κ) | 2.06 | **1.45** |
+| upwelling longwave | 3.82 | **3.55** |
+| LE (as measured) | 1.65 | 1.57 |
+| H (closure-corrected) | 4.16 | 4.30 (+3 %) |
+| objective | 61,507 | **51,650** |
 
-The albedo is no longer scored (the first fit took its RMSE from 5.34 to 1.37 σ through the NIR
+The albedo is no longer scored (the first fit took its RMSE from 5.34 to 1.36 σ through the NIR
 reflectance). LE improves a little, and H is a little worse. At the end of the fit H's χ² per row is
-1.7, even with its σ tripled (the cap). By day the model's sensible heat is 0.78 of the
+1.6, even with its σ tripled (the cap). By day the model's sensible heat is 0.77 of the
 closure-corrected tower's, against 0.86 in the first fit: with the NIR reflectance back at 0.45 the
-canopy absorbs less. The fit's reports are
-[`calibration/report_interception_off.md`](calibration/report_interception_off.md) and
-`report_interception_on.md`.
+canopy absorbs less. The fit's report is [`calibration/report.md`](calibration/report.md).
 
 ### The calibrated run over the five years
 
@@ -332,29 +328,29 @@ so it is not in them. `evaluation.png` draws the calibrated run beside the defau
 
 | over the tower's measured hours | tower | default | calibrated |
 |---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 (8.47 with κ) | 10.30 | **8.41** |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.00 | −3.23 |
-| latent heat [W m⁻²] | 75.5 | 67.7 | 60.6 |
-| sensible heat [W m⁻²] | 32.4 (as measured) | 68.1 | 74.4 |
-| net radiation [W m⁻²] | 136.3 | 121.2 | 123.0 |
-| albedo, at incoming shortwave above 200 W m⁻² | 0.129 | 0.182 | 0.166 |
-| u\* at night / at midday [m s⁻¹] | 0.41 / 0.71 | 0.86 / 1.13 | **0.49 / 0.69** |
-| midday GPP, LE, H | 21.8, 243, 173 | 28.5, 207, 238 | 23.2, 191, 242 |
-| stand at the end: LAI, AGB [kgC m⁻²] | | 5.38, 17.8 | 5.59, 17.2 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 (8.61 with κ) | 10.21 | **8.54** |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | −4.02 | −3.31 |
+| latent heat [W m⁻²] | 75.5 | 71.5 | 64.1 |
+| sensible heat [W m⁻²] | 32.4 (as measured) | 65.0 | 70.4 |
+| net radiation [W m⁻²] | 136.3 | 121.7 | 122.2 |
+| albedo, at incoming shortwave above 200 W m⁻² | 0.129 | 0.182 | 0.173 |
+| u\* at night / at midday [m s⁻¹] | 0.41 / 0.71 | 0.86 / 1.14 | **0.49 / 0.70** |
+| midday GPP, LE, H | 21.8, 243, 173 | 28.3, 207, 238 | 23.4, 188, 243 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | 5.38, 17.8 | 5.50, 17.2 |
 
 - **The full-record check passes.** The budgets close: whole-site energy and water have no failed
-  check in 3.0 million.
-  The dry season (January to April) is better than the default's: GPP RMSE 3.81 against 6.49 µmol m⁻² s⁻¹,
-  and LE RMSE 34.1 against 35.6 W m⁻².
-- **GPP matches the tower corrected for κ** (8.41 against 8.47), and u\* is close to the tower's.
-- **The albedo is 0.166 against the tower's 0.129.** The steeper leaves (60.8°) bring it down from
-  the default's 0.18, and the rest is the canopy-structure error the albedo target is off for. Net
-  radiation stays 13 W m⁻² short.
-- **April's GPP no longer falls short** in the drought years: 7.8 against the tower's 6.3 in 2016
-  (the shipped set of v0.3 gave 4.1).
-- **LE is lower than the default's** (60.6 against 67.7) and **H higher** (74.4 against 68.1). Over
+  check in 3.0 million. The dry season (January to April) is better than the default's: GPP RMSE
+  3.92 against 6.33 µmol m⁻² s⁻¹, and LE RMSE 35.2 against 38.6 W m⁻².
+- **GPP matches the tower corrected for κ** (8.54 against 8.61, over the same hours), and u\* is
+  close to the tower's.
+- **The albedo is 0.173 against the tower's 0.129.** The steeper leaves (54.0°) bring it down a little
+  from the default's 0.182, and the rest is the canopy-structure error the albedo target is off for.
+  Net radiation stays 14 W m⁻² short.
+- **April's GPP in the drought year** is 7.2 against the tower's 6.3 in 2016 (the default's 6.5; the
+  shipped set of v0.3 gave 4.1).
+- **LE is lower than the default's** (64.1 against 71.5) and **H higher** (70.4 against 65.0). Over
   the record the closure-corrected tower's H is about 68 W m⁻². The model's H is above it at night
-  (about 0 against the tower's −20 W m⁻²) and below it by day (0.78 of it in the fit's windows).
+  (about 0 against the tower's −24 W m⁻²) and below it by day (0.77 of it in the fit's windows).
   That is the structural H misfit above.
 
 ### Redoing it
@@ -375,8 +371,8 @@ the fit takes about an hour. Run the tool directly for a cluster: see
 | [`fetch_bci_data.py`](fetch_bci_data.py) | downloads and verifies the data |
 | [`run_example.py`](run_example.py) | runs every step |
 | [`plot_forcing.py`](plot_forcing.py), [`plot_evaluation.py`](plot_evaluation.py), [`plot_calibration.py`](plot_calibration.py) | the figures |
-| [`calibration.toml`](calibration.toml) | the calibration's choices: variants, κ's prior, the fit's settings (the rules choose the rest) |
-| [`calibration/`](calibration) | the fit's results and reports (`fit_*.json`, `report_*.md`), the variants side by side (`variants.json`), the calibrated configs |
+| [`calibration.toml`](calibration.toml) | the calibration's choices: κ's prior and the fit's settings (the rules choose the rest) |
+| [`calibration/`](calibration) | the fit's results and report (`fit.json`, `report.md`), the calibrated configs |
 | [`bci_census.toml`](bci_census.toml) | the declaration of the census the run starts from |
 | [`meds_config_eval.toml`](meds_config_eval.toml) | the MEDS run |
 | [`output_variables.toml`](output_variables.toml), [`pft_parameters.toml`](pft_parameters.toml) | its output list and PFT |

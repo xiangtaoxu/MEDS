@@ -1,4 +1,4 @@
-# Fast calibration: example_flux_tower_bci, variant interception_on
+# Fast calibration: example_flux_tower_bci
 
 ## Validation
 

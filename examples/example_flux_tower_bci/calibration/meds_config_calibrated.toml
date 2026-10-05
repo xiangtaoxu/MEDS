@@ -1,14 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
-# CALIBRATED by scripts/calibrate_fast (variant interception_off) from meds_config_eval.toml.
+# CALIBRATED by scripts/calibrate_fast from meds_config_eval.toml.
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
 # KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   aerodynamics.z0m_ratio         0.0505632  (0.13)  EFFECTIVE
+#   aerodynamics.z0m_ratio         0.0516454  (0.13)  EFFECTIVE
 #   leaf_physiology.ds_vcmax       641.129  (650)  KATTGE & KNORR
 #   leaf_physiology.ds_jmax        640.592  (640)  KATTGE & KNORR
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
-#   trait_dynamics.trait_plasticity_on true
-#   fast.canopy_water_on           false
 #   init.pft_config                "calibration/pft_parameters_calibrated.toml"
 #   output.prefix                  "cal"
 # MEDS example_flux_tower_bci: the five tower years, 2012-08-01 to 2017-08-01 UTC, started from the
@@ -28,8 +26,8 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
+canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
 
-canopy_water_on = false   # set by calibrate_fast
 [demography]
 demography_on             = true
 do_cohort_fissfuse        = true
@@ -195,4 +193,4 @@ bottom_bc = "dirichlet"
 deep_temp = 298.65                 # [K] the tower's mean air temperature, 2012-08 to 2017-08
 
 [aerodynamics]
-z0m_ratio = 0.0505632   # set by calibrate_fast
+z0m_ratio = 0.0516454   # set by calibrate_fast

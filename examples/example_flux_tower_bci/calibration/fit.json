@@ -1,6 +1,6 @@
 {
- "variant": "interception_on",
- "config": "/home/xx286/projects/MEDS/.claude/worktrees/cal-clean/examples/example_flux_tower_bci/calibration.toml",
+ "variant": null,
+ "config": "/home/xx286/projects/MEDS/.claude/worktrees/bci-on/examples/example_flux_tower_bci/calibration.toml",
  "windows": {
   "cal1_2016": [
    "2016-01-01 00:00:00",
@@ -2939,7 +2939,7 @@
  },
  "trials": {
   "run": 616,
-  "median_s": 16.24486517906189,
-  "wall_s": 946.9526410102844
+  "median_s": 16.82406771183014,
+  "wall_s": 951.9233858585358
  }
 }

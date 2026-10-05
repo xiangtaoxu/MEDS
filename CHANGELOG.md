@@ -146,6 +146,24 @@ before and after.
   are in the plan's §13.
 
 ### Changed
+- **The BCI example has one structure: the canopy's interception on.** The example's own config
+  switches it on (`[fast].canopy_water_on = true`), so the default and the calibrated runs differ
+  only by what the fit sets. `calibration.toml` drops its `[variants]`, and an `[overrides]` entry
+  the base config already set.
+  - **The fit** is the interception-on variant's, reproduced bit for bit (616 trials): `vcmax25`
+    30.9, `stomatal_g1` 2.99, `g0` 0.0032, leaf angle 54.0°, κ 0.74. The validation passes (in σ,
+    default against calibrated: GPP 2.06 → 1.45, u\* 1.74 → 0.67, upwelling longwave 3.82 → 3.55,
+    LE 1.65 → 1.57, H 4.16 → 4.30). One `fit.json` and `report.md` replace the two variants' files
+    and `variants.json`, and `plot_calibration.py` draws one fit.
+  - **The five years**, default → calibrated: GPP 10.21 → 8.54 µmol m⁻² s⁻¹ (the tower corrected
+    for κ: 8.61); LE 71.5 → 64.1 and H 65.0 → 70.4 W m⁻²; u\* at night 0.86 → 0.49 m s⁻¹ (tower
+    0.41). Interception moved the default run's LE from 67.7 to 71.5 and H from 68.1 to 65.0 W m⁻²
+    (tower 75.5 and 32.4).
+  - **`calibrate_fast`'s registry no longer ties a key to a variant's name.** The wet-canopy keys
+    (`leaf_surf_water_max`, `wood_surf_water_max`, `intercept_k`) loaded only under a variant called
+    `interception_on`, so a calibration with interception on in its base config could not name them.
+    They are always in the registry: with interception off they have no effect, and the triage fixes
+    such a key. The report and the calibrated files name a variant only when there is one.
 - **`calibrate_fast`, cleaned up after its review** (#365; `docs/dev_plans/MEDS_CALIBRATE_FAST_REVIEW_2026-10-04.md`;
   the owner's decisions D1–D4). The BCI fit's values are unchanged; its validation windows moved
   (below).
