@@ -1,0 +1,25 @@
+{
+  "harvard_forest": {
+    "flush_degree_days": 93.98,
+    "shed_base_temp": 290.1,
+    "shed_degree_days": 46.18,
+    "flush_rate_max": 0.03386,
+    "shed_rate_max": 0.3329,
+    "leaf_turnover_rate": 0.0003072,
+    "flush_light_threshold": 13.75,
+    "flush_light_sharpness": 7.99,
+    "shed_light_threshold": 9.127
+  },
+  "hyytiala": {
+    "flush_degree_days": 137.5,
+    "shed_base_temp": 279.9,
+    "shed_degree_days": 36.77,
+    "flush_rate_max": 0.02435,
+    "shed_rate_max": 0.159,
+    "leaf_turnover_rate": 0.2377,
+    "flush_light_threshold": 13.08,
+    "flush_light_sharpness": 6.585,
+    "shed_light_threshold": 14.49,
+    "min_leaf_cover": 0.8786
+  }
+}

@@ -8,9 +8,10 @@ README that shows how to reproduce it (run from the repository root):
   reproduce the A–Cᵢ curve and the leaf-temperature responses of four tropical tree species in
   Slot & Winter (2017).
 - **[`example02_canopy_phenology/`](example02_canopy_phenology/)** — the leaf-phenology module on
-  its own, driven from Python: one kernel with per-PFT cue masks gives temperate deciduous,
-  temperate evergreen, tropical drought-deciduous and light-driven leaf-exchanging canopies over
-  synthetic climates.
+  its own, driven from Python: one kernel, on air temperature and day length, fitted to a deciduous
+  forest (Harvard Forest: MODIS LAI, leaf fall, litter baskets) and an evergreen one (Hyytiälä
+  Scots pine: needle litter). The two differ only in parameter values; evergreen is a leaf-cover
+  floor.
 - **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
   ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
   stand-structure figures.
