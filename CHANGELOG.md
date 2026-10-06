@@ -26,6 +26,15 @@ before and after.
     gₛ optima of *F. insipida* and *L. speciosa* move 0.5 °C cooler, to 29.5 and 34.5 °C.
   - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
     of the two curves below the compensation point.
+- **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
+  - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
+    near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
+    0.57 of the solar constant, and the solar constant itself.
+  - **Effect:** run on measured shortwave at Hyytiälä, Harvard Forest and BCI, the scheme's PPFD moves
+    from 3–7% below the towers' quantum sensors to within 4% of them (1.04, 1.02 and 0.99 of the
+    measured; `docs/science/forcing.md` §6).
+  - **Unchanged:** the default `clearidx`, which stays 3–11% high. #369 lists that and the other open
+    uncertainties of the shortwave-to-PAR partition.
 
 ## [0.3.3] — 2026-10-05
 

@@ -288,13 +288,16 @@ f_{diff} =
 
 Then $`F_{diff}=f_{diff}\,\mathrm{SW}`$ and $`F_{beam}=\mathrm{SW}-F_{diff}`$, each divided into PAR and
 NIR by **fixed energy fractions** — 0.43 of the beam and 0.52 of the diffuse are PAR, the rest NIR; diffuse
-light is PAR-enriched because Rayleigh scattering is strongest at short wavelengths.
+light is PAR-enriched because Rayleigh scattering is strongest at short wavelengths. Against tower quantum
+sensors these fractions give PPFD 3–11% high, mostly from the diffuse 0.52 (#369).
 
-**`weiss_norman`** — the band-specific Weiss & Norman (1985) scheme, a port of ED2's
+**`weiss_norman`** — the band-specific Weiss & Norman (1985) scheme, after ED2's
 `short_bdown_weissnorman`. It builds *potential* (clear-sky) band fluxes from air-mass optical depth, with
 $`m=\sec z`$ and $`p_{rat}=P_{surf}/P_{std}`$ (so it needs surface pressure), then scales them to the
-observed total. Writing $`S_{vis}=0.43\,S_0`$, $`S_{nir}=0.57\,S_0`$, and the NIR water-vapour absorption
-$`w_{10}=S_0\,10^{\,-1.1950+0.4459\log_{10}m-0.0345(\log_{10}m)^2}`$:
+observed total. The sun's beam above the atmosphere is $`S_{vis}=600`$ W m⁻² visible and
+$`S_{nir}=720`$ W m⁻² near-infrared, and the NIR water-vapour absorption is
+$`w_{10}=1320\cdot10^{\,-1.1950+0.4459\log_{10}m-0.0345(\log_{10}m)^2}`$ W m⁻², as WN85 publish them
+(eqs. 1, 4, 6):
 
 ```math
 R^{pot}_{vis,b} = S_{vis}e^{-0.185\,p_{rat}m}\cos z, \qquad
@@ -320,6 +323,21 @@ Below $`\cos z\le\cos 89^\circ`$ the secant is unstable and everything is routed
 0.48 NIR. One ED2-faithful edge survives the port: in a narrow twilight band just above that cutoff
 $`w_{10}`$ can exceed the attenuated NIR beam, so the scaled NIR diffuse goes slightly negative while the
 four streams still sum to `SWdown` exactly.
+
+The diffuse terms of (8) keep ED2's form, which scales the beam it subtracts by $`\cos z`$ once more than
+other implementations of WN85 eq. 3 do (pyTSEB writes $`0.40\,(S_{vis}\cos z-R^{pot}_{vis,b})`$).
+
+**Against towers** (#369). Each tower's measured shortwave is run through the scheme and its PPFD
+($`\times 4.6`$ µmol J⁻¹) set against the tower's quantum sensor, with the sun above 5°. `weiss_norman` gives
+1.04 of the measured PPFD at Hyytiälä (ICOS FI-Hyy, 2018–2024), 1.02 at Harvard Forest (HF001, its eight
+calibration-stable years in 2005–2024) and 0.99 at BCI (2014–2016). These constants with the ED2 form of
+the diffuse terms fit the towers best of the variants tried:
+- a 0.43 / 0.57 split of the solar constant gives 0.97, 0.96 and 0.93;
+- the single-$`\cos z`$ form of eq. 3 gives 1.08, 1.06 and 1.01, with too little diffuse light;
+- `clearidx` gives 1.11, 1.07 and 1.03.
+
+WN85's 600 W m⁻² visible band is the 320–700 nm share of the solar spectrum, so it includes near-UV. #369
+lists this and the other open uncertainties of the partition.
 
 ## 7. Humidity and precipitation phase
 
