@@ -265,4 +265,4 @@ the cue and the arrestor cannot drift apart.
 | helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `daylength`, `doy_effective` |
 | per-cohort advance (slow loop) | `meds_vegetation_dynamics`: `advance_leaf_phenology` (folds the ED2 phenology driver), `flatten_pheno_params` |
 | rates → leaf carbon (one shed rate, floored) | `meds_plant_carbon_allocation`: `leaf_shed_amount`, `flush_growth_cap`, `plant_carbon_allocation`; orchestrated per-cohort in `meds_vegetation_dynamics%compute_carbon_allocation` |
-| Python front end + demo | `meds.plant.pheno` (`python/meds/plant/pheno.py`); `examples/example_phenology/` |
+| Python front end + demo | `meds.plant.pheno` (`python/meds/plant/pheno.py`); `examples/example02_canopy_phenology/` |

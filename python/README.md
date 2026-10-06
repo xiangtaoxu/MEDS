@@ -10,7 +10,7 @@ place for it to break.
 - [`meds.plant.leaf`](meds/plant/leaf.py) — leaf gas exchange (FvCB C3 / Collatz C4, Leuning / Medlyn /
   Katul stomata, the coupled A–gs–Ci solver);
 - [`meds.plant.pheno`](meds/plant/pheno.py) — leaf phenology (the two per-day flush / shed rate
-  tendencies + the four strategy presets; see `examples/example_phenology/`).
+  tendencies + the four strategy presets; see `examples/example02_canopy_phenology/`).
 
 **`meds.demography`** — [`Config` and `Site`](meds/demography/_site.py): load a TOML config, build a
 site, and step the carbon slow loop or feed it externally computed rates (`apply_rates`). This is the
