@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""fetch_phenology_data.py -- put the Harvard Forest and Hyytiala phenology data in data/.
+"""fetch_phenology_data.py -- put the Harvard Forest, Hyytiala and BCI phenology data in data/.
 
 The data are not in the repository. Sources (all open; cite them if you use the data):
 
@@ -11,12 +11,20 @@ Harvard Forest, Massachusetts (42.54 N), Harvard Forest Data Archive:
   MODIS  MCD15A3H leaf area index (Myneni et al.), the ORNL DAAC fixed subset for the site; the
          median of the 3 x 3 pixels around the tower is kept.
 Hyytiala, Finland (61.85 N), ICOS ETC Level 2 archive for FI-Hyy (CC BY 4.0):
-  the daily FLUXNET file (air temperature TA_F) and the ancillary file (needle litter).
+  the daily FLUXNET file (air temperature TA_F, PAR PPFD_IN) and the ancillary file (needle litter).
+Barro Colorado Island, Panama (9.15 N):
+  Tower  M. Detto, BCI eddy-covariance flux data 2012-2017, Zenodo 6456527 (CC0; acknowledge
+         CTFS-ForestGEO): shortwave and soil water content.
+  GLiMP  Sayer et al. (2023), Gigante Litter Manipulation Project, figshare
+         doi:10.6084/m9.figshare.24746235 (CC BY 4.0): fine litter in traps, about monthly.
+  Kupers Kupers et al. (2019) Scientific Data, figshare doi:10.6084/m9.figshare.7611005 (CC0):
+         soil water content and water potential sampled together in the BCI 50-ha plot.
 
 Usage:
-  python fetch_phenology_data.py              # downloads ~180 MB (the ICOS archive), keeps ~20 MB
+  python fetch_phenology_data.py              # downloads ~220 MB (the ICOS archive), keeps ~50 MB
 """
 import argparse
+import hashlib
 import http.cookiejar
 import io
 import json
@@ -39,6 +47,12 @@ ICOS_ARCHIVE = "XkewKEuf9Bv592orXDy4QpFi"          # ICOSETC_FI-Hyy_ARCHIVE_INTE
 ICOS = "https://data.icos-cp.eu/licence_accept?ids=%5B%22{id}%22%5D"
 ICOS_MEMBERS = {"ICOSETC_FI-Hyy_FLUXNET_DD_INTERIM_L2.csv": "hyytiala_fluxnet_dd.csv",
                 "ICOSETC_FI-Hyy_ANCILLARY_INTERIM_L2.csv":  "hyytiala_ancillary.csv"}
+BCI_TOWER = ("BCI_v5.1.csv", "https://zenodo.org/api/records/6456527/files/BCI_v5.1.csv/content",
+             "1bac4cfec6d0ed8e9f497fb55a422ab6")
+GLIMP = ("glimp_litterfall.csv", "https://ndownloader.figshare.com/files/43477650")
+KUPERS = "https://ndownloader.figshare.com/files/14758400"
+KUPERS_MEMBERS = {"Kupers_et_al/Input/BCI_Soil_moisture_mapping.txt":     "kupers_soil_moisture_mapping.txt",
+                  "Kupers_et_al/Input/BCI_Soil_moisture_small_scale.txt": "kupers_soil_moisture_small_scale.txt"}
 #----- The Harvard Forest archive refuses urllib's default User-Agent, so name the client. --------#
 HEADERS = {"User-Agent": "MEDS-example02 (urllib)"}
 
@@ -85,6 +99,34 @@ def icos_files(data_dir):
             dst.write(src.read())
 
 
+def download(url, dest):
+    with get(url) as r, open(dest, "wb") as fh:
+        fh.write(r.read())
+
+
+def bci_files(path):
+    """The BCI tower record (checked against its published md5), GLiMP, and two Kupers files."""
+    name, url, md5 = BCI_TOWER
+    if not os.path.exists(path(name)):
+        print(f"{name}: the BCI tower record from Zenodo (25 MB)")
+        download(url, path(name))
+        with open(path(name), "rb") as fh:
+            got = hashlib.md5(fh.read()).hexdigest()
+        if got != md5:
+            os.remove(path(name))
+            raise SystemExit(f"ERROR: {name} has md5 {got}, not the published {md5}; removed it")
+    if not os.path.exists(path(GLIMP[0])):
+        print(f"{GLIMP[0]}: GLiMP litter traps from figshare")
+        download(GLIMP[1], path(GLIMP[0]))
+    if not all(os.path.exists(path(n)) for n in KUPERS_MEMBERS.values()):
+        print("kupers_*.txt: BCI soil water content and potential from figshare")
+        with get(KUPERS) as r:
+            archive = zipfile.ZipFile(io.BytesIO(r.read()))
+        for member, name in KUPERS_MEMBERS.items():
+            with archive.open(member) as src, open(path(name), "wb") as dst:
+                dst.write(src.read())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Fetch the example02 phenology data into data/.")
     ap.add_argument("--data-dir", default=os.path.join(HERE, "data"))
@@ -94,14 +136,14 @@ def main(argv=None):
     for name, url in HF_FILES.items():
         if not os.path.exists(path(name)):
             print(f"{name}: downloading from the Harvard Forest Data Archive")
-            with get(url) as r, open(path(name), "wb") as fh:
-                fh.write(r.read())
+            download(url, path(name))
     if not os.path.exists(path("harvard_modis_lai.csv")):
         print("harvard_modis_lai.csv: MODIS MCD15A3H from the ORNL DAAC")
         modis_lai(path("harvard_modis_lai.csv"))
     if not all(os.path.exists(path(n)) for n in ICOS_MEMBERS.values()):
         print("hyytiala_*.csv: the ICOS FI-Hyy archive (~160 MB download)")
         icos_files(args.data_dir)
+    bci_files(path)
     print(f"data in {args.data_dir}")
 
 

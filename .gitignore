@@ -47,6 +47,7 @@ compile_commands.json
 !examples/example01_leaf_gas_exchange/slot2017.png
 !examples/example02_canopy_phenology/harvard_forest.png
 !examples/example02_canopy_phenology/hyytiala.png
+!examples/example02_canopy_phenology/bci.png
 !examples/example_flux_tower_bci/forcing_qc.png
 !examples/example_flux_tower_bci/lw_comparison.png
 !examples/example_flux_tower_bci/evaluation.png

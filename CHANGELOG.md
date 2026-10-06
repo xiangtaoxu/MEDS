@@ -82,19 +82,24 @@ before and after.
     section always flushes and loses leaves at its background turnover, as before; the only
     difference is the dropped cold suppression of an evergreen PFT's turnover, which the old driver
     evaluated at a fixed 25 °C stub temperature: a factor of 0.9997.
-- **The phenology example is `examples/example02_canopy_phenology/`, fitted to real data** at
-  Harvard Forest (deciduous broadleaf: MODIS LAI, HF003 leaf fall, HF069 litter baskets) and
-  Hyytiälä (Scots pine: ICOS needle litter), on air temperature and day length with no water stress.
-  `fetch_phenology_data.py` downloads the data; `run_phenology.py` runs the compiled kernel, scores
-  it, plots it and, with `--fit`, refits it. Harvard: MODIS / leaf-fall / basket RMSE 0.184 / 0.063
-  / 0.076, half-fallen day within 2.9 days (r 0.44), half-green day within 5.5 days (r 0.34), one
-  canopy of litter a year. Hyytiälä: needle-fall timing r 0.85, 0.30 canopy a year, leaf-cover
-  floor 0.88. The four synthetic strategies and `phenology_patterns.png` are gone; the tropical
-  habits come back with their own data.
-  - **The flush day-length gate is a step at both sites** (8.0 and 6.6 h⁻¹ at 13.75 and 13.1 h).
-    With a gradual gate (1 h⁻¹) the Harvard canopy keeps flushing in October while it senesces and
-    drops 1.89 canopies of leaves a year; holding the litter to one canopy with the sharpness fixed
-    instead loses the spring timing (r 0.05, RMSE 18.7 days).
+- **The phenology example is `examples/example02_canopy_phenology/`, fitted to real data**: four
+  leaf habits from one kernel. `fetch_phenology_data.py` downloads the data; `run_phenology.py` runs
+  the compiled kernel, scores it, plots it and, with `--fit`, refits it.
+  - **Harvard Forest** (deciduous broadleaf, warmth and day length; MODIS LAI, HF003 leaf fall,
+    HF069 baskets): RMSE 0.184 / 0.063 / 0.076, half-fallen day within 2.9 days (r 0.44),
+    half-green day within 5.5 days (r 0.34), one canopy of litter a year.
+  - **Hyytiälä** (Scots pine, warmth and PAR; ICOS needle litter): needle-fall timing r 0.90, 0.30
+    canopy a year, leaf-cover floor 0.90.
+  - **Barro Colorado Island**, two species under one climate (BCI tower PAR and soil water; GLiMP
+    litter): a light exchanger fitted to the litter (r 0.91, one canopy a year, half of it in
+    January–April) and a drought-deciduous species set by hand (leafless 29–100 days each dry
+    season). The predawn water potential is a surrogate: the tower's soil water content through a
+    retention curve fitted to the paired samples of Kupers et al. (2019).
+  - **The flush day-length gate is a step** at Harvard (8 h⁻¹ at 13.75 h). With a gradual gate
+    (1 h⁻¹) the canopy keeps flushing in October while it senesces and drops 1.89 canopies of leaves
+    a year; holding the litter to one canopy with the sharpness fixed instead loses the spring timing
+    (r 0.05, RMSE 18.7 days).
+  - The four synthetic strategies and `phenology_patterns.png` are gone.
 
 ## [0.3.3] — 2026-10-05
 

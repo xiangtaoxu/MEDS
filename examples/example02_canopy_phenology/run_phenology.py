@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Example 02: one MEDS phenology kernel at a deciduous and an evergreen forest.
+"""Example 02: one MEDS phenology kernel at three forests and four leaf habits.
 
-Harvard Forest (deciduous broadleaf, Massachusetts) and Hyytiala (Scots pine, Finland) run the same
-kernel with the same cues: degree-day sums of the daily air temperature, and the day length. There
-is no water stress. Only the parameter values differ; the pine keeps its canopy because its
-senescence stops at a leaf-cover floor (min_leaf_cover).
+  Harvard Forest  deciduous broadleaf: warmth and day length
+  Hyytiala        Scots pine (evergreen): warmth and PAR, senescence stopping at a leaf-cover floor
+  BCI             two tropical species under one climate, both cued on predawn water potential and
+                  PAR: a drought-deciduous species and a light-driven leaf exchanger
 
 The kernel and the leaf rule are the compiled Fortran of the coupled model, reached through
-meds.plant.pheno, with carbon never limiting the flush.
+meds.plant.pheno, with carbon never limiting the flush. At BCI the predawn water potential is a
+surrogate: the tower's soil water content through a retention curve fitted to paired soil samples.
 
 Usage (after fetch_phenology_data.py; build libmeds.so first, see the README):
   python run_phenology.py           # run with fitted_parameters.json: print scores, write figures
-  python run_phenology.py --fit     # refit both sites first (differential evolution, all cores)
+  python run_phenology.py --fit     # refit the fitted parameters first (differential evolution)
 """
 import argparse
 import json
@@ -31,11 +32,7 @@ import meds.plant.pheno as pheno                                   # noqa: E402
 
 DATA = os.path.join(HERE, "data")
 FIT_FILE = os.path.join(HERE, "fitted_parameters.json")
-
-#----- Both sites: flush and senescence on temperature and day length. Everything not fitted keeps
-#      its meds.plant.pheno default: the 5 C warmth base, the other sharpnesses, 5-day smoothing.
-SHARED = dict(flush_cue_mask=pheno.Cue.TEMP | pheno.Cue.LIGHT,
-              shed_cue_mask=pheno.Cue.TEMP | pheno.Cue.LIGHT)
+Cue = pheno.Cue
 
 
 def data(name):
@@ -60,42 +57,62 @@ def timing_skill(obs, mod):
     return float(np.corrcoef(obs[j], mod[j])[0, 1]), float(np.sqrt(np.mean((obs[j] - mod[j]) ** 2)))
 
 
+def collection_share(litter, coll):
+    """Model litter rate over each trap collection, over its mean (the traps' unit is relative)."""
+    cum, day = litter.cumsum(), pd.Timedelta(days=1)
+    rate = ((cum.reindex(coll.index - day, method="nearest").values
+             - cum.reindex(coll.start - day, method="nearest").values) / coll.days.values)
+    with np.errstate(invalid="ignore", divide="ignore"):    # a trial with no litter scores NaN
+        return rate / rate.mean()
+
+
+def plot_setup():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    return plt
+
+
 class Site:
     """A site's daily drivers and observations; simulate() runs the kernel over them."""
     key = title = ""
     lat = cover0 = 0.0
-    dates = tair = None
+    BASE = {}                                   # the cue masks and any fixed parameters
+    dates = tair = par = psi = None
 
-    def free(self):
-        """The fitted parameters and their bounds. The flush day length stays an hour below the
-        longest day, so the gate opens in summer. Its sharpness is fitted too: a deciduous canopy
-        needs a step (a gradual gate is still partly open in October, when the warmth sum is high,
-        and refills the canopy while it senesces), a pine a gradual flush window."""
-        longest = pheno.daylength(self.lat, 172)
+    def daylengths(self):
+        if not hasattr(self, "_daylen"):
+            self._daylen = np.array([pheno.daylength(self.lat, d) for d in self.dates.dayofyear])
+        return self._daylen
+
+    def simulate(self, values, base=None):
+        ph = pheno.Phenology(pheno.Params(**(self.BASE if base is None else base), **values),
+                             leaf_cover=self.cover0)
+        n = len(self.dates)
+        par = self.par if self.par is not None else np.zeros(n)
+        psi = self.psi if self.psi is not None else np.zeros(n)
+        days = [ph.step(temp_day=t, daylength=dl, par=p, predawn_leaf_psi=w, doy=d)
+                for t, dl, p, w, d in zip(self.tair, self.daylengths(), par, psi, self.dates.dayofyear)]
+        return pd.DataFrame({"cover": [x.leaf_cover for x in days],
+                             "litter": [x.senescence + x.background for x in days],
+                             "flush": [x.leaf_flush_tendency for x in days],
+                             "shed": [x.leaf_shed_tendency for x in days]}, index=self.dates)
+
+    def temperate_free(self):
+        """The temperature and rate parameters fitted at both temperate sites."""
         return {"flush_degree_days": (5.0, 1000.0),       # [K day] warmth centre
                 "shed_base_temp": (278.0, 300.0),         # [K]
                 "shed_degree_days": (5.0, 600.0),         # [K day] cold centre
                 "flush_rate_max": (1 / 60, 1 / 3),        # [1/day]
                 "shed_rate_max": (0.0005, 1 / 3),         # [1/day]
-                "leaf_turnover_rate": (0.0, 0.6),         # [1/yr]
-                "flush_light_threshold": (8.0, longest - 1.0),   # [h]
-                "flush_light_sharpness": (0.5, 8.0),             # [1/h]
-                "shed_light_threshold": (8.0, longest)}          # [h]
-
-    def simulate(self, values):
-        ph = pheno.Phenology(pheno.Params(**SHARED, **values), leaf_cover=self.cover0)
-        days = [ph.step(temp_day=t, daylength=pheno.daylength(self.lat, d), doy=d)
-                for t, d in zip(self.tair, self.dates.dayofyear)]
-        return pd.DataFrame({"cover": [x.leaf_cover for x in days],
-                             "litter": [x.senescence + x.background for x in days],
-                             "flush": [x.leaf_flush_tendency for x in days],
-                             "shed": [x.leaf_shed_tendency for x in days]}, index=self.dates)
+                "leaf_turnover_rate": (0.0, 0.6)}         # [1/yr]
 
 
 class HarvardForest(Site):
     key, title = "harvard_forest", "Harvard Forest (deciduous broadleaf, 42.5° N)"
     lat, cover0 = 42.538, 0.0
     first, last = 2002, 2023                          # 2002 grows the first canopy (spin-up)
+    BASE = dict(flush_cue_mask=Cue.TEMP | Cue.DAYLENGTH, shed_cue_mask=Cue.TEMP | Cue.DAYLENGTH)
     #----- Leaf litter per year as a share of the canopy. The baskets give the timing within each
     #      year, not the amount: a deciduous canopy is built once a year and every leaf falls, so
     #      one canopy. Without it the fit can keep flushing in October, when the warmth sum is still
@@ -132,6 +149,16 @@ class HarvardForest(Site):
         b = lit.groupby(["year", "date"]).wt_g.sum().reset_index()
         b["frac"] = b.groupby("year").wt_g.cumsum() / b.groupby("year").wt_g.transform("sum")
         self.basket = b
+
+    def free(self):
+        """Fitted parameters and bounds. The flush day length stays an hour below the longest
+        day, so the gate opens in summer; its sharpness is fitted too (a gradual gate is still
+        partly open in October and refills the canopy while it senesces)."""
+        longest = pheno.daylength(self.lat, 172)
+        return {**self.temperate_free(),
+                "flush_daylength_threshold": (8.0, longest - 1.0),   # [h]
+                "flush_daylength_sharpness": (0.5, 8.0),             # [1/h]
+                "shed_daylength_threshold": (8.0, longest)}          # [h]
 
     def fallen(self, sim):
         """Fraction of the year's peak canopy lost, from August on (as HF003 counts it)."""
@@ -172,9 +199,7 @@ class HarvardForest(Site):
         return out
 
     def plot(self, sim, path):
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        plt = plot_setup()
         fig = plt.figure(figsize=(11, 7.5), constrained_layout=True)
         gs = fig.add_gridspec(2, 2)
         ax = fig.add_subplot(gs[0, :])
@@ -214,24 +239,38 @@ class Hyytiala(Site):
     key, title = "hyytiala", "Hyytiälä (Scots pine, 61.8° N)"
     lat, cover0 = 61.8475, 1.0
     start, end = "2018-01-01", "2024-07-31"
+    BASE = dict(flush_cue_mask=Cue.TEMP | Cue.PAR, shed_cue_mask=Cue.TEMP | Cue.PAR)
     #----- Needle fall per year as a share of the canopy. The traps give the timing, not the share:
     #      southern-Finnish Scots pine keeps 3.4-4.2 needle cohorts and needles live about three
     #      years (Pensa & Jalkanen 1999, Silva Fennica 33:654), so about 0.3 of it falls each year.
     ANNUAL_NEEDLE_FALL = 0.30
 
     def __init__(self):
-        met = pd.read_csv(data("hyytiala_fluxnet_dd.csv"), usecols=["TIMESTAMP", "TA_F"], na_values=[-9999])
+        met = pd.read_csv(data("hyytiala_fluxnet_dd.csv"), usecols=["TIMESTAMP", "TA_F", "PPFD_IN", "SW_IN_F"],
+                          na_values=[-9999])
         met["date"] = pd.to_datetime(met.TIMESTAMP.astype(str), format="%Y%m%d")
-        tair = met.set_index("date").TA_F.loc[self.start:self.end].interpolate()
-        self.dates, self.tair = tair.index, tair.values + 273.15
+        met = met.set_index("date").loc[self.start:self.end]
+        #----- PAR [umol/m2/s, daily mean]: the measured PPFD, its gaps filled from the shortwave
+        #      by their ratio over the days with both. ------------------------------------------#
+        ratio = float((met.PPFD_IN / met.SW_IN_F).median())
+        par = met.PPFD_IN.where(met.PPFD_IN.notna(), ratio * met.SW_IN_F).interpolate()
+        tair = met.TA_F.interpolate()
+        self.dates, self.tair, self.par = tair.index, tair.values + 273.15, par.values
         lit = self.needle_litter(data("hyytiala_ancillary.csv"))
         first = self.dates[0] + pd.Timedelta(days=200)              # after a 200-day spin-up
-        self.litter = lit[(lit.start >= first) & (lit.end <= self.dates[-1])].reset_index(drop=True)
-        rate = (self.litter.mass / self.litter.days).values
+        lit = lit[(lit.start >= first) & (lit.end <= self.dates[-1])].set_index("end")
+        self.litter = lit
+        rate = (lit.mass / lit.days).values
         self.share = rate / rate.mean()          # needle fall rate per interval / its mean
 
     def free(self):
-        return {**super().free(), "min_leaf_cover": (0.4, 0.95)}
+        return {**self.temperate_free(),
+                "min_leaf_cover": (0.4, 0.95),
+                "flush_par_threshold": (20.0, 700.0),     # [umol/m2/s]
+                "flush_par_sharpness": (0.002, 0.5),      # [m2 s/umol]
+                "shed_par_threshold": (20.0, 700.0),      # [umol/m2/s]
+                "shed_par_sharpness": (-0.5, -0.002),     # < 0: dim light triggers senescence
+                "par_window": (2.0, 60.0)}                # [day]
 
     @staticmethod
     def needle_litter(path):
@@ -251,30 +290,22 @@ class Hyytiala(Site):
         out["days"] = (out.end - out.start).dt.days
         return out.dropna(subset=["start"])
 
-    def model_share(self, sim):
-        cum, day = sim.litter.cumsum(), pd.Timedelta(days=1)
-        rate = ((cum.reindex(self.litter.end - day, method="nearest").values
-                 - cum.reindex(self.litter.start - day, method="nearest").values) / self.litter.days.values)
-        return rate / rate.mean()
-
     def annual(self, sim):
         return float(sim.litter.loc["2019":"2023"].sum() / 5.0)
 
     def loss(self, sim):
-        rmse = np.sqrt(np.mean((self.model_share(sim) - self.share) ** 2))
+        rmse = np.sqrt(np.mean((collection_share(sim.litter, self.litter) - self.share) ** 2))
         return rmse ** 2 + 4.0 * (self.annual(sim) - self.ANNUAL_NEEDLE_FALL) ** 2
 
     def scores(self, sim):
-        mod = self.model_share(sim)
+        mod = collection_share(sim.litter, self.litter)
         return {"RMSE needle-fall share": float(np.sqrt(np.mean((mod - self.share) ** 2))),
                 "needle-fall share r": float(np.corrcoef(mod, self.share)[0, 1]),
                 "needle fall [canopies/yr]": self.annual(sim),
                 "lowest leaf cover": float(sim.cover.min())}
 
     def plot(self, sim, path):
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
+        plt = plot_setup()
         fig, axs = plt.subplots(3, 1, figsize=(11, 8.5), constrained_layout=True)
         ax = axs[0]
         ax.plot(sim.index, sim.cover, color="tab:green", lw=2, label="model leaf cover")
@@ -282,29 +313,148 @@ class Hyytiala(Site):
         ax.plot(sim.index, sim.shed, color="tab:red", lw=0.8, ls="--", label="senescence tendency")
         ax.set(ylabel="fraction", ylim=(-0.05, 1.1), title=f"(a) {self.title}")
         ax.legend(ncol=3, loc="lower left", fontsize=8)
-
-        ax = axs[1]
-        mod, lit = self.model_share(sim), self.litter
-        for k in range(len(lit)):
-            span = [lit.start[k], lit.end[k]]
-            ax.plot(span, [self.share[k]] * 2, color="k", lw=2, label="traps (ICOS)" if k == 0 else None)
-            ax.plot(span, [mod[k]] * 2, color="tab:green", lw=2, label="model" if k == 0 else None)
-        ax.set(ylabel="needle fall rate / mean", title="(b) needle fall, collection by collection")
-        ax.legend(fontsize=8)
-
-        ax = axs[2]
-        month = lit.end.dt.month.values
-        obs_m = pd.Series(self.share).groupby(month).mean()
-        mod_m = pd.Series(mod).groupby(month).mean()
-        ax.bar(obs_m.index - 0.2, obs_m.values, 0.4, color="k", label="traps (ICOS)")
-        ax.bar(mod_m.index + 0.2, mod_m.reindex(obs_m.index).values, 0.4, color="tab:green", label="model")
-        ax.set(xlabel="month the collection ended", ylabel="needle fall rate / mean",
-               xticks=range(1, 13), title="(c) mean by month")
-        ax.legend(fontsize=8)
+        plot_collections(axs[1], axs[2], self.litter, self.share, collection_share(sim.litter, self.litter),
+                         "needle", "traps (ICOS)")
         fig.savefig(path, dpi=130)
 
 
-SITES = {cls.key: cls for cls in (HarvardForest, Hyytiala)}
+def plot_collections(ax_t, ax_m, coll, obs, mod, what, obs_label):
+    """Collection-by-collection litter rates over their mean, and their mean by month."""
+    for k in range(len(coll)):
+        span = [coll.start.iloc[k], coll.index[k]]
+        ax_t.plot(span, [obs[k]] * 2, color="k", lw=2, label=obs_label if k == 0 else None)
+        ax_t.plot(span, [mod[k]] * 2, color="tab:green", lw=2, label="model" if k == 0 else None)
+    ax_t.set(ylabel=f"{what} fall rate / mean", title=f"(b) {what} fall, collection by collection")
+    ax_t.legend(fontsize=8)
+    month = coll.index.month
+    obs_m = pd.Series(obs).groupby(month).mean()
+    mod_m = pd.Series(mod).groupby(month).mean()
+    ax_m.bar(obs_m.index - 0.2, obs_m.values, 0.4, color="k", label=obs_label)
+    ax_m.bar(mod_m.index + 0.2, mod_m.reindex(obs_m.index).values, 0.4, color="tab:green", label="model")
+    ax_m.set(xlabel="month the collection ended", ylabel=f"{what} fall rate / mean",
+             xticks=range(1, 13), title="(c) mean by month")
+    ax_m.legend(fontsize=8)
+
+
+class BCI(Site):
+    """Two species under one climate. Both flush on water and senesce on water or PAR; they
+    differ in their water threshold (the predawn potential they shed at) and PAR sensitivity."""
+    key, title = "bci", "Barro Colorado Island (moist tropical forest, 9.2° N)"
+    lat, cover0 = 9.15, 1.0
+    start, end = "2012-07-03", "2017-08-31"
+    BASE = dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.PAR | Cue.WATER)
+    FITTED = "light_exchanger"
+    #----- Leaf litter per year as a share of the canopy: the leaves falling at BCI each year have
+    #      about the canopy's area, 7.3 m2 per m2 of ground (Leigh 1999, ORNL NPP data set BRR).
+    ANNUAL_LEAF_FALL = 1.0
+
+    def __init__(self):
+        tower = pd.read_csv(data("BCI_v5.1.csv"), parse_dates=["date"], na_values=["NaN"]).set_index("date")
+        #----- PAR [umol/m2/s]: the tower's shortwave times the PAR/shortwave ratio over the
+        #      half-hours with both (its PAR sensor covers only part of the record). --------------#
+        both = tower[["Rs", "Par_tot"]].dropna()
+        both = both[both.Rs > 50.0]
+        self.par_per_sw = float((both.Par_tot / both.Rs).median())
+        daily = tower[["tair", "Rs", "SWC"]].resample("D").mean().interpolate()
+        self.soil_psi_fit(daily.SWC)
+        daily = daily.loc[self.start:self.end]
+        self.dates = daily.index
+        self.tair = daily.tair.values + 273.15
+        self.par = self.par_per_sw * daily.Rs.values
+        self.psi = self.soil_psi(daily.SWC.values)
+        #----- GLiMP control plots: mean fine litter per trap and collection. -------------------#
+        lit = pd.read_csv(data("glimp_litterfall.csv"), encoding="utf-8-sig")
+        lit = lit[lit.treat == "CT"]
+        lit["date"] = pd.to_datetime(lit.date, dayfirst=True)
+        c = lit.groupby("date").agg(mass=("mass.g.trap", "mean"), days=("days.accum", "median"))
+        c["start"] = c.index - pd.to_timedelta(c.days, unit="D")
+        first = self.dates[0] + pd.Timedelta(days=180)              # after a half-year spin-up
+        self.litter = c[(c.start >= first) & (c.index <= self.dates[-1])]
+        rate = (self.litter.mass / self.litter.days).values
+        self.share = rate / rate.mean()
+
+    def soil_psi_fit(self, swc):
+        """A Campbell retention curve, psi = -exp(a) theta_g^b, fitted to the soil water content
+        and potential Kupers et al. (2019) sampled together; the tower's volumetric water content
+        converts to gravimetric by its ratio to the plot's on their four sampling periods."""
+        pairs = pd.concat([pd.read_csv(data(f), sep="\t") for f in
+                           ("kupers_soil_moisture_mapping.txt", "kupers_soil_moisture_small_scale.txt")])
+        pairs = pairs[(pairs.swp < -0.05) & (pairs.swc > 5.0)]      # the WP4C reads ~0 when wet
+        self.campbell_b, self.campbell_a = np.polyfit(np.log(pairs.swc / 100.0), np.log(-pairs.swp), 1)
+        plot = pd.read_csv(data("kupers_soil_moisture_mapping.txt"), sep="\t")
+        plot["date"] = pd.to_datetime(plot.date, format="%m/%d/%Y")
+        periods = plot.groupby("period").agg(date=("date", "median"), swc=("swc", "median"))
+        tower = [swc.loc[t - pd.Timedelta(days=3): t + pd.Timedelta(days=3)].mean() for t in periods.date]
+        self.bulk_density = float(np.median(np.array(tower) / (periods.swc.values / 100.0)))
+
+    def soil_psi(self, swc):
+        theta_g = swc / self.bulk_density
+        return -np.exp(self.campbell_a + self.campbell_b * np.log(theta_g))
+
+    def free(self):
+        """The light exchanger: rates, its evergreen floor and its PAR trigger."""
+        return {"flush_rate_max": (1 / 60, 1 / 3), "shed_rate_max": (0.0005, 1 / 3),
+                "leaf_turnover_rate": (0.0, 3.0), "min_leaf_cover": (0.8, 0.95),
+                "shed_par_threshold": (100.0, 900.0),    # [umol/m2/s]
+                "shed_par_sharpness": (0.002, 0.5),      # > 0: bright light triggers senescence
+                "par_window": (2.0, 60.0)}               # [day]
+
+    def annual(self, sim):
+        return float(sim.litter.loc["2013":"2016"].sum() / 4.0)
+
+    def loss(self, sim):
+        rmse = np.sqrt(np.mean((collection_share(sim.litter, self.litter) - self.share) ** 2))
+        return rmse ** 2 + 4.0 * (self.annual(sim) - self.ANNUAL_LEAF_FALL) ** 2
+
+    def scores(self, sim):
+        mod = collection_share(sim.litter, self.litter)
+        return {"RMSE litter share": float(np.sqrt(np.mean((mod - self.share) ** 2))),
+                "litter share r": float(np.corrcoef(mod, self.share)[0, 1]),
+                "leaf litter [canopies/yr]": self.annual(sim),
+                "lowest leaf cover": float(sim.cover.min())}
+
+    def leafless(self, sim):
+        """Per dry season, the days the deciduous canopy is below half cover, and the dates."""
+        out = {}
+        for year, g in sim.cover.groupby(sim.index.year):
+            low = g[g < 0.5]
+            if len(low):
+                out[year] = (len(low), low.index[0], low.index[-1])
+        return out
+
+    def plot(self, sims, path):
+        plt = plot_setup()
+        fig, axs = plt.subplots(4, 1, figsize=(11, 11), constrained_layout=True)
+        ax = axs[0]
+        ax.plot(self.dates, self.psi, color="tab:blue", lw=1, label="soil water potential (surrogate)")
+        for name, colour in (("drought_deciduous", "tab:brown"), ("light_exchanger", "tab:green")):
+            ax.axhline(self.values[name]["leaf_psi_tlp"], color=colour, ls=":", lw=1)
+        ax.set(ylabel="MPa", title=f"(a) {self.title}: drivers", ylim=(-1.0, 0.05))
+        ax2 = ax.twinx()
+        parm = pd.Series(self.par, index=self.dates).ewm(alpha=1.0 / self.values["light_exchanger"]["par_window"]).mean()
+        ax2.plot(self.dates, parm, color="tab:orange", lw=1, label="PAR, running mean")
+        ax2.axhline(self.values["light_exchanger"]["shed_par_threshold"], color="tab:orange", ls=":", lw=1)
+        ax2.set_ylabel("umol m$^{-2}$ s$^{-1}$")
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, loc="lower left", fontsize=8, ncol=2)
+
+        ax = axs[1]
+        for name, colour, label in (("drought_deciduous", "tab:brown", "drought-deciduous"),
+                                    ("light_exchanger", "tab:green", "light exchanger")):
+            ax.plot(sims[name].index, sims[name].cover, color=colour, lw=2, label=f"{label}: leaf cover")
+            ax.plot(sims[name].index, sims[name].shed, color=colour, lw=0.8, ls="--",
+                    label=f"{label}: senescence tendency")
+        ax.set(ylabel="fraction", ylim=(-0.05, 1.1), title="(b) two species, one climate")
+        ax.legend(ncol=2, loc="lower left", fontsize=8)
+        plot_collections(axs[2], axs[3], self.litter, self.share,
+                         collection_share(sims["light_exchanger"].litter, self.litter), "litter", "traps (GLiMP)")
+        axs[2].set_title("(c) light exchanger: litter, collection by collection")
+        axs[3].set_title("(d) light exchanger: mean by month")
+        fig.savefig(path, dpi=130)
+
+
+SITES = {cls.key: cls for cls in (HarvardForest, Hyytiala, BCI)}
 _LOADED = {}
 
 
@@ -315,49 +465,71 @@ def site(key):
     return _LOADED[key]
 
 
-def _loss(x, key, names):
+def species_values(key, fitted, species=None):
+    v = fitted[key]
+    return v[species] if species else v
+
+
+def _loss(x, key, names, fixed):
     s = site(key)
-    value = s.loss(s.simulate(dict(zip(names, x))))
+    value = s.loss(s.simulate({**fixed, **dict(zip(names, x))}))
     return float(value) if np.isfinite(value) else 1e3
 
 
-def fit(key, workers):
+def fit(key, workers, fixed):
     """Best of three differential-evolution seeds over the site's free parameters."""
     from scipy.optimize import differential_evolution
     free = site(key).free()
     names, best = list(free), None
+    fixed = {k: v for k, v in fixed.items() if k not in free}
     for seed in (1, 2, 3):
-        r = differential_evolution(_loss, [free[n] for n in names], args=(key, names), popsize=15,
+        r = differential_evolution(_loss, [free[n] for n in names], args=(key, names, fixed), popsize=15,
                                    maxiter=120, tol=1e-6, seed=seed, polish=False, workers=workers,
                                    updating="deferred")
         print(f"  {key} seed {seed}: loss {r.fun:.5f}", flush=True)
         if best is None or r.fun < best.fun:
             best = r
-    return {n: float(f"{v:.4g}") for n, v in zip(names, best.x)}
+    return {**fixed, **{n: float(f"{v:.4g}") for n, v in zip(names, best.x)}}
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--fit", action="store_true", help="refit both sites and rewrite " + os.path.basename(FIT_FILE))
+    ap.add_argument("--fit", action="store_true", help="refit and rewrite " + os.path.basename(FIT_FILE))
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="processes for the fit")
     args = ap.parse_args(argv)
-    if args.fit:
-        fitted = {key: fit(key, args.workers) for key in SITES}
-        with open(FIT_FILE, "w") as fh:
-            json.dump(fitted, fh, indent=2)
-            fh.write("\n")
     with open(FIT_FILE) as fh:
-        fitted = json.load(fh)
-    for key in SITES:
+        values = json.load(fh)
+    if args.fit:
+        values["harvard_forest"] = fit("harvard_forest", args.workers, {})
+        values["hyytiala"] = fit("hyytiala", args.workers, {})
+        values["bci"][BCI.FITTED] = fit("bci", args.workers, values["bci"][BCI.FITTED])
+        with open(FIT_FILE, "w") as fh:
+            json.dump(values, fh, indent=2)
+            fh.write("\n")
+    for key in ("harvard_forest", "hyytiala"):
         s = site(key)
-        sim = s.simulate(fitted[key])
+        sim = s.simulate(values[key])
         print(f"\n{s.title}")
-        for name, value in fitted[key].items():
-            print(f"  {name:24s} {value:g}")
+        for name, value in values[key].items():
+            print(f"  {name:26s} {value:g}")
         for name, value in s.scores(sim).items():
             print(f"  {name:30s} {value:.3f}")
         s.plot(sim, os.path.join(HERE, f"{key}.png"))
-    print(f"\nwrote {', '.join(k + '.png' for k in SITES)}")
+    s = site("bci")
+    s.values = values["bci"]
+    sims = {name: s.simulate(v) for name, v in values["bci"].items()}
+    print(f"\n{s.title}: soil water potential = -exp({s.campbell_a:.2f}) (SWC / {s.bulk_density:.3f})"
+          f"^{s.campbell_b:.2f} MPa; PAR = {s.par_per_sw:.3f} x shortwave")
+    for name, v in values["bci"].items():
+        print(f"  {name}:")
+        for k, value in v.items():
+            print(f"    {k:26s} {value:g}")
+    for k, value in s.scores(sims["light_exchanger"]).items():
+        print(f"  light exchanger {k:30s} {value:.3f}")
+    for year, (n, a, b) in s.leafless(sims["drought_deciduous"]).items():
+        print(f"  drought-deciduous {year}: below half cover {n} days, {a:%d %b} - {b:%d %b}")
+    s.plot(sims, os.path.join(HERE, "bci.png"))
+    print("\nwrote harvard_forest.png, hyytiala.png, bci.png")
 
 
 if __name__ == "__main__":

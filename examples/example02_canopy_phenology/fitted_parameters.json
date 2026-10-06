@@ -6,20 +6,51 @@
     "flush_rate_max": 0.03386,
     "shed_rate_max": 0.3329,
     "leaf_turnover_rate": 0.0003072,
-    "flush_light_threshold": 13.75,
-    "flush_light_sharpness": 7.99,
-    "shed_light_threshold": 9.127
+    "flush_daylength_threshold": 13.75,
+    "flush_daylength_sharpness": 7.99,
+    "shed_daylength_threshold": 9.127
   },
   "hyytiala": {
-    "flush_degree_days": 137.5,
-    "shed_base_temp": 279.9,
-    "shed_degree_days": 36.77,
-    "flush_rate_max": 0.02435,
-    "shed_rate_max": 0.159,
-    "leaf_turnover_rate": 0.2377,
-    "flush_light_threshold": 13.08,
-    "flush_light_sharpness": 6.585,
-    "shed_light_threshold": 14.49,
-    "min_leaf_cover": 0.8786
+    "flush_degree_days": 88.0,
+    "shed_base_temp": 299.6,
+    "shed_degree_days": 455.8,
+    "flush_rate_max": 0.2866,
+    "shed_rate_max": 0.03123,
+    "leaf_turnover_rate": 0.2742,
+    "min_leaf_cover": 0.895,
+    "flush_par_threshold": 306.5,
+    "flush_par_sharpness": 0.3694,
+    "shed_par_threshold": 124.2,
+    "shed_par_sharpness": -0.01328,
+    "par_window": 16.09
+  },
+  "bci": {
+    "light_exchanger": {
+      "leaf_psi_tlp": -1.5,
+      "flush_water_sum": 3.0,
+      "flush_water_sharpness": 6.667,
+      "shed_water_sum": 1.0,
+      "shed_water_sharpness": 20.0,
+      "flush_rate_max": 0.1699,
+      "shed_rate_max": 0.002864,
+      "leaf_turnover_rate": 0.6122,
+      "min_leaf_cover": 0.8349,
+      "shed_par_threshold": 445.3,
+      "shed_par_sharpness": 0.4996,
+      "par_window": 3.684
+    },
+    "drought_deciduous": {
+      "leaf_psi_tlp": -0.33,
+      "flush_water_sum": 3.0,
+      "flush_water_sharpness": 6.667,
+      "shed_water_sum": 1.0,
+      "shed_water_sharpness": 20.0,
+      "flush_cue_timescale": 2.0,
+      "flush_rate_max": 0.06667,
+      "shed_rate_max": 0.1,
+      "leaf_turnover_rate": 0.0,
+      "min_leaf_cover": 0.0,
+      "shed_par_threshold": 5000.0
+    }
   }
 }
