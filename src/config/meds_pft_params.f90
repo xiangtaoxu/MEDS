@@ -241,15 +241,12 @@ module meds_pft_params
       real(wp),    allocatable :: pheno_shed_base_temp(:)        !< [K]     cold base
       real(wp),    allocatable :: pheno_shed_degree_days(:)      !< [K day] cold requirement after midsummer
       real(wp),    allocatable :: pheno_shed_temp_sharpness(:)   !< [1/(K day)]
-      real(wp),    allocatable :: pheno_flush_daylength_threshold(:) !< [h]
-      real(wp),    allocatable :: pheno_flush_daylength_sharpness(:) !< [1/h]
-      real(wp),    allocatable :: pheno_shed_daylength_threshold(:)  !< [h]
-      real(wp),    allocatable :: pheno_shed_daylength_sharpness(:)  !< [1/h]; < 0: short days trigger
-      real(wp),    allocatable :: pheno_flush_par_threshold(:)   !< [umol/m2/s] PAR at the cohort's top
-      real(wp),    allocatable :: pheno_flush_par_sharpness(:)   !< [m2 s/umol]
-      real(wp),    allocatable :: pheno_shed_par_threshold(:)    !< [umol/m2/s]
-      real(wp),    allocatable :: pheno_shed_par_sharpness(:)    !< [m2 s/umol]; > 0: bright light triggers
-      real(wp),    allocatable :: pheno_par_window(:)            !< [day]   PAR running mean
+      real(wp),    allocatable :: pheno_par_min(:)               !< [umol/m2/s] PAR at the cohort's top that counts as light
+      real(wp),    allocatable :: pheno_flush_light_hours(:)     !< [h/day] hours of light that permit flushing
+      real(wp),    allocatable :: pheno_flush_light_sharpness(:) !< [1/h]
+      real(wp),    allocatable :: pheno_shed_light_hours(:)      !< [h/day] hours of light that trigger shedding
+      real(wp),    allocatable :: pheno_shed_light_sharpness(:)  !< [1/h]; < 0: short or dim days trigger, > 0 bright
+      real(wp),    allocatable :: pheno_light_window(:)          !< [day]   running mean of the hours of light
       real(wp),    allocatable :: pheno_flush_water_sum(:)       !< [MPa day] wet sum that permits flushing
       real(wp),    allocatable :: pheno_flush_water_sharpness(:) !< [1/(MPa day)]
       real(wp),    allocatable :: pheno_shed_water_sum(:)        !< [MPa day] dry sum that triggers shedding
@@ -330,10 +327,8 @@ contains
                pft%pheno_flush_base_temp(n), pft%pheno_flush_degree_days(n),                         &
                pft%pheno_flush_temp_sharpness(n), pft%pheno_shed_base_temp(n),                       &
                pft%pheno_shed_degree_days(n), pft%pheno_shed_temp_sharpness(n),                      &
-               pft%pheno_flush_daylength_threshold(n), pft%pheno_flush_daylength_sharpness(n),       &
-               pft%pheno_shed_daylength_threshold(n), pft%pheno_shed_daylength_sharpness(n),         &
-               pft%pheno_flush_par_threshold(n), pft%pheno_flush_par_sharpness(n),                   &
-               pft%pheno_shed_par_threshold(n), pft%pheno_shed_par_sharpness(n), pft%pheno_par_window(n), &
+               pft%pheno_par_min(n), pft%pheno_flush_light_hours(n), pft%pheno_flush_light_sharpness(n), &
+               pft%pheno_shed_light_hours(n), pft%pheno_shed_light_sharpness(n), pft%pheno_light_window(n), &
                pft%pheno_flush_water_sum(n), pft%pheno_flush_water_sharpness(n),                     &
                pft%pheno_shed_water_sum(n), pft%pheno_shed_water_sharpness(n),                       &
                pft%pheno_min_leaf_cover(n), pft%pheno_bare_leaf_cover(n))
@@ -349,15 +344,12 @@ contains
       pft%pheno_shed_base_temp        = 290.15_wp
       pft%pheno_shed_degree_days      = 50.0_wp
       pft%pheno_shed_temp_sharpness   = 0.1_wp
-      pft%pheno_flush_daylength_threshold = 12.0_wp
-      pft%pheno_flush_daylength_sharpness = 1.0_wp
-      pft%pheno_shed_daylength_threshold  = 11.0_wp
-      pft%pheno_shed_daylength_sharpness  = -1.0_wp
-      pft%pheno_flush_par_threshold   = 300.0_wp
-      pft%pheno_flush_par_sharpness   = 0.02_wp
-      pft%pheno_shed_par_threshold    = 300.0_wp
-      pft%pheno_shed_par_sharpness    = 0.02_wp
-      pft%pheno_par_window            = 10.0_wp
+      pft%pheno_par_min               = 5.0_wp       ! a low threshold: the hours of light ~ the day length
+      pft%pheno_flush_light_hours     = 12.0_wp
+      pft%pheno_flush_light_sharpness = 1.0_wp
+      pft%pheno_shed_light_hours      = 11.0_wp
+      pft%pheno_shed_light_sharpness  = -1.0_wp
+      pft%pheno_light_window          = 10.0_wp
       pft%pheno_flush_water_sum       = 10.0_wp
       pft%pheno_flush_water_sharpness = 0.5_wp
       pft%pheno_shed_water_sum        = 10.0_wp

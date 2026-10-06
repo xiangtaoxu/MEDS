@@ -7,7 +7,7 @@ family), all backed by the one plant C-API shared library:
     meds.plant.leaf   — leaf gas exchange: FvCB C3 / Collatz C4 photosynthesis + Leuning / Medlyn /
                         Katul stomatal conductance, Arrhenius / peaked temperature response, and the
                         coupled A-gs-Ci solver.
-    meds.plant.pheno  — leaf phenology: temperature, day-length, PAR and water cues + traits ->
+    meds.plant.pheno  — leaf phenology: temperature, hours-of-light and water cues + traits ->
                         flush and senescence tendencies -> leaf cover, by the coupled model's rule.
 
 Both are exposed with dataclasses + enums so callers never touch ctypes:
@@ -17,7 +17,7 @@ Both are exposed with dataclasses + enums so callers never touch ctypes:
 
     import meds.plant.pheno as pheno
     ph = pheno.Phenology(pheno.temperate_deciduous())
-    day = ph.step(temp_day=290.0, daylength=13.0, doy=150)     # day.leaf_cover, day.senescence
+    day = ph.step(temp_day=290.0, par_hours=13.0, doy=150)     # day.leaf_cover, day.senescence
 
 Importing `meds.plant` is cheap; the compiled library (see meds.plant._ffi) loads lazily on first use.
 """

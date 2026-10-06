@@ -27,14 +27,14 @@ before and after.
   - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
     of the two curves below the compensation point.
 - **Leaf phenology is one generic cue model, and evergreen is a leaf-cover floor, not a flag.**
-  The kernel (`meds_phenology`) takes four cues, chosen per PFT for each side by a bit mask:
+  The kernel (`meds_phenology`) takes three cues, chosen per PFT for each side by a bit mask:
   temperature (TEMP 1: a warmth sum above `flush_base_temp` from midwinter, a cold sum below
-  `shed_base_temp` from midsummer), day length (DAYLENGTH 2), predawn leaf water potential (WATER 4:
-  summed above and below the turgor-loss point, each sum restarting when the other side's switch
-  crosses 0.5) and PAR (8: a running mean of the daily PAR reaching the cohort's top). Every switch is
-  σ(s (x − x*)) with one centre and one signed sharpness; the flush signal is the product of the
-  flush cues' switches, the shed signal the larger of the seasonal trigger (TEMP × DAYLENGTH × PAR)
-  and the water trigger. The carbon layer applies one routine, `leaf_turnover_step`: senescence at
+  `shed_base_temp` from midsummer), the hours of light (LIGHT 2: the hours a day the PAR reaching the
+  cohort's top exceeds the PFT's `par_min`, as a running mean over `light_window` days) and predawn
+  leaf water potential (WATER 4: summed above and below the turgor-loss point, each sum restarting
+  when the other side's switch crosses 0.5). Every switch is σ(s (x − x*)) with one centre and one
+  signed sharpness; the flush signal is the product of the flush cues' switches, the shed signal the
+  larger of the seasonal trigger (TEMP × LIGHT) and the water trigger. The carbon layer applies one routine, `leaf_turnover_step`: senescence at
   `shed_rate_max` × the shed tendency down to `min_leaf_cover` of the full canopy, plus background
   turnover (1/leaf lifespan) scaled by the flush tendency, and a flush cap of `flush_rate_max` × the
   flush tendency. Gone: the chilling requirement, the soil-temperature cold-drop trigger, the
@@ -43,34 +43,40 @@ before and after.
   turnover, and `pft.evergreen`. Resorption (`retained_carbon_fraction`) now applies to senescence
   only. Design and evidence: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`; equations:
   `docs/science/plant_phenology.md`.
-  - **Day length and PAR are separate cues.** Fitted with each on each side, Harvard Forest is best
-    on day length (loss 0.043 against 0.052 on PAR), Hyytiälä on PAR (0.70 against 1.03) and the BCI
-    leaf exchanger on PAR (0.065 against 0.101); no mixed pair beats the best pure one.
-  - **PAR is per cohort.** The two-stream solver returns the light (beam + downward diffuse)
-    reaching each layer's top (`rad_flux_t%incid_top`); the fast loop sums the visible band per
-    cohort over the step (`par_accum`), and the phenology driver reads its daily mean, so the PAR cue
-    carries the canopy light gradient. The site-level shortwave reduction for phenology is gone, and
-    the PAR conversion `par_w_2_umol` moved to `meds_constants`.
+  - **One light cue for every PFT.** A low `par_min` counts the photoperiod, a high one the bright
+    hours. Day length and running-mean PAR each fit some sites and fail others (Harvard Forest is
+    best on day length, 0.0445 against 0.052 on PAR; Hyytiälä on PAR, 0.70 against 1.03; the BCI
+    leaf exchanger on PAR, 0.065 against 0.101). The hours of light with a fitted `par_min` came
+    within 4 % of the better of the two at every site (0.046, 0.59, 0.067 at 33, 280 and
+    700 µmol m⁻² s⁻¹, on tower PAR).
+  - **The hours of light are per cohort.** The two-stream solver returns the light (beam + downward
+    diffuse) reaching each layer's top (`rad_flux_t%incid_top`); each fast step whose visible light
+    there, in photons, exceeds the PFT's `par_min` adds its length to the cohort's
+    `light_hours_accum`, and the phenology driver reads it per day, so the cue carries the canopy
+    light gradient. A cohort with no light memory yet (a cold start, a recruit) starts its running
+    mean from its first day. The site-level shortwave reduction for phenology is gone, and the PAR
+    conversion `par_w_2_umol` moved to `meds_constants`.
   - **Config (breaking).** The `[phenology]` keys are now `flush_cue_mask`, `shed_cue_mask`,
     `flush_cue_timescale`, `shed_cue_timescale`, `flush_rate_max`, `shed_rate_max`,
     `min_leaf_cover`, `bare_leaf_cover`, `flush_base_temp`, `flush_degree_days`,
     `flush_temp_sharpness`, `shed_base_temp`, `shed_degree_days`, `shed_temp_sharpness`,
-    `flush_daylength_threshold`, `flush_daylength_sharpness`, `shed_daylength_threshold`,
-    `shed_daylength_sharpness`, and the optional `flush_par_threshold`, `flush_par_sharpness`,
-    `shed_par_threshold`, `shed_par_sharpness`, `par_window`, `flush_water_sum`,
+    `par_min`, `flush_light_hours`, `flush_light_sharpness`, `shed_light_hours`,
+    `shed_light_sharpness`, `light_window`, and the optional `flush_water_sum`,
     `flush_water_sharpness`, `shed_water_sum`, `shed_water_sharpness`. The previous keys
     (`k_flush_max`, `k_shed_max`, `tau_flush`, `tau_shed`, `cue_sharpness`, `gdd_base_temp`,
     `phen_a/b/c`, `chill_base_temp`, `cold_drop_*`, `photo_crit`, `photo_slope`, the `*_width`
-    keys, the water and light thresholds, `light_window`, `evg_ref_temp`, `evg_slope`,
+    keys, the water and light thresholds, `evg_ref_temp`, `evg_slope`,
     `bare_snap_frac`) and `pft.evergreen` are refused by name, each with its replacement. Cue bits
-    changed: DAYLENGTH is 2, WATER 4 (on predawn leaf ψ, the old HYDRO driver), PAR 8; the
-    soil-water cue (old 2), PHOTO (old 8) and the radiation LIGHT bit (old 16) are gone.
+    changed: LIGHT is 2 (the hours of light), WATER 4 (on predawn leaf ψ, the old HYDRO driver);
+    the soil-water cue (old 2), PHOTO (old 8) and the radiation LIGHT bit (old 16) are gone.
+    `light_window` is a key again, now the window of the hours of light.
   - **Outputs and restarts.** `pheno_flush_cohort` / `pheno_shed_cohort` are
     `leaf_flush_tendency_cohort` / `leaf_shed_tendency_cohort`. The restart variables are
     `leaf_flush_tendency`, `leaf_shed_tendency`, `growing_degree_days`, `cold_degree_days`,
-    `wet_psi_sum`, `dry_psi_sum` and `par_mean`; `pheno_water_avg` is gone. A restart file written
+    `wet_psi_sum`, `dry_psi_sum` and `light_hours_mean`; `pheno_water_avg` is gone. A restart file written
     before this change loads, with the phenology memory at its birth values.
-  - **Python (`meds.plant.pheno`, breaking).** New `Params` / `State` fields and the `par` driver;
+  - **Python (`meds.plant.pheno`, breaking).** New `Params` / `State` fields and the `par_hours`
+    driver, with `par_hours(par, step_hours, par_min)` to count it from sub-daily PAR;
     `Phenology.step` returns a `Day` (the two tendencies, leaf cover, senescence, background
     turnover) and keeps its C structs, so a 20-year daily run takes about 0.1 s.
     `leaf_step(cover, flush, shed, params)` and `daylength` call the Fortran through the new C-API

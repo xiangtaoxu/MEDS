@@ -47,7 +47,7 @@ print(flux.A_net, flux.gs, flux.ci, flux.limitation, flux.converged)
 
 import meds.plant.pheno as pheno
 ph = pheno.Phenology(pheno.temperate_deciduous())            # params + cue memory + leaf cover
-day = ph.step(temp_day=290.0, daylength=pheno.daylength(42.5, 150), doy=150)
+day = ph.step(temp_day=290.0, par_hours=14.5, doy=150)   # hours of PAR above par_min
 print(day.leaf_flush_tendency, day.leaf_cover)               # tendency [0-1], leaf / full leaf
 ```
 

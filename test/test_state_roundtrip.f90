@@ -50,7 +50,7 @@ program test_state_roundtrip
       site%cohort%cold_degree_days(i)    = 17.0_wp + real(i, wp)
       site%cohort%dry_psi_sum(i)         = 5.0_wp + real(i, wp)
       site%cohort%wet_psi_sum(i)         = 2.0_wp + real(i, wp)
-      site%cohort%par_mean(i)      = 210.0_wp + real(i, wp)
+      site%cohort%light_hours_mean(i) = 10.0_wp + 0.1_wp * real(i, wp)
    end do
 
    !----- P5 (MEDS_ED2_RK45_DESIGN.md): stamp distinct, non-default FAST reservoir values on every  !
@@ -116,8 +116,8 @@ program test_state_roundtrip
                         'dry_psi_sum recovered')
       call check_close(site2%cohort%wet_psi_sum(i), site%cohort%wet_psi_sum(i), 1.0e-12_wp, &
                         'wet_psi_sum recovered')
-      call check_close(site2%cohort%par_mean(i), site%cohort%par_mean(i), 1.0e-12_wp, &
-                        'par_mean recovered')
+      call check_close(site2%cohort%light_hours_mean(i), site%cohort%light_hours_mean(i), 1.0e-12_wp, &
+                        'light_hours_mean recovered')
       call check_close(site2%cohort%dmax_psi_leaf_accum(i), site%cohort%dmax_psi_leaf_accum(i), 1.0e-12_wp, &
                         'dmax_psi_leaf_accum recovered from state (partial day not discarded)')
    end do

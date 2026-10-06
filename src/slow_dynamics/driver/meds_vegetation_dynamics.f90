@@ -16,10 +16,9 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day, par_w_2_umol
+   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
-   use meds_time,                 only : daylength
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -990,7 +989,7 @@ contains
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik),         intent(in)    :: doy
-      !----- The polygon's latitude (day length, hemisphere). A region passes each polygon's own;    !
+      !----- The polygon's latitude (its hemisphere). A region passes each polygon's own;           !
       !      absent, it is the run's [site] latitude (MEDS_POLYGON_RUNTIME_PLAN.md B12). ------------!
       real(wp),            intent(in), optional :: latitude_deg
       type(pheno_env_t)    :: env
@@ -998,7 +997,7 @@ contains
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf
-      real(wp)    :: dt_days, temp_day, dlen, lat
+      real(wp)    :: dt_days, temp_day, lat
       logical     :: north
 
       if (site%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
@@ -1007,7 +1006,6 @@ contains
       lat = cfg%forcing%latitude_deg
       if (present(latitude_deg)) lat = latitude_deg
       north    = lat >= 0.0_wp
-      dlen     = daylength(lat, doy)
 
       do i = 1_ik, site%cohort%n
          pf = site%cohort%pft(i)
@@ -1018,10 +1016,9 @@ contains
          !      An UNSET cohort (born today) reports 0, which reads as well-watered for one day;     !
          !      that is the same seeding convention the leaf kernel uses.                            !
          env%temp_day         = temp_day
-         env%daylength        = dlen
-         !----- par_accum is the PAR (VIS) reaching the cohort's top integrated over the step     !
-         !      [J/m2]; over dt_slow it is the daily mean, in photons for the cue. ----------------!
-         env%par              = site%cohort%par_accum(i) / cfg%dt_slow * par_w_2_umol
+         !----- light_hours_accum is the time [h] the PAR at the cohort's top exceeded its PFT's   !
+         !      par_min over the step (counted in the fast loop); per day for the cue. -----------!
+         env%par_hours        = site%cohort%light_hours_accum(i) / dt_days
          env%predawn_leaf_psi = min(0.0_wp, site%cohort%dmax_psi_leaf(i))
          env%doy              = doy
          env%hemis_north      = north
@@ -1033,7 +1030,7 @@ contains
          state%cold_degree_days    = site%cohort%cold_degree_days(i)
          state%wet_psi_sum         = site%cohort%wet_psi_sum(i)
          state%dry_psi_sum         = site%cohort%dry_psi_sum(i)
-         state%par_mean      = site%cohort%par_mean(i)
+         state%light_hours_mean    = site%cohort%light_hours_mean(i)
          call phenology_kernel(env, params, dt_days, state, out)
          site%cohort%leaf_flush_tendency(i) = state%leaf_flush_tendency
          site%cohort%leaf_shed_tendency(i)  = state%leaf_shed_tendency
@@ -1041,7 +1038,7 @@ contains
          site%cohort%cold_degree_days(i)    = state%cold_degree_days
          site%cohort%wet_psi_sum(i)         = state%wet_psi_sum
          site%cohort%dry_psi_sum(i)         = state%dry_psi_sum
-         site%cohort%par_mean(i)      = state%par_mean
+         site%cohort%light_hours_mean(i)    = state%light_hours_mean
       end do
    end subroutine advance_leaf_phenology
 
@@ -1154,15 +1151,12 @@ contains
          p%shed_base_temp        = t%pheno_shed_base_temp(ipft)
          p%shed_degree_days      = t%pheno_shed_degree_days(ipft)
          p%shed_temp_sharpness   = t%pheno_shed_temp_sharpness(ipft)
-         p%flush_daylength_threshold = t%pheno_flush_daylength_threshold(ipft)
-         p%flush_daylength_sharpness = t%pheno_flush_daylength_sharpness(ipft)
-         p%shed_daylength_threshold  = t%pheno_shed_daylength_threshold(ipft)
-         p%shed_daylength_sharpness  = t%pheno_shed_daylength_sharpness(ipft)
-         p%flush_par_threshold   = t%pheno_flush_par_threshold(ipft)
-         p%flush_par_sharpness   = t%pheno_flush_par_sharpness(ipft)
-         p%shed_par_threshold    = t%pheno_shed_par_threshold(ipft)
-         p%shed_par_sharpness    = t%pheno_shed_par_sharpness(ipft)
-         p%par_window            = t%pheno_par_window(ipft)
+         p%par_min               = t%pheno_par_min(ipft)
+         p%flush_light_hours     = t%pheno_flush_light_hours(ipft)
+         p%flush_light_sharpness = t%pheno_flush_light_sharpness(ipft)
+         p%shed_light_hours      = t%pheno_shed_light_hours(ipft)
+         p%shed_light_sharpness  = t%pheno_shed_light_sharpness(ipft)
+         p%light_window          = t%pheno_light_window(ipft)
          p%flush_water_sum       = t%pheno_flush_water_sum(ipft)
          p%flush_water_sharpness = t%pheno_flush_water_sharpness(ipft)
          p%shed_water_sum        = t%pheno_shed_water_sum(ipft)

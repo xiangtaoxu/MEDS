@@ -936,13 +936,15 @@ contains
       !      or the alloc_pft_table defaults. Each mask is a set of TEMP(1), LIGHT(2), WATER(4).     !
       !      A sharpness of 0 would make its switch a constant 0.5, so it is refused.              !
       associate (p => cfg%pft, n => cfg%pft%n)
-         if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 15_ik) .or.     &
-             any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 15_ik))         &
-            error stop tag//'phenology flush_cue_mask / shed_cue_mask out of range [0,15]'
+         if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 7_ik) .or.      &
+             any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 7_ik))          &
+            error stop tag//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
          if (any(p%pheno_flush_cue_timescale(1:n) <= 0.0_wp) .or.                                     &
              any(p%pheno_shed_cue_timescale(1:n)  <= 0.0_wp) .or.                                     &
-             any(p%pheno_par_window(1:n)          <= 0.0_wp))                                         &
-            error stop tag//'phenology cue timescales and par_window must be > 0'
+             any(p%pheno_light_window(1:n)        <= 0.0_wp))                                         &
+            error stop tag//'phenology cue timescales and light_window must be > 0'
+         if (any(p%pheno_par_min(1:n) < 0.0_wp))                                                      &
+            error stop tag//'phenology.par_min must be >= 0'
          if (any(p%pheno_flush_rate_max(1:n) <= 0.0_wp))                                              &
             error stop tag//'phenology.flush_rate_max must be > 0'
          if (any(p%pheno_shed_rate_max(1:n) < 0.0_wp))                                                &
@@ -952,10 +954,8 @@ contains
             error stop tag//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
          if (any(p%pheno_flush_temp_sharpness(1:n) == 0.0_wp) .or.                                   &
              any(p%pheno_shed_temp_sharpness(1:n)  == 0.0_wp) .or.                                   &
-             any(p%pheno_flush_daylength_sharpness(1:n) == 0.0_wp) .or.                              &
-             any(p%pheno_shed_daylength_sharpness(1:n)  == 0.0_wp) .or.                              &
-             any(p%pheno_flush_par_sharpness(1:n) == 0.0_wp) .or.                                    &
-             any(p%pheno_shed_par_sharpness(1:n)  == 0.0_wp) .or.                                    &
+             any(p%pheno_flush_light_sharpness(1:n) == 0.0_wp) .or.                                  &
+             any(p%pheno_shed_light_sharpness(1:n)  == 0.0_wp) .or.                                  &
              any(p%pheno_flush_water_sharpness(1:n) == 0.0_wp) .or.                                  &
              any(p%pheno_shed_water_sharpness(1:n)  == 0.0_wp))                                      &
             error stop tag//'a phenology sharpness is 0: its switch would be a constant 0.5'

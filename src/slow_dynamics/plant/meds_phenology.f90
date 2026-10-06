@@ -10,11 +10,11 @@
 ! One daily update (docs/science/plant_phenology.md):                                        !
 !   (1) ACCUMULATE the cue memory: warmth above flush_base_temp from midwinter, cold below    !
 !       shed_base_temp from midsummer, predawn leaf psi above and below the turgor-loss point, !
-!       and the running-mean PAR at the cohort's top.                                         !
+!       and the running-mean hours of light (PAR at the cohort's top above par_min).           !
 !   (2) SWITCH each cue through sigma(s (x - x*)), one centre and one signed sharpness each.   !
 !   (3) COMBINE: flush = the product of its cues' switches (every cue must permit flushing);   !
-!       shed = the larger of the seasonal trigger (temperature x day length x PAR) and the     !
-!       water trigger.                                                                         !
+!       shed = the larger of the seasonal trigger (temperature x light) and the water        !
+!       trigger.                                                                               !
 !   (4) SMOOTH each signal into its tendency over a timescale; the potential relative rates    !
 !       are rate_max * tendency.                                                               !
 ! Pure, scalar, arithmetic only: device- and SIMD-friendly, and reentrant.                     !
@@ -70,24 +70,20 @@ contains
       s_flush = 1.0_wp
       if (iand(params%flush_cue_mask, CUE_TEMP) /= 0_ik) s_flush = s_flush *                     &
          logistic(params%flush_temp_sharpness * (state%growing_degree_days - params%flush_degree_days))
-      if (iand(params%flush_cue_mask, CUE_DAYLENGTH) /= 0_ik) s_flush = s_flush *                &
-         logistic(params%flush_daylength_sharpness * (env%daylength - params%flush_daylength_threshold))
-      if (iand(params%flush_cue_mask, CUE_PAR) /= 0_ik) s_flush = s_flush *                      &
-         logistic(params%flush_par_sharpness * (state%par_mean - params%flush_par_threshold))
+      if (iand(params%flush_cue_mask, CUE_LIGHT) /= 0_ik) s_flush = s_flush *                    &
+         logistic(params%flush_light_sharpness * (state%light_hours_mean - params%flush_light_hours))
       if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik) s_flush = s_flush * wet_switch
 
-      !----- (3b) Shed: the seasonal trigger needs all of its enabled cues (cold AND short   !
-      !      days AND the PAR condition); the water trigger acts on its own. An empty mask     !
-      !      never senesces.                                                                  !
+      !----- (3b) Shed: the seasonal trigger needs all of its enabled cues (cold AND the     !
+      !      light condition); the water trigger acts on its own. An empty mask never         !
+      !      senesces.                                                                        !
       seasonal = 0.0_wp
-      if (iand(params%shed_cue_mask, CUE_TEMP + CUE_DAYLENGTH + CUE_PAR) /= 0_ik) then
+      if (iand(params%shed_cue_mask, CUE_TEMP + CUE_LIGHT) /= 0_ik) then
          seasonal = 1.0_wp
          if (iand(params%shed_cue_mask, CUE_TEMP) /= 0_ik) seasonal = seasonal *                 &
             logistic(params%shed_temp_sharpness * (state%cold_degree_days - params%shed_degree_days))
-         if (iand(params%shed_cue_mask, CUE_DAYLENGTH) /= 0_ik) seasonal = seasonal *            &
-            logistic(params%shed_daylength_sharpness * (env%daylength - params%shed_daylength_threshold))
-         if (iand(params%shed_cue_mask, CUE_PAR) /= 0_ik) seasonal = seasonal *                  &
-            logistic(params%shed_par_sharpness * (state%par_mean - params%shed_par_threshold))
+         if (iand(params%shed_cue_mask, CUE_LIGHT) /= 0_ik) seasonal = seasonal *                &
+            logistic(params%shed_light_sharpness * (state%light_hours_mean - params%shed_light_hours))
       end if
       s_shed = seasonal
       if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik) s_shed = max(s_shed, dry_switch)
@@ -146,10 +142,16 @@ contains
          state%dry_psi_sum = state%dry_psi_sum + max(0.0_wp, params%leaf_psi_tlp - env%predawn_leaf_psi) * dt
       end if
 
-      !----- PAR: an exponential running mean of the daily PAR at the cohort's top. -------!
-      if (iand(both, CUE_PAR) /= 0_ik) then
-         w = min(1.0_wp, dt / max(params%par_window, dt))
-         state%par_mean = state%par_mean + w * (env%par - state%par_mean)
+      !----- Light: an exponential running mean of the daily hours of light. A cohort with  !
+      !      no light memory yet (a cold start or a recruit) starts from today's hours, so its  !
+      !      first days do not read as darkness.                                             !
+      if (iand(both, CUE_LIGHT) /= 0_ik) then
+         if (state%light_hours_mean < 0.0_wp) then
+            state%light_hours_mean = env%par_hours
+         else
+            w = min(1.0_wp, dt / max(params%light_window, dt))
+            state%light_hours_mean = state%light_hours_mean + w * (env%par_hours - state%light_hours_mean)
+         end if
       end if
    end subroutine accumulate
 

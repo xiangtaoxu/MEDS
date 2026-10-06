@@ -50,7 +50,7 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 
 | Page | Covers |
 |---|---|
-| [`plant_phenology.md`](science/plant_phenology.md) | Leaf phenology: temperature, day-length, PAR and water cues → flush and senescence tendencies → leaf growth and loss. |
+| [`plant_phenology.md`](science/plant_phenology.md) | Leaf phenology: temperature, hours-of-light and water cues → flush and senescence tendencies → leaf growth and loss. |
 | [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | The daily PARTEH-H1 carbon budget: net carbon → priority ladder → per-pool growth. |
 | [`plant_respiration.md`](science/plant_respiration.md) | The autotrophic budget: leaf, stem and fine-root maintenance, and growth respiration on realized growth. |
 | [`plant_traits.md`](science/plant_traits.md) | Light-driven leaf-trait plasticity and its carbon consequences. |

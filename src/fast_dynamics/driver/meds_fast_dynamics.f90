@@ -73,8 +73,9 @@ module meds_fast_dynamics
 
    public :: fast_context_t, init_fast_reservoirs, fast_dynamics, build_fast_context
 
-   !----- Absorbed-PAR (VIS) energy -> photon flux: par_w_2_umol (meds_constants), used ONLY on   !
-   !      the RT path (true absorbed PAR); the const path keeps the 2.1 total-SW blend.           !
+   !----- PAR (VIS) energy -> photon flux: par_w_2_umol (meds_constants). Photosynthesis uses it  !
+   !      ONLY on the RT path (true absorbed PAR; the const path keeps the 2.1 total-SW blend);    !
+   !      the phenology light count uses it on the PAR reaching each cohort's top.                 !
 
    !----- §7 C3 (deterministic reductions). The site-level fast-loop accumulators are written once !
    !      per (patch, sub-step) and folded into site%... afterwards. Staging them in ONE array,      !
@@ -361,7 +362,7 @@ contains
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
-      site%cohort%par_accum(1:site%cohort%n)       = 0.0_wp
+      site%cohort%light_hours_accum(1:site%cohort%n) = 0.0_wp
       !----- ROLL OVER the predawn water status (#95): today's accumulated maximum becomes the value  !
       !      the leaf kernel uses tomorrow, then the accumulator restarts. A cohort whose max is still !
       !      the UNSET sentinel (a recruit born mid-day) keeps it, so column_prepass seeds it from the  !
@@ -763,9 +764,11 @@ contains
                site%cohort%leaf_resp_accum(i) = site%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
-               !----- The PAR reaching the cohort's top, integrated over the slow step: the phenology  !
-               !      PAR cue's driver, so each cohort sees its own place in the canopy. --------------!
-               site%cohort%par_accum(i)       = site%cohort%par_accum(i)       + forc%par_top(j)  * cfg%dt_fast
+               !----- The hours of light at the cohort's top over the slow step, the phenology light   !
+               !      cue's driver: this step counts when its PAR exceeds the PFT's par_min, so each      !
+               !      cohort sees its own clouds and its own place in the canopy. ----------------------!
+               if (forc%par_top(j) * par_w_2_umol > cfg%pft%pheno_par_min(site%cohort%pft(i)))           &
+                  site%cohort%light_hours_accum(i) = site%cohort%light_hours_accum(i) + cfg%dt_fast / 3600.0_wp
                !----- Running daily MAX of psi_leaf (#95). max(), not a sum: the daily maximum occurs !
                !      near dawn and IS the quantity that drives tomorrow's beta_stomata. --------------!
                site%cohort%dmax_psi_leaf_accum(i) = max(site%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))

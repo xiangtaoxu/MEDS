@@ -588,6 +588,42 @@ PAR + WATER):
   floor that, refilled by the flush, cost 0.25 canopy a year; 5-day flush smoothing overlapped the
   drop by another 0.1.
 
+## 13. One light cue: the hours of light (owner, 2026-10-06)
+
+**Proposal (owner).** One light variable for every PFT: the hours a day the PAR exceeds a per-PFT
+`par_min`, like a degree-day sum for light. A low `par_min` makes it the photoperiod; a high one, the
+bright hours. Temperate PFTs flush as the hours rise and shed as they fall; a tropical light
+exchanger sheds (and flushes) as they rise in the bright dry season.
+
+**Tests (emulator; `~/claude_workspace/meds_pheno_proto/parhours_test.py`).** On tower PAR, with
+`par_min` fitted, the hours of light matched the better of the two §12 cues at each site: Harvard
+0.046 (`par_min` 33; day length 0.0445, PAR 0.052), Hyytiälä 0.59 (280; PAR 0.70), BCI 0.067 (700;
+PAR 0.065). On ERA5-Land PAR through MEDS's reader, thresholds fitted on tower PAR do not carry over
+(ERA5's PAR is 9–16 % brighter, mostly MEDS's SW→PAR split, #369); refitted on the forcing the model
+runs with, Harvard matched the tower fit (0.046) and the Hyytiälä fit agreed across drivers once the
+optimizer converged. A free `par_min` at BCI drifted to the photoperiod, a calendar; tropical fits
+need `par_min` bounded to bright hours. The forcing reader dropped the shortwave of a sunrise or
+sunset hour whose midpoint was dark, which biased low-`par_min` hours by up to −0.65 h a day (#371,
+fixed in #372).
+
+**Decision.** Day length and PAR (§12) are replaced by one cue, LIGHT (bit 2): `par_min`,
+`flush_light_hours`, `flush_light_sharpness`, `shed_light_hours`, `shed_light_sharpness`,
+`light_window`. The fast loop counts the hours per cohort (`light_hours_accum`: each fast step whose
+PAR at the cohort's top, in photons, exceeds `par_min` adds its length), the driver divides by the
+step, and the kernel keeps a running mean (`light_hours_mean`). A cohort with no light memory (a
+cold start, a recruit) starts the mean from its first day, so its first days do not read as
+darkness; fusion keeps the survivor's memory, as for the other cues.
+
+**Example02 (owner).** Four sites, one model, all on ERA5-Land PAR-hours through MEDS's reader:
+Harvard Forest and Hyytiälä (TEMP + LIGHT), the BCI light exchanger (WATER + LIGHT; BCI no longer
+carries a drought-deciduous species) and Palo Verde, Costa Rica (drought-deciduous; WATER + LIGHT),
+driven by a canopy predawn leaf ψ from a MEDS run of the BCI 2010 census at Palo Verde on ERA5-Land
+and scored against the Xu et al. (2016) litter traps (g per 0.25 m² trap) and MODIS LAI, 2009–2013.
+Fits use bounded sharpness and windows, several optimizer seeds with a local polish, and
+leave-one-year-out checks against a climatology (§§ in the example README). At Palo Verde the water
+cue alone sheds a month late on that ψ; adding a light cue (day length in the prototype) fixed most
+of the timing.
+
 ## References
 
 Botta et al. (2000) *Glob. Change Biol.*; White et al. (1997) *Glob. Biogeochem. Cycles*; Xu et

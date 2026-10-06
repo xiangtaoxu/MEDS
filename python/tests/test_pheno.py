@@ -31,7 +31,7 @@ def test_self_test_passes():
 
 def test_no_cues_hold_the_canopy_full():
     _lib_or_skip()
-    day = _drive(pheno.Params(), 60, temp_day=260.0, daylength=6.0, predawn_leaf_psi=-5.0)
+    day = _drive(pheno.Params(), 60, temp_day=260.0, par_hours=6.0, predawn_leaf_psi=-5.0)
     assert day.leaf_flush_tendency == 1.0 and day.leaf_shed_tendency == 0.0
     assert day.leaf_cover == 1.0 and day.senescence == 0.0
 
@@ -39,9 +39,9 @@ def test_no_cues_hold_the_canopy_full():
 def test_deciduous_flushes_in_summer_and_senesces_in_autumn():
     _lib_or_skip()
     p = pheno.temperate_deciduous()
-    summer = _drive(p, 60, doy0=150, temp_day=295.0, daylength=15.0)
+    summer = _drive(p, 60, doy0=150, temp_day=295.0, par_hours=15.0)
     assert summer.leaf_flush_tendency > 0.9 and summer.leaf_shed_tendency < 0.05
-    autumn = _drive(p, 80, doy0=250, temp_day=275.0, daylength=8.5)
+    autumn = _drive(p, 80, doy0=250, temp_day=275.0, par_hours=8.5)
     assert autumn.leaf_shed_tendency > 0.5 and autumn.leaf_flush_tendency < 0.2
     assert autumn.leaf_cover < 0.01                           # no floor: the canopy goes ~bare
 
@@ -51,7 +51,7 @@ def test_evergreen_is_a_leaf_cover_floor_not_a_flag():
     # The deciduous cues with a floor: the same autumn senescence stops at min_leaf_cover
     # (plus the day's small residual flush).
     p = pheno.temperate_deciduous(min_leaf_cover=0.7)
-    day = _drive(p, 80, doy0=250, temp_day=275.0, daylength=8.5)
+    day = _drive(p, 80, doy0=250, temp_day=275.0, par_hours=8.5)
     assert 0.7 <= day.leaf_cover < 0.701
 
 
@@ -72,8 +72,8 @@ def test_drought_deciduous_sheds_when_dry_and_reflushes():
 def test_light_exchanging_turns_over_while_staying_full():
     _lib_or_skip()
     p = pheno.light_exchanging()
-    dim = _drive(p, 60, par=170.0)
-    bright = _drive(p, 60, par=1100.0)
+    dim = _drive(p, 60, par_hours=2.0)                        # few hours above par_min
+    bright = _drive(p, 60, par_hours=10.0)
     assert dim.leaf_shed_tendency < 0.05 < bright.leaf_shed_tendency
     assert bright.leaf_flush_tendency > 0.99
     assert bright.senescence > 0.0 and bright.leaf_cover > 0.95   # exchanging, not thinning
@@ -88,6 +88,21 @@ def test_leaf_step_matches_the_carbon_rule():
     assert abs(cover - (0.5 - sen - bg + 0.03)) < 1e-15       # + flush_rate_max * tendency
     # A bare canopy loses nothing however high the shed tendency.
     assert pheno.leaf_step(0.0, 0.0, 1.0, p) == (0.0, 0.0, 0.0)
+
+
+def test_par_hours_counts_the_steps_above_par_min():
+    import numpy as np
+    par = np.array([[0.0, 3.0, 10.0, 400.0, 900.0, 4.0], [0.0] * 6])
+    assert list(pheno.par_hours(par, 4.0, 5.0)) == [12.0, 0.0]     # three 4-h steps above 5
+    assert list(pheno.par_hours(par, 4.0, 500.0)) == [4.0, 0.0]
+
+
+def test_a_new_cohort_starts_its_light_memory_from_its_first_day():
+    _lib_or_skip()
+    ph = pheno.Phenology(pheno.temperate_deciduous())
+    assert ph.state.light_hours_mean < 0.0
+    ph.step(temp_day=290.0, par_hours=13.0, doy=150)
+    assert ph.state.light_hours_mean == 13.0
 
 
 def test_daylength_is_the_model_formula():
