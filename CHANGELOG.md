@@ -27,6 +27,18 @@ before and after.
   - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
     of the two curves below the compensation point.
 
+### Fixed
+
+- **A sunrise or sunset forcing interval keeps its shortwave** (#371).
+  - **The bug:** the partition into beam and diffuse, PAR and NIR took the cos z at the interval's
+    midpoint. When that was dark, all four streams came out zero, however much light the record
+    had. With hourly ERA5-Land, each day lost up to an hour of light at dawn and dusk.
+  - **The fix:** the partition's sun is now the interval's mean of max(cos z, 0), the same mean the
+    disaggregation uses.
+  - **Effect** (sub-steps against tower quantum sensors): the bias in hours with PAR above
+    5 µmol m⁻² s⁻¹ goes from −0.46 to −0.24 h at Harvard Forest, −0.65 to −0.47 h at Hyytiälä and
+    −0.42 to −0.14 h at BCI. The daily shortwave rises by about 0.06%.
+
 ## [0.3.3] — 2026-10-05
 
 A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily

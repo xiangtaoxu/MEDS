@@ -271,8 +271,11 @@ disaggregated independently, each from the record carrying the interval mean —
 ## 6. Splitting shortwave into four streams
 
 Reanalysis ships total downwelling shortwave; the canopy two-stream needs beam and diffuse, in the visible
-and the near-infrared. The split happens **at ingest**, once per record, on that record's interval-midpoint
-$`\cos z`$, so `met_record_t` always holds four streams. Both schemes conserve energy exactly.
+and the near-infrared. The split happens **at ingest**, once per record, so `met_record_t` always holds four
+streams. Its sun is the mean of $`\max(\cos z, 0)`$ over the interval the record averages — the
+$`\langle\cos z\rangle_{win}`$ of the disaggregation above — so the clearness index is a ratio of interval
+means, and a sunrise or sunset interval whose midpoint is dark still splits its light (#371). An
+instantaneous record uses the sun at its stamp. Both schemes conserve energy exactly.
 
 **`clearidx` (default)** — the Erbs et al. (1982) clearness-index correlation. With
 $`k_t = \mathrm{SW}/(S_0\cos z)`$ clipped to $[0,1]$ and $`S_0 = 1361`$ W m⁻²,
