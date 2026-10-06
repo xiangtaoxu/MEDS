@@ -322,7 +322,7 @@ simplification; for anything regional it is a wall.
 |---|---|---|
 | Format | One netCDF file on a `(time, grid)` layout, or a constant-forcing backend with no file | `ED_MET_DRIVER_HEADER` pointing at HDF5 files, `IMETTYPE` |
 | Gap filling | **None — a NaN in a required field is a hard error** | — |
-| Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
+| Shortwave partitioning | Erbs (default), Weiss–Norman, or a clearness-index scheme. MEDS's Weiss–Norman uses the paper's 600 / 720 W m⁻² visible / NIR beam, where ED2 uses 0.43 / 0.57 of the solar constant (#369) | `IMETRAD` 0–5 (as-is, SiB, Weiss–Norman, all-diffuse, all-direct, clearness index) |
 | Sub-daily reconstruction | Interval-mean-conserving disaggregation anchored on the model sun (UTC + longitude + equation of time) | `IMETAVG` 0–3 declares the averaging convention |
 | Multi-year cycling | Calendar recycling with Feb-29 reconciliation, day-of-year exact | `METCYC1` / `METCYCF`, `ISHUFFLE` |
 | Preparation | ERA5-Land tools in `scripts/prepare_era5/` | Community drivers in ED2 format |

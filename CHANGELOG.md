@@ -101,6 +101,27 @@ before and after.
   refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
+- **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
+  - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
+    near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
+    0.57 of the solar constant, and the solar constant itself.
+  - **Effect:** run on measured shortwave at Hyytiälä, Harvard Forest and BCI, the scheme's PPFD moves
+    from 3–7% below the towers' quantum sensors to within 4% of them (1.04, 1.02 and 0.99 of the
+    measured; `docs/science/forcing.md` §6).
+  - **Unchanged:** the default `clearidx`, which stays 3–11% high. #369 lists that and the other open
+    uncertainties of the shortwave-to-PAR partition.
+
+### Fixed
+
+- **A sunrise or sunset forcing interval keeps its shortwave** (#371).
+  - **The bug:** the partition into beam and diffuse, PAR and NIR took the cos z at the interval's
+    midpoint. When that was dark, all four streams came out zero, however much light the record
+    had. With hourly ERA5-Land, each day lost up to an hour of light at dawn and dusk.
+  - **The fix:** the partition's sun is now the interval's mean of max(cos z, 0), the same mean the
+    disaggregation uses.
+  - **Effect** (sub-steps against tower quantum sensors): the bias in hours with PAR above
+    5 µmol m⁻² s⁻¹ goes from −0.46 to −0.24 h at Harvard Forest, −0.65 to −0.47 h at Hyytiälä and
+    −0.42 to −0.14 h at BCI. The daily shortwave rises by about 0.06%.
 
 ## [0.3.3] — 2026-10-05
 
