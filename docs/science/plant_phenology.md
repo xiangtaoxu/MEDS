@@ -4,7 +4,7 @@ MEDS models leaf phenology in two layers. The **cue kernel** (`meds_phenology`) 
 environmental cues and per-PFT traits into two smoothed **tendencies** in $[0,1]$: a leaf **flush**
 tendency $f$ and a leaf **shed** (senescence) tendency $s$. The **carbon layer** turns the tendencies
 into leaf growth and leaf loss (`leaf_turnover_step`, §5). The kernel's state is the two tendencies
-plus a small **cue memory** (temperature sums, water-potential sums, a shortwave running mean),
+plus a small **cue memory** (temperature sums, water-potential sums, a PAR running mean),
 carried per cohort and advanced once per day.
 
 One kernel covers every leaf habit. Two per-PFT **cue masks** pick which cues drive flushing and which
@@ -51,16 +51,24 @@ Both restart at midwinter. In the southern hemisphere the calendar is shifted by
 requirement: the photoperiod gate (below) does the work chilling was meant to do, holding the flush
 until days are long enough, and adding chilling did not improve the fits (§7).
 
-**Light (`CUE_LIGHT`).** The light variable $\Lambda$ is either the **day length** $D$ [h]
-(`light_variable = 1`, from latitude and day of year) or a **running mean of incident shortwave**
-$`\bar R`$ [W m⁻²] (`light_variable = 2`; ED2 `rad_avg`) over `light_window` days:
+**Day length (`CUE_DAYLENGTH`).** The photoperiod $D$ [h], from latitude and day of year.
+
+**PAR (`CUE_PAR`).** A running mean $`\bar P`$ of the daily PAR reaching the cohort's top $P$
+[µmol m⁻² s⁻¹] over `par_window` days:
 
 ```math
-\bar R \mathrel{+}= w\,(R - \bar R), \qquad w = \min\!\big(1,\ dt/\max(\texttt{light\_window},\,dt)\big) \qquad(4)
+\bar P \mathrel{+}= w\,(P - \bar P), \qquad w = \min\!\big(1,\ dt/\max(\texttt{par\_window},\,dt)\big) \qquad(4)
 ```
 
-Day length is the extratropical cue (photoperiodic budburst and growth cessation); shortwave is the
-tropical one (leaf exchange in the bright dry season, Kim et al. 2012).
+In the coupled model $P$ is the visible light, beam plus downward diffuse, reaching the top of the
+cohort's layer in the two-stream canopy radiation, averaged over the day. A cohort under others sees
+less light than one in the sun.
+
+The two light cues answer different questions. Day length is a calendar, the same every year and
+for every cohort; it is the extratropical cue (photoperiodic budburst and growth cessation). PAR is
+the light actually received, with its clouds, its year-to-year swings and its place in the canopy;
+it is the cue of tropical leaf exchange in the bright dry season (Kim et al. 2012). Fitted at three
+sites, neither replaces the other (§7).
 
 **Water (`CUE_WATER`).** Two sums of the predawn leaf water potential $`\psi_{\mathrm{pd}}`$ against the
 turgor-loss point $`\psi_{\mathrm{tlp}}`$:
@@ -81,7 +89,8 @@ uses (`pv_psi_tlp`), so the cue and the arrestor share one threshold.
 
 ```math
 S_{\mathrm{fl}} = \underbrace{\sigma\big(s_W (W - W^{*})\big)}_{\text{TEMP}}
-\cdot \underbrace{\sigma\big(s_{\Lambda,\mathrm{fl}} (\Lambda - \Lambda^{*}_{\mathrm{fl}})\big)}_{\text{LIGHT}}
+\cdot \underbrace{\sigma\big(s_{D,\mathrm{fl}} (D - D^{*}_{\mathrm{fl}})\big)}_{\text{DAYLENGTH}}
+\cdot \underbrace{\sigma\big(s_{P,\mathrm{fl}} (\bar P - P^{*}_{\mathrm{fl}})\big)}_{\text{PAR}}
 \cdot \underbrace{\sigma\big(s_{\mathrm{wet}} (M_{\mathrm{wet}} - M^{*}_{\mathrm{wet}})\big)}_{\text{WATER}}
 \qquad(6)
 ```
@@ -89,7 +98,8 @@ S_{\mathrm{fl}} = \underbrace{\sigma\big(s_W (W - W^{*})\big)}_{\text{TEMP}}
 ```math
 S_{\mathrm{sh}} = \max\Big(
 \underbrace{\sigma\big(s_C (C - C^{*})\big)}_{\text{TEMP}}
-\cdot \underbrace{\sigma\big(s_{\Lambda,\mathrm{sh}} (\Lambda - \Lambda^{*}_{\mathrm{sh}})\big)}_{\text{LIGHT}},\
+\cdot \underbrace{\sigma\big(s_{D,\mathrm{sh}} (D - D^{*}_{\mathrm{sh}})\big)}_{\text{DAYLENGTH}}
+\cdot \underbrace{\sigma\big(s_{P,\mathrm{sh}} (\bar P - P^{*}_{\mathrm{sh}})\big)}_{\text{PAR}},\
 \underbrace{\sigma\big(s_{\mathrm{dry}} (M_{\mathrm{dry}} - M^{*}_{\mathrm{dry}})\big)}_{\text{WATER}}
 \Big) \qquad(7)
 ```
@@ -98,15 +108,17 @@ Only the cues in each side's mask enter; an absent factor is 1 in a product and 
 An empty flush mask always flushes ($`S_{\mathrm{fl}}=1`$); an empty shed mask never senesces
 ($`S_{\mathrm{sh}}=0`$).
 
-- **Flushing needs every flush cue** (a product): warm enough *and* long enough days *and* wet enough.
+- **Flushing needs every flush cue** (a product): warm enough *and* long enough days *and* bright
+  enough *and* wet enough.
   The day-length gate applies all year, so it both holds back budburst in a warm spell in late winter
   and turns the flush off in late summer, when the warmth sum is still high. For the second it has to
   be sharp, a photoperiod threshold (§7).
-- **Senescence has two triggers** (a max): the **seasonal** one, cold *and* short days (Delpierre et
-  al. 2009), and the **water** one, sustained drought on its own. A drought need not wait for autumn.
+- **Senescence has two triggers** (a max): the **seasonal** one, cold *and* short days *and* the PAR
+  condition (Delpierre et al. 2009), and the **water** one, sustained drought on its own. A drought
+  need not wait for autumn.
 
-For the shed side a negative $`s_{\Lambda,\mathrm{sh}}`$ means *short* days (or dim light) trigger
-senescence; a positive one means *bright* light does, as in tropical leaf exchange.
+On the shed side a negative day-length sharpness means short days trigger senescence. A positive PAR
+sharpness means bright light does, as in tropical leaf exchange; a negative one, dim light.
 
 ## 4. Smoothing into tendencies
 
@@ -161,60 +173,70 @@ The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so th
 | habit | flush mask | shed mask | `min_leaf_cover` | what happens |
 |---|---|---|---|---|
 | no cues (default) | – | – | – | always flushing; loses leaves only to background turnover |
-| temperate deciduous | TEMP + LIGHT | TEMP + LIGHT | 0 | flush on warmth once days are long; senesce to ~bare on cold once days are short |
-| evergreen conifer | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (e.g. 0.8) | the same cues; autumn needle fall stops at the floor |
-| drought deciduous | WATER | WATER | 0 | full while watered, senesces in a drought, flushes again on rewetting |
-| light leaf exchange | – | LIGHT (shortwave, $`s>0`$) | – | always flushing; senescence rises with light, so leaves turn over while the canopy stays full |
+| temperate deciduous (Harvard) | TEMP + DAYLENGTH | TEMP + DAYLENGTH | 0 | flush on warmth while days are long; senesce to bare on cold once days shorten |
+| evergreen conifer (Hyytiälä) | TEMP + PAR | TEMP + PAR | the share kept through winter (0.9) | flush on warmth and bright light; autumn needle fall stops at the floor |
+| drought deciduous (BCI) | WATER | PAR + WATER | 0 | a high water threshold, no PAR response: senesces in the dry season, flushes after the rains |
+| light leaf exchange (BCI) | WATER | PAR + WATER | 0.9 | a water threshold it never reaches; senescence on bright PAR while the canopy refills, so it stays full |
 
 Evergreen and deciduous differ in one number. The emergent leaf lifespan follows from the rates and
 the floor; it is not a parameter of the kernel.
 
 ## 7. Evidence and status
 
-The temperate scheme was fitted offline, before implementation, with a Python emulation of these
-equations (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§9), and
-`examples/example02_canopy_phenology` refits it with the compiled kernel:
+`examples/example02_canopy_phenology` fits the compiled kernel at three sites:
 
-- **Harvard Forest** (temperate deciduous): MODIS LAI, the HF003 leaf-fall observations and the HF069
-  litter baskets.
-- **Hyytiälä** (Scots pine): the ICOS monthly needle litter.
+- **Harvard Forest** (temperate deciduous, day length): MODIS LAI, the HF003 leaf-fall observations
+  and the HF069 litter baskets.
+- **Hyytiälä** (Scots pine, PAR): the ICOS monthly needle litter.
+- **Barro Colorado Island** (two tropical species under one climate, PAR and water): GLiMP litter
+  traps for the light exchanger; the drought-deciduous species is set by hand. The water driver is a
+  surrogate, the tower's soil water content through a retention curve fitted to the paired soil
+  samples of Kupers et al. (2019).
 
-Three results shaped the design. Removing the chilling requirement changed neither fit, while light
-control improved both, mostly on the senescence side. The flush day-length gate has to be sharp: a
-gradual one (1 per hour) is still partly open in October, so the canopy refills while it senesces
-and a deciduous stand drops about 1.9 canopies of leaves a year, which no timing observation shows.
-With the annual leaf fall held to one canopy at Harvard and 0.3 at Hyytiälä, both fits make the
-gate a step (sharpness 8.0 and 6.6 per hour, thresholds 13.8 and 13.1 h), and Harvard's spring
-timing improves (RMSE 5.5 against 8.0 days). The other sharpnesses are not identifiable from these data (different values fit equally well), so they keep
-fixed defaults (0.04 per K day for warmth, 0.1 per K day for cold, −1 per hour for the senescence
-day length) and the centres are fitted.
+Four results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§12):
+
+- **No chilling.** Removing the chilling requirement changed neither temperate fit.
+- **Day length and PAR are separate cues.** Fitted with each light variable on each side, Harvard is
+  best on day length (loss 0.043 against 0.052 on PAR, whose flush gate nearly doubles the spring
+  timing error), Hyytiälä on PAR (0.70 against 1.03) and the BCI leaf exchanger on PAR (0.065 against
+  0.101; day length can only repeat one calendar each year). A mixed pair never beat the best pure one.
+- **The flush gate must be sharp where it ends the flush.** A gradual day-length gate (1 per hour) is
+  still partly open in October, so the canopy refills while it senesces and a deciduous stand drops
+  about 1.9 canopies of leaves a year, which no timing observation shows. Held to one canopy a year,
+  the Harvard fit makes the gate a step (8 per hour). The same holds for the water switches: a
+  sharpness of 5 per MPa day leaves a 0.7 % senescence floor that, refilled by the flush, sheds a
+  quarter canopy a year.
+- **Other sharpnesses are not identifiable** from these data (different values fit equally well), so
+  they keep fixed defaults (0.04 per K day for warmth, 0.1 per K day for cold, −1 per hour for the
+  senescence day length) and the centres are fitted.
 
 What is **not** validated: no coupled MEDS run's leaf-area cycle has yet been scored against
-observations, and the water and shortwave cues are covered by unit and driver tests only. The tropical
-habits (drought-deciduous Guanacaste, light-exchanging BCI) are the next examples.
+observations; the water cue has been exercised only on a soil surrogate, not on the model's own
+predawn leaf potential with the shed-to-water feedback.
 
 ## Parameters (`[phenology]` per-PFT block)
 
 | Symbol | Config key | Meaning |
 |---|---|---|
-| | `flush_cue_mask`, `shed_cue_mask` | sum of cue bits: TEMP 1, LIGHT 2, WATER 4 |
+| | `flush_cue_mask`, `shed_cue_mask` | sum of cue bits: TEMP 1, DAYLENGTH 2, WATER 4, PAR 8 |
 | $`\tau_{\mathrm{fl}},\tau_{\mathrm{sh}}`$ | `flush_cue_timescale`, `shed_cue_timescale` | smoothing of the tendencies [day] |
 | $`k_{\mathrm{fl}},k_{\mathrm{sh}}`$ | `flush_rate_max`, `shed_rate_max` | relative rates at full tendency [day⁻¹] |
 | $`c_{\min}`$ | `min_leaf_cover` | leaf cover senescence stops at [–] |
 | $`c_{\mathrm{bare}}`$ | `bare_leaf_cover` | a dormant canopy below this goes bare [–] |
 | $`T_{\mathrm{fl}}, W^{*}, s_W`$ | `flush_base_temp`, `flush_degree_days`, `flush_temp_sharpness` | warmth sum base [K], centre [K day], sharpness [1/(K day)] |
 | $`T_{\mathrm{sh}}, C^{*}, s_C`$ | `shed_base_temp`, `shed_degree_days`, `shed_temp_sharpness` | cold sum base [K], centre [K day], sharpness [1/(K day)] |
-| | `light_variable` | 1 day length [h], 2 running-mean shortwave [W m⁻²] |
-| $`\Lambda^{*}_{\mathrm{fl}}, s_{\Lambda,\mathrm{fl}}`$ | `flush_light_threshold`, `flush_light_sharpness` | flush light gate (> 0: more light permits) |
-| $`\Lambda^{*}_{\mathrm{sh}}, s_{\Lambda,\mathrm{sh}}`$ | `shed_light_threshold`, `shed_light_sharpness` | shed light trigger (< 0: short days; > 0: bright light) |
-| | `light_window` | shortwave running mean [day] (optional) |
+| $`D^{*}_{\mathrm{fl}}, s_{D,\mathrm{fl}}`$ | `flush_daylength_threshold`, `flush_daylength_sharpness` | flush photoperiod gate [h], [h⁻¹] (> 0: long days permit) |
+| $`D^{*}_{\mathrm{sh}}, s_{D,\mathrm{sh}}`$ | `shed_daylength_threshold`, `shed_daylength_sharpness` | shed photoperiod trigger (< 0: short days) |
+| $`P^{*}_{\mathrm{fl}}, s_{P,\mathrm{fl}}`$ | `flush_par_threshold`, `flush_par_sharpness` | flush PAR gate [µmol m⁻² s⁻¹], [m² s µmol⁻¹] (optional) |
+| $`P^{*}_{\mathrm{sh}}, s_{P,\mathrm{sh}}`$ | `shed_par_threshold`, `shed_par_sharpness` | shed PAR trigger (> 0: bright light; < 0: dim light) (optional) |
+| | `par_window` | PAR running mean [day] (optional) |
 | $`M^{*}_{\mathrm{wet}}, s_{\mathrm{wet}}`$ | `flush_water_sum`, `flush_water_sharpness` | wet sum that permits flushing [MPa day] (optional) |
 | $`M^{*}_{\mathrm{dry}}, s_{\mathrm{dry}}`$ | `shed_water_sum`, `shed_water_sharpness` | dry sum that triggers senescence [MPa day] (optional) |
 | $`\psi_{\mathrm{tlp}}`$ | *(derived)* | turgor-loss point from `leaf_pi0` and `leaf_elastic_mod` |
 | $`k_{\mathrm{turn}}`$ | `leaf_lifespan_toc` ([pft]) | background turnover $`1/\ell`$ [yr⁻¹] |
 
 The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults;
-present, every key above is required except the optional four water keys and `light_window`. A sharpness
+present, every key above is required except the optional PAR and water keys. A sharpness
 of 0 is rejected (the switch would be a constant 0.5). The keys of the previous scheme (`k_flush_max`,
 `tau_flush`, `cue_sharpness`, `phen_a/b/c`, the cold-drop and chilling keys, `pft.evergreen`, …) are
 refused by name with a pointer to their replacement.
@@ -224,11 +246,11 @@ refused by name with a pointer to their replacement.
 | cue | driver | source |
 |---|---|---|
 | TEMP | daily-mean air temperature | fast-loop `pheno_tair` reduction |
-| LIGHT, day length | day length | `meds_time::daylength(lat, doy)` |
-| LIGHT, shortwave | daily-mean incident shortwave at the canopy top, area-weighted over patches | fast-loop `pheno_rad` reduction |
+| DAYLENGTH | day length | `meds_time::daylength(lat, doy)` |
+| PAR | the visible light (beam + downward diffuse) reaching the top of the cohort's layer, averaged over the day | two-stream `incid_top`, summed per cohort in `par_accum` |
 | WATER | the cohort's predawn (daily-maximum) leaf water potential | `dmax_psi_leaf`, the same value that drives the stomatal stress limb |
 
-No cue reads soil data. All the cue sums and the shortwave mean are per-cohort state and are written to
+No cue reads soil data. All the cue sums and the PAR mean are per-cohort state and are written to
 restart files.
 
 ## References
@@ -251,6 +273,7 @@ restart files.
 | types (env / params / state / out) + cue bits | `meds_phenology_types` |
 | helpers | `meds_numerics`: `logistic`, `clamp01`; `meds_time`: `daylength`, `doy_effective` |
 | per-cohort advance (slow loop) | `meds_vegetation_dynamics`: `advance_leaf_phenology`, `flatten_pheno_params` |
+| PAR at each cohort's top | `meds_canopy_radiation`: `solve_band` (`incident`), `rad_flux_t%incid_top`; `meds_fast_dynamics`: `par_accum` |
 | turnover-first carbon demand | `meds_vegetation_dynamics`: `cohort_carbon_demand` (called from `compute_carbon_allocation`) |
 | C-API | `meds_c_api_phenology`: `meds_phenology_step`, `meds_leaf_turnover_step`, `meds_daylength` |
 | Python front end + example | `meds.plant.pheno`; `examples/example02_canopy_phenology/` |

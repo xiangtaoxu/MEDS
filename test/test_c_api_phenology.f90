@@ -21,7 +21,7 @@ program test_c_api_phenology
    use meds_constants,       only : yr_day
    use meds_c_api_phenology, only : pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c,      &
                                     meds_phenology_step, meds_leaf_turnover_step, meds_daylength
-   use meds_phenology_types, only : CUE_NONE, CUE_TEMP, CUE_WATER
+   use meds_phenology_types, only : CUE_NONE, CUE_TEMP, CUE_WATER, CUE_PAR
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -70,6 +70,14 @@ program test_c_api_phenology
                     'the dry sum grows by (leaf_psi_tlp - predawn_leaf_psi)')
    call check_close(st%wet_psi_sum, 0.0_wp, 0.0_wp, 'a dry day adds no wet credit')
 
+   !=== 4b. The PAR field and its window: one step moves the running mean by par/par_window. =!
+   env = warm_day()
+   p   = base_params(CUE_NONE, CUE_PAR)
+   st  = birth_state()
+   call meds_phenology_step(env, p, DT, st, out)
+   call check_close(st%par_mean, env%par / p%par_window, 1.0e-12_wp,                                &
+                    'the PAR running mean moves by par / par_window in one day')
+
    !=== 5. meds_leaf_turnover_step carries every argument through (background turnover,     !
    !       senescence, the flush cap), each a distinct product of its inputs.                !
    call meds_leaf_turnover_step(0.5_c_double, 1.0_c_double, 0.5_c_double, 1.0_c_double,              &
@@ -93,7 +101,7 @@ contains
    type(pheno_env_c) function warm_day() result(e)
       e%temp_day         = 293.15_c_double
       e%daylength        = 14.0_c_double
-      e%rad              = 400.0_c_double
+      e%par              = 800.0_c_double
       e%predawn_leaf_psi = -0.2_c_double
       e%doy              = 150_c_int
       e%hemis_north      = 1_c_int
@@ -114,12 +122,15 @@ contains
       q%shed_base_temp        = 290.15_c_double
       q%shed_degree_days      = 50.0_c_double
       q%shed_temp_sharpness   = 0.1_c_double
-      q%light_variable        = 1_c_int
-      q%flush_light_threshold = 12.0_c_double
-      q%flush_light_sharpness = 1.0_c_double
-      q%shed_light_threshold  = 11.0_c_double
-      q%shed_light_sharpness  = -1.0_c_double
-      q%light_window          = 10.0_c_double
+      q%flush_daylength_threshold = 12.0_c_double
+      q%flush_daylength_sharpness = 1.0_c_double
+      q%shed_daylength_threshold  = 11.0_c_double
+      q%shed_daylength_sharpness  = -1.0_c_double
+      q%flush_par_threshold   = 300.0_c_double
+      q%flush_par_sharpness   = 0.02_c_double
+      q%shed_par_threshold    = 300.0_c_double
+      q%shed_par_sharpness    = 0.02_c_double
+      q%par_window            = 10.0_c_double
       q%leaf_psi_tlp          = -2.0_c_double
       q%flush_water_sum       = 10.0_c_double
       q%flush_water_sharpness = 0.5_c_double
@@ -131,7 +142,7 @@ contains
       s%leaf_flush_tendency = 1.0_c_double ; s%leaf_shed_tendency = 0.0_c_double
       s%growing_degree_days = 0.0_c_double ; s%cold_degree_days   = 0.0_c_double
       s%wet_psi_sum         = 0.0_c_double ; s%dry_psi_sum        = 0.0_c_double
-      s%shortwave_mean      = 0.0_c_double
+      s%par_mean      = 0.0_c_double
    end function birth_state
 
 end program test_c_api_phenology

@@ -737,7 +737,7 @@ contains
    !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
    !      the alloc_pft_table defaults (no cues: always flushing, never senescing, losing leaves to    !
    !      background turnover alone, with a ~15-day flush cap). Present -> every per-PFT array is      !
-   !      REQUIRED except the optional light_window and water keys (the no-silent-defaults rule still   !
+   !      REQUIRED except the optional PAR and water keys (the no-silent-defaults rule still            !
    !      holds for a deliberate override). The arrays are flattened per cohort into a pheno_params_t   !
    !      by the slow-loop phenology driver.                                                            !
    !                                                                                          !
@@ -771,15 +771,18 @@ contains
       call req_pa(t, 'phenology.shed_base_temp',          cfg%pft%pheno_shed_base_temp,        npft, m)
       call req_pa(t, 'phenology.shed_degree_days',        cfg%pft%pheno_shed_degree_days,      npft, m)
       call req_pa(t, 'phenology.shed_temp_sharpness',     cfg%pft%pheno_shed_temp_sharpness,   npft, m)
-      call req_pa_int(t, 'phenology.light_variable',      cfg%pft%pheno_light_variable,        npft, m)
-      call req_pa(t, 'phenology.flush_light_threshold',   cfg%pft%pheno_flush_light_threshold, npft, m)
-      call req_pa(t, 'phenology.flush_light_sharpness',   cfg%pft%pheno_flush_light_sharpness, npft, m)
-      call req_pa(t, 'phenology.shed_light_threshold',    cfg%pft%pheno_shed_light_threshold,  npft, m)
-      call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno_shed_light_sharpness,  npft, m)
-      !----- OPTIONAL: the radiation running-mean window (light_variable = 2 only) and the water  !
-      !      cue, which a PFT turns on through its masks. An absent key keeps the alloc_pft_table   !
-      !      default, which equals the pheno_params_t default.  -----------------------------------!
-      call opt_pa(t, 'phenology.light_window',            cfg%pft%pheno_light_window,          npft, m)
+      call req_pa(t, 'phenology.flush_daylength_threshold', cfg%pft%pheno_flush_daylength_threshold, npft, m)
+      call req_pa(t, 'phenology.flush_daylength_sharpness', cfg%pft%pheno_flush_daylength_sharpness, npft, m)
+      call req_pa(t, 'phenology.shed_daylength_threshold',  cfg%pft%pheno_shed_daylength_threshold,  npft, m)
+      call req_pa(t, 'phenology.shed_daylength_sharpness',  cfg%pft%pheno_shed_daylength_sharpness,  npft, m)
+      !----- OPTIONAL: the PAR and water cues, which a PFT turns on through its masks (the        !
+      !      tropical cues). An absent key keeps the alloc_pft_table default, which equals the       !
+      !      pheno_params_t default.  --------------------------------------------------------------!
+      call opt_pa(t, 'phenology.flush_par_threshold',     cfg%pft%pheno_flush_par_threshold,   npft, m)
+      call opt_pa(t, 'phenology.flush_par_sharpness',     cfg%pft%pheno_flush_par_sharpness,   npft, m)
+      call opt_pa(t, 'phenology.shed_par_threshold',      cfg%pft%pheno_shed_par_threshold,    npft, m)
+      call opt_pa(t, 'phenology.shed_par_sharpness',      cfg%pft%pheno_shed_par_sharpness,    npft, m)
+      call opt_pa(t, 'phenology.par_window',              cfg%pft%pheno_par_window,            npft, m)
       call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno_flush_water_sum,       npft, m)
       call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno_flush_water_sharpness, npft, m)
       call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno_shed_water_sum,        npft, m)

@@ -111,8 +111,8 @@ light_ext  = 0.5
 # summed from midwinter AND long days permit the flush; cold summed from midsummer AND short days
 # trigger senescence, which runs to bare (min_leaf_cover = 0).
 [phenology]
-flush_cue_mask        = [3]        # TEMP + LIGHT: warmth reached AND long days
-shed_cue_mask         = [3]        # TEMP + LIGHT: cold reached AND short days
+flush_cue_mask        = [3]        # TEMP + DAYLENGTH: warmth reached AND long days
+shed_cue_mask         = [3]        # TEMP + DAYLENGTH: cold reached AND short days
 flush_cue_timescale   = [5.0]      # [day]
 shed_cue_timescale    = [5.0]      # [day]
 flush_rate_max        = [0.03386]  # [1/day] Harvard Forest fit (examples/example02_canopy_phenology)
@@ -125,8 +125,7 @@ flush_temp_sharpness  = [0.04]     # [1/(K day)]
 shed_base_temp        = [290.1]    # [K]
 shed_degree_days      = [46.18]    # [K day] after midsummer
 shed_temp_sharpness   = [0.1]      # [1/(K day)]
-light_variable        = [1]        # day length
-flush_light_threshold = [13.75]    # [h]
-flush_light_sharpness = [7.99]     # [1/h] a photoperiod step
-shed_light_threshold  = [9.127]    # [h]
-shed_light_sharpness  = [-1.0]     # [1/h] short days trigger senescence
+flush_daylength_threshold = [13.75] # [h]
+flush_daylength_sharpness = [7.99]  # [1/h] a photoperiod step
+shed_daylength_threshold  = [9.127] # [h]
+shed_daylength_sharpness  = [-1.0]  # [1/h] short days trigger senescence

@@ -157,18 +157,19 @@ contains
    ! Solve ONE band. Inputs (per cohort, bottom->top): etai (effective total area index),     !
    ! omega/beta/beta0/kdir (blended optics), emission (blackbody sigma*T^4, 0 for shortwave).   !
    ! Scalars: incident beam & diffuse at canopy top, ground reflectance & emission, band flags.  !
-   ! Outputs: absorbed(ncoh) [W/m2 per cohort, beam+diffuse], dn_ground/up_ground [W/m2] and     !
-   ! albedo (upward fraction leaving the top).                                                    !
+   ! Outputs: absorbed(ncoh) [W/m2 per cohort, beam+diffuse], incident(ncoh) [W/m2, beam +        !
+   ! downward diffuse at each layer's top], dn_ground/up_ground [W/m2] and albedo (upward fraction  !
+   ! leaving the top).                                                                             !
    !---------------------------------------------------------------------------------------!
    subroutine solve_band(ncoh, etai, omega, beta, beta0, kdir, emission, incid_beam,         &
                          incid_diff, grnd_refl, grnd_emiss, has_beam, has_emission,           &
-                         absorbed, dn_ground, up_ground, albedo)
+                         absorbed, incident, dn_ground, up_ground, albedo)
       integer(ik), intent(in)  :: ncoh
       real(wp),    intent(in)  :: etai(ncoh), omega(ncoh), beta(ncoh), beta0(ncoh), kdir(ncoh)
       real(wp),    intent(in)  :: emission(ncoh)
       real(wp),    intent(in)  :: incid_beam, incid_diff, grnd_refl, grnd_emiss
       logical,     intent(in)  :: has_beam, has_emission
-      real(wp),    intent(out) :: absorbed(ncoh)
+      real(wp),    intent(out) :: absorbed(ncoh), incident(ncoh)
       real(wp),    intent(out) :: dn_ground, up_ground, albedo
 
       real(wp), dimension(ncoh)   :: rdd, tdd, sup, sdn          ! layer R/T + up/down sources
@@ -220,9 +221,11 @@ contains
          if (i > 1_ik) din(i-1) = dbot(i)
       end do
 
-      !----- Absorbed per layer = beam divergence + diffuse divergence (in - out). ---------!
+      !----- Absorbed per layer = beam divergence + diffuse divergence (in - out); incident =   !
+      !      the beam and downward diffuse reaching the layer's top (the light a cohort sees).   !
       do i = 1_ik, ncoh
          absorbed(i) = (down0(i+1) - down0(i)) + (din(i) + uup(i)) - (utop(i) + dbot(i))
+         incident(i) = down0(i+1) + din(i)
       end do
 
       !----- Ground and top-of-canopy diagnostics. ----------------------------------------!
@@ -282,6 +285,7 @@ contains
       real(wp), dimension(max(ncoh,1)) :: emission, absorbed, kdir_coh
       !----- LAYER arrays: one entry per RT layer, which is a GROUP of exactly-tied cohorts. -----!
       real(wp), dimension(max(ncoh,1)) :: etai_l, omega_l, beta_l, beta0_l, kdir_l, emis_l, abs_l
+      real(wp), dimension(max(ncoh,1)) :: inc_l
       real(wp), dimension(max(ncoh,1)) :: wabs, wsum_l
       integer(ik) :: lyr(max(ncoh,1)), nmemb(max(ncoh,1))
       integer(ik) :: nlayer, il
@@ -400,7 +404,7 @@ contains
                          beta_l(1:nlayer), beta0_l(1:nlayer), kdir_l(1:nlayer), emis_l(1:nlayer), &
                          forcing%incid_beam(b), forcing%incid_diff(b), forcing%grnd_refl(b),    &
                          forcing%grnd_emiss(b), optics%has_beam(b), optics%has_emission(b),      &
-                         abs_l(1:nlayer), dn_ground, up_ground, albedo)
+                         abs_l(1:nlayer), inc_l(1:nlayer), dn_ground, up_ground, albedo)
 
          !----- Scatter the layer's absorbed flux back to its members by ABSORPTIVITY-WEIGHTED area.  !
          !      (1-omega_i)*etai_i is exactly aleaf_i + awood_i, the quantity leaf_frac is built from, !
@@ -422,10 +426,12 @@ contains
             end if
          end do
 
-         !----- Split absorbed radiation between leaves and wood (same weighting the solver used). -!
+         !----- Split absorbed radiation between leaves and wood (same weighting the solver used); !
+         !      every member of a layer sees the light reaching that layer's top. ----------------!
          do i = 1_ik, ncoh
-            flux%abs_leaf(b,i) = absorbed(i) * leaf_frac(i)
-            flux%abs_wood(b,i) = absorbed(i) * (1.0_wp - leaf_frac(i))
+            flux%abs_leaf(b,i)  = absorbed(i) * leaf_frac(i)
+            flux%abs_wood(b,i)  = absorbed(i) * (1.0_wp - leaf_frac(i))
+            flux%incid_top(b,i) = inc_l(lyr(i))
          end do
          flux%albedo(b)    = albedo
          flux%dn_ground(b) = dn_ground

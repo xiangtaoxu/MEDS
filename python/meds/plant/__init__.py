@@ -7,7 +7,7 @@ family), all backed by the one plant C-API shared library:
     meds.plant.leaf   — leaf gas exchange: FvCB C3 / Collatz C4 photosynthesis + Leuning / Medlyn /
                         Katul stomatal conductance, Arrhenius / peaked temperature response, and the
                         coupled A-gs-Ci solver.
-    meds.plant.pheno  — leaf phenology: temperature, light and water cues + per-PFT traits ->
+    meds.plant.pheno  — leaf phenology: temperature, day-length, PAR and water cues + traits ->
                         flush and senescence tendencies -> leaf cover, by the coupled model's rule.
 
 Both are exposed with dataclasses + enums so callers never touch ctypes:

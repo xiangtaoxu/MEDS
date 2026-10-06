@@ -15,8 +15,7 @@ module meds_phenology_types
    private
 
    public :: pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
-   public :: CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
-   public :: LIGHT_DAYLENGTH, LIGHT_RADIATION
+   public :: CUE_NONE, CUE_TEMP, CUE_DAYLENGTH, CUE_WATER, CUE_PAR, CUE_ALL
 
    !=======================================================================================!
    !     PHENOLOGY -- a SIGNAL kernel: daily cues + per-PFT traits -> two smoothed tendencies  !
@@ -26,22 +25,22 @@ module meds_phenology_types
    !=======================================================================================!
    !----- Cue-enable bits. flush_cue_mask and shed_cue_mask select the cues of each side: the !
    !      flush signal is the PRODUCT of its cues' switches, the shed signal the larger of the !
-   !      seasonal trigger (TEMP x LIGHT) and the water trigger.                               !
-   integer(ik), parameter :: CUE_NONE  = 0_ik    !< no cues (always flushing / no senescence)
-   integer(ik), parameter :: CUE_TEMP  = 1_ik    !< temperature: warmth sum (flush), cold sum (shed)
-   integer(ik), parameter :: CUE_LIGHT = 2_ik    !< light: day length or running-mean radiation
-   integer(ik), parameter :: CUE_WATER = 4_ik    !< water: predawn leaf psi summed against the TLP
-   integer(ik), parameter :: CUE_ALL   = CUE_TEMP + CUE_LIGHT + CUE_WATER
-
-   !----- Which variable the light cue reads (per PFT). -------------------------------------!
-   integer(ik), parameter :: LIGHT_DAYLENGTH = 1_ik   !< day length [h]
-   integer(ik), parameter :: LIGHT_RADIATION = 2_ik   !< running-mean incident shortwave [W/m2]
+   !      seasonal trigger (the product of its TEMP, DAYLENGTH and PAR switches) and the water  !
+   !      trigger. Day length and PAR are separate cues: day length is the photoperiod, a       !
+   !      calendar; PAR is the light the cohort actually receives, with its clouds and its     !
+   !      place in the canopy.                                                                 !
+   integer(ik), parameter :: CUE_NONE      = 0_ik   !< no cues (always flushing / no senescence)
+   integer(ik), parameter :: CUE_TEMP      = 1_ik   !< temperature: warmth sum (flush), cold sum (shed)
+   integer(ik), parameter :: CUE_DAYLENGTH = 2_ik   !< photoperiod: day length
+   integer(ik), parameter :: CUE_WATER     = 4_ik   !< water: predawn leaf psi summed against the TLP
+   integer(ik), parameter :: CUE_PAR       = 8_ik   !< light received: running-mean PAR at the cohort's top
+   integer(ik), parameter :: CUE_ALL       = CUE_TEMP + CUE_DAYLENGTH + CUE_WATER + CUE_PAR
 
    !----- Daily environmental drivers (read-only). ------------------------------------------!
    type :: pheno_env_t
       real(wp)    :: temp_day         = 0.0_wp    !< [K]   daily-mean air temperature
       real(wp)    :: daylength        = 12.0_wp   !< [h]   day length
-      real(wp)    :: rad              = 0.0_wp    !< [W/m2] daily-mean incident shortwave
+      real(wp)    :: par              = 0.0_wp    !< [umol/m2/s] daily-mean PAR at the cohort's top
       real(wp)    :: predawn_leaf_psi = 0.0_wp    !< [MPa, <=0] predawn (daily-max) leaf water potential
       integer(ik) :: doy              = 1_ik      !< [-]   day of year
       logical     :: hemis_north      = .true.    !< northern hemisphere (season windows)
@@ -56,7 +55,7 @@ module meds_phenology_types
       real(wp) :: cold_degree_days    = 0.0_wp   !< [K day] cold sum since midsummer       (TEMP shed)
       real(wp) :: wet_psi_sum         = 0.0_wp   !< [MPa day] sum of psi above the TLP     (WATER flush)
       real(wp) :: dry_psi_sum         = 0.0_wp   !< [MPa day] sum of psi below the TLP     (WATER shed)
-      real(wp) :: shortwave_mean      = 0.0_wp   !< [W/m2] running-mean shortwave  (LIGHT, radiation)
+      real(wp) :: par_mean            = 0.0_wp   !< [umol/m2/s] running-mean PAR          (PAR)
    end type pheno_state_t
 
    !----- Flat per-PFT trait set (filled by the driver from cfg%pft). ----------------------!
@@ -79,14 +78,18 @@ module meds_phenology_types
       real(wp)    :: shed_base_temp        = 290.15_wp      !< [K]
       real(wp)    :: shed_degree_days      = 50.0_wp        !< [K day] cold requirement
       real(wp)    :: shed_temp_sharpness   = 0.1_wp         !< [1/(K day)]
-      !----- Light: day length [h] or running-mean shortwave [W/m2], per light_variable. ---!
-      integer(ik) :: light_variable        = LIGHT_DAYLENGTH
-      real(wp)    :: flush_light_threshold = 12.0_wp        !< [h | W/m2]
-      real(wp)    :: flush_light_sharpness = 1.0_wp         !< [1/h | m2/W] > 0: more light permits
-      real(wp)    :: shed_light_threshold  = 11.0_wp        !< [h | W/m2]
-      real(wp)    :: shed_light_sharpness  = -1.0_wp        !< < 0: short days trigger senescence;
-                                                            !< > 0: bright light does (leaf exchange)
-      real(wp)    :: light_window          = 10.0_wp        !< [day] running mean (LIGHT_RADIATION)
+      !----- Day length (photoperiod). ---------------------------------------------------!
+      real(wp)    :: flush_daylength_threshold = 12.0_wp    !< [h]
+      real(wp)    :: flush_daylength_sharpness = 1.0_wp     !< [1/h] > 0: long days permit flushing
+      real(wp)    :: shed_daylength_threshold  = 11.0_wp    !< [h]
+      real(wp)    :: shed_daylength_sharpness  = -1.0_wp    !< [1/h] < 0: short days trigger senescence
+      !----- PAR received: a running mean of the daily PAR at the cohort's top. ------------!
+      real(wp)    :: flush_par_threshold   = 300.0_wp       !< [umol/m2/s]
+      real(wp)    :: flush_par_sharpness   = 0.02_wp        !< [m2 s/umol] > 0: bright light permits
+      real(wp)    :: shed_par_threshold    = 300.0_wp       !< [umol/m2/s]
+      real(wp)    :: shed_par_sharpness    = 0.02_wp        !< > 0: bright light triggers senescence
+                                                            !< (leaf exchange); < 0: dim light does
+      real(wp)    :: par_window            = 10.0_wp        !< [day] running-mean window
       !----- Water: predawn leaf psi summed against the turgor-loss point. -----------------!
       real(wp)    :: leaf_psi_tlp          = -2.0_wp        !< [MPa] turgor-loss point
       real(wp)    :: flush_water_sum       = 10.0_wp        !< [MPa day] wet sum that permits flushing

@@ -57,25 +57,25 @@ def test_evergreen_is_a_leaf_cover_floor_not_a_flag():
 
 def test_drought_deciduous_sheds_when_dry_and_reflushes():
     _lib_or_skip()
-    ph = pheno.Phenology(pheno.drought_deciduous())           # tlp = -1.5 MPa
+    ph = pheno.Phenology(pheno.drought_deciduous())           # threshold -0.33 MPa
     for _ in range(60):
-        wet = ph.step(predawn_leaf_psi=-0.4)
+        wet = ph.step(predawn_leaf_psi=-0.1)
     for _ in range(80):
-        dry = ph.step(predawn_leaf_psi=-3.0)
+        dry = ph.step(predawn_leaf_psi=-0.6)
     assert wet.leaf_shed_tendency < 0.05 and wet.leaf_cover > 0.99
     assert dry.leaf_shed_tendency > 0.9 and dry.leaf_cover < 0.2
-    for _ in range(40):
-        rewet = ph.step(predawn_leaf_psi=-0.4)
+    for _ in range(60):
+        rewet = ph.step(predawn_leaf_psi=-0.1)
     assert rewet.leaf_flush_tendency > 0.9 and rewet.leaf_cover > 0.9
 
 
 def test_light_exchanging_turns_over_while_staying_full():
     _lib_or_skip()
     p = pheno.light_exchanging()
-    dim = _drive(p, 60, rad=80.0)
-    bright = _drive(p, 60, rad=520.0)
+    dim = _drive(p, 60, par=170.0)
+    bright = _drive(p, 60, par=1100.0)
     assert dim.leaf_shed_tendency < 0.05 < bright.leaf_shed_tendency
-    assert bright.leaf_flush_tendency == 1.0
+    assert bright.leaf_flush_tendency > 0.99
     assert bright.senescence > 0.0 and bright.leaf_cover > 0.95   # exchanging, not thinning
 
 

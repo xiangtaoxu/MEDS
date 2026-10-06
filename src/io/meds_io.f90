@@ -68,7 +68,7 @@ contains
       integer(c_int) :: vc_lwm, vc_wwm, vc_lt, vc_wt       ! P6: per-cohort hydraulics/temperature state
       integer(c_int) :: vc_dmax, vc_dmax_acc                     ! #95: per-cohort predawn-psi stomatal feedback
       integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pcdd           ! the phenology tendencies + temperature sums
-      integer(c_int) :: vc_pdry, vc_pwet, vc_psw                   ! the water sums + shortwave running mean
+      integer(c_int) :: vc_pdry, vc_pwet, vc_ppar                  ! the water sums + PAR running mean
       integer(c_int) :: vs_tgrow                                   ! #176: growth-temperature running mean
       integer(c_int) :: vc_hgt, vc_ba, vc_agb, vc_la, vc_lc, vc_fc, vc_wc, vc_nc, vc_olai   ! pools + geometry
       integer(c_int) :: vc_lsw, vc_wsw                             ! canopy interception film
@@ -159,7 +159,7 @@ contains
       call dv(vc_pcdd, 'cold_degree_days',    NC_DOUBLE, [d_cohort], 'cold sum since midsummer [K day]')
       call dv(vc_pdry, 'dry_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
       call dv(vc_pwet, 'wet_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
-      call dv(vc_psw,  'shortwave_mean',      NC_DOUBLE, [d_cohort], 'running-mean incident shortwave [W/m2]')
+      call dv(vc_ppar, 'par_mean',      NC_DOUBLE, [d_cohort], 'running-mean PAR at the cohort top [umol/m2/s]')
       !----- The carbon pools and geometry as the running model holds them. Cohort fusion keeps the   !
       !      pools and derives the geometry from them, so a fused cohort sits off the allometry for   !
       !      its dbh; re-deriving them from dbh on read moved the leaf area (BCI: LAI 5.6380 written,  !
@@ -292,7 +292,7 @@ contains
             call put_coh(vc_pcdd, c%cold_degree_days(1:ncoh),    'cold_degree_days')
             call put_coh(vc_pdry, c%dry_psi_sum(1:ncoh),         'dry_psi_sum')
             call put_coh(vc_pwet, c%wet_psi_sum(1:ncoh),         'wet_psi_sum')
-            call put_coh(vc_psw,  c%shortwave_mean(1:ncoh),      'shortwave_mean')
+            call put_coh(vc_ppar, c%par_mean(1:ncoh),      'par_mean')
             call put_coh(vc_hgt,  c%height(1:ncoh),               'height')
             call put_coh(vc_ba,   c%basal_area(1:ncoh),           'basal_area')
             call put_coh(vc_agb,  c%agb(1:ncoh),                  'agb')
@@ -544,7 +544,7 @@ contains
             call gv_dbl_opt(ncid, 'cold_degree_days',    ncoh, c%cold_degree_days(1:ncoh))
             call gv_dbl_opt(ncid, 'dry_psi_sum',         ncoh, c%dry_psi_sum(1:ncoh))
             call gv_dbl_opt(ncid, 'wet_psi_sum',         ncoh, c%wet_psi_sum(1:ncoh))
-            call gv_dbl_opt(ncid, 'shortwave_mean',      ncoh, c%shortwave_mean(1:ncoh))
+            call gv_dbl_opt(ncid, 'par_mean',      ncoh, c%par_mean(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate

@@ -21,7 +21,7 @@ module meds_c_api_phenology
 
    !----- C mirror of pheno_env_t (4 doubles + 2 ints; hemis_north 0/1). --------------------!
    type, bind(c) :: pheno_env_c
-      real(c_double) :: temp_day, daylength, rad, predawn_leaf_psi
+      real(c_double) :: temp_day, daylength, par, predawn_leaf_psi
       integer(c_int) :: doy, hemis_north
    end type pheno_env_c
 
@@ -31,9 +31,10 @@ module meds_c_api_phenology
       real(c_double) :: flush_cue_timescale, shed_cue_timescale, flush_rate_max, shed_rate_max
       real(c_double) :: flush_base_temp, flush_degree_days, flush_temp_sharpness
       real(c_double) :: shed_base_temp, shed_degree_days, shed_temp_sharpness
-      integer(c_int) :: light_variable
-      real(c_double) :: flush_light_threshold, flush_light_sharpness
-      real(c_double) :: shed_light_threshold, shed_light_sharpness, light_window
+      real(c_double) :: flush_daylength_threshold, flush_daylength_sharpness
+      real(c_double) :: shed_daylength_threshold, shed_daylength_sharpness
+      real(c_double) :: flush_par_threshold, flush_par_sharpness
+      real(c_double) :: shed_par_threshold, shed_par_sharpness, par_window
       real(c_double) :: leaf_psi_tlp, flush_water_sum, flush_water_sharpness
       real(c_double) :: shed_water_sum, shed_water_sharpness
    end type pheno_params_c
@@ -41,7 +42,7 @@ module meds_c_api_phenology
    !----- C mirror of pheno_state_t (7 doubles; the prognostic memory, in/out). -------------!
    type, bind(c) :: pheno_state_c
       real(c_double) :: leaf_flush_tendency, leaf_shed_tendency, growing_degree_days,     &
-                        cold_degree_days, wet_psi_sum, dry_psi_sum, shortwave_mean
+                        cold_degree_days, wet_psi_sum, dry_psi_sum, par_mean
    end type pheno_state_c
 
    !----- C mirror of pheno_out_t (2 doubles). -----------------------------------------------!
@@ -69,7 +70,7 @@ contains
 
       env%temp_day         = env_c%temp_day
       env%daylength        = env_c%daylength
-      env%rad              = env_c%rad
+      env%par              = env_c%par
       env%predawn_leaf_psi = env_c%predawn_leaf_psi
       env%doy              = int(env_c%doy, ik)
       env%hemis_north      = env_c%hemis_north /= 0_c_int
@@ -86,12 +87,15 @@ contains
       p%shed_base_temp        = p_c%shed_base_temp
       p%shed_degree_days      = p_c%shed_degree_days
       p%shed_temp_sharpness   = p_c%shed_temp_sharpness
-      p%light_variable        = int(p_c%light_variable, ik)
-      p%flush_light_threshold = p_c%flush_light_threshold
-      p%flush_light_sharpness = p_c%flush_light_sharpness
-      p%shed_light_threshold  = p_c%shed_light_threshold
-      p%shed_light_sharpness  = p_c%shed_light_sharpness
-      p%light_window          = p_c%light_window
+      p%flush_daylength_threshold = p_c%flush_daylength_threshold
+      p%flush_daylength_sharpness = p_c%flush_daylength_sharpness
+      p%shed_daylength_threshold  = p_c%shed_daylength_threshold
+      p%shed_daylength_sharpness  = p_c%shed_daylength_sharpness
+      p%flush_par_threshold   = p_c%flush_par_threshold
+      p%flush_par_sharpness   = p_c%flush_par_sharpness
+      p%shed_par_threshold    = p_c%shed_par_threshold
+      p%shed_par_sharpness    = p_c%shed_par_sharpness
+      p%par_window            = p_c%par_window
       p%leaf_psi_tlp          = p_c%leaf_psi_tlp
       p%flush_water_sum       = p_c%flush_water_sum
       p%flush_water_sharpness = p_c%flush_water_sharpness
@@ -104,7 +108,7 @@ contains
       state%cold_degree_days    = state_c%cold_degree_days
       state%wet_psi_sum         = state_c%wet_psi_sum
       state%dry_psi_sum         = state_c%dry_psi_sum
-      state%shortwave_mean      = state_c%shortwave_mean
+      state%par_mean      = state_c%par_mean
 
       call phenology_kernel(env, p, real(dt, wp), state, out)
 
@@ -114,7 +118,7 @@ contains
       state_c%cold_degree_days    = state%cold_degree_days
       state_c%wet_psi_sum         = state%wet_psi_sum
       state_c%dry_psi_sum         = state%dry_psi_sum
-      state_c%shortwave_mean      = state%shortwave_mean
+      state_c%par_mean      = state%par_mean
       out_c%leaf_flush_potential  = out%leaf_flush_potential
       out_c%leaf_shed_potential   = out%leaf_shed_potential
    end subroutine meds_phenology_step

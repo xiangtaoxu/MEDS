@@ -170,19 +170,23 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # equal the number of PFTs. Leaf habit (deciduous, semi-deciduous, evergreen) comes from these
 # parameters: a deciduous PFT senesces to min_leaf_cover = 0, an evergreen one stops above 0.
 #
-# Three cues, chosen independently for each side by a bit mask: 1 = TEMP, 2 = LIGHT, 4 = WATER.
-#   TEMP : warmth above flush_base_temp summed from midwinter; cold below shed_base_temp summed
-#          from midsummer.
-#   LIGHT: day length [h] (light_variable = 1) or the running-mean shortwave [W/m2] (= 2).
-#   WATER: predawn leaf water potential summed above and below the PFT's turgor-loss point
-#          [MPa day]; each sum restarts when the other side's switch crosses 0.5.
+# Four cues, chosen independently for each side by a bit mask: 1 = TEMP, 2 = DAYLENGTH,
+# 4 = WATER, 8 = PAR.
+#   TEMP     : warmth above flush_base_temp summed from midwinter; cold below shed_base_temp
+#              summed from midsummer.
+#   DAYLENGTH: the photoperiod [h].
+#   WATER    : predawn leaf water potential summed above and below the PFT's turgor-loss point
+#              [MPa day]; each sum restarts when the other side's switch crosses 0.5.
+#   PAR      : the running mean of the daily PAR reaching the cohort's top [umol/m2/s], so each
+#              cohort sees its own place in the canopy.
 # Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s; it rises from 0.12 to
 # 0.88 over x* +- 2/|s|, and s < 0 turns it on as x falls. The flush signal is the PRODUCT of the
 # flush cues' switches; the shed signal is the larger of the seasonal trigger (the product of the
-# TEMP and LIGHT switches) and the WATER switch. A mask of 0 always flushes / never senesces.
+# TEMP, DAYLENGTH and PAR switches) and the WATER switch. A mask of 0 always flushes / never
+# senesces.
 #
-# Example below: PFT 1 a temperate deciduous tree (TEMP and LIGHT on both sides), PFTs 2 and 3
-# always flushing and never senescing.
+# Example below: PFT 1 a temperate deciduous tree (TEMP and DAYLENGTH on both sides), PFTs 2 and
+# 3 always flushing and never senescing.
 # [phenology]
 # flush_cue_mask        = [3, 0, 0]                # [bitmask] cues of the flush side
 # shed_cue_mask         = [3, 0, 0]                # [bitmask] cues of the shed side
@@ -198,15 +202,17 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # shed_base_temp        = [290.15, 290.15, 290.15] # [K]     cold base
 # shed_degree_days      = [50.0, 50.0, 50.0]       # [K day] cold requirement after midsummer
 # shed_temp_sharpness   = [0.1, 0.1, 0.1]          # [1/(K day)]
-# light_variable        = [1, 1, 1]                # [--]    1 day length [h], 2 running-mean shortwave [W/m2]
-# flush_light_threshold = [12.0, 12.0, 12.0]       # [h | W/m2]
-# flush_light_sharpness = [1.0, 1.0, 1.0]          # [1/h | m2/W]  a day-length gate fits as a step (~8)
-# shed_light_threshold  = [11.0, 11.0, 11.0]       # [h | W/m2]
-# shed_light_sharpness  = [-1.0, -1.0, -1.0]       # [1/h | m2/W]  < 0: short days trigger senescence
+# flush_daylength_threshold = [12.0, 12.0, 12.0]   # [h]
+# flush_daylength_sharpness = [1.0, 1.0, 1.0]      # [1/h]   a flush gate fits as a step (~8)
+# shed_daylength_threshold  = [11.0, 11.0, 11.0]   # [h]
+# shed_daylength_sharpness  = [-1.0, -1.0, -1.0]   # [1/h]   < 0: short days trigger senescence
 #
-# OPTIONAL: the shortwave running-mean window (light_variable = 2) and the WATER cue; absent keys
-# keep the defaults shown.
-# light_window          = [10.0, 10.0, 10.0]       # [day]   shortwave running-mean window
+# OPTIONAL: the PAR and WATER cues; absent keys keep the defaults shown.
+# flush_par_threshold   = [300.0, 300.0, 300.0]    # [umol/m2/s]
+# flush_par_sharpness   = [0.02, 0.02, 0.02]       # [m2 s/umol] > 0: bright light permits flushing
+# shed_par_threshold    = [300.0, 300.0, 300.0]    # [umol/m2/s]
+# shed_par_sharpness    = [0.02, 0.02, 0.02]       # [m2 s/umol] > 0: bright light triggers senescence
+# par_window            = [10.0, 10.0, 10.0]       # [day]   PAR running-mean window
 # flush_water_sum       = [10.0, 10.0, 10.0]       # [MPa day] wet sum that permits flushing
 # flush_water_sharpness = [0.5, 0.5, 0.5]          # [1/(MPa day)]
 # shed_water_sum        = [10.0, 10.0, 10.0]       # [MPa day] dry sum that triggers shedding

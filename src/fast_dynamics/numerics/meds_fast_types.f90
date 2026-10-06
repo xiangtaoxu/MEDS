@@ -234,6 +234,8 @@ module meds_fast_types
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
                                                         !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] absorbed SW / net LW per cohort (WOOD energy)
+      real(wp), allocatable :: par_top(:)               !< [W/m2] PAR (VIS) reaching the cohort's top: the
+                                                        !< phenology PAR cue's driver (canopy light gradient)
    end type column_forcing_t
 
    !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!

@@ -16,7 +16,7 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
+   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day, par_w_2_umol
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
    use meds_time,                 only : daylength
@@ -980,11 +980,11 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Advance the leaf phenology of every cohort over one slow step (the folded phenology driver, !
    ! ED2 phenology_driv analogue). It flattens the per-PFT cue params, builds the daily env from  !
-   ! the site daily means the fast loop accumulated (air temperature, shortwave) + the cohort's    !
-   ! predawn leaf psi + latitude + day-of-year, advances the kernel, and writes the tendencies and !
-   ! cue memory back to the cohort. It touches NO leaf/storage carbon; compute_carbon_allocation   !
-   ! turns the stored tendencies into leaf growth and loss. A no-temperature step (no fast         !
-   ! sub-steps ran) is skipped so the memory is never advanced on a bogus 0/0 mean.                !
+   ! what the fast loop accumulated (the site's air temperature, each cohort's PAR at its top) +   !
+   ! the cohort's predawn leaf psi + latitude + day-of-year, advances the kernel, and writes the   !
+   ! tendencies and cue memory back to the cohort. It touches NO leaf/storage carbon;             !
+   ! compute_carbon_allocation turns the stored tendencies into leaf growth and loss. A step with  !
+   ! no fast sub-steps is skipped so the memory is never advanced on a bogus 0/0 mean.             !
    !---------------------------------------------------------------------------------------!
    subroutine advance_leaf_phenology(site, cfg, doy, latitude_deg)
       type(site_t),        intent(inout) :: site
@@ -998,7 +998,7 @@ contains
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: i, pf
-      real(wp)    :: dt_days, temp_day, dlen, rad_day, nsub, lat
+      real(wp)    :: dt_days, temp_day, dlen, lat
       logical     :: north
 
       if (site%pheno_tair_n < 1_ik) return             ! no fast sub-steps this slow step -> no drivers
@@ -1008,12 +1008,6 @@ contains
       if (present(latitude_deg)) lat = latitude_deg
       north    = lat >= 0.0_wp
       dlen     = daylength(lat, doy)
-      !----- The area-weighted shortwave (#150). pheno_tair_n counts (sub-step, patch) pairs and  !
-      !      the shortwave sum carries the patch area, which sums to 1 -- so the daily mean divides !
-      !      by the SUB-STEP count, not by the pair count. With one patch the two agree, which is   !
-      !      exactly why getting this wrong would hide in every single-patch test.  ----------------!
-      nsub     = real(site%pheno_tair_n, wp) / real(max(site%patch%n, 1_ik), wp)
-      rad_day  = site%pheno_rad_sum / max(nsub, 1.0_wp)
 
       do i = 1_ik, site%cohort%n
          pf = site%cohort%pft(i)
@@ -1025,7 +1019,9 @@ contains
          !      that is the same seeding convention the leaf kernel uses.                            !
          env%temp_day         = temp_day
          env%daylength        = dlen
-         env%rad              = rad_day
+         !----- par_accum is the PAR (VIS) reaching the cohort's top integrated over the step     !
+         !      [J/m2]; over dt_slow it is the daily mean, in photons for the cue. ----------------!
+         env%par              = site%cohort%par_accum(i) / cfg%dt_slow * par_w_2_umol
          env%predawn_leaf_psi = min(0.0_wp, site%cohort%dmax_psi_leaf(i))
          env%doy              = doy
          env%hemis_north      = north
@@ -1037,7 +1033,7 @@ contains
          state%cold_degree_days    = site%cohort%cold_degree_days(i)
          state%wet_psi_sum         = site%cohort%wet_psi_sum(i)
          state%dry_psi_sum         = site%cohort%dry_psi_sum(i)
-         state%shortwave_mean      = site%cohort%shortwave_mean(i)
+         state%par_mean      = site%cohort%par_mean(i)
          call phenology_kernel(env, params, dt_days, state, out)
          site%cohort%leaf_flush_tendency(i) = state%leaf_flush_tendency
          site%cohort%leaf_shed_tendency(i)  = state%leaf_shed_tendency
@@ -1045,7 +1041,7 @@ contains
          site%cohort%cold_degree_days(i)    = state%cold_degree_days
          site%cohort%wet_psi_sum(i)         = state%wet_psi_sum
          site%cohort%dry_psi_sum(i)         = state%dry_psi_sum
-         site%cohort%shortwave_mean(i)      = state%shortwave_mean
+         site%cohort%par_mean(i)      = state%par_mean
       end do
    end subroutine advance_leaf_phenology
 
@@ -1158,12 +1154,15 @@ contains
          p%shed_base_temp        = t%pheno_shed_base_temp(ipft)
          p%shed_degree_days      = t%pheno_shed_degree_days(ipft)
          p%shed_temp_sharpness   = t%pheno_shed_temp_sharpness(ipft)
-         p%light_variable        = t%pheno_light_variable(ipft)
-         p%flush_light_threshold = t%pheno_flush_light_threshold(ipft)
-         p%flush_light_sharpness = t%pheno_flush_light_sharpness(ipft)
-         p%shed_light_threshold  = t%pheno_shed_light_threshold(ipft)
-         p%shed_light_sharpness  = t%pheno_shed_light_sharpness(ipft)
-         p%light_window          = t%pheno_light_window(ipft)
+         p%flush_daylength_threshold = t%pheno_flush_daylength_threshold(ipft)
+         p%flush_daylength_sharpness = t%pheno_flush_daylength_sharpness(ipft)
+         p%shed_daylength_threshold  = t%pheno_shed_daylength_threshold(ipft)
+         p%shed_daylength_sharpness  = t%pheno_shed_daylength_sharpness(ipft)
+         p%flush_par_threshold   = t%pheno_flush_par_threshold(ipft)
+         p%flush_par_sharpness   = t%pheno_flush_par_sharpness(ipft)
+         p%shed_par_threshold    = t%pheno_shed_par_threshold(ipft)
+         p%shed_par_sharpness    = t%pheno_shed_par_sharpness(ipft)
+         p%par_window            = t%pheno_par_window(ipft)
          p%flush_water_sum       = t%pheno_flush_water_sum(ipft)
          p%flush_water_sharpness = t%pheno_flush_water_sharpness(ipft)
          p%shed_water_sum        = t%pheno_shed_water_sum(ipft)

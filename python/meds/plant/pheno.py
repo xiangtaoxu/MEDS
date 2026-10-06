@@ -3,8 +3,8 @@
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
 same libmeds.so as meds.plant's gas exchange -- one C-API for the whole model). Each day it takes
-the cues (air temperature, day length or shortwave, predawn leaf water potential) and per-PFT
-traits, and advances two smoothed tendencies in [0,1]: leaf_flush_tendency and leaf_shed_tendency.
+the cues (air temperature, day length, PAR, predawn leaf water potential) and per-PFT traits, and
+advances two smoothed tendencies in [0,1]: leaf_flush_tendency and leaf_shed_tendency.
 
     import meds.plant.pheno as pheno
 
@@ -23,12 +23,12 @@ from __future__ import annotations
 import ctypes
 from ctypes import c_double, c_int, byref, POINTER
 from dataclasses import dataclass, asdict, fields
-from enum import IntEnum, IntFlag
+from enum import IntFlag
 
 from ._ffi import _lib   # the shared libmeds.so handle (also used by leaf gas exchange)
 
 __all__ = [
-    "Cue", "Light", "Params", "State", "Out", "Day", "Phenology", "step", "leaf_step", "daylength",
+    "Cue", "Params", "State", "Out", "Day", "Phenology", "step", "leaf_step", "daylength",
     "temperate_deciduous", "boreal_evergreen", "drought_deciduous", "light_exchanging",
     "self_test",
 ]
@@ -39,7 +39,7 @@ __all__ = [
 #  src/c_api/meds_c_api_phenology.f90.                                                      #
 #===========================================================================================#
 _ENV_FIELDS = [
-    ("temp_day", c_double), ("daylength", c_double), ("rad", c_double),
+    ("temp_day", c_double), ("daylength", c_double), ("par", c_double),
     ("predawn_leaf_psi", c_double), ("doy", c_int), ("hemis_north", c_int),
 ]
 _PARAM_FIELDS = [
@@ -48,16 +48,17 @@ _PARAM_FIELDS = [
     ("flush_rate_max", c_double), ("shed_rate_max", c_double),
     ("flush_base_temp", c_double), ("flush_degree_days", c_double), ("flush_temp_sharpness", c_double),
     ("shed_base_temp", c_double), ("shed_degree_days", c_double), ("shed_temp_sharpness", c_double),
-    ("light_variable", c_int),
-    ("flush_light_threshold", c_double), ("flush_light_sharpness", c_double),
-    ("shed_light_threshold", c_double), ("shed_light_sharpness", c_double), ("light_window", c_double),
+    ("flush_daylength_threshold", c_double), ("flush_daylength_sharpness", c_double),
+    ("shed_daylength_threshold", c_double), ("shed_daylength_sharpness", c_double),
+    ("flush_par_threshold", c_double), ("flush_par_sharpness", c_double),
+    ("shed_par_threshold", c_double), ("shed_par_sharpness", c_double), ("par_window", c_double),
     ("leaf_psi_tlp", c_double), ("flush_water_sum", c_double), ("flush_water_sharpness", c_double),
     ("shed_water_sum", c_double), ("shed_water_sharpness", c_double),
 ]
 _STATE_FIELDS = [
     ("leaf_flush_tendency", c_double), ("leaf_shed_tendency", c_double),
     ("growing_degree_days", c_double), ("cold_degree_days", c_double),
-    ("wet_psi_sum", c_double), ("dry_psi_sum", c_double), ("shortwave_mean", c_double),
+    ("wet_psi_sum", c_double), ("dry_psi_sum", c_double), ("par_mean", c_double),
 ]
 _OUT_FIELDS = [("leaf_flush_potential", c_double), ("leaf_shed_potential", c_double)]
 
@@ -105,17 +106,12 @@ def _make(struct_cls, src):
 class Cue(IntFlag):
     """Cue-enable bits (mirror meds_phenology_types). flush_cue_mask and shed_cue_mask pick the
     cues of each side: the flush signal is the PRODUCT of its cues' switches, the shed signal the
-    larger of the seasonal trigger (TEMP x LIGHT) and the water trigger."""
+    larger of the seasonal trigger (TEMP x DAYLENGTH x PAR) and the water trigger."""
     NONE = 0
-    TEMP = 1     # warmth sum from midwinter (flush), cold sum from midsummer (shed)
-    LIGHT = 2    # day length or running-mean shortwave (Params.light_variable)
-    WATER = 4    # predawn leaf water potential summed above / below the turgor-loss point
-
-
-class Light(IntEnum):
-    """Which variable the light cue reads."""
-    DAYLENGTH = 1    # day length [h]
-    RADIATION = 2    # running-mean incident shortwave [W/m2]
+    TEMP = 1        # warmth sum from midwinter (flush), cold sum from midsummer (shed)
+    DAYLENGTH = 2   # photoperiod [h]
+    WATER = 4       # predawn leaf water potential summed above / below the turgor-loss point
+    PAR = 8         # running-mean PAR at the cohort's top [umol/m2/s]
 
 
 @dataclass
@@ -139,12 +135,15 @@ class Params:
     shed_base_temp: float = 290.15            # [K]
     shed_degree_days: float = 50.0            # [K day] cold requirement
     shed_temp_sharpness: float = 0.1          # [1/(K day)]
-    light_variable: int = Light.DAYLENGTH
-    flush_light_threshold: float = 12.0       # [h | W/m2]
-    flush_light_sharpness: float = 1.0        # [1/h | m2/W]; > 0: more light permits flushing
-    shed_light_threshold: float = 11.0        # [h | W/m2]
-    shed_light_sharpness: float = -1.0        # < 0: short days trigger; > 0: bright light does
-    light_window: float = 10.0                # [day] running mean (Light.RADIATION)
+    flush_daylength_threshold: float = 12.0   # [h]
+    flush_daylength_sharpness: float = 1.0    # [1/h]; > 0: long days permit flushing
+    shed_daylength_threshold: float = 11.0    # [h]
+    shed_daylength_sharpness: float = -1.0    # [1/h]; < 0: short days trigger senescence
+    flush_par_threshold: float = 300.0        # [umol/m2/s]
+    flush_par_sharpness: float = 0.02         # [m2 s/umol]; > 0: bright light permits flushing
+    shed_par_threshold: float = 300.0         # [umol/m2/s]
+    shed_par_sharpness: float = 0.02          # > 0: bright light triggers senescence; < 0: dim does
+    par_window: float = 10.0                  # [day] PAR running mean
     leaf_psi_tlp: float = -2.0                # [MPa] turgor-loss point
     flush_water_sum: float = 10.0             # [MPa day]
     flush_water_sharpness: float = 0.5        # [1/(MPa day)]
@@ -165,7 +164,7 @@ class State:
     cold_degree_days: float = 0.0
     wet_psi_sum: float = 0.0
     dry_psi_sum: float = 0.0
-    shortwave_mean: float = 0.0
+    par_mean: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -185,7 +184,7 @@ class Day:
     background: float              # [-] leaf cover lost to background turnover today
 
 
-_ENV_DEFAULTS = dict(temp_day=298.15, daylength=12.0, rad=400.0, predawn_leaf_psi=0.0,
+_ENV_DEFAULTS = dict(temp_day=298.15, daylength=12.0, par=800.0, predawn_leaf_psi=0.0,
                      doy=1, hemis_north=True)
 
 
@@ -267,8 +266,8 @@ class Phenology:
 
 
 #===========================================================================================#
-#  Leaf habits as parameter sets. The two temperate ones are the example02 fits (Harvard      #
-#  Forest MODIS LAI + litter; Hyytiala needle litter); the two tropical ones are illustrative. #
+#  Leaf habits as parameter sets, from examples/example02_canopy_phenology: Harvard Forest     #
+#  (fitted), Hyytiala (fitted), the BCI light exchanger (fitted) and drought-deciduous species. #
 #===========================================================================================#
 def _preset(defaults, overrides) -> Params:
     names = {f.name for f in fields(Params)}
@@ -281,40 +280,47 @@ def _preset(defaults, overrides) -> Params:
 def temperate_deciduous(**overrides) -> Params:
     """Cold-deciduous (Harvard Forest): flush on warmth while days are longer than a photoperiod
     threshold, senesce on cold once days shorten; no leaf-cover floor, so the canopy goes bare."""
-    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
+    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.DAYLENGTH, shed_cue_mask=Cue.TEMP | Cue.DAYLENGTH,
                         flush_rate_max=0.03386, shed_rate_max=0.3329,
                         leaf_turnover_rate=0.0003072, flush_degree_days=93.98,
                         shed_base_temp=290.1, shed_degree_days=46.18,
-                        flush_light_threshold=13.75, flush_light_sharpness=7.99,
-                        shed_light_threshold=9.127), overrides)
+                        flush_daylength_threshold=13.75, flush_daylength_sharpness=7.99,
+                        shed_daylength_threshold=9.127), overrides)
 
 
 def boreal_evergreen(**overrides) -> Params:
-    """Evergreen conifer (Scots pine, Hyytiala): the same cues as the deciduous habit, but
-    senescence stops at min_leaf_cover -- the old needle cohort -- so the canopy never goes bare."""
-    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
-                        flush_rate_max=0.02435, shed_rate_max=0.159,
-                        leaf_turnover_rate=0.2377, min_leaf_cover=0.8786,
-                        flush_degree_days=137.5, shed_base_temp=279.9,
-                        shed_degree_days=36.77, flush_light_threshold=13.08,
-                        flush_light_sharpness=6.585, shed_light_threshold=14.49),
-                   overrides)
+    """Evergreen conifer (Scots pine, Hyytiala): flush on warmth and bright PAR, senesce as PAR
+    dims in autumn; senescence stops at min_leaf_cover -- the needles kept -- so the canopy never
+    goes bare."""
+    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.PAR, shed_cue_mask=Cue.TEMP | Cue.PAR,
+                        flush_degree_days=88.0, shed_base_temp=299.6, shed_degree_days=455.8,
+                        flush_rate_max=0.2866, shed_rate_max=0.03123, leaf_turnover_rate=0.2742,
+                        min_leaf_cover=0.895, flush_par_threshold=306.5,
+                        flush_par_sharpness=0.3694, shed_par_threshold=124.2,
+                        shed_par_sharpness=-0.01328, par_window=16.09), overrides)
 
 
 def drought_deciduous(**overrides) -> Params:
-    """Facultative drought-deciduous (tropical dry forest): flush and senescence keyed on the
-    predawn leaf water potential against the turgor-loss point. Illustrative values."""
-    return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.WATER, leaf_psi_tlp=-1.5,
-                        flush_rate_max=1.0 / 15.0, shed_rate_max=1.0 / 20.0), overrides)
+    """Drought-deciduous tropical tree (BCI example): flush and senesce on the predawn water
+    potential, with a high threshold and no PAR response, so it is leafless in the dry season.
+    Its water threshold is on example02's soil-water surrogate scale."""
+    return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.PAR | Cue.WATER,
+                        leaf_psi_tlp=-0.33, flush_water_sum=3.0, flush_water_sharpness=6.667,
+                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_cue_timescale=2.0,
+                        flush_rate_max=0.06667, shed_rate_max=0.1, leaf_turnover_rate=0.0,
+                        min_leaf_cover=0.0, shed_par_threshold=5000.0), overrides)
 
 
 def light_exchanging(**overrides) -> Params:
-    """Light-driven leaf exchange (tropical evergreen): always flushing, senescence rising with the
-    running-mean shortwave, so the canopy stays near full while turning over. Illustrative."""
-    return _preset(dict(flush_cue_mask=Cue.NONE, shed_cue_mask=Cue.LIGHT,
-                        light_variable=Light.RADIATION, shed_light_threshold=280.0,
-                        shed_light_sharpness=0.05, flush_rate_max=1.0 / 12.0,
-                        shed_rate_max=1.0 / 25.0, leaf_turnover_rate=0.5), overrides)
+    """Light-driven leaf exchanger (BCI example): a water threshold it never reaches, and senescence
+    on bright PAR while the canopy refills, so leaves turn over in the dry season and the canopy
+    stays full."""
+    return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.PAR | Cue.WATER,
+                        leaf_psi_tlp=-1.5, flush_water_sum=3.0, flush_water_sharpness=6.667,
+                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_rate_max=0.1699,
+                        shed_rate_max=0.002864, leaf_turnover_rate=0.6122,
+                        min_leaf_cover=0.8349, shed_par_threshold=445.3,
+                        shed_par_sharpness=0.4996, par_window=3.684), overrides)
 
 
 def self_test() -> None:
@@ -325,7 +331,7 @@ def self_test() -> None:
         day = none.step(temp_day=298.15, doy=doy)
     assert abs(day.leaf_cover - 1.0) < 1e-12 and day.senescence == 0.0, "no cues should hold full"
 
-    autumn = dict(temp_day=275.0, daylength=8.5)
+    autumn = dict(temp_day=275.0, daylength=8.5, par=60.0)          # cold, short and dim
     dec = Phenology(temperate_deciduous())
     for doy in range(250, 330):
         day = dec.step(doy=doy, **autumn)

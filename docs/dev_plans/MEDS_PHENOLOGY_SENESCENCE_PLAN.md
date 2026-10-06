@@ -535,10 +535,58 @@ the implementation added or found:
 4. **The dormant snap needs the sharp gate.** With a gradual gate the flush tendency never falls
    below the 10⁻⁶ day⁻¹ dormancy rate, so a deciduous canopy sits at a small residual cover instead
    of going bare; with the step gate it goes bare.
-5. **Deferred:** renaming `leaf_lifespan_toc` to `leaf_turnover_rate_toc` (D2); a per-cohort light
-   gradient for the shortwave cue; the tropical examples (Guanacaste water cue, BCI shortwave cue);
-   scoring a coupled run's leaf cycle. The biophysics example's PFT file takes the Harvard values,
-   but its committed outputs predate the scheme.
+5. **Deferred:** renaming `leaf_lifespan_toc` to `leaf_turnover_rate_toc` (D2); the water cue on
+   the model's own predawn leaf potential (Guanacaste, with the shed-to-water feedback); scoring a
+   coupled run's leaf cycle. The biophysics example's PFT file takes the Harvard values, but its
+   committed outputs predate the scheme. (The per-cohort light and the tropical examples: §12.)
+
+## 12. Day length or PAR, and the tropical examples (owner, 2026-10-06)
+
+The owner asked whether one light variable could serve all habits (PAR in the temperate fits, or day
+length in the tropics) and, if not, to separate the photoperiod and PAR controls; and for a tropical
+example at BCI with a soil-moisture surrogate for predawn water potential.
+
+**Test** (`~/claude_workspace/meds_pheno_proto/light_test.py`, a Python emulator of the kernel checked
+against the compiled one to 1e-16, so each side can read either variable). Same loss and data as the
+example; the PAR fits carry the averaging window as one more parameter.
+
+| Light cue, flush / senescence | Harvard | Hyytiälä | BCI exchanger, senescence only | BCI exchanger, both sides |
+|---|---|---|---|---|
+| day length / day length | **0.0429** | 1.03 (example fit) | 0.138 | 0.101 |
+| PAR / PAR | 0.0524 | **0.699** | **0.067** | **0.065** |
+| day length / PAR | 0.0491 | 0.750 | — | — |
+| PAR / day length | 0.0461 | 0.810 | — | — |
+
+- Harvard: a PAR flush gate nearly doubles the spring timing error (RMSE 5.5 → 9.6 days, r 0.31 →
+  0.05); PAR on the senescence side costs 0.6–0.9 days in autumn.
+- Hyytiälä: PAR raises the needle-fall correlation from 0.85 to 0.91.
+- BCI (GLiMP 2003–2019, Lutz shortwave × 2.115 as PAR, canopy floor ≥ 0.8): day length reaches 0.051
+  without the floor only by stripping an evergreen canopy to 27 %; with it, PAR wins and follows the
+  year-to-year dry-season litter (r 0.59 against 0.08).
+- No mixed pair beats the best pure one at any site.
+
+**Decision: separate cues.** The light cue becomes two: DAYLENGTH (bit 2) and PAR (bit 8; WATER stays
+4). PAR is the running mean of the daily PAR reaching the cohort's top: the two-stream solver now
+returns the beam plus downward diffuse at each layer's top (`incid_top`), the fast loop sums it per
+cohort (`par_accum`, the gpp_accum pattern, no reduction), and the driver divides by the step. So the
+cue carries the canopy light gradient; the site shortwave reduction for phenology is gone. Example02
+moves Hyytiälä to PAR (refit: r 0.90, 0.30 canopy a year).
+
+**BCI example.** Drivers from the BCI tower (July 2012 – August 2017): PAR = 2.11 × shortwave;
+predawn potential surrogate ψ = −exp(−3.74) (SWC/0.829)^−2.58 MPa, a Campbell curve fitted to Kupers
+et al.'s 1,020 paired samples (r −0.42; spatial scatter dominates) with the tower/plot moisture ratio
+on their four dates as the bulk density. The surrogate spans −0.05 to −0.9 MPa, so the water
+thresholds are on its scale, not a leaf TLP. Two species, the same masks (flush WATER; senescence
+PAR + WATER):
+
+- light exchanger, fitted to GLiMP (share RMSE 0.19, r 0.91, one canopy a year, after Leigh 1999):
+  water threshold −1.5 MPa (never reached), senescence when the 3.7-day PAR mean passes 445; cover
+  stays 1, half the year's leaf loss in January–April;
+- drought-deciduous, set by hand: threshold −0.33 MPa, senescence after 1 MPa day of drought
+  (sharpness 20), reflush after 3 MPa day of wetting, flush smoothing 2 days, no PAR response;
+  leafless 29–100 days each dry season, 1.16 canopies a year. Sharpness 5 left a 0.7 % senescence
+  floor that, refilled by the flush, cost 0.25 canopy a year; 5-day flush smoothing overlapped the
+  drop by another 0.1.
 
 ## References
 

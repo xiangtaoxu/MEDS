@@ -56,6 +56,9 @@ module meds_constants
    real(wp), parameter :: cp_liq = 4186.0_wp                 !< liquid-water cp (store water, advected enthalpy)
    real(wp), parameter :: cp_ice = 2093.0_wp                 !< ice cp (frozen-store heat capacity)
    real(wp), parameter :: latent_heat_fusion = 3.34e5_wp     !< [J/kg] latent heat of fusion (freeze/thaw plateau)
+
+   !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J] (~4.57). ---------------!
+   real(wp), parameter :: par_w_2_umol = 4.6_wp
    real(wp), parameter :: k_water = 0.57_wp                  !< liquid-water thermal conductivity
    real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
    real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity

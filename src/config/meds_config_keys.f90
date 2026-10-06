@@ -28,12 +28,14 @@ module meds_config_keys
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
    character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &
-      'signed sharpness: flush_temp_sharpness, shed_temp_sharpness, flush_light_sharpness, '//         &
-      'shed_light_sharpness, flush_water_sharpness, shed_water_sharpness'
+      'signed sharpness: flush_temp_sharpness, shed_temp_sharpness, flush_daylength_sharpness, '//     &
+      'shed_daylength_sharpness, flush_par_sharpness, shed_par_sharpness, flush_water_sharpness, '//   &
+      'shed_water_sharpness'
    character(len=*), parameter :: PHENO_CHILL = 'chilling is gone: the warmth requirement is the '//   &
       'constant flush_degree_days, warmth above flush_base_temp summed from midwinter'
    character(len=*), parameter :: PHENO_COLD = 'senescence follows a cold sum below shed_base_temp '//  &
-      'from midsummer (shed_degree_days) and short days (shed_light_threshold, shed_light_sharpness)'
+      'from midsummer (shed_degree_days) and short days (shed_daylength_threshold, '//             &
+      'shed_daylength_sharpness)'
    character(len=*), parameter :: PHENO_WATER = 'the water cue is predawn leaf psi summed against the '// &
       'turgor-loss point: flush_water_sum and shed_water_sum [MPa day]; no soil-water cue'
    character(len=*), parameter :: PHENO_HABIT = 'leaf habit comes from the phenology parameters: '//    &
@@ -92,8 +94,8 @@ module meds_config_keys
       retired_key_t('phenology.cold_drop_daylength', PHENO_COLD),                                &
       retired_key_t('phenology.cold_drop_soiltemp1', PHENO_COLD),                                &
       retired_key_t('phenology.cold_drop_soiltemp2', PHENO_COLD),                                &
-      retired_key_t('phenology.photo_crit', 'renamed flush_light_threshold (light_variable = 1)'), &
-      retired_key_t('phenology.photo_slope', 'renamed flush_light_sharpness'),                   &
+      retired_key_t('phenology.photo_crit', 'renamed flush_daylength_threshold'),                &
+      retired_key_t('phenology.photo_slope', 'renamed flush_daylength_sharpness'),               &
       retired_key_t('phenology.cue_sharpness', PHENO_SHARP),                                     &
       retired_key_t('phenology.gdd_width', PHENO_SHARP),                                         &
       retired_key_t('phenology.daylen_width', PHENO_SHARP),                                      &
@@ -107,8 +109,9 @@ module meds_config_keys
                     'below the turgor-loss point [MPa day]'),                                    &
       retired_key_t('phenology.high_psi_threshold', 'renamed flush_water_sum, now a sum of psi '// &
                     'above the turgor-loss point [MPa day]'),                                    &
-      retired_key_t('phenology.light_on_threshold', 'renamed shed_light_threshold, with '//       &
-                    'light_variable = 2 and a positive shed_light_sharpness'),                   &
+      retired_key_t('phenology.light_on_threshold', 'renamed shed_par_threshold [umol/m2/s], '//  &
+                    'with a positive shed_par_sharpness (the PAR cue, mask bit 8)'),             &
+      retired_key_t('phenology.light_window', 'renamed par_window'),                             &
       retired_key_t('phenology.evg_ref_temp', PHENO_HABIT),                                      &
       retired_key_t('phenology.evg_slope', PHENO_HABIT),                                         &
       retired_key_t('pft.evergreen', PHENO_HABIT),                                               &

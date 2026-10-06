@@ -13,7 +13,7 @@
 !                            skipped.                                                            !
 !   4. THE CUE DRIVERS, each against a HAND-COMPUTED value, because nothing else checks that the !
 !      numbers the fast loop reduces are the numbers the kernel reads: the warmth and cold sums,  !
-!      the predawn-psi sums against the PFT's derived turgor-loss point, the shortwave mean.     !
+!      the predawn-psi sums against the PFT's derived turgor-loss point, each cohort's PAR mean.!
 !   5. ACCEPTANCE          : a drought-deciduous and a light-exchanging PFT run end to end.      !
 !==========================================================================================!
 program test_phenology_driver
@@ -22,7 +22,8 @@ program test_phenology_driver
    use meds_site_state_types,     only : site_t
    use meds_init,                 only : init_bare_ground, add_cohort
    use meds_vegetation_dynamics,  only : advance_leaf_phenology
-   use meds_phenology_types,      only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_LIGHT, LIGHT_RADIATION
+   use meds_constants,            only : par_w_2_umol
+   use meds_phenology_types,      only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_DAYLENGTH, CUE_PAR
    use meds_test_support, only : build_test_config, check_close, check_int, check_true, test_report
    implicit none
 
@@ -34,16 +35,16 @@ program test_phenology_driver
    real(wp)    :: fl_none_200, sh_none_200, fl_none_340, sh_none_340, gdd_summer
 
    !----- Config: PFT 1 temperate deciduous (warmth x day length, cold x short days), the    !
-   !       with no cues. This test calls advance_leaf_phenology directly. -------------------!
+   !       rest with no cues. This test calls advance_leaf_phenology directly. --------------!
    cfg = build_test_config()
    cfg%forcing%latitude_deg               = 42.44_wp           ! Ithaca NY (northern hemisphere)
-   cfg%pft%pheno_flush_cue_mask(1)        = CUE_TEMP + CUE_LIGHT
-   cfg%pft%pheno_shed_cue_mask(1)         = CUE_TEMP + CUE_LIGHT
+   cfg%pft%pheno_flush_cue_mask(1)        = CUE_TEMP + CUE_DAYLENGTH
+   cfg%pft%pheno_shed_cue_mask(1)         = CUE_TEMP + CUE_DAYLENGTH
    cfg%pft%pheno_flush_degree_days(1)     = 92.0_wp
    cfg%pft%pheno_shed_base_temp(1)        = 290.37_wp
    cfg%pft%pheno_shed_degree_days(1)      = 48.0_wp
-   cfg%pft%pheno_flush_light_threshold(1) = 10.35_wp
-   cfg%pft%pheno_shed_light_threshold(1)  = 9.83_wp
+   cfg%pft%pheno_flush_daylength_threshold(1) = 10.35_wp
+   cfg%pft%pheno_shed_daylength_threshold(1)  = 9.83_wp
 
    !----- A site with two cohorts: cohort 1 = PFT 1 (deciduous), cohort 2 = PFT 2 (no cues). -!
    call init_bare_ground(site, cfg, 1_ik)
@@ -143,21 +144,25 @@ program test_phenology_driver
       call check_close('one wet day does not wipe the dry sum', site%cohort%dry_psi_sum(1), dry7, 0.0_wp)
    end block
 
-   !----- 4c. Light on shortwave: x += w*(rad - x) with w = dt/window. From x = 0 with a       !
-   !          constant input r and w = 0.1, after n days x = r*(1 - 0.9^n) EXACTLY. ----------!
+   !----- 4c. PAR: x += w*(par - x) with w = dt/window. From x = 0 with a constant input r    !
+   !          and w = 0.1, after n days x = r*(1 - 0.9^n) EXACTLY. Each cohort reads its OWN   !
+   !          PAR (par_accum, the light at its top): a shaded cohort's mean stays lower. -----!
    block
       real(wp) :: expect
-      cfg%pft%pheno_shed_cue_mask(1)  = CUE_LIGHT
-      cfg%pft%pheno_light_variable(1) = LIGHT_RADIATION
-      cfg%pft%pheno_light_window(1)   = 10.0_wp
+      cfg%pft%pheno_shed_cue_mask(1:2) = CUE_PAR
+      cfg%pft%pheno_par_window(1:2)    = 10.0_wp
       call reset_pheno_memory(site)
       do doy = 1_ik, 5_ik
          call set_daily_drivers(site, 290.0_wp, 400.0_wp)
+         site%cohort%par_accum(2) = 100.0_wp / par_w_2_umol * cfg%dt_slow     ! cohort 2 in shade
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
       expect = 400.0_wp * (1.0_wp - 0.9_wp**5)
-      call check_close('shortwave running mean after 5 days at 400 W/m2',                       &
-                       site%cohort%shortwave_mean(1), expect, 1.0e-9_wp)
+      call check_close('PAR running mean after 5 days at 400 umol/m2/s',                        &
+                       site%cohort%par_mean(1), expect, 1.0e-9_wp)
+      call check_close('a shaded cohort reads its own PAR (100 umol/m2/s)',                     &
+                       site%cohort%par_mean(2), expect / 4.0_wp, 1.0e-9_wp)
+      cfg%pft%pheno_shed_cue_mask(2) = CUE_NONE
    end block
 
    !=== 5. ACCEPTANCE: the drought-deciduous and light-exchanging habits, end to end. =======!
@@ -201,9 +206,9 @@ program test_phenology_driver
       real(wp) :: shed_dim, shed_bright, flush_bright
       integer(ik) :: d
       cfg%pft%pheno_flush_cue_mask(1)       = CUE_NONE
-      cfg%pft%pheno_shed_cue_mask(1)        = CUE_LIGHT
-      cfg%pft%pheno_shed_light_threshold(1) = 200.0_wp
-      cfg%pft%pheno_shed_light_sharpness(1) = 0.05_wp        ! > 0: bright light triggers
+      cfg%pft%pheno_shed_cue_mask(1)        = CUE_PAR
+      cfg%pft%pheno_shed_par_threshold(1)   = 200.0_wp
+      cfg%pft%pheno_shed_par_sharpness(1)   = 0.05_wp        ! > 0: bright light triggers
       call reset_pheno_memory(site)
       do d = 1_ik, 60_ik
          call set_daily_drivers(site, 295.0_wp, 60.0_wp)      ! dim
@@ -226,14 +231,14 @@ program test_phenology_driver
 
 contains
 
-   !----- Fill the site accumulators the fast loop fills: the air-temperature sum (not area-  !
-   !      weighted, site-uniform forcing) and the area-weighted shortwave; with one patch of   !
-   !      area 1 both are just the value itself. ------------------------------------------!
-   subroutine set_daily_drivers(site, tair, rad)
+   !----- Fill what the fast loop fills: the site air-temperature sum and, per cohort, the PAR  !
+   !      reaching its top integrated over the step [J/m2] -- here `par` [umol/m2/s] at every   !
+   !      cohort, so the driver's daily mean recovers it exactly. ---------------------------!
+   subroutine set_daily_drivers(site, tair, par)
       type(site_t), intent(inout) :: site
-      real(wp),     intent(in)    :: tair, rad
+      real(wp),     intent(in)    :: tair, par
       site%pheno_tair_sum = tair ; site%pheno_tair_n = 1_ik
-      site%pheno_rad_sum  = rad
+      site%cohort%par_accum(1:site%cohort%n) = par / par_w_2_umol * cfg%dt_slow
    end subroutine set_daily_drivers
 
    !----- Clear every phenology memory so each cue block starts from a known state. ---------!
@@ -246,7 +251,7 @@ contains
          site%cohort%cold_degree_days(1:n)    = 0.0_wp
          site%cohort%dry_psi_sum(1:n)         = 0.0_wp
          site%cohort%wet_psi_sum(1:n)         = 0.0_wp
-         site%cohort%shortwave_mean(1:n)      = 0.0_wp
+         site%cohort%par_mean(1:n)      = 0.0_wp
       end associate
    end subroutine reset_pheno_memory
 

@@ -216,6 +216,10 @@ module meds_site_state_types
       real(wp),    allocatable :: leaf_resp_accum(:) !< [kgC/plant] leaf dark respiration  (ED2 today_leaf_resp)
       real(wp),    allocatable :: stem_resp_accum(:) !< [kgC/plant] stem maintenance resp  (ED2 today_stem_resp)
       real(wp),    allocatable :: root_resp_accum(:) !< [kgC/plant] fine-root maint. resp  (ED2 today_root_resp)
+      !----- The PAR reaching the cohort's top, integrated over the slow step (reset each slow step, !
+      !      like gpp_accum): the phenology PAR cue's driver, so each cohort sees its own place in    !
+      !      the canopy's light gradient. Consumed by the phenology advance before any fusion. ------!
+      real(wp),    allocatable :: par_accum(:)       !< [J/m2] PAR (VIS) at the cohort's top x time
       !----- PROGNOSTIC leaf phenology (owned here so it rides the cohort lockstep): the two       !
       !      smoothed tendencies and the cue memory, advanced daily by the slow-loop phenology        !
       !      advance; the carbon layer turns the tendencies into leaf growth and loss. The memory     !
@@ -227,7 +231,7 @@ module meds_site_state_types
       real(wp),    allocatable :: cold_degree_days(:)     !< [K day]   cold sum since midsummer      (TEMP)
       real(wp),    allocatable :: dry_psi_sum(:)          !< [MPa day] predawn psi below the TLP     (WATER)
       real(wp),    allocatable :: wet_psi_sum(:)          !< [MPa day] predawn psi above the TLP     (WATER)
-      real(wp),    allocatable :: shortwave_mean(:)       !< [W/m2]    running-mean shortwave        (LIGHT)
+      real(wp),    allocatable :: par_mean(:)             !< [umol/m2/s] running-mean PAR at the top (PAR)
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -365,10 +369,6 @@ module meds_site_state_types
       !      acclimated optimum jump. Negative means "not yet seeded" -- the first slow step adopts  !
       !      that day's mean outright rather than relaxing from an arbitrary origin.                 !
       real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
-      !----- Incident shortwave for the light cue, same lifecycle as pheno_tair_sum. An AREA-     !
-      !      WEIGHTED sum over (sub-step, patch), so the daily mean divides by the SUB-STEP count     !
-      !      (pheno_tair_n / npatch): the patch areas already sum to 1.                              !
-      real(wp)           :: pheno_rad_sum    = 0.0_wp   !< [W/m2]  incident shortwave
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
@@ -482,12 +482,12 @@ contains
          site%cohort%overtopping_lai,                                                             &
          site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
          site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
-         site%cohort%gpp_accum,                                                                   &
+         site%cohort%gpp_accum, site%cohort%par_accum,                                            &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
          site%cohort%leaf_flush_tendency, site%cohort%leaf_shed_tendency,                            &
          site%cohort%growing_degree_days, site%cohort%cold_degree_days,                                        &
          site%cohort%dry_psi_sum,                                                       &
-         site%cohort%wet_psi_sum, site%cohort%shortwave_mean)
+         site%cohort%wet_psi_sum, site%cohort%par_mean)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
@@ -516,21 +516,22 @@ contains
       allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
       allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
-      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
+      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap), cohort%par_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
       allocate(cohort%leaf_flush_tendency(cap), cohort%leaf_shed_tendency(cap),                       &
                cohort%growing_degree_days(cap), cohort%cold_degree_days(cap),                                   &
                cohort%dry_psi_sum(cap),                                                   &
-               cohort%wet_psi_sum(cap), cohort%shortwave_mean(cap))
+               cohort%wet_psi_sum(cap), cohort%par_mean(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
+      cohort%par_accum = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
       cohort%leaf_flush_tendency = PHENO_FLUSH_INIT ; cohort%leaf_shed_tendency = PHENO_SHED_INIT
       cohort%growing_degree_days = 0.0_wp ; cohort%cold_degree_days = 0.0_wp
-      cohort%dry_psi_sum = 0.0_wp ; cohort%wet_psi_sum = 0.0_wp ; cohort%shortwave_mean = 0.0_wp
+      cohort%dry_psi_sum = 0.0_wp ; cohort%wet_psi_sum = 0.0_wp ; cohort%par_mean = 0.0_wp
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
@@ -641,6 +642,7 @@ contains
       tmp%leaf_surf_water(1:m) = cohort%leaf_surf_water(1:m)
       tmp%wood_surf_water(1:m) = cohort%wood_surf_water(1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
+      tmp%par_accum(1:m)      = cohort%par_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
       tmp%root_resp_accum(1:m) = cohort%root_resp_accum(1:m)
@@ -650,7 +652,7 @@ contains
       tmp%cold_degree_days(1:m)    = cohort%cold_degree_days(1:m)
       tmp%dry_psi_sum(1:m)         = cohort%dry_psi_sum(1:m)
       tmp%wet_psi_sum(1:m)         = cohort%wet_psi_sum(1:m)
-      tmp%shortwave_mean(1:m)      = cohort%shortwave_mean(1:m)
+      tmp%par_mean(1:m)      = cohort%par_mean(1:m)
       !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
       !      inactive -- move_alloc_block copies tmp INTO cohort, so it must be the one holding it. !
       tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
@@ -712,6 +714,7 @@ contains
       call move_alloc(src%leaf_surf_water, dst%leaf_surf_water)
       call move_alloc(src%wood_surf_water, dst%wood_surf_water)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
+      call move_alloc(src%par_accum, dst%par_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
       call move_alloc(src%root_resp_accum, dst%root_resp_accum)
@@ -721,7 +724,7 @@ contains
       call move_alloc(src%cold_degree_days, dst%cold_degree_days)
       call move_alloc(src%dry_psi_sum, dst%dry_psi_sum)
       call move_alloc(src%wet_psi_sum, dst%wet_psi_sum)
-      call move_alloc(src%shortwave_mean, dst%shortwave_mean)
+      call move_alloc(src%par_mean, dst%par_mean)
    end subroutine move_alloc_block
 
    !=======================================================================================!
@@ -835,6 +838,7 @@ contains
       cohort%leaf_surf_water(1:m) = cohort%leaf_surf_water(perm(1:m))
       cohort%wood_surf_water(1:m) = cohort%wood_surf_water(perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
+      cohort%par_accum(1:m)      = cohort%par_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
       cohort%root_resp_accum(1:m) = cohort%root_resp_accum(perm(1:m))
@@ -844,7 +848,7 @@ contains
       cohort%cold_degree_days(1:m)    = cohort%cold_degree_days(perm(1:m))
       cohort%dry_psi_sum(1:m)         = cohort%dry_psi_sum(perm(1:m))
       cohort%wet_psi_sum(1:m)         = cohort%wet_psi_sum(perm(1:m))
-      cohort%shortwave_mean(1:m)      = cohort%shortwave_mean(perm(1:m))
+      cohort%par_mean(1:m)      = cohort%par_mean(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
       !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
       call cohort_diag_reorder(cohort%diag,  perm, m)
@@ -924,6 +928,7 @@ contains
       cohort%leaf_surf_water(dst) = cohort%leaf_surf_water(src)
       cohort%wood_surf_water(dst) = cohort%wood_surf_water(src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
+      cohort%par_accum(dst)      = cohort%par_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
       cohort%root_resp_accum(dst) = cohort%root_resp_accum(src)
@@ -933,7 +938,7 @@ contains
       cohort%cold_degree_days(dst)    = cohort%cold_degree_days(src)
       cohort%dry_psi_sum(dst)         = cohort%dry_psi_sum(src)
       cohort%wet_psi_sum(dst)         = cohort%wet_psi_sum(src)
-      cohort%shortwave_mean(dst)      = cohort%shortwave_mean(src)
+      cohort%par_mean(dst)      = cohort%par_mean(src)
    end subroutine copy_cohort_slot
 
    !---------------------------------------------------------------------------------------!
@@ -1023,11 +1028,11 @@ contains
       cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
       cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
       !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
-      !      (the two tendencies, the degree-day and psi sums, the shortwave mean) and dmax_psi_leaf !
-      !      are absent from this routine ON PURPOSE, so the                                          !
+      !      (the two tendencies, the degree-day and psi sums, the PAR mean), par_accum (already      !
+      !      consumed this step) and dmax_psi_leaf are absent from this routine ON PURPOSE, so the    !
       !      survivor keeps its own. Two cohorts only fuse when they already match in size, height   !
-      !      and PFT, and every one of these is driven by a site- or patch-level signal both of them !
-      !      saw, so the two memories are near-identical at the moment of fusion and a blend would   !
+      !      and PFT, and every one of these is driven by a signal both of them saw (the PAR at a   !
+      !      shared height included), so the two memories are near-identical at fusion and a blend would !
       !      move nothing. Blending is also not obviously right for a sum that resets on a trigger:  !
       !      an nplant-weighted average of a sum that has just reset and one that has not is a       !
       !      history neither cohort had. If a future cue is driven by something genuinely           !
@@ -1180,6 +1185,7 @@ contains
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      cohort%par_accum(m)        = 0.0_wp             ! no light seen yet this step
       call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
       call cohort_diag_clear_slot(cohort%sdiag, m)
       cohort%leaf_flush_tendency(m) = PHENO_FLUSH_INIT  ! born flushing
@@ -1188,7 +1194,7 @@ contains
       cohort%cold_degree_days(m)    = 0.0_wp
       cohort%dry_psi_sum(m)         = 0.0_wp
       cohort%wet_psi_sum(m)         = 0.0_wp
-      cohort%shortwave_mean(m)      = 0.0_wp
+      cohort%par_mean(m)      = 0.0_wp
       cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
       cohort%p_wood_density(m)       = pft%wood_density(ipft)
       cohort%p_hgt_max(m)            = pft%hgt_max(ipft)

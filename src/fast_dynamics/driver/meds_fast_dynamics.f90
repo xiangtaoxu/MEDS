@@ -17,6 +17,7 @@
 module meds_fast_dynamics
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num, rho_h2o, umol_2_kgC, grav, cp_air, latent_heat_vap, day_sec, p_std, &
+                                     par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
    use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
@@ -72,10 +73,8 @@ module meds_fast_dynamics
 
    public :: fast_context_t, init_fast_reservoirs, fast_dynamics, build_fast_context
 
-   !----- Absorbed-PAR (VIS) energy -> photon-flux conversion [umol photon / J], the 400-700 nm !
-   !      value (~4.57). Used ONLY on the RT path (true absorbed PAR); the const path keeps the    !
-   !      2.1 total-SW blend (column_forcing_t default) -- see fast_dynamics.                       !
-   real(wp), parameter :: PAR_W_2_UMOL = 4.6_wp
+   !----- Absorbed-PAR (VIS) energy -> photon flux: par_w_2_umol (meds_constants), used ONLY on   !
+   !      the RT path (true absorbed PAR); the const path keeps the 2.1 total-SW blend.           !
 
    !----- §7 C3 (deterministic reductions). The site-level fast-loop accumulators are written once !
    !      per (patch, sub-step) and folded into site%... afterwards. Staging them in ONE array,      !
@@ -98,16 +97,12 @@ module meds_fast_dynamics
    integer(ik), parameter :: RED_CLAMP_COMMIT  = 11_ik   !< commit-level state clamps
    integer(ik), parameter :: RED_CLAMP_MASS    = 12_ik   !< water mass created by clamping [kg/m2]
    integer(ik), parameter :: RED_CLAMP_ENERGY  = 13_ik   !< energy created by clamping [J/m2]
-   !----- The light cue's driver: incident shortwave, area-weighted like every other per-patch   !
-   !      site diagnostic, so the site fold divides by the sub-step count alone (patch areas sum  !
-   !      to 1). RED_PHENO_TAIR above is not area-weighted: air temperature is site-uniform. -----!
-   integer(ik), parameter :: RED_PHENO_RAD     = 14_ik   !< incident shortwave [W/m2]      (light cue)
    !----- The rain and snow each patch received, split at its canopy-air top (fill_forcing), area-  !
    !      weighted: the forcing outputs report the split the model used, not one at the forcing's     !
    !      own height. --------------------------------------------------------------------------------!
-   integer(ik), parameter :: RED_RAINF         = 15_ik   !< rain [kg/m2/s]
-   integer(ik), parameter :: RED_SNOWFALL      = 16_ik   !< snow [kg/m2/s]
-   integer(ik), parameter :: N_RED             = 16_ik
+   integer(ik), parameter :: RED_RAINF         = 14_ik   !< rain [kg/m2/s]
+   integer(ik), parameter :: RED_SNOWFALL      = 15_ik   !< snow [kg/m2/s]
+   integer(ik), parameter :: N_RED             = 15_ik
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -366,6 +361,7 @@ contains
       site%cohort%leaf_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%stem_resp_accum(1:site%cohort%n) = 0.0_wp
       site%cohort%root_resp_accum(1:site%cohort%n) = 0.0_wp
+      site%cohort%par_accum(1:site%cohort%n)       = 0.0_wp
       !----- ROLL OVER the predawn water status (#95): today's accumulated maximum becomes the value  !
       !      the leaf kernel uses tomorrow, then the accumulator restarts. A cohort whose max is still !
       !      the UNSET sentinel (a recruit born mid-day) keeps it, so column_prepass seeds it from the  !
@@ -653,9 +649,6 @@ contains
             end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
-            !----- The light cue's driver: INCIDENT shortwave at the top of the canopy (ED2's rad_avg);  !
-            !      a per-cohort absorbed value, for a light gradient within the canopy, is ROADMAP. ------!
-            red_site(RED_PHENO_RAD,    isub, ip) = site%patch%area(ip) * met%swdown()
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
             red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budget%integ_nsteps,   wp)
@@ -770,6 +763,9 @@ contains
                site%cohort%leaf_resp_accum(i) = site%cohort%leaf_resp_accum(i) + leaf_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%stem_resp_accum(i) = site%cohort%stem_resp_accum(i) + stem_resp_coh(j) * cfg%dt_fast * umol_2_kgC
                site%cohort%root_resp_accum(i) = site%cohort%root_resp_accum(i) + root_resp_coh(j) * cfg%dt_fast * umol_2_kgC
+               !----- The PAR reaching the cohort's top, integrated over the slow step: the phenology  !
+               !      PAR cue's driver, so each cohort sees its own place in the canopy. --------------!
+               site%cohort%par_accum(i)       = site%cohort%par_accum(i)       + forc%par_top(j)  * cfg%dt_fast
                !----- Running daily MAX of psi_leaf (#95). max(), not a sum: the daily maximum occurs !
                !      near dawn and IS the quantity that drives tomorrow's beta_stomata. --------------!
                site%cohort%dmax_psi_leaf_accum(i) = max(site%cohort%dmax_psi_leaf_accum(i), psi_leaf_coh(j))
@@ -810,7 +806,6 @@ contains
       !  bit-for-bit to what the serial driver produced. -----------------------------------------------!
       !=========================================================================================!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
-      site%pheno_rad_sum  = 0.0_wp
       site%et_accum       = 0.0_wp
       site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
       site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
@@ -823,7 +818,6 @@ contains
             site%et_accum          = site%et_accum          + red_site(RED_ET,            isub, ip)
             site%pheno_tair_sum    = site%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
             site%pheno_tair_n      = site%pheno_tair_n      + 1_ik
-            site%pheno_rad_sum     = site%pheno_rad_sum     + red_site(RED_PHENO_RAD,     isub, ip)
             site%work_integ_steps  = site%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
             site%work_integ_rej    = site%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)
             site%work_soil_nsub    = site%work_soil_nsub    + red_site(RED_SOIL_NSUB,     isub, ip)
@@ -940,10 +934,11 @@ contains
       integer(ik),            intent(in)    :: ncoh
       if (allocated(forc%abs_sw)) then
          if (size(forc%abs_sw) < ncoh) deallocate(forc%abs_sw, forc%abs_lw, forc%abs_par,        &
-                                                  forc%abs_sw_wood, forc%abs_lw_wood)
+                                                  forc%abs_sw_wood, forc%abs_lw_wood, forc%par_top)
       end if
       if (.not. allocated(forc%abs_sw)) allocate(forc%abs_sw(ncoh), forc%abs_lw(ncoh),           &
-                                                 forc%abs_par(ncoh), forc%abs_sw_wood(ncoh), forc%abs_lw_wood(ncoh))
+                                                 forc%abs_par(ncoh), forc%abs_sw_wood(ncoh), forc%abs_lw_wood(ncoh), &
+                                                 forc%par_top(ncoh))
    end subroutine alloc_forcing
 
    !----- Fill the per-patch prescribed forcing from the sub-step's forcing record and the ground  !
@@ -974,6 +969,7 @@ contains
             forc%abs_sw(j) = 0.0_wp
          end if
          forc%abs_par(j) = forc%abs_sw(j)            ! no PAR/NIR split in the LAI path -> PAR==SW (biased high)
+         forc%par_top(j) = met%par_beam + met%par_diffuse   ! no light gradient in the LAI path
          forc%abs_lw(j)  = 0.0_wp
          forc%abs_sw_wood(j) = 0.0_wp                ! MVP const/no-forcing path: no wood absorption
          forc%abs_lw_wood(j) = 0.0_wp
@@ -1092,11 +1088,12 @@ contains
          forc%abs_lw(ig)  = flux%abs_leaf(RAD_LW, j)                                ! NET leaf LW at tcas (emission incl.)
          forc%abs_sw_wood(ig) = flux%abs_wood(RAD_VIS, j) + flux%abs_wood(RAD_NIR, j)  ! ABSORBED wood SW (WAI share)
          forc%abs_lw_wood(ig) = flux%abs_wood(RAD_LW, j)                               ! NET wood LW
+         forc%par_top(ig)     = flux%incid_top(RAD_VIS, j)                             ! PAR at the cohort's top
       end do
       forc%abs_sw_ground = (flux%dn_ground(RAD_VIS) - flux%up_ground(RAD_VIS))                      &
                          + (flux%dn_ground(RAD_NIR) - flux%up_ground(RAD_NIR))
       forc%abs_lw_ground = flux%dn_ground(RAD_LW) - flux%up_ground(RAD_LW)          ! NET ground LW (soil emission incl.)
-      forc%par_per_w     = PAR_W_2_UMOL                        ! true VIS absorbed -> photon flux
+      forc%par_per_w     = par_w_2_umol                        ! true VIS absorbed -> photon flux
       !----- TOP-OF-CANOPY fluxes (#171). canopy_radiation already forms albedo(b) = utop/incid, so   !
       !      the upwelling is that ratio times the incident it was formed from -- no second solve.    !
       !      Kept as FLUXES rather than as a time-averaged albedo on purpose: a period-mean albedo is  !
