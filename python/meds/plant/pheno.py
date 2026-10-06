@@ -312,12 +312,12 @@ def drought_deciduous(**overrides) -> Params:
     recovered while the days are long, senesce as the days shorten or after a long drought; the
     canopy keeps about a quarter of its leaves through the dry season."""
     return _preset(dict(flush_cue_mask=Cue.WATER | Cue.LIGHT, shed_cue_mask=Cue.WATER | Cue.LIGHT,
-                        leaf_psi_tlp=-2.971, flush_water_sum=0.5063, flush_water_sharpness=11.31,
-                        shed_water_sum=19.17, shed_water_sharpness=3.751,
-                        flush_rate_max=0.3076, shed_rate_max=0.05249, leaf_turnover_rate=0.9265,
-                        min_leaf_cover=0.2808, par_min=1.246, flush_light_hours=12.45,
-                        flush_light_sharpness=7.971, shed_light_hours=11.28,
-                        shed_light_sharpness=-6.086, light_window=20.46), overrides)
+                        leaf_psi_tlp=-2.091, flush_water_sum=3.372, flush_water_sharpness=10.72,
+                        shed_water_sum=23.59, shed_water_sharpness=8.176,
+                        flush_rate_max=0.3137, shed_rate_max=0.01899, leaf_turnover_rate=0.702,
+                        min_leaf_cover=0.2731, par_min=5.004, flush_light_hours=12.38,
+                        flush_light_sharpness=7.999, shed_light_hours=11.44,
+                        shed_light_sharpness=-7.195, light_window=8.68), overrides)
 
 
 def light_exchanging(**overrides) -> Params:

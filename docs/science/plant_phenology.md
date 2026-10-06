@@ -178,7 +178,7 @@ The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so th
 | no cues (default) | – | – | – | always flushing; loses leaves only to background turnover |
 | temperate deciduous (Harvard) | TEMP + LIGHT | TEMP + LIGHT | 0 | low `par_min`: flush on warmth while days are long; senesce to bare on cold once days shorten |
 | evergreen conifer (Hyytiälä) | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (0.9) | high `par_min`: flush on warmth and many bright hours; autumn needle fall stops at the floor |
-| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (0.28) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |
+| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (0.27) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |
 | light leaf exchange (BCI) | WATER | LIGHT + WATER | 0.95 | high `par_min`: a water threshold it never reaches; senescence on many bright hours while the canopy refills, so it stays full |
 
 Evergreen and deciduous differ in one number. The emergent leaf lifespan follows from the rates and
@@ -195,8 +195,8 @@ light from ERA5-Land through MEDS's forcing reader:
 - **Barro Colorado Island** (a light leaf exchanger; `par_min` 1081): GLiMP litter traps. The water
   driver is a surrogate, the tower's soil water content through a retention curve fitted to the
   paired soil samples of Kupers et al. (2019).
-- **Palo Verde** (a drought-deciduous dry forest; `par_min` 1.2, the photoperiod): the leaf litter of
-  Xu et al. (2016) and MODIS LAI. The water driver is hypothetical, the canopy predawn leaf ψ of a
+- **Palo Verde** (a drought-deciduous dry forest; `par_min` 5, the photoperiod): the monthly leaf litter
+  of Xu et al. (2016) and MODIS LAI. The water driver is hypothetical, the canopy predawn leaf ψ of a
   MEDS run at the site.
 
 Five results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§12):
@@ -210,9 +210,9 @@ Five results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.m
   variable serves all three. Refitted on ERA5-Land, the deciduous canopies count the photoperiod
   (at Palo Verde with `par_min` free) and the evergreen ones the bright hours (within bounds that
   hold them to bright light).
-- **Light makes the drought-deciduous canopy.** At Palo Verde water alone fits poorly (loss 0.069):
+- **Light makes the drought-deciduous canopy.** At Palo Verde water alone fits poorly (loss 0.064):
   the leaves fall in December–January, before the water potential drops. The photoperiod alone
-  reaches 0.025 and both cues 0.023, water adding only the late refills of the driest years, as
+  reaches 0.025 and both cues 0.023, as
   photoperiodic leaf fall and spring flushing are known in tropical dry forests (Borchert & Rivera
   2001; Rivera et al. 2002).
 - **The flush gate must be sharp where it ends the flush.** A gradual day-length gate (1 per hour) is

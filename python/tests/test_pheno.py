@@ -58,11 +58,11 @@ def test_evergreen_is_a_leaf_cover_floor_not_a_flag():
 def test_drought_deciduous_sheds_when_dry_and_reflushes():
     _lib_or_skip()
     # Palo Verde's days: about 12.4 h of light in the wet season, 11.5 h in the dry season.
-    p = pheno.drought_deciduous()                             # turgor-loss point -2.97 MPa
+    p = pheno.drought_deciduous()                             # turgor-loss point -2.09 MPa
     ph = pheno.Phenology(p)
     for _ in range(60):
         wet = ph.step(predawn_leaf_psi=-0.3, par_hours=12.4)
-    for _ in range(80):
+    for _ in range(120):                                      # a four-month dry season
         dry = ph.step(predawn_leaf_psi=-3.5, par_hours=11.5)
     assert wet.leaf_shed_tendency < 0.05 and wet.leaf_cover > 0.99
     assert dry.leaf_shed_tendency > 0.9 and abs(dry.leaf_cover - p.min_leaf_cover) < 1e-3

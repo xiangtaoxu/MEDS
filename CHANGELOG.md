@@ -88,32 +88,19 @@ before and after.
     section always flushes and loses leaves at its background turnover, as before; the only
     difference is the dropped cold suppression of an evergreen PFT's turnover, which the old driver
     evaluated at a fixed 25 °C stub temperature: a factor of 0.9997.
-- **The phenology example is `examples/example02_canopy_phenology/`, fitted to real data**: four
-  forests, four leaf habits, one kernel with one light cue, and every site's light from ERA5-Land
-  through MEDS's forcing reader (the hours of light above each of 24 `par_min` values, counted from
-  bare-ground MEDS runs by `make_era5_par_hours.py` and committed in `drivers/`).
-  `fetch_phenology_data.py` downloads the site data; `run_phenology.py` runs the compiled kernel,
-  scores it, plots it and, with `--fit`, refits it: differential evolution from four seeds, each
-  polished by Nelder–Mead, on each year's cumulative litter plus the litter per year.
-  - **Harvard Forest** (deciduous broadleaf, warmth and the photoperiod, `par_min` 2; MODIS LAI,
-    HF003 leaf fall, HF069 baskets): RMSE 0.185 / 0.063 / 0.074, half-fallen day within 2.9 days
-    (r 0.45), half-green day within 5.3 days (r 0.38), one canopy of litter a year. The flush gate
-    is a photoperiod step (8 h⁻¹ at 13.65 h): a gradual gate keeps the canopy flushing in October
-    while it senesces.
-  - **Hyytiälä** (Scots pine, warmth and the hours above 99 µmol m⁻² s⁻¹; ICOS needle litter):
-    cumulative needle-fall RMSE 0.063, collection r 0.85, 0.30 canopy a year, leaf-cover floor 0.89.
-  - **Barro Colorado Island**, a light exchanger (senescence on the hours above 1081 µmol m⁻² s⁻¹;
-    GLiMP litter): cumulative RMSE 0.024, collection r 0.80, one canopy a year, half of it in
-    January–April. Its water switch reads a surrogate: the tower's soil water content through a
-    retention curve fitted to the paired samples of Kupers et al. (2019).
-  - **Palo Verde**, a drought-deciduous dry forest (water and the photoperiod; leaf litter of Xu et
-    al. 2016 and MODIS LAI): LAI RMSE 0.14, cumulative leaf-fall RMSE 0.052, collection r 0.82,
-    leaf cover 0.28 to 1. Its water driver is hypothetical, the canopy predawn leaf ψ of a MEDS run
-    at the site (committed with the litter and LAI). The photoperiod carries the fit: water alone
-    reaches a loss of 0.069, the photoperiod alone 0.025, both 0.023; water adds the
-    late refills of the driest years.
-  - The BCI drought-deciduous species set by hand, the four synthetic strategies and
-    `phenology_patterns.png` are gone.
+- **The phenology example is `examples/example02_canopy_phenology/`**: a showcase of the module's
+  structure, one kernel and three cues with four leaf habits as parameter sets, fitted to real data
+  at four forests. Harvard Forest (deciduous broadleaf: warmth and day length; MODIS LAI, HF003
+  leaf fall, HF069 baskets), Hyytiälä (Scots pine: warmth and the bright hours; ICOS needle litter),
+  Barro Colorado Island (a leaf exchanger: senescence in the bright dry season; GLiMP litter) and
+  Palo Verde (drought-deciduous: water and day length; monthly leaf litter from Xu et al. 2016 and
+  MODIS LAI, on a hypothetical leaf water potential from a MEDS run). Every site's light is
+  ERA5-Land through MEDS's forcing reader (`make_era5_par_hours.py`, committed in `drivers/`).
+  `run_phenology.py` runs the compiled kernel, prints scores, writes one figure
+  (`canopy_phenology.png`: the canopy and the monthly leaf fall at each site) and, with `--fit`,
+  refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
+  alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
+  strategies and `phenology_patterns.png` are gone.
 
 ## [0.3.3] — 2026-10-05
 

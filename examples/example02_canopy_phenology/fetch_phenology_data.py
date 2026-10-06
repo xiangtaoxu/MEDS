@@ -21,9 +21,9 @@ Barro Colorado Island, Panama (9.15 N):
          soil water content and water potential sampled together in the BCI 50-ha plot.
 
 drivers/ IS in the repository: every site's hours of light (ERA5-Land through MEDS's forcing
-reader, make_era5_par_hours.py) and Palo Verde's data -- a MEDS run's canopy predawn leaf water
-potential, the leaf litter traps of Xu et al. (2016, New Phytol. 212:80; oven-dry leaf litter in
-0.25 m2 traps, by collection round) and MODIS MCD15A3H leaf area index (ORNL DAAC subset).
+reader, make_era5_par_hours.py) and Palo Verde's processed data -- a MEDS run's canopy predawn leaf
+water potential, monthly leaf litter (from the traps of Xu et al. 2016, New Phytol. 212:80) and
+monthly MODIS LAI.
 
 Usage:
   python fetch_phenology_data.py              # downloads ~220 MB (the ICOS archive), keeps ~50 MB
