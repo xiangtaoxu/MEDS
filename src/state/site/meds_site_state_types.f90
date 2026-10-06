@@ -65,10 +65,10 @@ module meds_site_state_types
    !      would pin it there forever and the daily max would never update. (It did, until measured.)  !
    real(wp), parameter :: DMAX_PSI_LEAF_ACCUM_RESET = -1.0e30_wp
 
-   !----- Initial phenology GOVERNOR drives of a freshly created cohort: born leafed / flushing,  !
-   !      no active shed (= the evergreen fixed point). Plain literals because `state` may not     !
-   !      depend on the plant library (the DAG wall); the phenology driver advances them once real !
-   !      drivers arrive. flush_drive=1 with no active shed keeps a fresh canopy building.          !
+   !----- Initial phenology tendencies of a freshly created cohort: born flushing, not senescing   !
+   !      (the always-flushing fixed point), so a fresh canopy keeps building. Plain literals       !
+   !      because `state` may not depend on the plant library (the DAG wall); the phenology driver   !
+   !      advances them once real drivers arrive.                                                    !
    real(wp), parameter :: PHENO_FLUSH_INIT = 1.0_wp
    real(wp), parameter :: PHENO_SHED_INIT  = 0.0_wp
 
@@ -216,25 +216,22 @@ module meds_site_state_types
       real(wp),    allocatable :: leaf_resp_accum(:) !< [kgC/plant] leaf dark respiration  (ED2 today_leaf_resp)
       real(wp),    allocatable :: stem_resp_accum(:) !< [kgC/plant] stem maintenance resp  (ED2 today_stem_resp)
       real(wp),    allocatable :: root_resp_accum(:) !< [kgC/plant] fine-root maint. resp  (ED2 today_root_resp)
-      !----- PROGNOSTIC leaf-phenology GOVERNOR drives + thermal cue memory (owned here so they ride !
-      !      the cohort lockstep). Advanced daily by the slow-loop phenology advance from the cohort's !
-      !      PFT cue params + drivers; the two rates (k*drive) are derived at the carbon consumer.     !
-      !      Survivor-keeps on cohort fusion (like growth_avg -- the donor's memory is discarded).     !
-      real(wp),    allocatable :: pheno_flush_drive(:)  !< [-] smoothed flush governor in [0,1] (0 => dormant)
-      real(wp),    allocatable :: pheno_shed_drive(:)   !< [-] smoothed active-shed governor in [0,1] (0 => none)
-      !----- The four CUE sub-accumulators (#150). They were locals inside advance_leaf_phenology, so
-      !      `state = pheno_state_t()` re-zeroed them every slow step and the WATER/HYDRO/LIGHT cues
-      !      could never build the multi-day memory they are defined by -- a running mean with a 10-day
-      !      window reset daily is just its own instantaneous input, and a "consecutive dry days"
-      !      counter reset daily never exceeds one. Persisting them is what makes those cues mean
-      !      anything. FUSION POLICY: survivor-keeps, like the four phenology memories below it --
-      !      see the note in fuse_cohort_fast_state.
-      real(wp),    allocatable :: pheno_water_avg(:)     !< [-]     running-mean available water  (CUE_WATER)
-      real(wp),    allocatable :: pheno_low_psi_days(:)  !< [day]   consecutive dry days          (CUE_HYDRO)
-      real(wp),    allocatable :: pheno_high_psi_days(:) !< [day]   consecutive wet days          (CUE_HYDRO)
-      real(wp),    allocatable :: pheno_light_avg(:)     !< [W/m2]  running-mean radiation        (CUE_LIGHT)
-      real(wp),    allocatable :: pheno_gdd(:)          !< [K day] growing-degree-day sum   (CUE_TEMP)
-      real(wp),    allocatable :: pheno_chill(:)        !< [day]   chilling-day count        (CUE_TEMP)
+      !----- The PAR reaching the cohort's top, integrated over the slow step (reset each slow step, !
+      !      like gpp_accum): the phenology PAR cue's driver, so each cohort sees its own place in    !
+      !      the canopy's light gradient. Consumed by the phenology advance before any fusion. ------!
+      real(wp),    allocatable :: light_hours_accum(:) !< [h] time the PAR at the cohort's top exceeded par_min
+      !----- PROGNOSTIC leaf phenology (owned here so it rides the cohort lockstep): the two       !
+      !      smoothed tendencies and the cue memory, advanced daily by the slow-loop phenology        !
+      !      advance; the carbon layer turns the tendencies into leaf growth and loss. The memory     !
+      !      must persist across steps -- a running mean or a seasonal sum reset every step would be  !
+      !      its own instantaneous input. FUSION POLICY: survivor-keeps (see fuse_cohort_fast_state). !
+      real(wp),    allocatable :: leaf_flush_tendency(:)  !< [-]       smoothed flush signal in [0,1]
+      real(wp),    allocatable :: leaf_shed_tendency(:)   !< [-]       smoothed senescence signal in [0,1]
+      real(wp),    allocatable :: growing_degree_days(:)  !< [K day]   warmth sum since midwinter    (TEMP)
+      real(wp),    allocatable :: cold_degree_days(:)     !< [K day]   cold sum since midsummer      (TEMP)
+      real(wp),    allocatable :: dry_psi_sum(:)          !< [MPa day] predawn psi below the TLP     (WATER)
+      real(wp),    allocatable :: wet_psi_sum(:)          !< [MPa day] predawn psi above the TLP     (WATER)
+      real(wp),    allocatable :: light_hours_mean(:)     !< [h/day] running-mean hours of light (LIGHT); < 0: none yet
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -365,10 +362,6 @@ module meds_site_state_types
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
-      !----- The three remaining cue drivers (#150), same lifecycle. These are AREA-WEIGHTED sums   !
-      !      over (sub-step, patch), so the daily mean is sum / (pheno_tair_n / npatch) -- i.e.      !
-      !      divide by the SUB-STEP count, because the patch areas already sum to 1. Air temperature !
-      !      above is not area-weighted because it is site-uniform under single-site forcing.        !
       !----- GROWTH TEMPERATURE for thermal acclimation (#176): an exponential running mean of the  !
       !      daily-mean air temperature, window [leaf_physiology].acclim_window_days (~30 d), which  !
       !      is what Kattge & Knorr (2007) fitted dS against. PROGNOSTIC and slow, so it is written  !
@@ -376,9 +369,6 @@ module meds_site_state_types
       !      acclimated optimum jump. Negative means "not yet seeded" -- the first slow step adopts  !
       !      that day's mean outright rather than relaxing from an arbitrary origin.                 !
       real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
-      real(wp)           :: pheno_soilt_sum  = 0.0_wp   !< [K]     top-layer soil temperature
-      real(wp)           :: pheno_swater_sum = 0.0_wp   !< [-]     root-weighted available water
-      real(wp)           :: pheno_rad_sum    = 0.0_wp   !< [W/m2]  incident shortwave
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
@@ -492,12 +482,12 @@ contains
          site%cohort%overtopping_lai,                                                             &
          site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
          site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
-         site%cohort%gpp_accum,                                                                   &
+         site%cohort%gpp_accum, site%cohort%light_hours_accum,                                            &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
-         site%cohort%pheno_flush_drive, site%cohort%pheno_shed_drive,                            &
-         site%cohort%pheno_gdd, site%cohort%pheno_chill,                                        &
-         site%cohort%pheno_water_avg, site%cohort%pheno_low_psi_days,                          &
-         site%cohort%pheno_high_psi_days, site%cohort%pheno_light_avg)
+         site%cohort%leaf_flush_tendency, site%cohort%leaf_shed_tendency,                            &
+         site%cohort%growing_degree_days, site%cohort%cold_degree_days,                                        &
+         site%cohort%dry_psi_sum,                                                       &
+         site%cohort%wet_psi_sum, site%cohort%light_hours_mean)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
@@ -526,22 +516,22 @@ contains
       allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
       allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
-      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
+      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap), cohort%light_hours_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
-      allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
-               cohort%pheno_gdd(cap), cohort%pheno_chill(cap),                                   &
-               cohort%pheno_water_avg(cap), cohort%pheno_low_psi_days(cap),                      &
-               cohort%pheno_high_psi_days(cap), cohort%pheno_light_avg(cap))
+      allocate(cohort%leaf_flush_tendency(cap), cohort%leaf_shed_tendency(cap),                       &
+               cohort%growing_degree_days(cap), cohort%cold_degree_days(cap),                                   &
+               cohort%dry_psi_sum(cap),                                                   &
+               cohort%wet_psi_sum(cap), cohort%light_hours_mean(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
+      cohort%light_hours_accum = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
-      cohort%pheno_flush_drive = PHENO_FLUSH_INIT ; cohort%pheno_shed_drive = PHENO_SHED_INIT
-      cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp
-      cohort%pheno_water_avg = 0.0_wp ; cohort%pheno_low_psi_days = 0.0_wp
-      cohort%pheno_high_psi_days = 0.0_wp ; cohort%pheno_light_avg = 0.0_wp
+      cohort%leaf_flush_tendency = PHENO_FLUSH_INIT ; cohort%leaf_shed_tendency = PHENO_SHED_INIT
+      cohort%growing_degree_days = 0.0_wp ; cohort%cold_degree_days = 0.0_wp
+      cohort%dry_psi_sum = 0.0_wp ; cohort%wet_psi_sum = 0.0_wp ; cohort%light_hours_mean = -1.0_wp
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
@@ -652,17 +642,17 @@ contains
       tmp%leaf_surf_water(1:m) = cohort%leaf_surf_water(1:m)
       tmp%wood_surf_water(1:m) = cohort%wood_surf_water(1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
+      tmp%light_hours_accum(1:m)      = cohort%light_hours_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
       tmp%root_resp_accum(1:m) = cohort%root_resp_accum(1:m)
-      tmp%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(1:m)
-      tmp%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(1:m)
-      tmp%pheno_gdd(1:m)        = cohort%pheno_gdd(1:m)
-      tmp%pheno_water_avg(1:m)     = cohort%pheno_water_avg(1:m)
-      tmp%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(1:m)
-      tmp%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(1:m)
-      tmp%pheno_light_avg(1:m)     = cohort%pheno_light_avg(1:m)
-      tmp%pheno_chill(1:m)      = cohort%pheno_chill(1:m)
+      tmp%leaf_flush_tendency(1:m) = cohort%leaf_flush_tendency(1:m)
+      tmp%leaf_shed_tendency(1:m)  = cohort%leaf_shed_tendency(1:m)
+      tmp%growing_degree_days(1:m) = cohort%growing_degree_days(1:m)
+      tmp%cold_degree_days(1:m)    = cohort%cold_degree_days(1:m)
+      tmp%dry_psi_sum(1:m)         = cohort%dry_psi_sum(1:m)
+      tmp%wet_psi_sum(1:m)         = cohort%wet_psi_sum(1:m)
+      tmp%light_hours_mean(1:m)      = cohort%light_hours_mean(1:m)
       !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
       !      inactive -- move_alloc_block copies tmp INTO cohort, so it must be the one holding it. !
       tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
@@ -724,17 +714,17 @@ contains
       call move_alloc(src%leaf_surf_water, dst%leaf_surf_water)
       call move_alloc(src%wood_surf_water, dst%wood_surf_water)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
+      call move_alloc(src%light_hours_accum, dst%light_hours_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
       call move_alloc(src%root_resp_accum, dst%root_resp_accum)
-      call move_alloc(src%pheno_flush_drive, dst%pheno_flush_drive)
-      call move_alloc(src%pheno_shed_drive, dst%pheno_shed_drive)
-      call move_alloc(src%pheno_gdd, dst%pheno_gdd)
-      call move_alloc(src%pheno_water_avg, dst%pheno_water_avg)
-      call move_alloc(src%pheno_low_psi_days, dst%pheno_low_psi_days)
-      call move_alloc(src%pheno_high_psi_days, dst%pheno_high_psi_days)
-      call move_alloc(src%pheno_light_avg, dst%pheno_light_avg)
-      call move_alloc(src%pheno_chill, dst%pheno_chill)
+      call move_alloc(src%leaf_flush_tendency, dst%leaf_flush_tendency)
+      call move_alloc(src%leaf_shed_tendency, dst%leaf_shed_tendency)
+      call move_alloc(src%growing_degree_days, dst%growing_degree_days)
+      call move_alloc(src%cold_degree_days, dst%cold_degree_days)
+      call move_alloc(src%dry_psi_sum, dst%dry_psi_sum)
+      call move_alloc(src%wet_psi_sum, dst%wet_psi_sum)
+      call move_alloc(src%light_hours_mean, dst%light_hours_mean)
    end subroutine move_alloc_block
 
    !=======================================================================================!
@@ -848,17 +838,17 @@ contains
       cohort%leaf_surf_water(1:m) = cohort%leaf_surf_water(perm(1:m))
       cohort%wood_surf_water(1:m) = cohort%wood_surf_water(perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
+      cohort%light_hours_accum(1:m)      = cohort%light_hours_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
       cohort%root_resp_accum(1:m) = cohort%root_resp_accum(perm(1:m))
-      cohort%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(perm(1:m))
-      cohort%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(perm(1:m))
-      cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
-      cohort%pheno_water_avg(1:m)     = cohort%pheno_water_avg(perm(1:m))
-      cohort%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(perm(1:m))
-      cohort%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(perm(1:m))
-      cohort%pheno_light_avg(1:m)     = cohort%pheno_light_avg(perm(1:m))
-      cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
+      cohort%leaf_flush_tendency(1:m) = cohort%leaf_flush_tendency(perm(1:m))
+      cohort%leaf_shed_tendency(1:m)  = cohort%leaf_shed_tendency(perm(1:m))
+      cohort%growing_degree_days(1:m) = cohort%growing_degree_days(perm(1:m))
+      cohort%cold_degree_days(1:m)    = cohort%cold_degree_days(perm(1:m))
+      cohort%dry_psi_sum(1:m)         = cohort%dry_psi_sum(perm(1:m))
+      cohort%wet_psi_sum(1:m)         = cohort%wet_psi_sum(perm(1:m))
+      cohort%light_hours_mean(1:m)      = cohort%light_hours_mean(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
       !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
       call cohort_diag_reorder(cohort%diag,  perm, m)
@@ -938,17 +928,17 @@ contains
       cohort%leaf_surf_water(dst) = cohort%leaf_surf_water(src)
       cohort%wood_surf_water(dst) = cohort%wood_surf_water(src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
+      cohort%light_hours_accum(dst)      = cohort%light_hours_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
       cohort%root_resp_accum(dst) = cohort%root_resp_accum(src)
-      cohort%pheno_flush_drive(dst) = cohort%pheno_flush_drive(src)
-      cohort%pheno_shed_drive(dst)  = cohort%pheno_shed_drive(src)
-      cohort%pheno_gdd(dst)        = cohort%pheno_gdd(src)
-      cohort%pheno_water_avg(dst)     = cohort%pheno_water_avg(src)
-      cohort%pheno_low_psi_days(dst)  = cohort%pheno_low_psi_days(src)
-      cohort%pheno_high_psi_days(dst) = cohort%pheno_high_psi_days(src)
-      cohort%pheno_light_avg(dst)     = cohort%pheno_light_avg(src)
-      cohort%pheno_chill(dst)      = cohort%pheno_chill(src)
+      cohort%leaf_flush_tendency(dst) = cohort%leaf_flush_tendency(src)
+      cohort%leaf_shed_tendency(dst)  = cohort%leaf_shed_tendency(src)
+      cohort%growing_degree_days(dst) = cohort%growing_degree_days(src)
+      cohort%cold_degree_days(dst)    = cohort%cold_degree_days(src)
+      cohort%dry_psi_sum(dst)         = cohort%dry_psi_sum(src)
+      cohort%wet_psi_sum(dst)         = cohort%wet_psi_sum(src)
+      cohort%light_hours_mean(dst)      = cohort%light_hours_mean(src)
    end subroutine copy_cohort_slot
 
    !---------------------------------------------------------------------------------------!
@@ -1038,14 +1028,14 @@ contains
       cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
       cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
       !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
-      !      (pheno_flush_drive, pheno_shed_drive, pheno_gdd, pheno_chill, and the four #150 cue    !
-      !      sub-accumulators) and dmax_psi_leaf are absent from this routine ON PURPOSE, so the     !
-      !      survivor keeps its own. Two cohorts only fuse when they already match in size, height   !
-      !      and PFT, and every one of these is driven by a site- or patch-level signal both of them !
-      !      saw, so the two memories are near-identical at the moment of fusion and a blend would   !
-      !      move nothing. Blending is also not obviously the right operation for a CONSECUTIVE-DAY  !
-      !      counter: an nplant-weighted average of "7 dry days" and "0 dry days" is 4.1 dry days,   !
-      !      a history neither cohort had. If a future cue is driven by something genuinely          !
+      !      (the two tendencies, the degree-day and psi sums, the light mean), light_hours_accum    !
+      !      (already consumed this step) and dmax_psi_leaf are absent from this routine ON PURPOSE,  !
+      !      so the survivor keeps its own. Two cohorts only fuse when they already match in size,   !
+      !      height and PFT, and every one of these is driven by a signal both of them saw (the PAR at a !
+      !      shared height included), so the two memories are near-identical at fusion and a blend would !
+      !      move nothing. Blending is also not obviously right for a sum that resets on a trigger:  !
+      !      an nplant-weighted average of a sum that has just reset and one that has not is a       !
+      !      history neither cohort had. If a future cue is driven by something genuinely           !
       !      per-cohort and slow, revisit this -- and add it here rather than leaving it implicit.   !
    contains
       pure subroutine blend(a, wr, wd, wtot)
@@ -1195,16 +1185,16 @@ contains
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      cohort%light_hours_accum(m)        = 0.0_wp             ! no light seen yet this step
       call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
       call cohort_diag_clear_slot(cohort%sdiag, m)
-      cohort%pheno_flush_drive(m) = PHENO_FLUSH_INIT  ! born flushing (evergreen fixed point)
-      cohort%pheno_shed_drive(m)  = PHENO_SHED_INIT   ! no active shed at birth
-      cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory
-      cohort%pheno_chill(m)      = 0.0_wp
-      cohort%pheno_water_avg(m)     = 0.0_wp
-      cohort%pheno_low_psi_days(m)  = 0.0_wp
-      cohort%pheno_high_psi_days(m) = 0.0_wp
-      cohort%pheno_light_avg(m)     = 0.0_wp
+      cohort%leaf_flush_tendency(m) = PHENO_FLUSH_INIT  ! born flushing
+      cohort%leaf_shed_tendency(m)  = PHENO_SHED_INIT   ! not senescing at birth
+      cohort%growing_degree_days(m) = 0.0_wp            ! fresh phenology memory
+      cohort%cold_degree_days(m)    = 0.0_wp
+      cohort%dry_psi_sum(m)         = 0.0_wp
+      cohort%wet_psi_sum(m)         = 0.0_wp
+      cohort%light_hours_mean(m) = -1.0_wp          ! no light memory: its first day sets it
       cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
       cohort%p_wood_density(m)       = pft%wood_density(ipft)
       cohort%p_hgt_max(m)            = pft%hgt_max(ipft)

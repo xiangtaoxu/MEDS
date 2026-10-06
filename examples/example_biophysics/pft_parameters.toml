@@ -79,7 +79,6 @@ growth_resp_factor     = [0.3]
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
-evergreen              = [0]     # 0 = DECIDUOUS (this PFT sheds leaves under the phenology cue)
 # Necromass -> litter-destination split (added: schema grew since this file was written; values match
 # the reference meds_config_pft.toml's mid-successional PFT, the closest analogue to this one).
 f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
@@ -106,33 +105,29 @@ lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5
 
-# Leaf-phenology cue parameters. The PRESENCE of this section is the gate: leave it out and this
-# PFT keeps the built-in evergreen defaults regardless of `evergreen = [0]` above. Present, every key
-# here is REQUIRED -- a missing one is a hard error naming it.
-# Cue bits: 0 = none | 1 = TEMP | 2 = WATER | 4 = HYDRO | 8 = PHOTO | 16 = LIGHT.
-# This PFT is cold-deciduous: TEMP permits the spring flush (GDD against a chilling-adjusted
-# threshold) and TEMP forces the autumn shed (short days with cool soil, or very cold soil alone).
+# Leaf phenology (docs/science/plant_phenology.md). The PRESENCE of this section is the gate: leave
+# it out and this PFT always flushes and never senesces. Present, every key here is REQUIRED.
+# Cue bits: 1 = TEMP, 2 = LIGHT, 4 = WATER. This PFT is temperate deciduous: warmth above 5 degC
+# summed from midwinter AND long days permit the flush; cold summed from midsummer AND short days
+# trigger senescence, which runs to bare (min_leaf_cover = 0).
 [phenology]
-flush_cue_mask      = [1]        # cues that PERMIT flushing (combined by MIN)
-shed_cue_mask       = [1]        # cues that FORCE shedding  (combined by MAX)
-cue_sharpness       = [2.0]      # [--]   logistic slope
-k_flush_max         = [0.06667]  # [1/day] max relative flush rate (~full canopy in 15 d)
-k_shed_max          = [0.05]     # [1/day] max relative active-shed rate (~bare in 20 d)
-tau_flush           = [5.0]      # [day]  flush governor low-pass timescale
-tau_shed            = [5.0]      # [day]  shed governor low-pass timescale
-gdd_base_temp       = [278.15]   # [K] 5 degC
-chill_base_temp     = [278.15]
-phen_a              = [-68.0]    # [K day] Botta 2000 GDD-threshold intercept
-phen_b              = [638.0]
-phen_c              = [-0.01]
-cold_drop_daylength = [10.9]     # [h] autumn short-day drop trigger
-cold_drop_soiltemp1 = [284.3]    # [K] cool-soil drop (with short days)
-cold_drop_soiltemp2 = [275.15]   # [K] very-cold-soil drop (unconditional)
-photo_crit          = [11.0]     # [h]
-photo_slope         = [2.0]      # [1/h]
-gdd_width           = [50.0]     # [K day] GDD flush transition width
-daylen_width        = [1.0]      # [h] autumn daylength transition width
-soiltemp_width      = [2.0]      # [K] autumn soil-temperature transition width
-evg_ref_temp        = [278.15]   # [K]   evergreen cold-limitation reference (unused at mask 1)
-evg_slope           = [0.4]      # [1/K] evergreen cold-limitation slope
-bare_snap_frac      = [0.02]     # [--]  below this leaf fraction the canopy snaps bare
+flush_cue_mask        = [3]        # TEMP + LIGHT: warmth reached AND long days
+shed_cue_mask         = [3]        # TEMP + LIGHT: cold reached AND short days
+flush_cue_timescale   = [5.0]      # [day]
+shed_cue_timescale    = [5.0]      # [day]
+flush_rate_max        = [0.03333]  # [1/day] Harvard Forest fit (examples/example02_canopy_phenology)
+shed_rate_max         = [0.3333]   # [1/day]
+min_leaf_cover        = [0.0]      # deciduous: senescence runs to bare
+bare_leaf_cover       = [0.02]
+flush_base_temp       = [278.15]   # [K] 5 degC
+flush_degree_days     = [91.4]     # [K day]
+flush_temp_sharpness  = [0.04]     # [1/(K day)]
+shed_base_temp        = [290.2]    # [K]
+shed_degree_days      = [47.91]    # [K day] after midsummer
+shed_temp_sharpness   = [0.1]      # [1/(K day)]
+par_min               = [2.0]      # [umol/m2/s] a low threshold: the hours of light ~ the day length
+flush_light_hours     = [13.65]    # [h/day]
+flush_light_sharpness = [7.999]    # [1/h] a photoperiod step
+shed_light_hours      = [9.06]     # [h/day]
+shed_light_sharpness  = [-1.0]     # [1/h] short days trigger senescence
+light_window          = [1.0]      # [day]

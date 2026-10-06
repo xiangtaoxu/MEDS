@@ -83,7 +83,6 @@ growth_resp_factor     = [0.3]
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
-evergreen              = [1]     # 1 = EVERGREEN: a humid tropical broadleaf tree
 # Necromass -> litter-destination split (added: schema grew since this file was written; values match
 # the reference meds_config_pft.toml's mid-successional PFT, the closest analogue to this one).
 f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
@@ -110,5 +109,5 @@ lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5
 
-# No [phenology] section: without it every PFT keeps the built-in evergreen cues (permissive flush,
-# no active shed), which is what a single evergreen tropical PFT needs.
+# No [phenology] section: without it every PFT always flushes and never senesces, losing leaves to
+# background turnover alone, which is what a single evergreen tropical PFT needs.

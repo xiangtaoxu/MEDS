@@ -14,7 +14,7 @@
 !       it (plus storage where allowed) down the priority ladder to GROWTH, charging GROWTH        !
 !       respiration (1+g per unit of tissue built) on realized growth only. It returns the         !
 !       per-pool GROWTH (>= 0) + the net storage change + growth respiration + starvation flags.   !
-!       Tissue LOSS (turnover / shed) is applied UPSTREAM by the driver (update_biomass_turnover): !
+!       Tissue LOSS (turnover / shed) is applied UPSTREAM by the driver (cohort_carbon_demand):    !
 !       the pools handed in are already net of this step's shed, and the driver forms the net      !
 !       per-pool change (growth - shed) + the litter. So this kernel only ever ADDS carbon.        !
 !   * growth_respiration -- construction respiration = g x (carbon allocated to NEW growth). It     !

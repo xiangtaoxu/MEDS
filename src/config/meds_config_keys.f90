@@ -27,6 +27,19 @@ module meds_config_keys
    !      against an older MEDS says what to change rather than only that something is wrong. ---!
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
+   character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &
+      'signed sharpness: flush_temp_sharpness, shed_temp_sharpness, flush_light_sharpness, '//         &
+      'shed_light_sharpness, flush_water_sharpness, shed_water_sharpness'
+   character(len=*), parameter :: PHENO_CHILL = 'chilling is gone: the warmth requirement is the '//   &
+      'constant flush_degree_days, warmth above flush_base_temp summed from midwinter'
+   character(len=*), parameter :: PHENO_COLD = 'senescence follows a cold sum below shed_base_temp '//  &
+      'from midsummer (shed_degree_days) and short days (shed_light_hours, '//                     &
+      'shed_light_sharpness, with a low par_min)'
+   character(len=*), parameter :: PHENO_WATER = 'the water cue is predawn leaf psi summed against the '// &
+      'turgor-loss point: flush_water_sum and shed_water_sum [MPa day]; no soil-water cue'
+   character(len=*), parameter :: PHENO_HABIT = 'leaf habit comes from the phenology parameters: '//    &
+      'min_leaf_cover (the leaf cover senescence stops at) and the cue masks; background turnover '//  &
+      'is not cold-suppressed'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -65,10 +78,44 @@ module meds_config_keys
       retired_key_t('site.wind_roughness_z0', 'the forcing is moved to each patch''s canopy-air '// &
                     'top; declare its own heights in [forcing]: tq_height, wind_height, '//       &
                     'height_above, wind_exposure'),                                              &
-      retired_key_t('phenology.cue_mask', 'the flush and shed cues are selected independently '// &
-                    'now: set flush_cue_mask (cues that permit flushing, combined by MIN) and '// &
-                    'shed_cue_mask (cues that force shedding, by MAX); a cold-deciduous PFT is '// &
-                    'flush_cue_mask = [1], shed_cue_mask = [1]'),                                &
+      retired_key_t('phenology.cue_mask', 'the flush and shed cues are selected independently: '// &
+                    'flush_cue_mask and shed_cue_mask (TEMP 1, LIGHT 2, WATER 4); a cold-'//     &
+                    'deciduous PFT is flush_cue_mask = [3], shed_cue_mask = [3]'),               &
+      retired_key_t('phenology.k_flush_max', 'renamed flush_rate_max'),                          &
+      retired_key_t('phenology.k_shed_max', 'renamed shed_rate_max'),                            &
+      retired_key_t('phenology.tau_flush', 'renamed flush_cue_timescale'),                       &
+      retired_key_t('phenology.tau_shed', 'renamed shed_cue_timescale'),                         &
+      retired_key_t('phenology.gdd_base_temp', 'renamed flush_base_temp'),                       &
+      retired_key_t('phenology.phen_a', PHENO_CHILL),                                            &
+      retired_key_t('phenology.phen_b', PHENO_CHILL),                                            &
+      retired_key_t('phenology.phen_c', PHENO_CHILL),                                            &
+      retired_key_t('phenology.chill_base_temp', PHENO_CHILL),                                   &
+      retired_key_t('phenology.cold_drop_daylength', PHENO_COLD),                                &
+      retired_key_t('phenology.cold_drop_soiltemp1', PHENO_COLD),                                &
+      retired_key_t('phenology.cold_drop_soiltemp2', PHENO_COLD),                                &
+      retired_key_t('phenology.photo_crit', 'the light cue counts hours of light: use '//         &
+                    'flush_light_hours [h/day] with a low par_min (then ~ the day length)'),     &
+      retired_key_t('phenology.photo_slope', 'renamed flush_light_sharpness [1/h]'),             &
+      retired_key_t('phenology.cue_sharpness', PHENO_SHARP),                                     &
+      retired_key_t('phenology.gdd_width', PHENO_SHARP),                                         &
+      retired_key_t('phenology.daylen_width', PHENO_SHARP),                                      &
+      retired_key_t('phenology.soiltemp_width', PHENO_SHARP),                                    &
+      retired_key_t('phenology.light_width', PHENO_SHARP),                                       &
+      retired_key_t('phenology.water_width', PHENO_WATER),                                       &
+      retired_key_t('phenology.water_off_threshold', PHENO_WATER),                               &
+      retired_key_t('phenology.water_on_threshold', PHENO_WATER),                                &
+      retired_key_t('phenology.water_window', PHENO_WATER),                                      &
+      retired_key_t('phenology.low_psi_threshold', 'renamed shed_water_sum, now a sum of psi '//   &
+                    'below the turgor-loss point [MPa day]'),                                    &
+      retired_key_t('phenology.high_psi_threshold', 'renamed flush_water_sum, now a sum of psi '// &
+                    'above the turgor-loss point [MPa day]'),                                    &
+      retired_key_t('phenology.light_on_threshold', 'the light cue counts hours of light: '//    &
+                    'set par_min to that PAR [umol/m2/s] and shed_light_hours with a positive '// &
+                    'shed_light_sharpness (LIGHT, mask bit 2)'),                                 &
+      retired_key_t('phenology.evg_ref_temp', PHENO_HABIT),                                      &
+      retired_key_t('phenology.evg_slope', PHENO_HABIT),                                         &
+      retired_key_t('pft.evergreen', PHENO_HABIT),                                               &
+      retired_key_t('phenology.bare_snap_frac', 'renamed bare_leaf_cover'),                      &
       retired_key_t('phenology.phenology_on', 'leaf phenology always runs; the per-PFT cues are '//&
                     'the PFT file''s [phenology] block'),                                        &
       retired_key_t('carbon.growth_source', 'growth is always carbon-driven, by the NPP the '//    &

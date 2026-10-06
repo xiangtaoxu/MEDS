@@ -9,8 +9,9 @@ place for it to break.
 
 - [`meds.plant.leaf`](meds/plant/leaf.py) — leaf gas exchange (FvCB C3 / Collatz C4, Leuning / Medlyn /
   Katul stomata, the coupled A–gs–Ci solver);
-- [`meds.plant.pheno`](meds/plant/pheno.py) — leaf phenology (the two per-day flush / shed rate
-  tendencies + the four strategy presets; see `examples/example_phenology/`).
+- [`meds.plant.pheno`](meds/plant/pheno.py) — leaf phenology (the flush and senescence tendencies,
+  the coupled model's leaf rule, and four leaf-habit presets; see
+  `examples/example02_canopy_phenology/`).
 
 **`meds.demography`** — [`Config` and `Site`](meds/demography/_site.py): load a TOML config, build a
 site, and step the carbon slow loop or feed it externally computed rates (`apply_rates`). This is the
@@ -45,9 +46,9 @@ flux = leaf.gas_exchange(par=1500.0, leaf_temp=298.15,       # leaf_temp in KELV
 print(flux.A_net, flux.gs, flux.ci, flux.limitation, flux.converged)
 
 import meds.plant.pheno as pheno
-ph = pheno.Phenology(pheno.temperate_deciduous())            # a stateful phenology driver
-out = ph.step(temp_day=290.0, soil_temp=290.0, daylength=13.0, doy=150)
-print(out.leaf_flush_rate, out.leaf_shed_rate)               # [1/day] flush / shed tendencies
+ph = pheno.Phenology(pheno.temperate_deciduous())            # params + cue memory + leaf cover
+day = ph.step(temp_day=290.0, par_hours=14.5, doy=150)   # hours of PAR above par_min
+print(day.leaf_flush_tendency, day.leaf_cover)               # tendency [0-1], leaf / full leaf
 ```
 
 ## Install

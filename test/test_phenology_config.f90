@@ -3,19 +3,19 @@
 ! test_phenology_config -- the [phenology] section actually reaches the PFT table (#245).       !
 !                                                                                          !
 ! The gate on this section is its PRESENCE in the PFT file: absent, every PFT keeps the          !
-! built-in evergreen defaults; present, every key in it is REQUIRED. That contract was          !
+! built-in no-cue defaults; present, every key in it is REQUIRED. That contract was          !
 ! implemented by testing for ONE key inside the block -- `flush_cue_mask` -- which the shipped   !
 ! meds_config_pft.toml never documented. It documented `cue_mask`, a name no reader consumes.    !
 !                                                                                          !
 ! So a config that wrote a full, deliberate [phenology] block was skipped in SILENCE. The        !
 ! presence map never saw twenty-three required keys go missing, and every PFT fell back to       !
-! CUE_NONE / CUE_NONE -- flush = 1, shed = 0, the evergreen fixed point -- whatever leaf habit    !
+! CUE_NONE / CUE_NONE -- always flushing, never senescing -- whatever leaf habit                  !
 ! it declared. The Ithaca reference stand, declared cold-deciduous, held LAI 5.28-5.66 through    !
 ! every January of a 50-year run, and no MEDS run has ever had a leaf-area cycle.                 !
 !                                                                                          !
 ! What is asserted here is the GATE, on both sides of it, because that is the thing that failed: !
 !                                                                                          !
-!   1. a PFT file with NO [phenology] section keeps the evergreen defaults (the documented        !
+!   1. a PFT file with NO [phenology] section keeps the no-cue defaults (the documented           !
 !      fallback -- it has to stay reachable, or every existing config becomes an error);          !
 !   2. a PFT file WITH the section is read, and the masks land where the kernel looks;            !
 !   3. `toml_has_section` -- the new gate -- sees a section by ANY of its keys, not by one        !
@@ -40,7 +40,6 @@ program test_phenology_config
    open(newunit=u, file=F_NONE, status='replace', action='write')
    write(u,'(a)') '[pft]'
    write(u,'(a)') 'include_pft = [1]'
-   write(u,'(a)') 'evergreen   = [0]'
    close(u)
 
    !----- (b) the same file WITH a phenology section, written the way the shipped            !
@@ -48,11 +47,10 @@ program test_phenology_config
    open(newunit=u, file=F_FULL, status='replace', action='write')
    write(u,'(a)') '[pft]'
    write(u,'(a)') 'include_pft = [1]'
-   write(u,'(a)') 'evergreen   = [0]'
    write(u,'(a)') '[phenology]'
    write(u,'(a)') 'flush_cue_mask = [1]'
    write(u,'(a)') 'shed_cue_mask  = [1]'
-   write(u,'(a)') 'cue_sharpness  = [2.0]'
+   write(u,'(a)') 'flush_rate_max = [0.05]'
    close(u)
 
    !----- (c) a file carrying ONLY the retired spelling. The section is plainly present and  !

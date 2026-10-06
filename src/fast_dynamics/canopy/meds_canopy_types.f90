@@ -74,6 +74,8 @@ module meds_canopy_types
       integer(ik) :: n_band = 0_ik, n_coh = 0_ik
       real(wp), allocatable :: abs_leaf(:,:)       !< (band,col_cohort) [W/m2] absorbed by leaves
       real(wp), allocatable :: abs_wood(:,:)       !< (band,col_cohort) [W/m2] absorbed by wood
+      real(wp), allocatable :: incid_top(:,:)      !< (band,col_cohort) [W/m2] beam + downward diffuse
+                                                   !<   reaching the top of the cohort's layer
       real(wp), allocatable :: albedo(:)           !< (band) canopy+ground albedo (SW) / upward frac
       real(wp), allocatable :: dn_ground(:)        !< (band) [W/m2] downwelling below canopy (to ground)
       real(wp), allocatable :: up_ground(:)        !< (band) [W/m2] upwelling from ground into canopy
@@ -167,10 +169,11 @@ contains
       integer(ik),      intent(in)  :: n_band, n_coh
       flux%n_band = n_band
       flux%n_coh  = n_coh
-      allocate(flux%abs_leaf(n_band, n_coh), flux%abs_wood(n_band, n_coh))
+      allocate(flux%abs_leaf(n_band, n_coh), flux%abs_wood(n_band, n_coh), flux%incid_top(n_band, n_coh))
       allocate(flux%albedo(n_band), flux%dn_ground(n_band), flux%up_ground(n_band))
       flux%abs_leaf = 0.0_wp
       flux%abs_wood = 0.0_wp
+      flux%incid_top = 0.0_wp
       flux%albedo = 0.0_wp
       flux%dn_ground = 0.0_wp
       flux%up_ground = 0.0_wp

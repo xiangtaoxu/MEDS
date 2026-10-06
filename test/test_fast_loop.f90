@@ -176,7 +176,7 @@ program test_fast_loop
    block
       type(met_source_t) :: drv
       type(met_cursor_t) :: cur
-      real(wp)           :: gpp_night, gpp_day, tcas_n
+      real(wp)           :: gpp_night, gpp_day, tcas_n, light_night, light_day
       real(wp)           :: g1_ref, g2_ref, g3_ref   ! 1-thread multi-patch GPP, for the section 7 C5 check
       cfg%gpp_ref = 0.0_wp     ! isolate the FORCING-driven GPP
       call build_fast_context(cfg, ctx)                          ! rebuild ctx WITH the RT optics table (rad_opt)
@@ -202,12 +202,14 @@ program test_fast_loop
       call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,2_ik))    ! 02-04 UTC (night)
       gpp_night = site%cohort%gpp_accum(1)
+      light_night = site%cohort%light_hours_accum(1)
       tcas_n    = site%patch%cas(1)%can_temp      ! night canopy-air temp after the SW=0 window
 
       call init_fast_reservoirs(site, ctx)
       call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur,               &
                                step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik))   ! 15-17 UTC (day)
       gpp_day = site%cohort%gpp_accum(1)
+      light_day = site%cohort%light_hours_accum(1)
 
       !=== The FORCING ECHO (MEDS_FORCING_DESIGN.md §6.7): with the polygon diagnostics and the     !
       !    fast tier on, a step must record exactly the forcing the reader hands the fast loop --    !
@@ -296,6 +298,11 @@ program test_fast_loop
       call check(gpp_night < 1.0e-9_wp, 'night forcing window -> ~zero GPP (SW=0 propagated through met_instant)')
       call check(gpp_day > 1.0e-7_wp,   'day forcing window -> positive GPP')
       call check(gpp_day > 10.0_wp * max(gpp_night, 1.0e-30_wp), 'GPP tracks the diurnal shortwave (day >> night)')
+      !----- The phenology light count: no step of the night window has PAR above par_min, every   !
+      !      step of the mid-afternoon window does, so the cohort counts 0 h and the window's hours. !
+      call check(light_night == 0.0_wp, 'night window -> no hours of light counted')
+      call check(abs(light_day - cfg%n_fast_per_slow * cfg%dt_fast / 3600.0_wp) < 1.0e-9_wp, &
+                 'day window -> every fast step counted as light (the window''s hours)')
 
       !=== MULTI-PATCH x FORCING (§7 C1). ================================================================!
       !    The forced block above runs ONE patch, so it cannot see the patch loop's interaction with the   !

@@ -45,7 +45,7 @@ compile_commands.json
 !examples/example_demography/example_output_pft.png
 !examples/example_demography/forest3d_landscape.png
 !examples/example01_leaf_gas_exchange/slot2017.png
-!examples/example_phenology/phenology_patterns.png
+!examples/example02_canopy_phenology/canopy_phenology.png
 !examples/example_flux_tower_bci/forcing_qc.png
 !examples/example_flux_tower_bci/lw_comparison.png
 !examples/example_flux_tower_bci/evaluation.png
@@ -85,6 +85,8 @@ examples/example_flux_tower_bci/data/
 examples/example_flux_tower_bci/output/
 # The calibration's trials and states (calibrate_fast.py --work); its results are committed.
 examples/example_flux_tower_bci/calibration/run/
+# The phenology example's site data, downloaded by fetch_phenology_data.py.
+examples/example02_canopy_phenology/data/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md

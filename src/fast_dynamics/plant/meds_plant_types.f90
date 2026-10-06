@@ -301,12 +301,11 @@ module meds_plant_types
 
 
    !=======================================================================================!
-   !     CARBON ALLOCATION -- see meds_plant_carbon_allocation. The allocation kernel and its !
-   !     rate->amount helpers (leaf_shed_amount, flush_growth_cap) are ELEMENTAL over plain     !
-   !     cohort scalars, so no derived types live here: the vegetation-dynamics driver hands    !
-   !     the kernel raw per-cohort arrays (GPP, maintenance resp, storage, shed amounts, capped  !
-   !     demands) and receives the per-pool NPP + growth respiration. Tissue turnover is a       !
-   !     degenerate phenology (baseline shed rate) and lives in the PHENOLOGY section above.     !
+   !     CARBON ALLOCATION -- see meds_plant_carbon_allocation. The allocation kernel is      !
+   !     ELEMENTAL over plain cohort scalars, so no derived types live here: the vegetation-     !
+   !     dynamics driver hands the kernel raw per-cohort arrays (GPP, maintenance resp, storage, !
+   !     shed amounts, capped demands) and receives the per-pool NPP + growth respiration. Leaf  !
+   !     loss and the flush cap come from meds_phenology::leaf_turnover_step.                    !
    !=======================================================================================!
 
    !----- (soil_energy_column_t + cas_state_t now live in meds_column_state_types; re-exported.) -!

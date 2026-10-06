@@ -1,241 +1,251 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_plant_phenology -- unit tests for the stateless leaf-phenology SIGNAL kernel.         !
+! test_plant_phenology -- unit tests for the leaf-phenology kernel and leaf_turnover_step.  !
 !                                                                                          !
-! The kernel emits TWO relative rate tendencies (leaf_flush_rate, leaf_shed_rate [1/day]) from  !
-! two governor accumulators. The tests exercise the FOUR target patterns (design §1a) plus the   !
-! rate-mapping boundary values, hysteresis, and FPE safety:                                       !
+! The kernel turns daily cues into two smoothed tendencies (leaf_flush_tendency,            !
+! leaf_shed_tendency) and the potential rates rate_max * tendency. The tests:                !
 !                                                                                          !
-!   1. EVERGREEN            : flush={} shed={} => flush_rate = k_flush_max, shed_rate = 0 always.  !
-!   2. TEMPERATE DECIDUOUS  : flush={TEMP} shed={TEMP} => flush pulse in summer, shed pulse autumn. !
-!   3. FACULTATIVE DROUGHT  : flush={HYDRO} shed={HYDRO} => sheds under sustained low dmax_leaf_psi, !
-!                             flushes on rewet; stays flushed when never droughted.                 !
-!   4. LIGHT LEAF-EXCHANGING: flush={} shed={LIGHT} => flush stays HIGH while shed RISES with light  !
-!                             (canopy full while turning over).                                     !
-!   5. RATE MAPPING         : leaf_flush_rate == k_flush_max*flush_drive; shed likewise (boundaries).!
-!   6. DEGENERATE / FPE     : extreme drivers keep both rates finite and >= 0 (no trap).             !
-!   7. DAYLENGTH            : the relocated meds_time daylength has the polar branches right.         !
+!   1. NO CUES             : both masks empty => flush potential = flush_rate_max, shed 0.    !
+!   2. TEMPERATE DECIDUOUS : warmth x light flush, cold x short-day shed (the hours of light   !
+!                            at a low par_min are the day length); the sums reset             !
+!                            at midwinter and the cold sum waits for midsummer.              !
+!   3. SOUTHERN HEMISPHERE : the same PFT half a year later.                                 !
+!   4. DROUGHT DECIDUOUS   : wet/dry psi sums; a long wet season does not block a drought, a  !
+!                            brief rain does not wipe one.                                    !
+!   5. LIGHT EXCHANGING    : many bright hours trigger senescence, flush stays on; a cohort   !
+!                            with no light memory starts from its first day's hours.          !
+!   6. RATE MAPPING        : potential == rate_max * tendency, tendencies in [0,1].            !
+!   7. DEGENERATE / FPE    : extreme drivers keep the potentials finite and >= 0.             !
+!   8. DAYLENGTH           : the polar branches of meds_time daylength.                       !
+!   9. LEAF TURNOVER STEP  : background, senescence, the leaf-cover floor (an emergent        !
+!                            evergreen), the dormant snap to bare, the pool clamp.            !
 !==========================================================================================!
 program test_plant_phenology
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : yr_day
    use meds_time,            only : daylength
-   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t, CUE_NONE, CUE_TEMP, CUE_WATER, &
-                                CUE_HYDRO, CUE_PHOTO, CUE_LIGHT
-   use meds_phenology, only : phenology_kernel, pheno_drives_to_rates
+   use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,     &
+                                    CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
+   use meds_phenology,       only : phenology_kernel, leaf_turnover_step
    implicit none
 
-   real(wp),    parameter :: twopi = 6.283185307179586_wp
+   real(wp), parameter :: twopi = 6.283185307179586_wp
+   real(wp), parameter :: LAT   = 42.5_wp                 ! Harvard Forest
 
-   call test_evergreen()
+   call test_no_cues()
    call test_temperate_deciduous()
+   call test_southern_hemisphere()
    call test_drought_deciduous()
    call test_light_exchanging()
    call test_rate_mapping()
    call test_degenerate()
    call test_daylength_polar()
-   call test_shed_rate_split()
+   call test_leaf_turnover_step()
 
    call test_report('test_plant_phenology')
 
 contains
 
-   !----- The BASELINE share of the leaf shed rate (#151). Resorption is charged on the ACTIVE    !
-   !      (senescence) shed only, so the carbon layer needs the split -- and the split has to be   !
-   !      exact, because leaf_shed_rate is a MAX of the two channels, not a sum. Three regimes:    !
-   !      baseline dominant, active dominant, and the reported base always equal to the turnover   !
-   !      rate whichever wins.                                                                     !
-   subroutine test_shed_rate_split()
-      real(wp) :: fl, shed, root, base
-      real(wp), parameter :: TURN = 1.0_wp, KSHED = 0.05_wp
-      print '(a)', 'test_shed_rate_split:'
-      !----- No active shed (shed_drive = 0): the rate IS the baseline, active excess is zero, so  !
-      !      an evergreen shedding only by turnover resorbs NOTHING however large the fraction.    !
-      call pheno_drives_to_rates(1.0_wp, 0.0_wp, 0.06_wp, KSHED, TURN, 0.5_wp, .false.,           &
-                                 278.15_wp, 0.4_wp, 290.0_wp, fl, shed, root, leaf_shed_base_rate=base)
-      call check_close(base, TURN / yr_day, 1.0e-12_wp, 'baseline shed rate = turnover / yr_day')
-      call check_close(shed, base,       1.0e-12_wp, 'no active shed => rate is the baseline')
-      call check_true('no active shed => zero active excess', abs(shed - base) < 1.0e-15_wp, shed - base)
-      !----- Full active shed: k_shed_max dominates the baseline, and the excess is the difference. !
-      call pheno_drives_to_rates(0.0_wp, 1.0_wp, 0.06_wp, KSHED, TURN, 0.5_wp, .false.,           &
-                                 278.15_wp, 0.4_wp, 290.0_wp, fl, shed, root, leaf_shed_base_rate=base)
-      call check_close(shed, KSHED, 1.0e-12_wp, 'full active shed => rate is k_shed_max')
-      call check_close(base, TURN / yr_day, 1.0e-12_wp, 'baseline is reported unchanged when active wins')
-      call check_true('active excess = rate - baseline, and is positive',                          &
-                      shed - base > 0.0_wp .and. abs((shed - base) - (KSHED - TURN/yr_day)) < 1.0e-12_wp, &
-                      shed - base)
-      !----- The decomposition is exact either way: excess + base == rate, in BOTH regimes. -------!
-      call check_close(max(0.0_wp, shed - base) + base, shed, 1.0e-15_wp,                          &
-                       'excess + baseline == the shed rate (exact decomposition of a max)')
-   end subroutine test_shed_rate_split
-
-
-
-   !----- Annual forcing (northern hemisphere; summer solstice ~ doy 201). -----------------!
+   !----- Annual air temperature (northern hemisphere; warmest ~ doy 201). -----------------!
    pure real(wp) function annual_temp(doy) result(t)
       integer(ik), intent(in) :: doy
       t = 283.15_wp + 12.0_wp * cos(twopi * real(doy - 201_ik, wp) / 365.0_wp)
    end function annual_temp
 
-   pure real(wp) function annual_soiltemp(doy) result(t)
-      integer(ik), intent(in) :: doy
-      t = 283.15_wp + 8.0_wp * cos(twopi * real(doy - 215_ik, wp) / 365.0_wp)
-   end function annual_soiltemp
+   !----- A temperate deciduous PFT (warmth x light, cold x short days). The tests feed the   !
+   !      day length as the hours of light, which is what a low par_min counts. ----------------!
+   pure function temperate_deciduous() result(p)
+      type(pheno_params_t) :: p
+      p%flush_cue_mask        = CUE_TEMP + CUE_LIGHT
+      p%shed_cue_mask         = CUE_TEMP + CUE_LIGHT
+      p%flush_degree_days     = 92.0_wp
+      p%shed_base_temp        = 290.37_wp
+      p%shed_degree_days      = 48.0_wp
+      p%flush_light_hours     = 10.35_wp
+      p%shed_light_hours      = 9.83_wp
+   end function temperate_deciduous
 
-   !----- 1. Evergreen: flush stays at k_flush_max, no active shed, under ANY drivers. ------!
-   subroutine test_evergreen()
+   !----- 1. No cues: always flushing, never senescing, under ANY drivers. -----------------!
+   subroutine test_no_cues()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
       logical     :: flush_ok, shed_ok
-      print '(a)', '-- 1. evergreen (flush={}, shed={}) --'
+      print '(a)', '-- 1. no cues (flush={}, shed={}) --'
       params%flush_cue_mask = CUE_NONE ; params%shed_cue_mask = CUE_NONE
-      state    = pheno_state_t()
       flush_ok = .true. ; shed_ok = .true.
       do d = 1_ik, 400_ik
-         env%doy           = modulo(d - 1_ik, 365_ik) + 1_ik
-         env%temp_day      = annual_temp(env%doy)
-         env%soil_temp     = annual_soiltemp(env%doy)
-         env%avail_water   = 0.05_wp                     ! bone dry ...
-         env%dmax_leaf_psi = -8.0_wp                     ! ... and cavitated ...
-         env%rad           = 800.0_wp                    ! ... and blazing -- none of it is a cue
-         env%daylength     = daylength(45.0_wp, env%doy)
+         env%doy              = modulo(d - 1_ik, 365_ik) + 1_ik
+         env%temp_day         = annual_temp(env%doy)
+         env%predawn_leaf_psi = -8.0_wp                  ! cavitated ...
+         env%par_hours        = 24.0_wp                  ! ... and never dark -- none of it is a cue
          call phenology_kernel(env, params, 1.0_wp, state, out)
-         if (abs(out%leaf_flush_rate - params%k_flush_max) > 1.0e-9_wp) flush_ok = .false.
-         if (out%leaf_shed_rate /= 0.0_wp) shed_ok = .false.
+         if (abs(out%leaf_flush_potential - params%flush_rate_max) > 1.0e-12_wp) flush_ok = .false.
+         if (out%leaf_shed_potential /= 0.0_wp) shed_ok = .false.
       end do
-      call check_true('evergreen: flush_rate = k_flush_max regardless of drivers', flush_ok)
-      call check_true('evergreen: shed_rate = 0 regardless of drivers',            shed_ok)
-   end subroutine test_evergreen
+      call check_true('no cues: flush potential = flush_rate_max regardless of drivers', flush_ok)
+      call check_true('no cues: shed potential = 0 regardless of drivers',               shed_ok)
+   end subroutine test_no_cues
 
-   !----- 2. Temperate deciduous: flush pulse in summer, shed pulse in autumn. --------------!
-   subroutine test_temperate_deciduous()
+   !----- Run a temperate deciduous PFT for two years and sample the second. ----------------!
+   subroutine run_two_years(north, offset, fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171)
+      logical,     intent(in)  :: north
+      integer(ik), intent(in)  :: offset          !< calendar lag of the climate [day] (183: doy_effective)
+      real(wp),    intent(out) :: fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171
       type(pheno_env_t)    :: env
-      type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
-      integer(ik) :: d, doy
-      real(wp)    :: fl_200, sh_200, fl_340, sh_340, gdd_200
-      print '(a)', '-- 2. temperate deciduous (flush={TEMP}, shed={TEMP}) --'
-      params%flush_cue_mask = CUE_TEMP ; params%shed_cue_mask = CUE_TEMP
-      state           = pheno_state_t()
-      env%hemis_north = .true.
-      fl_200 = -9.0_wp ; sh_200 = -9.0_wp ; fl_340 = -9.0_wp ; sh_340 = -9.0_wp ; gdd_200 = 0.0_wp
-      do d = 1_ik, 730_ik                                 ! two years (year 2 has prior-winter chill)
-         doy           = modulo(d - 1_ik, 365_ik) + 1_ik
-         env%doy       = doy
-         env%temp_day  = annual_temp(doy)
-         env%soil_temp = annual_soiltemp(doy)
-         env%daylength = daylength(45.0_wp, doy)
+      type(pheno_params_t) :: params
+      integer(ik) :: d, de
+      real(wp)    :: lat_signed
+      params = temperate_deciduous()
+      lat_signed = merge(LAT, -LAT, north)
+      env%hemis_north = north
+      do d = 1_ik, 730_ik
+         env%doy       = modulo(d - 1_ik + offset, 365_ik) + 1_ik
+         de            = modulo(d - 1_ik, 365_ik) + 1_ik          ! the season, northern-equivalent
+         env%temp_day  = annual_temp(de)
+         env%par_hours = daylength(lat_signed, env%doy)
          call phenology_kernel(env, params, 1.0_wp, state, out)
-         if (d == 565_ik) then                            ! year-2 mid-summer (doy 200)
-            fl_200 = state%flush_drive ; sh_200 = state%shed_drive ; gdd_200 = state%gdd
+         if (d == 366_ik) gdd_1   = state%growing_degree_days
+         if (d == 536_ik) cdd_171 = state%cold_degree_days
+         if (d == 565_ik) then
+            fl_200 = state%leaf_flush_tendency ; sh_200 = state%leaf_shed_tendency
+            gdd_200 = state%growing_degree_days
          end if
-         if (d == 705_ik) then                            ! year-2 late autumn (doy 340)
-            fl_340 = state%flush_drive ; sh_340 = state%shed_drive
+         if (d == 705_ik) then
+            fl_340 = state%leaf_flush_tendency ; sh_340 = state%leaf_shed_tendency
          end if
       end do
-      call check_true('deciduous: flush_drive HIGH in mid-summer',   fl_200 > 0.5_wp)
-      call check_true('deciduous: shed_drive  LOW  in mid-summer',   sh_200 < 0.2_wp)
-      call check_true('deciduous: shed_drive  HIGH in late autumn',  sh_340 > 0.4_wp)
-      call check_true('deciduous: flush_drive LOW  in late autumn',  fl_340 < 0.5_wp)
-      call check_true('deciduous: GDD accumulated by summer',        gdd_200 > 100.0_wp)
+   end subroutine run_two_years
+
+   !----- 2. Temperate deciduous: flush in summer, senescence in late autumn. --------------!
+   subroutine test_temperate_deciduous()
+      real(wp) :: fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171
+      print '(a)', '-- 2. temperate deciduous (flush={TEMP,LIGHT}, shed={TEMP,LIGHT}) --'
+      call run_two_years(.true., 0_ik, fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171)
+      call check_true('deciduous: flush tendency HIGH in mid-summer', fl_200 > 0.9_wp, fl_200)
+      call check_true('deciduous: shed tendency  LOW  in mid-summer', sh_200 < 0.05_wp, sh_200)
+      call check_true('deciduous: shed tendency  HIGH in late autumn', sh_340 > 0.5_wp, sh_340)
+      !----- The warmth sum is still high in autumn: it is the light gate that closes. -------!
+      call check_true('deciduous: flush tendency LOW in late autumn (light gate)', fl_340 < 0.5_wp, fl_340)
+      call check_true('deciduous: warmth sum restarts at midwinter',   gdd_1 < 1.0_wp, gdd_1)
+      call check_true('deciduous: warmth sum accumulated by summer',   gdd_200 > 92.0_wp, gdd_200)
+      call check_close('deciduous: no cold sum before midsummer',      cdd_171, 0.0_wp, 0.0_wp)
    end subroutine test_temperate_deciduous
 
-   !----- 3. Facultative drought-deciduous: sheds on drought, flushes on rewet. -------------!
+   !----- 3. Southern hemisphere: the same seasons half a year later on the calendar. -----!
+   subroutine test_southern_hemisphere()
+      real(wp) :: fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171
+      print '(a)', '-- 3. southern hemisphere --'
+      call run_two_years(.false., 183_ik, fl_200, sh_200, fl_340, sh_340, gdd_1, gdd_200, cdd_171)
+      call check_true('south: flush tendency HIGH in its mid-summer', fl_200 > 0.9_wp, fl_200)
+      call check_true('south: shed tendency  LOW  in its mid-summer', sh_200 < 0.05_wp, sh_200)
+      call check_true('south: shed tendency  HIGH in its late autumn', sh_340 > 0.5_wp, sh_340)
+      call check_true('south: warmth sum restarts at its midwinter',  gdd_1 < 1.0_wp, gdd_1)
+   end subroutine test_southern_hemisphere
+
+   !----- 4. Drought deciduous: the wet and dry sums of predawn psi against the TLP. -------!
    subroutine test_drought_deciduous()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      real(wp)    :: shed_watered, shed_drought, flush_rewet
-      print '(a)', '-- 3. facultative drought-deciduous (flush={HYDRO}, shed={HYDRO}) --'
-      params%flush_cue_mask = CUE_HYDRO ; params%shed_cue_mask = CUE_HYDRO   ! tlp=-2, thresholds=10 d
-      state = pheno_state_t()
-      env%doy = 1_ik
-      !----- (a) well-watered: sustained high dmax_leaf_psi -> no active shed (facultative). --!
-      do d = 1_ik, 30_ik
-         env%dmax_leaf_psi = -0.5_wp                      ! >= 0.5*tlp (-1): a wet day
+      real(wp)    :: dry_before_rain
+      print '(a)', '-- 4. drought deciduous (flush={WATER}, shed={WATER}) --'
+      params%flush_cue_mask = CUE_WATER ; params%shed_cue_mask = CUE_WATER   ! tlp -2, sums 10
+      !----- (a) A long wet season: the wet sum grows far past its centre. -----------------!
+      do d = 1_ik, 60_ik
+         env%predawn_leaf_psi = -0.5_wp                     ! 1.5 MPa above the TLP each day
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      shed_watered = out%leaf_shed_rate
-      call check_true('drought-decid: watered => no active shed', shed_watered < 0.05_wp * params%k_shed_max)
-      call check_true('drought-decid: watered => flush is on',    out%leaf_flush_rate > 0.5_wp * params%k_flush_max)
-      !----- (b) drought: sustained low dmax_leaf_psi -> shed rises, flush falls. ------------!
+      call check_true('drought-decid: watered => no senescence', out%leaf_shed_potential < 0.05_wp * params%shed_rate_max)
+      call check_true('drought-decid: watered => flushing',      out%leaf_flush_potential > 0.9_wp * params%flush_rate_max)
+      !----- (b) Drought: the dry sum crosses its centre DESPITE the large wet sum (the     !
+      !      crossing resets the wet sum; a level test would wipe the dry sum every day). -!
       do d = 1_ik, 30_ik
-         env%dmax_leaf_psi = -3.0_wp                      ! < tlp (-2): a dry day
+         env%predawn_leaf_psi = -3.0_wp                     ! 1 MPa below the TLP each day
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      shed_drought = out%leaf_shed_rate
-      call check_true('drought-decid: drought => active shed rises', shed_drought > 0.5_wp * params%k_shed_max)
-      call check_true('drought-decid: drought => flush falls',       out%leaf_flush_rate < 0.2_wp * params%k_flush_max)
-      !----- (c) rewet: flush recovers. ----------------------------------------------------!
-      do d = 1_ik, 30_ik
-         env%dmax_leaf_psi = -0.5_wp
+      call check_true('drought-decid: drought after a wet season => senescence', &
+                      out%leaf_shed_potential > 0.9_wp * params%shed_rate_max, out%leaf_shed_potential)
+      call check_true('drought-decid: drought => flush falls',   out%leaf_flush_potential < 0.1_wp * params%flush_rate_max)
+      !----- (c) A brief rain adds wet credit but does not wipe the drought. ---------------!
+      dry_before_rain = state%dry_psi_sum
+      do d = 1_ik, 2_ik
+         env%predawn_leaf_psi = -0.5_wp
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      flush_rewet = out%leaf_flush_rate
-      call check_true('drought-decid: rewet => flush recovers',      flush_rewet > 0.5_wp * params%k_flush_max)
+      call check_close('drought-decid: brief rain keeps the dry sum', state%dry_psi_sum, dry_before_rain, 0.0_wp)
+      call check_true('drought-decid: brief rain keeps senescing', out%leaf_shed_potential > 0.5_wp * params%shed_rate_max)
+      !----- (d) Rewetting: the wet sum crosses, the dry sum resets, flushing resumes. -----!
+      do d = 1_ik, 30_ik
+         env%predawn_leaf_psi = -0.5_wp
+         call phenology_kernel(env, params, 1.0_wp, state, out)
+      end do
+      call check_close('drought-decid: rewet resets the dry sum', state%dry_psi_sum, 0.0_wp, 0.0_wp)
+      call check_true('drought-decid: rewet => flush recovers',  out%leaf_flush_potential > 0.9_wp * params%flush_rate_max)
+      call check_true('drought-decid: rewet => senescence stops', out%leaf_shed_potential < 0.05_wp * params%shed_rate_max)
    end subroutine test_drought_deciduous
 
-   !----- 4. Light-driven leaf-exchanging: flush stays HIGH, shed rises with light. ---------!
+   !----- 5. Light-driven leaf exchange: flush stays on, senescence rises with light. -------!
    subroutine test_light_exchanging()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      real(wp)    :: flush_lowlight, shed_lowlight, flush_highlight, shed_highlight
-      print '(a)', '-- 4. light-driven leaf-exchanging (flush={}, shed={LIGHT}) --'
-      params%flush_cue_mask = CUE_NONE ; params%shed_cue_mask = CUE_LIGHT   ! on=200, width=50, window=10
-      state = pheno_state_t()
-      !----- (a) low light: little active shed; flush stays at k_flush_max. -----------------!
+      print '(a)', '-- 5. light-driven leaf exchange (flush={}, shed={LIGHT}) --'
+      params%flush_cue_mask       = CUE_NONE ; params%shed_cue_mask = CUE_LIGHT
+      params%shed_light_hours     = 6.0_wp
+      params%shed_light_sharpness = 2.0_wp               ! > 0: many bright hours trigger senescence
+      call check_true('leaf-exch: a new cohort has no light memory', state%light_hours_mean < 0.0_wp, &
+                      state%light_hours_mean)
+      env%par_hours = 2.0_wp
+      call phenology_kernel(env, params, 1.0_wp, state, out)
+      call check_close('leaf-exch: its first day sets the light memory', state%light_hours_mean, 2.0_wp, 0.0_wp)
       do d = 1_ik, 40_ik
-         env%rad = 50.0_wp
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      flush_lowlight = out%leaf_flush_rate ; shed_lowlight = out%leaf_shed_rate
-      call check_true('leaf-exch: low light => shed small',           shed_lowlight < 0.1_wp * params%k_shed_max)
-      call check_close('leaf-exch: flush = k_flush_max (permissive)', flush_lowlight, params%k_flush_max, 1.0e-9_wp)
-      !----- (b) high light: shed rises; flush UNCHANGED (canopy stays full while exchanging). !
+      call check_close('leaf-exch: running mean tracks the hours of light', state%light_hours_mean, 2.0_wp, 1.0e-9_wp)
+      call check_true('leaf-exch: few bright hours => little senescence', out%leaf_shed_potential < 0.01_wp * params%shed_rate_max)
+      call check_close('leaf-exch: flush potential = flush_rate_max', out%leaf_flush_potential, params%flush_rate_max, 1.0e-12_wp)
       do d = 1_ik, 40_ik
-         env%rad = 500.0_wp
+         env%par_hours = 10.0_wp
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      flush_highlight = out%leaf_flush_rate ; shed_highlight = out%leaf_shed_rate
-      call check_true('leaf-exch: high light => active shed rises',   shed_highlight > 0.5_wp * params%k_shed_max)
-      call check_close('leaf-exch: flush unchanged by light',         flush_highlight, params%k_flush_max, 1.0e-9_wp)
-      call check_true('leaf-exch: BOTH rates > 0 under high light',   flush_highlight > 0.0_wp .and. shed_highlight > 0.0_wp)
+      call check_true('leaf-exch: bright => senescence', out%leaf_shed_potential > 0.9_wp * params%shed_rate_max)
+      call check_close('leaf-exch: flush unchanged by light', out%leaf_flush_potential, params%flush_rate_max, 1.0e-12_wp)
    end subroutine test_light_exchanging
 
-   !----- 5. Rate mapping: the outputs are exactly k_*_max times the governor drives. -------!
+   !----- 6. Rate mapping: the potentials are exactly rate_max times the tendencies. ------!
    subroutine test_rate_mapping()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
       integer(ik) :: d
-      print '(a)', '-- 5. rate mapping (leaf_rate = k*drive) --'
-      params%flush_cue_mask = CUE_HYDRO ; params%shed_cue_mask = CUE_LIGHT
-      state = pheno_state_t()
-      env%doy = 1_ik
+      print '(a)', '-- 6. rate mapping (potential = rate_max * tendency) --'
+      params%flush_cue_mask = CUE_WATER ; params%shed_cue_mask = CUE_LIGHT
+      params%shed_light_hours = 6.0_wp ; params%shed_light_sharpness = 0.5_wp
       do d = 1_ik, 25_ik
-         env%dmax_leaf_psi = -1.5_wp ; env%rad = 260.0_wp     ! partial flush + partial shed
+         env%predawn_leaf_psi = -1.7_wp ; env%par_hours = 6.2_wp   ! partial flush + partial shed
          call phenology_kernel(env, params, 1.0_wp, state, out)
       end do
-      call check_close('flush_rate == k_flush_max * flush_drive', out%leaf_flush_rate, &
-                       params%k_flush_max * state%flush_drive, 1.0e-12_wp)
-      call check_close('shed_rate  == k_shed_max  * shed_drive',  out%leaf_shed_rate,  &
-                       params%k_shed_max  * state%shed_drive,  1.0e-12_wp)
-      call check_true ('drives are in [0,1]', state%flush_drive >= 0.0_wp .and. state%flush_drive <= 1.0_wp &
-                       .and. state%shed_drive >= 0.0_wp .and. state%shed_drive <= 1.0_wp)
+      call check_close('flush potential == flush_rate_max * flush tendency', out%leaf_flush_potential, &
+                       params%flush_rate_max * state%leaf_flush_tendency, 1.0e-12_wp)
+      call check_close('shed potential  == shed_rate_max  * shed tendency',  out%leaf_shed_potential,  &
+                       params%shed_rate_max  * state%leaf_shed_tendency,  1.0e-12_wp)
+      call check_true('tendencies are partial and in [0,1]',                                           &
+                      state%leaf_flush_tendency > 0.0_wp .and. state%leaf_flush_tendency < 1.0_wp .and.  &
+                      state%leaf_shed_tendency  > 0.0_wp .and. state%leaf_shed_tendency  < 1.0_wp)
    end subroutine test_rate_mapping
 
-   !----- 6. Degenerate drivers: rates stay finite and non-negative, no FP trap. ------------!
+   !----- 7. Degenerate drivers: potentials stay finite and non-negative, no FP trap. -----!
    subroutine test_degenerate()
       type(pheno_env_t)    :: env
       type(pheno_params_t) :: params
@@ -243,37 +253,75 @@ contains
       type(pheno_out_t)    :: out
       integer(ik) :: d
       logical     :: ok
-      print '(a)', '-- 6. degenerate drivers (all cues both masks) --'
-      params%flush_cue_mask = ior(ior(CUE_TEMP, CUE_WATER), ior(CUE_HYDRO, CUE_PHOTO))
-      params%shed_cue_mask  = ior(ior(CUE_TEMP, CUE_WATER), ior(CUE_HYDRO, CUE_LIGHT))
-      state = pheno_state_t()
-      ok    = .true.
+      print '(a)', '-- 7. degenerate drivers (every cue on both sides) --'
+      params%flush_cue_mask = CUE_ALL ; params%shed_cue_mask = CUE_ALL
+      ok = .true.
       do d = 1_ik, 60_ik
          env%doy = modulo(d - 1_ik, 365_ik) + 1_ik
          if (mod(d, 2_ik) == 0_ik) then
-            env%temp_day = 350.0_wp ; env%soil_temp = 330.0_wp ; env%avail_water = 10.0_wp
-            env%dmax_leaf_psi = 5.0_wp ; env%daylength = 30.0_wp ; env%rad = 5000.0_wp
+            env%temp_day = 350.0_wp ; env%predawn_leaf_psi = 5.0_wp ; env%par_hours = 30.0_wp
          else
-            env%temp_day = 200.0_wp ; env%soil_temp = 210.0_wp ; env%avail_water = -5.0_wp
-            env%dmax_leaf_psi = -100.0_wp ; env%daylength = -5.0_wp ; env%rad = -50.0_wp
+            env%temp_day = 200.0_wp ; env%predawn_leaf_psi = -100.0_wp ; env%par_hours = -5.0_wp
          end if
          call phenology_kernel(env, params, 1.0_wp, state, out)
-         if (out%leaf_flush_rate < 0.0_wp .or. out%leaf_shed_rate < 0.0_wp)          ok = .false.
-         if (out%leaf_flush_rate /= out%leaf_flush_rate .or. out%leaf_shed_rate /= out%leaf_shed_rate) ok = .false.  ! NaN
+         if (out%leaf_flush_potential < 0.0_wp .or. out%leaf_shed_potential < 0.0_wp) ok = .false.
+         if (out%leaf_flush_potential /= out%leaf_flush_potential .or.                            &
+             out%leaf_shed_potential  /= out%leaf_shed_potential) ok = .false.        ! NaN
       end do
-      call check_true('degenerate: rates finite and >= 0, no trap', ok)
+      call check_true('degenerate: potentials finite and >= 0, no trap', ok)
    end subroutine test_degenerate
 
-   !----- 7. Daylength: polar day/night + equator (relocated to meds_time; ED2 branch fixed). -!
+   !----- 8. Daylength: polar day/night + equator. ------------------------------------------!
    subroutine test_daylength_polar()
-      real(wp) :: dl_summer, dl_winter, dl_eq
-      print '(a)', '-- 7. daylength polar branches (meds_time) --'
-      dl_summer = daylength(80.0_wp, 172_ik)             ! high N latitude, near summer solstice
-      dl_winter = daylength(80.0_wp, 355_ik)             ! near winter solstice
-      dl_eq     = daylength(0.0_wp, 172_ik)              ! equator
-      call check_true('polar day ~ 24 h (ED2 bug fixed)', dl_summer > 23.5_wp)
-      call check_true('polar night ~ 0 h', dl_winter < 0.5_wp)
-      call check_close('equator ~ 12 h', dl_eq, 12.0_wp, 0.5_wp)
+      print '(a)', '-- 8. daylength polar branches (meds_time) --'
+      call check_true('polar day ~ 24 h',  daylength(80.0_wp, 172_ik) > 23.5_wp)
+      call check_true('polar night ~ 0 h', daylength(80.0_wp, 355_ik) < 0.5_wp)
+      call check_close('equator ~ 12 h',   daylength(0.0_wp, 172_ik), 12.0_wp, 0.5_wp)
    end subroutine test_daylength_polar
+
+   !----- 9. leaf_turnover_step: the one place the tendencies become leaf loss. ------------!
+   subroutine test_leaf_turnover_step()
+      real(wp) :: sen, bg, cap
+      real(wp), parameter :: TURN = 0.5_wp            ! [1/yr]
+      print '(a)', '-- 9. leaf_turnover_step --'
+      !----- Flushing, not senescing: background turnover only, and the flush cap. ----------!
+      call leaf_turnover_step(1.0_wp, 1.0_wp, 1.0_wp, 0.0_wp, 0.06_wp, 0.3_wp, TURN, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('flushing: no senescence',             sen, 0.0_wp, 0.0_wp)
+      call check_close('flushing: background = turnover/yr',  bg,  TURN / yr_day, 1.0e-15_wp)
+      call check_close('flushing: flush cap = rate*full*dt',  cap, 0.06_wp, 1.0e-15_wp)
+      !----- Background turnover follows the flush tendency: none in dormancy. --------------!
+      call leaf_turnover_step(1.0_wp, 1.0_wp, 0.0_wp, 0.0_wp, 0.06_wp, 0.3_wp, TURN, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('dormant: no background turnover', bg,  0.0_wp, 0.0_wp)
+      call check_close('dormant: no flush cap',           cap, 0.0_wp, 0.0_wp)
+      !----- Senescence = shed_rate_max * tendency * pool * dt; background adds to it. -------!
+      call leaf_turnover_step(0.5_wp, 1.0_wp, 0.5_wp, 1.0_wp, 0.06_wp, 0.1_wp, TURN, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('senescing: senescence = rate*pool*dt', sen, 0.05_wp, 1.0e-15_wp)
+      call check_close('senescing: background still acts',    bg,  TURN / yr_day * 0.5_wp * 0.5_wp, 1.0e-15_wp)
+      !----- The leaf-cover floor: senescence stops at min_leaf_cover of the full canopy, ---!
+      !      which is what makes a PFT evergreen (an emergent habit, not a flag).          --!
+      call leaf_turnover_step(0.82_wp, 1.0_wp, 1.0_wp, 1.0_wp, 0.06_wp, 0.3_wp, 0.0_wp, 0.8_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('floor: senescence stops at min_leaf_cover', 0.82_wp - sen, 0.8_wp, 1.0e-15_wp)
+      call leaf_turnover_step(0.7_wp, 1.0_wp, 1.0_wp, 1.0_wp, 0.06_wp, 0.3_wp, 0.0_wp, 0.8_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('floor: none below min_leaf_cover', sen, 0.0_wp, 0.0_wp)
+      !----- Dormant snap: a dormant canopy left below bare_leaf_cover goes bare. -----------!
+      call leaf_turnover_step(0.021_wp, 1.0_wp, 0.0_wp, 1.0_wp, 0.06_wp, 0.1_wp, TURN, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('snap: a dormant canopy goes bare', sen + bg, 0.021_wp, 1.0e-15_wp)
+      call leaf_turnover_step(0.021_wp, 1.0_wp, 1.0_wp, 1.0_wp, 0.06_wp, 0.1_wp, 0.0_wp, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('snap: none while flushing', sen, 0.0021_wp, 1.0e-15_wp)
+      call leaf_turnover_step(0.021_wp, 1.0_wp, 0.0_wp, 1.0_wp, 0.06_wp, 0.1_wp, 0.0_wp, 0.02_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('snap: none when the floor is not below bare', sen, 0.001_wp, 1.0e-15_wp)
+      !----- A rate * dt above 1 removes at most the pool. -----------------------------------!
+      call leaf_turnover_step(0.4_wp, 1.0_wp, 1.0_wp, 1.0_wp, 0.06_wp, 5.0_wp, 0.0_wp, 0.0_wp, 0.02_wp, &
+                              1.0_wp, sen, bg, cap)
+      call check_close('clamp: senescence removes at most the pool', sen, 0.4_wp, 1.0e-15_wp)
+   end subroutine test_leaf_turnover_step
 
 end program test_plant_phenology

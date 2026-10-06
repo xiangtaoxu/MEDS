@@ -44,7 +44,7 @@ Exposed through process-oriented packages in `python/meds/`:
   [`examples/example01_leaf_gas_exchange/`](../../../examples/example01_leaf_gas_exchange/).
 - `meds.plant.pheno` — the leaf-phenology kernel (its Fortran side is in `slow_dynamics/plant/`).
   The four phenology strategies are in
-  [`examples/example_phenology/`](../../../examples/example_phenology/).
+  [`examples/example02_canopy_phenology/`](../../../examples/example02_canopy_phenology/).
 
 ## Science
 

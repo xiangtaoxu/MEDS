@@ -67,8 +67,8 @@ contains
       integer(c_int) :: vc_sla, vc_vc, vc_rd, vc_ll        ! plastic leaf traits
       integer(c_int) :: vc_lwm, vc_wwm, vc_lt, vc_wt       ! P6: per-cohort hydraulics/temperature state
       integer(c_int) :: vc_dmax, vc_dmax_acc                     ! #95: per-cohort predawn-psi stomatal feedback
-      integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pchl           ! #150: the phenology governor + thermal memory
-      integer(c_int) :: vc_pwat, vc_plow, vc_phigh, vc_plit        ! #150: the four cue sub-accumulators
+      integer(c_int) :: vc_pfl, vc_psh, vc_pgdd, vc_pcdd           ! the phenology tendencies + temperature sums
+      integer(c_int) :: vc_pdry, vc_pwet, vc_plight                ! the water sums + the light running mean
       integer(c_int) :: vs_tgrow                                   ! #176: growth-temperature running mean
       integer(c_int) :: vc_hgt, vc_ba, vc_agb, vc_la, vc_lc, vc_fc, vc_wc, vc_nc, vc_olai   ! pools + geometry
       integer(c_int) :: vc_lsw, vc_wsw                             ! canopy interception film
@@ -147,25 +147,19 @@ contains
       call dv(vc_dmax, 'dmax_psi_leaf',   NC_DOUBLE, [d_cohort], &
             'yesterday daily-max leaf water potential [MPa] (drives beta_stomata)')
       call dv(vc_dmax_acc, 'dmax_psi_leaf_accum', NC_DOUBLE, [d_cohort], 'running daily-max leaf water potential accumulator [MPa]')
-      !----- PHENOLOGY MEMORY (#150). None of this was written before, so a restart resurrected      !
-      !      every cohort at the BIRTH state -- flush_drive = 1, shed_drive = 0, GDD = chill = 0,    !
-      !      i.e. the evergreen fixed point. A temperate-deciduous stand restarted in January came   !
-      !      back with flushing permitted and no chilling accumulated, so it leafed out in midwinter !
-      !      and then had to rebuild the whole thermal memory. That was true of the two strategies   !
-      !      that have shipped since v0.1.0, not only the two #150 adds.                              !
-      !                                                                                          !
-      !      NOT derivable from anything else in the file: these are time INTEGRALS over the         !
-      !      preceding weeks (a degree-day sum, a chilling count, two exponential running means and  !
-      !      two consecutive-day counters), not functions of the instantaneous state. OPTIONAL on    !
-      !      read, so an older state file still restarts on the birth values it always used.  -------!
-      call dv(vc_pfl,  'pheno_flush_drive',  NC_DOUBLE, [d_cohort], 'phenology flush governor [0,1]')
-      call dv(vc_psh,  'pheno_shed_drive',   NC_DOUBLE, [d_cohort], 'phenology active-shed governor [0,1]')
-      call dv(vc_pgdd, 'pheno_gdd',          NC_DOUBLE, [d_cohort], 'growing-degree-day sum [K day]')
-      call dv(vc_pchl, 'pheno_chill',        NC_DOUBLE, [d_cohort], 'chilling-day count [day]')
-      call dv(vc_pwat, 'pheno_water_avg',    NC_DOUBLE, [d_cohort], 'running-mean available water [-]')
-      call dv(vc_plow, 'pheno_low_psi_days', NC_DOUBLE, [d_cohort], 'consecutive days below turgor loss [day]')
-      call dv(vc_phigh,'pheno_high_psi_days',NC_DOUBLE, [d_cohort], 'consecutive wet days [day]')
-      call dv(vc_plit, 'pheno_light_avg',    NC_DOUBLE, [d_cohort], 'running-mean incident shortwave [W/m2]')
+      !----- PHENOLOGY MEMORY. Without it a restart would resurrect every cohort at its birth state  !
+      !      (flushing, no senescence, empty sums): a deciduous stand restarted in January would leaf  !
+      !      out in midwinter. None of it is derivable from the rest of the file: these are time      !
+      !      integrals over the preceding season (degree-day sums, psi sums, a running mean), not     !
+      !      functions of the instantaneous state. OPTIONAL on read, so a file without them restarts  !
+      !      on the birth values.  ---------------------------------------------------------------------!
+      call dv(vc_pfl,  'leaf_flush_tendency', NC_DOUBLE, [d_cohort], 'smoothed flush signal [0,1]')
+      call dv(vc_psh,  'leaf_shed_tendency',  NC_DOUBLE, [d_cohort], 'smoothed senescence signal [0,1]')
+      call dv(vc_pgdd, 'growing_degree_days', NC_DOUBLE, [d_cohort], 'warmth sum since midwinter [K day]')
+      call dv(vc_pcdd, 'cold_degree_days',    NC_DOUBLE, [d_cohort], 'cold sum since midsummer [K day]')
+      call dv(vc_pdry, 'dry_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
+      call dv(vc_pwet, 'wet_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
+      call dv(vc_plight, 'light_hours_mean', NC_DOUBLE, [d_cohort], 'running-mean hours of light at the cohort top [h/day]')
       !----- The carbon pools and geometry as the running model holds them. Cohort fusion keeps the   !
       !      pools and derives the geometry from them, so a fused cohort sits off the allometry for   !
       !      its dbh; re-deriving them from dbh on read moved the leaf area (BCI: LAI 5.6380 written,  !
@@ -292,14 +286,13 @@ contains
                   c%dmax_psi_leaf(1:ncoh)), 'put dmax_psi_leaf')
             call nc_check(nc_put_vara_double(ncid, vc_dmax_acc, [0_c_size_t], [int(ncoh,c_size_t)], &
                   c%dmax_psi_leaf_accum(1:ncoh)), 'put dmax_psi_leaf_accum')
-            call put_coh(vc_pfl,  c%pheno_flush_drive(1:ncoh),   'pheno_flush_drive')
-            call put_coh(vc_psh,  c%pheno_shed_drive(1:ncoh),    'pheno_shed_drive')
-            call put_coh(vc_pgdd, c%pheno_gdd(1:ncoh),           'pheno_gdd')
-            call put_coh(vc_pchl, c%pheno_chill(1:ncoh),         'pheno_chill')
-            call put_coh(vc_pwat, c%pheno_water_avg(1:ncoh),     'pheno_water_avg')
-            call put_coh(vc_plow, c%pheno_low_psi_days(1:ncoh),  'pheno_low_psi_days')
-            call put_coh(vc_phigh,c%pheno_high_psi_days(1:ncoh), 'pheno_high_psi_days')
-            call put_coh(vc_plit, c%pheno_light_avg(1:ncoh),     'pheno_light_avg')
+            call put_coh(vc_pfl,  c%leaf_flush_tendency(1:ncoh), 'leaf_flush_tendency')
+            call put_coh(vc_psh,  c%leaf_shed_tendency(1:ncoh),  'leaf_shed_tendency')
+            call put_coh(vc_pgdd, c%growing_degree_days(1:ncoh), 'growing_degree_days')
+            call put_coh(vc_pcdd, c%cold_degree_days(1:ncoh),    'cold_degree_days')
+            call put_coh(vc_pdry, c%dry_psi_sum(1:ncoh),         'dry_psi_sum')
+            call put_coh(vc_pwet, c%wet_psi_sum(1:ncoh),         'wet_psi_sum')
+            call put_coh(vc_plight, c%light_hours_mean(1:ncoh), 'light_hours_mean')
             call put_coh(vc_hgt,  c%height(1:ncoh),               'height')
             call put_coh(vc_ba,   c%basal_area(1:ncoh),           'basal_area')
             call put_coh(vc_agb,  c%agb(1:ncoh),                  'agb')
@@ -543,17 +536,15 @@ contains
             !      soil behaviour; a current file restores the true feedback state. -------------------!
             call gv_dbl_opt(ncid, 'dmax_psi_leaf',   ncoh, c%dmax_psi_leaf(1:ncoh))
             call gv_dbl_opt(ncid, 'dmax_psi_leaf_accum', ncoh, c%dmax_psi_leaf_accum(1:ncoh))
-            !----- Phenology memory (#150, OPTIONAL): an older state file has none of these, and     !
-            !      alloc_cohort_block has already set the birth values, so it restarts exactly as    !
-            !      it did before. A current file restores the accumulated season.  ------------------!
-            call gv_dbl_opt(ncid, 'pheno_flush_drive',  ncoh, c%pheno_flush_drive(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_shed_drive',   ncoh, c%pheno_shed_drive(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_gdd',          ncoh, c%pheno_gdd(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_chill',        ncoh, c%pheno_chill(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_water_avg',    ncoh, c%pheno_water_avg(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_low_psi_days', ncoh, c%pheno_low_psi_days(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_high_psi_days',ncoh, c%pheno_high_psi_days(1:ncoh))
-            call gv_dbl_opt(ncid, 'pheno_light_avg',    ncoh, c%pheno_light_avg(1:ncoh))
+            !----- Phenology memory (OPTIONAL): a file without it restarts on the birth values      !
+            !      alloc_cohort_block has already set; a current file restores the season. -------------!
+            call gv_dbl_opt(ncid, 'leaf_flush_tendency', ncoh, c%leaf_flush_tendency(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_shed_tendency',  ncoh, c%leaf_shed_tendency(1:ncoh))
+            call gv_dbl_opt(ncid, 'growing_degree_days', ncoh, c%growing_degree_days(1:ncoh))
+            call gv_dbl_opt(ncid, 'cold_degree_days',    ncoh, c%cold_degree_days(1:ncoh))
+            call gv_dbl_opt(ncid, 'dry_psi_sum',         ncoh, c%dry_psi_sum(1:ncoh))
+            call gv_dbl_opt(ncid, 'wet_psi_sum',         ncoh, c%wet_psi_sum(1:ncoh))
+            call gv_dbl_opt(ncid, 'light_hours_mean', ncoh, c%light_hours_mean(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_surf_water',    ncoh, c%leaf_surf_water(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate
