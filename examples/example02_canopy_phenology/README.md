@@ -56,20 +56,49 @@ The run takes a few seconds: it reads [`fitted_parameters.json`](fitted_paramete
 parameters and scores, and writes `harvard_forest.png` and `hyytiala.png`. `--fit` refits both sites
 first and rewrites the JSON (about 4 minutes on 40 cores; `--workers` sets the processes).
 
-## Results
+## One model, two parameter sets
 
-| Parameter | Harvard Forest | Hyytiälä |
+Both sites run the same equations on the same cues. Every parameter is listed below; ★ marks the
+fitted ones (the values are in [`fitted_parameters.json`](fitted_parameters.json)), and the rest
+are shared.
+
+| Process | Parameter | Harvard Forest | Hyytiälä | What the difference does |
+|---|---|---|---|---|
+| Cues | `flush_cue_mask`, `shed_cue_mask` | 3, 3 | 3, 3 | — (TEMP + LIGHT on both sides) |
+| | `light_variable` | 1 | 1 | — (day length) |
+| | `flush_cue_timescale`, `shed_cue_timescale` [day] | 5, 5 | 5, 5 | — |
+| Flush: warmth | `flush_base_temp` | 5 °C | 5 °C | — |
+| | `flush_degree_days` ★ [K day] | 94 | 138 | the pine needs more warmth, met in late May rather than late April |
+| | `flush_temp_sharpness` [(K day)⁻¹] | 0.04 | 0.04 | — |
+| Flush: day length | `flush_light_threshold` ★ [h] | 13.75 | 13.08 | gate open 28 Apr – 14 Aug at Harvard, 2 Apr – 9 Sep at Hyytiälä |
+| | `flush_light_sharpness` ★ [h⁻¹] | 8.0 | 6.6 | — (both near a step: the gate, not warmth, ends the flush in late summer) |
+| Senescence: cold | `shed_base_temp` ★ | 17.0 °C | 6.8 °C | every day below 17 °C counts at Harvard, so the clock starts in late summer; only days below 7 °C count at Hyytiälä |
+| | `shed_degree_days` ★ [K day] | 46 | 37 | — |
+| | `shed_temp_sharpness` [(K day)⁻¹] | 0.1 | 0.1 | — |
+| Senescence: day length | `shed_light_threshold` ★ [h] | 9.13 | 14.49 | Harvard's days stay above it until late November, so it only scales the autumn rate (switch 0.07–0.24 through October); at Hyytiälä it switches on when days fall below 14.5 h, on 27 Aug |
+| | `shed_light_sharpness` [h⁻¹] | −1 | −1 | — |
+| Rates | `flush_rate_max` ★ [day⁻¹] | 0.034 | 0.024 | a bare broadleaf canopy fills in about a month; the pine only regrows the needles it lost |
+| | `shed_rate_max` ★ [day⁻¹] | 0.333 | 0.159 | the broadleaf canopy drops within weeks even at a switch of 0.15 |
+| | `leaf_turnover_rate` ★ [yr⁻¹] | 0.0003 | 0.24 | none in the broadleaf season; the pine sheds needles all summer |
+| Leaf cover | `min_leaf_cover` ★ | 0 | 0.88 | **the leaf habit**: the broadleaf senesces to bare, the pine stops at 88 % |
+| | `bare_leaf_cover` | 0.02 | 0.02 | — |
+
+What the two parameter sets produce (median year):
+
+| | Harvard Forest | Hyytiälä |
 |---|---|---|
-| `flush_degree_days` [K day] | 94.0 | 137.5 |
-| `flush_light_threshold` [h] | 13.75 | 13.08 |
-| `flush_light_sharpness` [h⁻¹] | 7.99 | 6.59 |
-| `shed_base_temp` [°C] | 17.0 | 6.8 |
-| `shed_degree_days` [K day] | 46.2 | 36.8 |
-| `shed_light_threshold` [h] | 9.13 | 14.49 |
-| `flush_rate_max` [day⁻¹] | 0.034 | 0.024 |
-| `shed_rate_max` [day⁻¹] | 0.333 | 0.159 |
-| `leaf_turnover_rate` [yr⁻¹] | 0.0003 | 0.238 |
-| `min_leaf_cover` | 0 | 0.879 |
+| Warmth requirement met | 25 Apr (25 Mar – 4 May) | 23 May (19 May – 3 Jun) |
+| What sets the spring flush | day length in 15 of 21 years | warmth in every year |
+| Flushing (tendency above 0.5) | 4 May – 19 Aug | 29 May – 13 Sep |
+| Senescence | cold sum met 21 Sep; leaves half fallen 17 Oct, all by 20 Nov | from late August; needle fall over by 10 Oct |
+| Leaf cover over the year | 0 to 1 | 0.88 to 1 |
+| Leaf loss per year | 1.01 canopy, in autumn | 0.30 canopy: 0.23 senescence, 0.07 summer turnover |
+| Leaf lifespan (mean cover / annual loss) | 0.41 yr | 3.0 yr |
+
+The leaf lifespan is an output: 5 months against 3 years, from the same model with ten numbers
+changed.
+
+## Results
 
 ![Harvard Forest](harvard_forest.png)
 
@@ -96,20 +125,20 @@ over its mean, traps against model. (c) The same, averaged by the month a collec
 | Needle fall | 0.30 canopies a year |
 | Lowest leaf cover | 0.88 |
 
-- **One model, two habits.** The pine's autumn senescence stops at 88 % of its canopy; the oaks and
-  maples senesce to bare. Their cues are the same; the pine also turns its needles over at 0.24 a
-  year while it flushes, which carries its summer needle fall.
 - **The flush gate is a photoperiod step at both sites** (13.75 and 13.1 h, sharpness 8.0 and 6.6 per
   hour). A gradual gate is still partly open in October, when the warmth sum is high: the canopy then
   refills while it senesces and drops about 1.9 canopies of leaves a year, which no timing
   observation shows. Holding the annual litter to one canopy is what pins the gate.
 - **Autumn is timed to within 3 days, spring to within 6**, but neither follows the year-to-year
-  variation closely (r 0.44 and 0.34). The Harvard senescence base of 17 °C makes the cold sum a
-  clock that starts in late summer.
+  variation closely (r 0.44 and 0.34). At Harvard the 13.75 h gate sets the spring date in most
+  years, and the 17 °C senescence base makes the cold sum a clock that starts in late summer.
 - **The Hyytiälä needle fall peaks in September–October as observed**; the model puts too much in
   July–August and misses the small winter fall. The largest residuals are timing errors of about two
   weeks: in 2022 the model's needle fall peaked in the second half of September, the traps' in early
   October.
+- **The pine's flush and needle fall overlap** from late August to mid-September, so about 0.12
+  canopy is shed and regrown then. That is how the fit reconciles 0.30 canopy of needle fall a year
+  with a canopy that only dips to 0.88; the floor is not otherwise constrained by the traps.
 
 ## Files
 
