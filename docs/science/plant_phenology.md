@@ -178,25 +178,28 @@ The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so th
 | no cues (default) | – | – | – | always flushing; loses leaves only to background turnover |
 | temperate deciduous (Harvard) | TEMP + LIGHT | TEMP + LIGHT | 0 | low `par_min`: flush on warmth while days are long; senesce to bare on cold once days shorten |
 | evergreen conifer (Hyytiälä) | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (0.9) | high `par_min`: flush on warmth and many bright hours; autumn needle fall stops at the floor |
-| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | 0 | senesces in the dry season, flushes after the rains |
-| light leaf exchange (BCI) | WATER | LIGHT + WATER | 0.9 | high `par_min`: a water threshold it never reaches; senescence on many bright hours while the canopy refills, so it stays full |
+| drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (0.28) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |
+| light leaf exchange (BCI) | WATER | LIGHT + WATER | 0.95 | high `par_min`: a water threshold it never reaches; senescence on many bright hours while the canopy refills, so it stays full |
 
 Evergreen and deciduous differ in one number. The emergent leaf lifespan follows from the rates and
 the floor; it is not a parameter of the kernel.
 
 ## 7. Evidence and status
 
-`examples/example02_canopy_phenology` fits the compiled kernel at three sites:
+`examples/example02_canopy_phenology` fits the compiled kernel at four sites, every one with its
+light from ERA5-Land through MEDS's forcing reader:
 
-- **Harvard Forest** (temperate deciduous, day length): MODIS LAI, the HF003 leaf-fall observations
-  and the HF069 litter baskets.
-- **Hyytiälä** (Scots pine, PAR): the ICOS monthly needle litter.
-- **Barro Colorado Island** (two tropical species under one climate, PAR and water): GLiMP litter
-  traps for the light exchanger; the drought-deciduous species is set by hand. The water driver is a
-  surrogate, the tower's soil water content through a retention curve fitted to the paired soil
-  samples of Kupers et al. (2019).
+- **Harvard Forest** (temperate deciduous; `par_min` 2, the photoperiod): MODIS LAI, the HF003
+  leaf-fall observations and the HF069 litter baskets.
+- **Hyytiälä** (Scots pine; `par_min` 99): the ICOS monthly needle litter.
+- **Barro Colorado Island** (a light leaf exchanger; `par_min` 1081): GLiMP litter traps. The water
+  driver is a surrogate, the tower's soil water content through a retention curve fitted to the
+  paired soil samples of Kupers et al. (2019).
+- **Palo Verde** (a drought-deciduous dry forest; `par_min` 1.2, the photoperiod): the leaf litter of
+  Xu et al. (2016) and MODIS LAI. The water driver is hypothetical, the canopy predawn leaf ψ of a
+  MEDS run at the site.
 
-Four results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§12):
+Five results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§12):
 
 - **No chilling.** Removing the chilling requirement changed neither temperate fit.
 - **One light cue, the hours of light above a fitted `par_min`.** Day length and running-mean PAR
@@ -204,7 +207,14 @@ Four results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.m
   PAR), Hyytiälä on PAR (0.70 against 1.03) and the BCI leaf exchanger on PAR (0.065 against 0.101).
   The hours of light with a fitted `par_min` came within 4 % of the better of the two at every site
   (Harvard 0.046 at 33 µmol m⁻² s⁻¹, Hyytiälä 0.59 at 280, BCI 0.067 at 700; tower PAR), so one
-  variable serves all three.
+  variable serves all three. Refitted on ERA5-Land, the deciduous canopies count the photoperiod
+  (at Palo Verde with `par_min` free) and the evergreen ones the bright hours (within bounds that
+  hold them to bright light).
+- **Light makes the drought-deciduous canopy.** At Palo Verde water alone fits poorly (loss 0.069):
+  the leaves fall in December–January, before the water potential drops. The photoperiod alone
+  reaches 0.025 and both cues 0.023, water adding only the late refills of the driest years, as
+  photoperiodic leaf fall and spring flushing are known in tropical dry forests (Borchert & Rivera
+  2001; Rivera et al. 2002).
 - **The flush gate must be sharp where it ends the flush.** A gradual day-length gate (1 per hour) is
   still partly open in October, so the canopy refills while it senesces and a deciduous stand drops
   about 1.9 canopies of leaves a year, which no timing observation shows. Held to one canopy a year,
@@ -216,8 +226,10 @@ Four results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.m
   fitted.
 
 What is **not** validated: no coupled MEDS run's leaf-area cycle has yet been scored against
-observations; the water cue has been exercised only on a soil surrogate, not on the model's own
-predawn leaf potential with the shed-to-water feedback.
+observations; the water cue has been exercised only on a soil surrogate (BCI) and on a MEDS run's
+leaf potential without the shed-to-water feedback (Palo Verde), not on a run's own predawn leaf
+potential with it. The fits capture the mean seasonal cycle; four to five scored years per site do
+not constrain its year-to-year variation.
 
 ## Parameters (`[phenology]` per-PFT block)
 
@@ -263,6 +275,10 @@ restart files.
   sum under shortening days.
 - **White et al. (1997)**, *Glob. Biogeochem. Cycles* 11:217 — day-length and temperature leaf offset.
 - **Xu et al. (2016)**, *New Phytol.* 212:80 — drought deciduousness keyed on the turgor-loss point.
+- **Borchert & Rivera (2001)**, *Tree Physiol.* 21:213 — photoperiodic control of leaf shedding and
+  dormancy in tropical trees.
+- **Rivera et al. (2002)**, *Trees* 16:445 — increasing day length induces flushing of tropical dry
+  forest trees before the rains.
 - **Kim et al. (2012)**, *Glob. Change Biol.* 18:1322 — light-driven leaf phenology in the tropics.
 - ED2 `ED/src/dynamics/phenology_driv.f90`, `phenology_aux.f90`; the design record,
   `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`.

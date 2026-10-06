@@ -619,10 +619,17 @@ Harvard Forest and Hyytiälä (TEMP + LIGHT), the BCI light exchanger (WATER + L
 carries a drought-deciduous species) and Palo Verde, Costa Rica (drought-deciduous; WATER + LIGHT),
 driven by a canopy predawn leaf ψ from a MEDS run of the BCI 2010 census at Palo Verde on ERA5-Land
 and scored against the Xu et al. (2016) litter traps (g per 0.25 m² trap) and MODIS LAI, 2009–2013.
-Fits use bounded sharpness and windows, several optimizer seeds with a local polish, and
-leave-one-year-out checks against a climatology (§§ in the example README). At Palo Verde the water
-cue alone sheds a month late on that ψ; adding a light cue (day length in the prototype) fixed most
-of the timing.
+Fits use bounded sharpness and windows and four optimizer seeds, each with a local polish (the
+example README); leave-one-year-out checks against a climatology were run in the prototypes only,
+and the owner accepted fits of the mean seasonal cycle.
+
+**Result (2026-10-06).** Best losses, with the four seeds' spread: Harvard 0.04392 (to 0.04393),
+Hyytiälä 0.00397 (to 0.00429), BCI 0.00056 (to 0.00075), Palo Verde 0.0227 (to 0.0349). `par_min`
+came out at 2 (Harvard, held to 1–100), 99 (Hyytiälä, 50–600), 1081 (BCI, 100–1200) and 1.2 (Palo
+Verde, free): the deciduous canopies count the photoperiod, the evergreen ones the bright hours. At
+Palo Verde, under the same objective, water alone reaches 0.069 (leaves fall in December–January,
+before the stand-in ψ drops below −3 MPa in mid-February to mid-March), the photoperiod alone 0.025
+and both 0.023; water adds only the delayed refills of the driest years (2011, 2013).
 
 ## References
 

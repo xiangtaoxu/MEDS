@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """fetch_phenology_data.py -- put the Harvard Forest, Hyytiala and BCI phenology data in data/.
 
-The data are not in the repository. Sources (all open; cite them if you use the data):
+These data are not in the repository. Sources (all open; cite them if you use the data):
 
 Harvard Forest, Massachusetts (42.54 N), Harvard Forest Data Archive:
   HF001  Boose & Gould, Fisher Meteorological Station: daily mean air temperature.
@@ -11,14 +11,19 @@ Harvard Forest, Massachusetts (42.54 N), Harvard Forest Data Archive:
   MODIS  MCD15A3H leaf area index (Myneni et al.), the ORNL DAAC fixed subset for the site; the
          median of the 3 x 3 pixels around the tower is kept.
 Hyytiala, Finland (61.85 N), ICOS ETC Level 2 archive for FI-Hyy (CC BY 4.0):
-  the daily FLUXNET file (air temperature TA_F, PAR PPFD_IN) and the ancillary file (needle litter).
+  the daily FLUXNET file (air temperature TA_F) and the ancillary file (needle litter).
 Barro Colorado Island, Panama (9.15 N):
   Tower  M. Detto, BCI eddy-covariance flux data 2012-2017, Zenodo 6456527 (CC0; acknowledge
-         CTFS-ForestGEO): shortwave and soil water content.
+         CTFS-ForestGEO): air temperature and soil water content.
   GLiMP  Sayer et al. (2023), Gigante Litter Manipulation Project, figshare
          doi:10.6084/m9.figshare.24746235 (CC BY 4.0): fine litter in traps, about monthly.
   Kupers Kupers et al. (2019) Scientific Data, figshare doi:10.6084/m9.figshare.7611005 (CC0):
          soil water content and water potential sampled together in the BCI 50-ha plot.
+
+drivers/ IS in the repository: every site's hours of light (ERA5-Land through MEDS's forcing
+reader, make_era5_par_hours.py) and Palo Verde's data -- a MEDS run's canopy predawn leaf water
+potential, the leaf litter traps of Xu et al. (2016, New Phytol. 212:80; oven-dry leaf litter in
+0.25 m2 traps, by collection round) and MODIS MCD15A3H leaf area index (ORNL DAAC subset).
 
 Usage:
   python fetch_phenology_data.py              # downloads ~220 MB (the ICOS archive), keeps ~50 MB

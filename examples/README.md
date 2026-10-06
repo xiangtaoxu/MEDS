@@ -8,11 +8,12 @@ README that shows how to reproduce it (run from the repository root):
   reproduce the A–Cᵢ curve and the leaf-temperature responses of four tropical tree species in
   Slot & Winter (2017).
 - **[`example02_canopy_phenology/`](example02_canopy_phenology/)** — the leaf-phenology module on
-  its own, driven from Python: one kernel, four leaf habits. A deciduous broadleaf on warmth and day
-  length (Harvard Forest: MODIS LAI, leaf fall, litter baskets), an evergreen pine on warmth and PAR
-  (Hyytiälä: needle litter), and two tropical species under one climate on water and PAR (Barro
-  Colorado Island: litter traps), one drought-deciduous and one exchanging its leaves in the bright
-  dry season. They differ only in parameter values; evergreen is a leaf-cover floor.
+  its own, driven from Python: one kernel, four forests, four leaf habits, every site's light from
+  ERA5-Land. A deciduous broadleaf on warmth and day length (Harvard Forest: MODIS LAI, leaf fall,
+  litter baskets), an evergreen pine on warmth and the bright hours (Hyytiälä: needle litter), a
+  tropical tree exchanging its leaves in the bright dry season (Barro Colorado Island: litter traps)
+  and a drought-deciduous dry forest on water and day length (Palo Verde: leaf litter, MODIS LAI).
+  They differ only in parameter values; evergreen is a leaf-cover floor.
 - **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
   ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
   stand-structure figures.

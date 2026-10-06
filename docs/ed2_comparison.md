@@ -135,11 +135,12 @@ Read the notes column — that is where the qualifications live.
 ### 2.2a Two caveats on what v0.2.0 makes selectable
 
 **Phenology is selectable and self-consistent. The coupled model is not validated.** The cue
-kernel has been fitted offline at three sites (Harvard Forest, Hyytiälä, Barro Colorado Island;
-`examples/example02_canopy_phenology`), but no coupled MEDS run's leaf-area cycle has yet been scored
-against an observation, and the water cue has been driven only by a soil-moisture surrogate.
-Thresholds are site- and biome-specific: a PAR senescence trigger set for a tropical dry season,
-used at a temperate site, strips the canopy every summer.
+kernel has been fitted offline at four sites (Harvard Forest, Hyytiälä, Barro Colorado Island, Palo
+Verde; `examples/example02_canopy_phenology`), but no coupled MEDS run's leaf-area cycle has yet been
+scored against an observation, and the water cue has been driven only by a soil-moisture surrogate
+and by a MEDS run's leaf water potential without the shed-to-water feedback. Thresholds are site- and
+biome-specific: a bright-hours senescence trigger set for a tropical dry season, used at a temperate
+site, strips the canopy every summer.
 
 And until v0.2.0 it did not run at all: the `[phenology]` block was skipped unless it contained a
 key the shipped PFT file never documented, so the cue masks kept their `CUE_NONE` defaults and every

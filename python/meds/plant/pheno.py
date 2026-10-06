@@ -284,49 +284,52 @@ def _preset(defaults, overrides) -> Params:
 
 
 def temperate_deciduous(**overrides) -> Params:
-    """Cold-deciduous (Harvard Forest): flush on warmth while the days are long (a low par_min:
-    the hours of light are the day length), senesce on cold once days shorten; no leaf-cover
+    """Cold-deciduous (Harvard Forest): flush on warmth once the days are long (a low par_min:
+    the hours of light are the day length), senesce on cold as the days shorten; no leaf-cover
     floor, so the canopy goes bare."""
     return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
-                        flush_rate_max=0.03386, shed_rate_max=0.3329,
-                        leaf_turnover_rate=0.0003072, flush_degree_days=93.98,
-                        shed_base_temp=290.1, shed_degree_days=46.18,
-                        par_min=5.0, flush_light_hours=13.75, flush_light_sharpness=7.99,
-                        shed_light_hours=9.127, shed_light_sharpness=-1.0, light_window=5.0), overrides)
+                        flush_rate_max=0.03333, shed_rate_max=0.3333,
+                        leaf_turnover_rate=1.72e-05, flush_degree_days=91.4,
+                        shed_base_temp=290.2, shed_degree_days=47.91,
+                        par_min=2.0, flush_light_hours=13.65, flush_light_sharpness=7.999,
+                        shed_light_hours=9.06, shed_light_sharpness=-1.0, light_window=1.0), overrides)
 
 
 def boreal_evergreen(**overrides) -> Params:
     """Evergreen conifer (Scots pine, Hyytiala): flush on warmth and many bright hours, senesce
-    as the bright hours dwindle in autumn; senescence stops at min_leaf_cover -- the needles kept
-    -- so the canopy never goes bare."""
+    on cold as the bright hours dwindle in autumn; senescence stops at min_leaf_cover -- the
+    needles kept -- so the canopy never goes bare."""
     return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
-                        flush_degree_days=172.5, shed_base_temp=295.4, shed_degree_days=287.0,
-                        flush_rate_max=0.2428, shed_rate_max=0.1327, leaf_turnover_rate=0.2462,
-                        min_leaf_cover=0.8948, par_min=280.0, flush_light_hours=9.773,
-                        flush_light_sharpness=6.137, shed_light_hours=2.606,
-                        shed_light_sharpness=-0.6055, light_window=19.73), overrides)
+                        flush_degree_days=88.0, shed_base_temp=288.3, shed_degree_days=8.39,
+                        flush_rate_max=0.2866, shed_rate_max=0.009217, leaf_turnover_rate=0.1886,
+                        min_leaf_cover=0.8942, par_min=99.38, flush_light_hours=13.78,
+                        flush_light_sharpness=1.414, shed_light_hours=11.0,
+                        shed_light_sharpness=-0.7859, light_window=7.494), overrides)
 
 
 def drought_deciduous(**overrides) -> Params:
-    """Drought-deciduous tropical tree: flush and senesce on the predawn water potential, so it is
-    leafless in the dry season."""
-    return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.WATER,
-                        leaf_psi_tlp=-0.33, flush_water_sum=3.0, flush_water_sharpness=6.667,
-                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_cue_timescale=2.0,
-                        flush_rate_max=0.06667, shed_rate_max=0.1, leaf_turnover_rate=0.0,
-                        min_leaf_cover=0.0), overrides)
+    """Drought-deciduous tropical forest (Palo Verde): flush once the predawn water potential has
+    recovered while the days are long, senesce as the days shorten or after a long drought; the
+    canopy keeps about a quarter of its leaves through the dry season."""
+    return _preset(dict(flush_cue_mask=Cue.WATER | Cue.LIGHT, shed_cue_mask=Cue.WATER | Cue.LIGHT,
+                        leaf_psi_tlp=-2.971, flush_water_sum=0.5063, flush_water_sharpness=11.31,
+                        shed_water_sum=19.17, shed_water_sharpness=3.751,
+                        flush_rate_max=0.3076, shed_rate_max=0.05249, leaf_turnover_rate=0.9265,
+                        min_leaf_cover=0.2808, par_min=1.246, flush_light_hours=12.45,
+                        flush_light_sharpness=7.971, shed_light_hours=11.28,
+                        shed_light_sharpness=-6.086, light_window=20.46), overrides)
 
 
 def light_exchanging(**overrides) -> Params:
-    """Light-driven leaf exchanger (BCI example): a water threshold it never reaches, and senescence
-    on many bright hours while the canopy refills, so leaves turn over in the dry season and the
+    """Light-driven leaf exchanger (BCI): a water threshold it never reaches, and senescence on
+    many bright hours while the canopy refills, so leaves turn over in the dry season and the
     canopy stays full."""
     return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.LIGHT | Cue.WATER,
                         leaf_psi_tlp=-1.5, flush_water_sum=3.0, flush_water_sharpness=6.667,
-                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_rate_max=0.1699,
-                        shed_rate_max=0.002864, leaf_turnover_rate=0.6122,
-                        min_leaf_cover=0.8349, par_min=700.0, shed_light_hours=6.0,
-                        shed_light_sharpness=1.0, light_window=4.0), overrides)
+                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_rate_max=0.2352,
+                        shed_rate_max=0.004274, leaf_turnover_rate=0.3964,
+                        min_leaf_cover=0.9499, par_min=1081.0, shed_light_hours=5.204,
+                        shed_light_sharpness=1.845, light_window=2.837), overrides)
 
 
 def self_test() -> None:
