@@ -3,57 +3,58 @@
 ! meds_c_api_phenology -- the C-API shim for the PHENOLOGY kernel (`meds.plant.pheno`).       !
 !                                                                                          !
 ! One shim per subsystem, mirroring the Fortran tree (structure plan §7.6 #3).                !
-! The bind(c) structs are an ABI contract with `python/meds/plant/_ffi.py` and are compiled by !
-! a mandatory ctest target (`test_c_api_phenology`) so a field-order change breaks the BUILD--  !
-! see the header of meds_c_api_leaf for the incident that rule comes from.                       !
+! The bind(c) structs are an ABI contract with `python/meds/plant/pheno.py` and are compiled  !
+! by a mandatory ctest target (`test_c_api_phenology`) so a field-order change breaks the     !
+! BUILD -- see the header of meds_c_api_leaf for the incident that rule comes from.           !
 !==========================================================================================!
 module meds_c_api_phenology
    use iso_c_binding,        only : c_double, c_int
    use meds_kinds,           only : wp, ik
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
-   use meds_phenology,       only : phenology_kernel
+   use meds_phenology,       only : phenology_kernel, leaf_turnover_step
+   use meds_time,            only : daylength
    implicit none
    private
 
-   public :: pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c, meds_phenology_step
+   public :: pheno_env_c, pheno_params_c, pheno_state_c, pheno_out_c
+   public :: meds_phenology_step, meds_leaf_turnover_step, meds_daylength
 
-   !----- PHENOLOGY: C mirror of pheno_env_t (6 doubles + 2 ints; hemis_north 0/1). ---------!
+   !----- C mirror of pheno_env_t (4 doubles + 2 ints; hemis_north 0/1). --------------------!
    type, bind(c) :: pheno_env_c
-      real(c_double) :: temp_day, soil_temp, avail_water, dmax_leaf_psi, rad, daylength
+      real(c_double) :: temp_day, daylength, rad, predawn_leaf_psi
       integer(c_int) :: doy, hemis_north
    end type pheno_env_c
 
-   !----- C mirror of pheno_params_t (masks + rate scales + all cue params; water_use_pot 0/1). !
+   !----- C mirror of pheno_params_t. ---------------------------------------------------------!
    type, bind(c) :: pheno_params_c
       integer(c_int) :: flush_cue_mask, shed_cue_mask
-      real(c_double) :: cue_sharpness, k_flush_max, k_shed_max, tau_flush, tau_shed
-      real(c_double) :: gdd_base_temp, chill_base_temp, phen_a, phen_b, phen_c
-      real(c_double) :: cold_drop_daylength, cold_drop_soiltemp1, cold_drop_soiltemp2
-      integer(c_int) :: water_use_potential
-      real(c_double) :: water_off_threshold, water_on_threshold, water_window, water_width
-      real(c_double) :: leaf_psi_tlp, low_psi_threshold, high_psi_threshold
-      real(c_double) :: photo_crit, photo_slope
-      real(c_double) :: light_on_threshold, light_width, light_window
+      real(c_double) :: flush_cue_timescale, shed_cue_timescale, flush_rate_max, shed_rate_max
+      real(c_double) :: flush_base_temp, flush_degree_days, flush_temp_sharpness
+      real(c_double) :: shed_base_temp, shed_degree_days, shed_temp_sharpness
+      integer(c_int) :: light_variable
+      real(c_double) :: flush_light_threshold, flush_light_sharpness
+      real(c_double) :: shed_light_threshold, shed_light_sharpness, light_window
+      real(c_double) :: leaf_psi_tlp, flush_water_sum, flush_water_sharpness
+      real(c_double) :: shed_water_sum, shed_water_sharpness
    end type pheno_params_c
 
-   !----- C mirror of pheno_state_t (8 doubles; the prognostic memory, in/out). -------------!
+   !----- C mirror of pheno_state_t (7 doubles; the prognostic memory, in/out). -------------!
    type, bind(c) :: pheno_state_c
-      real(c_double) :: flush_drive, shed_drive, gdd, chill, water_avg, low_psi_days, &
-                        high_psi_days, light_avg
+      real(c_double) :: leaf_flush_tendency, leaf_shed_tendency, growing_degree_days,     &
+                        cold_degree_days, wet_psi_sum, dry_psi_sum, shortwave_mean
    end type pheno_state_c
 
-   !----- C mirror of pheno_out_t (2 doubles + 1 int). --------------------------------------!
+   !----- C mirror of pheno_out_t (2 doubles). -----------------------------------------------!
    type, bind(c) :: pheno_out_c
-      real(c_double) :: leaf_flush_rate, leaf_shed_rate
-      integer(c_int) :: cue_limiting
+      real(c_double) :: leaf_flush_potential, leaf_shed_potential
    end type pheno_out_c
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Advance one cohort's leaf phenology ONE step: unpack the C structs, call phenology_kernel !
-   ! (state advanced in place), pack the advanced state + the two relative rates back out.     !
-   ! `state_c` is intent(inout): the caller keeps it across days (the phenological memory).    !
+   ! Advance one cohort's phenology ONE step: unpack the C structs, call phenology_kernel     !
+   ! (state advanced in place), pack the state and the potential rates back out. `state_c` is !
+   ! intent(inout): the caller keeps it across days (the phenological memory).               !
    !---------------------------------------------------------------------------------------!
    subroutine meds_phenology_step(env_c, p_c, dt, state_c, out_c) bind(c, name="meds_phenology_step")
       type(pheno_env_c),    intent(in)    :: env_c
@@ -66,70 +67,88 @@ contains
       type(pheno_state_t)  :: state
       type(pheno_out_t)    :: out
 
-      !----- Unpack the environment. -----------------------------------------------------!
-      env%temp_day      = env_c%temp_day
-      env%soil_temp     = env_c%soil_temp
-      env%avail_water   = env_c%avail_water
-      env%dmax_leaf_psi = env_c%dmax_leaf_psi
-      env%rad           = env_c%rad
-      env%daylength     = env_c%daylength
-      env%doy           = int(env_c%doy, ik)
-      env%hemis_north   = env_c%hemis_north /= 0_c_int
+      env%temp_day         = env_c%temp_day
+      env%daylength        = env_c%daylength
+      env%rad              = env_c%rad
+      env%predawn_leaf_psi = env_c%predawn_leaf_psi
+      env%doy              = int(env_c%doy, ik)
+      env%hemis_north      = env_c%hemis_north /= 0_c_int
 
-      !----- Unpack the parameters. ------------------------------------------------------!
-      p%flush_cue_mask      = int(p_c%flush_cue_mask, ik)
-      p%shed_cue_mask       = int(p_c%shed_cue_mask, ik)
-      p%cue_sharpness       = p_c%cue_sharpness
-      p%k_flush_max         = p_c%k_flush_max
-      p%k_shed_max          = p_c%k_shed_max
-      p%tau_flush           = p_c%tau_flush
-      p%tau_shed            = p_c%tau_shed
-      p%gdd_base_temp       = p_c%gdd_base_temp
-      p%chill_base_temp     = p_c%chill_base_temp
-      p%phen_a              = p_c%phen_a
-      p%phen_b              = p_c%phen_b
-      p%phen_c              = p_c%phen_c
-      p%cold_drop_daylength = p_c%cold_drop_daylength
-      p%cold_drop_soiltemp1 = p_c%cold_drop_soiltemp1
-      p%cold_drop_soiltemp2 = p_c%cold_drop_soiltemp2
-      p%water_use_potential = p_c%water_use_potential /= 0_c_int
-      p%water_off_threshold = p_c%water_off_threshold
-      p%water_on_threshold  = p_c%water_on_threshold
-      p%water_window        = p_c%water_window
-      p%water_width         = p_c%water_width
-      p%leaf_psi_tlp        = p_c%leaf_psi_tlp
-      p%low_psi_threshold   = p_c%low_psi_threshold
-      p%high_psi_threshold  = p_c%high_psi_threshold
-      p%photo_crit          = p_c%photo_crit
-      p%photo_slope         = p_c%photo_slope
-      p%light_on_threshold  = p_c%light_on_threshold
-      p%light_width         = p_c%light_width
-      p%light_window        = p_c%light_window
+      p%flush_cue_mask        = int(p_c%flush_cue_mask, ik)
+      p%shed_cue_mask         = int(p_c%shed_cue_mask, ik)
+      p%flush_cue_timescale   = p_c%flush_cue_timescale
+      p%shed_cue_timescale    = p_c%shed_cue_timescale
+      p%flush_rate_max        = p_c%flush_rate_max
+      p%shed_rate_max         = p_c%shed_rate_max
+      p%flush_base_temp       = p_c%flush_base_temp
+      p%flush_degree_days     = p_c%flush_degree_days
+      p%flush_temp_sharpness  = p_c%flush_temp_sharpness
+      p%shed_base_temp        = p_c%shed_base_temp
+      p%shed_degree_days      = p_c%shed_degree_days
+      p%shed_temp_sharpness   = p_c%shed_temp_sharpness
+      p%light_variable        = int(p_c%light_variable, ik)
+      p%flush_light_threshold = p_c%flush_light_threshold
+      p%flush_light_sharpness = p_c%flush_light_sharpness
+      p%shed_light_threshold  = p_c%shed_light_threshold
+      p%shed_light_sharpness  = p_c%shed_light_sharpness
+      p%light_window          = p_c%light_window
+      p%leaf_psi_tlp          = p_c%leaf_psi_tlp
+      p%flush_water_sum       = p_c%flush_water_sum
+      p%flush_water_sharpness = p_c%flush_water_sharpness
+      p%shed_water_sum        = p_c%shed_water_sum
+      p%shed_water_sharpness  = p_c%shed_water_sharpness
 
-      !----- Unpack the prognostic state (the caller keeps it across days). ---------------!
-      state%flush_drive   = state_c%flush_drive
-      state%shed_drive    = state_c%shed_drive
-      state%gdd           = state_c%gdd
-      state%chill         = state_c%chill
-      state%water_avg     = state_c%water_avg
-      state%low_psi_days  = state_c%low_psi_days
-      state%high_psi_days = state_c%high_psi_days
-      state%light_avg     = state_c%light_avg
+      state%leaf_flush_tendency = state_c%leaf_flush_tendency
+      state%leaf_shed_tendency  = state_c%leaf_shed_tendency
+      state%growing_degree_days = state_c%growing_degree_days
+      state%cold_degree_days    = state_c%cold_degree_days
+      state%wet_psi_sum         = state_c%wet_psi_sum
+      state%dry_psi_sum         = state_c%dry_psi_sum
+      state%shortwave_mean      = state_c%shortwave_mean
 
       call phenology_kernel(env, p, real(dt, wp), state, out)
 
-      !----- Pack the advanced state + outputs back. -------------------------------------!
-      state_c%flush_drive   = state%flush_drive
-      state_c%shed_drive    = state%shed_drive
-      state_c%gdd           = state%gdd
-      state_c%chill         = state%chill
-      state_c%water_avg     = state%water_avg
-      state_c%low_psi_days  = state%low_psi_days
-      state_c%high_psi_days = state%high_psi_days
-      state_c%light_avg     = state%light_avg
-      out_c%leaf_flush_rate = out%leaf_flush_rate
-      out_c%leaf_shed_rate  = out%leaf_shed_rate
-      out_c%cue_limiting    = int(out%cue_limiting, c_int)
+      state_c%leaf_flush_tendency = state%leaf_flush_tendency
+      state_c%leaf_shed_tendency  = state%leaf_shed_tendency
+      state_c%growing_degree_days = state%growing_degree_days
+      state_c%cold_degree_days    = state%cold_degree_days
+      state_c%wet_psi_sum         = state%wet_psi_sum
+      state_c%dry_psi_sum         = state%dry_psi_sum
+      state_c%shortwave_mean      = state%shortwave_mean
+      out_c%leaf_flush_potential  = out%leaf_flush_potential
+      out_c%leaf_shed_potential   = out%leaf_shed_potential
    end subroutine meds_phenology_step
+
+   !---------------------------------------------------------------------------------------!
+   ! One step of leaf loss and the flush cap (meds_phenology::leaf_turnover_step), so Python   !
+   ! applies the carbon layer's own rule rather than a copy of it.                            !
+   !---------------------------------------------------------------------------------------!
+   subroutine meds_leaf_turnover_step(leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency,  &
+                                      flush_rate_max, shed_rate_max, leaf_turnover_rate,         &
+                                      min_leaf_cover, bare_leaf_cover, dt,                       &
+                                      senescence, background, flush_cap)                         &
+                                      bind(c, name="meds_leaf_turnover_step")
+      real(c_double), value, intent(in) :: leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency
+      real(c_double), value, intent(in) :: flush_rate_max, shed_rate_max, leaf_turnover_rate
+      real(c_double), value, intent(in) :: min_leaf_cover, bare_leaf_cover, dt
+      real(c_double), intent(out)       :: senescence, background, flush_cap
+      real(wp) :: sen, bg, cap
+      call leaf_turnover_step(real(leaf, wp), real(leaf_full, wp), real(leaf_flush_tendency, wp),     &
+                              real(leaf_shed_tendency, wp), real(flush_rate_max, wp),                 &
+                              real(shed_rate_max, wp), real(leaf_turnover_rate, wp),                  &
+                              real(min_leaf_cover, wp), real(bare_leaf_cover, wp), real(dt, wp),      &
+                              sen, bg, cap)
+      senescence = sen ; background = bg ; flush_cap = cap
+   end subroutine meds_leaf_turnover_step
+
+   !---------------------------------------------------------------------------------------!
+   ! Day length [h] at a latitude and day of year (meds_time::daylength), the light cue's     !
+   ! driver, so Python builds its forcing with the model's own formula.                       !
+   !---------------------------------------------------------------------------------------!
+   real(c_double) function meds_daylength(latitude_deg, doy) bind(c, name="meds_daylength")
+      real(c_double), value, intent(in) :: latitude_deg
+      integer(c_int), value, intent(in) :: doy
+      meds_daylength = daylength(real(latitude_deg, wp), int(doy, ik))
+   end function meds_daylength
 
 end module meds_c_api_phenology

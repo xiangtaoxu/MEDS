@@ -932,42 +932,34 @@ contains
             end if
          end if
       end if
-      !----- Leaf phenology (UNCONDITIONAL now -- no more phenology_on gate; a config's per-PFT cue   !
-      !      params are either a deliberate [phenology] override in the PFT file, or the             !
-      !      alloc_pft_table literature defaults, so validate them unconditionally either way. The    !
-      !      daily-mean temperature that drives the active TEMP/GDD cue comes from the fast loop's     !
-      !      met forcing WHEN a calendar context is supplied (advance_leaf_phenology no-ops otherwise, !
-      !      leaving the cue drives at their vanilla-evergreen fixed point) -- so there is no fast/     !
-      !      forcing precondition to enforce here any more. ALL FIVE cue bits are wired since #150 --   !
-      !      TEMP(1), WATER(2), HYDRO(4), PHOTO(8) and LIGHT(16) -- so no bit is rejected any more; the  !
-      !      WATER/HYDRO/LIGHT drivers are the root-weighted available-water fraction, the cohort's      !
-      !      published predawn leaf potential and the daily-mean incident shortwave. Each mask is a bit  !
-      !      set in [0,31]; the rate scales must be non-negative (flush strictly positive).               !
-      !                                                                                          !
-      !      SELECTABLE IS NOT VALIDATED. The kernel is unit-tested for all four strategies and the      !
-      !      four cue drivers each have a hand-computed unit test, but no MEDS run's leaf-area cycle     !
-      !      has ever been scored against a phenology observation, under ANY strategy. See the release   !
-      !      notes and docs/science/plant_phenology.md.  -------------------------------------------------!
-      if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
-              cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
-          any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
-              cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
-         error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
-      !----- CUE_WATER thresholds bracket a FRACTION in [0,1], and flush must sit above shed or the   !
-      !      logistic pair is inverted -- the cohort would flush when dry and shed when wet. -----------!
-      if (any(cfg%pft%pheno_water_on_threshold(1:cfg%pft%n) <=                                &
-              cfg%pft%pheno_water_off_threshold(1:cfg%pft%n)))                                &
-         error stop tag//'phenology.water_on_threshold must exceed water_off_threshold'
-      if (any(cfg%pft%pheno_water_window(1:cfg%pft%n) <= 0.0_wp) .or.                         &
-          any(cfg%pft%pheno_light_window(1:cfg%pft%n) <= 0.0_wp))                             &
-         error stop tag//'phenology water/light running-mean windows must be > 0'
-      if (any(cfg%pft%pheno_low_psi_threshold(1:cfg%pft%n) <= 0.0_wp) .or.                    &
-          any(cfg%pft%pheno_high_psi_threshold(1:cfg%pft%n) <= 0.0_wp))                       &
-         error stop tag//'phenology low/high_psi_threshold (days) must be > 0'
-      if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
-         error stop tag//'pheno_k_flush_max must be > 0'
-      if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &
-         error stop tag//'pheno_k_shed_max must be >= 0'
+      !----- Leaf phenology: every PFT's cue parameters are validated, from a [phenology] section  !
+      !      or the alloc_pft_table defaults. Each mask is a set of TEMP(1), LIGHT(2), WATER(4).     !
+      !      A sharpness of 0 would make its switch a constant 0.5, so it is refused.              !
+      associate (p => cfg%pft, n => cfg%pft%n)
+         if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 7_ik) .or.      &
+             any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 7_ik))          &
+            error stop tag//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
+         if (any(p%pheno_light_variable(1:n) < 1_ik .or. p%pheno_light_variable(1:n) > 2_ik))           &
+            error stop tag//'phenology.light_variable must be 1 (day length) or 2 (shortwave)'
+         if (any(p%pheno_flush_cue_timescale(1:n) <= 0.0_wp) .or.                                     &
+             any(p%pheno_shed_cue_timescale(1:n)  <= 0.0_wp) .or.                                     &
+             any(p%pheno_light_window(1:n)        <= 0.0_wp))                                         &
+            error stop tag//'phenology cue timescales and light_window must be > 0'
+         if (any(p%pheno_flush_rate_max(1:n) <= 0.0_wp))                                              &
+            error stop tag//'phenology.flush_rate_max must be > 0'
+         if (any(p%pheno_shed_rate_max(1:n) < 0.0_wp))                                                &
+            error stop tag//'phenology.shed_rate_max must be >= 0'
+         if (any(p%pheno_min_leaf_cover(1:n) < 0.0_wp .or. p%pheno_min_leaf_cover(1:n) >= 1.0_wp) .or. &
+             any(p%pheno_bare_leaf_cover(1:n) < 0.0_wp .or. p%pheno_bare_leaf_cover(1:n) >= 1.0_wp))   &
+            error stop tag//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
+         if (any(p%pheno_flush_temp_sharpness(1:n) == 0.0_wp) .or.                                   &
+             any(p%pheno_shed_temp_sharpness(1:n)  == 0.0_wp) .or.                                   &
+             any(p%pheno_flush_light_sharpness(1:n) == 0.0_wp) .or.                                  &
+             any(p%pheno_shed_light_sharpness(1:n)  == 0.0_wp) .or.                                  &
+             any(p%pheno_flush_water_sharpness(1:n) == 0.0_wp) .or.                                  &
+             any(p%pheno_shed_water_sharpness(1:n)  == 0.0_wp))                                      &
+            error stop tag//'a phenology sharpness is 0: its switch would be a constant 0.5'
+      end associate
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'

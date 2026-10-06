@@ -42,8 +42,7 @@ module meds_fast_dynamics
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
                                      PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
-   use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params,  &
-                                 root_available_water
+   use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase
@@ -99,20 +98,16 @@ module meds_fast_dynamics
    integer(ik), parameter :: RED_CLAMP_COMMIT  = 11_ik   !< commit-level state clamps
    integer(ik), parameter :: RED_CLAMP_MASS    = 12_ik   !< water mass created by clamping [kg/m2]
    integer(ik), parameter :: RED_CLAMP_ENERGY  = 13_ik   !< energy created by clamping [J/m2]
-   !----- The three remaining phenology cue drivers (#150), area-weighted like every other        !
-   !      per-patch site diagnostic. RED_PHENO_TAIR above is NOT area-weighted because air        !
-   !      temperature is site-uniform under single-site forcing; these three are patch state and  !
-   !      genuinely differ between patches, so they carry the area factor and the site fold       !
-   !      divides by the sub-step count alone (patch areas sum to 1).  ---------------------------!
-   integer(ik), parameter :: RED_PHENO_SOILT   = 14_ik   !< shallow soil temperature [K]   (cold-drop trigger)
-   integer(ik), parameter :: RED_PHENO_SWATER  = 15_ik   !< root-weighted available water [-] (CUE_WATER)
-   integer(ik), parameter :: RED_PHENO_RAD     = 16_ik   !< incident shortwave [W/m2]      (CUE_LIGHT)
+   !----- The light cue's driver: incident shortwave, area-weighted like every other per-patch   !
+   !      site diagnostic, so the site fold divides by the sub-step count alone (patch areas sum  !
+   !      to 1). RED_PHENO_TAIR above is not area-weighted: air temperature is site-uniform. -----!
+   integer(ik), parameter :: RED_PHENO_RAD     = 14_ik   !< incident shortwave [W/m2]      (light cue)
    !----- The rain and snow each patch received, split at its canopy-air top (fill_forcing), area-  !
    !      weighted: the forcing outputs report the split the model used, not one at the forcing's     !
    !      own height. --------------------------------------------------------------------------------!
-   integer(ik), parameter :: RED_RAINF         = 17_ik   !< rain [kg/m2/s]
-   integer(ik), parameter :: RED_SNOWFALL      = 18_ik   !< snow [kg/m2/s]
-   integer(ik), parameter :: N_RED             = 18_ik
+   integer(ik), parameter :: RED_RAINF         = 15_ik   !< rain [kg/m2/s]
+   integer(ik), parameter :: RED_SNOWFALL      = 16_ik   !< snow [kg/m2/s]
+   integer(ik), parameter :: N_RED             = 16_ik
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -658,17 +653,8 @@ contains
             end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
-            !----- PHENOLOGY CUE DRIVERS (#150), sampled from the state the fast loop just advanced.     !
-            !      soil temperature: the TOP layer, which is what the cold-drop trigger is written        !
-            !      against (it stood in with air temperature until now). available water: the ROOT-       !
-            !      weighted fraction of extractable water, (theta - theta_wp)/(theta_fc - theta_wp)       !
-            !      clamped to [0,1] -- a fraction, because the kernel's thresholds are 0.2 and 0.5.       !
-            !      radiation: INCIDENT shortwave at the top of the canopy, matching ED2's rad_avg and     !
-            !      the 200 W/m2 light threshold; a per-cohort absorbed value is a different quantity      !
-            !      and would need its own thresholds (ROADMAP).  -----------------------------------------!
-            red_site(RED_PHENO_SOILT,  isub, ip) = site%patch%area(ip) * biophys%soil_e%soil_temp(1)
-            red_site(RED_PHENO_SWATER, isub, ip) = site%patch%area(ip)                                        &
-                 * root_available_water(biophys%soil_w%theta, ctx%col_config%soil)
+            !----- The light cue's driver: INCIDENT shortwave at the top of the canopy (ED2's rad_avg);  !
+            !      a per-cohort absorbed value, for a light gradient within the canopy, is ROADMAP. ------!
             red_site(RED_PHENO_RAD,    isub, ip) = site%patch%area(ip) * met%swdown()
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
@@ -824,7 +810,7 @@ contains
       !  bit-for-bit to what the serial driver produced. -----------------------------------------------!
       !=========================================================================================!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
-      site%pheno_soilt_sum = 0.0_wp ; site%pheno_swater_sum = 0.0_wp ; site%pheno_rad_sum = 0.0_wp
+      site%pheno_rad_sum  = 0.0_wp
       site%et_accum       = 0.0_wp
       site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
       site%work_soil_nsub   = 0.0_wp ; site%work_hydro_nsub = 0.0_wp
@@ -837,8 +823,6 @@ contains
             site%et_accum          = site%et_accum          + red_site(RED_ET,            isub, ip)
             site%pheno_tair_sum    = site%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
             site%pheno_tair_n      = site%pheno_tair_n      + 1_ik
-            site%pheno_soilt_sum   = site%pheno_soilt_sum   + red_site(RED_PHENO_SOILT,   isub, ip)
-            site%pheno_swater_sum  = site%pheno_swater_sum  + red_site(RED_PHENO_SWATER,  isub, ip)
             site%pheno_rad_sum     = site%pheno_rad_sum     + red_site(RED_PHENO_RAD,     isub, ip)
             site%work_integ_steps  = site%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
             site%work_integ_rej    = site%work_integ_rej    + red_site(RED_INTEG_REJ,     isub, ip)

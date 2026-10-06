@@ -199,9 +199,9 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_RD25)
       call add_variable(reg, 'llspan_cohort', 'leaf lifespan', 'yr',                             &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LLSPAN)
-      call add_variable(reg, 'pheno_flush_cohort', 'phenology flush governor', '-',              &
+      call add_variable(reg, 'leaf_flush_tendency_cohort', 'smoothed leaf flush tendency', '-',          &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_FLUSH)
-      call add_variable(reg, 'pheno_shed_cohort', 'phenology active-shed governor', '-',         &
+      call add_variable(reg, 'leaf_shed_tendency_cohort', 'smoothed leaf senescence tendency', '-',      &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_SHED)
       call add_variable(reg, 'dmax_psi_leaf_cohort', 'predawn (daily-max) leaf water potential', 'MPa', &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)

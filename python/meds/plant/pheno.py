@@ -1,38 +1,35 @@
 # SPDX-License-Identifier: Apache-2.0
-"""meds.plant.pheno — leaf-phenology SIGNAL kernel (part of the plant-ecophysiology package).
+"""meds.plant.pheno — the leaf-phenology kernel (part of the plant-ecophysiology package).
 
 A Pythonic front end to the MEDS Fortran phenology kernel (meds_phenology.f90, exposed through the
-same libmeds.so as meds.plant's gas exchange -- one C-API for the whole model). Given daily
-environmental cues + per-PFT traits it returns two RELATIVE rate tendencies -- leaf_flush_rate and
-leaf_shed_rate [1/day] -- from two governor accumulators it advances in place.
+same libmeds.so as meds.plant's gas exchange -- one C-API for the whole model). Each day it takes
+the cues (air temperature, day length or shortwave, predawn leaf water potential) and per-PFT
+traits, and advances two smoothed tendencies in [0,1]: leaf_flush_tendency and leaf_shed_tendency.
 
     import meds.plant.pheno as pheno
 
-    ph = pheno.Phenology(pheno.temperate_deciduous())     # a stateful driver (holds params + memory)
-    out = ph.step(temp_day=290.0, soil_temp=290.0, daylength=13.0, doy=150)
-    print(out.leaf_flush_rate, out.leaf_shed_rate)        # [1/day] flush / shed TENDENCIES
+    ph = pheno.Phenology(pheno.temperate_deciduous())     # params + cue memory + leaf cover
+    day = ph.step(temp_day=290.0, daylength=pheno.daylength(42.5, 150), doy=150)
+    print(day.leaf_cover, day.senescence)                 # canopy fullness, leaf lost today
 
-    # the kernel is signal-only (no leaf mass). Track relative LAI + realized litter yourself:
-    lai, litter = pheno.leaf_step(lai, out.leaf_flush_rate, out.leaf_shed_rate, baseline_turnover=8e-4)
-
-`leaf_step` is a compact relative-unit analogue of the Fortran carbon leaf update
-(meds_plant_carbon_dynamics): the flush TENDENCY fills toward full, the shed TENDENCY + a small
-baseline turnover remove leaves, and it reports the REALIZED litter (leaf actually shed that step),
-which is not the same as the shed tendency -- e.g. a bare deciduous canopy has a high winter shed
-tendency but zero realized litter. Requires the compiled libmeds.so (see meds._libmeds).
+`Phenology.step` applies the coupled model's own leaf rule (`leaf_step`, the Fortran
+leaf_turnover_step through the C-API) with carbon never limiting the flush: senescence at
+shed_rate_max * leaf_shed_tendency down to min_leaf_cover, background turnover while the canopy
+flushes, and a flush of up to flush_rate_max * leaf_flush_tendency per day toward full cover.
+Requires the compiled libmeds.so (see meds._libmeds).
 """
 from __future__ import annotations
 
 import ctypes
 from ctypes import c_double, c_int, byref, POINTER
-from dataclasses import dataclass, asdict
-from enum import IntFlag
+from dataclasses import dataclass, asdict, fields
+from enum import IntEnum, IntFlag
 
 from ._ffi import _lib   # the shared libmeds.so handle (also used by leaf gas exchange)
 
 __all__ = [
-    "Cue", "Params", "State", "Out", "Phenology", "step", "leaf_step", "integrate_lai",
-    "temperate_deciduous", "temperate_evergreen", "drought_deciduous", "light_exchanging",
+    "Cue", "Light", "Params", "State", "Out", "Day", "Phenology", "step", "leaf_step", "daylength",
+    "temperate_deciduous", "boreal_evergreen", "drought_deciduous", "light_exchanging",
     "self_test",
 ]
 
@@ -42,32 +39,27 @@ __all__ = [
 #  src/c_api/meds_c_api_phenology.f90.                                                      #
 #===========================================================================================#
 _ENV_FIELDS = [
-    ("temp_day", c_double), ("soil_temp", c_double), ("avail_water", c_double),
-    ("dmax_leaf_psi", c_double), ("rad", c_double), ("daylength", c_double),
-    ("doy", c_int), ("hemis_north", c_int),
+    ("temp_day", c_double), ("daylength", c_double), ("rad", c_double),
+    ("predawn_leaf_psi", c_double), ("doy", c_int), ("hemis_north", c_int),
 ]
 _PARAM_FIELDS = [
     ("flush_cue_mask", c_int), ("shed_cue_mask", c_int),
-    ("cue_sharpness", c_double), ("k_flush_max", c_double), ("k_shed_max", c_double),
-    ("tau_flush", c_double), ("tau_shed", c_double),
-    ("gdd_base_temp", c_double), ("chill_base_temp", c_double),
-    ("phen_a", c_double), ("phen_b", c_double), ("phen_c", c_double),
-    ("cold_drop_daylength", c_double), ("cold_drop_soiltemp1", c_double),
-    ("cold_drop_soiltemp2", c_double),
-    ("water_use_potential", c_int),
-    ("water_off_threshold", c_double), ("water_on_threshold", c_double),
-    ("water_window", c_double), ("water_width", c_double),
-    ("leaf_psi_tlp", c_double), ("low_psi_threshold", c_double), ("high_psi_threshold", c_double),
-    ("photo_crit", c_double), ("photo_slope", c_double),
-    ("light_on_threshold", c_double), ("light_width", c_double), ("light_window", c_double),
+    ("flush_cue_timescale", c_double), ("shed_cue_timescale", c_double),
+    ("flush_rate_max", c_double), ("shed_rate_max", c_double),
+    ("flush_base_temp", c_double), ("flush_degree_days", c_double), ("flush_temp_sharpness", c_double),
+    ("shed_base_temp", c_double), ("shed_degree_days", c_double), ("shed_temp_sharpness", c_double),
+    ("light_variable", c_int),
+    ("flush_light_threshold", c_double), ("flush_light_sharpness", c_double),
+    ("shed_light_threshold", c_double), ("shed_light_sharpness", c_double), ("light_window", c_double),
+    ("leaf_psi_tlp", c_double), ("flush_water_sum", c_double), ("flush_water_sharpness", c_double),
+    ("shed_water_sum", c_double), ("shed_water_sharpness", c_double),
 ]
 _STATE_FIELDS = [
-    ("flush_drive", c_double), ("shed_drive", c_double), ("gdd", c_double), ("chill", c_double),
-    ("water_avg", c_double), ("low_psi_days", c_double), ("high_psi_days", c_double),
-    ("light_avg", c_double),
+    ("leaf_flush_tendency", c_double), ("leaf_shed_tendency", c_double),
+    ("growing_degree_days", c_double), ("cold_degree_days", c_double),
+    ("wet_psi_sum", c_double), ("dry_psi_sum", c_double), ("shortwave_mean", c_double),
 ]
-_OUT_FIELDS = [("leaf_flush_rate", c_double), ("leaf_shed_rate", c_double), ("cue_limiting", c_int)]
-_INT_NAMES = {"doy", "hemis_north", "flush_cue_mask", "shed_cue_mask", "water_use_potential"}
+_OUT_FIELDS = [("leaf_flush_potential", c_double), ("leaf_shed_potential", c_double)]
 
 
 class _EnvC(ctypes.Structure):
@@ -86,212 +78,262 @@ class _OutC(ctypes.Structure):
     _fields_ = _OUT_FIELDS
 
 
-_ENV_NAMES = tuple(n for n, _ in _ENV_FIELDS)
-_PARAM_NAMES = tuple(n for n, _ in _PARAM_FIELDS)
-_STATE_NAMES = tuple(n for n, _ in _STATE_FIELDS)
-_PHENO_BOUND = False
+_BOUND = False
 
 
 def _pheno_lib():
-    """The shared libmeds.so (via meds.plant._ffi), with meds_phenology_step bound once."""
-    global _PHENO_BOUND
+    """The shared libmeds.so (via meds.plant._ffi), with the phenology entries bound once."""
+    global _BOUND
     lib = _lib()
-    if not _PHENO_BOUND:
+    if not _BOUND:
         lib.meds_phenology_step.restype = None
         lib.meds_phenology_step.argtypes = [POINTER(_EnvC), POINTER(_ParamsC), c_double,
                                             POINTER(_StateC), POINTER(_OutC)]
-        _PHENO_BOUND = True
+        lib.meds_leaf_turnover_step.restype = None
+        lib.meds_leaf_turnover_step.argtypes = [c_double] * 10 + [POINTER(c_double)] * 3
+        lib.meds_daylength.restype = c_double
+        lib.meds_daylength.argtypes = [c_double, c_int]
+        _BOUND = True
     return lib
 
 
-def _make(struct_cls, names, src):
-    return struct_cls(**{n: (int(src[n]) if n in _INT_NAMES else float(src[n])) for n in names})
+def _make(struct_cls, src):
+    return struct_cls(**{n: (int(src[n]) if t is c_int else float(src[n]))
+                         for n, t in struct_cls._fields_})
 
 
 class Cue(IntFlag):
-    """Cue-enable bits (mirror meds_plant_types). Flush and shed sides are selected independently."""
+    """Cue-enable bits (mirror meds_phenology_types). flush_cue_mask and shed_cue_mask pick the
+    cues of each side: the flush signal is the PRODUCT of its cues' switches, the shed signal the
+    larger of the seasonal trigger (TEMP x LIGHT) and the water trigger."""
     NONE = 0
-    TEMP = 1     # temperature: GDD flush + autumn cold-drop shed
-    WATER = 2    # soil-water running mean       (driver not wired in the standalone model yet)
-    HYDRO = 4    # daily-max leaf water potential (dmax_leaf_psi)
-    PHOTO = 8    # photoperiod (gates the temperature flush)
-    LIGHT = 16   # radiation: active shed rises with running-mean light
+    TEMP = 1     # warmth sum from midwinter (flush), cold sum from midsummer (shed)
+    LIGHT = 2    # day length or running-mean shortwave (Params.light_variable)
+    WATER = 4    # predawn leaf water potential summed above / below the turgor-loss point
+
+
+class Light(IntEnum):
+    """Which variable the light cue reads."""
+    DAYLENGTH = 1    # day length [h]
+    RADIATION = 2    # running-mean incident shortwave [W/m2]
 
 
 @dataclass
 class Params:
-    """Per-PFT phenology traits. Rates are RELATIVE, per day; the two masks pick which cues drive
-    each side. k_flush_max = 1/15 d => a bare canopy fills in ~15 days at full drive."""
+    """Per-PFT phenology traits. Every switch is sigma(s (x - x*)): a centre x* and a signed
+    sharpness s; its 12-88 % transition spans x* +- 2/|s|. The defaults (no cues: always flushing,
+    never senescing) are those of a PFT without a [phenology] section.
+
+    The last three fields belong to the carbon layer (leaf_step), not the cue kernel: the
+    background turnover while flushing, the leaf cover senescence stops at (an evergreen floor),
+    and the cover below which a dormant canopy goes bare."""
     flush_cue_mask: int = Cue.NONE
     shed_cue_mask: int = Cue.NONE
-    cue_sharpness: float = 2.0
-    k_flush_max: float = 1.0 / 15.0
-    k_shed_max: float = 1.0 / 20.0
-    tau_flush: float = 5.0
-    tau_shed: float = 5.0
-    gdd_base_temp: float = 278.15
-    chill_base_temp: float = 278.15
-    phen_a: float = -68.0
-    phen_b: float = 638.0
-    phen_c: float = -0.01
-    cold_drop_daylength: float = 10.9
-    cold_drop_soiltemp1: float = 284.3
-    cold_drop_soiltemp2: float = 275.15
-    water_use_potential: bool = False
-    water_off_threshold: float = 0.2
-    water_on_threshold: float = 0.5
-    water_window: float = 10.0
-    water_width: float = 0.1
-    leaf_psi_tlp: float = -2.0
-    low_psi_threshold: float = 10.0
-    high_psi_threshold: float = 10.0
-    photo_crit: float = 11.0
-    photo_slope: float = 2.0
-    light_on_threshold: float = 200.0
-    light_width: float = 50.0
-    light_window: float = 10.0
+    flush_cue_timescale: float = 5.0          # [day]
+    shed_cue_timescale: float = 5.0           # [day]
+    flush_rate_max: float = 0.06667           # [1/day] leaf growth at full tendency
+    shed_rate_max: float = 0.05               # [1/day] senescence at full tendency
+    flush_base_temp: float = 278.15           # [K]
+    flush_degree_days: float = 100.0          # [K day] warmth requirement
+    flush_temp_sharpness: float = 0.04        # [1/(K day)]
+    shed_base_temp: float = 290.15            # [K]
+    shed_degree_days: float = 50.0            # [K day] cold requirement
+    shed_temp_sharpness: float = 0.1          # [1/(K day)]
+    light_variable: int = Light.DAYLENGTH
+    flush_light_threshold: float = 12.0       # [h | W/m2]
+    flush_light_sharpness: float = 1.0        # [1/h | m2/W]; > 0: more light permits flushing
+    shed_light_threshold: float = 11.0        # [h | W/m2]
+    shed_light_sharpness: float = -1.0        # < 0: short days trigger; > 0: bright light does
+    light_window: float = 10.0                # [day] running mean (Light.RADIATION)
+    leaf_psi_tlp: float = -2.0                # [MPa] turgor-loss point
+    flush_water_sum: float = 10.0             # [MPa day]
+    flush_water_sharpness: float = 0.5        # [1/(MPa day)]
+    shed_water_sum: float = 10.0              # [MPa day]
+    shed_water_sharpness: float = 0.5         # [1/(MPa day)]
+    leaf_turnover_rate: float = 0.0           # [1/yr] background loss while flushing
+    min_leaf_cover: float = 0.0               # [-] senescence stops here
+    bare_leaf_cover: float = 0.02             # [-] a dormant canopy below this goes bare
 
 
 @dataclass
 class State:
-    """The prognostic phenological memory (two governor drives + cue sub-accumulators). Born
-    flushing (flush_drive=1) with no active shed — the evergreen fixed point."""
-    flush_drive: float = 1.0
-    shed_drive: float = 0.0
-    gdd: float = 0.0
-    chill: float = 0.0
-    water_avg: float = 0.0
-    low_psi_days: float = 0.0
-    high_psi_days: float = 0.0
-    light_avg: float = 0.0
+    """The prognostic memory: two smoothed tendencies + the cue accumulators. Born flushing and
+    not senescing."""
+    leaf_flush_tendency: float = 1.0
+    leaf_shed_tendency: float = 0.0
+    growing_degree_days: float = 0.0
+    cold_degree_days: float = 0.0
+    wet_psi_sum: float = 0.0
+    dry_psi_sum: float = 0.0
+    shortwave_mean: float = 0.0
 
 
 @dataclass(frozen=True)
 class Out:
-    """One step's phenology signal (TENDENCIES; the realized fluxes come from leaf_step)."""
-    leaf_flush_rate: float    # [1/day] relative flush tendency (0 => dormant)
-    leaf_shed_rate: float     # [1/day] relative active-shed tendency (0 => no active shed)
-    cue_limiting: int         # the strongest active shed cue (a Cue bit; diagnostic)
+    """One step's potential relative rates (rate_max * tendency)."""
+    leaf_flush_potential: float    # [1/day]
+    leaf_shed_potential: float     # [1/day]
 
 
-_ENV_DEFAULTS = dict(temp_day=298.15, soil_temp=298.15, avail_water=0.5, dmax_leaf_psi=0.0,
-                     rad=400.0, daylength=12.0, doy=1, hemis_north=True)
+@dataclass(frozen=True)
+class Day:
+    """One day of a Phenology run: the tendencies and what the leaf rule made of them."""
+    leaf_flush_tendency: float     # [-]
+    leaf_shed_tendency: float      # [-]
+    leaf_cover: float              # [-] leaf / full leaf, after today's loss and flush
+    senescence: float              # [-] leaf cover lost to senescence today
+    background: float              # [-] leaf cover lost to background turnover today
+
+
+_ENV_DEFAULTS = dict(temp_day=298.15, daylength=12.0, rad=400.0, predawn_leaf_psi=0.0,
+                     doy=1, hemis_north=True)
 
 
 def step(env, params, state, dt=1.0):
     """Low-level one-step call. `env` is a dict (missing keys default), `params`/`state` are Params/
     State (or dicts). Returns (Out, new_State); `state` is NOT mutated -- feed new_State back."""
-    env_full = {**_ENV_DEFAULTS, **dict(env)}
     p = asdict(params) if isinstance(params, Params) else dict(params)
     s = asdict(state) if isinstance(state, State) else dict(state)
-    env_c = _make(_EnvC, _ENV_NAMES, env_full)
-    params_c = _make(_ParamsC, _PARAM_NAMES, p)
-    state_c = _make(_StateC, _STATE_NAMES, s)
+    env_c = _make(_EnvC, {**_ENV_DEFAULTS, **dict(env)})
+    params_c = _make(_ParamsC, p)
+    state_c = _make(_StateC, s)
     out_c = _OutC()
     _pheno_lib().meds_phenology_step(byref(env_c), byref(params_c), float(dt),
                                      byref(state_c), byref(out_c))
-    out = Out(leaf_flush_rate=out_c.leaf_flush_rate, leaf_shed_rate=out_c.leaf_shed_rate,
-              cue_limiting=int(out_c.cue_limiting))
-    new_state = State(**{n: getattr(state_c, n) for n in _STATE_NAMES})
-    return out, new_state
+    out = Out(leaf_flush_potential=out_c.leaf_flush_potential,
+              leaf_shed_potential=out_c.leaf_shed_potential)
+    return out, State(**{n: getattr(state_c, n) for n, _ in _STATE_FIELDS})
+
+
+def leaf_step(leaf_cover, leaf_flush_tendency, leaf_shed_tendency, params, dt=1.0):
+    """Advance leaf cover (leaf / full leaf) ONE step with the coupled model's leaf rule.
+
+    Returns (new_leaf_cover, senescence, background). The loss terms come from the Fortran
+    leaf_turnover_step (the carbon layer calls the same routine); the flush then refills the
+    post-loss canopy toward full by up to flush_rate_max * leaf_flush_tendency * dt, with carbon
+    never limiting. Litter is senescence * (1 - resorption) + background.
+    """
+    sen, bg, cap = c_double(), c_double(), c_double()
+    _pheno_lib().meds_leaf_turnover_step(
+        float(leaf_cover), 1.0, float(leaf_flush_tendency), float(leaf_shed_tendency),
+        float(params.flush_rate_max), float(params.shed_rate_max), float(params.leaf_turnover_rate),
+        float(params.min_leaf_cover), float(params.bare_leaf_cover), float(dt),
+        byref(sen), byref(bg), byref(cap))
+    post = leaf_cover - sen.value - bg.value
+    return post + min(max(0.0, 1.0 - post), cap.value), sen.value, bg.value
+
+
+def daylength(lat_deg, doy):
+    """Day length [h] at latitude `lat_deg` on day of year `doy` (meds_time::daylength)."""
+    return _pheno_lib().meds_daylength(float(lat_deg), int(doy))
 
 
 class Phenology:
-    """A stateful phenology driver: holds the per-PFT params + the advancing memory."""
+    """A stateful driver: per-PFT params, the cue memory, and the leaf cover.
 
-    def __init__(self, params: Params, state: State | None = None):
+    The C structs are built once and kept, so a long daily run costs two library calls a day.
+    `params` is fixed at construction; make a new Phenology to change it."""
+
+    def __init__(self, params: Params, state: State | None = None, leaf_cover: float = 1.0):
         self.params = params
-        self.state = state if state is not None else State()
+        self.leaf_cover = leaf_cover
+        self._lib = _pheno_lib()
+        self._params_c = _make(_ParamsC, asdict(params))
+        self._state_c = _make(_StateC, asdict(state if state is not None else State()))
+        self._env_c, self._out_c = _EnvC(), _OutC()
+        self._sen, self._bg, self._cap = c_double(), c_double(), c_double()
 
-    def step(self, dt: float = 1.0, **env) -> Out:
-        out, self.state = step(env, self.params, self.state, dt=dt)
-        return out
+    @property
+    def state(self) -> State:
+        """The cue memory now (a copy)."""
+        return State(**{n: getattr(self._state_c, n) for n, _ in _STATE_FIELDS})
 
-
-def leaf_step(elongf, leaf_flush_rate, leaf_shed_rate, dt=1.0,
-              baseline_turnover=0.0, elongf_min=0.02):
-    """Advance relative LAI (canopy fullness, elongf in [0,1]) ONE step; return (new_elongf, litter).
-
-    A compact relative-unit analogue of the Fortran carbon leaf update (get_plant_flux_slow):
-      * flush FILLS toward full at leaf_flush_rate (linear, capped by the deficit 1-elongf),
-      * the ACTIVE shed removes leaf_shed_rate per day (linear toward bare), NON-replaceable,
-      * `baseline_turnover` [1/day] is a small proportional, REPLACEABLE background loss,
-      * a net decline that crosses below elongf_min SNAPS to bare (ED2's fully-abscised state).
-    `litter` is the REALIZED relative leaf carbon shed to litter this step (= flush-adjusted leaf
-    removed), which differs from the shed TENDENCY: a bare canopy sheds nothing however high the
-    tendency, and a full evergreen canopy litters via baseline turnover with zero shed tendency.
-    """
-    flush_gain = min(leaf_flush_rate * dt, max(0.0, 1.0 - elongf))
-    loss = min(leaf_shed_rate * dt + baseline_turnover * elongf * dt, elongf)
-    e = elongf + flush_gain - loss
-    if leaf_shed_rate > 0.0 and loss > flush_gain and e < elongf_min:
-        e = 0.0
-    e = min(1.0, max(0.0, e))
-    litter = max(0.0, (elongf + flush_gain) - e)      # leaf present (incl. this step's flush) that left
-    return e, litter
-
-
-def integrate_lai(elongf, leaf_flush_rate, leaf_shed_rate, dt=1.0,
-                  baseline_turnover=0.0, elongf_min=0.02):
-    """Relative LAI after one step (canopy fullness in [0,1]); the scalar half of `leaf_step`."""
-    e, _ = leaf_step(elongf, leaf_flush_rate, leaf_shed_rate, dt, baseline_turnover, elongf_min)
-    return e
+    def step(self, dt: float = 1.0, **env) -> Day:
+        """Advance one step: the cues (env keys as in pheno_env_t; missing keys take their
+        defaults), then the leaf rule."""
+        for name, value in {**_ENV_DEFAULTS, **env}.items():
+            setattr(self._env_c, name, value)
+        st, p = self._state_c, self.params
+        self._lib.meds_phenology_step(byref(self._env_c), byref(self._params_c), float(dt),
+                                      byref(st), byref(self._out_c))
+        self._lib.meds_leaf_turnover_step(
+            self.leaf_cover, 1.0, st.leaf_flush_tendency, st.leaf_shed_tendency,
+            p.flush_rate_max, p.shed_rate_max, p.leaf_turnover_rate, p.min_leaf_cover,
+            p.bare_leaf_cover, float(dt), byref(self._sen), byref(self._bg), byref(self._cap))
+        sen, bg = self._sen.value, self._bg.value
+        post = self.leaf_cover - sen - bg
+        self.leaf_cover = post + min(max(0.0, 1.0 - post), self._cap.value)
+        return Day(st.leaf_flush_tendency, st.leaf_shed_tendency, self.leaf_cover, sen, bg)
 
 
 #===========================================================================================#
-#  The four target phenological strategies (design §1a / §6.1), as ready-to-use Params.       #
+#  Leaf habits as parameter sets. The two temperate ones are the example02 fits (Harvard      #
+#  Forest MODIS LAI + litter; Hyytiala needle litter); the two tropical ones are illustrative. #
 #===========================================================================================#
 def _preset(defaults, overrides) -> Params:
+    names = {f.name for f in fields(Params)}
+    unknown = set(overrides) - names
+    if unknown:
+        raise TypeError(f"unknown phenology parameter(s): {sorted(unknown)}")
     return Params(**{**defaults, **overrides})
 
 
 def temperate_deciduous(**overrides) -> Params:
-    """Cold-deciduous: flush on spring GDD, shed on the autumn cold-drop (both masks = TEMP)."""
-    return _preset(dict(flush_cue_mask=Cue.TEMP, shed_cue_mask=Cue.TEMP,
-                        k_flush_max=1.0 / 15.0, k_shed_max=1.0 / 18.0), overrides)
+    """Cold-deciduous (Harvard Forest): flush on warmth while days are longer than a photoperiod
+    threshold, senesce on cold once days shorten; no leaf-cover floor, so the canopy goes bare."""
+    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
+                        flush_rate_max=0.03386, shed_rate_max=0.3329,
+                        leaf_turnover_rate=0.0003072, flush_degree_days=93.98,
+                        shed_base_temp=290.1, shed_degree_days=46.18,
+                        flush_light_threshold=13.75, flush_light_sharpness=7.99,
+                        shed_light_threshold=9.127), overrides)
 
 
-def temperate_evergreen(**overrides) -> Params:
-    """Evergreen: permissive flush (no onset cue), no active shed — the canopy is held full year
-    round, thinned only by the small baseline turnover the caller applies in leaf_step. Pass
-    flush_cue_mask=Cue.TEMP for a mild seasonal flush that still never actively sheds."""
-    return _preset(dict(flush_cue_mask=Cue.NONE, shed_cue_mask=Cue.NONE, k_flush_max=1.0 / 15.0),
+def boreal_evergreen(**overrides) -> Params:
+    """Evergreen conifer (Scots pine, Hyytiala): the same cues as the deciduous habit, but
+    senescence stops at min_leaf_cover -- the old needle cohort -- so the canopy never goes bare."""
+    return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
+                        flush_rate_max=0.02435, shed_rate_max=0.159,
+                        leaf_turnover_rate=0.2377, min_leaf_cover=0.8786,
+                        flush_degree_days=137.5, shed_base_temp=279.9,
+                        shed_degree_days=36.77, flush_light_threshold=13.08,
+                        flush_light_sharpness=6.585, shed_light_threshold=14.49),
                    overrides)
 
 
 def drought_deciduous(**overrides) -> Params:
-    """Facultative drought-deciduous (tropical): flush + shed keyed on the daily-max leaf water
-    potential vs the turgor-loss point (both masks = HYDRO). Evergreen when never droughted."""
-    return _preset(dict(flush_cue_mask=Cue.HYDRO, shed_cue_mask=Cue.HYDRO,
-                        leaf_psi_tlp=-1.5, low_psi_threshold=10.0, high_psi_threshold=10.0,
-                        k_flush_max=1.0 / 15.0, k_shed_max=1.0 / 20.0), overrides)
+    """Facultative drought-deciduous (tropical dry forest): flush and senescence keyed on the
+    predawn leaf water potential against the turgor-loss point. Illustrative values."""
+    return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.WATER, leaf_psi_tlp=-1.5,
+                        flush_rate_max=1.0 / 15.0, shed_rate_max=1.0 / 20.0), overrides)
 
 
 def light_exchanging(**overrides) -> Params:
-    """Light-driven leaf-exchanging (tropical evergreen): permissive high flush + an active shed that
-    RISES with running-mean radiation, so the canopy stays ~full while turning leaves over fast."""
+    """Light-driven leaf exchange (tropical evergreen): always flushing, senescence rising with the
+    running-mean shortwave, so the canopy stays near full while turning over. Illustrative."""
     return _preset(dict(flush_cue_mask=Cue.NONE, shed_cue_mask=Cue.LIGHT,
-                        light_on_threshold=280.0, light_width=70.0, light_window=10.0,
-                        k_flush_max=1.0 / 12.0, k_shed_max=1.0 / 25.0), overrides)
+                        light_variable=Light.RADIATION, shed_light_threshold=280.0,
+                        shed_light_sharpness=0.05, flush_rate_max=1.0 / 12.0,
+                        shed_rate_max=1.0 / 25.0, leaf_turnover_rate=0.5), overrides)
 
 
 def self_test() -> None:
-    """Smoke test: evergreen holds flush=k_flush_max / shed=0; a cold spell drives a deciduous shed
-    up; a full canopy under a hard shed goes bare and its litter matches the loss."""
-    ev = Phenology(temperate_evergreen())
-    o = ev.step(temp_day=298.15, doy=180)
-    assert abs(o.leaf_flush_rate - ev.params.k_flush_max) < 1e-9, "evergreen flush should be k_flush_max"
-    assert o.leaf_shed_rate == 0.0, "evergreen should have no active shed"
+    """Smoke test: no cues hold the canopy full; a deciduous canopy senesces to ~bare in a cold,
+    short-day autumn; an evergreen floor stops the same senescence at min_leaf_cover."""
+    none = Phenology(Params())
+    for doy in range(1, 30):
+        day = none.step(temp_day=298.15, doy=doy)
+    assert abs(day.leaf_cover - 1.0) < 1e-12 and day.senescence == 0.0, "no cues should hold full"
 
+    autumn = dict(temp_day=275.0, daylength=8.5)
     dec = Phenology(temperate_deciduous())
-    for doy in range(1, 60):
-        out = dec.step(temp_day=265.0, soil_temp=265.0, daylength=9.0, doy=doy)
-    assert out.leaf_shed_rate > 0.0, "cold winter should raise the deciduous shed rate"
+    for doy in range(250, 330):
+        day = dec.step(doy=doy, **autumn)
+    assert day.leaf_cover < 0.01, f"a deciduous canopy should be ~bare, got {day.leaf_cover}"
 
-    lai, total_litter = 1.0, 0.0
-    for _ in range(40):
-        lai, lit = leaf_step(lai, 0.0, dec.params.k_shed_max)
-        total_litter += lit
-    assert lai < 0.05, f"canopy should shed to ~bare, got {lai}"
-    assert abs(total_litter - 1.0) < 0.05, f"a full canopy shed to bare should litter ~1.0, got {total_litter}"
+    evg = Phenology(boreal_evergreen())
+    for doy in range(250, 330):
+        day = evg.step(doy=doy, **autumn)
+    floor = evg.params.min_leaf_cover
+    assert abs(day.leaf_cover - floor) < 1e-6, f"an evergreen should stop at {floor}, got {day.leaf_cover}"
     print("meds.plant.pheno.self_test: OK")

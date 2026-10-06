@@ -48,7 +48,7 @@ same output stream, not three separate studies:
 | Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
 | Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
 | Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |
-| Phenology | rate-based signal kernel: cues → flush and shed tendencies | [plant_phenology](docs/science/plant_phenology.md) |
+| Phenology | one cue kernel (temperature, light, water) → flush and senescence tendencies; evergreen as a leaf-cover floor | [plant_phenology](docs/science/plant_phenology.md) |
 | Carbon allocation | daily FATES PARTEH-H1 priority ladder | [plant_carbon_allocation](docs/science/plant_carbon_allocation.md) |
 | Respiration | leaf, stem and fine-root maintenance; growth charged on realized growth | [plant_respiration](docs/science/plant_respiration.md) |
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |

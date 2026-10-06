@@ -163,7 +163,6 @@ contains
          p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! = 1/old leaf_turnover_rate
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
-         p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
          p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]
          p%f_labile_stem          = [ 0.05_wp, 0.05_wp, 0.05_wp ]
          p%struct_lignin_frac     = [ 0.20_wp, 0.25_wp, 0.30_wp ]

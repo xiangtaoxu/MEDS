@@ -443,8 +443,8 @@ contains
       case (FLD_C_STEM_RESP)       ; x(1:n) = site%cohort%stem_resp_accum(1:n)
       case (FLD_C_ROOT_RESP)       ; x(1:n) = site%cohort%root_resp_accum(1:n)
       case (FLD_C_DMAX_PSI_LEAF)   ; x(1:n) = site%cohort%dmax_psi_leaf(1:n)
-      case (FLD_C_PHENO_FLUSH)     ; x(1:n) = site%cohort%pheno_flush_drive(1:n)
-      case (FLD_C_PHENO_SHED)      ; x(1:n) = site%cohort%pheno_shed_drive(1:n)
+      case (FLD_C_PHENO_FLUSH)     ; x(1:n) = site%cohort%leaf_flush_tendency(1:n)
+      case (FLD_C_PHENO_SHED)      ; x(1:n) = site%cohort%leaf_shed_tendency(1:n)
       !----- derived ------------------------------------------------------------------------!
       case (FLD_C_ONE)             ; x(1:n) = 1.0_wp
       case (FLD_C_LAI)             ; x(1:n) = cohort_lai(site%cohort%nplant(1:n),               &

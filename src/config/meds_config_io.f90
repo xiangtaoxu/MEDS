@@ -735,18 +735,18 @@ contains
    !----- Load the per-PFT [phenology] cue params from the PFT file. Leaf phenology is UNCONDITIONAL !
    !      now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
    !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
-   !      the alloc_pft_table literature defaults (a vanilla evergreen: permissive flush, no active    !
-   !      shed, a realistic ~15-day flush cap -- the new default, not a placeholder). Present -> every  !
-   !      per-PFT array is REQUIRED (the no-silent-defaults rule still holds for a deliberate override). !
-   !      The arrays are flattened per cohort into a meds_plant pheno_params_t by the slow-loop         !
-   !      phenology driver.                                                                             !
+   !      the alloc_pft_table defaults (no cues: always flushing, never senescing, losing leaves to    !
+   !      background turnover alone, with a ~15-day flush cap). Present -> every per-PFT array is      !
+   !      REQUIRED except the optional light_window and water keys (the no-silent-defaults rule still   !
+   !      holds for a deliberate override). The arrays are flattened per cohort into a pheno_params_t   !
+   !      by the slow-loop phenology driver.                                                            !
    !                                                                                          !
    !      THE GATE IS THE SECTION, NOT A KEY INSIDE IT (#245). It used to be                           !
    !      `toml_has(t, 'phenology.flush_cue_mask')`, and that key is not one the shipped               !
    !      meds_config_pft.toml ever documented -- it documented `cue_mask`, which no reader consumes.  !
    !      So a config that wrote a full, deliberate [phenology] block was skipped in SILENCE: the      !
    !      presence map never saw the twenty-three required keys go missing, and every PFT fell back    !
-   !      to CUE_NONE/CUE_NONE -- flush = 1, shed = 0, the evergreen fixed point -- whatever it        !
+   !      to CUE_NONE/CUE_NONE -- always flushing, never senescing -- whatever leaf habit it           !
    !      declared. The Ithaca reference stand, declared cold-deciduous, held LAI 5.28-5.66 through    !
    !      every January of a 50-year run. Gating on the section asks whether the author meant to       !
    !      configure phenology at all, which is the question, rather than whether they happened to      !
@@ -757,42 +757,33 @@ contains
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
       if (.not. toml_has_section(t, 'phenology')) return
-      call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
-      call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
-      call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
-      call req_pa(t, 'phenology.k_flush_max',         cfg%pft%pheno_k_flush_max,         npft, m)
-      call req_pa(t, 'phenology.k_shed_max',          cfg%pft%pheno_k_shed_max,          npft, m)
-      call req_pa(t, 'phenology.tau_flush',           cfg%pft%pheno_tau_flush,           npft, m)
-      call req_pa(t, 'phenology.tau_shed',            cfg%pft%pheno_tau_shed,            npft, m)
-      call req_pa(t, 'phenology.gdd_base_temp',       cfg%pft%pheno_gdd_base_temp,       npft, m)
-      call req_pa(t, 'phenology.chill_base_temp',     cfg%pft%pheno_chill_base_temp,     npft, m)
-      call req_pa(t, 'phenology.phen_a',              cfg%pft%pheno_phen_a,              npft, m)
-      call req_pa(t, 'phenology.phen_b',              cfg%pft%pheno_phen_b,              npft, m)
-      call req_pa(t, 'phenology.phen_c',              cfg%pft%pheno_phen_c,              npft, m)
-      call req_pa(t, 'phenology.cold_drop_daylength', cfg%pft%pheno_cold_drop_daylength, npft, m)
-      call req_pa(t, 'phenology.cold_drop_soiltemp1', cfg%pft%pheno_cold_drop_soiltemp1, npft, m)
-      call req_pa(t, 'phenology.cold_drop_soiltemp2', cfg%pft%pheno_cold_drop_soiltemp2, npft, m)
-      call req_pa(t, 'phenology.photo_crit',          cfg%pft%pheno_photo_crit,          npft, m)
-      call req_pa(t, 'phenology.photo_slope',         cfg%pft%pheno_photo_slope,         npft, m)
-      call req_pa(t, 'phenology.gdd_width',           cfg%pft%pheno_gdd_width,           npft, m)
-      call req_pa(t, 'phenology.daylen_width',        cfg%pft%pheno_daylen_width,        npft, m)
-      call req_pa(t, 'phenology.soiltemp_width',      cfg%pft%pheno_soiltemp_width,      npft, m)
-      call req_pa(t, 'phenology.evg_ref_temp',        cfg%pft%pheno_evg_ref_temp,        npft, m)
-      call req_pa(t, 'phenology.evg_slope',           cfg%pft%pheno_evg_slope,           npft, m)
-      call req_pa(t, 'phenology.bare_snap_frac',      cfg%pft%pheno_bare_snap_frac,      npft, m)
-      !----- The WATER / HYDRO / LIGHT cue parameters (#150). OPTIONAL, because those cues are     !
-      !      opt-in via the cue masks; absent keys keep the alloc_pft_table defaults. Four of them  !
-      !      (water_width, light_*) were on the table but had no loader at all, so they could not   !
-      !      be tuned even after their drivers landed.  ---------------------------------------------!
-      call opt_pa(t, 'phenology.water_off_threshold', cfg%pft%pheno_water_off_threshold, npft, m)
-      call opt_pa(t, 'phenology.water_on_threshold',  cfg%pft%pheno_water_on_threshold,  npft, m)
-      call opt_pa(t, 'phenology.water_window',        cfg%pft%pheno_water_window,        npft, m)
-      call opt_pa(t, 'phenology.water_width',         cfg%pft%pheno_water_width,         npft, m)
-      call opt_pa(t, 'phenology.low_psi_threshold',   cfg%pft%pheno_low_psi_threshold,   npft, m)
-      call opt_pa(t, 'phenology.high_psi_threshold',  cfg%pft%pheno_high_psi_threshold,  npft, m)
-      call opt_pa(t, 'phenology.light_on_threshold',  cfg%pft%pheno_light_on_threshold,  npft, m)
-      call opt_pa(t, 'phenology.light_width',         cfg%pft%pheno_light_width,         npft, m)
-      call opt_pa(t, 'phenology.light_window',        cfg%pft%pheno_light_window,        npft, m)
+      call req_pa_int(t, 'phenology.flush_cue_mask',      cfg%pft%pheno_flush_cue_mask,        npft, m)
+      call req_pa_int(t, 'phenology.shed_cue_mask',       cfg%pft%pheno_shed_cue_mask,         npft, m)
+      call req_pa(t, 'phenology.flush_cue_timescale',     cfg%pft%pheno_flush_cue_timescale,   npft, m)
+      call req_pa(t, 'phenology.shed_cue_timescale',      cfg%pft%pheno_shed_cue_timescale,    npft, m)
+      call req_pa(t, 'phenology.flush_rate_max',          cfg%pft%pheno_flush_rate_max,        npft, m)
+      call req_pa(t, 'phenology.shed_rate_max',           cfg%pft%pheno_shed_rate_max,         npft, m)
+      call req_pa(t, 'phenology.min_leaf_cover',          cfg%pft%pheno_min_leaf_cover,        npft, m)
+      call req_pa(t, 'phenology.bare_leaf_cover',         cfg%pft%pheno_bare_leaf_cover,       npft, m)
+      call req_pa(t, 'phenology.flush_base_temp',         cfg%pft%pheno_flush_base_temp,       npft, m)
+      call req_pa(t, 'phenology.flush_degree_days',       cfg%pft%pheno_flush_degree_days,     npft, m)
+      call req_pa(t, 'phenology.flush_temp_sharpness',    cfg%pft%pheno_flush_temp_sharpness,  npft, m)
+      call req_pa(t, 'phenology.shed_base_temp',          cfg%pft%pheno_shed_base_temp,        npft, m)
+      call req_pa(t, 'phenology.shed_degree_days',        cfg%pft%pheno_shed_degree_days,      npft, m)
+      call req_pa(t, 'phenology.shed_temp_sharpness',     cfg%pft%pheno_shed_temp_sharpness,   npft, m)
+      call req_pa_int(t, 'phenology.light_variable',      cfg%pft%pheno_light_variable,        npft, m)
+      call req_pa(t, 'phenology.flush_light_threshold',   cfg%pft%pheno_flush_light_threshold, npft, m)
+      call req_pa(t, 'phenology.flush_light_sharpness',   cfg%pft%pheno_flush_light_sharpness, npft, m)
+      call req_pa(t, 'phenology.shed_light_threshold',    cfg%pft%pheno_shed_light_threshold,  npft, m)
+      call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno_shed_light_sharpness,  npft, m)
+      !----- OPTIONAL: the radiation running-mean window (light_variable = 2 only) and the water  !
+      !      cue, which a PFT turns on through its masks. An absent key keeps the alloc_pft_table   !
+      !      default, which equals the pheno_params_t default.  -----------------------------------!
+      call opt_pa(t, 'phenology.light_window',            cfg%pft%pheno_light_window,          npft, m)
+      call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno_flush_water_sum,       npft, m)
+      call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno_flush_water_sharpness, npft, m)
+      call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno_shed_water_sum,        npft, m)
+      call opt_pa(t, 'phenology.shed_water_sharpness',    cfg%pft%pheno_shed_water_sharpness,  npft, m)
    end subroutine load_phenology_pft
 
    !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
@@ -1257,13 +1248,12 @@ contains
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
-      call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
       call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
       call req_pa(tp, 'pft.f_labile_stem',          cfg%pft%f_labile_stem,          npft, miss)
       call req_pa(tp, 'pft.struct_lignin_frac',     cfg%pft%struct_lignin_frac,     npft, miss)
 
-      !----- Leaf-phenology per-PFT cue params (required only if this PFT overrides the       !
-      !      literature/vanilla-evergreen defaults; see load_phenology_pft). -----------------!
+      !----- Leaf-phenology per-PFT cue params (required only if this PFT file has a          !
+      !      [phenology] section; see load_phenology_pft). ------------------------------------!
       call load_phenology_pft(tp, cfg, npft, miss)
 
       call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)
@@ -1344,15 +1334,15 @@ contains
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
+           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 49 ITEMS: i0 + 9 + i0 + 2 + i0 + 22 + 11 + i0 + 3. A format SHORTER than the value !
+            !----- 50 ITEMS: i0 + 9 + i0 + 2 + i0 + 36. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,22(",",es15.8),11(",",es15.8),",",i0,3(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,36(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1368,7 +1358,7 @@ contains
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_lifespan_toc(pf),                                                            &
-                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf),              &
+                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
                  p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
          end do
       end associate

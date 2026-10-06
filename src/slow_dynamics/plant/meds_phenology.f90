@@ -1,44 +1,45 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_phenology -- the leaf-phenology SIGNAL kernel.                                       !
+! meds_phenology -- the leaf-phenology kernel.                                               !
 !                                                                                          !
-! A pure signal generator: environment cues + per-PFT traits -> TWO relative rate tendencies  !
-! (leaf_flush_rate, leaf_shed_rate, both [1/day]). It touches NO carbon, NO leaf/storage state, !
-! and NO elongf -- all leaf/storage carbon update lives downstream in the daily allocator        !
-! (meds_plant_carbon_allocation).                                                                !
+! A signal generator: daily cues + per-PFT traits -> two smoothed tendencies in [0,1]       !
+! (leaf_flush_tendency, leaf_shed_tendency). It touches no carbon; leaf_turnover_step, here  !
+! too, is the one place the tendencies become leaf growth and leaf loss, for the carbon      !
+! layer and for the Python mirror alike.                                                    !
 !                                                                                          !
-! One daily update, four steps:                                                             !
-!   (1) ACCUMULATE the cue memory -- season-gated GDD/chilling sums, the running-mean available  !
-!       water, the dmax-leaf-psi consecutive dry/wet-day counters, and the running-mean radiation. !
-!   (2) PER-CUE (s_flush, s_shed) in [0,1] -- each cue supplies a flush signal and a shed signal.  !
-!   (3) COMBINE over the TWO masks: s_flush = MIN over flush_cue_mask (build only when every flush   !
-!       cue is clear); s_shed = MAX over shed_cue_mask (any shed cue commands senescence). Splitting  !
-!       the mask is what expresses the four target patterns (evergreen flushes on TEMP but never       !
-!       sheds; a leaf-exchanger flushes permissively but sheds on LIGHT).                               !
-!   (4) LOW-PASS the two governors (flush_drive, shed_drive -- the prognostic memory) and map to rates: !
-!       leaf_flush_rate = k_flush_max*flush_drive; leaf_shed_rate = k_shed_max*shed_drive.               !
-!                                                                                          !
-! Everything is pure/scalar, arithmetic + intrinsics only, fixed-size flat data -- GPU/SIMD-friendly    !
-! and reentrant. logistic/clamp01 come from meds_numerics; doy_effective from meds_time.                !
+! One daily update (docs/science/plant_phenology.md):                                        !
+!   (1) ACCUMULATE the cue memory: warmth above flush_base_temp from midwinter, cold below    !
+!       shed_base_temp from midsummer, predawn leaf psi above and below the turgor-loss point, !
+!       and the running-mean shortwave.                                                       !
+!   (2) SWITCH each cue through sigma(s (x - x*)), one centre and one signed sharpness each.   !
+!   (3) COMBINE: flush = the product of its cues' switches (every cue must permit flushing);   !
+!       shed = the larger of the seasonal trigger (temperature x light) and the water trigger. !
+!   (4) SMOOTH each signal into its tendency over a timescale; the potential relative rates    !
+!       are rate_max * tendency.                                                               !
+! Pure, scalar, arithmetic only: device- and SIMD-friendly, and reentrant.                     !
 !==========================================================================================!
 module meds_phenology
    use meds_kinds,       only : wp, ik
-   use meds_constants,   only : safe_exp, tiny_num
+   use meds_constants,   only : yr_day
    use meds_numerics,    only : logistic, clamp01
    use meds_time,        only : doy_effective
    use meds_phenology_types
    implicit none
    private
 
-   public :: phenology_kernel, pheno_drives_to_rates, turnover_shed_rates
+   public :: phenology_kernel, leaf_turnover_step
 
-   real(wp), parameter :: DAYS_PER_YEAR = 365.2425_wp   !< [day/yr] turnover [1/yr] -> [1/day] conversion
+   !----- Northern-equivalent day of the summer solstice: the cold sum counts from here, while !
+   !      days shorten (doy_effective shifts the southern hemisphere by half a year).          !
+   integer(ik), parameter :: MIDSUMMER_DOY     = 172_ik
+   !----- A flush rate at or below this is dormant: a senescing canopy then snaps to bare     !
+   !      rather than leaving an exponential tail (a numerical "off", not a trait).            !
+   real(wp),    parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp    !< [1/day]
 
 contains
 
    !=======================================================================================!
-   !  Advance one cohort's phenology over one daily step: accumulate the cue memory, form the !
-   !  per-cue signals, combine over the two masks, low-pass the governors, emit two rates.    !
+   !  Advance one cohort's phenology over one step of dt days.                               !
    !=======================================================================================!
    pure subroutine phenology_kernel(env, params, dt, state, out)
       type(pheno_env_t),    intent(in)    :: env
@@ -46,86 +47,72 @@ contains
       real(wp),             intent(in)    :: dt
       type(pheno_state_t),  intent(inout) :: state
       type(pheno_out_t),    intent(out)   :: out
-      integer(ik) :: both, lim
-      real(wp)    :: k, s_flush, s_shed, f, f_photo, w_f, w_s
-      real(wp)    :: t_flush, t_shed, gdd_thresh, g_day, g_st1, g_st2
+      integer(ik) :: both
+      real(wp)    :: light, wet_before, dry_before, wet_switch, dry_switch, s_flush, seasonal, s_shed, w
 
       both = ior(params%flush_cue_mask, params%shed_cue_mask)
-
-      !----- (1) update the cue memory (only for cues enabled on either side). ------------!
+      wet_before = wet_water_switch(params, state)
+      dry_before = dry_water_switch(params, state)
       call accumulate(env, params, dt, both, state)
+      light = env%daylength
+      if (params%light_variable == LIGHT_RADIATION) light = state%shortwave_mean
 
-      !----- (2) temperature signals (computed once; used by whichever side lists TEMP). --!
-      k = params%cue_sharpness
-      t_flush = 0.0_wp ; t_shed = 0.0_wp
-      if (iand(both, CUE_TEMP) /= 0_ik) then
-         gdd_thresh = params%phen_a + params%phen_b * safe_exp(params%phen_c * state%chill)
-         t_flush    = logistic(k * (state%gdd - gdd_thresh) / params%gdd_width)
-         g_day      = logistic(k * (params%cold_drop_daylength - env%daylength) / params%daylen_width)
-         g_st1      = logistic(k * (params%cold_drop_soiltemp1 - env%soil_temp) / params%soiltemp_width)
-         g_st2      = logistic(k * (params%cold_drop_soiltemp2 - env%soil_temp) / params%soiltemp_width)
-         t_shed     = max(g_day * g_st1, g_st2)
+      !----- Water has no calendar: each sum resets when the OTHER side's switch crosses 0.5  !
+      !      upward today (the event, not the level). A brief rain adds wet credit without     !
+      !      wiping a drought, and a long wet season cannot block the next drought.            !
+      if (iand(both, CUE_WATER) /= 0_ik) then
+         if (wet_before <= 0.5_wp .and. wet_water_switch(params, state) > 0.5_wp) state%dry_psi_sum = 0.0_wp
+         if (dry_before <= 0.5_wp .and. dry_water_switch(params, state) > 0.5_wp) state%wet_psi_sum = 0.0_wp
       end if
+      wet_switch = wet_water_switch(params, state)
+      dry_switch = dry_water_switch(params, state)
 
-      !----- (3a) FLUSH signal = MIN over the flush cues (CUE_NONE => permissive 1). -------!
+      !----- (3a) Flush: every enabled cue must permit it (an empty mask always flushes). ----!
       s_flush = 1.0_wp
-      f_photo = 1.0_wp
-      if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik)                                       &
-         f_photo = logistic(params%photo_slope * (env%daylength - params%photo_crit))
-      if (iand(params%flush_cue_mask, CUE_TEMP) /= 0_ik) then
-         f = t_flush
-         if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik) f = f * f_photo   ! photoperiod gates temp flush
-         s_flush = min(s_flush, f)
-      else if (iand(params%flush_cue_mask, CUE_PHOTO) /= 0_ik) then
-         s_flush = min(s_flush, f_photo)                                        ! photoperiod acting alone
+      if (iand(params%flush_cue_mask, CUE_TEMP) /= 0_ik) s_flush = s_flush *                     &
+         logistic(params%flush_temp_sharpness * (state%growing_degree_days - params%flush_degree_days))
+      if (iand(params%flush_cue_mask, CUE_LIGHT) /= 0_ik) s_flush = s_flush *                    &
+         logistic(params%flush_light_sharpness * (light - params%flush_light_threshold))
+      if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik) s_flush = s_flush * wet_switch
+
+      !----- (3b) Shed: the seasonal trigger needs all of its enabled cues (cold AND short   !
+      !      days); the water trigger acts on its own. An empty mask never senesces.         !
+      seasonal = 0.0_wp
+      if (iand(params%shed_cue_mask, CUE_TEMP + CUE_LIGHT) /= 0_ik) then
+         seasonal = 1.0_wp
+         if (iand(params%shed_cue_mask, CUE_TEMP) /= 0_ik) seasonal = seasonal *                 &
+            logistic(params%shed_temp_sharpness * (state%cold_degree_days - params%shed_degree_days))
+         if (iand(params%shed_cue_mask, CUE_LIGHT) /= 0_ik) seasonal = seasonal *                &
+            logistic(params%shed_light_sharpness * (light - params%shed_light_threshold))
       end if
-      if (iand(params%flush_cue_mask, CUE_WATER) /= 0_ik)                                       &
-         s_flush = min(s_flush, logistic(k * (state%water_avg - params%water_on_threshold)      &
-                                           / max(params%water_width, tiny_num)))
-      if (iand(params%flush_cue_mask, CUE_HYDRO) /= 0_ik)                                       &
-         s_flush = min(s_flush, clamp01(state%high_psi_days / max(params%high_psi_threshold, tiny_num)))
-      !----- CUE_LIGHT contributes a flush signal of 1 (non-limiting) -- no term needed. ---!
+      s_shed = seasonal
+      if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik) s_shed = max(s_shed, dry_switch)
 
-      !----- (3b) SHED signal = MAX over the shed cues (CUE_NONE => no active shed 0). -----!
-      s_shed = 0.0_wp ; lim = CUE_NONE
-      if (iand(params%shed_cue_mask, CUE_TEMP) /= 0_ik)  call consider(t_shed, CUE_TEMP,  s_shed, lim)
-      if (iand(params%shed_cue_mask, CUE_WATER) /= 0_ik)                                        &
-         call consider(logistic(k * (params%water_off_threshold - state%water_avg)              &
-                                  / max(params%water_width, tiny_num)), CUE_WATER, s_shed, lim)
-      if (iand(params%shed_cue_mask, CUE_HYDRO) /= 0_ik)                                        &
-         call consider(clamp01(state%low_psi_days / max(params%low_psi_threshold, tiny_num)), &
-                       CUE_HYDRO, s_shed, lim)
-      if (iand(params%shed_cue_mask, CUE_LIGHT) /= 0_ik)                                        &
-         call consider(logistic(k * (state%light_avg - params%light_on_threshold)              &
-                                  / max(params%light_width, tiny_num)), CUE_LIGHT, s_shed, lim)
-
-      !----- (4) low-pass the two governors (guarded weight caps at 1; FPE-safe), map to rates. -!
-      w_f = dt / max(params%tau_flush, dt)
-      w_s = dt / max(params%tau_shed,  dt)
-      state%flush_drive = clamp01(state%flush_drive + w_f * (s_flush - state%flush_drive))
-      state%shed_drive  = clamp01(state%shed_drive  + w_s * (s_shed  - state%shed_drive))
-
-      out%leaf_flush_rate = params%k_flush_max * state%flush_drive
-      out%leaf_shed_rate  = params%k_shed_max  * state%shed_drive
-      out%cue_limiting    = lim
+      !----- (4) Smooth into the tendencies (the weight caps at 1 when dt exceeds the       !
+      !      timescale) and map to the potential rates.                                     !
+      w = dt / max(params%flush_cue_timescale, dt)
+      state%leaf_flush_tendency = clamp01(state%leaf_flush_tendency + w * (s_flush - state%leaf_flush_tendency))
+      w = dt / max(params%shed_cue_timescale, dt)
+      state%leaf_shed_tendency  = clamp01(state%leaf_shed_tendency  + w * (s_shed  - state%leaf_shed_tendency))
+      out%leaf_flush_potential = params%flush_rate_max * state%leaf_flush_tendency
+      out%leaf_shed_potential  = params%shed_rate_max  * state%leaf_shed_tendency
    end subroutine phenology_kernel
 
-   !----- Track the running MAXIMUM shed signal and the cue that produced it. --------------!
-   pure subroutine consider(f, cue, s, lim)
-      real(wp),    intent(in)    :: f
-      integer(ik), intent(in)    :: cue
-      real(wp),    intent(inout) :: s
-      integer(ik), intent(inout) :: lim
-      if (f > s) then
-         s   = f
-         lim = cue
-      end if
-   end subroutine consider
+   !----- The two water switches, from the sums of predawn leaf psi above and below the TLP. -!
+   pure real(wp) function wet_water_switch(params, state) result(sw)
+      type(pheno_params_t), intent(in) :: params
+      type(pheno_state_t),  intent(in) :: state
+      sw = logistic(params%flush_water_sharpness * (state%wet_psi_sum - params%flush_water_sum))
+   end function wet_water_switch
+
+   pure real(wp) function dry_water_switch(params, state) result(sw)
+      type(pheno_params_t), intent(in) :: params
+      type(pheno_state_t),  intent(in) :: state
+      sw = logistic(params%shed_water_sharpness * (state%dry_psi_sum - params%shed_water_sum))
+   end function dry_water_switch
 
    !=======================================================================================!
-   !  Accumulate the cue memory from today's drivers (only for the enabled cues -- `both` is  !
-   !  the OR of the two masks). Identical thermal/water/hydro logic to the tri-state kernel,  !
-   !  plus the light running mean; the hydraulic counters key on the DAILY-MAX leaf psi.      !
+   !  Accumulate the cue memory from today's drivers, for the cues either side uses.         !
    !=======================================================================================!
    pure subroutine accumulate(env, params, dt, both, state)
       type(pheno_env_t),    intent(in)    :: env
@@ -134,108 +121,69 @@ contains
       integer(ik),          intent(in)    :: both
       type(pheno_state_t),  intent(inout) :: state
       integer(ik) :: de
-      logical     :: growing, chilling, warm
       real(wp)    :: w
 
-      !----- Thermal sums (season-gated), CUE_TEMP. --------------------------------------!
+      !----- Temperature: both sums restart at midwinter (the first step of the northern-   !
+      !      equivalent year); warmth counts all year, cold only once days shorten.          !
       if (iand(both, CUE_TEMP) /= 0_ik) then
-         de       = doy_effective(env%doy, env%hemis_north)
-         growing  = de <= 244_ik
-         chilling = de >= 305_ik .or. de <= 181_ik
-         warm     = env%temp_day > params%gdd_base_temp
-         if (growing) then
-            if (warm) state%gdd = state%gdd + (env%temp_day - params%gdd_base_temp) * dt
-         else
-            state%gdd = 0.0_wp
+         de = doy_effective(env%doy, env%hemis_north)
+         if (real(de, wp) < 1.0_wp + dt) then
+            state%growing_degree_days = 0.0_wp
+            state%cold_degree_days    = 0.0_wp
          end if
-         if (chilling) then
-            if (env%temp_day < params%chill_base_temp) state%chill = state%chill + dt
-         else
-            state%chill = 0.0_wp
-         end if
+         state%growing_degree_days = state%growing_degree_days + max(0.0_wp, env%temp_day - params%flush_base_temp) * dt
+         if (de >= MIDSUMMER_DOY)                                                                &
+            state%cold_degree_days = state%cold_degree_days + max(0.0_wp, params%shed_base_temp - env%temp_day) * dt
       end if
 
-      !----- Soil-water running mean (exponential), CUE_WATER. ----------------------------!
+      !----- Water: predawn leaf psi above and below the turgor-loss point. ----------------!
       if (iand(both, CUE_WATER) /= 0_ik) then
-         w = min(1.0_wp, dt / max(params%water_window, dt))
-         state%water_avg = state%water_avg + w * (env%avail_water - state%water_avg)
+         state%wet_psi_sum = state%wet_psi_sum + max(0.0_wp, env%predawn_leaf_psi - params%leaf_psi_tlp) * dt
+         state%dry_psi_sum = state%dry_psi_sum + max(0.0_wp, params%leaf_psi_tlp - env%predawn_leaf_psi) * dt
       end if
 
-      !----- Daily-max-leaf-psi consecutive-day counters, CUE_HYDRO. ----------------------!
-      if (iand(both, CUE_HYDRO) /= 0_ik) then
-         if (env%dmax_leaf_psi < params%leaf_psi_tlp) then
-            state%low_psi_days = state%low_psi_days + dt
-         else
-            state%low_psi_days = 0.0_wp
-         end if
-         if (env%dmax_leaf_psi >= 0.5_wp * params%leaf_psi_tlp) then
-            state%high_psi_days = state%high_psi_days + dt
-         else
-            state%high_psi_days = 0.0_wp
-         end if
-      end if
-
-      !----- Radiation running mean (exponential), CUE_LIGHT (ED2 rad_avg). ---------------!
-      if (iand(both, CUE_LIGHT) /= 0_ik) then
+      !----- Light by radiation: an exponential running mean (ED2 rad_avg). ----------------!
+      if (iand(both, CUE_LIGHT) /= 0_ik .and. params%light_variable == LIGHT_RADIATION) then
          w = min(1.0_wp, dt / max(params%light_window, dt))
-         state%light_avg = state%light_avg + w * (env%rad - state%light_avg)
+         state%shortwave_mean = state%shortwave_mean + w * (env%rad - state%shortwave_mean)
       end if
    end subroutine accumulate
 
    !=======================================================================================!
-   !  Baseline tissue turnover expressed as a per-day SHED rate -- "turnover is a degenerate  !
-   !  phenology". The per-PFT [1/yr] leaf/fine-root turnover is converted to [1/day] and, for  !
-   !  evergreen PFTs, cold-suppressed by the ED2 factor 1/(1+exp(slope*(T0 - T))) (~1 warm, ~0 !
-   !  cold). This is the FLOOR the active phenological shed rises above (see pheno_drives_to_   !
-   !  rates), and it is ALSO the whole shed signal when phenology is off (leaf lifespan still   !
-   !  applies). elemental + scalar: GPU/SIMD-safe (issue-#7 N/A).                               !
+   !  One step of leaf loss and the flush cap, in whatever carbon unit `leaf` is in. The      !
+   !  carbon layer calls it per cohort; the C-API exposes it so Python applies the same rule. !
+   !                                                                                         !
+   !    background = leaf_turnover_rate * leaf_flush_tendency * leaf * dt   (old leaves turned !
+   !                 over while new ones grow; none in dormancy)                               !
+   !    senescence = shed_rate_max * leaf_shed_tendency * leaf * dt, stopping where leaf_cover !
+   !                 (leaf / leaf_full) reaches min_leaf_cover                                 !
+   !    flush_cap  = flush_rate_max * leaf_flush_tendency * leaf_full * dt                     !
+   !                                                                                         !
+   !  A dormant canopy (flush ~ 0) that senescence would leave below bare_leaf_cover snaps to  !
+   !  bare, when its floor lies below that threshold (a deciduous PFT).                        !
    !=======================================================================================!
-   elemental pure subroutine turnover_shed_rates(leaf_turnover_rate, fineroot_turnover_rate,   &
-                                                 evergreen, evg_ref_temp, evg_slope, tissue_temp, &
-                                                 leaf_shed_base, fineroot_shed_base)
-      real(wp), intent(in)  :: leaf_turnover_rate, fineroot_turnover_rate  !< [1/yr] baseline turnover
-      logical,  intent(in)  :: evergreen                                    !< .true. => cold-suppress
-      real(wp), intent(in)  :: evg_ref_temp, evg_slope, tissue_temp         !< [K],[1/K],[K]
-      real(wp), intent(out) :: leaf_shed_base, fineroot_shed_base           !< [1/day] baseline shed rates
-      real(wp) :: cold
-      cold = 1.0_wp
-      if (evergreen) cold = 1.0_wp / (1.0_wp + safe_exp(evg_slope * (evg_ref_temp - tissue_temp)))
-      leaf_shed_base     = (leaf_turnover_rate     / DAYS_PER_YEAR) * cold
-      fineroot_shed_base = (fineroot_turnover_rate / DAYS_PER_YEAR) * cold
-   end subroutine turnover_shed_rates
+   pure subroutine leaf_turnover_step(leaf, leaf_full, leaf_flush_tendency, leaf_shed_tendency,   &
+                                      flush_rate_max, shed_rate_max, leaf_turnover_rate,          &
+                                      min_leaf_cover, bare_leaf_cover, dt,                        &
+                                      senescence, background, flush_cap)
+      real(wp), intent(in)  :: leaf, leaf_full                          !< [carbon] now and full canopy
+      real(wp), intent(in)  :: leaf_flush_tendency, leaf_shed_tendency  !< [-]
+      real(wp), intent(in)  :: flush_rate_max, shed_rate_max            !< [1/day]
+      real(wp), intent(in)  :: leaf_turnover_rate                       !< [1/yr] background loss
+      real(wp), intent(in)  :: min_leaf_cover, bare_leaf_cover          !< [-] fractions of leaf_full
+      real(wp), intent(in)  :: dt                                       !< [day]
+      real(wp), intent(out) :: senescence, background, flush_cap        !< [carbon] this step
+      real(wp) :: pool
 
-   !=======================================================================================!
-   !  Map the two governor drives to the RELATIVE rate tendencies [1/day] that the carbon      !
-   !  allocation layer consumes. The flush rate is k_flush_max*flush_drive; the leaf shed rate  !
-   !  is the MAX of the active phenological shed (k_shed_max*shed_drive) and the baseline        !
-   !  turnover floor -- so an evergreen (shed_drive=0) sheds at its leaf-lifespan rate, while a   !
-   !  deciduous canopy in autumn sheds at the larger active rate. fine-root shed = its baseline   !
-   !  (no active root phenology yet). Scalar intent(out) args (issue-#7 safe). Called by the      !
-   !  driver from the stored cohort drives + PFT turnover traits.                                 !
-   !=======================================================================================!
-   pure subroutine pheno_drives_to_rates(flush_drive, shed_drive, k_flush_max, k_shed_max,     &
-                                         leaf_turnover_rate, fineroot_turnover_rate, evergreen, &
-                                         evg_ref_temp, evg_slope, tissue_temp,                  &
-                                         leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate,    &
-                                         leaf_shed_base_rate)
-      real(wp), intent(in)  :: flush_drive, shed_drive, k_flush_max, k_shed_max
-      real(wp), intent(in)  :: leaf_turnover_rate, fineroot_turnover_rate
-      logical,  intent(in)  :: evergreen
-      real(wp), intent(in)  :: evg_ref_temp, evg_slope, tissue_temp
-      real(wp), intent(out) :: leaf_flush_rate, leaf_shed_rate, fineroot_shed_rate
-      !----- The BASELINE share of the leaf shed rate, reported so the carbon layer can separate    !
-      !      senescence-driven shed from ordinary turnover (#151). leaf_shed_rate is a MAX of the   !
-      !      two, not a sum, so the active excess is exactly leaf_shed_rate - leaf_shed_base_rate:  !
-      !      when the phenological shed leads it is (active - base) + base = active, and when the   !
-      !      baseline leads it is 0 + base = base. That decomposition of a max is exact either way. !
-      real(wp), optional, intent(out) :: leaf_shed_base_rate
-      real(wp) :: leaf_base, root_base
-      call turnover_shed_rates(leaf_turnover_rate, fineroot_turnover_rate, evergreen,           &
-                               evg_ref_temp, evg_slope, tissue_temp, leaf_base, root_base)
-      leaf_flush_rate    = k_flush_max * flush_drive
-      leaf_shed_rate     = max(k_shed_max * shed_drive, leaf_base)
-      fineroot_shed_rate = root_base
-      if (present(leaf_shed_base_rate)) leaf_shed_base_rate = leaf_base
-   end subroutine pheno_drives_to_rates
+      pool       = max(leaf, 0.0_wp)
+      background = min(max(leaf_turnover_rate, 0.0_wp) / yr_day * leaf_flush_tendency * pool * dt, pool)
+      senescence = min(max(shed_rate_max, 0.0_wp) * leaf_shed_tendency * pool * dt,                  &
+                       max(0.0_wp, pool - background - min_leaf_cover * leaf_full))
+      if (flush_rate_max * leaf_flush_tendency <= DORMANT_FLUSH_EPS .and. senescence > 0.0_wp      &
+          .and. min_leaf_cover < bare_leaf_cover                                                  &
+          .and. pool - background - senescence < bare_leaf_cover * leaf_full)                     &
+         senescence = pool - background
+      flush_cap  = max(flush_rate_max, 0.0_wp) * leaf_flush_tendency * leaf_full * dt
+   end subroutine leaf_turnover_step
 
 end module meds_phenology

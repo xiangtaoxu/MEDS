@@ -26,7 +26,52 @@ before and after.
     gₛ optima of *F. insipida* and *L. speciosa* move 0.5 °C cooler, to 29.5 and 34.5 °C.
   - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
     of the two curves below the compensation point.
-
+- **Leaf phenology is one generic cue model, and evergreen is a leaf-cover floor, not a flag.**
+  The kernel (`meds_phenology`) takes three cues, chosen per PFT for each side by a bit mask:
+  temperature (TEMP 1: a warmth sum above `flush_base_temp` from midwinter, a cold sum below
+  `shed_base_temp` from midsummer), light (LIGHT 2: day length, or the running-mean shortwave) and
+  water (WATER 4: predawn leaf water potential summed above and below the turgor-loss point, each
+  sum restarting when the other side's switch crosses 0.5). Every switch is σ(s (x − x*)) with one
+  centre and one signed sharpness; the flush signal is the product of the flush cues' switches, the
+  shed signal the larger of the seasonal trigger (TEMP × LIGHT) and the water trigger. The carbon
+  layer applies one routine, `leaf_turnover_step`: senescence at `shed_rate_max` × the shed tendency
+  down to `min_leaf_cover` of the full canopy, plus background turnover (1/leaf lifespan) scaled by
+  the flush tendency, and a flush cap of `flush_rate_max` × the flush tendency. Gone: the chilling
+  requirement, the soil-temperature cold-drop trigger, the soil-water cue (`root_available_water`
+  and the fast-loop soil reductions for phenology), the consecutive-day ψ counters, the 31 August
+  warmth reset, the evergreen cold suppression of turnover, and `pft.evergreen`. Resorption
+  (`retained_carbon_fraction`) now applies to senescence only. Design and evidence:
+  `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`; equations: `docs/science/plant_phenology.md`.
+  - **Config (breaking).** The `[phenology]` keys are now `flush_cue_mask`, `shed_cue_mask`,
+    `flush_cue_timescale`, `shed_cue_timescale`, `flush_rate_max`, `shed_rate_max`,
+    `min_leaf_cover`, `bare_leaf_cover`, `flush_base_temp`, `flush_degree_days`,
+    `flush_temp_sharpness`, `shed_base_temp`, `shed_degree_days`, `shed_temp_sharpness`,
+    `light_variable`, `flush_light_threshold`, `flush_light_sharpness`, `shed_light_threshold`,
+    `shed_light_sharpness`, and the optional `light_window`, `flush_water_sum`,
+    `flush_water_sharpness`, `shed_water_sum`, `shed_water_sharpness`. The previous keys
+    (`k_flush_max`, `k_shed_max`, `tau_flush`, `tau_shed`, `cue_sharpness`, `gdd_base_temp`,
+    `phen_a/b/c`, `chill_base_temp`, `cold_drop_*`, `photo_crit`, `photo_slope`, the `*_width`
+    keys, the water and light thresholds, `evg_ref_temp`, `evg_slope`, `bare_snap_frac`) and
+    `pft.evergreen` are refused by name, each with its replacement. Cue bits changed: LIGHT is 2
+    and WATER is 4 (on predawn leaf ψ, the old HYDRO driver); the soil-water cue (old 2), PHOTO (8)
+    and the old LIGHT bit (16) are gone.
+  - **Outputs and restarts.** `pheno_flush_cohort` / `pheno_shed_cohort` are
+    `leaf_flush_tendency_cohort` / `leaf_shed_tendency_cohort`. The restart variables are
+    `leaf_flush_tendency`, `leaf_shed_tendency`, `growing_degree_days`, `cold_degree_days`,
+    `wet_psi_sum`, `dry_psi_sum` and `shortwave_mean`; `pheno_water_avg` is gone. A restart file
+    written before this change loads, with the phenology memory at its birth values.
+  - **Python (`meds.plant.pheno`, breaking).** New `Params` / `State` fields; `Phenology.step`
+    returns a `Day` (the two tendencies, leaf cover, senescence, background turnover) and keeps its C
+    structs, so a 20-year daily run takes about 0.1 s. `leaf_step(cover, flush, shed, params)` and
+    `daylength` call the Fortran through the new C-API entries `meds_leaf_turnover_step` and
+    `meds_daylength`. Presets: `temperate_deciduous` and `boreal_evergreen` (the example02 fits),
+    `drought_deciduous` and `light_exchanging` (illustrative). `temperate_evergreen` and
+    `integrate_lai` are gone.
+  - **What moves numbers.** Any PFT with a `[phenology]` section. The biophysics example's PFT file
+    takes the Harvard Forest values (its committed outputs predate the change). A PFT without the
+    section always flushes and loses leaves at its background turnover, as before; the only
+    difference is the dropped cold suppression of an evergreen PFT's turnover, which the old driver
+    evaluated at a fixed 25 °C stub temperature: a factor of 0.9997.
 ## [0.3.3] — 2026-10-05
 
 A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily

@@ -1,8 +1,8 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_carbon_allocation -- unit tests for the elemental, GROWTH-ONLY daily carbon      !
-! allocation kernel + growth_respiration + the turnover baseline rates. (Tissue shed/turnover  !
-! is applied by the driver's update_biomass_turnover -- tested in test_carbon_growth.)         !
+! allocation kernel + growth_respiration. (Leaf loss is applied upstream by the driver from   !
+! meds_phenology::leaf_turnover_step -- tested in test_plant_phenology.)                     !
 !                                                                                          !
 !   1. GROWTH RESP     : growth_respiration = g * max(0, npp_growth).                            !
 !   2. CLOSURE         : (growth pools + npp_store) - deficit = (gpp - resp) - growth_resp.       !
@@ -10,16 +10,12 @@
 !   4. WOOD RESIDUAL   : a budget that only covers the leaf demand => wood 0.                     !
 !   5. STORAGE GROWTH  : storage funds leaf growth EVEN when net < 0 (spring leaf-out).            !
 !   6. STARVING        : maintenance debt beyond storage => starving + deficit, no growth.         !
-!   7. TURNOVER FLOOR  : baseline turnover as a [1/day] shed rate; max(active, baseline).          !
 !==========================================================================================!
 program test_plant_carbon_allocation
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_phenology, only : pheno_drives_to_rates, turnover_shed_rates
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
    implicit none
-
-   real(wp), parameter :: YR_DAY = 365.2425_wp
 
    call test_growth_respiration()
    call test_closure()
@@ -27,7 +23,6 @@ program test_plant_carbon_allocation
    call test_wood_residual()
    call test_storage_growth()
    call test_starving()
-   call test_turnover_floor()
 
    call test_report('test_plant_carbon_allocation')
 
@@ -110,22 +105,5 @@ contains
       call check_close('starving: storage drained',     gs, -0.3_wp)
       call check_closure('starving: closes', 0.0_wp, 1.0_wp, gl, gf, gw, gr, gs, gresp, def)
    end subroutine test_starving
-
-   !----- 7. Turnover as a baseline [1/day] shed rate, and the max(active, baseline) floor. --!
-   subroutine test_turnover_floor()
-      real(wp) :: lb, rb, flush, shed, root_shed
-      call turnover_shed_rates(0.5_wp, 1.2_wp, .false., 278.15_wp, 0.4_wp, 300.0_wp, lb, rb)
-      call check_close('turnover: deciduous leaf base', lb, 0.5_wp / YR_DAY)
-      call check_close('turnover: deciduous root base', rb, 1.2_wp / YR_DAY)
-      call turnover_shed_rates(0.5_wp, 1.2_wp, .true., 278.15_wp, 0.4_wp, 278.15_wp, lb, rb)
-      call check_close('turnover: evergreen @ref => x0.5', lb, 0.5_wp * (0.5_wp / YR_DAY))
-      call pheno_drives_to_rates(1.0_wp, 0.0_wp, 0.0667_wp, 0.05_wp, 0.5_wp, 1.2_wp, .false.,     &
-           278.15_wp, 0.4_wp, 300.0_wp, flush, shed, root_shed)
-      call check_close('drives: flush = k_flush*drive',   flush, 0.0667_wp)
-      call check_close('drives: shed floored to baseline', shed, 0.5_wp / YR_DAY)
-      call pheno_drives_to_rates(1.0_wp, 1.0_wp, 0.0667_wp, 0.05_wp, 0.5_wp, 1.2_wp, .false.,     &
-           278.15_wp, 0.4_wp, 300.0_wp, flush, shed, root_shed)
-      call check_close('drives: active shed wins when large', shed, 0.05_wp)
-   end subroutine test_turnover_floor
 
 end program test_plant_carbon_allocation

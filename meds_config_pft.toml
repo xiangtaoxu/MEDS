@@ -108,7 +108,6 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fr
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
-evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppress turnover), 0 = deciduous
 # Necromass -> litter-destination split (meds_column_state_types%necromass_to_litter). aboveground_frac
 # (above) doubles as the litter above/below-ground split for leaf/storage and wood streams.
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
@@ -164,56 +163,51 @@ light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
 # mort_beta  = [...]
 
 # ------------------------------------------------------------------------------------------
-# Leaf-phenology cue parameters (per PFT). The gate is the PRESENCE of this [phenology] section in
-# THIS file: absent, every PFT keeps the built-in literature defaults, which are a vanilla EVERGREEN
-# (permissive flush, no active shed). Present, every key below is REQUIRED -- a missing one is a hard
-# error naming it, not a silent default. Every array length must equal the number of PFTs.
+# Leaf-phenology cue parameters (per PFT; docs/science/plant_phenology.md). The gate is the
+# PRESENCE of this [phenology] section in THIS file: absent, every PFT keeps the built-in defaults,
+# both masks 0 -- always flushing, never senescing, losing leaves to background turnover alone.
+# Present, every key below is REQUIRED except the optional ones marked; every array length must
+# equal the number of PFTs. Leaf habit (deciduous, semi-deciduous, evergreen) comes from these
+# parameters: a deciduous PFT senesces to min_leaf_cover = 0, an evergreen one stops above 0.
 #
-# A PFT declared `evergreen = [0]` above does NOT by itself give it a leaf-area cycle: what sheds a
-# canopy is the shed cue mask here. Leave this section out and a deciduous PFT will hold full leaf
-# area all winter.
+# Three cues, chosen independently for each side by a bit mask: 1 = TEMP, 2 = LIGHT, 4 = WATER.
+#   TEMP : warmth above flush_base_temp summed from midwinter; cold below shed_base_temp summed
+#          from midsummer.
+#   LIGHT: day length [h] (light_variable = 1) or the running-mean shortwave [W/m2] (= 2).
+#   WATER: predawn leaf water potential summed above and below the PFT's turgor-loss point
+#          [MPa day]; each sum restarts when the other side's switch crosses 0.5.
+# Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s; it rises from 0.12 to
+# 0.88 over x* +- 2/|s|, and s < 0 turns it on as x falls. The flush signal is the PRODUCT of the
+# flush cues' switches; the shed signal is the larger of the seasonal trigger (the product of the
+# TEMP and LIGHT switches) and the WATER switch. A mask of 0 always flushes / never senesces.
 #
-# The two masks are ORs of the cue bits, and are chosen INDEPENDENTLY:
-#   0 = none | 1 = TEMP (GDD/chilling) | 2 = WATER | 4 = HYDRO (leaf water potential)
-#   8 = PHOTO (daylength) | 16 = LIGHT
-# flush_cue_mask combines its cues by MIN (every listed cue must permit flushing); shed_cue_mask
-# combines by MAX (any listed cue can force shedding). 0 on the flush side is permissive (always
-# allowed); 0 on the shed side means no active shed -- that pair is the evergreen fixed point.
-#
-# Example below: PFT 1 cold-deciduous (TEMP on both sides), PFTs 2 & 3 evergreen.
+# Example below: PFT 1 a temperate deciduous tree (TEMP and LIGHT on both sides), PFTs 2 and 3
+# always flushing and never senescing.
 # [phenology]
-# flush_cue_mask      = [1, 0, 0]                  # [bitmask] cues that PERMIT flushing (MIN)
-# shed_cue_mask       = [1, 0, 0]                  # [bitmask] cues that FORCE shedding  (MAX)
-# cue_sharpness       = [2.0, 2.0, 2.0]            # [--]   logistic slope (larger = sharper threshold)
-# k_flush_max         = [0.06667, 0.06667, 0.06667]# [1/day] max relative flush rate (~full in 15 d)
-# k_shed_max          = [0.05, 0.05, 0.05]         # [1/day] max relative active-shed rate (~bare in 20 d)
-# tau_flush           = [5.0, 5.0, 5.0]            # [day]   flush governor low-pass timescale
-# tau_shed            = [5.0, 5.0, 5.0]            # [day]   shed governor low-pass timescale
-# gdd_base_temp       = [278.15, 278.15, 278.15]   # [K]     GDD accumulation base (5 degC)
-# chill_base_temp     = [278.15, 278.15, 278.15]   # [K]     chilling-day base
-# phen_a              = [-68.0, -68.0, -68.0]      # [K day] GDD-threshold intercept (Botta 2000)
-# phen_b              = [638.0, 638.0, 638.0]      # [K day] GDD-threshold amplitude
-# phen_c              = [-0.01, -0.01, -0.01]      # [1/day] chilling exponent (more chill -> less GDD needed)
-# cold_drop_daylength = [10.9, 10.9, 10.9]         # [h]     autumn short-day drop trigger (White 1997)
-# cold_drop_soiltemp1 = [284.3, 284.3, 284.3]      # [K]     cool-soil drop (with short days)
-# cold_drop_soiltemp2 = [275.15, 275.15, 275.15]   # [K]     very-cold-soil drop (unconditional)
-# photo_crit          = [11.0, 11.0, 11.0]         # [h]     critical daylength (CUE_PHOTO)
-# photo_slope         = [2.0, 2.0, 2.0]            # [1/h]   daylength logistic slope (CUE_PHOTO)
-# gdd_width           = [50.0, 50.0, 50.0]         # [K day] GDD flush transition width
-# daylen_width        = [1.0, 1.0, 1.0]            # [h]     autumn daylength transition width
-# soiltemp_width      = [2.0, 2.0, 2.0]            # [K]     autumn soil-temperature transition width
-# evg_ref_temp        = [278.15, 278.15, 278.15]   # [K]     evergreen cold-limitation reference
-# evg_slope           = [0.4, 0.4, 0.4]            # [1/K]   evergreen cold-limitation slope
-# bare_snap_frac      = [0.02, 0.02, 0.02]         # [--]    below this leaf fraction the canopy snaps bare
+# flush_cue_mask        = [3, 0, 0]                # [bitmask] cues of the flush side
+# shed_cue_mask         = [3, 0, 0]                # [bitmask] cues of the shed side
+# flush_cue_timescale   = [5.0, 5.0, 5.0]          # [day]   smoothing of the flush tendency
+# shed_cue_timescale    = [5.0, 5.0, 5.0]          # [day]   smoothing of the shed tendency
+# flush_rate_max        = [0.06667, 0.06667, 0.06667] # [1/day] leaf growth at full flush tendency
+# shed_rate_max         = [0.05, 0.05, 0.05]       # [1/day] senescence at full shed tendency
+# min_leaf_cover        = [0.0, 0.0, 0.0]          # [--]    leaf cover senescence stops at
+# bare_leaf_cover       = [0.02, 0.02, 0.02]       # [--]    a dormant canopy below this goes bare
+# flush_base_temp       = [278.15, 278.15, 278.15] # [K]     warmth base
+# flush_degree_days     = [100.0, 100.0, 100.0]    # [K day] warmth requirement
+# flush_temp_sharpness  = [0.04, 0.04, 0.04]       # [1/(K day)]
+# shed_base_temp        = [290.15, 290.15, 290.15] # [K]     cold base
+# shed_degree_days      = [50.0, 50.0, 50.0]       # [K day] cold requirement after midsummer
+# shed_temp_sharpness   = [0.1, 0.1, 0.1]          # [1/(K day)]
+# light_variable        = [1, 1, 1]                # [--]    1 day length [h], 2 running-mean shortwave [W/m2]
+# flush_light_threshold = [12.0, 12.0, 12.0]       # [h | W/m2]
+# flush_light_sharpness = [1.0, 1.0, 1.0]          # [1/h | m2/W]  a day-length gate fits as a step (~8)
+# shed_light_threshold  = [11.0, 11.0, 11.0]       # [h | W/m2]
+# shed_light_sharpness  = [-1.0, -1.0, -1.0]       # [1/h | m2/W]  < 0: short days trigger senescence
 #
-# The WATER / HYDRO / LIGHT cue parameters are OPTIONAL (those cues are opt-in via the masks);
-# absent keys keep the defaults shown. See docs/configuration.md for what each does.
-# water_off_threshold = [0.2, 0.2, 0.2]            # [--]    WATER cue: available soil water at which shedding is full
-# water_on_threshold  = [0.5, 0.5, 0.5]            # [--]    WATER cue: available soil water at which flushing is full
-# water_window        = [10.0, 10.0, 10.0]         # [day]   WATER cue: soil-water running-mean window
-# water_width         = [0.1, 0.1, 0.1]            # [--]    WATER cue: logistic transition width
-# low_psi_threshold   = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: dry days below the turgor-loss point to full shed
-# high_psi_threshold  = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: wet days to full flush
-# light_on_threshold  = [200.0, 200.0, 200.0]      # [W/m2]  LIGHT cue: radiation at which shedding starts
-# light_width         = [50.0, 50.0, 50.0]         # [W/m2]  LIGHT cue: shedding transition width
-# light_window        = [10.0, 10.0, 10.0]         # [day]   LIGHT cue: radiation running-mean window
+# OPTIONAL: the shortwave running-mean window (light_variable = 2) and the WATER cue; absent keys
+# keep the defaults shown.
+# light_window          = [10.0, 10.0, 10.0]       # [day]   shortwave running-mean window
+# flush_water_sum       = [10.0, 10.0, 10.0]       # [MPa day] wet sum that permits flushing
+# flush_water_sharpness = [0.5, 0.5, 0.5]          # [1/(MPa day)]
+# shed_water_sum        = [10.0, 10.0, 10.0]       # [MPa day] dry sum that triggers shedding
+# shed_water_sharpness  = [0.5, 0.5, 0.5]          # [1/(MPa day)]

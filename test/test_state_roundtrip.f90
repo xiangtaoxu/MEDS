@@ -42,16 +42,15 @@ program test_state_roundtrip
       site%cohort%dmax_psi_leaf(i)   = -0.75_wp - 0.01_wp * real(i, wp)
       site%cohort%dmax_psi_leaf_accum(i) = -0.40_wp - 0.01_wp * real(i, wp)
       !----- PHENOLOGY MEMORY (#150). Set every column to a distinct, non-birth value: the point   !
-      !      is that a restart must not resurrect the cohort at flush_drive = 1 / shed = 0 / all    !
+      !      is that a restart must not resurrect the cohort at flush tendency 1 / shed 0 / all     !
       !      accumulators zero, which is what it did before these were written.  -------------------!
-      site%cohort%pheno_flush_drive(i)   = 0.30_wp + 0.01_wp * real(i, wp)
-      site%cohort%pheno_shed_drive(i)    = 0.70_wp - 0.01_wp * real(i, wp)
-      site%cohort%pheno_gdd(i)           = 123.0_wp + real(i, wp)
-      site%cohort%pheno_chill(i)         = 17.0_wp + real(i, wp)
-      site%cohort%pheno_water_avg(i)     = 0.42_wp + 0.01_wp * real(i, wp)
-      site%cohort%pheno_low_psi_days(i)  = 5.0_wp + real(i, wp)
-      site%cohort%pheno_high_psi_days(i) = 2.0_wp + real(i, wp)
-      site%cohort%pheno_light_avg(i)     = 210.0_wp + real(i, wp)
+      site%cohort%leaf_flush_tendency(i) = 0.30_wp + 0.01_wp * real(i, wp)
+      site%cohort%leaf_shed_tendency(i)  = 0.70_wp - 0.01_wp * real(i, wp)
+      site%cohort%growing_degree_days(i) = 123.0_wp + real(i, wp)
+      site%cohort%cold_degree_days(i)    = 17.0_wp + real(i, wp)
+      site%cohort%dry_psi_sum(i)         = 5.0_wp + real(i, wp)
+      site%cohort%wet_psi_sum(i)         = 2.0_wp + real(i, wp)
+      site%cohort%shortwave_mean(i)      = 210.0_wp + real(i, wp)
    end do
 
    !----- P5 (MEDS_ED2_RK45_DESIGN.md): stamp distinct, non-default FAST reservoir values on every  !
@@ -105,22 +104,20 @@ program test_state_roundtrip
       !      midnight discards the part of today's maximum already seen. --------------------------------!
       call check_close(site2%cohort%dmax_psi_leaf(i), site%cohort%dmax_psi_leaf(i), 1.0e-12_wp, &
                         'dmax_psi_leaf recovered from state (not re-seeded from soil)')
-      call check_close(site2%cohort%pheno_flush_drive(i), site%cohort%pheno_flush_drive(i), 1.0e-12_wp, &
-                        'pheno_flush_drive recovered (not reset to the evergreen fixed point)')
-      call check_close(site2%cohort%pheno_shed_drive(i), site%cohort%pheno_shed_drive(i), 1.0e-12_wp, &
-                        'pheno_shed_drive recovered')
-      call check_close(site2%cohort%pheno_gdd(i), site%cohort%pheno_gdd(i), 1.0e-12_wp, &
-                        'pheno_gdd recovered (a season of thermal memory, not re-accumulated)')
-      call check_close(site2%cohort%pheno_chill(i), site%cohort%pheno_chill(i), 1.0e-12_wp, &
-                        'pheno_chill recovered')
-      call check_close(site2%cohort%pheno_water_avg(i), site%cohort%pheno_water_avg(i), 1.0e-12_wp, &
-                        'pheno_water_avg recovered')
-      call check_close(site2%cohort%pheno_low_psi_days(i), site%cohort%pheno_low_psi_days(i), 1.0e-12_wp, &
-                        'pheno_low_psi_days recovered')
-      call check_close(site2%cohort%pheno_high_psi_days(i), site%cohort%pheno_high_psi_days(i), 1.0e-12_wp, &
-                        'pheno_high_psi_days recovered')
-      call check_close(site2%cohort%pheno_light_avg(i), site%cohort%pheno_light_avg(i), 1.0e-12_wp, &
-                        'pheno_light_avg recovered')
+      call check_close(site2%cohort%leaf_flush_tendency(i), site%cohort%leaf_flush_tendency(i), 1.0e-12_wp, &
+                        'leaf_flush_tendency recovered (not reset to the birth value)')
+      call check_close(site2%cohort%leaf_shed_tendency(i), site%cohort%leaf_shed_tendency(i), 1.0e-12_wp, &
+                        'leaf_shed_tendency recovered')
+      call check_close(site2%cohort%growing_degree_days(i), site%cohort%growing_degree_days(i), 1.0e-12_wp, &
+                        'growing_degree_days recovered (a season of thermal memory, not re-accumulated)')
+      call check_close(site2%cohort%cold_degree_days(i), site%cohort%cold_degree_days(i), 1.0e-12_wp, &
+                        'cold_degree_days recovered')
+      call check_close(site2%cohort%dry_psi_sum(i), site%cohort%dry_psi_sum(i), 1.0e-12_wp, &
+                        'dry_psi_sum recovered')
+      call check_close(site2%cohort%wet_psi_sum(i), site%cohort%wet_psi_sum(i), 1.0e-12_wp, &
+                        'wet_psi_sum recovered')
+      call check_close(site2%cohort%shortwave_mean(i), site%cohort%shortwave_mean(i), 1.0e-12_wp, &
+                        'shortwave_mean recovered')
       call check_close(site2%cohort%dmax_psi_leaf_accum(i), site%cohort%dmax_psi_leaf_accum(i), 1.0e-12_wp, &
                         'dmax_psi_leaf_accum recovered from state (partial day not discarded)')
    end do

@@ -38,13 +38,20 @@ failure, not from a plan.
 
 ## 2. Phenology
 
-Source: `docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`. Science page:
+Source: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`. Science page:
 [`science/plant_phenology.md`](science/plant_phenology.md).
 
-All five cues are wired and selectable as of v0.2.0, and the design plan is archived. What is
-**not** done is validation: no MEDS leaf-area cycle has been scored against an observation, at any
-site, under any strategy. That is not a roadmap item with a design — it is the benchmarking gap in
+One generic cue model (temperature, light, water) with evergreen as a leaf-cover floor. The kernel
+is fitted offline at two temperate sites (`examples/example02_canopy_phenology`); no coupled MEDS
+run's leaf-area cycle has been scored against an observation yet. That is the benchmarking gap in
 §1, of which this is one instance.
+
+- **Tropical examples** — *Planned.* The water cue at a dry forest (Guanacaste, predawn ψ from a
+  coupled run, since the cue needs the shed → ψ feedback) and the shortwave cue at BCI (litter traps).
+- **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* The background turnover rate is
+  the model's parameter; leaf lifespan is emergent (plan D2).
+- **Light gradient in the shortwave cue** — *Candidate.* The cue reads the incident shortwave at the
+  canopy top for every cohort; an understorey cohort sees less.
 
 - **`root_phen_factor`** — *Candidate.* [#258](https://github.com/xiangtaoxu/MEDS/issues/258) The fine-root side of phenological shedding.
   Leaf resorption shipped in v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling

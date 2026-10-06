@@ -315,7 +315,7 @@ contains
       !      The driver feeds env%psi the previous day's daily-MAX leaf water potential -- the   !
       !      model's predawn potential -- so f_lwp is set once a day from a slow, integrated measure,  !
       !      not from a noisy sub-daily psi. Phenology compares dmax against the same tlp            !
-      !      (pheno_state_t%low_psi_days). A thermodynamic limit on transpiration (issue #96) would    !
+      !      (pheno_state_t%dry_psi_sum). A thermodynamic limit on transpiration (issue #96) would     !
       !      make this control matter less. ----------------------------------------------------!
       f_lwp = 1.0_wp
       if (p%low_psi_control == 1_ik) f_lwp = low_psi_gs_factor(env%psi, p%psi_tlp)   ! linear decline

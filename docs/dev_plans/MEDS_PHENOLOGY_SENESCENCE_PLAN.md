@@ -1,10 +1,10 @@
 # MEDS phenology: leaf habit from phenology parameters alone
 
-**Status:** proposal, written 2026-10-05 against `beta` at `413b587`, for review. **Revised after
-review 1 the same day: §8 supersedes §2.2, §2.3 and the open questions of §6.** Nothing here is
-implemented. The tests behind it are offline fits of the phenology kernel (`meds.plant.pheno`) to
-two sites, kept in `~/claude_workspace/meds_pheno_proto/`; they mirror the proposed kernel logic in
-Python and have not run inside the coupled model.
+**Status:** written 2026-10-05 against `beta` at `413b587`. **Revised after review 1 the same day:
+§8 supersedes §2.2, §2.3 and the open questions of §6. §9–§10 (the generic model) were implemented
+on 2026-10-06 on `dev/example02-canopy-phenology`; §11 records what the implementation found.** The
+fits of §8–§9 are offline fits of a Python emulation, kept in `~/claude_workspace/meds_pheno_proto/`;
+`examples/example02_canopy_phenology` refits the compiled kernel.
 
 **Goal:** a PFT's leaf habit (deciduous, evergreen, semi-deciduous) emerges from its phenology
 parameters, with no `evergreen` flag, and leaf lifespan becomes an output rather than an input.
@@ -495,10 +495,11 @@ M_wet += max(0, ψ_pd − ψ_tlp)        flush signal = σ(s_wet (M_wet − M_we
 M_dry += max(0, ψ_tlp − ψ_pd)        shed signal  = σ(s_dry (M_dry − M_dry*))
 ```
 
-Water has no calendar, so each sum needs a reset rule. Proposed: each resets when the opposite
-event triggers (M_dry when the flush signal passes 0.5, M_wet when the shed signal does). A brief
-rain then adds a little wet credit without wiping the drought, unlike today's consecutive-day
-counters, which reset on a single opposite day. ψ_tlp can be fixed at the PFT's measured
+Water has no calendar, so each sum needs a reset rule. Each resets when the opposite switch
+crosses 0.5 upward (M_dry when the wet switch does, M_wet when the dry switch does): the crossing
+event, not the level, or a long wet season would hold the wet switch high and wipe every drought.
+A brief rain then adds a little wet credit without wiping the drought, unlike the old
+consecutive-day counters, which reset on a single opposite day. ψ_tlp can be fixed at the PFT's measured
 turgor-loss point, leaving the two centres to fit.
 
 **Not fitted offline.** The predawn ψ from the Palo Verde test run (§8, `pv_daily.csv`) has no
@@ -507,6 +508,37 @@ all year while ψ falls to −3.1 MPa in March. A drought-deciduous canopy that 
 less and its predawn ψ recovers toward the soil's, so fitting the cue to that driver would be
 fitting to the wrong water potential. The water cue has to be tested in the coupled model, with the
 cue on and a dry-forest stand (the Guanacaste example), after implementation.
+
+## 11. Implementation (2026-10-06, `dev/example02-canopy-phenology`)
+
+The generic model of §9–§10 replaces the old kernel, its config keys and its Python front end. What
+the implementation added or found:
+
+1. **The compiled kernel reproduces the emulation.** With the §9 values (G2h, G2) the example scores
+   exactly what the Python prototype did: Harvard MODIS / leaf-fall / basket RMSE 0.185 / 0.061 /
+   0.080; Hyytiälä share RMSE 1.031, r 0.850, annual needle fall 0.379.
+2. **The water sums reset on the crossing.** §10 as first written ("resets when the opposite switch
+   passes 0.5") was implemented as a level test, which deadlocks: a wet season holds the wet switch
+   on and wipes the dry sum every day. The kernel resets a sum when the other switch crosses 0.5
+   upward; `test_plant_phenology` covers the wet-season and brief-rain cases.
+3. **A gradual flush gate churns leaves in autumn.** With the G2h values the Harvard flush tendency
+   is still 0.64 in October (gate σ(D − 10.35), D ≈ 11 h): the canopy refills while it senesces and
+   drops 1.89 canopies of leaves a year (1.13 in October alone). The basket target, normalised
+   within each year, cannot see it. Adding the annual leaf fall to the loss (one canopy, weighted as
+   Hyytiälä's 0.30):
+   - with the gate sharpness fixed at 1 h⁻¹ the fit pushes the flush day length to its bound
+     (14.1 h) and W* to 6 K·d: litter 1.04, but spring timing collapses (r 0.05, RMSE 18.7 d);
+   - with the sharpness fitted it runs to the 8 h⁻¹ bound (threshold 13.75 h): litter 1.01, spring
+     RMSE 5.5 d (r 0.34), autumn 2.9 d (r 0.44), loss 0.0436, below G2h's 0.0446 without the term.
+     Hyytiälä fitted the same way picks 6.6 h⁻¹ at 13.1 h (share r 0.853, needle fall 0.304).
+   The example fits `flush_light_sharpness` at both sites; the kernel default stays 1.
+4. **The dormant snap needs the sharp gate.** With a gradual gate the flush tendency never falls
+   below the 10⁻⁶ day⁻¹ dormancy rate, so a deciduous canopy sits at a small residual cover instead
+   of going bare; with the step gate it goes bare.
+5. **Deferred:** renaming `leaf_lifespan_toc` to `leaf_turnover_rate_toc` (D2); a per-cohort light
+   gradient for the shortwave cue; the tropical examples (Guanacaste water cue, BCI shortwave cue);
+   scoring a coupled run's leaf cycle. The biophysics example's PFT file takes the Harvard values,
+   but its committed outputs predate the scheme.
 
 ## References
 
