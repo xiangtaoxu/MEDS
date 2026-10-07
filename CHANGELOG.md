@@ -16,12 +16,12 @@ before and after.
 
 ### Added
 
-- **A Python demography run can start from a census.** `Site(cfg, census=True)` reads the file the
+- **A Python demography run can start from a census** (#376). `Site(cfg, census=True)` reads the file the
   config's `[init].census_file` names and restructures the stand as `meds_main` does for
   `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
   0 when it could not be; Python raises). `test_c_api_demography` covers it on the root config's
   pseudo census.
-- **A saturating height curve.** `[allometry].height_allometry = "gmm"` replaces the pan-tropical
+- **A saturating height curve** (#376). `[allometry].height_allometry = "gmm"` replaces the pan-tropical
   power law with height = gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b), still capped at `[pft].hgt_max`;
   `meds_config_pft.toml` lists `gmm_a`, `gmm_b` and `gmm_k` at Cano et al. (2019, Biogeosciences
   16:847)'s fit for the Barro Colorado Nature Monument (58.0 m, 0.73, 21.8). Height inverts in closed
@@ -33,7 +33,7 @@ before and after.
 
 - **`meds_apply_rates` restructures the stand with the carbon path's own `restructure_stand`**
   instead of a copy of it kept to reproduce the empirical golden (removed with the empirical laws;
-  see below). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
+  see below; #376). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
   does, and fuses, splits, disturbs and recruits through the same routine as `meds_advance_slow`;
   `meds_site_init_census` computes the overtopping LAI of the stand it builds.
 
@@ -123,7 +123,7 @@ before and after.
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
 - **The demography example is `examples/example03_demography/`, and its vital rates are fitted
-  to the Barro Colorado Island 50-ha plot censuses** instead of written by hand.
+  to the Barro Colorado Island 50-ha plot censuses** instead of written by hand (#376).
   - **The laws**, per PFT, with coefficients in `vital_rates.json`: dbh growth rises with size on a
     logistic curve in ln D and falls with the overtopping LAI, which the driver reads from the engine
     and the census gets from the same allometry (the leaf area of taller trees within 20 m)
