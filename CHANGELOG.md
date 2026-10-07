@@ -14,6 +14,14 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **A Python demography run can start from a census.** `Site(cfg, census=True)` reads the file the
+  config's `[init].census_file` names and restructures the stand as `meds_main` does for
+  `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
+  0 when it could not be; Python raises). `test_c_api_demography` covers it on the root config's
+  pseudo census.
+
 ### Changed
 
 - **The leaf example is `examples/example01_leaf_gas_exchange/`**, the first of the examples
@@ -101,6 +109,26 @@ before and after.
   refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
+- **The demography example is `examples/example03_demography/`, and its vital rates are learned
+  from the Barro Colorado Island 50-ha plot censuses** instead of written by hand.
+  - **The laws.** Random forests, trained on the censuses of 1985–2010 and committed as tables in
+    `vital_rates/`, give each cohort its dbh growth (from dbh, the basal area of larger trees in its
+    patch and PFT) and its mortality (from dbh, that predicted growth and PFT), and each PFT and
+    patch its recruits at 1 cm (from the patch's basal area and the PFT's share). The three PFTs are
+    wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
+    recruits enter at 1 cm (`min_cohort_height` 3.13 m, was 2.0); `dbh_critical` is 300 cm (was
+    100); the treefall rate is taken off the census mortality of trees tall enough to die in a gap.
+  - **The runs.** From the 1985 census the stand tracks the plot through 2010 (basal area 29.7
+    against 30.5 m² ha⁻¹, stems 4087 against 4145 ha⁻¹) and settles near 33 m² ha⁻¹ as PFT 2
+    replaces PFT 1; from near-bare ground it reaches the census's basal area in about 250 years.
+    The canopy-profile and 3-D landscape animations are regenerated from the 300-year
+    near-bare-ground run, and `demography.png` is the example's one figure.
+  - **Removed:** the hand-written laws (`empirical_laws.py`, `empirical_spinup.py`), their goldens
+    (`test/golden/empirical_spinup_golden.csv`, `empirical_spinup_final_cohorts.csv`), the carbon-path
+    driver `run_carbon.py`, the committed run netCDF and the old figures. The pseudo census the
+    tests and the root config start from moves to `data/census_example.csv`.
+  - **Dependency:** fitting the forests needs scikit-learn, listed in `environment.yml` as
+    optional; the runs read only the committed tables.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
