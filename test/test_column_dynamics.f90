@@ -102,7 +102,7 @@ program test_column_dynamics
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
@@ -206,7 +206,6 @@ program test_column_dynamics
    !           so the COLUMN-TOTAL uptake is independent of how it is distributed vertically.  !
    !           The vertical distribution itself is checked in test_root_share_drydown below.   !
    !=====================================================================================!
-   col_config%specific_root_area = cfg%hydraulics%specific_root_area
    call integrate_day()
    call check_true('PER-LAYER ROOTS: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,            &
            real(budget%whole_water%n_fail, wp))

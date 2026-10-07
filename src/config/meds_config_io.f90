@@ -991,9 +991,13 @@ contains
             error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
          end select
       end if
-      cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
-      cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
-      cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
+      cfg%hydraulics%root_beta     = toml_real(tm, 'hydraulics.root_beta',     cfg%hydraulics%root_beta)
+      cfg%hydraulics%root_depth_b1 = toml_real(tm, 'hydraulics.root_depth_b1', cfg%hydraulics%root_depth_b1)
+      cfg%hydraulics%root_depth_b2 = toml_real(tm, 'hydraulics.root_depth_b2', cfg%hydraulics%root_depth_b2)
+      cfg%hydraulics%specific_root_length = toml_real(tm, 'hydraulics.specific_root_length',                &
+                                                      cfg%hydraulics%specific_root_length)
+      cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
+                                                      cfg%hydraulics%fine_root_radius)
 
       !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
@@ -1244,6 +1248,11 @@ contains
       call opt_pa(tp, 'pft.k_plant_max',         cfg%pft%hyd_k_plant_max,         npft, miss)
       call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
       call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
+      call opt_pa(tp, 'pft.root_beta',           cfg%pft%hyd_root_beta,           npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b1',       cfg%pft%hyd_root_depth_b1,       npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
+      call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
+      call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)

@@ -46,8 +46,14 @@ module meds_config_keys
    end type retired_key_t
    type(retired_key_t), parameter :: RETIRED(*) = [                                          &
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
-                    '[hydraulics].root_beta (0 < beta < 1) and root_depth; root_beta = '//        &
-                    'exp(-b*root_depth) gives the old exponential decay b per metre'),           &
+                    '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
+                    'root_depth_b1 and root_depth_b2'),                                          &
+      retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
+                    'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
+                    'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &
+      retired_key_t('hydraulics.specific_root_area', 'the soil->root conductance takes root '//   &
+                    'length: set [hydraulics].specific_root_length [m/kgC] and fine_root_radius '// &
+                    '[m], or their pft.* values'),                                               &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &

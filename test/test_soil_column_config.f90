@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_soil_column_config
    use meds_kinds,         only : wp, ik
-   use meds_config,        only : soil_column_config_t, hydraulics_config_t
+   use meds_config,        only : soil_column_config_t
    use meds_column_params, only : soil_params_t, soil_thermal_params_t,                            &
                                   build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -83,34 +83,6 @@ program test_soil_column_config
    call check_close(th%soil_dry_conductivity(1),   0.20_wp, 1.0e-14_wp, 'dry_conductivity did not reach it')
    call check_close(th%soil_dry_heat_capacity(1),  1.5e6_wp, 1.0e-8_wp, 'dry_heat_capacity did not reach it')
 
-   !----- The root profile comes from the plant's rooting traits, [hydraulics].root_beta and       !
-   !      root_depth: ED2's beta^(d/D) over each layer's depths, normalized. The defaults, beta =      !
-   !      exp(-4) and D = 2 m, are the exponential exp(-2 d) that [soil_column].root_beta = 2 used to   !
-   !      set, integrated over each layer; a shallower rooting depth leaves the deeper layers empty. --!
-   block
-      type(soil_params_t)       :: rp
-      type(hydraulics_config_t) :: h
-      real(wp)    :: expect(10), dtop, dbot
-      integer(ik) :: k
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp, 2.89e-6_wp,   &
-                                  3.6_wp, 1.56_wp, h%root_beta, h%root_depth, -3.37_wp, rp)
-      call check_close(sum(rp%root_frac(1:10)), 1.0_wp, 1.0e-12_wp, 'root fractions do not sum to 1')
-      do k = 1_ik, 10_ik
-         dtop = -rp%soil_layer_z(k) ; dbot = -rp%soil_layer_z(k+1_ik)
-         expect(k) = exp(-2.0_wp * dtop) - exp(-2.0_wp * dbot)
-      end do
-      expect = expect / sum(expect)
-      call check_close(maxval(abs(rp%root_frac(1:10) - expect)), 0.0_wp, 1.0e-12_wp,                    &
-                       'the default root profile is not exp(-2 d) per layer')
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp, 2.89e-6_wp,   &
-                                  3.6_wp, 1.56_wp, h%root_beta, 0.5_wp, -3.37_wp, rp)
-      do k = 1_ik, 10_ik
-         if (-rp%soil_layer_z(k) >= 0.5_wp)                                                             &
-            call check(rp%root_frac(k) == 0.0_wp, 'roots below a 0.5 m rooting depth')
-      end do
-      call check_close(sum(rp%root_frac(1:10)), 1.0_wp, 1.0e-12_wp, 'shallow root fractions do not sum to 1')
-   end block
-
    print '(a)', 'test_soil_column_config: all checks passed'
 
 contains
@@ -119,10 +91,9 @@ contains
    subroutine build_column(c, out)
       type(soil_column_config_t), intent(in)  :: c
       type(soil_params_t),        intent(out) :: out
-      type(hydraulics_config_t) :: h                  ! the rooting traits' defaults
       call build_soil_hydr_params(c%n_layer, c%retention, c%depth, c%grid_growth,                  &
                                   c%theta_sat, c%theta_res, c%ksat, c%curve_par_a,                 &
-                                  c%curve_par_n, h%root_beta, h%root_depth, c%psi_fc, out)
+                                  c%curve_par_n, c%psi_fc, out)
    end subroutine build_column
 
 end program test_soil_column_config

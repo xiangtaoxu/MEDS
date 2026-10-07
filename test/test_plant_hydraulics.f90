@@ -18,7 +18,7 @@
 program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
-   use meds_constants,         only : grav_head
+   use meds_constants,         only : grav_head, pi
    use meds_hydr_lib,      only : plc_retained, flux_potential, kirchhoff_edge, hydro_table_t, build_hydro_table, &
                                   flux_potential_lin, kirchhoff_edge_tab
    use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
@@ -26,7 +26,7 @@ program test_plant_hydraulics
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 HYDRO_SUBSTEP_FIXED, HYDRO_COND_SEGMENT
    use meds_plant_hydraulics, only : solve_plant_water
-   use meds_plant_hydraulics, only : root_fraction_profile
+   use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile, rhizosphere_cond
    implicit none
 
 
@@ -42,6 +42,7 @@ program test_plant_hydraulics
    call test_diurnal()
    call test_degenerate()
    call test_multilayer_roots()
+   call test_cohort_roots()
    call test_biomass_seam()
    call test_seam_capacity_clamp()
 
@@ -440,6 +441,40 @@ contains
       call check('DRY-DOWN: per-layer uptake still conserves',                                   &
            flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
    end subroutine test_multilayer_roots
+
+   !=======================================================================================!
+   ! Cohort roots: the rooting depth follows ED2's height allometry (5 m for a 35 m tree) and   !
+   ! stops at the soil column; a cohort's profile sums to one within its own depth and holds     !
+   ! ED2's (1 - beta^(d/D)) / (1 - beta) above depth d; and the single-root conductance is        !
+   ! Gardner's value, so a layer split in two keeps its total.                                     !
+   !=======================================================================================!
+   subroutine test_cohort_roots()
+      type(hydro_params_t) :: hp                       ! the defaults: ED2 IALLOM 1, beta 0.1
+      real(wp)    :: edges(13), frac(12), depth, lv, half, g, g_half
+      integer(ik) :: k
+      print '(a)', '-- Cohort roots --'
+      call check('a 35 m tree roots to 5 m (ED2 IALLOM 1)', cohort_root_depth(35.0_wp, hp, 10.0_wp), 5.0_wp, 1.0e-3_wp)
+      call check('the rooting depth stops at the soil column', cohort_root_depth(35.0_wp, hp, 2.0_wp), 2.0_wp, 0.0_wp)
+      call check_true('a 3 m sapling roots shallower than 2 m', cohort_root_depth(3.0_wp, hp, 10.0_wp) < 2.0_wp)
+      edges = [(0.5_wp * k, k = 0, 12)]                ! 0 to 6 m in 0.5 m layers
+      call cohort_root_profile(35.0_wp, hp, edges(1:12), edges(2:13), frac)
+      depth = cohort_root_depth(35.0_wp, hp, 6.0_wp)
+      call check('the profile sums to one', sum(frac), 1.0_wp, 1.0e-12_wp)
+      call check_true('no roots below the rooting depth', all(frac(11:12) == 0.0_wp))
+      call check('ED2''s share above 1 m', sum(frac(1:2)),                                         &
+                 (1.0_wp - hp%root_beta**(1.0_wp / depth)) / (1.0_wp - hp%root_beta), 1.0e-12_wp)
+      !----- 0.01 plants/m2 with 1000 m of root each in a 0.4 m layer; the same density in two 0.2 m !
+      !      halves gives each plant 500 m per half, and the same half-spacing. ------------------------!
+      lv   = 0.01_wp * 1000.0_wp / 0.4_wp
+      half = 1.0_wp / sqrt(pi * lv)
+      g      = rhizosphere_cond(1.0e-6_wp, 1000.0_wp, half, 1.5e-4_wp)
+      g_half = rhizosphere_cond(1.0e-6_wp,  500.0_wp, half, 1.5e-4_wp)
+      call check('Gardner: 2 pi K L / ln(r_half / r_root)', g,                                     &
+                 2.0_wp * pi * 1.0e-6_wp * 1000.0_wp / log(half / 1.5e-4_wp), 1.0e-15_wp)
+      call check('a layer split in two keeps its conductance', 2.0_wp * g_half, g, 1.0e-15_wp)
+      call check('twice the root length at the same spacing, twice the conductance',               &
+                 rhizosphere_cond(1.0e-6_wp, 2000.0_wp, half, 1.5e-4_wp), 2.0_wp * g, 1.0e-15_wp)
+   end subroutine test_cohort_roots
 
    !=======================================================================================!
    ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3, user-directed revision of the design !

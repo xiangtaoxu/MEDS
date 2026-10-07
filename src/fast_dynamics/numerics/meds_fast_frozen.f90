@@ -15,7 +15,7 @@
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
-   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch
+   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config, only : meds_config_t, CTRL_L2_STRICT
@@ -97,6 +97,8 @@ contains
       real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
       real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
       real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
+      real(wp) :: root_frac(nsl, n), root_frac_patch(nsl), z_top(nsl), z_bot(nsl), root_len(nsl, n)
+      real(wp) :: half_spacing(nsl), root_carbon
       real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up, u_liq_leaf, u_liq_wood
       real(wp) :: sapflow_gnd(n), uptake_gnd(n)
       integer(ik) :: nsub_b(n)
@@ -139,9 +141,27 @@ contains
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
       y%leaf_surf_water(1:n) = biophys%leaf_surf_water(1:n) ; y%wood_surf_water(1:n) = biophys%wood_surf_water(1:n)
 
+      !----- Each cohort's fine roots by layer, within its own rooting depth, and the patch's profile:   !
+      !      the cohorts' weighted by their fine-root carbon. A patch with no roots puts its weight in the !
+      !      top layer (it has no root respiration to weight). -----------------------------------------!
+      z_top(1:nsl) = -col_config%soil%soil_layer_z(1:nsl)
+      z_bot(1:nsl) = -col_config%soil%soil_layer_z(2:nsl+1)
+      root_frac_patch(1:nsl) = 0.0_wp
+      do i = 1_ik, n
+         call cohort_root_profile(col_cohort%height(i), col_config%hydraulics_table%pft(col_cohort%pft(i)),       &
+                                  z_top(1:nsl), z_bot(1:nsl), root_frac(1:nsl, i))
+         root_frac_patch(1:nsl) = root_frac_patch(1:nsl) + col_cohort%nplant(i)*col_cohort%broot(i)*root_frac(1:nsl, i)
+      end do
+      root_carbon = sum(root_frac_patch(1:nsl))
+      if (root_carbon > tiny_num) then
+         root_frac_patch(1:nsl) = root_frac_patch(1:nsl) / root_carbon
+      else
+         root_frac_patch(1:nsl) = 0.0_wp ; root_frac_patch(1) = 1.0_wp
+      end if
+
       !----- the SHARED pre-pass (meds_fast_prepass%column_prepass): gas exchange / respiration / CAS   !
       !      aero -- writes directly into the frozen struct's h_coeff_leaf/g_transp_leaf arrays. ------------------!
-      call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,                       &
+      call column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac_patch(1:nsl), &
                           tcas, qcas, press, rho, t_ground, frozen%tissue%h_coeff_leaf, frozen%tissue%g_transp_leaf,      &
                           cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                           gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
@@ -361,10 +381,20 @@ contains
               col_config%soil%theta_sat(k), col_config%soil%theta_res(k), col_config%soil%vg_alpha(k),                   &
               col_config%soil%vg_n(k), col_config%soil%ksat(k))
       end do
+      !----- Each plant's fine-root length by layer, and half the distance between the patch's roots in  !
+      !      each layer, (pi L_v)^-1/2 from the root-length density of every cohort there. -------------!
+      do i = 1_ik, n
+         root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i)                                       &
+                              * col_config%hydraulics_table%pft(col_cohort%pft(i))%specific_root_length
+      end do
+      do k = 1_ik, nsl
+         half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(col_cohort%nplant(1:n) * root_len(k, 1:n))               &
+                                                  / col_config%soil%dz(k), tiny_num))
+      end do
       do i = 1_ik, n
          do k = 1_ik, nsl
-            rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta_layer(k)/grav_head, col_cohort%broot(i),  &
-                 col_config%specific_root_area, col_config%soil%root_frac(k), col_config%soil%dz(k), col_cohort%nplant(i))
+            rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta_layer(k)/grav_head, root_len(k, i),         &
+                 half_spacing(k), col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
          end do
       end do
       !----- Hand the kernel's own frozen boundary inputs to the post-stage corrector, so it can       !
@@ -432,7 +462,7 @@ contains
       if (share_tot > tiny_num) then
          frozen%roots%root_share(1:nsl) = frozen%roots%root_share(1:nsl) / share_tot
       else
-         frozen%roots%root_share(1:nsl) = col_config%soil%root_frac(1:nsl)
+         frozen%roots%root_share(1:nsl) = root_frac_patch(1:nsl)
       end if
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
@@ -525,7 +555,7 @@ contains
       !      wood 13 K above the canopy air and drove H to +600 W/m2 at zero net radiation (#355). The leaf  !
       !      still pays the full vapour enthalpy of what it transpires (surface_derivs); its water store's   !
       !      outflow is counted at the pre-pass transpiration demand (sf0), frozen like everything here.     !
-      soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), col_config%soil%root_frac, nsl)
+      soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), root_frac_patch, nsl)
       u_liq_soil = internal_energy_liquid(soil_temp_root)
       frozen%tissue%water_store_enth = 0.0_wp
       do i = 1_ik, n

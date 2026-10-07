@@ -111,13 +111,19 @@ conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "s
 k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
 wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
 vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
-# ---- the root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the soil ----
-#      column; layers below root_depth hold no roots. It sets the per-layer water uptake and rhizosphere
-#      conductance, the root-zone temperature of root respiration and the root-weighted soil state.
-#      exp(-4) with a 2 m depth is the exponential exp(-2 * depth [m]).
-root_beta          = 0.01831563888873418   # [-]  ED2 root-profile decay (0,1); smaller = shallower rooting
-root_depth         = 2.0   # [m]      maximum rooting depth
-specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
+# ---- roots, plant traits (pft.<key> overrides each per PFT). A cohort roots to root_depth_b1 *
+#      height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1: 5 m at 35 m), capped at the soil
+#      column; its fine roots fall off within that depth as ED2's (1 - root_beta^(d/D)) / (1 - root_beta)
+#      above depth d. Its root length (fine-root carbon * specific_root_length) sets each layer's
+#      soil->root conductance, 2 pi K L / ln(r_half / fine_root_radius) (Gardner 1960).
+root_beta            = 0.1        # [-]     share of the profile that would lie below the rooting depth (0,1)
+root_depth_b1        = 1.1140580  # [m]     rooting depth = b1 * height[m]^b2
+root_depth_b2        = 0.4223014  # [-]
+specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root carbon: 10 m per g dry mass, the
+                                  #         tropical fine roots of Panama (Wurzburger & Wright 2015; Cordeiro et
+                                  #         al. 2024) and GRooT, times 2 g dry per g C. All fine-root carbon counts:
+                                  #         the 0-1 mm roots hold 92 % of the length.
+fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 [soil]
 # Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults

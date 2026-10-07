@@ -84,8 +84,10 @@ uncorrected.
   own 15.1.
 - **Leaf traits follow the light** down the canopy (`trait_plasticity_on`), and the **canopy
   intercepts** rain and dew (`canopy_water_on`).
-- **The soil** is BCI's: a clay Oxisol that is porous and drains fast near the surface, 2 m deep
-  in 10 layers. Its van Genuchten curve is fitted to the plot's paired water content and potential
+- **Roots** belong to each cohort: a tree roots to a depth set by its height (ED2's allometry: 1.8 m
+  at 3 m, 5 m at 35 m), and each soil layer's root length sets how readily it can supply the tree.
+- **The soil** is BCI's: a clay Oxisol that is porous and drains fast near the surface, 6 m deep
+  in 16 layers. Its van Genuchten curve is fitted to the plot's paired water content and potential
   (Kupers et al. 2019) and the tower's 0–15 cm soil water, and its saturated conductivity is the
   measured in-situ value at 12.5 cm (Godsey et al. 2004). It starts at 298.65 K and at field
   capacity, 0.42 m³ m⁻³. Its carbon starts in steady state with the census stand's litter, with

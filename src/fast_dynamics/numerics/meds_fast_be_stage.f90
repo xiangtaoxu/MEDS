@@ -195,7 +195,7 @@ contains
             !      base, the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary  !
             !      of both books, the soil's and the whole column's. -------------------------------------!
             bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil + e_floor
-            bf%soil_enth_out= qloss_total * sum(col_config%soil%root_frac(1:nsl)) + e_drain + e_clip
+            bf%soil_enth_out= qloss_total + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/rainfall are frozen fast-step).  !

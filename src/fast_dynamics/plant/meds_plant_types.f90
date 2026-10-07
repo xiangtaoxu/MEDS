@@ -234,6 +234,12 @@ module meds_plant_types
       real(wp) :: k_plant_max = 0.0_wp  !< [kg/s/MPa/m2_leaf] whole-plant (HYDRO_COND_KPLANT)
       real(wp) :: wood_kmax   = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity (HYDRO_COND_SEGMENT)
       real(wp) :: vessel_curl = 1.0_wp  !< [-] tortuosity / path-length factor (HYDRO_COND_SEGMENT)
+      !----- Roots: the depth allometry, the profile within it, and the absorbing length. ----------!
+      real(wp) :: root_beta            = 0.1_wp       !< [-] (1 - beta^(d/D)) / (1 - beta) above depth d
+      real(wp) :: root_depth_b1        = 1.1140580_wp !< [m] rooting depth = b1 * height^b2
+      real(wp) :: root_depth_b2        = 0.4223014_wp !< [-]
+      real(wp) :: specific_root_length = 2.0e4_wp     !< [m/kgC] fine-root length per unit fine-root carbon
+      real(wp) :: fine_root_radius     = 2.5e-4_wp    !< [m] fine-root radius
       !----- Precomputed Kirchhoff lookup table (built from wood_kexp by build_hydro_table). It is    !
       !       consulted on the hot path ONLY for wood_kexp not in {1,2} (the quadrature regime); for   !
       !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!

@@ -175,6 +175,8 @@ module meds_pft_params
       real(wp),    allocatable :: hyd_wood_water_sat(:)
       real(wp),    allocatable :: hyd_wood_psi50(:), hyd_wood_kexp(:)
       real(wp),    allocatable :: hyd_k_plant_max(:), hyd_wood_kmax(:), hyd_vessel_curl(:)
+      real(wp),    allocatable :: hyd_root_beta(:), hyd_root_depth_b1(:), hyd_root_depth_b2(:)
+      real(wp),    allocatable :: hyd_specific_root_length(:), hyd_fine_root_radius(:)
       real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
       real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
@@ -314,6 +316,10 @@ contains
       pft%hyd_wood_apoplast_frac = HYD_UNSET ; pft%hyd_wood_water_sat = HYD_UNSET
       pft%hyd_wood_psi50 = HYD_UNSET ; pft%hyd_wood_kexp = HYD_UNSET
       pft%hyd_k_plant_max = HYD_UNSET ; pft%hyd_wood_kmax = HYD_UNSET ; pft%hyd_vessel_curl = HYD_UNSET
+      allocate(pft%hyd_root_beta(n), pft%hyd_root_depth_b1(n), pft%hyd_root_depth_b2(n),               &
+               pft%hyd_specific_root_length(n), pft%hyd_fine_root_radius(n))
+      pft%hyd_root_beta = HYD_UNSET ; pft%hyd_root_depth_b1 = HYD_UNSET ; pft%hyd_root_depth_b2 = HYD_UNSET
+      pft%hyd_specific_root_length = HYD_UNSET ; pft%hyd_fine_root_radius = HYD_UNSET
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
       allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
       pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;

@@ -21,7 +21,6 @@
 module meds_column_params
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : tiny_num
-   use meds_hydr_lib,         only : root_fraction_profile
    use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
@@ -62,7 +61,6 @@ module meds_column_params
       real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
       real(wp) :: theta_wp(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] wilting point (DERIVED)
-      real(wp) :: root_frac(n_soil_layer_max) = 0.0_wp       !< [-] normalized root fraction (sum = 1)
    end type soil_params_t
 
    !----- Per-column soil THERMAL texture (geometry + porosity arrive via soil_params_t). ----!
@@ -84,21 +82,19 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Assemble a per-column soil_params_t: the ED2 negative-z geometry (exponential generator !
-   ! OR an explicit soil_layer_z interface array), uniform texture broadcast, an exponential  !
-   ! root profile, and the DERIVED thresholds theta_fc/theta_wp (from the retention curve).   !
+   ! OR an explicit soil_layer_z interface array), uniform texture broadcast, and the DERIVED  !
+   ! thresholds theta_fc/theta_wp (from the retention curve). The roots are the cohorts' own   !
+   ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                          !
    !---------------------------------------------------------------------------------------!
    pure subroutine build_soil_hydr_params(n_active, retention, soil_depth, grid_growth, theta_sat,  &
-                                theta_res, ksat, par_a, par_n, root_beta, root_depth, psi_fc_m, params,    &
-                                soil_layer_z_in)
+                                theta_res, ksat, par_a, par_n, psi_fc_m, params, soil_layer_z_in)
       integer(ik),         intent(in)  :: n_active, retention
       real(wp),            intent(in)  :: soil_depth, grid_growth, theta_sat, theta_res
       real(wp),            intent(in)  :: ksat, par_a, par_n, psi_fc_m
-      real(wp),            intent(in)  :: root_beta   !< [-] ED2 root-profile decay (0,1): the plant's [hydraulics] trait
-      real(wp),            intent(in)  :: root_depth  !< [m] maximum rooting depth (> 0): the plant's [hydraulics] trait
       type(soil_params_t), intent(out) :: params
       real(wp), optional,  intent(in)  :: soil_layer_z_in(:)
       integer(ik) :: k
-      real(wp)    :: denom, rsum
+      real(wp)    :: denom
 
       params%n_active  = n_active
       params%retention = retention
@@ -147,18 +143,6 @@ contains
          soil_theta_from_psi(retention, psi_fc_m, theta_sat, theta_res, par_a, par_n)
       params%theta_wp(1:n_active) =                                                          &
          soil_theta_from_psi(retention, PSI_WP, theta_sat, theta_res, par_a, par_n)
-
-      !----- The stand's root profile, from the plant's rooting traits ([hydraulics].root_beta and  !
-      !      root_depth): ED2's cumulative form, root_beta^(d_top/D) - root_beta^(d_bot/D) over each  !
-      !      layer's depths d, clamped to the rooting depth D, then normalized to sum 1 over the       !
-      !      column. Layers below D hold no roots. --------------------------------------------------!
-      rsum = 0.0_wp
-      do k = 1_ik, n_active
-         params%root_frac(k) = root_fraction_profile(root_beta, root_depth, -params%soil_layer_z(k),     &
-                                                     -params%soil_layer_z(k+1_ik))
-         rsum = rsum + params%root_frac(k)
-      end do
-      if (rsum > tiny_num) params%root_frac(1:n_active) = params%root_frac(1:n_active) / rsum
    end subroutine build_soil_hydr_params
 
    !---------------------------------------------------------------------------------------!

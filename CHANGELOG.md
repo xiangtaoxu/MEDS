@@ -133,6 +133,34 @@ before and after.
   - `plot_evaluation.py` draws the calibration's target for the fluxes the fit adjusts (GPP, and H
     or LE by their share of the closure gap) instead of testing which differ from the measured
     flux; its figure and statistics are byte-identical.
+- **Roots belong to each cohort: a rooting depth from its height, ED2's profile within it, and a
+  single-root soil→root conductance** (#375; #377 asks whether the conductance should grow in
+  proportion to root length).
+  - **Depth and profile.** A cohort roots to `root_depth_b1` · height^`root_depth_b2`, ED2's IALLOM 1
+    allometry (1.114 · h^0.4223: 1.8 m at 3 m, 5.0 m at 35 m), capped at the soil column. Within that
+    depth its fine roots follow ED2's (1 − β^(d/D)) / (1 − β) above depth d, with `root_beta` = 0.1
+    as in ED2. Before, one profile (β = e⁻⁴ over a fixed 2 m) served the whole stand.
+  - **Conductance.** Each layer's soil→root conductance is the single-root form 2πK·L / ln(r_half /
+    r_root) (Gardner 1960). L is the cohort's fine-root length (fine-root carbon ×
+    `specific_root_length`, 2.0×10⁴ m kgC⁻¹: 10 m per g dry in Panama and GRooT), r_half comes from the
+    patch's root-length density, and `fine_root_radius` is 0.25 mm. It replaces ED2-hydro's
+    K·√RAI/(π·Δz) (after Katul et al. 2003), which grew by 2√2 each time the layers were halved and by
+    √2 each time a cohort was split, and connected the thick deep layers one to two orders of
+    magnitude more weakly.
+  - The column's stand-wide root profile is gone. A patch's profile, its cohorts' weighted by fine-root
+    carbon, weights the root-zone temperature and spreads uptake when no layer supplies any.
+  - **Config (breaking).** New `[hydraulics]` keys `root_depth_b1`, `root_depth_b2`,
+    `specific_root_length` and `fine_root_radius`, each with a `pft.*` override like the other
+    per-PFT hydraulic traits; `root_beta` defaults to 0.1 (was e⁻⁴). `hydraulics.root_depth` and
+    `hydraulics.specific_root_area` are refused, naming their replacements.
+  - **At BCI** (example 04 on its clay soil, with the keys calibrated on the previous model): the
+    predawn leaf ψ of the largest patch's tallest tree / of the canopy, 15–26 April 2016, at the end
+    of the El Niño dry season, was −1.15 / −0.98 MPa. It is now −0.52 / −0.49 MPa on the 2 m column and
+    −0.41 / −0.38 MPa on a 6 m column, which example 04 now uses (`n_layer` 16, `grid_growth` 4,
+    `deep_depth` 6.72). The wet-season level is −0.27 MPa, the gravity head. 16 or 20 layers give the
+    same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm: the moist subsoil no longer
+    limits the tree. Dry-season ET is 2.71 mm d⁻¹ (2.72 before). The example's calibration is not
+    redone on this model yet.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and

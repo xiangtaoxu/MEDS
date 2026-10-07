@@ -155,8 +155,7 @@ contains
       associate (sc => cfg%soil_column)
          call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
                                      sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, cfg%hydraulics%root_beta,                     &
-                                     cfg%hydraulics%root_depth, sc%psi_fc, ctx%col_config%soil)
+                                     sc%curve_par_n, sc%psi_fc, ctx%col_config%soil)
          call build_soil_therm_params(sc%n_layer, sc%solid_conductivity, sc%dry_conductivity,      &
                                       sc%dry_heat_capacity, ctx%col_config%soil_thermal)
       end associate
@@ -175,7 +174,6 @@ contains
          ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_KPLANT
       end if
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
-      ctx%col_config%specific_root_area = cfg%hydraulics%specific_root_area
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on
       !----- Fast-loop biophysics run-config from the [soil]/[energy]/[snow]/[aerodynamics] blocks   !
