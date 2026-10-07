@@ -24,13 +24,16 @@ program test_c_api_demography
    use meds_kinds,            only : wp
    use meds_c_api_demography,  only : meds_config_load, meds_config_n_pft, meds_config_dt_years,   &
                                      meds_site_create, meds_site_init_bare, meds_site_free,       &
+                                     meds_site_init_census,                                       &
                                      meds_advance_slow, meds_site_n_patch, meds_site_n_cohort,    &
                                      meds_site_total_agb, meds_site_generation
    use meds_test_support, only : banner, check
    implicit none
 
    character(len=*), parameter :: CFG = 'examples/example_demography/example_config_main.toml'
-   integer(c_int) :: ch, sh, sh2, npft, npatch
+   !----- The root config names data/census_example.csv, a small pseudo census, as its census.  !
+   character(len=*), parameter :: CFG_CENSUS = 'meds_config_main.toml'
+   integer(c_int) :: ch, ch2, sh, sh2, npft, npatch
    real(c_double) :: dt_yr, agb0, agb1
    integer(c_long) :: gen0, gen1
    integer :: k
@@ -80,6 +83,17 @@ program test_c_api_demography
    call check(agb1 >= 0.0_wp, 'total_agb is readable after advancing')
 
    call meds_site_free(sh)
+
+   !=== 4. A site STARTS FROM A CENSUS: the file the config names is read and restructured. ==!
+   cpath = to_c(CFG_CENSUS)
+   ch2 = meds_config_load(cpath, int(len(CFG_CENSUS), c_int))
+   call check(ch2 > 0_c_int, 'the root config loads through the C-API')
+   sh2 = meds_site_create()
+   call check(meds_site_init_census(sh2, ch2) == 1_c_int, 'init_census reads the configured census')
+   call check(meds_site_n_patch(sh2) >= 1_c_int .and. meds_site_n_cohort(sh2) >= 1_c_int,           &
+              'the census stand has patches and cohorts')
+   call check(meds_site_total_agb(sh2) > 0.0_wp, 'the census stand carries biomass')
+   call meds_site_free(sh2)
    print '(a)', 'test_c_api_demography: ALL PASSED'
 
 contains

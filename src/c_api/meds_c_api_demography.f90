@@ -26,7 +26,7 @@ module meds_c_api_demography
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
-   use meds_init,                   only : init_bare_ground
+   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
@@ -42,7 +42,7 @@ module meds_c_api_demography
    !      procedure is unreachable from a test, and an untestable shim is how this file came to    !
    !      stop compiling without anyone noticing (see the header).  ------------------------------!
    public :: meds_config_load, meds_config_n_pft, meds_config_dt_years
-   public :: meds_site_create, meds_site_init_bare, meds_site_free
+   public :: meds_site_create, meds_site_init_bare, meds_site_init_census, meds_site_free
    public :: meds_advance_slow, meds_apply_rates
    public :: meds_site_generation, meds_site_n_patch, meds_site_n_cohort
    public :: meds_site_total_agb, meds_site_total_lai, meds_site_total_nplant
@@ -101,6 +101,20 @@ contains
       call init_bare_ground(g_site(sh), g_cfg(ch), int(n_patch, ik))
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_site_init_bare
+
+   !----- Start the site from the census file named by the config's [init].census_file, and let  !
+   !      the slow step's own operators restructure it, as meds_main does: a census arrives with a  !
+   !      cohort per measured size and a patch per plot cell. Returns 1 when the file was read, 0   !
+   !      when it could not be (the site is then left unbuilt).  -------------------------------- !
+   function meds_site_init_census(sh, ch) result(ok) bind(c, name="meds_site_init_census")
+      integer(c_int), value, intent(in) :: sh, ch
+      integer(c_int) :: ok
+      logical :: found
+      call init_from_census(g_site(sh), g_cfg(ch), trim(g_cfg(ch)%init_census_file), found)
+      if (found) call restructure_census_stand(g_site(sh), g_cfg(ch))
+      ok = merge(1_c_int, 0_c_int, found)
+      g_generation(sh) = g_generation(sh) + 1_c_long
+   end function meds_site_init_census
 
    !----- Advance one slow step (the driver's CARBON orchestration + cadence). Bumps the        !
    !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1: !
