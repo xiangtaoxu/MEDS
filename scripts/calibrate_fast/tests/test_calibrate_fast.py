@@ -9,6 +9,7 @@ import datetime as dt
 import json
 import os
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -30,6 +31,7 @@ import targets                 # noqa: E402
 import tower                   # noqa: E402
 import trials                  # noqa: E402
 import uncertainty             # noqa: E402
+import workers                 # noqa: E402
 from calibration import Calibration, seconds          # noqa: E402
 from meds.config import RunConfig, load_toml          # noqa: E402
 from parameters import (DEFAULT_PRIOR_SD_U, GRADIENT_STEP_U, Param, interval, load, select,   # noqa: E402
@@ -129,6 +131,56 @@ def test_build_trial_sets_keys(tmp_path):
     assert trials.build_trial(base, ps, [5.0, 0.11], w, "/x/state.nc", tmp_path) != tdir
     assert base.get("pft.stomatal_g1", file="pft") == [3.0, 4.0]      # the base is not changed
     assert trials.timeout_for(10, 30.0) == 300.0 and trials.timeout_for(1, 30.0) == 300.0   # at least ten days' worth
+
+
+def test_a_run_takes_threads_by_its_length():
+    assert [trials.threads_for(d, 8) for d in (1, 10, 15, 16, 120, 180)] == [1, 1, 1, 2, 8, 8]
+    assert trials.threads_for(120, 4) == 4 and trials.threads_for(120, 1) == 1
+
+
+def test_the_thread_count_does_not_rename_a_trial(tmp_path):
+    base = RunConfig({"run": {"n_threads": 8}, "init": {}, "output": {"fast": {}}}, {"pft": {"stomatal_g1": [3.0]}})
+    g1 = Param("g1", "pft", "pft.stomatal_g1", 1.5, 6.0, "log", pft=1)
+    w = trials.Window("w", dt.datetime(2016, 1, 1), 120, "cal")
+    one = trials.build_trial(base, [g1], [4.0], w, "/x/s.nc", tmp_path, threads=1)
+    eight = trials.build_trial(base, [g1], [4.0], w, "/x/s.nc", tmp_path, threads=8)
+    assert one == eight and load_toml(eight / "main.toml")["run"]["n_threads"] == 8
+
+
+def timed_tasks(root, n, threads):
+    """n tasks of `threads` threads that each write when they started and ended."""
+    code = "import sys, time; t0 = time.time(); time.sleep(0.3); open(sys.argv[1], 'w').write(f'{t0} {time.time()}')"
+    return [workers.Task(f"t{i}", [sys.executable, "-c", code, str(root / f"t{i}.txt")], str(root),
+                         str(root / f"t{i}.log"), 30.0, threads) for i in range(n)]
+
+
+def overlap(root, n):
+    spans = sorted(tuple(map(float, (root / f"t{i}.txt").read_text().split())) for i in range(n))
+    return any(b[0] < a[1] for a, b in zip(spans, spans[1:]))
+
+
+def test_local_workers_give_a_run_as_many_cores_as_threads(tmp_path):
+    w = workers.LocalWorkers(4)
+    assert all(s == "ok" for s, _ in w.run(timed_tasks(tmp_path, 3, 3)).values())
+    assert not overlap(tmp_path, 3)                  # three 3-thread runs on 4 cores: one at a time
+    assert all(s == "ok" for s, _ in w.run(timed_tasks(tmp_path, 4, 1)).values())
+    assert overlap(tmp_path, 4)                      # four 1-thread runs: together
+    w.close()
+
+
+def test_a_queue_worker_counts_threads_against_its_slots(tmp_path):
+    q = workers.QueueWorkers(tmp_path / "queue", poll=0.05)
+    node = threading.Thread(target=workers.queue_worker, args=(tmp_path / "queue", 4, 0.05))
+    node.start()
+    try:
+        three = q.run(timed_tasks(tmp_path, 3, 3))
+        assert all(s == "ok" for s, _ in three.values()) and not overlap(tmp_path, 3)
+        four = q.run(timed_tasks(tmp_path, 4, 1))
+        assert all(s == "ok" for s, _ in four.values()) and overlap(tmp_path, 4)
+    finally:
+        q.close()
+        node.join(timeout=30)
+    assert not node.is_alive()
 
 
 def test_command_runs_the_python_api_or_an_executable():
