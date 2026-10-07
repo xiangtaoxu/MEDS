@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """One figure: the three census-trained laws (top) and what the engine does with them (bottom).
 
-    python plot_demography.py      # reads census_stand.csv and output/stand_*.csv, writes demography.png
+    python plot_demography.py      # reads census_stand.csv and output/{census,bare}.nc, writes demography.png
 """
 import os
 import sys
@@ -12,6 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt                                  # noqa: E402
 import numpy as np                                               # noqa: E402
 import pandas as pd                                              # noqa: E402
+from netCDF4 import Dataset                                      # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -26,27 +27,48 @@ plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor":
                      "grid.linewidth": 0.6, "legend.frameon": False})
 
 laws = CensusLaws(os.path.join(HERE, "example_config_main.toml"))
+SIZE_CLASSES = [1, 2, 5, 10, 20, 50, 100, 1000]   # dbh class edges [cm], as in census_stand.csv
+
+
+def stand(path):
+    """Stems [1/ha] and basal area [m2/ha] by year, PFT and size class from a run's netCDF."""
+    rows = []
+    with Dataset(path) as d:
+        d.set_auto_mask(False)                     # plain arrays: an empty selection sums to 0
+        for k, year in enumerate(d["year"][:]):
+            n = int(d["n_cohort"][k])
+            dbh, pft = d["dbh"][k, :n], d["pft"][k, :n]
+            stems = d["nplant"][k, :n] * d["patch_area"][k, d["owner_patch"][k, :n] - 1] * 1e4
+            size = np.digitize(dbh, SIZE_CLASSES[1:-1])
+            for p in (1, 2, 3):
+                for c in range(len(SIZE_CLASSES) - 1):
+                    m = (pft == p) & (size == c)
+                    rows.append((int(year), p, SIZE_CLASSES[c], stems[m].sum(),
+                                 (stems[m] * np.pi / 4 * (dbh[m] / 100) ** 2).sum()))
+    return pd.DataFrame(rows, columns=["year", "pft", "dbh_class", "stems", "basal_area"])
+
+
 cen = pd.read_csv(os.path.join(HERE, "census_stand.csv"))
-mc = pd.read_csv(os.path.join(HERE, "output", "stand_census.csv"))
-mb = pd.read_csv(os.path.join(HERE, "output", "stand_bare.csv"))
+mc = stand(os.path.join(HERE, "output", "census.nc"))
+mb = stand(os.path.join(HERE, "output", "bare.nc"))
 
 fig, ax = plt.subplots(2, 3, figsize=(11, 6.6), layout="constrained")
 dbh = np.geomspace(1, 120, 200)
 
-# (a) growth: open (BAL 0) and shaded (BAL 40 m2/ha)
+# (a) growth: open (no leaves above) and shaded (overtopping LAI 4)
 a = ax[0, 0]
 for p in (1, 2, 3):
-    for bal, ls in ((0.0, "-"), (40.0, "--")):
-        a.plot(dbh, laws.growth(p - 1, dbh, bal), ls, color=PFT_COLOR[p], lw=1.6,
-               label=PFT_NAME[p] if bal == 0 else None)
+    for lai, ls in ((0.0, "-"), (4.0, "--")):
+        a.plot(dbh, laws.growth(p - 1, dbh, lai), ls, color=PFT_COLOR[p], lw=1.6,
+               label=PFT_NAME[p] if lai == 0 else None)
 a.set(xscale="log", xlabel="dbh [cm]", ylabel="diameter growth [cm/yr]",
-      title="a  Growth (solid: open, dashed: BAL 40 m²/ha)")
+      title="a  Growth (solid: open, dashed: LAI 4 above)")
 a.legend(loc="upper left")
 
 # (b) mortality against growth, over the growth each PFT's law gives (Camac et al. 2018)
 a = ax[0, 1]
 for p in (1, 2, 3):
-    reach = laws.growth(p - 1, dbh[:, None], np.array([0.0, 60.0])[None, :])
+    reach = laws.growth(p - 1, dbh[:, None], np.array([0.0, 6.0])[None, :])
     g = np.linspace(reach.min(), reach.max(), 100)
     a.plot(g, 100 * laws.mortality(p - 1, g), color=PFT_COLOR[p], lw=1.6)
     a.annotate(f"PFT {p}", (g[0], 100 * laws.mortality(p - 1, g[:1])[0]), xytext=(4, 2),
@@ -54,14 +76,14 @@ for p in (1, 2, 3):
 a.set(xlabel="predicted diameter growth [cm/yr]", ylabel="death rate [%/yr]",
       title="b  Mortality (Camac et al. 2018)", ylim=(0, None))
 
-# (c) recruitment against the patch's basal area, each PFT holding a third of it
+# (c) recruitment against the patch's leaf area index, each PFT holding a third of it
 a = ax[0, 2]
-ba = np.linspace(0, 80, 161)
+lai = np.linspace(0, 8, 161)
 for p in (1, 2, 3):
-    a.plot(ba, 1e4 * laws.recruitment(p - 1, ba, ba / 3), color=PFT_COLOR[p], lw=1.6)
-    a.annotate(f"PFT {p}", (ba[-1], 1e4 * laws.recruitment(p - 1, ba[-1:], ba[-1:] / 3)[0]),
+    a.plot(lai, 1e4 * laws.recruitment(p - 1, lai, lai / 3), color=PFT_COLOR[p], lw=1.6)
+    a.annotate(f"PFT {p}", (lai[-1], 1e4 * laws.recruitment(p - 1, lai[-1:], lai[-1:] / 3)[0]),
                xytext=(-4, 6), textcoords="offset points", ha="right", color=INK, fontsize=8)
-a.set(xlabel="patch basal area [m²/ha]", ylabel="recruits ≥ 1 cm [1/ha/yr]",
+a.set(xlabel="patch LAI [m²/m²], a third each PFT's", ylabel="recruits ≥ 1 cm [1/ha/yr]",
       title="c  Recruitment", ylim=(0, None))
 
 
@@ -77,7 +99,7 @@ for p in (1, 2, 3):
     a.plot(c.index, c[p], "o", ms=5, mfc=PFT_COLOR[p], mec="white", mew=1.0)
     a.annotate(f"PFT {p}", (m.index[-1], m[p].iloc[-1]), xytext=(-4, 5), textcoords="offset points",
                ha="right", color=INK, fontsize=8)
-a.set(xlabel="year", ylabel="basal area [m²/ha]", ylim=(0, None),
+a.set(xlabel="year", ylabel="basal area [m²/ha]", ylim=(0, 1.15 * max(m.max().max(), c.max().max())),
       title="d  From the 1985 census (dots: censuses)")
 
 # (e) size distribution in 2010, model against census
@@ -105,7 +127,7 @@ for p in (1, 2, 3):
 level = c.mean().mean()
 a.axhline(level, color=MUTED, lw=1.0, ls=":")
 a.annotate("census, each PFT", (0, level), xytext=(2, 4), textcoords="offset points", color=MUTED, fontsize=8)
-a.set(xlabel="years from bare ground", ylabel="basal area [m²/ha]", ylim=(0, None),
+a.set(xlabel="years from bare ground", ylabel="basal area [m²/ha]", ylim=(0, 1.15 * m.max().max()),
       title="f  From near-bare ground")
 
 out = os.path.join(HERE, "demography.png")

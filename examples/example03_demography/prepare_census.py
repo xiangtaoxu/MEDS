@@ -15,9 +15,11 @@ per tree; dbh in mm). Writes, in data/ (not committed):
 and, committed, census_stand.csv: stems and basal area by PFT and size class in every census.
 
 A tree is described by what it is at the start of an interval: its dbh, its PFT (from its species'
-wood density) and the basal area of LARGER trees within 20 m of it (BAL). A quadrat's recruits are
-described by the basal area within 20 m of the quadrat's centre, all of it and the PFT's own. Trees
-and quadrats whose 20 m circle crosses the plot's edge are not described (they still count as
+wood density) and its overtopping LAI, the leaf area of TALLER trees within 20 m of it per m2 of
+ground -- the competition index the MEDS engine computes for every cohort. Height and leaf area are
+MEDS's pan-tropical allometry, read from the example's PFT config. A quadrat's recruits are described
+by the leaf area index within 20 m of the quadrat's centre, all of it and the PFT's own. Trees and
+quadrats whose 20 m circle crosses the plot's edge are not described (they still count as
 neighbours). A MEDS tree is one stem, so a tree alive with no main stem to measure has died, and is a
 recruit when a stem is measured again. Growth keeps every increment measured at an unchanged height
 and below 75 mm/yr, negative ones included; fit_vital_rates.py decides how to treat those. The 1982
@@ -25,6 +27,11 @@ census is not used: it rounded small stems to 5 mm.
 """
 import os
 import sys
+
+try:
+    import tomllib                      # py3.11+
+except ModuleNotFoundError:             # pragma: no cover -- py3.10 and older
+    import tomli as tomllib
 
 import numpy as np
 import pandas as pd
@@ -41,9 +48,11 @@ QUAD = 20.0                     # quadrat side [m]: recruits are counted per qua
 BLOCK = 100.0                   # cross-validation block side [m]
 RHO_BREAKS = (0.42, 0.58)       # [g/cm3] terciles of 1985 basal area: PFT 1 below, 2 between, 3 above
 SIZE_CLASSES = [1, 2, 5, 10, 20, 50, 100, 1000]   # dbh class edges [cm] for census_stand.csv
-CIRCLE_HA = np.pi * RADIUS ** 2 / 1e4
 
 wood_density = pd.read_csv(os.path.join(HERE, "bci_wood_density.csv")).set_index("sp").rho
+with open(os.path.join(HERE, "example_config_pft.toml"), "rb") as fh:
+    PFT_CONFIG = tomllib.load(fh)
+ALLOM, HGT_MAX = PFT_CONFIG["allometry"], np.array(PFT_CONFIG["pft"]["hgt_max"])
 
 
 def load(year):
@@ -66,23 +75,35 @@ def basal_area_m2(dbh_cm):
     return np.pi / 4 * (dbh_cm / 100) ** 2
 
 
-def basal_area_of_larger(c):
-    """BAL [m2/ha] of each live tree: the basal area of strictly larger trees within RADIUS of it;
-    NaN where the circle crosses the plot's edge."""
+def height_m(dbh_cm, pft):
+    """MEDS's dbh_to_height: exp(b1Ht + b2Ht ln D), capped at the PFT's hgt_max."""
+    return np.minimum(np.exp(ALLOM["b1Ht"] + ALLOM["b2Ht"] * np.log(dbh_cm)), HGT_MAX[pft - 1])
+
+
+def leaf_area_m2(dbh_cm, pft):
+    """MEDS's dbh_to_leaf_area: lai_b1 (D^2 h)^lai_b2 [m2 per tree]."""
+    return ALLOM["lai_b1"] * (dbh_cm ** 2 * height_m(dbh_cm, pft)) ** ALLOM["lai_b2"]
+
+
+def overtopping_lai(c):
+    """Each live tree's overtopping LAI [m2/m2]: the leaf area of strictly taller trees within RADIUS
+    of it, per m2 of the circle -- trees of equal height share a layer, as in the engine. NaN where
+    the circle crosses the plot's edge."""
     a = c[c.live]
-    d, ba = a.dbh.to_numpy(), basal_area_m2(a.dbh.to_numpy())
+    pft = a.pft.to_numpy()
+    h, la = height_m(a.dbh.to_numpy(), pft), leaf_area_m2(a.dbh.to_numpy(), pft)
     i, j = cKDTree(a[["gx", "gy"]].to_numpy()).query_pairs(RADIUS, output_type="ndarray").T
-    bal = (np.bincount(i, weights=np.where(d[j] > d[i], ba[j], 0.0), minlength=len(a))
-           + np.bincount(j, weights=np.where(d[i] > d[j], ba[i], 0.0), minlength=len(a)))
+    over = (np.bincount(i, weights=np.where(h[j] > h[i], la[j], 0.0), minlength=len(a))
+            + np.bincount(j, weights=np.where(h[i] > h[j], la[i], 0.0), minlength=len(a)))
     out = pd.Series(np.nan, index=c.index)
-    out[a.index] = np.where(inside(a.gx, a.gy), bal / CIRCLE_HA, np.nan)
+    out[a.index] = np.where(inside(a.gx, a.gy), over / (np.pi * RADIUS ** 2), np.nan)
     return out
 
 
 os.makedirs(OUT, exist_ok=True)
 census = {y: load(y) for y in YEARS}
 for y in YEARS:
-    census[y]["bal"] = basal_area_of_larger(census[y])
+    census[y]["lai_over"] = overtopping_lai(census[y])
 
 # the quadrats whose 20 m circle lies inside the plot, and their centres
 qx, qy = np.meshgrid(np.arange(PLOT_X / QUAD), np.arange(PLOT_Y / QUAD), indexing="ij")
@@ -97,8 +118,8 @@ for y0, y1 in zip(YEARS[:-1], YEARS[1:]):
     c0, c1 = census[y0], census[y1]
     dt = (c1.date - c0.date) / 365.25
     start = pd.DataFrame({"interval": y0, "block": c0.block, "pft": c0.pft, "dbh": c0.dbh,
-                          "bal": c0.bal, "dt": dt})
-    focal = c0.live & c0.bal.notna()
+                          "lai_over": c0.lai_over, "dt": dt})
+    focal = c0.live & c0.lai_over.notna()
 
     inc_mm = (c1.dbh - c0.dbh) * 10
     ok = (focal & (c1.status == "A") & c1.dbh.notna() & (np.abs(c1.hom - c0.hom) <= 0.05 * c0.hom)
@@ -108,19 +129,20 @@ for y0, y1 in zip(YEARS[:-1], YEARS[1:]):
     ok = focal & c1.status.isin(["A", "D"])                   # trees not found are left out
     survival.append(start[ok].assign(dead=((c1.status == "D") | c1.dbh.isna())[ok].astype(int)))
 
-    # recruits per quadrat and PFT, against the basal area within 20 m of the quadrat's centre
+    # recruits per quadrat and PFT, against the leaf area index within 20 m of the quadrat's centre
     live = c0[c0.live]
-    ba, pft = basal_area_m2(live.dbh.to_numpy()), live.pft.to_numpy()
+    pft = live.pft.to_numpy()
+    la = leaf_area_m2(live.dbh.to_numpy(), pft)
     near = cKDTree(live[["gx", "gy"]].to_numpy()).query_ball_point(centres, RADIUS)
-    ba_pft = np.array([[ba[n][pft[n] == p].sum() for p in (1, 2, 3)] for n in near]) / CIRCLE_HA
+    lai_pft = np.array([[la[n][pft[n] == p].sum() for p in (1, 2, 3)] for n in near]) / (np.pi * RADIUS ** 2)
     q_dt = ((c1.date[c1.status == "A"].groupby(c1.quad).mean()
              - c0.date[c0.status == "A"].groupby(c0.quad).mean()) / 365.25).reindex(quads).values
     new = (((c0.status == "P") | ((c0.status == "A") & c0.dbh.isna()))
            & (c1.status == "A") & c1.dbh.notna())
     n_new = new.groupby([c1.quad, c1.pft]).sum().unstack(fill_value=0).reindex(quads, fill_value=0)
     for p in (1, 2, 3):
-        r = pd.DataFrame({"interval": y0, "block": quad_block, "pft": p, "ba_tot": ba_pft.sum(1),
-                          "ba_pft": ba_pft[:, p - 1],
+        r = pd.DataFrame({"interval": y0, "block": quad_block, "pft": p, "lai": lai_pft.sum(1),
+                          "lai_pft": lai_pft[:, p - 1],
                           "n_new": n_new[p].values if p in n_new else np.zeros(len(quads), int),
                           "dt": q_dt})
         recruits.append(r.assign(exposure=QUAD * QUAD * r.dt, rate=r.n_new / (QUAD * QUAD) / r.dt))

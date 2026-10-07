@@ -24,6 +24,12 @@ before and after.
 
 ### Changed
 
+- **`meds_apply_rates` restructures the stand with the carbon path's own `restructure_stand`**
+  instead of a copy of it kept to reproduce the empirical golden (removed with the empirical laws;
+  see below). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
+  does, and fuses, splits, disturbs and recruits through the same routine as `meds_advance_slow`;
+  `meds_site_init_census` computes the overtopping LAI of the stand it builds.
+
 - **The leaf example is `examples/example01_leaf_gas_exchange/`**, the first of the examples
   renumbered so that each exercises one module of MEDS (#368). Its plot script moved in from
   `post_proc/`, and the script and README were cut to the experiment and its current results.
@@ -112,17 +118,22 @@ before and after.
 - **The demography example is `examples/example03_demography/`, and its vital rates are fitted
   to the Barro Colorado Island 50-ha plot censuses** instead of written by hand.
   - **The laws**, per PFT, with coefficients in `vital_rates.json`: dbh growth rises with size on a
-    logistic curve in ln D and falls with the basal area of larger trees within 20 m
-    (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·BAL), Gamma quasi-likelihood, increments
+    logistic curve in ln D and falls with the overtopping LAI, which the driver reads from the engine
+    and the census gets from the same allometry (the leaf area of taller trees within 20 m)
+    (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·L), Gamma quasi-likelihood, increments
     ≤ 0 set to a tenth of the smallest positive one); mortality is Camac et al. (2018)'s
     γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
-    Poisson GLM in the basal area within 20 m and the PFT's share of it. The three PFTs are
+    Poisson GLM in the patch's leaf area index and the PFT's share of it. The three PFTs are
     wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
-    recruits enter at 1 cm (`min_cohort_height` 3.13 m, was 2.0); `dbh_critical` is 300 cm (was
-    100); the treefall rate is taken off the census mortality of trees tall enough to die in a gap.
-  - **The runs.** From the 1985 census the stand tracks the plot through 2010 (basal area 30.9
-    against 30.5 m² ha⁻¹, stems 4071 against 4145 ha⁻¹) and settles near 33 m² ha⁻¹ as PFT 1 gives
-    way to PFTs 2 and 3; from near-bare ground it reaches the census's basal area in about 200 years.
+    recruits enter at 1 cm (`min_cohort_height` 3.13 m, was 2.0); trees stop growing taller at
+    42 m (`hgt_max`, was 46) and keep thickening to 300 cm (`dbh_critical`, was 100, which had
+    capped them at 42 m); the treefall rate is taken off the census mortality of trees tall enough
+    to die in a gap.
+  - **The runs**, both written as netCDF. From the 1985 census the stand tracks the plot through
+    2010 (basal area 31.5 against 30.5 m² ha⁻¹, stems 4038 against 4145 ha⁻¹) and gains 0.03
+    m² ha⁻¹ yr⁻¹ to 2100; from near-bare ground it goes through a succession -- the light-wooded PFT
+    rises fastest, peaks near year 100 and gives way -- and reaches the census's basal area within
+    about 90 years.
     The canopy-profile and 3-D landscape animations are regenerated from the 300-year
     near-bare-ground run, and `demography.png` is the example's one figure.
   - **Removed:** the hand-written laws (`empirical_laws.py`, `empirical_spinup.py`), their goldens

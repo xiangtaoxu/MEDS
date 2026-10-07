@@ -7,7 +7,7 @@
 [pft]
 wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] basal-area means of the BCI wood-density classes
 dbh_critical       = [300.0, 300.0, 300.0] # [cm] maximum diameter: above BCI's largest tree, so no cap
-hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
+hgt_max            = [42.0, 42.0, 42.0]     # [m] height cap: the BCI canopy top (dbh 99 cm on the allometry)
 # The four reproduction keys are required by the loader and unused here: recruitment is a census law.
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
