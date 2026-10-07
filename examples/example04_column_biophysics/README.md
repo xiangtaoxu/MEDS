@@ -12,7 +12,7 @@ seasonal tropical forest), over the tower's five years, 2012–2017. The example
 ## Running it
 
 ```bash
-cd examples/example_flux_tower_bci
+cd examples/example04_column_biophysics
 python run_example.py --forcing-only            # the data, the forcing and its figures
 python run_example.py                           # every step, with the shipped calibration
 python run_example.py --calibrate --workers 40  # ... and redo the calibration first

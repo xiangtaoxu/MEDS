@@ -1,6 +1,6 @@
 {
  "variant": null,
- "config": "/home/xx286/projects/MEDS/.claude/worktrees/bci-on/examples/example_flux_tower_bci/calibration.toml",
+ "config": "/home/xx286/projects/MEDS/.claude/worktrees/bci-on/examples/example04_column_biophysics/calibration.toml",
  "windows": {
   "cal1_2016": [
    "2016-01-01 00:00:00",

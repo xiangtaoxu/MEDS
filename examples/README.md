@@ -23,7 +23,7 @@ README that shows how to reproduce it (run from the repository root):
   leaf and canopy-air temperatures that the meteorological forcing never contained. This is the one
   example that drives the **full coupled model from Python** (`meds.model.Run`), with the time loop
   on the Python side — so it also plots a spin-up trajectory sampled from the running model.
-- **[`example_flux_tower_bci/`](example_flux_tower_bci/)** — forcing built from a flux tower's own
+- **[`example04_column_biophysics/`](example04_column_biophysics/)** — forcing built from a flux tower's own
   meteorology at Barro Colorado Island, Panama: a site TOML declares the data, the tool checks it
   against the sun and the data, fills gaps with a flag on every value, and states the tower's 41 m
   heights so MEDS moves each sample to every patch's canopy-air top. Also scores its longwave gap

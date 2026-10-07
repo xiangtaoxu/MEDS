@@ -552,7 +552,7 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
 #   potential temperature and humidity are conserved, and the wind follows the patch's own log
 #   profile. Values below are ERA5-Land's; a flux tower gives its sensor heights above the ground,
-#   height_above = "ground" and wind_exposure = "local" (examples/example_flux_tower_bci).
+#   height_above = "ground" and wind_exposure = "local" (examples/example04_column_biophysics).
 # tq_height             = 2.0            # [m] height of air temperature and humidity
 # wind_height           = 10.0           # [m] height of the wind
 # height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement

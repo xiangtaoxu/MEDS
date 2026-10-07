@@ -121,7 +121,7 @@ The full commands are in the header of `make_forcing_file.py`.
 **From flux-tower data**, `scripts/prepare_flux_tower/make_tower_forcing.py` builds the same kind of
 file from AmeriFlux BASE, FLUXNET or a plain CSV, described by a site TOML that declares the source
 clock, stamp convention, heights and units; the tool checks each declaration against the sun and the
-data. `examples/example_flux_tower_bci/` is the worked example.
+data. `examples/example04_column_biophysics/` is the worked example.
 
 
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the

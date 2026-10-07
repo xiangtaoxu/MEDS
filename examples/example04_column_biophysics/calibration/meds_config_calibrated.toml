@@ -9,7 +9,7 @@
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
 #   init.pft_config                "calibration/pft_parameters_calibrated.toml"
 #   output.prefix                  "cal"
-# MEDS example_flux_tower_bci: the five tower years, 2012-08-01 to 2017-08-01 UTC, started from the
+# MEDS example04_column_biophysics: the five tower years, 2012-08-01 to 2017-08-01 UTC, started from the
 # 2010 census of the BCI 50-ha plot, with hourly output to compare against the tower's own fluxes.
 # There is no spin-up: the stand is the census (bci_census.toml -> scripts/prepare_census), the soil
 # starts at the site's temperature, and soil carbon starts in steady state with the stand's litter.

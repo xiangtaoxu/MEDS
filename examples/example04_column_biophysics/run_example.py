@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""MEDS example_flux_tower_bci -- forcing from a flux tower, end to end, at Barro Colorado Island.
+"""MEDS example04_column_biophysics -- forcing from a flux tower, end to end, at Barro Colorado Island.
 
 Steps (each skipped when its product already exists, unless --force):
   1. fetch the tower data into data/ (Zenodo 6456527, CC0; checked by md5)
