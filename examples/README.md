@@ -15,9 +15,9 @@ README that shows how to reproduce it (run from the repository root):
   and a drought-deciduous dry forest on water and day length (Palo Verde: leaf litter, MODIS LAI).
   They differ only in parameter values; evergreen is a leaf-cover floor.
 - **[`example03_demography/`](example03_demography/)** — the demography module on its own, driven
-  from Python: random forests learn growth, mortality and recruitment from five intervals of the
-  Barro Colorado Island 50-ha plot census, and the cohort-and-patch engine runs them from the 1985
-  census (it tracks the next 25 years) and from near-bare ground.
+  from Python: growth, mortality (Camac et al. 2018) and recruitment are fitted to five intervals of
+  the Barro Colorado Island 50-ha plot census, and the cohort-and-patch engine runs them from the
+  1985 census (it tracks the next 25 years) and from near-bare ground.
 - **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
   a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
   tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing

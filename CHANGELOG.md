@@ -109,26 +109,28 @@ before and after.
   refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
-- **The demography example is `examples/example03_demography/`, and its vital rates are learned
-  from the Barro Colorado Island 50-ha plot censuses** instead of written by hand.
-  - **The laws.** Random forests, trained on the censuses of 1985–2010 and committed as tables in
-    `vital_rates/`, give each cohort its dbh growth (from dbh, the basal area of larger trees in its
-    patch and PFT) and its mortality (from dbh, that predicted growth and PFT), and each PFT and
-    patch its recruits at 1 cm (from the patch's basal area and the PFT's share). The three PFTs are
+- **The demography example is `examples/example03_demography/`, and its vital rates are fitted
+  to the Barro Colorado Island 50-ha plot censuses** instead of written by hand.
+  - **The laws**, per PFT, with coefficients in `vital_rates.json`: dbh growth rises with size on a
+    logistic curve in ln D and falls with the basal area of larger trees within 20 m
+    (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·BAL), Gamma quasi-likelihood, increments
+    ≤ 0 set to a tenth of the smallest positive one); mortality is Camac et al. (2018)'s
+    γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
+    Poisson GLM in the basal area within 20 m and the PFT's share of it. The three PFTs are
     wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
     recruits enter at 1 cm (`min_cohort_height` 3.13 m, was 2.0); `dbh_critical` is 300 cm (was
     100); the treefall rate is taken off the census mortality of trees tall enough to die in a gap.
-  - **The runs.** From the 1985 census the stand tracks the plot through 2010 (basal area 29.7
-    against 30.5 m² ha⁻¹, stems 4087 against 4145 ha⁻¹) and settles near 33 m² ha⁻¹ as PFT 2
-    replaces PFT 1; from near-bare ground it reaches the census's basal area in about 250 years.
+  - **The runs.** From the 1985 census the stand tracks the plot through 2010 (basal area 30.9
+    against 30.5 m² ha⁻¹, stems 4071 against 4145 ha⁻¹) and settles near 33 m² ha⁻¹ as PFT 1 gives
+    way to PFTs 2 and 3; from near-bare ground it reaches the census's basal area in about 200 years.
     The canopy-profile and 3-D landscape animations are regenerated from the 300-year
     near-bare-ground run, and `demography.png` is the example's one figure.
   - **Removed:** the hand-written laws (`empirical_laws.py`, `empirical_spinup.py`), their goldens
     (`test/golden/empirical_spinup_golden.csv`, `empirical_spinup_final_cohorts.csv`), the carbon-path
     driver `run_carbon.py`, the committed run netCDF and the old figures. The pseudo census the
     tests and the root config start from moves to `data/census_example.csv`.
-  - **Dependency:** fitting the forests needs scikit-learn, listed in `environment.yml` as
-    optional; the runs read only the committed tables.
+  - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
+    the runs read only the committed coefficients.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and

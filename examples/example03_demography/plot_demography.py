@@ -15,7 +15,7 @@ import pandas as pd                                              # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from census_laws import RateTable                                # noqa: E402
+from census_laws import CensusLaws                               # noqa: E402
 
 PFT_COLOR = {1: "#008300", 2: "#2a78d6", 3: "#e87ba4"}   # the ED colours post_proc renders with
 PFT_NAME = {1: "PFT 1, light wood", 2: "PFT 2", 3: "PFT 3, dense wood"}
@@ -25,9 +25,7 @@ plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor":
                      "axes.spines.right": False, "axes.grid": True, "grid.color": GRID,
                      "grid.linewidth": 0.6, "legend.frameon": False})
 
-growth = RateTable("growth", "dbh", "bal", log_x=True)
-mortality = RateTable("mortality", "dbh", "growth", log_x=True)
-recruitment = RateTable("recruitment", "ba_tot", "ba_pft")
+laws = CensusLaws(os.path.join(HERE, "example_config_main.toml"))
 cen = pd.read_csv(os.path.join(HERE, "census_stand.csv"))
 mc = pd.read_csv(os.path.join(HERE, "output", "stand_census.csv"))
 mb = pd.read_csv(os.path.join(HERE, "output", "stand_bare.csv"))
@@ -39,28 +37,29 @@ dbh = np.geomspace(1, 120, 200)
 a = ax[0, 0]
 for p in (1, 2, 3):
     for bal, ls in ((0.0, "-"), (40.0, "--")):
-        a.plot(dbh, growth(p - 1, dbh, bal), ls, color=PFT_COLOR[p], lw=1.6,
+        a.plot(dbh, laws.growth(p - 1, dbh, bal), ls, color=PFT_COLOR[p], lw=1.6,
                label=PFT_NAME[p] if bal == 0 else None)
 a.set(xscale="log", xlabel="dbh [cm]", ylabel="diameter growth [cm/yr]",
       title="a  Growth (solid: open, dashed: BAL 40 m²/ha)")
 a.legend(loc="upper left")
 
-# (b) mortality at the growth each neighbourhood gives
+# (b) mortality against growth, over the growth each PFT's law gives (Camac et al. 2018)
 a = ax[0, 1]
 for p in (1, 2, 3):
-    for bal, ls in ((0.0, "-"), (40.0, "--")):
-        a.plot(dbh, 100 * mortality(p - 1, dbh, growth(p - 1, dbh, bal)), ls, color=PFT_COLOR[p], lw=1.6)
-    a.annotate(f"PFT {p}", (dbh[0], 100 * mortality(p - 1, dbh[:1], growth(p - 1, dbh[:1], 40.0))[0]),
-               xytext=(4, 0), textcoords="offset points", color=INK, va="center", fontsize=8)
-a.set(xscale="log", xlabel="dbh [cm]", ylabel="death rate [%/yr]",
-      title="b  Mortality at the predicted growth", ylim=(0, None))
+    reach = laws.growth(p - 1, dbh[:, None], np.array([0.0, 60.0])[None, :])
+    g = np.linspace(reach.min(), reach.max(), 100)
+    a.plot(g, 100 * laws.mortality(p - 1, g), color=PFT_COLOR[p], lw=1.6)
+    a.annotate(f"PFT {p}", (g[0], 100 * laws.mortality(p - 1, g[:1])[0]), xytext=(4, 2),
+               textcoords="offset points", color=INK, fontsize=8)
+a.set(xlabel="predicted diameter growth [cm/yr]", ylabel="death rate [%/yr]",
+      title="b  Mortality (Camac et al. 2018)", ylim=(0, None))
 
 # (c) recruitment against the patch's basal area, each PFT holding a third of it
 a = ax[0, 2]
 ba = np.linspace(0, 80, 161)
 for p in (1, 2, 3):
-    a.plot(ba, 1e4 * recruitment(p - 1, ba, ba / 3), color=PFT_COLOR[p], lw=1.6)
-    a.annotate(f"PFT {p}", (ba[-1], 1e4 * recruitment(p - 1, ba[-1:], ba[-1:] / 3)[0]),
+    a.plot(ba, 1e4 * laws.recruitment(p - 1, ba, ba / 3), color=PFT_COLOR[p], lw=1.6)
+    a.annotate(f"PFT {p}", (ba[-1], 1e4 * laws.recruitment(p - 1, ba[-1:], ba[-1:] / 3)[0]),
                xytext=(-4, 6), textcoords="offset points", ha="right", color=INK, fontsize=8)
 a.set(xlabel="patch basal area [m²/ha]", ylabel="recruits ≥ 1 cm [1/ha/yr]",
       title="c  Recruitment", ylim=(0, None))

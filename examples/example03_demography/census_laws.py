@@ -1,19 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """Census-trained vital rates for the demography engine.
 
-The three laws are tables that fit_vital_rates.py tabulated from random forests trained on the BCI
-censuses (vital_rates/*.csv). Each step this module describes every cohort the way the census
-described every tree -- its dbh, its PFT and the basal area of LARGER trees in its own patch (BAL) --
-looks its rates up, and returns the three arrays ``Site.apply_rates`` takes:
+fit_vital_rates.py fits three laws per PFT to the BCI censuses and writes their coefficients to
+vital_rates.json. Each step this module describes every cohort the way the census described every
+tree -- its dbh D, its PFT and the basal area of LARGER trees in its own patch (BAL) -- and returns
+the three arrays ``Site.apply_rates`` takes:
 
-  growth       [cm/yr]        per cohort, from dbh, BAL and PFT
-  mortality    [1/yr]         per cohort, from dbh, the growth above and PFT
-  recruitment  [plants/m2/yr] per PFT and patch, from the patch's basal area and the PFT's share of it
+  growth       [cm/yr]        [g_min + (g_max - g_min) / (1 + exp(-k (lnD - lnD0)))] exp(-b BAL)
+  mortality    [1/yr]         gamma + alpha exp(-beta growth)          (Camac et al. 2018)
+  recruitment  [plants/m2/yr] exp(c0 + c1 BA + c2 BA_pft), per PFT and patch
 
-The census counts every death, including the canopy trees that fall and open a gap. The engine kills
-those through treefall disturbance (canopy cohorts on the disturbed area die), so that rate is taken
-off the mortality of cohorts tall enough to die in a gap.
+Recruitment's basal areas beyond the census's range take the range's edge. The census counts every death, including the
+canopy trees that fall and open a gap. The engine kills those through treefall disturbance (canopy
+cohorts on the disturbed area die), so that rate is taken off the mortality of cohorts tall enough to
+die in a gap.
 """
+import json
 import os
 
 try:
@@ -22,38 +24,8 @@ except ModuleNotFoundError:             # pragma: no cover -- py3.10 and older
     import tomli as tomllib
 
 import numpy as np
-import pandas as pd
 
-TABLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vital_rates")
-
-
-def _locate(grid, x):
-    """Lower node and weight of x on a sorted grid. The weight is held to [0, 1], so beyond the grid
-    the edge value holds -- what the forest itself does outside its data."""
-    i = np.clip(np.searchsorted(grid, x, side="right") - 1, 0, len(grid) - 2)
-    w = np.clip((x - grid[i]) / (grid[i + 1] - grid[i]), 0.0, 1.0)
-    return i, w
-
-
-class RateTable:
-    """One rate on a regular (x, y) grid per PFT, read bilinearly; ``log_x`` grids dbh in log space."""
-
-    def __init__(self, name, x, y, log_x=False):
-        t = pd.read_csv(os.path.join(TABLES, f"{name}.csv")).sort_values(["pft", x, y])
-        self.x = np.unique(t[x].to_numpy())
-        self.y = np.unique(t[y].to_numpy())
-        self.log_x = log_x
-        if log_x:
-            self.x = np.log(self.x)
-        self.v = t[name].to_numpy().reshape(t.pft.nunique(), len(self.x), len(self.y))
-
-    def __call__(self, pft, x, y):
-        """The rate of 0-based ``pft`` at (x, y); the arguments broadcast against each other."""
-        ix, wx = _locate(self.x, np.log(x) if self.log_x else x)
-        iy, wy = _locate(self.y, y)
-        v = self.v
-        return ((1 - wx) * (1 - wy) * v[pft, ix, iy] + wx * (1 - wy) * v[pft, ix + 1, iy]
-                + (1 - wx) * wy * v[pft, ix, iy + 1] + wx * wy * v[pft, ix + 1, iy + 1])
+COEFFICIENTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vital_rates.json")
 
 
 def basal_area_of_larger(dbh, nplant, patch):
@@ -81,10 +53,30 @@ class CensusLaws:
             disturbance = tomllib.load(fh)["disturbance"]
         self.treefall_rate = disturbance["patch_disturbance_rate"]
         self.treefall_height = disturbance["disturbance_survive_height"]
-        self.growth = RateTable("growth", "dbh", "bal", log_x=True)
-        self.mortality = RateTable("mortality", "dbh", "growth", log_x=True)
-        self.recruitment = RateTable("recruitment", "ba_tot", "ba_pft")
-        self.n_pft = self.growth.v.shape[0]
+        with open(COEFFICIENTS) as fh:
+            laws = json.load(fh)
+        self.g = np.array([laws["growth"][k] for k in ("g_min", "g_max", "D0", "k", "b")]).T   # [pft, 5]
+        self.camac = np.array([laws["mortality"][k] for k in ("gamma", "alpha", "beta")]).T
+        self.c = np.array(laws["recruitment"]["coefficients"])                 # [pft, 3]
+        self.range = laws["range"]
+        self.n_pft = len(self.g)
+
+    def growth(self, pft, dbh, bal):
+        """[cm/yr] for 0-based ``pft``; the arguments broadcast against each other."""
+        t = self.g[pft]
+        size = 1.0 / (1.0 + np.exp(-t[..., 3] * (np.log(dbh) - np.log(t[..., 2]))))
+        return (t[..., 0] + (t[..., 1] - t[..., 0]) * size) * np.exp(-t[..., 4] * bal)
+
+    def mortality(self, pft, growth):
+        """[1/yr] at the given growth [cm/yr]."""
+        t = self.camac[pft]
+        return t[..., 0] + t[..., 1] * np.exp(-t[..., 2] * growth)
+
+    def recruitment(self, pft, ba, ba_pft):
+        """[plants/m2/yr] in a patch of basal area ``ba`` [m2/ha], ``ba_pft`` of it the PFT's own."""
+        ba, ba_pft = np.clip(ba, *self.range["ba"]), np.clip(ba_pft, *self.range["ba"])
+        c = self.c[pft]
+        return np.exp(c[..., 0] + c[..., 1] * ba + c[..., 2] * ba_pft)
 
     def rates(self, state, n_patch):
         """(growth[n], mortality[n], recruitment[n_pft, n_patch]) for the stand in ``state``."""
@@ -99,7 +91,7 @@ class CensusLaws:
             return np.zeros(0), np.zeros(0), recruitment
 
         growth = self.growth(pft, dbh, basal_area_of_larger(dbh, nplant, patch))
-        mortality = self.mortality(pft, dbh, growth)
+        mortality = self.mortality(pft, growth)
         tall = state["height"] >= self.treefall_height
         mortality[tall] = np.maximum(mortality[tall] - self.treefall_rate, 0.0)
         return growth, mortality, recruitment

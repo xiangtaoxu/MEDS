@@ -1,44 +1,116 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Fit the three vital-rate forests to the census tables and tabulate them for the MEDS driver.
+"""Fit the three vital-rate laws to the census tables; writes vital_rates.json for the MEDS driver.
 
-    python fit_vital_rates.py          # reads data/ (prepare_census.py), writes vital_rates/
+    python fit_vital_rates.py          # reads data/ (prepare_census.py); a few minutes
 
-  growth       dbh growth [cm/yr]           from dbh, BAL, PFT
-  mortality    death rate [1/yr]            from dbh, PREDICTED growth, PFT
-  recruitment  new stems >= 1 cm [1/m2/yr]  from the quadrat's basal area, the PFT's share of it, PFT
+Each law is fitted for each PFT, and each predicts a MEAN rate -- what a cohort carries:
 
-Mortality learns from out-of-fold predicted growth, not measured growth: a MEDS cohort carries the
-mean growth of its trees, so the law has to say how fast trees die that are EXPECTED to grow this
-fast; this is also how the neighbourhood reaches mortality. Skill is cross-validated on 1-ha blocks,
-so that neighbouring trees never sit on both sides of a split. Each forest is then evaluated on a
-regular grid and written as a table; runs read the tables, not the forests. Needs scikit-learn;
-about two minutes on 40 cores.
+  growth       [cm/yr]    g = [g_min + (g_max - g_min) / (1 + exp(-k (lnD - lnD0)))] exp(-b BAL)
+  mortality    [1/yr]     m = gamma + alpha exp(-beta g)                       (Camac et al. 2018)
+  recruitment  [1/m2/yr]  ln R = c0 + c1 BA + c2 BA_pft                         (Poisson GLM)
+
+D is dbh [cm]; BAL the basal area of larger trees within 20 m [m2/ha]; BA and BA_pft the basal area
+within 20 m of a quadrat's centre, all of it and the PFT's own [m2/ha]. Growth rises with size from
+g_min to g_max, half-way at D0, and shade shrinks it by exp(-b BAL); it is fitted to each tree's mean
+by Gamma quasi-likelihood, which needs growth above zero, so increments of zero or less are set to a
+tenth of the smallest positive one. Mortality
+takes g from the growth law rather than the tree's measured growth, because a cohort's growth is the
+law's too; it is fitted by maximum likelihood over each census interval, P(die) = 1 - exp(-m dt), so
+m is a rate per year. Recruitment is fitted to each quadrat's rate weighted by its area x interval,
+which is the Poisson model of the count. Skill is cross-validated on 1-ha blocks.
 """
+import json
 import os
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor
+from scipy.optimize import minimize
+from sklearn.linear_model import PoissonRegressor
 from sklearn.metrics import r2_score, roc_auc_score
-from sklearn.model_selection import GroupKFold
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
-OUT = os.path.join(HERE, "vital_rates")
-MIN_LEAF = {"growth": 300, "mortality": 1000, "recruitment": 50}   # trees (quadrats) per leaf
+PFTS = (1, 2, 3)
 N_FOLD = 5
 
 
-def forest(name):
-    return RandomForestRegressor(n_estimators=200, min_samples_leaf=MIN_LEAF[name], max_features=1.0,
-                                 max_samples=0.5, n_jobs=-1, random_state=0)
+def growth_law(theta, dbh, bal):
+    """[cm/yr] for theta = (g_min, g_max, D0, k, b)."""
+    g_min, g_max, d0, k, b = theta
+    return (g_min + (g_max - g_min) / (1.0 + np.exp(-k * (np.log(dbh) - np.log(d0))))) * np.exp(-b * bal)
+
+
+def fit_growth(dbh, bal, g):
+    """g_min, g_max, D0, k, b by Gamma quasi-likelihood (all kept positive), from three starting D0."""
+    def deviance(log_theta):
+        mu = growth_law(np.exp(log_theta), dbh, bal)
+        return np.sum(g / mu + np.log(mu))
+    fits = [minimize(deviance, np.log([0.05, 0.5, d0, 2.0, 0.01]), method="Nelder-Mead",
+                     options={"maxiter": 8000, "xatol": 1e-7, "fatol": 1e-7}) for d0 in (7.0, 20.0, 50.0)]
+    return [float(v) for v in np.exp(min(fits, key=lambda f: f.fun).x)]
+
+
+def recruitment_terms(ba, ba_pft):
+    return np.column_stack([ba, ba_pft])
+
+
+def glm(model, X, y, weight=None):
+    model.fit(X, y, sample_weight=weight)
+    return [float(model.intercept_)] + [float(c) for c in model.coef_]
+
+
+def log_link(coef, X):
+    return np.exp(coef[0] + X @ np.asarray(coef[1:]))
+
+
+def camac(theta, g):
+    gamma, alpha, beta = theta
+    return gamma + alpha * np.exp(-beta * g)
+
+
+def fit_camac(g, dead, dt, start=(0.01, 0.05, 10.0)):
+    """gamma, alpha, beta [1/yr, 1/yr, yr/cm] by maximum likelihood, all kept positive."""
+    def negative_log_likelihood(log_theta):
+        h = camac(np.exp(log_theta), g) * dt                  # expected deaths per tree in its interval
+        return -(dead * np.log(-np.expm1(-h)) - (1 - dead) * h).sum()
+    fit = minimize(negative_log_likelihood, np.log(start), method="Nelder-Mead",
+                   options={"xatol": 1e-6, "fatol": 1e-6, "maxiter": 4000})
+    return [float(v) for v in np.exp(fit.x)]
+
+
+def fit_laws(g, s, r):
+    """The three laws for each PFT, from the given rows."""
+    laws = {"growth": [], "mortality": [], "recruitment": []}
+    for p in PFTS:
+        gp, sp, rp = g[g.pft == p], s[s.pft == p], r[r.pft == p]
+        a = fit_growth(gp.dbh.to_numpy(), gp.bal.to_numpy(), gp.g_fit.to_numpy())
+        laws["growth"].append(a)
+        laws["mortality"].append(fit_camac(growth_law(a, sp.dbh.to_numpy(), sp.bal.to_numpy()),
+                                           sp.dead.to_numpy(), sp.dt.to_numpy()))
+        laws["recruitment"].append(glm(PoissonRegressor(alpha=0.0, solver="newton-cholesky", max_iter=1000),
+                                       recruitment_terms(rp.ba_tot, rp.ba_pft), rp.rate, rp.exposure))
+    return laws
+
+
+def predict(laws, g, s, r):
+    """Each row's growth [cm/yr], chance of dying within its interval, and recruitment [1/m2/yr]."""
+    gp, ps, rp = np.zeros(len(g)), np.zeros(len(s)), np.zeros(len(r))
+    for k, p in enumerate(PFTS):
+        a, theta, c = laws["growth"][k], laws["mortality"][k], laws["recruitment"][k]
+        m = (g.pft == p).to_numpy()
+        gp[m] = growth_law(a, g.dbh[m], g.bal[m])
+        m = (s.pft == p).to_numpy()
+        ps[m] = -np.expm1(-camac(theta, growth_law(a, s.dbh[m], s.bal[m])) * s.dt[m])
+        m = (r.pft == p).to_numpy()
+        rp[m] = log_link(c, recruitment_terms(r.ba_tot[m], r.ba_pft[m]))
+    return gp, ps, rp
 
 
 def class_mean_r2(obs, pred, df):
     """R2 of the means by PFT, size class and BAL class -- what a cohort carries."""
     keys = [df.pft.values, np.digitize(df.dbh.values, [2, 5, 10, 20, 40, 80]),
-            np.digitize(df.bal.values, [5, 10, 20, 30, 45, 60, 80])]
+            np.digitize(df.bal.values, [10, 20, 30, 40, 50, 60])]
     t = pd.DataFrame({"o": obs, "p": pred}).groupby(keys).agg(o=("o", "mean"), p=("p", "mean"),
                                                               n=("o", "size"))
     t = t[t.n >= 50]
@@ -47,62 +119,45 @@ def class_mean_r2(obs, pred, df):
 
 g = pd.read_csv(os.path.join(DATA, "growth.csv.gz"))
 s = pd.read_csv(os.path.join(DATA, "survival.csv.gz"))
-r = pd.read_csv(os.path.join(DATA, "recruits.csv.gz"))
-folds = GroupKFold(N_FOLD)
+r = pd.read_csv(os.path.join(DATA, "recruits.csv.gz")).dropna(subset=["dt"])
+epsilon = 0.1 * g.g[g.g > 0].min()
+g["g_fit"] = np.maximum(g.g, epsilon)
 
-# growth, predicting each held-out block's growth rows (skill) and survival rows (mortality's input)
-XG = ["dbh", "bal", "pft"]
-g_cv = np.zeros(len(g))
-s["growth"] = np.nan
-for train, test in folds.split(g, groups=g.block):
-    model = forest("growth").fit(g.loc[train, XG], g.g.iloc[train])
-    g_cv[test] = model.predict(g.loc[test, XG])
-    held = s.block.isin(g.block.iloc[test].unique())
-    s.loc[held, "growth"] = model.predict(s.loc[held, XG])
-print(f"growth       R2 {r2_score(g.g, g_cv):.2f} for trees, {class_mean_r2(g.g, g_cv, g):.3f} for class means")
-growth = forest("growth").fit(g[XG], g.g)
+# skill: each 1-ha block predicted by laws fitted without it
+blocks = np.random.default_rng(0).permutation(np.unique(np.r_[g.block, s.block, r.block]))
+fold = {b: i % N_FOLD for i, b in enumerate(blocks)}
+g_cv, p_cv, r_cv = np.zeros(len(g)), np.zeros(len(s)), np.zeros(len(r))
+for k in range(N_FOLD):
+    held = [t.block.map(fold).to_numpy() == k for t in (g, s, r)]
+    laws = fit_laws(g[~held[0]], s[~held[1]], r[~held[2]])
+    pred = predict(laws, g[held[0]], s[held[1]], r[held[2]])
+    g_cv[held[0]], p_cv[held[1]], r_cv[held[2]] = pred
+w = r.exposure.to_numpy()
+print(f"growth       R2 {r2_score(g.g, g_cv):.2f} for trees, {class_mean_r2(g.g, g_cv, g):.3f} for class "
+      f"means; mean {g.g.mean():.4f} measured, {g.g_fit.mean():.4f} with <= 0 set to {epsilon:.5f}, "
+      f"{g_cv.mean():.4f} predicted [cm/yr]")
+print(f"mortality    AUC {roc_auc_score(s.dead, p_cv):.2f} for trees, R2 {class_mean_r2(s.dead, p_cv, s):.3f} "
+      f"for class means; {s.dead.mean() * 100:.1f} % die, {p_cv.mean() * 100:.1f} % predicted")
+print(f"recruitment  R2 {r2_score(r.rate, r_cv, sample_weight=w):.2f} for quadrats; plot total "
+      f"{np.average(r.rate, weights=w) * 3e4:.0f} observed, {np.average(r_cv, weights=w) * 3e4:.0f} "
+      f"predicted [stems/ha/yr]")
 
-XM = ["dbh", "growth", "pft"]
-dt = s.dt.mean()
-m_cv = np.zeros(len(s))
-for train, test in folds.split(s, groups=s.block):
-    m_cv[test] = forest("mortality").fit(s.loc[train, XM], s.dead.iloc[train]).predict(s.loc[test, XM])
-print(f"mortality    AUC {roc_auc_score(s.dead, m_cv):.2f} for trees, R2 {class_mean_r2(s.dead, m_cv, s):.3f} "
-      f"for class means")
-mortality = forest("mortality").fit(s[XM], s.dead)
-
-XR = ["ba_tot", "ba_pft", "pft"]
-r_cv = np.zeros(len(r))
-for train, test in folds.split(r, groups=r.block):
-    r_cv[test] = forest("recruitment").fit(r.loc[train, XR], r.rate.iloc[train]).predict(r.loc[test, XR])
-print(f"recruitment  R2 {r2_score(r.rate, r_cv):.2f} for quadrats; plot total {r.rate.mean() * 3e4:.0f} "
-      f"observed, {r_cv.mean() * 3e4:.0f} predicted [stems/ha/yr]")
-recruitment = forest("recruitment").fit(r[XR], r.rate)
-
-
-def table(model, names, axes, value):
-    """The forest on the grid spanned by ``axes``; the driver reads between the nodes."""
-    mesh = np.meshgrid(*axes, indexing="ij")
-    t = pd.DataFrame({n: a.ravel() for n, a in zip(names, mesh)})
-    t[value] = model.predict(t[names])
-    return t
-
-
-pft = np.array([1, 2, 3])
-dbh = np.round(np.geomspace(1.0, 150.0, 41), 4)
-bal = np.arange(0.0, 112.5, 2.5)
-gro = np.round(np.linspace(0.0, np.quantile(s.growth, 0.995), 41), 5)
-ba = np.arange(0.0, 112.5, 5.0)
-tables = {
-    "growth": table(growth, XG, [dbh, bal, pft], "growth"),
-    "mortality": table(mortality, XM, [dbh, gro, pft], "p_dead"),
-    "recruitment": table(recruitment, XR, [ba, ba, pft], "recruitment"),
+laws = fit_laws(g, s, r)
+out = {
+    "about": "Census-trained vital rates for examples/example03_demography (fit_vital_rates.py); "
+             "one value per PFT. Recruitment's basal areas beyond 'range' take the range's edge.",
+    "growth": {"law": "[g_min + (g_max - g_min) / (1 + exp(-k (lnD - lnD0)))] exp(-b BAL) [cm/yr]",
+               **{name: [t[i] for t in laws["growth"]] for i, name in enumerate(("g_min", "g_max", "D0", "k", "b"))},
+               "epsilon": float(epsilon)},
+    "mortality": {"law": "gamma + alpha exp(-beta growth) [1/yr]",
+                  "gamma": [t[0] for t in laws["mortality"]], "alpha": [t[1] for t in laws["mortality"]],
+                  "beta": [t[2] for t in laws["mortality"]]},
+    "recruitment": {"law": "exp(c0 + c1 BA + c2 BA_pft) [1/m2/yr]", "coefficients": laws["recruitment"]},
+    "range": {"ba": [0.0, float(r.ba_tot.max())]},
 }
-# the forest gives the chance of dying within a census interval; the engine wants a rate per year
-m = tables["mortality"]
-m["mortality"] = -np.log(1.0 - m.pop("p_dead").clip(upper=0.999)) / dt   # clamp-ok: certain death
-os.makedirs(OUT, exist_ok=True)
-for name, t in tables.items():
-    cols = ["pft"] + [c for c in t.columns if c not in ("pft", name)] + [name]
-    t[cols].sort_values(cols[:3]).to_csv(os.path.join(OUT, f"{name}.csv"), index=False, float_format="%.6g")
-print(f"wrote {OUT}/growth.csv, mortality.csv, recruitment.csv")
+with open(os.path.join(HERE, "vital_rates.json"), "w") as fh:
+    json.dump(out, fh, indent=1)
+for k, p in enumerate(PFTS):
+    print(f"PFT {p}: growth {np.round(laws['growth'][k], 4)}; gamma, alpha, beta "
+          f"{np.round(laws['mortality'][k], 4)}; recruitment {np.round(laws['recruitment'][k], 4)}")
+print("wrote vital_rates.json")
