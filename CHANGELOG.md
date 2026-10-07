@@ -151,7 +151,7 @@ before and after.
   - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
     the runs read only the committed coefficients.
 - **The flux-tower example is `examples/example04_column_biophysics/`, and
-  `examples/example_biophysics/` is retired.** The Barro Colorado Island example stands for the
+  `examples/example_biophysics/` is retired** (#378). The Barro Colorado Island example stands for the
   coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's
   meteorology, a start from the 2010 census, the calibration, the comparison with the tower), and
   a last step shows the column's states: the calibrated run restarted for ten days,
@@ -183,7 +183,7 @@ before and after.
     or LE by their share of the closure gap) instead of testing which differ from the measured
     flux; its figure and statistics are byte-identical.
 - **Roots belong to each cohort: a rooting depth from its height, ED2's profile within it, and a
-  single-root soil→root conductance** (#375; #377 asks whether the conductance should grow in
+  single-root soil→root conductance** (#378; #375; #377 asks whether the conductance should grow in
   proportion to root length).
   - **Depth and profile.** A cohort roots to `root_depth_b1` · height^`root_depth_b2`, ED2's IALLOM 1
     allometry (1.114 · h^0.4223: 1.8 m at 3 m, 5.0 m at 35 m), capped at the soil column. Within that
@@ -221,7 +221,7 @@ before and after.
       so the dry season's water comes from the whole 6 m column rather than from the top. A big
       canopy tree's leaf ψ moves only 0.04 MPa a day, wet season or dry.
 - **A plant's internal conductance is its sapwood's, with the sapwood's conductivity from wood
-  density.** The maximum wood→leaf conductance is `wood_kmax` × sapwood area / (height ×
+  density** (#378). The maximum wood→leaf conductance is `wood_kmax` × sapwood area / (height ×
   `vessel_curl`), and `wood_kmax` [kg m⁻¹ s⁻¹ MPa⁻¹] is exp(2.348 − 2.455 ρ + 0.6186 / 2), the fit of
   Xu et al. (2016, New Phytol 212:80) to 72 neotropical species, as ED2 codes it
   (`plant_hydro_scheme` 2); ρ is held to 0.35–0.95. It is 3.3 at ρ = 0.6, against 2–4 measured on
@@ -251,7 +251,7 @@ before and after.
 
 ### Fixed
 
-- **The plant hydraulics read the sapwood area in m².** The cohort keeps it in cm²
+- **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
   (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴
   times too large: the leaves' ψ did not move at all over a day. Only the segment conductance, which
   no config had selected, read the area, so no earlier run changed. `cm2_to_m2` moved from the
