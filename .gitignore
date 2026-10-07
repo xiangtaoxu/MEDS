@@ -37,10 +37,6 @@ compile_commands.json
 # ... but curated example figures ARE tracked. Listed one by one on purpose: `!examples/**/*.png`
 # would also un-ignore every figure a user's own run drops into an example directory.
 !examples/*.png
-!examples/example_biophysics/biophysics_july.png
-!examples/example_biophysics/carbon_july.png
-!examples/example_biophysics/soil_july.png
-!examples/example_biophysics/spinup_trajectory.png
 !examples/example_demography/example_output.png
 !examples/example_demography/example_output_pft.png
 !examples/example_demography/forest3d_landscape.png
@@ -50,6 +46,7 @@ compile_commands.json
 !examples/example04_column_biophysics/lw_comparison.png
 !examples/example04_column_biophysics/evaluation.png
 !examples/example04_column_biophysics/calibration.png
+!examples/example04_column_biophysics/window.png
 # The list was short of five of these. Four were tracked anyway -- they predate the *.png rule, and
 # .gitignore does not apply to a file already in the index -- so the gap was invisible until a NEW
 # figure appeared: examples/example_phenology/phenology_patterns.png was silently never added, and

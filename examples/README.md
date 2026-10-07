@@ -17,16 +17,11 @@ README that shows how to reproduce it (run from the repository root):
 - **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
   ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
   stand-structure figures.
-- **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
-  a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
-  tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing
-  leaf and canopy-air temperatures that the meteorological forcing never contained. This is the one
-  example that drives the **full coupled model from Python** (`meds.model.Run`), with the time loop
-  on the Python side — so it also plots a spin-up trajectory sampled from the running model.
-- **[`example04_column_biophysics/`](example04_column_biophysics/)** — forcing built from a flux tower's own
-  meteorology at Barro Colorado Island, Panama: a site TOML declares the data, the tool checks it
-  against the sun and the data, fills gaps with a flag on every value, and states the tower's 41 m
-  heights so MEDS moves each sample to every patch's canopy-air top. Also scores its longwave gap
-  fill on hidden observations. The run starts from the 2010 census of the BCI 50-ha plot, with no
-  spin-up, and is compared with the tower's carbon, water and energy fluxes. The data are
-  downloaded or read in place, never committed.
+- **[`example04_column_biophysics/`](example04_column_biophysics/)** — the coupled column at a
+  flux tower: canopy radiation, leaf gas exchange, the energy balances of leaves, canopy air and
+  soil, plant hydraulics and soil water, every 15 minutes, at Barro Colorado Island, Panama. The
+  forcing is built from the tower's own meteorology, the stand is the 2010 census of the 50-ha plot
+  (no spin-up), the fast parameters are calibrated against the tower, and both runs are compared
+  with its carbon, water and energy fluxes over five years. Ten days restarted at half-hourly output
+  show the states the column solves: leaf, canopy-air and soil temperatures, canopy-air CO₂, leaf
+  water potential and soil moisture. The data are downloaded or read in place, never committed.

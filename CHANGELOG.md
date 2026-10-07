@@ -101,6 +101,27 @@ before and after.
   refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
+- **The flux-tower example is `examples/example04_column_biophysics/`, and
+  `examples/example_biophysics/` is retired.** The Barro Colorado Island example stands for the
+  coupled column in the renumbered examples. Its pipeline is unchanged (forcing from the tower's
+  meteorology, a start from the 2010 census, the shipped calibration, the comparison with the
+  tower), and a last step shows the column's states: the calibrated run restarted for ten days,
+  20–29 April 2016, with every patch's and cohort's states written each half hour
+  (`output_window.toml`, `plot_window.py`, `window.png`). The restart matches the continuous run to
+  10⁻¹³ K.
+  - **Rerun on this beta, end to end from the download.** The rebuilt forcing file is identical
+    value for value, and the five-year means move only in the README's last digit: the default GPP
+    from 10.22 to 10.23 µmol m⁻² s⁻¹ and its NEE from −4.03 to −4.04, the calibrated night H from
+    1.4 to 1.5 W m⁻², and the calibrated dry-season H RMSE from 71.2 to 71.3 W m⁻². The calibration
+    is not redone.
+  - **`example_biophysics`** (Ithaca: a 50-year spin-up, then one July at hourly output) had not
+    been rerun since v0.3.0. Its July config, PFT file and output table move to `test/region/`, from
+    which the `region` test derives its configs (the config's comments dropped, every key and value
+    the same); `c_api_run` loads example 04's default and calibrated configs instead. The root
+    README's second figure is example 04's ten days.
+  - `plot_evaluation.py` draws the calibration's target for the fluxes the fit adjusts (GPP, and H
+    or LE by their share of the closure gap) instead of testing which differ from the measured
+    flux; its figure and statistics are byte-identical.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and

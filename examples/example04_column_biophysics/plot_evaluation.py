@@ -76,7 +76,8 @@ def calibration_targets(table, site, fit_path, config_path):
     """The tower as the calibration scores it, on its measured half hours: by day (the calibration's
     targets are daytime ones), GPP with the tower's respiration divided by kappa, and H and LE with
     the closure gap shared as the fit shared it; at night the measured flux. Returns the columns
-    (named as the tower's) and kappa."""
+    (named as the tower's) that differ from the measured flux -- GPP, and H or LE where the fit gave
+    it a share of the gap -- and kappa."""
     with open(fit_path) as fh:
         fit = json.load(fh)
     settings = calibration_settings.complete(load_toml(config_path))
@@ -87,7 +88,8 @@ def calibration_targets(table, site, fit_path, config_path):
     kappa = fit["map"]["kappa"]
     day = table.values["SWdown"] > float(settings["tower"]["daytime_sw"])
     target = pd.DataFrame({"GPP": v["GPP"] + (1.0 / kappa - 1.0) * v["RECO"], "H": h, "LE": le})
-    return target.where(day, v[["GPP", "H", "LE"]]), kappa
+    target = target[["GPP"] + [name for name in ("H", "LE") if shares[name.lower()] != 0.0]]
+    return target.where(day, v[target.columns]), kappa
 
 
 def read_tower(site, fit_path=None, config_path=None):
@@ -141,11 +143,8 @@ def main(argv=None):
         both = model[mv].notna() & tower[tv].notna()
         if cal is not None:
             both &= cal[mv].notna()
-        #----- scored against the calibration's target where the target differs from the measured flux
-        scored = False
-        if tv in target:
-            known = both & target[tv].notna()
-            scored = not np.allclose(target.loc[known, tv], tower.loc[known, tv])
+        #----- scored against the calibration's target where it differs from the measured flux
+        scored = tv in target
         if scored:
             both &= target[tv].notna()
         m, t = model.loc[both, mv], tower.loc[both, tv]

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""MEDS example04_column_biophysics -- forcing from a flux tower, end to end, at Barro Colorado Island.
+"""MEDS example 04 -- the coupled column at the Barro Colorado Island flux tower, end to end.
 
-Steps (each skipped when its product already exists, unless --force):
+Steps (the data, the forcing and the census file are kept once made; --force remakes them):
   1. fetch the tower data into data/ (Zenodo 6456527, CC0; checked by md5)
-  2. build the forcing file data/bci_forcing.nc with scripts/prepare_flux_tower/make_tower_forcing.py,
-     the longwave filled by the model's synthesis regressed onto the tower
-  3. score that longwave fill on hidden observations (compare_longwave_fill.py)
-  4. draw the forcing's fill flags (plot_forcing.py)
-  5. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
-  6. run the five tower years from the census, with hourly output (meds_config_eval.toml)
-  7. with --calibrate: fit the fast parameters to the tower (calibration.toml, scripts/calibrate_fast):
-     the fit and the calibrated configs in calibration/
-  8. run the five years again with the calibrated parameters (calibration/meds_config_calibrated.toml),
-     when those configs exist -- they ship with the example, so --calibrate is only to redo the fit
-  9. compare with the tower in local time: mean diurnal and seasonal cycles, the default and the
-     calibrated run side by side (plot_evaluation.py), and the calibration's summary (plot_calibration.py)
+  2. build the forcing file data/bci_forcing.nc from the tower's meteorology
+     (scripts/prepare_flux_tower/make_tower_forcing.py); score its longwave fill on hidden
+     observations (compare_longwave_fill.py) and draw its fill flags (plot_forcing.py)
+  3. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
+  4. run the five tower years from the census, with hourly output (meds_config_eval.toml)
+  5. with --calibrate: fit the fast parameters to the tower (calibration.toml, scripts/calibrate_fast)
+     into calibration/; the fit ships with the example, so this is only to redo it
+  6. run the five years again with the calibrated parameters (calibration/meds_config_calibrated.toml)
+  7. compare both runs with the tower (plot_evaluation.py) and summarize the fit (plot_calibration.py)
+  8. ten days at half-hourly output (WINDOW): run the calibrated configuration to the window's start,
+     writing its state, restart from it with every patch's and cohort's states on (output_window.toml),
+     and draw them (plot_window.py)
 
 Usage:
   python run_example.py                          # everything
-  python run_example.py --copy-from ~/BCI_flux   # take the data from a local copy
-  python run_example.py --forcing-only           # steps 1-4: no model run
+  python run_example.py --copy-from ~/BCI_flux   # take the tower data from a local copy
+  python run_example.py --forcing-only           # steps 1-2: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
   python run_example.py --calibrate --workers 40 # redo the fit: ~5 h on one 40-core node (scripts/calibrate_fast)
 
@@ -34,13 +34,17 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(ROOT, "python"))
+from meds.config import RunConfig  # noqa: E402
+
 TOOLS = os.path.join(ROOT, "scripts", "prepare_flux_tower")
 CENSUS_TOOL = os.path.join(ROOT, "scripts", "prepare_census", "make_census.py")
+CALIBRATE_FAST = os.path.join(ROOT, "scripts", "calibrate_fast", "calibrate_fast.py")
 DATA = os.path.join(HERE, "data")
 OUTPUT = os.path.join(HERE, "output")
 CENSUS = os.path.join(DATA, "bci_census2010_meds.csv")
 CALIB = os.path.join(HERE, "calibration")
-CALIBRATE_FAST = os.path.join(ROOT, "scripts", "calibrate_fast", "calibrate_fast.py")
+WINDOW = ("2016-04-20", "2016-05-01")   # [UTC] the end of the 2016 El Nino dry season and its first storm
 
 
 def run(cmd, log=None):
@@ -54,13 +58,34 @@ def run(cmd, log=None):
         subprocess.check_call(cmd, cwd=HERE)
 
 
+def run_window(meds_main, config):
+    """Ten days at half-hourly records: run `config` to the window's start, writing the state, then
+    restart from that state with the window's outputs on. The restart continues the run exactly."""
+    start, end = WINDOW
+    cfg = RunConfig.load(config, relative_to=HERE)
+    lead = cfg.copy()
+    for key, value in {"run.end_time": start, "output.enabled": False, "output.prefix": "window_lead",
+                       "state.write_state": True, "state.output_prefix": "window"}.items():
+        lead.set(key, value)
+    state = os.path.join(OUTPUT, f"window-S-{start.replace('-', '')}000000.nc")
+    window = cfg.copy()
+    for key, value in {"init.init_mode": 2, "init.restart_file": state,
+                       "run.start_time": start, "run.end_time": end,
+                       "output.prefix": "window", "output.io_config": os.path.join(HERE, "output_window.toml"),
+                       "output.fast_interval_steps": 2}.items():          # 2 x 900 s: half-hourly records
+        window.set(key, value)
+    folder = os.path.join(OUTPUT, "window")
+    run([meds_main, str(lead.write(folder, "lead.toml", "lead_pft.toml"))], log=os.path.join(OUTPUT, "window_lead.log"))
+    run([meds_main, str(window.write(folder, "window.toml", "window_pft.toml"))], log=os.path.join(OUTPUT, "window.log"))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--copy-from", help="a folder holding BCI_v5.1.csv and README.txt")
     ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
     ap.add_argument("--forcing-only", action="store_true", help="stop after the forcing and its figures")
-    ap.add_argument("--force", action="store_true", help="redo every step")
-    ap.add_argument("--calibrate", action="store_true", help="redo the fast-parameter fit (step 7)")
+    ap.add_argument("--force", action="store_true", help="remake the forcing and the census file")
+    ap.add_argument("--calibrate", action="store_true", help="redo the fast-parameter fit (step 5)")
     ap.add_argument("--workers", type=int, default=os.cpu_count(), help="trials at once for --calibrate")
     args = ap.parse_args(argv)
     py = sys.executable
@@ -89,12 +114,11 @@ def main(argv=None):
         for name in ("fit.json", "report.md", "meds_config_calibrated.toml", "pft_parameters_calibrated.toml"):
             shutil.copyfile(os.path.join(work, name), os.path.join(CALIB, name))
     calibrated = os.path.join(CALIB, "meds_config_calibrated.toml")
-    if os.path.exists(calibrated):
-        run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))
-        run([py, "plot_evaluation.py", "--calibrated", os.path.join(OUTPUT, "cal-F-*.nc")])
-        run([py, "plot_calibration.py"])
-    else:
-        run([py, "plot_evaluation.py"])
+    run([args.meds_main, calibrated], log=os.path.join(OUTPUT, "cal.log"))
+    run([py, "plot_evaluation.py", "--calibrated", os.path.join(OUTPUT, "cal-F-*.nc")])
+    run([py, "plot_calibration.py"])
+    run_window(args.meds_main, calibrated)
+    run([py, "plot_window.py"])
 
 
 if __name__ == "__main__":
