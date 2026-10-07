@@ -147,6 +147,8 @@ def pft_params(pft_file, pft):
     a, p, k = t["allometry"], t["pft"], int(pft) - 1
     pick = lambda name: float(p[name][k])        # noqa: E731
     return {"b1Ht": a["b1Ht"], "b2Ht": a["b2Ht"], "agb_c1": a["agb_c1"], "agb_c2": a["agb_c2"],
+            "height_allometry": a.get("height_allometry", "power"),
+            "gmm": (a.get("gmm_a"), a.get("gmm_b"), a.get("gmm_k")),
             "lai_b1": a["lai_b1"], "lai_b2": a["lai_b2"], "hgt_max": pick("hgt_max"),
             "rho": pick("wood_density"), "sla": pick("sla"), "root_to_leaf": pick("root_to_leaf_ratio"),
             "aboveground_frac": pick("aboveground_frac"), "leaf_lifespan": pick("leaf_lifespan_toc"),
@@ -156,7 +158,11 @@ def pft_params(pft_file, pft):
 
 def allometry(dbh_cm, pp):
     """Height [m], leaf area [m2] and AGB [kgC] per tree."""
-    h = np.minimum(np.exp(pp["b1Ht"] + pp["b2Ht"] * np.log(dbh_cm)), pp["hgt_max"])
+    if pp.get("height_allometry", "power") == "gmm":
+        a, b, k = pp["gmm"]
+        h = np.minimum(a * dbh_cm ** b / (k + dbh_cm ** b), pp["hgt_max"])
+    else:
+        h = np.minimum(np.exp(pp["b1Ht"] + pp["b2Ht"] * np.log(dbh_cm)), pp["hgt_max"])
     x = dbh_cm * dbh_cm * h
     return h, pp["lai_b1"] * x ** pp["lai_b2"], pp["agb_c1"] * pp["rho"] ** pp["agb_c2"] * x ** pp["agb_c2"]
 

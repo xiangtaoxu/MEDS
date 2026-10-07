@@ -30,7 +30,7 @@ def base_config(run_dir, start, end, *, slow_on, restart_file=None, reacclimate=
                        "fast.canopy_water_on": canopy_water, "forcing.forcing_on": False,
                        "init.init_mode": 2 if restart_file else 1,
                        "init.restart_file": restart_file or "none",
-                       "init.census_file": str(ROOT / "examples/example_demography/census_example.csv"),
+                       "init.census_file": str(ROOT / "data/census_example.csv"),
                        "state.output_dir": str(run_dir / "out"), "state.output_prefix": "s",
                        "state.write_state": True, "output.enabled": False,
                        "trait_dynamics.trait_plasticity_on": plasticity}.items():

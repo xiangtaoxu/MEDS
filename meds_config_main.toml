@@ -300,7 +300,7 @@ min_recruit_size = 1.0e-2            # [plant/m2] pool threshold to spawn a recr
 [init]
 init_mode    = 0                              # 0 = near-bare ground | 1 = cohort census | 2 = restart
 restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
-census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (init_mode = 1)
+census_file  = "data/census_example.csv"  # cohort CSV (init_mode = 1)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 # soil_temp          = 288.0      # [K]      initial soil temperature, every layer (init_mode 0 and 1)
 # soil_theta         = 0.30       # [m3/m3]  initial soil moisture, every layer (init_mode 0 and 1)

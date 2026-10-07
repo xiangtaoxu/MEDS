@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
-"""netCDF writer for the empirical demography spin-up (#260).
+"""netCDF writer for the demography example's runs (#260).
 
 The demography example drives MEDS's law-free apply-primitives from Python with its own
 vital-rate laws, so nothing in the Fortran output layer is involved: this module writes the
 stand itself, in the ragged cohort/patch layout `post_proc/` already reads.
 
-**Why the example writes its own file at all.** The Fortran model has no empirical growth path —
-the reorg moved those laws here — so `meds_main` cannot produce this run. The figures need a
-file, and this is the only thing that can make one.
+**Why the example writes its own file at all.** The laws live in the example, not in Fortran, so
+`meds_main` cannot produce this run. The figures need a file, and this is the only thing that can
+make one.
 
 The schema is deliberately the one the existing plotters expect: one record per sampled year,
 a `cohort` axis padded to a fixed capacity, a `patch` axis likewise, the CSR map
@@ -75,7 +75,7 @@ class StandWriter:
                 f"truncating -- a silently clipped stand is worse than a failed write.")
 
         with Dataset(self.path, "w", format="NETCDF4") as d:
-            d.title = "MEDS empirical demography spin-up (examples/example_demography)"
+            d.title = "MEDS demography with census-trained vital rates (examples/example03_demography)"
             d.Conventions = "CF-1.8"
             d.createDimension("time", None)
             d.createDimension("cohort", self.cohort_cap)

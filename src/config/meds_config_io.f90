@@ -14,6 +14,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
+   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_GMM
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
@@ -452,6 +453,24 @@ contains
       case default          ; call note_missing(m, key)
       end select
    end subroutine req_sw_partition
+
+   !----- [allometry].height_allometry: "power" (the default, and every config written before the  !
+   !       option) or "gmm", which then needs its three coefficients. -------------------------!
+   subroutine opt_height_allometry(t, cfg, m)
+      type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      s = toml_string(t, 'allometry.height_allometry', 'power')
+      select case (trim(s))
+      case ('power') ; cfg%allom%height_form = HEIGHT_POWER
+      case ('gmm')
+         cfg%allom%height_form = HEIGHT_GMM
+         call req_r(t, 'allometry.gmm_a', cfg%allom%gmm_a, m)
+         call req_r(t, 'allometry.gmm_b', cfg%allom%gmm_b, m)
+         call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
+      case default   ; call note_missing(m, 'allometry.height_allometry')
+      end select
+   end subroutine opt_height_allometry
 
    subroutine req_lwdown_source(t, key, mode, m)    ! "file" | "synthesize"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
@@ -1270,6 +1289,7 @@ contains
       call req_r(tp, 'allometry.lai_b1',     cfg%allom%lai_b1,    miss)
       call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
       call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
+      call opt_height_allometry(tp, cfg, miss)
 
       !----- Key check: abort with the full list of the missing required keys and of the keys    !
       !      MEDS does not read (unknown or retired), from both files at once. -----------------!

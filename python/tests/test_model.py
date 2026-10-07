@@ -31,7 +31,7 @@ def two_days(run_dir: Path) -> Path:
     for key, value in {"run.start_time": "2001-06-01 00:00:00", "run.end_time": "2001-06-03 00:00:00",
                        "run.n_threads": 1, "fast.fast_biophysics_on": True, "forcing.forcing_on": False,
                        "init.init_mode": 1,
-                       "init.census_file": str(ROOT / "examples/example_demography/census_example.csv"),
+                       "init.census_file": str(ROOT / "data/census_example.csv"),
                        "state.write_state": False, "output.enabled": True, "output.dir": str(run_dir / "out"),
                        "output.prefix": "m", "output.fast.enabled": True, "output.daily.enabled": True,
                        "output.monthly.enabled": False, "output.annual.enabled": False}.items():

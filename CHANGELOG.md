@@ -14,7 +14,28 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **A Python demography run can start from a census** (#376). `Site(cfg, census=True)` reads the file the
+  config's `[init].census_file` names and restructures the stand as `meds_main` does for
+  `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
+  0 when it could not be; Python raises). `test_c_api_demography` covers it on the root config's
+  pseudo census.
+- **A saturating height curve** (#376). `[allometry].height_allometry = "gmm"` replaces the pan-tropical
+  power law with height = gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b), still capped at `[pft].hgt_max`;
+  `meds_config_pft.toml` lists `gmm_a`, `gmm_b` and `gmm_k` at Cano et al. (2019, Biogeosciences
+  16:847)'s fit for the Barro Colorado Nature Monument (58.0 m, 0.73, 21.8). Height inverts in closed
+  form; biomass inverts to diameter by Newton's method, which fusion, fission and the carbon path's
+  wood-carbon size anchor use. The default stays `"power"`, so no existing config changes, and
+  `scripts/prepare_census/make_census.py` follows the option.
+
 ### Changed
+
+- **`meds_apply_rates` restructures the stand with the carbon path's own `restructure_stand`**
+  instead of a copy of it kept to reproduce the empirical golden (removed with the empirical laws;
+  see below; #376). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
+  does, and fuses, splits, disturbs and recruits through the same routine as `meds_advance_slow`;
+  `meds_site_init_census` computes the overtopping LAI of the stand it builds.
 
 - **The leaf example is `examples/example01_leaf_gas_exchange/`**, the first of the examples
   renumbered so that each exercises one module of MEDS (#368). Its plot script moved in from
@@ -101,6 +122,34 @@ before and after.
   refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
   alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
   strategies and `phenology_patterns.png` are gone.
+- **The demography example is `examples/example03_demography/`, and its vital rates are fitted
+  to the Barro Colorado Island 50-ha plot censuses** instead of written by hand (#376).
+  - **The laws**, per PFT, with coefficients in `vital_rates.json`: dbh growth rises with size on a
+    logistic curve in ln D and falls with the overtopping LAI, which the driver reads from the engine
+    and the census gets from the same allometry (the leaf area of taller trees within 20 m)
+    (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·L), Gamma quasi-likelihood, increments
+    ≤ 0 set to a tenth of the smallest positive one); mortality is Camac et al. (2018)'s
+    γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
+    Poisson GLM in the patch's leaf area index and the PFT's share of it. The three PFTs are
+    wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
+    height follows the Barro Colorado curve of Cano et al. (2019) (`height_allometry = "gmm"`:
+    33 m at 1 m dbh, 43 m at 300 cm), so the canopy thins upward instead of piling up at a cap;
+    trees grow to 300 cm (`dbh_critical`, was 100); recruits enter at 1 cm (`min_cohort_height`
+    2.544 m, was 2.0); the treefall rate is taken off the census mortality of trees tall enough to
+    die in a gap.
+  - **The runs**, both written as netCDF. From the 1985 census the stand tracks the plot through
+    2010 (basal area 31.2 against 30.5 m² ha⁻¹, stems 4055 against 4145 ha⁻¹) and gains 0.04
+    m² ha⁻¹ yr⁻¹ to 2100; from near-bare ground it goes through a succession -- the light-wooded PFT
+    rises fastest, peaks near year 100 and gives way -- and reaches the census's basal area within
+    about 90 years.
+    The canopy-profile and 3-D landscape animations are regenerated from the 300-year
+    near-bare-ground run, and `demography.png` is the example's one figure.
+  - **Removed:** the hand-written laws (`empirical_laws.py`, `empirical_spinup.py`), their goldens
+    (`test/golden/empirical_spinup_golden.csv`, `empirical_spinup_final_cohorts.csv`), the carbon-path
+    driver `run_carbon.py`, the committed run netCDF and the old figures. The pseudo census the
+    tests and the root config start from moves to `data/census_example.csv`.
+  - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
+    the runs read only the committed coefficients.
 - **The flux-tower example is `examples/example04_column_biophysics/`, and
   `examples/example_biophysics/` is retired.** The Barro Colorado Island example stands for the
   coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's

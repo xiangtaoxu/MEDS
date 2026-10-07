@@ -148,6 +148,12 @@ Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are 
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
 penalty. Growth, competition and reproduction parameters are per-PFT but ship uniform.
 
+Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
+`[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
+instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado
+Island; either curve is capped at `[pft].hgt_max`, and biomass, leaf area and crown area take the
+height it gives.
+
 ## How a run starts
 
 `[init].init_mode` selects one of three, and the files for the unselected modes are ignored rather
@@ -183,7 +189,7 @@ trial restarts from a shared state this way, so a changed `vcmax25` reaches the 
 (`scripts/calibrate_fast`).
 
 A census is how you start from a field inventory; see
-[`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
+[`data/census_example.csv`](../data/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
 falls back to near-bare ground with a warning.
 
@@ -333,8 +339,9 @@ detail_polygons   = [1714634]                        # optional: these also writ
 
 The example configs are the fastest way in, and each is a complete pair:
 
-- [`examples/example_demography/`](../examples/example_demography/) — a 250-year demographic
-  spin-up from near-bare ground.
+- [`examples/example03_demography/`](../examples/example03_demography/) — the demography engine
+  driven from Python by growth, mortality and recruitment trained on the BCI censuses, from the
+  1985 census and from near-bare ground.
 - [`examples/example04_column_biophysics/`](../examples/example04_column_biophysics/) — the
   coupled model at the Barro Colorado Island flux tower: forcing from the tower, a start from the
   plot's census, five years at hourly output, and ten days restarted at half-hourly output.

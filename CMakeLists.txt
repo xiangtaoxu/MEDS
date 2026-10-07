@@ -591,7 +591,7 @@ if(MEDS_BUILD_TESTS)
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_demography.f90)
    target_link_libraries(test_c_api_demography PRIVATE meds_testsupport meds_model ${MEDS_IO_LIB})
    meds_fortran_flags(test_c_api_demography)
-   #      Runs from the SOURCE dir: it loads examples/example_demography's shipped config, which
+   #      Runs from the SOURCE dir: it loads examples/example03_demography's shipped config, which
    #      gives that config a build-time consumer. It had none, and had drifted 37 required keys
    #      behind the schema -- a config nothing loads rots exactly like a shim nothing compiles.
    add_test(NAME c_api_demography COMMAND test_c_api_demography

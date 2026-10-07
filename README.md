@@ -13,17 +13,18 @@ energy, water and CO₂ balance every sub-daily step, and the demography runs on
 balance produces.
 
 <p align="center">
-  <img src="examples/example_demography/example_output_forest.gif" height="230" alt="Canopy-layer stand profile with vertical LAI">
+  <img src="examples/example03_demography/canopy_profile.gif" height="230" alt="Canopy-layer stand profile with vertical LAI">
   &nbsp;&nbsp;
-  <img src="examples/example_demography/forest3d_growth.gif" height="230" alt="3D landscape, trees growing in place">
+  <img src="examples/example03_demography/landscape_growth_3d.gif" height="230" alt="3D landscape, trees growing in place">
 </p>
 
-*A 250-year spin-up from near-bare ground. Left: the vertical leaf-area profile beside a stand
-cross-section, each bar a cohort's canopy disk seen edge-on. Right: the same run as a synthetic
-landscape, with every tree tracked by a persistent id so it grows in place. Colour is plant
-functional type — green pioneer, blue mid-successional, magenta climax — and the sequence is the
-textbook ED succession: bare ground, a pioneer flush, canopy closure. Reproduce it from
-[`examples/example_demography/`](examples/example_demography/).*
+*The demography module alone, 300 years from near-bare ground, with growth, mortality and
+recruitment learned from the Barro Colorado Island 50-ha plot census. Left: the vertical leaf-area
+profile beside a stand cross-section, each bar a cohort's canopy disk seen edge-on. Right: the same
+run as a synthetic landscape, with every tree tracked by a persistent id so it grows in place.
+Colour is plant functional type by wood density — green light, blue medium, magenta dense. Started
+from the 1985 census instead, the same rates track the plot through 2010. Reproduce it from
+[`examples/example03_demography/`](examples/example03_demography/).*
 
 [![Ten days of the coupled column at Barro Colorado Island, every half hour](examples/example04_column_biophysics/window.png)](examples/example04_column_biophysics/)
 
@@ -78,9 +79,9 @@ cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
-./build/meds_main examples/example_demography/example_config_main.toml
+./build/meds_main examples/example03_demography/example_config_main.toml
 python post_proc/plot_site_timeseries.py \
-       examples/example_demography/example_output/example_output-D-output.nc -o timeseries.png
+       examples/example03_demography/output/example_output-D-output.nc -o timeseries.png
 ```
 
 netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. Details, including

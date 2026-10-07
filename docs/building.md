@@ -15,7 +15,7 @@ cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
-./build/meds_main examples/example_demography/example_config_main.toml
+./build/meds_main examples/example03_demography/example_config_main.toml
 ```
 
 If the run cannot find `libnetcdf` or the compiler runtime, put both on the loader path:

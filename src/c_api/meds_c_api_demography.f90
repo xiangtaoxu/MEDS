@@ -26,14 +26,13 @@ module meds_c_api_demography
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
-   use meds_init,                   only : init_bare_ground
+   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
                                           size2leaf_carbon, size2wood_carbon
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
-   use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
-   use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
+   use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
    private
 
@@ -42,7 +41,7 @@ module meds_c_api_demography
    !      procedure is unreachable from a test, and an untestable shim is how this file came to    !
    !      stop compiling without anyone noticing (see the header).  ------------------------------!
    public :: meds_config_load, meds_config_n_pft, meds_config_dt_years
-   public :: meds_site_create, meds_site_init_bare, meds_site_free
+   public :: meds_site_create, meds_site_init_bare, meds_site_init_census, meds_site_free
    public :: meds_advance_slow, meds_apply_rates
    public :: meds_site_generation, meds_site_n_patch, meds_site_n_cohort
    public :: meds_site_total_agb, meds_site_total_lai, meds_site_total_nplant
@@ -102,6 +101,24 @@ contains
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_site_init_bare
 
+   !----- Start the site from the census file named by the config's [init].census_file, and let  !
+   !      the slow step's own operators restructure it, as meds_main does: a census arrives with a  !
+   !      cohort per measured size and a patch per plot cell. Returns 1 when the file was read, 0   !
+   !      when it could not be (the site is then left unbuilt). The overtopping LAI is computed    !
+   !      for the restructured stand, so rates read on the first step see its canopy.  ---------- !
+   function meds_site_init_census(sh, ch) result(ok) bind(c, name="meds_site_init_census")
+      integer(c_int), value, intent(in) :: sh, ch
+      integer(c_int) :: ok
+      logical :: found
+      call init_from_census(g_site(sh), g_cfg(ch), trim(g_cfg(ch)%init_census_file), found)
+      if (found) then
+         call restructure_census_stand(g_site(sh), g_cfg(ch))
+         call update_overtopping_lai(g_site(sh))
+      end if
+      ok = merge(1_c_int, 0_c_int, found)
+      g_generation(sh) = g_generation(sh) + 1_c_long
+   end function meds_site_init_census
+
    !----- Advance one slow step (the driver's CARBON orchestration + cadence). Bumps the        !
    !       generation (the SoA is reordered by fuse/fission). is_new_month/is_new_year are 0/1: !
    !       the step's END crosses that boundary, and the stand is restructured (restructure_stand) !
@@ -122,10 +139,10 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Apply CALLER-SUPPLIED demographic rates (the empirical / Python path): grow by the       !
    ! per-cohort growth [cm/yr], die by the per-cohort mortality [1/yr], recruit from the       !
-   ! per-(PFT,patch) recruitment [plant/m2/yr], then age patches + run the fuse/fission        !
-   ! cadence -- the engine's law-free apply-primitives, sequenced exactly as the former         !
-   ! empirical update_demography. `recr` is a flat column-major (PFT-fastest) npft*npatch array. !
-   ! is_new_month / is_new_year are 0/1.                                                        !
+   ! per-(PFT,patch) recruitment [plant/m2/yr], then sort, age the patches and restructure the  !
+   ! stand with the carbon path's own restructure_stand: monthly recruitment, cohort fusion and  !
+   ! fission; yearly treefall disturbance and patch fusion. `recr` is a flat column-major        !
+   ! (PFT-fastest) npft*npatch array. is_new_month / is_new_year are 0/1.                        !
    !---------------------------------------------------------------------------------------!
    subroutine meds_apply_rates(sh, ch, growth, mortality, recr, is_new_month, is_new_year) &
                                bind(c, name="meds_apply_rates")
@@ -134,8 +151,6 @@ contains
       integer(ik) :: n, np, npft, ip, pf, i, n_window
       real(wp), allocatable :: g(:), m(:), rec(:,:)
       real(wp)              :: seed_c
-      logical :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
-      real(wp), parameter :: PATCH_DYNAMICS_INTERVAL = 1.0_wp
       real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new
       real(wp) :: lc_new, fc_new, wc_new, nc_new
 
@@ -151,10 +166,6 @@ contains
                rec(pf, ip) = real(recr((ip - 1_ik) * npft + pf), wp)
             end do
          end do
-
-         do_cohort_fissfuse   = is_new_month /= 0_c_int .and. cfg%demography_on .and. cfg%do_cohort_fissfuse
-         do_patch_disturbance = is_new_year  /= 0_c_int .and. cfg%demography_on .and. cfg%do_patch_disturbance
-         do_patch_fissfuse    = is_new_year  /= 0_c_int .and. cfg%demography_on .and. cfg%do_patch_fissfuse
 
          n_window = growth_window_steps(cfg)
          site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
@@ -198,23 +209,13 @@ contains
          !      import report and has no consumer here.                                             !
          call accumulate_recruit_pool(site, cfg, rec, cfg%dt_years, seed_c)
          call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
-         !----- NOTE: this deliberately mirrors the ORIGINAL empirical update_demography order      !
-         !      (sort only on the monthly/annual fuse-fiss cadence, below) so the Python empirical   !
-         !      example reproduces the historical golden. The go-forward CARBON model                !
-         !      (meds_vegetation_dynamics) re-sorts every step -- the #2 correctness fix.             !
+         !----- From here on the step is the carbon path's: sort every step (as vegetation_dynamics  !
+         !      does), age the patches, and restructure on the calendar's boundaries with the same   !
+         !      restructure_stand that meds_advance_slow calls, which ends by refreshing the         !
+         !      overtopping LAI the caller's next rates read.  ---------------------------------------!
+         call sort_cohorts(site)
          call update_patch_states(site%patch, cfg%dt_years)
-         if (do_cohort_fissfuse) then
-            call apply_recruitment(site, cfg)
-            call new_fuse_cohorts(site, cfg) ; call terminate_cohorts(site, cfg)
-            call split_cohorts(site, cfg)    ; call sort_cohorts(site)
-         end if
-         if (do_patch_disturbance) call apply_patch_disturbance(site, cfg, PATCH_DYNAMICS_INTERVAL)
-         if (do_patch_fissfuse) then
-            call sort_patches(site)      ; call new_fuse_patches(site, cfg)
-            call terminate_patches(site, cfg) ; call new_fuse_cohorts(site, cfg)
-            call terminate_cohorts(site, cfg) ; call sort_cohorts(site)
-         end if
-         call update_overtopping_lai(site)
+         call restructure_stand(site, cfg, is_new_month /= 0_c_int, is_new_year /= 0_c_int)
       end associate
       g_generation(sh) = g_generation(sh) + 1_c_long
    end subroutine meds_apply_rates
