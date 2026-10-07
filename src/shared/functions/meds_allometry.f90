@@ -9,6 +9,10 @@
 !                                                                                          !
 !   height(dbh)        = exp(b1Ht + b2Ht*ln(dbh)),  capped at hgt_max (per-PFT arg) [m]           !
 !   dbh(height)        = exp((ln(height) - b1Ht)/b2Ht)                          [cm]          !
+!   ... or, with height_form = HEIGHT_GMM, a saturating generalized Michaelis-Menten height:   !
+!   height(dbh)        = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b), capped at hgt_max     [m]       !
+!   dbh(height)        = (gmm_k*height / (gmm_a - height))^(1/gmm_b)                   [cm]      !
+!   (Cano et al. 2019, Biogeosciences 16:847, fitted it to the Barro Colorado Nature Monument.)  !
 !   crown_area(dbh,h)  = ca_b1 * (dbh^2*h)^ca_b2                                [m2]          !
 !   agb(dbh,h,rho)     = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2                  [kgC/plant]   !
 !   leaf_area(dbh,h)   = lai_b1 * (dbh^2*h)^lai_b2                              [m2/plant]    !
@@ -27,7 +31,7 @@
 ! Taken without the division, AGB is dry mass labelled as carbon and leaf area twice ED2's.  !
 !==========================================================================================!
 module meds_allometry
-   use meds_kinds,     only : wp
+   use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, pio4
    implicit none
    private
@@ -37,7 +41,14 @@ module meds_allometry
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: dbh_to_wai, sapwood_fraction
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
+   public :: height_form, gmm_a, gmm_b, gmm_k, HEIGHT_POWER, HEIGHT_GMM
    public :: set_allometry
+
+   !----- The height curve: the pan-tropical power law, or a saturating gMM. -------------!
+   integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_GMM = 2_ik
+   !----- Newton's method for agb -> dbh under the gMM height (agb_to_dbh_gmm). -------------!
+   integer,     parameter :: NEWTON_MAX_ITER = 50
+   real(wp),    parameter :: NEWTON_TOL      = 1.0e-12_wp    !< [ln cm] change in ln(dbh)
 
    !----- Allometry coefficients are RUNTIME CONFIGURATION: set_allometry installs them once at  !
    !       config load (from the PFT config file) and they are read thereafter. `protected` =>    !
@@ -63,32 +74,56 @@ module meds_allometry
    real(wp), protected :: lai_b1    = 0.23384770_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
    real(wp), protected :: lai_b2    = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
    real(wp), protected :: light_ext = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
+   integer(ik), protected :: height_form = HEIGHT_POWER
+   !----- gMM coefficients, read only when height_form = HEIGHT_GMM: Cano et al. (2019) eq. 7.  !
+   real(wp), protected :: gmm_a     = 58.0_wp        !< [m]   asymptotic height
+   real(wp), protected :: gmm_b     = 0.73_wp        !< [--]  exponent on dbh
+   real(wp), protected :: gmm_k     = 21.8_wp        !< [cm^gmm_b] half-saturation
 
 contains
 
-   !----- Install the allometry coefficients (called once at config load). ----------------!
+   !----- Install the allometry coefficients (called once at config load). Without the height  !
+   !       arguments the height curve is the power law. ---------------------------------------!
    subroutine set_allometry(b1Ht_in, b2Ht_in, agb_c1_in, agb_c2_in,           &
-                            ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in)
+                            ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in, &
+                            height_form_in, gmm_a_in, gmm_b_in, gmm_k_in)
       real(wp), intent(in) :: b1Ht_in, b2Ht_in, agb_c1_in, agb_c2_in
       real(wp), intent(in) :: ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in
+      integer(ik), intent(in), optional :: height_form_in
+      real(wp),    intent(in), optional :: gmm_a_in, gmm_b_in, gmm_k_in
       b1Ht = b1Ht_in ; b2Ht = b2Ht_in
       agb_c1 = agb_c1_in ; agb_c2 = agb_c2_in
       ca_b1 = ca_b1_in ; ca_b2 = ca_b2_in
       lai_b1 = lai_b1_in ; lai_b2 = lai_b2_in ; light_ext = light_ext_in
+      height_form = HEIGHT_POWER
+      if (present(height_form_in)) height_form = height_form_in
+      if (present(gmm_a_in)) gmm_a = gmm_a_in
+      if (present(gmm_b_in)) gmm_b = gmm_b_in
+      if (present(gmm_k_in)) gmm_k = gmm_k_in
    end subroutine set_allometry
 
    !----- Diameter -> height [m], capped at the per-PFT asymptote hgt_max. -----------------!
    elemental pure function dbh_to_height(dbh, hgt_max) result(h)
       real(wp), intent(in) :: dbh, hgt_max
-      real(wp)             :: h
-      h = min(exp(b1Ht + b2Ht * log(max(dbh, tiny_num))), hgt_max)
+      real(wp)             :: h, db
+      if (height_form == HEIGHT_GMM) then
+         db = max(dbh, tiny_num) ** gmm_b
+         h  = gmm_a * db / (gmm_k + db)
+      else
+         h  = exp(b1Ht + b2Ht * log(max(dbh, tiny_num)))
+      end if
+      h = min(h, hgt_max)
    end function dbh_to_height
 
-   !----- Height -> diameter [cm] (inverse of the uncapped branch). -----------------------!
+   !----- Height -> diameter [cm] (inverse of the uncapped curve). -----------------------!
    elemental pure function height_to_dbh(h) result(dbh)
       real(wp), intent(in) :: h
       real(wp)             :: dbh
-      dbh = exp((log(max(h, tiny_num)) - b1Ht) / b2Ht)
+      if (height_form == HEIGHT_GMM) then
+         dbh = (gmm_k * max(h, tiny_num) / max(gmm_a - h, tiny_num)) ** (1.0_wp / gmm_b)
+      else
+         dbh = exp((log(max(h, tiny_num)) - b1Ht) / b2Ht)
+      end if
    end function height_to_dbh
 
    !----- Crown area [m2]. ----------------------------------------------------------------!
@@ -130,6 +165,10 @@ contains
    elemental pure function agb_to_dbh(agb, rho, hgt_max) result(dbh)
       real(wp), intent(in) :: agb, rho, hgt_max
       real(wp)             :: dbh, k_un, p_un, k_cap, p_cap, h
+      if (height_form == HEIGHT_GMM) then
+         dbh = agb_to_dbh_gmm(agb, rho, hgt_max)
+         return
+      end if
       k_un = agb_c1 * rho ** agb_c2 * exp(agb_c2 * b1Ht)
       p_un = agb_c2 * (2.0_wp + b2Ht)
       dbh  = (max(agb, tiny_num) / k_un) ** (1.0_wp / p_un)
@@ -140,6 +179,36 @@ contains
          dbh   = (max(agb, tiny_num) / k_cap) ** (1.0_wp / p_cap)
       end if
    end function agb_to_dbh
+
+   !---------------------------------------------------------------------------------------!
+   ! agb -> dbh under the gMM height, which has no closed-form inverse. With x = ln(dbh), the  !
+   ! biomass law reads 2x + ln h(x) = ln(agb / (agb_c1 rho^agb_c2)) / agb_c2. The left side     !
+   ! rises with x at a slope between 2 and 2 + gmm_b and is concave (the hgt_max cap only        !
+   ! flattens it), so Newton's method lands at or below the root after its first step and then  !
+   ! climbs to it without overshooting.                                                      !
+   !---------------------------------------------------------------------------------------!
+   elemental pure function agb_to_dbh_gmm(agb, rho, hgt_max) result(dbh)
+      real(wp), intent(in) :: agb, rho, hgt_max
+      real(wp)             :: dbh, target, x, db, h, f, slope, dx
+      integer              :: it
+      target = log(max(agb, tiny_num) / (agb_c1 * rho ** agb_c2)) / agb_c2
+      x = target / (2.0_wp + gmm_b)
+      do it = 1, NEWTON_MAX_ITER
+         db = exp(gmm_b * x)
+         h  = gmm_a * db / (gmm_k + db)
+         if (h < hgt_max) then
+            f     = 2.0_wp * x + log(h) - target
+            slope = 2.0_wp + gmm_b * gmm_k / (gmm_k + db)
+         else
+            f     = 2.0_wp * x + log(hgt_max) - target
+            slope = 2.0_wp
+         end if
+         dx = f / slope
+         x  = x - dx
+         if (abs(dx) < NEWTON_TOL) exit
+      end do
+      dbh = exp(x)
+   end function agb_to_dbh_gmm
 
    !---------------------------------------------------------------------------------------!
    ! Carbon-pool size targets for the daily allocator (meds_plant_carbon_allocation).        !

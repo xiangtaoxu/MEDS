@@ -148,6 +148,12 @@ Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are 
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
 penalty. Growth, competition and reproduction parameters are per-PFT but ship uniform.
 
+Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
+`[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
+instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado
+Island; either curve is capped at `[pft].hgt_max`, and biomass, leaf area and crown area take the
+height it gives.
+
 ## How a run starts
 
 `[init].init_mode` selects one of three, and the files for the unselected modes are ignored rather
