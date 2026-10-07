@@ -30,7 +30,7 @@ program test_c_api_demography
    use meds_test_support, only : banner, check
    implicit none
 
-   character(len=*), parameter :: CFG = 'examples/example_demography/example_config_main.toml'
+   character(len=*), parameter :: CFG = 'examples/example03_demography/example_config_main.toml'
    !----- The root config names data/census_example.csv, a small pseudo census, as its census.  !
    character(len=*), parameter :: CFG_CENSUS = 'meds_config_main.toml'
    integer(c_int) :: ch, ch2, sh, sh2, npft, npatch
@@ -43,7 +43,7 @@ program test_c_api_demography
 
    !=== 1. The SHIPPED example config loads. ================================================!
    !      This is the assertion that would have caught the 37-key schema drift. It is a real  !
-   !      consumer of examples/example_demography/, which previously had none.                !
+   !      consumer of examples/example03_demography/, which previously had none.                !
    cpath = to_c(CFG)
    ch = meds_config_load(cpath, int(len(CFG), c_int))
    call check(ch > 0_c_int, 'the shipped example config loads through the C-API')

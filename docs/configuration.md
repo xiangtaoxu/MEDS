@@ -333,7 +333,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
 
 The example configs are the fastest way in, and each is a complete pair:
 
-- [`examples/example_demography/`](../examples/example_demography/) — a 250-year demographic
-  spin-up from near-bare ground.
+- [`examples/example03_demography/`](../examples/example03_demography/) — the demography engine
+  driven from Python by growth, mortality and recruitment trained on the BCI censuses, from the
+  1985 census and from near-bare ground.
 - [`examples/example_biophysics/`](../examples/example_biophysics/) — a 50-year spin-up at Ithaca
   with real forcing, then one July restarted at high output resolution.

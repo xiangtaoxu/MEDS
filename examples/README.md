@@ -14,9 +14,10 @@ README that shows how to reproduce it (run from the repository root):
   tropical tree exchanging its leaves in the bright dry season (Barro Colorado Island: litter traps)
   and a drought-deciduous dry forest on water and day length (Palo Verde: leaf litter, MODIS LAI).
   They differ only in parameter values; evergreen is a leaf-cover floor.
-- **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
-  ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
-  stand-structure figures.
+- **[`example03_demography/`](example03_demography/)** — the demography module on its own, driven
+  from Python: random forests learn growth, mortality and recruitment from five intervals of the
+  Barro Colorado Island 50-ha plot census, and the cohort-and-patch engine runs them from the 1985
+  census (it tracks the next 25 years) and from near-bare ground.
 - **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
   a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
   tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing
