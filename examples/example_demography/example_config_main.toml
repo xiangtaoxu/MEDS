@@ -67,7 +67,7 @@ min_recruit_size = 1.0e-2
 [init]
 init_mode    = 0
 restart_file = "meds_output-S-22500101000000.nc"
-census_file  = "examples/example_demography/census_example.csv"
+census_file  = "data/census_example.csv"
 pft_config   = "examples/example_demography/example_config_pft.toml"
 
 [state]

@@ -119,7 +119,7 @@ below 1 cm DBH falling to 0.0008 above 50 cm, while **76% of the biomass sits in
 
 ## Census restart input
 
-**`census_example.csv`** — a pseudo cohort census (one row per cohort:
+**[`data/census_example.csv`](../../data/census_example.csv)** — a pseudo cohort census (one row per cohort:
 `site_id,patch_id,cohort_id,dbh,height,pft,nplant`) used to start a run from existing stand
 structure instead of bare ground. Point `[init].census_file` at it with `[init].init_mode = 1`. See
 [`src/init/meds_init.f90`](../../src/init/meds_init.f90) (`init_from_census`).

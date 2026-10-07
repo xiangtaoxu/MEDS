@@ -183,7 +183,7 @@ trial restarts from a shared state this way, so a changed `vcmax25` reaches the 
 (`scripts/calibrate_fast`).
 
 A census is how you start from a field inventory; see
-[`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
+[`data/census_example.csv`](../data/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
 falls back to near-bare ground with a warning.
 
