@@ -17,11 +17,8 @@ README that shows how to reproduce it (run from the repository root):
 - **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
   ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
   stand-structure figures.
-- **[`example04_column_biophysics/`](example04_column_biophysics/)** — the coupled column at a
-  flux tower: canopy radiation, leaf gas exchange, the energy balances of leaves, canopy air and
-  soil, plant hydraulics and soil water, every 15 minutes, at Barro Colorado Island, Panama. The
-  forcing is built from the tower's own meteorology, the stand is the 2010 census of the 50-ha plot
-  (no spin-up), the fast parameters are calibrated against the tower, and both runs are compared
-  with its carbon, water and energy fluxes over five years. Ten days restarted at half-hourly output
-  show the states the column solves: leaf, canopy-air and soil temperatures, canopy-air CO₂, leaf
-  water potential and soil moisture. The data are downloaded or read in place, never committed.
+- **[`example04_column_biophysics/`](example04_column_biophysics/)** — the coupled column at the
+  Barro Colorado Island flux tower, Panama: canopy radiation, leaf gas exchange, energy balances,
+  plant hydraulics and soil water every 15 minutes. It starts from the plot's 2010 census, calibrates
+  the fast parameters against the tower, compares five years with its fluxes, and shows ten days
+  at half-hourly output.
