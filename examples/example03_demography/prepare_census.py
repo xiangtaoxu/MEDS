@@ -17,7 +17,7 @@ and, committed, census_stand.csv: stems and basal area by PFT and size class in 
 A tree is described by what it is at the start of an interval: its dbh, its PFT (from its species'
 wood density) and its overtopping LAI, the leaf area of TALLER trees within 20 m of it per m2 of
 ground -- the competition index the MEDS engine computes for every cohort. Height and leaf area are
-MEDS's pan-tropical allometry, read from the example's PFT config. A quadrat's recruits are described
+MEDS's allometry as the example's PFT config sets it (the BCI height curve of Cano et al. 2019). A quadrat's recruits are described
 by the leaf area index within 20 m of the quadrat's centre, all of it and the PFT's own. Trees and
 quadrats whose 20 m circle crosses the plot's edge are not described (they still count as
 neighbours). A MEDS tree is one stem, so a tree alive with no main stem to measure has died, and is a
@@ -76,8 +76,12 @@ def basal_area_m2(dbh_cm):
 
 
 def height_m(dbh_cm, pft):
-    """MEDS's dbh_to_height: exp(b1Ht + b2Ht ln D), capped at the PFT's hgt_max."""
-    return np.minimum(np.exp(ALLOM["b1Ht"] + ALLOM["b2Ht"] * np.log(dbh_cm)), HGT_MAX[pft - 1])
+    """MEDS's dbh_to_height: the config's height curve, capped at the PFT's hgt_max."""
+    if ALLOM.get("height_allometry", "power") == "gmm":
+        h = ALLOM["gmm_a"] * dbh_cm ** ALLOM["gmm_b"] / (ALLOM["gmm_k"] + dbh_cm ** ALLOM["gmm_b"])
+    else:
+        h = np.exp(ALLOM["b1Ht"] + ALLOM["b2Ht"] * np.log(dbh_cm))
+    return np.minimum(h, HGT_MAX[pft - 1])
 
 
 def leaf_area_m2(dbh_cm, pft):

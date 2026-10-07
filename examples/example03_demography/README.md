@@ -17,15 +17,15 @@ passes them to the engine's law-free apply-primitives through
 
 | PFT | wood density [g cm⁻³] | g_min [cm/yr] | g_max [cm/yr] | D₀ [cm] | k | b | γ [1/yr] | α [1/yr] | β [yr/cm] |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 0.36 | 0.36 | 1.03 | 17 | 1.3 | 0.21 | 0.023 | 0.23 | 11 |
-| 2 | 0.50 | 0.17 | 0.59 | 8 | 2.7 | 0.16 | 0.019 | 0.08 | 14 |
-| 3 | 0.68 | 0.08 | 0.50 | 23 | 1.7 | 0.07 | 0.019 | 0.11 | 38 |
+| 1 | 0.36 | 0.37 | 1.04 | 17 | 1.2 | 0.23 | 0.023 | 0.24 | 12 |
+| 2 | 0.50 | 0.17 | 0.60 | 8 | 2.8 | 0.18 | 0.019 | 0.08 | 14 |
+| 3 | 0.68 | 0.08 | 0.50 | 23 | 1.7 | 0.07 | 0.019 | 0.11 | 37 |
 
 - **Growth** rises with dbh D from g_min to g_max, half-way at D₀, and shade shrinks it by e^(−b·L).
   L is the overtopping LAI, the leaf area of taller trees per m² of ground: the competition index the
   engine computes for every cohort (`overtopping_lai`), which the driver reads as it is. For each
   census tree it is the leaf area of taller trees within 20 m, with height and leaf area from MEDS's
-  pan-tropical allometry; trees of equal height share a layer, as in the engine. Zero and negative
+  allometry; trees of equal height share a layer, as in the engine. Zero and negative
   increments (the tape's millimetre, or a broken stem) are set to a tenth of the smallest positive
   one, 0.0017 cm/yr, which raises the census's mean growth from 0.085 to 0.094 cm/yr.
 - **Mortality** depends on growth alone, as in Camac et al. (2018), who fitted the same form to the BCI
@@ -37,10 +37,13 @@ passes them to the engine's law-free apply-primitives through
 - **PFTs are wood-density classes**: species' wood density from the Global Wood Density Database
   ([`bci_wood_density.csv`](bci_wood_density.csv): neotropical entries, species → genus → family),
   split at 0.42 and 0.58 g cm⁻³ so each class holds a third of the 1985 basal area.
+- **Height follows Barro Colorado's own curve**, Cano et al. (2019)'s fit to 9884 trees of the
+  Barro Colorado Nature Monument: H = 58.0·D^0.73 / (21.8 + D^0.73) [m], 33 m at 1 m dbh and 43 m at
+  BCI's largest tree, with no cap (`[allometry] height_allometry = "gmm"`). Leaf area and biomass take
+  this height.
 - **A tree is one stem**, as in MEDS: a tree that loses its main stem has died, and returns as a
   recruit when a stem is measured again. Recruits enter at the census's 1 cm (`min_cohort_height`
-  3.13 m); trees stop growing taller at the BCI canopy's 42 m (`hgt_max`, reached at dbh 99 cm) but
-  keep thickening.
+  2.544 m on the BCI curve).
 - **Treefall** (`patch_disturbance_rate` 0.014 yr⁻¹) kills canopy trees above 10 m on the disturbed
   area. The census counts those deaths too, so the driver takes the rate off the mortality of
   cohorts tall enough to die in a gap.
@@ -94,19 +97,20 @@ censuses, the size distribution in 2010, and a run from near-bare ground.
 |---|---|---|---|---|
 | census 1985 | 4841 | 414 | 31.1 | 10.6 / 9.8 / 10.7 |
 | census 2010 | 4145 | 416 | 30.5 | 10.7 / 9.4 / 10.4 |
-| model 2010, from the 1985 census | 4038 | 411 | 31.5 | 9.9 / 10.5 / 11.1 |
-| model 2100, from the 1985 census | 3675 | 543 | 34.9 | 9.2 / 14.3 / 11.4 |
-| model, 100 years from bare ground | 3738 | 534 | 32.4 | 14.3 / 14.7 / 3.3 |
-| model, 300 years from bare ground | 3639 | 512 | 36.1 | 11.4 / 16.6 / 8.1 |
+| model 2010, from the 1985 census | 4055 | 417 | 31.2 | 9.6 / 10.5 / 11.1 |
+| model 2100, from the 1985 census | 3660 | 492 | 34.6 | 9.0 / 14.3 / 11.4 |
+| model, 100 years from bare ground | 3703 | 522 | 32.4 | 14.7 / 14.4 / 3.3 |
+| model, 300 years from bare ground | 3644 | 528 | 35.6 | 10.9 / 16.8 / 8.0 |
 
 - **From the census, the module tracks the plot for 25 years**: the stem decline, the trees above
   10 cm, the basal area and the size distribution class by class.
-- **Run on to 2100, the stand gains basal area slowly** (0.03 m² ha⁻¹ yr⁻¹), most of it in PFT 2.
+- **Run on to 2100, the stand gains basal area slowly** (0.04 m² ha⁻¹ yr⁻¹), most of it in PFT 2.
   These are BCI's present rates run forward, not a prediction.
 - **From bare ground the stand goes through a succession.** Under an open canopy the light-wooded
   PFT 1 grows fastest and rises with PFT 2, reaching the census's basal area within about 90 years;
   as the canopy closes PFT 1 declines, PFT 2 holds the canopy, and the dense-wooded PFT 3 builds up
-  slowly beneath. Basal area ends 18 % above the census's.
+  slowly beneath. Basal area ends 17 % above the census's; the canopy thins upward to 43 m, as the
+  census stand does on the same height curve.
 
 <p align="center">
   <img src="canopy_profile.gif" height="230" alt="Canopy-layer stand profile with vertical LAI">

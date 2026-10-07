@@ -21,6 +21,13 @@ before and after.
   `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
   0 when it could not be; Python raises). `test_c_api_demography` covers it on the root config's
   pseudo census.
+- **A saturating height curve.** `[allometry].height_allometry = "gmm"` replaces the pan-tropical
+  power law with height = gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b), still capped at `[pft].hgt_max`;
+  `meds_config_pft.toml` lists `gmm_a`, `gmm_b` and `gmm_k` at Cano et al. (2019, Biogeosciences
+  16:847)'s fit for the Barro Colorado Nature Monument (58.0 m, 0.73, 21.8). Height inverts in closed
+  form; biomass inverts to diameter by Newton's method, which fusion, fission and the carbon path's
+  wood-carbon size anchor use. The default stays `"power"`, so no existing config changes, and
+  `scripts/prepare_census/make_census.py` follows the option.
 
 ### Changed
 
@@ -125,12 +132,13 @@ before and after.
     γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
     Poisson GLM in the patch's leaf area index and the PFT's share of it. The three PFTs are
     wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
-    recruits enter at 1 cm (`min_cohort_height` 3.13 m, was 2.0); trees stop growing taller at
-    42 m (`hgt_max`, was 46) and keep thickening to 300 cm (`dbh_critical`, was 100, which had
-    capped them at 42 m); the treefall rate is taken off the census mortality of trees tall enough
-    to die in a gap.
+    height follows the Barro Colorado curve of Cano et al. (2019) (`height_allometry = "gmm"`:
+    33 m at 1 m dbh, 43 m at 300 cm), so the canopy thins upward instead of piling up at a cap;
+    trees grow to 300 cm (`dbh_critical`, was 100); recruits enter at 1 cm (`min_cohort_height`
+    2.544 m, was 2.0); the treefall rate is taken off the census mortality of trees tall enough to
+    die in a gap.
   - **The runs**, both written as netCDF. From the 1985 census the stand tracks the plot through
-    2010 (basal area 31.5 against 30.5 m² ha⁻¹, stems 4038 against 4145 ha⁻¹) and gains 0.03
+    2010 (basal area 31.2 against 30.5 m² ha⁻¹, stems 4055 against 4145 ha⁻¹) and gains 0.04
     m² ha⁻¹ yr⁻¹ to 2100; from near-bare ground it goes through a succession -- the light-wooded PFT
     rises fastest, peaks near year 100 and gives way -- and reaches the census's basal area within
     about 90 years.
