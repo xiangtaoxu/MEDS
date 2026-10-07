@@ -171,6 +171,25 @@ before and after.
       tower's sensor (it matched at 0.28 on the 2 m column): the roots draw from the wettest layers,
       so the dry season's water comes from the whole 6 m column rather than from the top. A big
       canopy tree's leaf ψ moves only 0.04 MPa a day, wet season or dry.
+- **A plant's internal conductance is its sapwood's, with the sapwood's conductivity from wood
+  density.** The maximum wood→leaf conductance is `wood_kmax` × sapwood area / (height ×
+  `vessel_curl`), and `wood_kmax` [kg m⁻¹ s⁻¹ MPa⁻¹] is exp(2.348 − 2.455 ρ + 0.6186 / 2), the fit of
+  Xu et al. (2016, New Phytol 212:80) to 72 neotropical species, as ED2 codes it
+  (`plant_hydro_scheme` 2); ρ is held to 0.35–0.95. It is 3.3 at ρ = 0.6, against 2–4 measured on
+  the branches of Panama canopy trees and FATES's 3.0. `pft.wood_kmax` overrides it per PFT.
+  - **Gone:** the whole-plant conductance per unit leaf area (`k_plant_max`, 6×10⁻⁴ kg s⁻¹ MPa⁻¹
+    m⁻², 33 mmol m⁻² s⁻¹ MPa⁻¹), which was the default, and the key that chose between the two.
+    For a 35 m BCI canopy tree the sapwood gives 1.9 mmol m⁻² s⁻¹ MPa⁻¹.
+  - **Config (breaking).** `hydraulics.k_plant_max`, `pft.k_plant_max`, `hydraulics.conductance`
+    and `hydraulics.wood_kmax` are refused, each naming what replaced it. `vessel_curl` (1.5) stays.
+  - **At BCI** (example 04, calibrated; old → new). The daily range of leaf ψ of the canopy trees
+    (over 25 m, every patch) goes from 0.03 to 0.42 MPa in the wet season (October 2015; midday
+    −0.38 → −0.77) and from 0.03 to 0.45–0.52 MPa in the 2016 dry season (March and late April;
+    midday −0.42 → −0.84 to −0.91). The 35 m tree on top of the largest patch goes from 0.04 to
+    0.68–0.75 MPa in the dry season (midday −0.44 → −1.09 to −1.15). Measured canopy trees reach
+    −0.9 to −1.2 MPa at midday in the wet season and −1.4 to −2.0 in the dry. Predawn ψ is unchanged
+    (−0.40 in the dry season, against −0.6 to −1.0 measured). The five-year fluxes move by less than 0.1 %: midday leaf ψ stays above the
+    turgor-loss point (−1.7 MPa), where the stomata start to close, so the calibration stands.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
@@ -183,6 +202,11 @@ before and after.
 
 ### Fixed
 
+- **The plant hydraulics read the sapwood area in m².** The cohort keeps it in cm²
+  (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴
+  times too large: the leaves' ψ did not move at all over a day. Only the segment conductance, which
+  no config had selected, read the area, so no earlier run changed. `cm2_to_m2` moved from the
+  output code to `meds_constants`.
 - **A sunrise or sunset forcing interval keeps its shortwave** (#371).
   - **The bug:** the partition into beam and diffuse, PAR and NIR took the cos z at the interval's
     midpoint. When that was dark, all four streams came out zero, however much light the record

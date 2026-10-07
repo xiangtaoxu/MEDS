@@ -217,11 +217,13 @@ a site mean would average the closed forest with the gaps; its top cohort is its
   air; at 110 cm it does not move.
 - **Canopy-air CO₂** falls 4–10 µmol mol⁻¹ by day as the canopy draws it down and returns at night,
   highest on the calmest night (29–30 April, u\* 0.26 m s⁻¹).
-- **Leaf water potential.** The top cohort's leaves sit at −0.41 MPa at night and −0.45 at midday
-  through the dry days, a daily range of 0.04 MPa, and rise to −0.35 to −0.42 after the storm. The
-  tree reaches moist soil (5 m of roots in a 6 m column, which stays near −0.06 MPa below 1 m), so it
-  refills every night; the midday drop is small because the whole-plant conductance is high
-  against the canopy's transpiration.
+- **Leaf water potential.** The top cohort's leaves refill to −0.41 MPa every night and fall to
+  −1.1 MPa at midday on the bright days (−0.9 to −1.0 on the overcast 23rd and 24th), a daily range
+  of 0.7 MPa; after the storm they refill to −0.34 to −0.37. The midday drop is the canopy's transpiration through the
+  sapwood (3.3 kg m⁻¹ s⁻¹ MPa⁻¹ at this PFT's wood density). The night level barely moves because
+  the tree reaches moist soil (5 m of roots in a 6 m column, which stays near −0.06 MPa below 1 m).
+  Panama's canopy trees measure −0.6 to −1.0 MPa before dawn and −1.4 to −2.0 at midday in a dry
+  season, so the model's tree has more water than the measured ones.
 - **Soil moisture.** The model's top 15 cm stays at 0.37 m³ m⁻³ through the dry days, 0.09 wetter than
   the tower's 0–15 cm sensor (0.28): the roots draw from the wettest layers, so the dry season's
   water comes from the whole column rather than from the top. The storm wets the top 15 cm to 0.57

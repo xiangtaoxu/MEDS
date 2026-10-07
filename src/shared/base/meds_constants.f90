@@ -13,6 +13,7 @@ module meds_constants
    !----- Geometry. -----------------------------------------------------------------------!
    real(wp), parameter :: pi   = 3.14159265358979323846_wp
    real(wp), parameter :: pio4 = 0.25_wp * pi                 !< basal area = pio4 * dbh^2
+   real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp               !< [m2/cm2] basal and sapwood areas are kept in cm2
 
    !----- Calendar (mean Gregorian year). -------------------------------------------------!
    real(wp), parameter :: yr_day      = 365.2425_wp           !< days per year

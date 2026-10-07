@@ -440,7 +440,6 @@ contains
          end do
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
-                 frozen%plant%leaf_area(1:n),                &
               frozen%roots%psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
               frozen%plant%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt, psi_c(:, 1:n), &
               sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &

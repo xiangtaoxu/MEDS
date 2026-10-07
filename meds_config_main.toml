@@ -107,10 +107,11 @@ wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
 wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
 wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
 wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
-conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "segment": the sapwood's
-k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
-wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
+# ---- the plant's maximum internal conductance is its sapwood's, wood_kmax * sapwood area /
+#      (height * vessel_curl). wood_kmax is a PFT trait: by default exp(2.348 - 2.455 rho + 0.6186/2)
+#      [kg/m/s/MPa] from the PFT's wood density rho (Xu et al. 2016, tropical trees; ED2), which
+#      pft.wood_kmax overrides.
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
 # ---- roots, plant traits (pft.<key> overrides each per PFT). A cohort roots to root_depth_b1 *
 #      height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1: 5 m at 35 m), capped at the soil
 #      column; its fine roots fall off within that depth as ED2's (1 - root_beta^(d/D)) / (1 - root_beta)

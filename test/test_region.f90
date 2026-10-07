@@ -231,9 +231,10 @@ program test_region
    call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
                 '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
                 'is retired: the root profile is a plant trait: set [hydraulics].root_beta')
-   call refused('hydraulics.conductance is whole_plant or segment',                                 &
-                '[hydraulics]'//nl()//'conductance = "xylem"'//nl()//site_block(1_ik), .false., .false., &
-                'hydraulics.conductance must be')
+   !----- The whole-plant conductance is gone: k_plant_max is refused, naming the sapwood's. -------!
+   call refused('hydraulics.k_plant_max is refused, naming the sapwood conductance',                 &
+                '[hydraulics]'//nl()//'k_plant_max = 3.0e-4'//nl()//site_block(1_ik), .false., .false., &
+                'is retired: the plant''s conductance is its sapwood''s')
    call refused('leaf_physiology.low_water_potential_control is linear_decline',                    &
                 '[leaf_physiology]'//nl()//'low_water_potential_control = "clamp"'//nl()//          &
                 site_block(1_ik), .false., .false., 'low_water_potential_control must be')

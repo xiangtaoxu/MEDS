@@ -31,7 +31,7 @@ module meds_fast_types
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_hydr_lib, only : build_hydro_table
+   use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
@@ -912,7 +912,6 @@ contains
                                                    apoplast_frac = hcfg%wood_apoplast_frac,                          &
                                                    water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
-      hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
       hydraulics_params%root_beta      = hcfg%root_beta      ; hydraulics_params%root_depth_b1  = hcfg%root_depth_b1
       hydraulics_params%root_depth_b2  = hcfg%root_depth_b2
@@ -922,10 +921,9 @@ contains
    end subroutine fill_hydro_params
 
    !----- PER-PFT hydraulics table (#179). Each entry starts from the shared [hydraulics] block    !
-   !      and then takes whichever traits the [pft] table actually supplied -- HYD_UNSET means      !
-   !      "not given", so a config can make ONE trait per-PFT without restating the other twelve,   !
-   !      and a config with no per-PFT hydraulics at all builds n_pft identical copies of exactly   !
-   !      what apply_hydraulics_config produced before.                                             !
+   !      and the sapwood conductivity of its wood density, and then takes whichever traits the     !
+   !      [pft] table actually supplied -- HYD_UNSET means "not given", so a config can make ONE    !
+   !      trait per-PFT without restating the others.                                              !
    !                                                                                          !
    !      The Kirchhoff lookup is rebuilt PER ENTRY, from that PFT's own wood_kexp: the table is    !
    !      what makes a non-integer vulnerability exponent affordable on the hot path, so sharing    !
@@ -948,7 +946,7 @@ contains
          call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
          call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
-         call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
+         table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
          call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
          call ovr(table%pft(i)%root_beta,          pft%hyd_root_beta(i))

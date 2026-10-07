@@ -20,8 +20,7 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, HYD_CONDUCTANCE_SEGMENT
-   use meds_plant_types,      only : HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
+   use meds_config,           only : meds_config_t
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
@@ -167,12 +166,6 @@ contains
       !      base; whatever per-PFT traits the [pft] table supplied are laid over it.  ---------------!
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
       call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
-      !----- [hydraulics].conductance: k_plant_max per leaf area, or the sapwood segment. ---------!
-      if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
-         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_SEGMENT
-      else
-         ctx%col_config%hydraulics_opts%cond_mode = HYDRO_COND_KPLANT
-      end if
       call build_leaf_photo_table(cfg, ctx%col_config%leaf_photo)    ! per-PFT leaf parameters, once per run
       !----- P3 coupled-surface (Picard) solver knobs + option selectors, from the [fast] block. --!
       ctx%col_config%canopy_water_on    = cfg%canopy_water_on

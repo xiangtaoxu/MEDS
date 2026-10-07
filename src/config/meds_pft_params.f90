@@ -174,7 +174,7 @@ module meds_pft_params
       real(wp),    allocatable :: hyd_wood_pi0(:), hyd_wood_elastic_mod(:), hyd_wood_apoplast_frac(:)
       real(wp),    allocatable :: hyd_wood_water_sat(:)
       real(wp),    allocatable :: hyd_wood_psi50(:), hyd_wood_kexp(:)
-      real(wp),    allocatable :: hyd_k_plant_max(:), hyd_wood_kmax(:), hyd_vessel_curl(:)
+      real(wp),    allocatable :: hyd_wood_kmax(:), hyd_vessel_curl(:)
       real(wp),    allocatable :: hyd_root_beta(:), hyd_root_depth_b1(:), hyd_root_depth_b2(:)
       real(wp),    allocatable :: hyd_specific_root_length(:), hyd_fine_root_radius(:)
       real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
@@ -293,7 +293,7 @@ contains
                pft%hyd_leaf_water_sat(n), pft%hyd_wood_pi0(n), pft%hyd_wood_elastic_mod(n),     &
                pft%hyd_wood_apoplast_frac(n), pft%hyd_wood_water_sat(n),                        &
                pft%hyd_wood_psi50(n), pft%hyd_wood_kexp(n),                                     &
-               pft%hyd_k_plant_max(n), pft%hyd_wood_kmax(n), pft%hyd_vessel_curl(n),            &
+               pft%hyd_wood_kmax(n), pft%hyd_vessel_curl(n),                                    &
                pft%is_woody(n), pft%stem_resp_factor25(n), pft%root_resp_factor25(n),        &
                pft%leaf_reflect_vis(n), pft%leaf_transmit_vis(n), pft%leaf_reflect_nir(n),   &
                pft%leaf_transmit_nir(n), pft%leaf_emissivity(n),                             &
@@ -315,7 +315,7 @@ contains
       pft%hyd_wood_pi0 = HYD_UNSET ; pft%hyd_wood_elastic_mod = HYD_UNSET
       pft%hyd_wood_apoplast_frac = HYD_UNSET ; pft%hyd_wood_water_sat = HYD_UNSET
       pft%hyd_wood_psi50 = HYD_UNSET ; pft%hyd_wood_kexp = HYD_UNSET
-      pft%hyd_k_plant_max = HYD_UNSET ; pft%hyd_wood_kmax = HYD_UNSET ; pft%hyd_vessel_curl = HYD_UNSET
+      pft%hyd_wood_kmax = HYD_UNSET ; pft%hyd_vessel_curl = HYD_UNSET
       allocate(pft%hyd_root_beta(n), pft%hyd_root_depth_b1(n), pft%hyd_root_depth_b2(n),               &
                pft%hyd_specific_root_length(n), pft%hyd_fine_root_radius(n))
       pft%hyd_root_beta = HYD_UNSET ; pft%hyd_root_depth_b1 = HYD_UNSET ; pft%hyd_root_depth_b2 = HYD_UNSET

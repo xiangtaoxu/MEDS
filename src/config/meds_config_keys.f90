@@ -54,6 +54,16 @@ module meds_config_keys
       retired_key_t('hydraulics.specific_root_area', 'the soil->root conductance takes root '//   &
                     'length: set [hydraulics].specific_root_length [m/kgC] and fine_root_radius '// &
                     '[m], or their pft.* values'),                                               &
+      retired_key_t('hydraulics.k_plant_max', 'the plant''s conductance is its sapwood''s, '//      &
+                    'wood_kmax * sapwood area / (height * vessel_curl), with wood_kmax from the '// &
+                    'PFT''s wood density (Xu et al. 2016); set pft.wood_kmax to override it'),   &
+      retired_key_t('pft.k_plant_max', 'the plant''s conductance is its sapwood''s, wood_kmax '//    &
+                    '* sapwood area / (height * vessel_curl): set pft.wood_kmax [kg/m/s/MPa], '// &
+                    'which defaults to the PFT''s wood density (Xu et al. 2016)'),             &
+      retired_key_t('hydraulics.conductance', 'the sapwood (segment) conductance is the only '//   &
+                    'form: wood_kmax * sapwood area / (height * vessel_curl)'),                  &
+      retired_key_t('hydraulics.wood_kmax', 'wood_kmax follows each PFT''s wood density (Xu et '// &
+                    'al. 2016: 3.3 kg/m/s/MPa at 0.6 g/cm3); set pft.wood_kmax to override it'), &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &

@@ -71,7 +71,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[soil_column]` | The **physical ground**: layer count, depth, grid growth, hydraulic texture, retention family, thermal properties. |
 | `[soil]`, `[energy]`, `[snow]`, `[aerodynamics]` | The **solvers over it**: selectors and tolerances. `[soil]` also holds the bare ground's optics: `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
-| `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the conductance form (`conductance = "whole_plant"` or `"segment"`), and the root profile (`root_beta`, `root_depth`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
+| `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |

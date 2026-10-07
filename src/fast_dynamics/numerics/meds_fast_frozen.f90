@@ -414,8 +414,7 @@ contains
       transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
       call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &
                                    col_cohort%bsap(1:n), col_cohort%broot(1:n), col_cohort%sap_area(1:n), &
-                                         col_cohort%height(1:n),   &
-                                   col_cohort%leaf_area(1:n),                                                  &
+                                   col_cohort%height(1:n),                                                     &
                                    psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
                                    col_cohort%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt_fast, &
                                    psi_scratch(:, 1:n), sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n), &

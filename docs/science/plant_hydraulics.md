@@ -95,12 +95,28 @@ K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_
 \;\xrightarrow[\Delta\psi\to0]{}\; k_{\text{cond}}\,k(\psi)
 ```
 
-$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance. `[hydraulics].conductance`
-picks its form: `"whole_plant"` (default), $`k_{\text{cond}}=k_{plant\_max}\cdot\text{leaf area}`$, or
-`"segment"`, $`k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel\_curl})`$ from stem allometry
-(Huber value $`H_v=A_{sap}/A_{leaf}`$). `wood_kmax` and `vessel_curl` are read only in segment
-mode, and `k_plant_max` only in whole-plant mode. Before v0.3.1 there was no key for the mode, so
-`wood_kmax` and `vessel_curl` were accepted and never used. For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
+$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance, the sapwood's over the
+path from the stem base to the crown:
+
+```math
+k_{\text{cond}}=\frac{K_s\,A_{sap}}{H\cdot\text{vessel\_curl}},\qquad
+K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right)
+```
+
+$A_{sap}$ is the sapwood area of the stem allometry, $H$ the plant's height, and `vessel_curl`
+(1.5, as in ED2) lengthens the path beyond the height. $K_s$ [kg m⁻¹ s⁻¹ MPa⁻¹], the sapwood
+specific conductivity, is a PFT trait: by default it follows the PFT's wood density $\rho$
+[g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of neotropical
+seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2). The fit is lognormal, so the
+residual variance 0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes
+the nearest edge. $K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95; `pft.wood_kmax`
+overrides it. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
+lie a factor of 2 either side. Branches of Panama canopy trees span about 1.6–12, and 2–4 at
+$\rho$ = 0.6 (Meinzer et al. 2008), and FATES's default is 3.0. For a 35 m BCI canopy
+tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
+$k_{\text{cond}}$ = 0.019 kg s⁻¹ MPa⁻¹: 1.9 mmol m⁻² s⁻¹ MPa⁻¹ per unit leaf area, and
+63 g m⁻² s⁻¹ MPa⁻¹ per unit sapwood, inside the 25–131 measured from soil to branch on Panama
+canopy trees (Meinzer et al. 2003). For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
 uniform-grid **lookup table** $G(r)$ and read by linear interpolation on the hot path (the closed
 forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$ is a runtime
 scale.
@@ -203,10 +219,8 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | $w_{sat}$ | `leaf_water_sat`, `wood_water_sat` | saturated water content [kg H₂O / kgC] |
 | $\psi_{50}$ | `wood_psi50` | xylem potential at 50 % loss of conductance [MPa] |
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
-| $`k_{plant\_max}`$ | `k_plant_max` | max whole-plant conductance [kg s⁻¹ MPa⁻¹ m⁻²_leaf] |
-| — | `conductance` | `"whole_plant"` (default) or `"segment"`: which of the two rows below sets $k_{\text{cond}}$ |
-| $K_s$ | `wood_kmax` | sapwood specific conductivity (segment mode) [kg m⁻¹ s⁻¹ MPa⁻¹] |
-| — | `vessel_curl` | tortuosity / path-length factor (segment mode) [–] |
+| $K_s$ | `pft.wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; default from wood density (Xu et al. 2016) |
+| — | `vessel_curl` | tortuosity / path-length factor [–] |
 | — | `rhizo_cond` | rhizosphere conductance (single-BC) [kg s⁻¹ MPa⁻¹] |
 | $\beta$ | `root_beta` | the root profile within the rooting depth [–], $0<\beta<1$ (ED2: 0.1) |
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |

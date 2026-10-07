@@ -16,7 +16,7 @@ module meds_plant_hydraulics
    use meds_constants, only : pi, grav_head, safe_exp, tiny_num
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_params_table_t, hydro_opts_t,  &
                                hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
-                                NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
+                                NROOT_MAX, HYDRO_NODES_2, HYDRO_SUBSTEP_FIXED
    use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, plc_retained
    use meds_water_retention, only : capacitance, water_content
    use meds_numerics,         only : adaptive_step_update
@@ -272,14 +272,10 @@ contains
 
    contains
 
-      !----- Maximum (plc=1) internal conductance, per plant [kg/s/MPa]. -------------------!
+      !----- Maximum (plc=1) internal conductance, per plant [kg/s/MPa]: the sapwood's specific    !
+      !      conductivity over its cross-section and the path, height * vessel_curl. --------------!
       real(wp) function cond_max() result(kc)
-         if (o%cond_mode == HYDRO_COND_SEGMENT) then
-            kc = p%wood_kmax * env%sap_area / max(env%height*p%vessel_curl, tiny_num)
-         else
-            kc = p%k_plant_max * env%leaf_area
-         end if
-         kc = max(kc, k_floor)
+         kc = max(p%wood_kmax * env%sap_area / max(env%height*p%vessel_curl, tiny_num), k_floor)
       end function cond_max
 
       !----- Frozen linear-system coefficients + Ohm's-law steady state at the sub-step start   !
@@ -363,14 +359,13 @@ contains
    ! guard a caller-side precondition check instead) from the data-layout change, matching BB1's own       !
    ! "land it bit-identical and still serial first" discipline.                                            !
    !---------------------------------------------------------------------------------------!
-   subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area,                   &
-                                      height, leaf_area,                                              &
+   subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area, height,           &
                                       soil_psi_layer, root_z_layer, rhizo_cond_layer, pft, ptab, o, dt, psi, &
                                       sapflow, root_uptake, root_uptake_layer, psi_leaf, psi_wood,    &
                                       plc, nsub, converged)
       integer(ik),          intent(in)    :: n, nsl
       real(wp),             intent(in)    :: transp(n), bleaf(n), bsap(n), broot(n), sap_area(n)
-      real(wp),             intent(in)    :: height(n), leaf_area(n)
+      real(wp),             intent(in)    :: height(n)
       real(wp),             intent(in)    :: soil_psi_layer(nsl), root_z_layer(nsl)      !< per-layer, all cohorts
       real(wp),             intent(in)    :: rhizo_cond_layer(nsl, n)                    !< per-(layer,cohort)
       !----- PER-PFT parameters (#179): the batch selects the cohort's entry and hands the SAME      !
@@ -394,7 +389,7 @@ contains
       do i = 1_ik, n
          env%transp    = transp(i)
          env%bleaf     = bleaf(i) ; env%bsap = bsap(i) ; env%broot = broot(i)
-         env%sap_area  = sap_area(i) ; env%height = height(i) ; env%leaf_area = leaf_area(i)
+         env%sap_area  = sap_area(i) ; env%height = height(i)
          !----- Per-layer root boundary, UNCONDITIONAL since Phase 1 retired the multilayer_roots flag  !
          !      (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md). The per-cohort kernel below KEEPS its           !
          !      n_root_layer <= 1 scalar branch: src/plant is a standalone library that must be usable    !

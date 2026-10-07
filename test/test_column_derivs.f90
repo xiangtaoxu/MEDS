@@ -1126,7 +1126,7 @@ contains
       hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
-      hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
+      hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n), frozen%plant%bsap(n), &

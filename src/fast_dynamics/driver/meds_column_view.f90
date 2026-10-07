@@ -27,6 +27,7 @@
 !==========================================================================================!
 module meds_column_view
    use meds_kinds,            only : wp, ik
+   use meds_constants,        only : cm2_to_m2
    use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size
    use meds_pft_params,       only : pft_table_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity
@@ -69,7 +70,7 @@ contains
          cc%broot(j)         = cohort%fineroot_carbon(i)
          cc%bsap(j)          = cohort%sapwood_carbon(i)   ! sapwood ring -> HYDRAULICS
          cc%bwood(j)         = cohort%wood_carbon(i)      ! ALL wood      -> THERMAL store
-         cc%sap_area(j)      = cohort%sapwood_area(i)
+         cc%sap_area(j)      = cohort%sapwood_area(i) * cm2_to_m2   ! [cm2] -> [m2] (hydraulics)
          !----- Plastic leaf capacities + yesterday's daily-max leaf potential. -----------!
          cc%vcmax25(j)       = cohort%vcmax25(i)
          cc%rd25(j)          = cohort%rd25(i)
