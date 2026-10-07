@@ -41,12 +41,18 @@ class Config:
 
 
 class Site:
-    def __init__(self, cfg, n_patch=1):
+    def __init__(self, cfg, n_patch=1, census=False):
+        """A near-bare-ground site of ``n_patch`` empty patches, or with ``census=True`` the stand in
+        the config's [init].census_file, restructured the way meds_main restructures it."""
         self.cfg = cfg
         self.handle = lib.meds_site_create()
         if self.handle < 0:
             raise RuntimeError("MEDS site registry full")
-        lib.meds_site_init_bare(self.handle, cfg.handle, int(n_patch))
+        if not census:
+            lib.meds_site_init_bare(self.handle, cfg.handle, int(n_patch))
+        elif lib.meds_site_init_census(self.handle, cfg.handle) != 1:
+            lib.meds_site_free(self.handle)
+            raise RuntimeError("MEDS could not read the census file named by [init].census_file")
 
     def advance_slow(self, is_new_month, is_new_year):
         """Advance one slow step using the Fortran built-in CARBON orchestration."""

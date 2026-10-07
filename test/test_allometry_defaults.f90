@@ -15,9 +15,9 @@
 !==========================================================================================!
 program test_allometry_defaults
    use meds_kinds,        only : wp
-   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real
+   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string
    use meds_allometry,    only : b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2,      &
-                                 light_ext
+                                 light_ext, height_form, gmm_a, gmm_b, gmm_k, HEIGHT_POWER
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -53,6 +53,15 @@ program test_allometry_defaults
    call same('lai_b1', lai_b1)
    call same('lai_b2', lai_b2)
    call same('light_ext', light_ext)
+
+   !----- The height curve: the shipped config and the initializer are both the power law, and  !
+   !      the gMM initializers are Cano et al. (2019) eq. 7, the values the config lists. -------!
+   call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
+              'meds_config_pft.toml sets [allometry].height_allometry = "power"')
+   call check(height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
+   call check_close(gmm_a, 58.0_wp, rtol, 'gmm_a initializer = Cano et al. (2019) eq. 7')
+   call check_close(gmm_b, 0.73_wp, rtol, 'gmm_b initializer = Cano et al. (2019) eq. 7')
+   call check_close(gmm_k, 21.8_wp, rtol, 'gmm_k initializer = Cano et al. (2019) eq. 7')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

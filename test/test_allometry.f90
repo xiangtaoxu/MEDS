@@ -4,7 +4,7 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, set_allometry,                              &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh
+                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -81,6 +81,35 @@ program test_allometry
    dbh    = 130.0_wp                                       ! capped
    wood_c = size2wood_carbon(dbh, dbh_to_height(dbh, hcap), rho, agf)
    call check_close(wood_to_dbh(wood_c, rho, hcap, agf), dbh, 1.0e-8_wp, 'wood_to_dbh inverse failed (capped)')
+
+   !=== The gMM height curve (Cano et al. 2019 eq. 7) and its two inverses. ===============!
+   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
+                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
+                      HEIGHT_GMM, 58.0_wp, 0.73_wp, 21.8_wp)
+   call check_close(dbh_to_height(1.0_wp, 100.0_wp), 58.0_wp / 22.8_wp, 1.0e-12_wp,                 &
+                    'gMM height at 1 cm is gmm_a / (gmm_k + 1)')
+   call check_close(dbh_to_height(100.0_wp, 100.0_wp),                                                &
+                    58.0_wp * 100.0_wp**0.73_wp / (21.8_wp + 100.0_wp**0.73_wp), 1.0e-12_wp,           &
+                    'gMM height at 100 cm follows the formula')
+   call check(dbh_to_height(300.0_wp, 100.0_wp) < 58.0_wp, 'gMM height stays below its asymptote')
+   call check_close(dbh_to_height(300.0_wp, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'gMM height caps at hgt_max')
+   do i = 1_ik, 3_ik
+      dbh = dvec(i)
+      call check_close(height_to_dbh(dbh_to_height(dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
+                       'gMM dbh<->height round trip')
+   end do
+   !----- agb -> dbh by Newton's method: uncapped, and on the capped branch (hgt_max = 35 m). --!
+   do i = 1_ik, 3_ik
+      dbh = dvec(i)
+      agb = dbh_to_agb(dbh, dbh_to_height(dbh, 100.0_wp), rho)
+      call check_close(agb_to_dbh(agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (uncapped)')
+   end do
+   dbh = 250.0_wp
+   call check_close(dbh_to_height(dbh, 35.0_wp), 35.0_wp, 1.0e-12_wp, 'a 250 cm stem is at a 35 m cap')
+   agb = dbh_to_agb(dbh, dbh_to_height(dbh, 35.0_wp), rho)
+   call check_close(agb_to_dbh(agb, rho, 35.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (capped)')
+   wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
+   call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'gMM wood_to_dbh inverse')
 
    write(*,'(a)') '   PASS'
 end program test_allometry

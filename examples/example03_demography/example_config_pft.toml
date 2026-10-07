@@ -5,14 +5,15 @@
 # The number of PFTs is the length of [pft].wood_density; every per-PFT array must match it.
 
 [pft]
-wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-off axis (pioneer/mid/climax)
-dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
-hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
+wood_density       = [0.36, 0.50, 0.68]    # [g/cm3] basal-area means of the BCI wood-density classes
+dbh_critical       = [300.0, 300.0, 300.0] # [cm] maximum diameter: above BCI's largest tree, so no cap
+hgt_max            = [46.0, 46.0, 46.0]     # [m] the shipped cap; the BCI height curve stays below it (43 m at 300 cm)
+# The four reproduction keys are required by the loader and unused here: recruitment is a census law.
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
 repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
-min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
+min_cohort_height       = 2.544            # [m] = dbh 1 cm on the BCI height curve; recruits born here
 min_reproduction_height = 20.0             # [m] height a cohort must exceed before it reproduces (all PFTs)
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
 # (Used by the leaf gas-exchange model; not yet coupled to demographic growth.)
@@ -81,6 +82,7 @@ f_labile_stem          = [0.05, 0.05, 0.05]         # [--] labile fraction of wo
 struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of the structural-litter stream
 
 [camac]
+# Required by the loader and unused here: mortality is a census law.
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
 # law in wood density: param = param_0 * (rho/mort_rho_ref)^exp (always positive).
 mort_rho_ref   = 0.6        # [g/cm3] wood-density reference
@@ -104,6 +106,12 @@ ca_b2      = 0.464          # crown-area exponent
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
+# The Barro Colorado height curve: Cano et al. (2019, Biogeosciences 16:847) eq. 7, the community-level
+# generalized Michaelis-Menten fit to 9884 trees of the Barro Colorado Nature Monument.
+height_allometry = "gmm"
+gmm_a      = 58.0           # [m] asymptotic height
+gmm_b      = 0.73           # [--] exponent on dbh
+gmm_k      = 21.8           # [cm^gmm_b] half-saturation
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density:

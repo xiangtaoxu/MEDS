@@ -154,6 +154,12 @@ ca_b2      = 0.464          # crown-area exponent
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
+height_allometry = "power"  # the height curve: "power" (b1Ht, b2Ht above) or "gmm" (below), both capped at hgt_max
+# The gMM curve, read only with height_allometry = "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b).
+# These are Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
+# gmm_a = 58.0     # [m] asymptotic height
+# gmm_b = 0.73     # [--] exponent on dbh
+# gmm_k = 21.8     # [cm^gmm_b] half-saturation
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density:
