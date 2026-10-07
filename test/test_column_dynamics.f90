@@ -15,7 +15,7 @@
 !==========================================================================================!
 program test_column_dynamics
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav
+   use meds_constants,           only : latent_heat_fusion, rho_h2o, grav, pio4
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy
@@ -99,10 +99,15 @@ program test_column_dynamics
    !      the fixture; they describe a real 20 cm tree now: 224 stems/ha, which is the density   !
    !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
+   !----- The hydraulics take the sapwood area in m2; the cohort keeps it in cm2. It used to pass  !
+   !      through unconverted, 10^4 times the stem's own cross-section. -------------------------!
+   call check_true('the sapwood area reaches the hydraulics in m2, within the stem',             &
+                   col_cohort%sap_area(1) > 0.0_wp .and. col_cohort%sap_area(1) <= pio4*0.2_wp**2, &
+                   col_cohort%sap_area(1))
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
@@ -206,7 +211,6 @@ program test_column_dynamics
    !           so the COLUMN-TOTAL uptake is independent of how it is distributed vertically.  !
    !           The vertical distribution itself is checked in test_root_share_drydown below.   !
    !=====================================================================================!
-   col_config%specific_root_area = cfg%hydraulics%specific_root_area
    call integrate_day()
    call check_true('PER-LAYER ROOTS: whole-column water still closes', budget%whole_water%n_fail  == 0_ik,            &
            real(budget%whole_water%n_fail, wp))

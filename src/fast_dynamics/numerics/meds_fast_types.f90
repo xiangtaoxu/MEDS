@@ -31,7 +31,7 @@ module meds_fast_types
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_hydr_lib, only : build_hydro_table
+   use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
@@ -166,7 +166,6 @@ module meds_fast_types
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
-      real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       !----- Canopy-surface water: the interception film and its evaporation/dew exchange            !
       !      (archive/MEDS_ED2_RK45_DESIGN.md sec 3.4). Opt-in, default off, so a config that does not !
       !      set it is unchanged. BOTH integrators honour it: the ARK reads it through the shared      !
@@ -611,7 +610,7 @@ module meds_fast_types
    !      interface closes to the soil's TRUE realized supply. root_share is THIS dt_fast's realized  !
    !      per-layer uptake shares (sum = 1), built from solve_plant_water_batch's own breakdown so   !
    !      the root MASS sink and the root HEAT sink land in the same layers by construction; it      !
-   !      falls back to the static root_frac profile when no layer supplies anything. qloss_frozen  !
+   !      falls back to the patch's root profile when no layer supplies anything. qloss_frozen      !
    !      is ED2's qloss: the liquid enthalpy the uptake carries out of the soil, per cohort.         !
    type :: root_zone_t
       real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized (post-rescale) aggregate root uptake
@@ -826,9 +825,9 @@ module meds_fast_types
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
-      !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
-      !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
-      !       single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
+      !       plant solve; the soil sink distributes coh_transp by these (not the root profile) so the  !
+      !       soil dries where roots actually took water. Default 0 => the patch's root profile (first   !
+      !       step / single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
       !       now built from THIS step's realized uptake, inline on the split path and on column_frozen_t
       !       for ARK/RK45, so nothing lags through patch state any more. ---------------------------!
       !----- WARM START for the adaptive march (MEDS_NUMERICS_SCOPING.md section 8e). The controller     !
@@ -913,16 +912,18 @@ contains
                                                    apoplast_frac = hcfg%wood_apoplast_frac,                          &
                                                    water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
-      hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
+      hydraulics_params%root_beta      = hcfg%root_beta      ; hydraulics_params%root_depth_b1  = hcfg%root_depth_b1
+      hydraulics_params%root_depth_b2  = hcfg%root_depth_b2
+      hydraulics_params%specific_root_length = hcfg%specific_root_length
+      hydraulics_params%fine_root_radius     = hcfg%fine_root_radius
       call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
    end subroutine fill_hydro_params
 
    !----- PER-PFT hydraulics table (#179). Each entry starts from the shared [hydraulics] block    !
-   !      and then takes whichever traits the [pft] table actually supplied -- HYD_UNSET means      !
-   !      "not given", so a config can make ONE trait per-PFT without restating the other twelve,   !
-   !      and a config with no per-PFT hydraulics at all builds n_pft identical copies of exactly   !
-   !      what apply_hydraulics_config produced before.                                             !
+   !      and the sapwood conductivity of its wood density, and then takes whichever traits the     !
+   !      [pft] table actually supplied -- HYD_UNSET means "not given", so a config can make ONE    !
+   !      trait per-PFT without restating the others.                                              !
    !                                                                                          !
    !      The Kirchhoff lookup is rebuilt PER ENTRY, from that PFT's own wood_kexp: the table is    !
    !      what makes a non-integer vulnerability exponent affordable on the hot path, so sharing    !
@@ -945,9 +946,14 @@ contains
          call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
          call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
-         call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
+         table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
          call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
+         call ovr(table%pft(i)%root_beta,          pft%hyd_root_beta(i))
+         call ovr(table%pft(i)%root_depth_b1,      pft%hyd_root_depth_b1(i))
+         call ovr(table%pft(i)%root_depth_b2,      pft%hyd_root_depth_b2(i))
+         call ovr(table%pft(i)%specific_root_length, pft%hyd_specific_root_length(i))
+         call ovr(table%pft(i)%fine_root_radius,   pft%hyd_fine_root_radius(i))
          !----- kexp LAST and separately: changing it invalidates the lookup built above. --------!
          if (pft%hyd_wood_kexp(i) > HYD_UNSET) then
             table%pft(i)%wood_kexp = pft%hyd_wood_kexp(i)

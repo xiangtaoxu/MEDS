@@ -26,15 +26,15 @@ Colour is plant functional type by wood density — green light, blue medium, ma
 from the 1985 census instead, the same rates track the plot through 2010. Reproduce it from
 [`examples/example03_demography/`](examples/example03_demography/).*
 
-[![Hourly canopy energy balance for one July](examples/example_biophysics/biophysics_july.png)](examples/example_biophysics/)
+[![Ten days of the coupled column at Barro Colorado Island, every half hour](examples/example04_column_biophysics/window.png)](examples/example04_column_biophysics/)
 
-*One July at hourly resolution, year 50 of a run at Ithaca NY. **Only the grey curve is an input** —
-above-canopy air temperature from the ERA5-Land forcing. The canopy air space, the sunlit leaf and
-the soil surface are all solved from it and the incoming shortwave. They separate from the forcing
-in different directions and with different phase, which is what a real surface does and what a
-meteorological file cannot tell you. The same run's carbon and soil-water figures come from the
-same output stream, not three separate studies:
-[`examples/example_biophysics/`](examples/example_biophysics/).*
+*Ten days in one patch of the Barro Colorado Island forest, Panama, every half hour, at the end of
+the 2016 El Niño dry season. **Of what is drawn, only the top panel and the grey air temperature are
+inputs**, from the flux tower's own meteorology. The canopy air, the top tree's leaves and the soil
+are solved: the leaves run 3–6 K above the air at midday, the canopy draws its air's CO₂ down by
+day, and the first storm wets the soil from the top down. The same run starts from the plot's
+census and is calibrated against the tower's fluxes:
+[`examples/example04_column_biophysics/`](examples/example04_column_biophysics/).*
 
 ## What is in the model
 

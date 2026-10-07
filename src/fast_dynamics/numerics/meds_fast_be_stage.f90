@@ -195,7 +195,7 @@ contains
             !      base, the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary  !
             !      of both books, the soil's and the whole column's. -------------------------------------!
             bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil + e_floor
-            bf%soil_enth_out= qloss_total * sum(col_config%soil%root_frac(1:nsl)) + e_drain + e_clip
+            bf%soil_enth_out= qloss_total + e_drain + e_clip
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/rainfall are frozen fast-step).  !
@@ -440,7 +440,6 @@ contains
          end do
          call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
               frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
-                 frozen%plant%leaf_area(1:n),                &
               frozen%roots%psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
               frozen%plant%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt, psi_c(:, 1:n), &
               sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &

@@ -383,7 +383,7 @@ GPP_site,h = Σ_patches area_p Σ_cohorts LAI_c · A_gross(PAR_c,h, T_c,h, VPD_c
 | R3 | model and API: per-cohort leaf drivers as hourly outputs; `meds.canopy.radiation`; a batch `meds.plant.leaf` call; tests | `src/fast_dynamics/`, `src/io/meds_output_registry.f90`, `python/meds/` | medium |
 | R4 | stages 1–5 (§7) with `--stage`, and stage 2's outer passes | `scripts/calibrate_fast/` | medium |
 | R5 | rough uncertainty (§8): σ-scaled Laplace, transformed intervals, filter sensitivity | `scripts/calibrate_fast/fit.py` | small |
-| R6 | the BCI refit on the merged #340/#341 base; README and figures. Only when the owner asks | `examples/example_flux_tower_bci/` | small |
+| R6 | the BCI refit on the merged #340/#341 base; README and figures. Only when the owner asks | `examples/example04_column_biophysics/` | small |
 
 Each phase comes with tests:
 - the synthetic-model checks in `scripts/calibrate_fast/tests`;

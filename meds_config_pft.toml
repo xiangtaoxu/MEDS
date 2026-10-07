@@ -126,9 +126,14 @@ struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of th
 # wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
 # wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
 # wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
-# k_plant_max        = [6.0e-4, 6.0e-4, 6.0e-4]    # [kg/s/MPa/m2 leaf] whole-plant conductance
-# wood_kmax          = [8.0, 8.0, 8.0]             # [kg/m/s/MPa] sapwood specific conductivity
+# wood_kmax          = [5.3, 3.3, 1.8]             # [kg/m/s/MPa] sapwood specific conductivity; absent,
+#                                                  #   it follows wood_density (Xu et al. 2016), shown here
 # vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
+# root_beta          = [0.1, 0.1, 0.1]             # [--]  root profile within the rooting depth
+# root_depth_b1      = [1.114058, 1.114058, 1.114058]   # [m] rooting depth = b1 * height^b2
+# root_depth_b2      = [0.4223014, 0.4223014, 0.4223014] # [--]
+# specific_root_length = [2.0e4, 2.0e4, 2.0e4]     # [m/kgC] fine-root length per unit fine-root carbon
+# fine_root_radius   = [2.5e-4, 2.5e-4, 2.5e-4]    # [m]  fine-root radius
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power

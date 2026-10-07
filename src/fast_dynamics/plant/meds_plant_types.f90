@@ -29,7 +29,6 @@ module meds_plant_types
    public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_ROOT, NODE_WOOD, NROOT_MAX
    public :: HYDRO_NODES_2, HYDRO_NODES_3
    public :: HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE
-   public :: HYDRO_COND_KPLANT, HYDRO_COND_SEGMENT
    public :: HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED
    !----- PHENOLOGY ------------------------------------------------------------------------!
    !----- RESPIRATION (env/flux types removed: the kernels are now `elemental pure` over bare      !
@@ -193,10 +192,6 @@ module meds_plant_types
    integer(ik), parameter :: HYDRO_SOLVER_EXPM = 1_ik  !< frozen-coefficient matrix exponential (default)
    integer(ik), parameter :: HYDRO_SOLVER_BE   = 2_ik  !< linearly-implicit backward Euler (3-node / stiff)
 
-   !----- Internal-conductance parameterization. -------------------------------------------!
-   integer(ik), parameter :: HYDRO_COND_KPLANT  = 1_ik !< leaf-area-specific whole-plant conductance (default)
-   integer(ik), parameter :: HYDRO_COND_SEGMENT = 2_ik !< X16 stem allometry: kmax*sap_area/(height*curl)
-
    !----- Sub-step control. ----------------------------------------------------------------!
    integer(ik), parameter :: HYDRO_SUBSTEP_ADAPTIVE = 1_ik !< step-doubling error control (default)
    integer(ik), parameter :: HYDRO_SUBSTEP_FIXED    = 2_ik !< fixed n_sub equal steps (GPU lockstep)
@@ -209,9 +204,8 @@ module meds_plant_types
       real(wp) :: bleaf      = 0.0_wp   !< [kgC]   leaf biomass  (sets leaf capacitance)
       real(wp) :: bsap       = 0.0_wp   !< [kgC]   sapwood biomass
       real(wp) :: broot      = 0.0_wp   !< [kgC]   fine-root biomass (bsap+broot set wood capacitance)
-      real(wp) :: sap_area   = 0.0_wp   !< [m2]    sapwood cross-sectional area (segment cond. mode)
-      real(wp) :: height     = 0.0_wp   !< [m]     plant height (gravity head + segment path length)
-      real(wp) :: leaf_area  = 0.0_wp   !< [m2]    leaf area (scales whole-plant conductance)
+      real(wp) :: sap_area   = 0.0_wp   !< [m2]    sapwood cross-sectional area (conductance)
+      real(wp) :: height     = 0.0_wp   !< [m]     plant height (gravity head + path length)
       !----- Multi-layer root boundary (ED2-style; MEDS_MULTILAYER_ROOTS_DESIGN). When              !
       !       n_root_layer > 1 the solver aggregates these per-layer soil potentials + rhizosphere    !
       !       conductances into an effective (G_root, psi_soil_eff) at the wood node and distributes   !
@@ -230,10 +224,15 @@ module meds_plant_types
       !----- Xylem vulnerability (loss of conductance). -----------------------------------!
       real(wp) :: wood_psi50 = 0.0_wp   !< [MPa, <0] potential at 50% loss
       real(wp) :: wood_kexp  = 0.0_wp   !< [-]  vulnerability shape (a)
-      !----- Conductance parameterization. ------------------------------------------------!
-      real(wp) :: k_plant_max = 0.0_wp  !< [kg/s/MPa/m2_leaf] whole-plant (HYDRO_COND_KPLANT)
-      real(wp) :: wood_kmax   = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity (HYDRO_COND_SEGMENT)
-      real(wp) :: vessel_curl = 1.0_wp  !< [-] tortuosity / path-length factor (HYDRO_COND_SEGMENT)
+      !----- Conductance: wood_kmax * sapwood area / (height * vessel_curl). -------------------!
+      real(wp) :: wood_kmax   = 0.0_wp  !< [kg/m/s/MPa] sapwood specific conductivity
+      real(wp) :: vessel_curl = 1.0_wp  !< [-] tortuosity / path-length factor
+      !----- Roots: the depth allometry, the profile within it, and the absorbing length. ----------!
+      real(wp) :: root_beta            = 0.1_wp       !< [-] (1 - beta^(d/D)) / (1 - beta) above depth d
+      real(wp) :: root_depth_b1        = 1.1140580_wp !< [m] rooting depth = b1 * height^b2
+      real(wp) :: root_depth_b2        = 0.4223014_wp !< [-]
+      real(wp) :: specific_root_length = 2.0e4_wp     !< [m/kgC] fine-root length per unit fine-root carbon
+      real(wp) :: fine_root_radius     = 2.5e-4_wp    !< [m] fine-root radius
       !----- Precomputed Kirchhoff lookup table (built from wood_kexp by build_hydro_table). It is    !
       !       consulted on the hot path ONLY for wood_kexp not in {1,2} (the quadrature regime); for   !
       !       kexp in {1,2} the solver keeps the exact closed form, so it stays dormant there. --------!
@@ -254,7 +253,6 @@ module meds_plant_types
    type :: hydro_opts_t
       integer(ik) :: topology     = HYDRO_NODES_2
       integer(ik) :: solver       = HYDRO_SOLVER_EXPM
-      integer(ik) :: cond_mode    = HYDRO_COND_KPLANT
       integer(ik) :: substep_mode = HYDRO_SUBSTEP_ADAPTIVE
       logical     :: gravity_on   = .true.
       real(wp)    :: rtol         = 1.0e-3_wp   !< [-]  relative sub-step tolerance

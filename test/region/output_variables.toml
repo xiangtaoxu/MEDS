@@ -1,5 +1,5 @@
-# MEDS per-variable OUTPUT override table for example_biophysics
-# (named by [output].io_config in both stage configs).
+# The per-variable output table of test_region's runs (named by [output].io_config in
+# meds_config_site.toml).
 #
 # Each entry is  variables.<registry-name> = <value>, where <value> is either
 #   true | false      force the variable on with its registry-default streams, or off everywhere

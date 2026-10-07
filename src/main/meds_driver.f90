@@ -2,9 +2,8 @@
 !==========================================================================================!
 ! meds_driver -- a site run as an OPEN / STEP / FINALIZE object, so a caller other than the       !
 ! `meds_main` program can drive it. `meds_main` is a thin shell over it, and the C-API shim        !
-! `meds_c_api_run` is a second caller, which is what lets `examples/example_biophysics` drive the   !
-! full coupled model from Python. The site is one polygon (meds_polygon); a region of polygons is   !
-! meds_region.                                                                                      !
+! `meds_c_api_run` is a second caller, which lets Python drive the full coupled model              !
+! (`meds.model`). The site is one polygon (meds_polygon); a region of polygons is meds_region.     !
 !                                                                                          !
 !   type(meds_run_t) :: run                                                                      !
 !   call driver_open('meds_config_main.toml', run, ok)                                            !
@@ -100,11 +99,8 @@ contains
       !      `meds_run_t` has default initialisers, which is enough for a fresh variable -- and   !
       !      NOT enough here. The C-API keeps its runs in a module-`save` registry and hands out   !
       !      freed slots again, so a second run in the same process opens on top of the first      !
-      !      one's counters, ledgers and budgets. examples/example_biophysics does exactly that:    !
-      !      run_example.py opens the spin-up, closes it, then opens the July stage in the SAME     !
-      !      process. Caught when both stages reported the identical worst seam gap to four         !
-      !      significant figures -- stage 2 was still carrying stage 1's maximum, and would have    !
-      !      carried its step counters and both conservation ledgers too.  ------------------------!
+      !      one's counters, ledgers and budgets. A Python process that runs one config after       !
+      !      another (scripts/calibrate_fast's trials) does exactly that.  ----                     !
       run%istep = 0_ik
       run%iyear = 0_ik
       !----- The run before's output: its files are closed, but a run with [output] off would still  !

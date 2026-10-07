@@ -150,6 +150,95 @@ before and after.
     tests and the root config start from moves to `data/census_example.csv`.
   - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
     the runs read only the committed coefficients.
+- **The flux-tower example is `examples/example04_column_biophysics/`, and
+  `examples/example_biophysics/` is retired** (#378). The Barro Colorado Island example stands for the
+  coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's
+  meteorology, a start from the 2010 census, the calibration, the comparison with the tower), and
+  a last step shows the column's states: the calibrated run restarted for ten days,
+  20–29 April 2016, with every patch's and cohort's states written each half hour
+  (`output_window.toml`, `plot_window.py`, `window.png`). The restart matches the continuous run to
+  10⁻¹³ K.
+  - **BCI's soil, and the calibration redone on it.** The soil was MEDS's default loam (θs 0.43,
+    n 1.56); by the end of a dry season its whole root zone was near its residual water, and the
+    tower's 0–15 cm sensor read 0.17 m³ m⁻³ wetter. It is now BCI's clay Oxisol, a van Genuchten
+    fit to the plot's paired water content and potential (Kupers et al. 2019) and the tower:
+    θs 0.60, θr 0.10, α 2.0 m⁻¹, n 1.23, Ks 1×10⁻⁵ m s⁻¹ (Godsey et al. 2004), starting at field
+    capacity, 0.42 (was 0.30). In the ten days the model's top 15 cm now holds what the tower's
+    sensor reads (0.28 m³ m⁻³ both, 20–26 April).
+    - The refit (786 trials, 67 min on 5 nodes) moves `leaf_angle_mean` 51.3 → 58.0°,
+      `vcmax25` 31.4 → 32.0, `stomatal_g1` 3.00 → 2.83, `stomatal_g0` 0.0030 → 0.0013 and
+      `wstress_sref_stomata` 1.40 → 5.35, which the tower now barely informs (posterior sd 0.90 of
+      the prior's); κ moves from 0.724 to 0.725.
+    - Five-year means, default / calibrated: GPP 10.22 / 8.60 → 10.45 / 8.72 µmol m⁻² s⁻¹ (the
+      fit's target 8.18), LE 71.6 / 64.0 → 77.4 / 65.2 W m⁻² (tower 75.5), NEE −4.03 / −3.34 →
+      −3.60 / −2.84 µmol m⁻² s⁻¹ (tower −4.24). Validation cost 61,251 → 51,377 before, 62,022 →
+      52,501 now.
+    - Rebuilt end to end from the download, the forcing file is identical value for value.
+  - **`example_biophysics`** (Ithaca: a 50-year spin-up, then one July at hourly output) had not
+    been rerun since v0.3.0. Its July config, PFT file and output table move to `test/region/`, from
+    which the `region` test derives its configs (the config's comments dropped, every key and value
+    the same); `c_api_run` loads example 04's default and calibrated configs instead. The root
+    README's second figure is example 04's ten days.
+  - `plot_evaluation.py` draws the calibration's target for the fluxes the fit adjusts (GPP, and H
+    or LE by their share of the closure gap) instead of testing which differ from the measured
+    flux; its figure and statistics are byte-identical.
+- **Roots belong to each cohort: a rooting depth from its height, ED2's profile within it, and a
+  single-root soil→root conductance** (#378; #375; #377 asks whether the conductance should grow in
+  proportion to root length).
+  - **Depth and profile.** A cohort roots to `root_depth_b1` · height^`root_depth_b2`, ED2's IALLOM 1
+    allometry (1.114 · h^0.4223: 1.8 m at 3 m, 5.0 m at 35 m), capped at the soil column. Within that
+    depth its fine roots follow ED2's (1 − β^(d/D)) / (1 − β) above depth d, with `root_beta` = 0.1
+    as in ED2. Before, one profile (β = e⁻⁴ over a fixed 2 m) served the whole stand.
+  - **Conductance.** Each layer's soil→root conductance is the single-root form 2πK·L / ln(r_half /
+    r_root) (Gardner 1960). L is the cohort's fine-root length (fine-root carbon ×
+    `specific_root_length`, 2.0×10⁴ m kgC⁻¹: 10 m per g dry in Panama and GRooT), r_half comes from the
+    patch's root-length density, and `fine_root_radius` is 0.25 mm. It replaces ED2-hydro's
+    K·√RAI/(π·Δz) (after Katul et al. 2003), which grew by 2√2 each time the layers were halved and by
+    √2 each time a cohort was split, and connected the thick deep layers one to two orders of
+    magnitude more weakly.
+  - The column's stand-wide root profile is gone. A patch's profile, its cohorts' weighted by fine-root
+    carbon, weights the root-zone temperature and spreads uptake when no layer supplies any.
+  - **Config (breaking).** New `[hydraulics]` keys `root_depth_b1`, `root_depth_b2`,
+    `specific_root_length` and `fine_root_radius`, each with a `pft.*` override like the other
+    per-PFT hydraulic traits; `root_beta` defaults to 0.1 (was e⁻⁴). `hydraulics.root_depth` and
+    `hydraulics.specific_root_area` are refused, naming their replacements.
+  - **At BCI** (example 04 on its clay soil). The predawn leaf ψ of the largest patch's tallest tree /
+    of the canopy, 15–26 April 2016, at the end of the El Niño dry season, was −1.15 / −0.98 MPa with
+    the keys calibrated on the previous model. On the new model it is −0.52 / −0.49 MPa on the 2 m
+    column and −0.41 / −0.38 MPa on a 6 m column, which example 04 now uses (`n_layer` 16,
+    `grid_growth` 4, `deep_depth` 6.72). The wet-season level is −0.27 MPa, the gravity head. 16 or 20
+    layers give the same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm, and
+    `root_beta` 0.01 or 0.001: the moist subsoil no longer limits the tree.
+    - **Refit** (756 trials, 21 min on 5 nodes; validation cost 66,201 → 52,687). `wstress_sref_stomata`
+      drops out of the fit: the canopy's predawn ψ never falls below the stomata's water-stress onset
+      (−0.86 MPa), so no window uses it. `leaf_angle_mean` 58.0 → 55.1°, `vcmax25` 32.0 → 31.3,
+      `stomatal_g0` 0.0013 → 0.0005, κ 0.725 → 0.767.
+    - Five-year means, default / calibrated: GPP 10.45 / 8.72 → 10.54 / 8.54 µmol m⁻² s⁻¹ (the fit's
+      target 8.18 → 8.04), LE 77.4 / 65.2 → 79.8 / 63.9 W m⁻² (tower 75.5), NEE −3.60 / −2.84 →
+      −3.58 / −2.68 µmol m⁻² s⁻¹ (tower −4.24).
+    - **The top 15 cm of soil** now stays at 0.37 m³ m⁻³ through the 2016 dry days, 0.09 wetter than the
+      tower's sensor (it matched at 0.28 on the 2 m column): the roots draw from the wettest layers,
+      so the dry season's water comes from the whole 6 m column rather than from the top. A big
+      canopy tree's leaf ψ moves only 0.04 MPa a day, wet season or dry.
+- **A plant's internal conductance is its sapwood's, with the sapwood's conductivity from wood
+  density** (#378). The maximum wood→leaf conductance is `wood_kmax` × sapwood area / (height ×
+  `vessel_curl`), and `wood_kmax` [kg m⁻¹ s⁻¹ MPa⁻¹] is exp(2.348 − 2.455 ρ + 0.6186 / 2), the fit of
+  Xu et al. (2016, New Phytol 212:80) to 72 neotropical species, as ED2 codes it
+  (`plant_hydro_scheme` 2); ρ is held to 0.35–0.95. It is 3.3 at ρ = 0.6, against 2–4 measured on
+  the branches of Panama canopy trees and FATES's 3.0. `pft.wood_kmax` overrides it per PFT.
+  - **Gone:** the whole-plant conductance per unit leaf area (`k_plant_max`, 6×10⁻⁴ kg s⁻¹ MPa⁻¹
+    m⁻², 33 mmol m⁻² s⁻¹ MPa⁻¹), which was the default, and the key that chose between the two.
+    For a 35 m BCI canopy tree the sapwood gives 1.9 mmol m⁻² s⁻¹ MPa⁻¹.
+  - **Config (breaking).** `hydraulics.k_plant_max`, `pft.k_plant_max`, `hydraulics.conductance`
+    and `hydraulics.wood_kmax` are refused, each naming what replaced it. `vessel_curl` (1.5) stays.
+  - **At BCI** (example 04, calibrated; old → new). The daily range of leaf ψ of the canopy trees
+    (over 25 m, every patch) goes from 0.03 to 0.42 MPa in the wet season (October 2015; midday
+    −0.38 → −0.77) and from 0.03 to 0.45–0.52 MPa in the 2016 dry season (March and late April;
+    midday −0.42 → −0.84 to −0.91). The 35 m tree on top of the largest patch goes from 0.04 to
+    0.68–0.75 MPa in the dry season (midday −0.44 → −1.09 to −1.15). Measured canopy trees reach
+    −0.9 to −1.2 MPa at midday in the wet season and −1.4 to −2.0 in the dry. Predawn ψ is unchanged
+    (−0.40 in the dry season, against −0.6 to −1.0 measured). The five-year fluxes move by less than 0.1 %: midday leaf ψ stays above the
+    turgor-loss point (−1.7 MPa), where the stomata start to close, so the calibration stands.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
@@ -162,6 +251,11 @@ before and after.
 
 ### Fixed
 
+- **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
+  (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴
+  times too large: the leaves' ψ did not move at all over a day. Only the segment conductance, which
+  no config had selected, read the area, so no earlier run changed. `cm2_to_m2` moved from the
+  output code to `meds_constants`.
 - **A sunrise or sunset forcing interval keeps its shortwave** (#371).
   - **The bug:** the partition into beam and diffuse, PAR and NIR took the cos z at the interval's
     midpoint. When that was dark, all four streams came out zero, however much light the record

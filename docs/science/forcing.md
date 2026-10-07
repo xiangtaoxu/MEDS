@@ -122,7 +122,7 @@ last, and nothing is ever filled.
 **Producing one from flux-tower data.** `scripts/prepare_flux_tower/make_tower_forcing.py` reads
 AmeriFlux BASE, FLUXNET (ONEFlux) or a plain CSV described by a site TOML, converts the clock to UTC,
 writes `RHair` as measured, fills gaps explicitly with a per-variable `<Var>_qc` flag, and states the
-tower's heights; `examples/example_flux_tower_bci/` builds Barro Colorado Island's file with it. Its
+tower's heights; `examples/example04_column_biophysics/` builds Barro Colorado Island's file with it. Its
 conversions and checks are in `docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md` §7–§9.
 
 **The ED_ERA5land archive (`format = "ED_ERA5land"`).** The global archive built by

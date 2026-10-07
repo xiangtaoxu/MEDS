@@ -2,8 +2,9 @@
 !==========================================================================================!
 ! meds_hydr_lib -- how water MOVES through the plant: the xylem vulnerability curve and its      !
 ! Kirchhoff (matric flux) potential, a fixed-grid lookup table + linear interpolant for the        !
-! general-exponent Kirchhoff integral, and the root profile. How much water a tissue or soil layer !
-! holds is in meds_water_retention. All are stateless, elemental/pure, scalar-in kernels          !
+! general-exponent Kirchhoff integral, the sapwood conductivity of a wood density, and the root    !
+! profile. How much water a tissue or soil layer holds is in meds_water_retention. All are         !
+! stateless, elemental/pure, scalar-in kernels                                                     !
 ! -- the hydraulics analogue of meds_allometry -- so they live in src/shared/functions and can be  !
 ! evaluated at config-load (table build) and on the GPU hot path alike. The stateful NETWORK        !
 ! SOLVER (solve_plant_water / plant_water_tendency) that assembles these into an ODE stays in        !
@@ -17,11 +18,20 @@ module meds_hydr_lib
 
    !----- Vulnerability / Kirchhoff-conductance family. ------------------------------------!
    public :: plc_retained, dplc_dpsi, flux_potential, kirchhoff_edge
-   public :: root_fraction_profile
+   public :: root_fraction_profile, wood_kmax_from_density
    !----- Precomputed lookup table (dormant until the solver adopts it for general kexp). ---!
    public :: hydro_table_t, build_hydro_table, flux_potential_lin, kirchhoff_edge_tab
    public :: HYDRO_TABLE_NTAB, HYDRO_TABLE_RMAX
    real(wp), parameter :: dpsi_eps = 1.0e-6_wp   !< |up-down| below which K_eff -> pointwise limit
+
+   !----- Sapwood specific conductivity against wood density (Xu et al. 2016, New Phytol 212:80;   !
+   !      ED2 plant_hydro_scheme 2): ln Ks = a + b rho, residual variance s2, fitted to 72 species  !
+   !      of neotropical seasonally dry forests (R2 0.21). Panama canopy branches give 2-4 at 0.6. -!
+   real(wp), parameter :: kmax_ln_a     =  2.348_wp   !< [ln(kg/m/s/MPa)] intercept
+   real(wp), parameter :: kmax_ln_b     = -2.455_wp   !< [ln(kg/m/s/MPa) per g/cm3] slope
+   real(wp), parameter :: kmax_ln_var   =  0.6186_wp  !< [-] residual variance of ln Ks
+   real(wp), parameter :: kmax_rho_min  =  0.35_wp    !< [g/cm3] wood densities outside the fitted
+   real(wp), parameter :: kmax_rho_max  =  0.95_wp    !<   range take its edge (ED2's bounds)
 
    !----- Fixed-grid Kirchhoff lookup table (POD value type: trivially copyable + GPU-mappable). -!
    integer,  parameter :: HYDRO_TABLE_NTAB = 512        !< uniform intervals over [0, R_MAX]
@@ -35,6 +45,13 @@ module meds_hydr_lib
    end type hydro_table_t
 
 contains
+
+   !----- Sapwood specific conductivity [kg/m/s/MPa] of a wood density rho [g/cm3]: the mean of   !
+   !      the lognormal fit, exp(a + b rho + s2/2) -- 6.0 at rho 0.35, 3.3 at 0.60, 1.4 at 0.95. -!
+   elemental real(wp) function wood_kmax_from_density(rho) result(kmax)
+      real(wp), intent(in) :: rho
+      kmax = exp(kmax_ln_a + kmax_ln_b*min(max(rho, kmax_rho_min), kmax_rho_max) + 0.5_wp*kmax_ln_var)
+   end function wood_kmax_from_density
 
    !----- Fraction of conductance retained (1 - PLC). psi<0, psi50<0 => r>0; clamp for psi>0.    !
    !      r=0 is guarded explicitly (0**kexp=0 for any kexp>0): nvfortran's real**real codegen      !

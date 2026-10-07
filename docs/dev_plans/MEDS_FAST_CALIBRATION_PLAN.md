@@ -419,7 +419,7 @@ The calibrated set is accepted only if it passes the gates of §8.
 
 **P1 (done) — `scripts/calibrate_fast/`**, modelled on `scripts/numerics_sweep.py` and kept small:
 - **registry:** a parameter registry (TOML) giving each key's file, section, default, range, transform and source.
-- **site declaration:** windows, targets, σ and the tower file. It lives in the example (`examples/example_flux_tower_bci/calibration.toml`).
+- **site declaration:** windows, targets, σ and the tower file. It lives in the example (`examples/example04_column_biophysics/calibration.toml`).
 - **states:** the state chain of §5.1.
 - **trials:** a trial writer that deep-sets keys in parsed copies of the base TOMLs, and a runner (`meds_main`, one thread, timeout, provenance check).
 - **residuals:** the reader and the residual builder of §5.
@@ -502,7 +502,7 @@ would come later:
 ## 13. What the first fit showed (2026-09-29)
 
 The BCI fit ran on the calib-tool build, with trait plasticity on in the example
-(`examples/example_flux_tower_bci/README.md`, "Calibrating the fast parameters", has the tables).
+(`examples/example04_column_biophysics/README.md`, "Calibrating the fast parameters", has the tables).
 
 ### 13.1 Results
 

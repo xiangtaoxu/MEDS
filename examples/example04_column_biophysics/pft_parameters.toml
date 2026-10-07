@@ -1,30 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-# CALIBRATED by scripts/calibrate_fast from pft_parameters.toml.
-# Every line is the base file's, comments included, except these keys the fit set
-# (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
-# KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   pft.leaf_angle_mean            51.2881  (45)
-#   pft.vcmax25                    31.3696  (45)
-#   pft.stomatal_g1                2.99672  (3)
-#   pft.stomatal_g0                0.00301837  (0.01)
-#   pft.wstress_sref_stomata       1.4035  (2)  EFFECTIVE
-#   pft.jmax_vcmax_ratio           1.6983  (1.7)  KATTGE & KNORR
-# MEDS PFT config for the flux-tower example at Barro Colorado Island: ONE evergreen broadleaf PFT
-# at a mid-successional wood density. It is the example_biophysics PFT with its leaf habit changed,
-# not a calibration for BCI -- the example is about building forcing from tower data. BCI's
-# drought-deciduous and liana components are not represented.
+# The PFT of example 04 at Barro Colorado Island: ONE evergreen broadleaf PFT at a mid-successional
+# wood density, for the whole census. Its fast parameters are the calibration's starting point
+# (calibration/ holds the fitted file). BCI's drought-deciduous and liana components are not
+# represented.
 # Every per-PFT array has length 1 (the PFT count = length of [pft].wood_density).
 
 [pft]
 wood_density       = [0.60]      # [g/cm3] mid-successional
-# ---- REQUIRED since the WAI + sapwood allometry port (ED2 ed_params.f90, tropical broadleaf).
+# Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf).
 wai_b1             = [0.0096]    # [--] ED2 b1WAI = 0.0192*0.5
 wai_b2             = [2.0947]    # [--] ED2 b2WAI
 sapwood_area_b1    = [1.582]     # [cm2/cm^b2] ED2 b1SA
 sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 
-#----- Canopy-element geometry for the aerodynamic boundary layers. These were hard-coded
-#      constants in the fast loop (0.04 m, 0.02 m, 1.0); the values below reproduce them.
+#----- Canopy-element geometry for the aerodynamic boundary layers.
 leaf_width         = [0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02]     # [m]  characteristic branch diameter
 crown_area_frac    = [1.0]      # [--] crown area as a fraction of the patch
@@ -38,13 +27,13 @@ min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
 min_reproduction_height = 20.0   # [m] shared scalar
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
-vcmax25            = [31.3696]
-jmax_vcmax_ratio   = [1.6983]
+vcmax25            = [45.0]
+jmax_vcmax_ratio   = [1.7]
 tpu_vcmax_ratio    = [0.167]
 rd_vcmax_ratio     = [0.015]
 kp25               = [1.0e-9]
-stomatal_g0        = [0.00301837]
-stomatal_g1        = [2.99672]        # Medlyn [kPa^0.5]
+stomatal_g0        = [0.01]
+stomatal_g1        = [3.0]        # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0]
 quantum_yield_c4   = [0.0]
 theta_j            = [0.70]       # the effective curvature of a mean-light cohort (#351; CLM5, ED2)
@@ -56,15 +45,14 @@ katul_lambda25     = [800.0]
 wstress_psi_open   = [-0.5]
 wstress_psi_close  = [-3.0]
 wstress_lambda_exp = [1.0]
-wstress_sref_stomata = [1.4035]     # [1/MPa] Sabot stomatal-stress sensitivity (added: schema grew since this file was written)
+wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity
 # Carbon-dynamics traits.
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
 huber_value            = [1.5e-4]
 aboveground_frac       = [0.7]
 
-#----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
-#      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
+#----- Non-leaf maintenance respiration (leaf Rd is rd_vcmax_ratio above).
 is_woody           = [1]     # 1 = woody (0 = grass: no stem respiration)
 stem_resp_factor25 = [0.06]  # [umol CO2/m2 stem/s @25C]
 root_resp_factor25 = [0.30]  # [umol CO2/kgC fine root/s @25C]
@@ -86,15 +74,14 @@ wood_transmit_nir  = [0.001]   # [--] wood/bark NIR transmittance
 wood_emissivity    = [0.90]    # [--] wood thermal emissivity
 leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
-leaf_angle_mean    = [51.2881]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
+leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
-# Necromass -> litter-destination split (added: schema grew since this file was written; values match
-# the reference meds_config_pft.toml's mid-successional PFT, the closest analogue to this one).
+# Necromass -> litter-destination split, as the reference meds_config_pft.toml's mid-successional PFT.
 f_labile_leaf          = [0.70]  # [--] labile fraction of leaf/storage/fine-root necromass
 f_labile_stem          = [0.05]  # [--] labile fraction of wood/CWD necromass
 struct_lignin_frac     = [0.25]  # [--] lignin fraction of the structural-litter stream

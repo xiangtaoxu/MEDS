@@ -36,7 +36,7 @@ time, per-hour(H) = raw(H) - raw(H-1) everywhere except at 01:00 UTC, where per-
 A leading sample that is not 01:00 cannot be differenced and is dropped (a boundary, not a gap).
 Negative packing noise is clipped to 0 for precipitation and shortwave, as in the archive.
 
-Usage (Ithaca NY, calendar year 2024, the example_biophysics recycle window):
+Usage (Ithaca NY, calendar year 2024):
   # from an archive
   python make_forcing_file.py --data-path $ERA5LAND_ROOT/ED_ERA5land --start 2024-01-01 \\
       --end 2024-12-31 --lat 42.44 --lon -76.50 --out ithaca_forcing.nc

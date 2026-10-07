@@ -19,7 +19,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
+   use meds_config,     only : soil_column_config_t,                                              &
                                LWP_CONTROL_LINEAR_DECLINE, pft_stomata_psi_onset
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -999,20 +999,14 @@ contains
       cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
       cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
       cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)
-      cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
-      cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
-      if (toml_has(tm, 'hydraulics.conductance')) then
-         select case (trim(adjustl(toml_string(tm, 'hydraulics.conductance', 'whole_plant'))))
-         case ('whole_plant') ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_WHOLE_PLANT
-         case ('segment')     ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_SEGMENT
-         case default
-            error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
-         end select
-      end if
-      cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
-      cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
-      cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
+      cfg%hydraulics%root_beta     = toml_real(tm, 'hydraulics.root_beta',     cfg%hydraulics%root_beta)
+      cfg%hydraulics%root_depth_b1 = toml_real(tm, 'hydraulics.root_depth_b1', cfg%hydraulics%root_depth_b1)
+      cfg%hydraulics%root_depth_b2 = toml_real(tm, 'hydraulics.root_depth_b2', cfg%hydraulics%root_depth_b2)
+      cfg%hydraulics%specific_root_length = toml_real(tm, 'hydraulics.specific_root_length',                &
+                                                      cfg%hydraulics%specific_root_length)
+      cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
+                                                      cfg%hydraulics%fine_root_radius)
 
       !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
@@ -1260,9 +1254,13 @@ contains
       call opt_pa(tp, 'pft.wood_water_sat',      cfg%pft%hyd_wood_water_sat,      npft, miss)
       call opt_pa(tp, 'pft.wood_psi50',          cfg%pft%hyd_wood_psi50,          npft, miss)
       call opt_pa(tp, 'pft.wood_kexp',           cfg%pft%hyd_wood_kexp,           npft, miss)
-      call opt_pa(tp, 'pft.k_plant_max',         cfg%pft%hyd_k_plant_max,         npft, miss)
       call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
       call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
+      call opt_pa(tp, 'pft.root_beta',           cfg%pft%hyd_root_beta,           npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b1',       cfg%pft%hyd_root_depth_b1,       npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
+      call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
+      call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
