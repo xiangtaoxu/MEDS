@@ -11,8 +11,8 @@
 ! and must give the same files. Last, meds_main (the second argument)                               !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
 !                                                                                          !
-! The configs are DERIVED from examples/example_biophysics/meds_config_july.toml (the test runs    !
-! from that directory): an override block is prepended -- meds_toml returns the FIRST match of a    !
+! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
+! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
 ! key -- and the keys the archive or region mode reject are dropped. The monthly tier is chunked by  !
 ! month: a site file caps a tier with cohort variables at a month, and the region's (which has none)  !
 ! would otherwise keep the template's year, so the same records would sit in differently named       !
@@ -33,7 +33,7 @@ program test_region
                                           region_done, region_finalize, region_free
    implicit none
 
-   character(len=*), parameter :: TEMPLATE = 'meds_config_july.toml'
+   character(len=*), parameter :: TEMPLATE = 'meds_config_site.toml'
    character(len=1), parameter :: LETTER(4) = ['F', 'D', 'M', 'Y']
    !----- The box [N, W, S, E] = [40, 150, 20, -150] holds rows 1-2 (35 N, 25 N) and columns 17, 0, 1  !
    !      (160 E, 180, 160 W). (2,0) has no data and column 1 is 30% land, so land_fraction_min = 0.5 !

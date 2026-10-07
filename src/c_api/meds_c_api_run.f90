@@ -8,12 +8,11 @@
 ! live met forcing, netCDF output, both conservation ledgers -- by holding a `meds_run_t` from    !
 ! `meds_driver` and handing the caller the OPEN / STEP / FINALIZE seam.                            !
 !                                                                                          !
-! The caller owns the time loop. That is the whole point: `examples/example_biophysics` used to    !
-! be a bash script that exec'd the binary twice and then ran three plotting scripts over the        !
-! netCDF it left behind; it is now one Python process that opens a run, steps it, reads the site    !
-! state AS IT GOES, and plots. Nothing here re-implements the model -- `driver_step` is the same    !
-! call the executable makes, so a Python-driven run and a `meds_main` run of the same config        !
-! produce byte-identical output. The example's README records that comparison.                       !
+! The caller owns the time loop: a Python process opens a run, steps it, reads the site state as   !
+! it goes, and finalizes it. `python -m meds.model CONFIG` is that loop, and                       !
+! scripts/calibrate_fast runs its trials through it. Nothing here re-implements the model --       !
+! `driver_step` is the same call the executable makes, so a Python-driven run and a `meds_main`    !
+! run of the same config produce byte-identical output.                                            !
 !                                                                                          !
 ! Conventions match the other shims: `site_t` and friends never cross the boundary. A run is an     !
 ! opaque integer handle into a module-`save` registry; scalars return by value; arrays COPY into a  !

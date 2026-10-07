@@ -335,5 +335,6 @@ The example configs are the fastest way in, and each is a complete pair:
 
 - [`examples/example_demography/`](../examples/example_demography/) — a 250-year demographic
   spin-up from near-bare ground.
-- [`examples/example_biophysics/`](../examples/example_biophysics/) — a 50-year spin-up at Ithaca
-  with real forcing, then one July restarted at high output resolution.
+- [`examples/example04_column_biophysics/`](../examples/example04_column_biophysics/) — the
+  coupled model at the Barro Colorado Island flux tower: forcing from the tower, a start from the
+  plot's census, five years at hourly output, and ten days restarted at half-hourly output.

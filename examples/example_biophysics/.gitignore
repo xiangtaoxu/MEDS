@@ -1,5 +1,0 @@
-# Model output and run artifacts -- regenerate with `python run_example.py`
-out/
-*.log
-*-S-*.nc
-*_pft_parameters.csv

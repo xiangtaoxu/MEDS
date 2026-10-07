@@ -603,21 +603,20 @@ if(MEDS_BUILD_TESTS)
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/c_api/meds_c_api_run.f90)
    target_link_libraries(test_c_api_run PRIVATE meds_testsupport meds_driver)
    meds_fortran_flags(test_c_api_run)
-   #      Runs from examples/example_biophysics: it loads BOTH of that example's shipped configs,
-   #      which until now had no build-time consumer at all -- the example is a shell script and
-   #      three plotting scripts, none of which the build knows about. That is the same hole the
-   #      demography config fell through.
+   #      Runs from examples/example04_column_biophysics: it loads both of that example's shipped
+   #      configs (the default and the calibrated run), so the build notices when they fall behind
+   #      the config reader.
    add_test(NAME c_api_run COMMAND test_c_api_run
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example04_column_biophysics)
 
    #      A region against its site runs (MEDS_POLYGON_RUNTIME_PLAN.md R2), on the synthetic archive.
-   #      Runs from examples/example_biophysics, whose July config it derives its configs from; it
-   #      writes everything under the work directory in the build tree.
+   #      Runs from test/region, whose site config it derives its configs from; it writes
+   #      everything under the work directory in the build tree.
    add_executable(test_region test/test_region.f90)
    target_link_libraries(test_region PRIVATE meds_driver meds_testassert meds_testarchive)
    meds_fortran_flags(test_region)
    add_test(NAME region COMMAND test_region ${CMAKE_CURRENT_BINARY_DIR}/region_test_tmp $<TARGET_FILE:meds_main>
-            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/examples/example_biophysics)
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/test/region)
 
    #----- Hydraulics / phenology / respiration / carbon tests link the flat plant library (state-free). #
    #     The list spans both tiers -- hydraulics and respiration are sub-daily, phenology,
