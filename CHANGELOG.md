@@ -103,17 +103,28 @@ before and after.
   strategies and `phenology_patterns.png` are gone.
 - **The flux-tower example is `examples/example04_column_biophysics/`, and
   `examples/example_biophysics/` is retired.** The Barro Colorado Island example stands for the
-  coupled column in the renumbered examples. Its pipeline is unchanged (forcing from the tower's
-  meteorology, a start from the 2010 census, the shipped calibration, the comparison with the
-  tower), and a last step shows the column's states: the calibrated run restarted for ten days,
+  coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's
+  meteorology, a start from the 2010 census, the calibration, the comparison with the tower), and
+  a last step shows the column's states: the calibrated run restarted for ten days,
   20–29 April 2016, with every patch's and cohort's states written each half hour
   (`output_window.toml`, `plot_window.py`, `window.png`). The restart matches the continuous run to
   10⁻¹³ K.
-  - **Rerun on this beta, end to end from the download.** The rebuilt forcing file is identical
-    value for value, and the five-year means move only in the README's last digit: the default GPP
-    from 10.22 to 10.23 µmol m⁻² s⁻¹ and its NEE from −4.03 to −4.04, the calibrated night H from
-    1.4 to 1.5 W m⁻², and the calibrated dry-season H RMSE from 71.2 to 71.3 W m⁻². The calibration
-    is not redone.
+  - **BCI's soil, and the calibration redone on it.** The soil was MEDS's default loam (θs 0.43,
+    n 1.56); by the end of a dry season its whole root zone was near its residual water, and the
+    tower's 0–15 cm sensor read 0.17 m³ m⁻³ wetter. It is now BCI's clay Oxisol, a van Genuchten
+    fit to the plot's paired water content and potential (Kupers et al. 2019) and the tower:
+    θs 0.60, θr 0.10, α 2.0 m⁻¹, n 1.23, Ks 1×10⁻⁵ m s⁻¹ (Godsey et al. 2004), starting at field
+    capacity, 0.42 (was 0.30). In the ten days the model's top 15 cm now holds what the tower's
+    sensor reads (0.28 m³ m⁻³ both, 20–26 April).
+    - The refit (786 trials, 67 min on 5 nodes) moves `leaf_angle_mean` 51.3 → 58.0°,
+      `vcmax25` 31.4 → 32.0, `stomatal_g1` 3.00 → 2.83, `stomatal_g0` 0.0030 → 0.0013 and
+      `wstress_sref_stomata` 1.40 → 5.35, which the tower now barely informs (posterior sd 0.90 of
+      the prior's); κ moves from 0.724 to 0.725.
+    - Five-year means, default / calibrated: GPP 10.22 / 8.60 → 10.45 / 8.72 µmol m⁻² s⁻¹ (the
+      fit's target 8.18), LE 71.6 / 64.0 → 77.4 / 65.2 W m⁻² (tower 75.5), NEE −4.03 / −3.34 →
+      −3.60 / −2.84 µmol m⁻² s⁻¹ (tower −4.24). Validation cost 61,251 → 51,377 before, 62,022 →
+      52,501 now.
+    - Rebuilt end to end from the download, the forcing file is identical value for value.
   - **`example_biophysics`** (Ithaca: a 50-year spin-up, then one July at hourly output) had not
     been rerun since v0.3.0. Its July config, PFT file and output table move to `test/region/`, from
     which the `region` test derives its configs (the config's comments dropped, every key and value

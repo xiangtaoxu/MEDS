@@ -5,8 +5,8 @@ MEDS solves from it in one patch. The patch is the one that covers the most grou
 a site mean would average it with the gaps. Its top cohort is its tallest at each half hour.
 
 Panels, top to bottom: shortwave and rain (the forcing); air, canopy-air, top-leaf and top-soil
-temperature; canopy-air CO2; the top cohort's leaf water potential; soil moisture and soil
-temperature at four depths, with the tower's soil water content beside the model's. Local time.
+temperature; canopy-air CO2; the top cohort's leaf water potential; soil moisture over 0-15 cm (the
+tower's sensor, drawn beside it) and at two deeper layers; soil temperature at four depths. Local time.
 
 Usage: python plot_window.py [--out window.png]
 """
@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(HERE, "..", "..", "scripts", "prepare_flux_tower
 import tower_inputs as ti  # noqa: E402  (the site TOML's reader)
 
 DEPTHS = [0.05, 0.15, 0.40, 1.00]           # [m] the soil layers drawn: the ones whose nodes are nearest
+SENSOR = 0.15                                # [m] the tower's soil water sensor spans 0-15 cm
 INK, MUTED, GRID, NIGHT = "#0b0b0b", "#52514e", "#d9d8d4", "#efeeea"
 AIR, CAS, LEAF, SOIL, TOWER = "#52514e", "#2a78d6", "#1baf7a", "#a35d1c", "#0b0b0b"
 LAYERS = ["#a35d1c", "#d4661c", "#eda100", "#c9b98f"]   # shallow to deep
@@ -43,7 +44,7 @@ def read(pattern):
             for name, var in ds.variables.items():
                 if var.dimensions and var.dimensions[0] == "time":
                     data.setdefault(name, []).append(np.ma.filled(var[:].astype(float), np.nan))
-            soil_z = np.asarray(ds["soil_z"][:], float) if "soil_z" in ds.variables else None
+            soil_z = np.ma.filled(ds["soil_z"][:].astype(float), np.nan) if "soil_z" in ds.variables else None
     if not stamps:
         raise SystemExit(f"ERROR: no output matches {pattern}; run the window first (run_example.py)")
     data = {k: np.concatenate(v) for k, v in data.items()}
@@ -75,6 +76,11 @@ def main(argv=None):
     leaf_psi = f["gx_psi_leaf_cohort_fast"][rows, top]
     layer = [int(np.nanargmin(np.abs(-soil_z - z))) for z in DEPTHS]
     soil_w = f["soil_water_layer_patch_fast"][:, p, :]
+    edges = np.zeros(len(soil_z) + 1)                           # layer edges from the nodes (midpoints)
+    for k, z in enumerate(-soil_z):
+        edges[k + 1] = 2 * z - edges[k] if np.isfinite(z) else edges[k]
+    over = np.clip(np.minimum(edges[1:], SENSOR) - edges[:-1], 0, None)   # each layer's share of 0-15 cm
+    sensor_w = np.nansum(soil_w * over, axis=1) / over.sum()
     soil_t = f["soil_temp_layer_patch_fast"][:, p, :] - 273.15
 
     #----- The tower's soil water content, on the same local clock -----------------------------#
@@ -118,9 +124,10 @@ def main(argv=None):
     a.set_ylabel("top cohort's leaf\nwater potential [MPa]")
 
     a = ax[4]
-    for i, k in enumerate(layer):
+    a.plot(t, sensor_w, color=LAYERS[0], lw=1.4, label=f"0-{SENSOR * 100:.0f} cm")
+    for i, k in list(enumerate(layer))[2:]:
         a.plot(t, soil_w[:, k], color=LAYERS[i], lw=1.2, label=f"{-soil_z[k] * 100:.0f} cm")
-    a.plot(swc.index, swc.values, color=TOWER, lw=0, marker="o", ms=1.6, label="tower (a clay soil)")
+    a.plot(swc.index, swc.values, color=TOWER, lw=0, marker="o", ms=1.6, label=f"tower, 0-{SENSOR * 100:.0f} cm")
     a.set_ylabel("soil moisture\n[m³ m⁻³]")
     a.legend(loc="upper left", ncol=5, frameon=False, fontsize=8.5)
 
