@@ -30,7 +30,7 @@ textbook ED succession: bare ground, a pioneer flush, canopy closure. Reproduce 
 *Ten days in one patch of the Barro Colorado Island forest, Panama, every half hour, at the end of
 the 2016 El Niño dry season. **Of what is drawn, only the top panel and the grey air temperature are
 inputs**, from the flux tower's own meteorology. The canopy air, the top tree's leaves and the soil
-are solved: the leaves run 3–5 K above the air at midday, the canopy draws its air's CO₂ down by
+are solved: the leaves run 3–6 K above the air at midday, the canopy draws its air's CO₂ down by
 day, and the first storm wets the soil from the top down. The same run starts from the plot's
 census and is calibrated against the tower's fluxes:
 [`examples/example04_column_biophysics/`](examples/example04_column_biophysics/).*

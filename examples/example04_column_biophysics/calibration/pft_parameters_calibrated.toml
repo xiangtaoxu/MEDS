@@ -3,11 +3,10 @@
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
 # KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   pft.leaf_angle_mean            57.9892  (45)
-#   pft.vcmax25                    31.9657  (45)
-#   pft.stomatal_g1                2.82978  (3)
-#   pft.stomatal_g0                0.00130369  (0.01)
-#   pft.wstress_sref_stomata       5.34535  (2)  EFFECTIVE
+#   pft.leaf_angle_mean            55.1153  (45)
+#   pft.vcmax25                    31.3275  (45)
+#   pft.stomatal_g1                2.82088  (3)
+#   pft.stomatal_g0                0.000463421  (0.01)
 #   pft.jmax_vcmax_ratio           1.6983  (1.7)  KATTGE & KNORR
 # The PFT of example 04 at Barro Colorado Island: ONE evergreen broadleaf PFT at a mid-successional
 # wood density, for the whole census. Its fast parameters are the calibration's starting point
@@ -37,13 +36,13 @@ min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
 min_reproduction_height = 20.0   # [m] shared scalar
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
-vcmax25            = [31.9657]
+vcmax25            = [31.3275]
 jmax_vcmax_ratio   = [1.6983]
 tpu_vcmax_ratio    = [0.167]
 rd_vcmax_ratio     = [0.015]
 kp25               = [1.0e-9]
-stomatal_g0        = [0.00130369]
-stomatal_g1        = [2.82978]        # Medlyn [kPa^0.5]
+stomatal_g0        = [0.000463421]
+stomatal_g1        = [2.82088]        # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0]
 quantum_yield_c4   = [0.0]
 theta_j            = [0.70]       # the effective curvature of a mean-light cohort (#351; CLM5, ED2)
@@ -55,7 +54,7 @@ katul_lambda25     = [800.0]
 wstress_psi_open   = [-0.5]
 wstress_psi_close  = [-3.0]
 wstress_lambda_exp = [1.0]
-wstress_sref_stomata = [5.34535]     # [1/MPa] Sabot stomatal-stress sensitivity
+wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity
 # Carbon-dynamics traits.
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
@@ -84,7 +83,7 @@ wood_transmit_nir  = [0.001]   # [--] wood/bark NIR transmittance
 wood_emissivity    = [0.90]    # [--] wood thermal emissivity
 leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
-leaf_angle_mean    = [57.9892]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
+leaf_angle_mean    = [55.1153]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]

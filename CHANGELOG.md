@@ -153,14 +153,24 @@ before and after.
     `specific_root_length` and `fine_root_radius`, each with a `pft.*` override like the other
     per-PFT hydraulic traits; `root_beta` defaults to 0.1 (was e⁻⁴). `hydraulics.root_depth` and
     `hydraulics.specific_root_area` are refused, naming their replacements.
-  - **At BCI** (example 04 on its clay soil, with the keys calibrated on the previous model): the
-    predawn leaf ψ of the largest patch's tallest tree / of the canopy, 15–26 April 2016, at the end
-    of the El Niño dry season, was −1.15 / −0.98 MPa. It is now −0.52 / −0.49 MPa on the 2 m column and
-    −0.41 / −0.38 MPa on a 6 m column, which example 04 now uses (`n_layer` 16, `grid_growth` 4,
-    `deep_depth` 6.72). The wet-season level is −0.27 MPa, the gravity head. 16 or 20 layers give the
-    same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm: the moist subsoil no longer
-    limits the tree. Dry-season ET is 2.71 mm d⁻¹ (2.72 before). The example's calibration is not
-    redone on this model yet.
+  - **At BCI** (example 04 on its clay soil). The predawn leaf ψ of the largest patch's tallest tree /
+    of the canopy, 15–26 April 2016, at the end of the El Niño dry season, was −1.15 / −0.98 MPa with
+    the keys calibrated on the previous model. On the new model it is −0.52 / −0.49 MPa on the 2 m
+    column and −0.41 / −0.38 MPa on a 6 m column, which example 04 now uses (`n_layer` 16,
+    `grid_growth` 4, `deep_depth` 6.72). The wet-season level is −0.27 MPa, the gravity head. 16 or 20
+    layers give the same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm, and
+    `root_beta` 0.01 or 0.001: the moist subsoil no longer limits the tree.
+    - **Refit** (756 trials, 21 min on 5 nodes; validation cost 66,201 → 52,687). `wstress_sref_stomata`
+      drops out of the fit: the canopy's predawn ψ never falls below the stomata's water-stress onset
+      (−0.86 MPa), so no window uses it. `leaf_angle_mean` 58.0 → 55.1°, `vcmax25` 32.0 → 31.3,
+      `stomatal_g0` 0.0013 → 0.0005, κ 0.725 → 0.767.
+    - Five-year means, default / calibrated: GPP 10.45 / 8.72 → 10.54 / 8.54 µmol m⁻² s⁻¹ (the fit's
+      target 8.18 → 8.04), LE 77.4 / 65.2 → 79.8 / 63.9 W m⁻² (tower 75.5), NEE −3.60 / −2.84 →
+      −3.58 / −2.68 µmol m⁻² s⁻¹ (tower −4.24).
+    - **The top 15 cm of soil** now stays at 0.37 m³ m⁻³ through the 2016 dry days, 0.09 wetter than the
+      tower's sensor (it matched at 0.28 on the 2 m column): the roots draw from the wettest layers,
+      so the dry season's water comes from the whole 6 m column rather than from the top. A big
+      canopy tree's leaf ψ moves only 0.04 MPa a day, wet season or dry.
 - **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
   - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
     near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and

@@ -116,7 +116,7 @@ calibrated configs, `fit.json`, and [`report.md`](calibration/report.md).
 - the provider's respiration is about the soil chambers' alone, so GPP's observation model scales it
   by κ (prior 0.65 ± 0.10).
 
-**The keys.** Seven are fitted. `vcmax25` and `stomatal_g1` take their prior centres from the site's
+**The keys.** Six are fitted. `vcmax25` and `stomatal_g1` take their prior centres from the site's
 climate (eco-evolutionary optimality), the others from the PFT file. The calibrated value is the MAP
 (maximum a posteriori): the most probable value given both the tower and the prior. The 68 % range
 is the posterior's. Prior z is how far the fit moved a key from its prior centre, in prior standard
@@ -124,17 +124,19 @@ deviations; in the figure, a whisker short against 1 marks a key the tower pinne
 
 | key | calibrated (MAP) | 68 % | prior centre | prior z |
 |---|---|---|---|---|
-| `vcmax25` [µmol m⁻² s⁻¹] | 32.0 | 31.1–32.9 | 41.0 (climate) | −0.50 |
-| `stomatal_g1` [kPa^0.5] | 2.83 | 2.74–2.93 | 2.80 (climate) | +0.02 |
-| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0013 | 0.0008–0.0022 | 0.01 | −1.87 |
-| `leaf_angle_mean` [°] | 58.0 | 54.1–61.5 | 45 | +1.36 |
-| `z0m_ratio` | 0.053 | 0.051–0.055 | 0.13 | −2.61 |
-| `wstress_sref_stomata` [MPa⁻¹] | 5.35 | 3.57–6.94 | 2.0 | +1.84 |
-| κ | 0.725 | 0.690–0.760 | 0.65 | +0.74 |
+| `vcmax25` [µmol m⁻² s⁻¹] | 31.3 | 30.4–32.2 | 41.0 (climate) | −0.54 |
+| `stomatal_g1` [kPa^0.5] | 2.82 | 2.74–2.90 | 2.80 (climate) | +0.02 |
+| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0005 | 0.0003–0.0011 | 0.01 | −2.99 |
+| `leaf_angle_mean` [°] | 55.1 | 51.2–58.7 | 45 | +1.04 |
+| `z0m_ratio` | 0.054 | 0.052–0.056 | 0.13 | −2.60 |
+| κ | 0.767 | 0.728–0.804 | 0.65 | +1.15 |
 
-`wstress_sref_stomata` is the one key the tower barely informs: its posterior is 0.90 of its prior.
+`stomatal_g0` is the key the tower barely informs: its posterior is 0.93 of its prior.
 
 Fixed:
+- `wstress_sref_stomata`, which no window uses: the canopy's predawn leaf ψ stays above the onset of
+  stomatal water stress (half the turgor-loss point, −0.86 MPa) all year, even at the end of the 2016
+  dry season;
 - the leaf's NIR reflectance, at 0.45, and the albedo is not a target: fitting it pushed the
   reflectance to an unrealistic 0.32, because the canopy's structure, not its leaves, makes the
   model too bright;
@@ -149,16 +151,16 @@ Fixed:
 | target | default | calibrated |
 |---|---|---|
 | u\* | 1.72 | 0.67 |
-| GPP (with κ) | 2.14 | 1.55 |
-| upwelling longwave | 3.84 | 3.55 |
-| LE | 1.56 | 1.56 |
-| H (closure-corrected) | 4.18 | 4.35 |
-| all (the objective) | 62,022 | 52,501 |
+| GPP (with κ) | 2.50 | 1.58 |
+| upwelling longwave | 3.87 | 3.54 |
+| LE | 1.70 | 1.59 |
+| H (closure-corrected) | 4.34 | 4.35 |
+| all (the objective) | 66,201 | 52,687 |
 
-- **κ = 0.73** puts the tower's respiration at 4.52 µmol m⁻² s⁻¹ instead of 3.28, and its
-  GPP, which gains the extra respiration by day only, at 3.14 kgC m⁻² yr⁻¹ instead of 2.86.
+- **κ = 0.77** puts the tower's respiration at 4.27 µmol m⁻² s⁻¹ instead of 3.28, and its
+  GPP, which gains the extra respiration by day only, at 3.08 kgC m⁻² yr⁻¹ instead of 2.86.
 - **The closure is the largest uncertainty.** Sharing the gap between H and LE (the Bowen ratio)
-  instead moves `stomatal_g1` to 4.96 and `wstress_sref_stomata` to 0.84.
+  instead moves `stomatal_g1` to 4.44 and `vcmax25` to 28.2.
 - **The intervals are rough:** they are local (Laplace), and the fit stops when an iteration gains
   less than 0.1 % of the cost, which places each key only to about its interval's width.
 
@@ -173,27 +175,27 @@ hours in every column.
 
 | | tower, measured | tower, the fit's target | default | calibrated |
 |---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.18 | 10.45 | 8.72 |
-| LE [W m⁻²] | 75.5 | 75.5 | 77.4 | 65.2 |
-| H by day [W m⁻²] | 91.3 | 166.6 | 129.5 | 141.9 |
-| H at night [W m⁻²] | −24.0 | −24.0 | −5.6 | 1.0 |
-| midday (11–14 h) GPP, LE, H | 21.8, 243, 174 | 23.3, 243, 307 | 29.0, 221, 229 | 24.0, 187, 243 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.60 | −2.84 |
-| net radiation [W m⁻²] | 136.3 | | 122.0 | 123.2 |
-| albedo, shortwave above 200 W m⁻² | 0.129 | | 0.183 | 0.170 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.04 | 10.54 | 8.54 |
+| LE [W m⁻²] | 75.5 | 75.5 | 79.8 | 63.9 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 126.6 | 143.5 |
+| H at night [W m⁻²] | −24.0 | −24.0 | −6.2 | 0.7 |
+| midday (11–14 h) GPP, LE, H | 21.8, 243, 174 | 23.0, 243, 307 | 29.3, 227, 225 | 23.3, 182, 248 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.58 | −2.68 |
+| net radiation [W m⁻²] | 136.3 | | 122.0 | 122.6 |
+| albedo, shortwave above 200 W m⁻² | 0.129 | | 0.183 | 0.173 |
 | u\* at night / at midday [m s⁻¹] | 0.42 / 0.71 | 0.42 / 0.71 | 0.85 / 1.12 | 0.49 / 0.70 |
-| stand at the end: LAI, AGB [kgC m⁻²] | | | 5.43, 17.9 | 5.56, 17.3 |
+| stand at the end: LAI, AGB [kgC m⁻²] | | | 5.43, 18.0 | 5.50, 17.2 |
 
-- **Carbon:** the calibration brings GPP from 28 % above its target to 7 % above (midday: 24.0
-  against 23.3), and u\* close to the tower's.
-- **Energy:** the model's canopy reflects too much, so net radiation is 13 W m⁻² short, and by day
-  its H is 0.85 of the target (243 against 307 at midday). At night its H is near 0 against the
+- **Carbon:** the calibration brings GPP from 31 % above its target to 6 % above (midday: 23.3
+  against 23.0), and u\* close to the tower's.
+- **Energy:** the model's canopy reflects too much, so net radiation is 14 W m⁻² short, and by day
+  its H is 0.86 of the target (248 against 307 at midday). At night its H is near 0 against the
   tower's −24 W m⁻².
-- **Water:** on BCI's soil the default run evaporates as much as the tower (LE 77.4 against
-  75.5 W m⁻²). The calibration lowers it to 65.2; its LE score on the validation windows does not
-  change (1.56), so the fit trades LE for GPP, H and u\*.
-- **The dry season** (January to April), RMSE against the targets: GPP 3.63 against the default's
-  6.08 µmol m⁻² s⁻¹, LE 35.2 against 34.1, H 73.0 against 75.6 W m⁻².
+- **Water:** the default run evaporates a little more than the tower (LE 79.8 against 75.5 W m⁻²).
+  The calibration lowers it to 63.9, although its LE score on the daytime validation windows
+  improves (1.70 to 1.59).
+- **The dry season** (January to April), RMSE against the targets: GPP 3.53 against the default's
+  6.55 µmol m⁻² s⁻¹, LE 36.6 against 38.7, H 71.7 against 80.8 W m⁻².
 - **Budgets:** whole-site energy and water close in every check of both runs.
 
 ## 5. Ten days inside the column
@@ -210,21 +212,20 @@ El Niño dry season: four bright dry days, small showers, then 42 mm on dry soil
 The figure shows one patch, the one that covers the most ground (8 % of the site, LAI 5.9), because
 a site mean would average the closed forest with the gaps; its top cohort is its tallest tree.
 - **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2 K above it and meets
-  it at night; the top cohort's leaves run 3–5 K above the air at midday and a few tenths of a
-  degree below it at night. The soil at 6 cm swings 1–3 K a day and peaks 1–5 hours after the
-  air; at 90 cm it does not move.
-- **Canopy-air CO₂** falls 4–9 µmol mol⁻¹ by day as the canopy draws it down and returns at night,
+  it at night; the top cohort's leaves run 3–6 K above the air at midday and a few tenths of a
+  degree below it at night. The soil at 5 cm swings 1–3 K a day and peaks 1–4 hours after the
+  air; at 110 cm it does not move.
+- **Canopy-air CO₂** falls 4–10 µmol mol⁻¹ by day as the canopy draws it down and returns at night,
   highest on the calmest night (29–30 April, u\* 0.26 m s⁻¹).
-- **Leaf water potential.** Through the dry days the top cohort's leaves fall to −1.4 to −1.6 MPa
-  each afternoon and recover only to between −0.75 and −1.2 MPa by dawn: the tree's wood water
-  store refills more slowly at night than it empties by day (#375). The 6.6 mm shower on the 24th,
-  which wets only the top few centimetres, lifts them to −0.4 MPa within hours; after the storm they
-  sit at −0.35 to −0.45 MPa, near the gravity head of a 35 m tree, with almost no daily cycle.
-  MEDS has no root resistance in series with the soil, so one wet layer sets the whole tree (#356).
-- **Soil moisture.** Through the dry days and the small showers the model's top 15 cm holds what
-  the tower's 0–15 cm sensor reads (both 0.28 m³ m⁻³ on average, 20–26 April) and wets on the same
-  showers. The storm nearly saturates it (0.54), and it stays 0.07 wetter than the tower over the
-  next two days; 45 and 90 cm do not change.
+- **Leaf water potential.** The top cohort's leaves sit at −0.41 MPa at night and −0.45 at midday
+  through the dry days, a daily range of 0.04 MPa, and rise to −0.35 to −0.42 after the storm. The
+  tree reaches moist soil (5 m of roots in a 6 m column, which stays near −0.06 MPa below 1 m), so it
+  refills every night; the midday drop is small because the whole-plant conductance is high
+  against the canopy's transpiration.
+- **Soil moisture.** The model's top 15 cm stays at 0.37 m³ m⁻³ through the dry days, 0.09 wetter than
+  the tower's 0–15 cm sensor (0.28): the roots draw from the wettest layers, so the dry season's
+  water comes from the whole column rather than from the top. The storm wets the top 15 cm to 0.57
+  and 46 cm over the next two days; 110 cm does not change.
 
 ## Files
 
