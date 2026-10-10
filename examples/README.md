@@ -23,3 +23,9 @@ README that shows how to reproduce it (run from the repository root):
   plant hydraulics and soil water every 15 minutes. It starts from the plot's 2010 census, calibrates
   the fast parameters against the tower, compares five years with its fluxes, and shows ten days
   at half-hourly output.
+- **[`example05_forest_regeneration/`](example05_forest_regeneration/)** — the whole model at once,
+  driven from Python: a forest regrowing from bare ground at Barro Colorado Island from 1600 to 2020,
+  with the column of example 04 every 15 minutes and the demography of example 03 every day, three
+  PFTs (early, mid and late successional) with Panama's sun leaves and a sink limit on diameter
+  growth, checked against the census's growth and the forest's carbon budget, on ERA5-Land weather
+  repeated and the CO₂ of its history.

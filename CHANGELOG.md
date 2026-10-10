@@ -56,6 +56,20 @@ before and after.
   fewer seedlings survive. The recruits and the seed lost to litter take the efficiency from one
   helper (`cohort_recruit_efficiency`), so the two still add up to the reproduction carbon;
   `test_slow_ledger` checks the recruit pool's credit against exp(−k · LAI).
+- **Example 05, forest regeneration** (`examples/example05_forest_regeneration/`): the coupled model
+  run through `meds.model.Run` from bare ground at Barro Colorado Island, 1600-2020, on ERA5-Land's
+  2003-2022 at the plot's cell (repeated; cut by `scripts/prepare_era5/make_forcing_file.py`) and the
+  CMIP7 CO2 history. The three PFTs are example 03's wood-density classes with its census-fitted Camac
+  mortality (pinned through `[derived]`, the treefall rate taken off gamma) and BCI height curve. Their
+  leaves are Panama's sun leaves (top-of-canopy lifespan 0.5, 0.7 and 0.9 yr; 100, 110 and 120 g m⁻²)
+  on example 04's Vcmax25, with Ma et al. (2025)'s light plasticity; fine roots turn over at 1.5 times
+  the leaves' rate, stems respire on sapwood volume, and diameter growth is sink-limited at twice the
+  census's 75th percentile (x dbh^0.5). Seed rain brings one sapling per m² a year, shared by the PFTs.
+  `calibrate_growth.py check` compares each cohort's 2005-2010 diameter growth with the census's,
+  measured as the census measures it, by PFT, size and overtopping LAI, and the stand's carbon budget
+  with BCI's (`calibration.json`); `plot_regeneration.py` draws the regrowth against the plot's
+  censuses and tower. By 2010 the stand holds 123 MgC ha⁻¹ aboveground (census 118) and 33 m² ha⁻¹ of
+  basal area (30.5), with GPP 32 MgC ha⁻¹ yr⁻¹ (tower 31).
 - **`meds.model.Run.patches()`** copies per-patch `area` (fraction of the site) and `age` out of a live
   run, through the new C-API entry `meds_run_get_patch_real`; a cohort's `owner_patch` indexes them, so
   stand totals can be built from cohorts. `test_model.py` checks that the area-weighted cohort biomass
