@@ -8,11 +8,15 @@ CENSUS_DIR holds the ForestGEO tree tables of censuses 2-7 as bci_1985.csv ... b
 per tree; dbh in mm). Writes, in data/ (not committed):
 
   growth.csv.gz      one row per tree and interval: dbh growth [cm/yr] of a tree alive at both ends
+                     (died 0) and, for a tree that died within the interval, its growth over the
+                     interval before, the last one measured (died 1); the first interval has none
   survival.csv.gz    one row per tree and interval: alive at the start, dead (1) or alive (0) at the end
   recruits.csv.gz    one row per quadrat, PFT and interval: new stems >= 1 cm [plants/m2/yr]
-  bci_1985_census.csv  the 1985 stand as a MEDS census: a patch per quadrat, nplant per m2
+  bci_1985_census.csv, bci_2005_census.csv  the 1985 and 2005 stands as MEDS censuses: a patch per
+                     quadrat, nplant per m2
 
-and, committed, census_stand.csv: stems and basal area by PFT and size class in every census.
+and, committed, census_stand.csv: stems, basal area and aboveground biomass (MEDS's allometry, each
+species' wood density) by PFT and size class in every census.
 
 A tree is described by what it is at the start of an interval: its dbh, its PFT (from its species'
 wood density) and its overtopping LAI, the leaf area of TALLER trees within 20 m of it per m2 of
@@ -24,6 +28,12 @@ neighbours). A MEDS tree is one stem, so a tree alive with no main stem to measu
 recruit when a stem is measured again. Growth keeps every increment measured at an unchanged height
 and below 75 mm/yr, negative ones included; fit_vital_rates.py decides how to treat those. The 1982
 census is not used: it rounded small stems to 5 mm.
+
+A model cohort's growth is that of every tree in it, including the trees that will die before the next
+census; the census measures growth only on the trees that live to it. So a tree that dies within an
+interval keeps its last measured growth, so that the growth of the trees alive at an interval's start
+can be fitted -- the slowest growers are the likeliest to die, and growth of the survivors alone runs
+high, the more so in deep shade.
 """
 import os
 import sys
@@ -59,7 +69,8 @@ def load(year):
     c = pd.read_csv(os.path.join(CENSUS, f"bci_{year}.csv"), low_memory=False,
                     usecols=["sp", "gx", "gy", "dbh", "hom", "date", "status"])
     c["dbh"] = c.dbh / 10.0                                   # mm -> cm
-    c["pft"] = np.digitize(c.sp.map(wood_density), RHO_BREAKS) + 1
+    c["rho"] = c.sp.map(wood_density)
+    c["pft"] = np.digitize(c.rho, RHO_BREAKS) + 1
     c["quad"] = (np.floor(c.gx / QUAD) * 100 + np.floor(c.gy / QUAD)).astype("Int64")
     c["block"] = (np.floor(c.gx / BLOCK) * 10 + np.floor(c.gy / BLOCK)).astype("Int64")
     c["live"] = (c.status == "A") & c.dbh.notna() & c.gx.notna() & c.gy.notna()
@@ -82,6 +93,11 @@ def height_m(dbh_cm, pft):
     else:
         h = np.exp(ALLOM["b1Ht"] + ALLOM["b2Ht"] * np.log(dbh_cm))
     return np.minimum(h, HGT_MAX[pft - 1])
+
+
+def agb_kgc(dbh_cm, pft, rho):
+    """MEDS's dbh_to_agb: agb_c1 (rho D^2 h)^agb_c2 [kgC per tree]."""
+    return ALLOM["agb_c1"] * (rho * dbh_cm ** 2 * height_m(dbh_cm, pft)) ** ALLOM["agb_c2"]
 
 
 def leaf_area_m2(dbh_cm, pft):
@@ -118,6 +134,7 @@ centres = np.c_[centre_x[keep], centre_y[keep]]
 quad_block = (np.floor(centres[:, 0] / BLOCK) * 10 + np.floor(centres[:, 1] / BLOCK)).astype(int)
 
 growth, survival, recruits = [], [], []
+last_g = pd.Series(np.nan, index=census[YEARS[0]].index)          # each tree's last measured growth
 for y0, y1 in zip(YEARS[:-1], YEARS[1:]):
     c0, c1 = census[y0], census[y1]
     dt = (c1.date - c0.date) / 365.25
@@ -128,10 +145,16 @@ for y0, y1 in zip(YEARS[:-1], YEARS[1:]):
     inc_mm = (c1.dbh - c0.dbh) * 10
     ok = (focal & (c1.status == "A") & c1.dbh.notna() & (np.abs(c1.hom - c0.hom) <= 0.05 * c0.hom)
           & (inc_mm / dt <= 75))
-    growth.append(start[ok].assign(g=(inc_mm / 10 / dt)[ok]))
+    g_now = (inc_mm / 10 / dt).where(ok)
+    growth.append(start[ok].assign(g=g_now[ok], died=0))
 
     ok = focal & c1.status.isin(["A", "D"])                   # trees not found are left out
-    survival.append(start[ok].assign(dead=((c1.status == "D") | c1.dbh.isna())[ok].astype(int)))
+    dead = ((c1.status == "D") | c1.dbh.isna()) & ok
+    survival.append(start[ok].assign(dead=dead[ok].astype(int)))
+    known = dead & last_g.notna()                             # dying trees with a growth measured before
+    growth.append(start[known].assign(g=last_g[known], died=1))
+    print(f"{y0}-{y1}: {int(known.sum())} of {int(dead.sum())} dying trees carry their last growth")
+    last_g = g_now
 
     # recruits per quadrat and PFT, against the leaf area index within 20 m of the quadrat's centre
     live = c0[c0.live]
@@ -150,21 +173,23 @@ for y0, y1 in zip(YEARS[:-1], YEARS[1:]):
                           "n_new": n_new[p].values if p in n_new else np.zeros(len(quads), int),
                           "dt": q_dt})
         recruits.append(r.assign(exposure=QUAD * QUAD * r.dt, rate=r.n_new / (QUAD * QUAD) / r.dt))
-    print(f"{y0}-{y1}: {len(growth[-1])} growth rows, {len(survival[-1])} survival rows "
+    print(f"{y0}-{y1}: {len(growth[-2]) + len(growth[-1])} growth rows, {len(survival[-1])} survival rows "
           f"({survival[-1].dead.mean() * 100:.1f} % die), {int(new.sum())} recruits")
 
 for name, parts in (("growth", growth), ("survival", survival), ("recruits", recruits)):
     pd.concat(parts, ignore_index=True).to_csv(os.path.join(OUT, f"{name}.csv.gz"), index=False,
                                                float_format="%.6g")
 
-# the 1985 stand as a MEDS census: one row per quadrat, PFT and dbh; MEDS fuses it when it reads it
-live = census[1985][census[1985].live]
-rows = live.groupby(["quad", "pft", "dbh"]).size().rename("n").reset_index()
-rows["patch_id"] = rows.quad.astype(int) + 1
-rows["patch_area"] = QUAD * QUAD
-rows["nplant"] = rows.n / (QUAD * QUAD)
-rows[["patch_id", "patch_area", "pft", "dbh", "nplant"]].to_csv(
-    os.path.join(OUT, "bci_1985_census.csv"), index=False, float_format="%.6g")
+# the 1985 and 2005 stands as MEDS censuses: one row per quadrat, PFT and dbh; MEDS fuses them when it
+# reads them. The 1985 stand starts the demography runs, the 2005 one example 05's growth check.
+for y in (1985, 2005):
+    live = census[y][census[y].live]
+    rows = live.groupby(["quad", "pft", "dbh"]).size().rename("n").reset_index()
+    rows["patch_id"] = rows.quad.astype(int) + 1
+    rows["patch_area"] = QUAD * QUAD
+    rows["nplant"] = rows.n / (QUAD * QUAD)
+    rows[["patch_id", "patch_area", "pft", "dbh", "nplant"]].to_csv(
+        os.path.join(OUT, f"bci_{y}_census.csv"), index=False, float_format="%.6g")
 
 # every census's stand by PFT and size class, for the comparison with the model
 stand = []
@@ -175,7 +200,8 @@ for y in YEARS:
         for j in range(len(SIZE_CLASSES) - 1):
             m = (live.pft == p) & (k == j)
             stand.append((y, p, SIZE_CLASSES[j], m.sum() / PLOT_AREA,
-                          basal_area_m2(live.dbh[m]).sum() / PLOT_AREA))
-pd.DataFrame(stand, columns=["year", "pft", "dbh_class", "stems", "basal_area"]).to_csv(
+                          basal_area_m2(live.dbh[m]).sum() / PLOT_AREA,
+                          agb_kgc(live.dbh[m], p, live.rho[m]).sum() / (PLOT_AREA * 1e4)))
+pd.DataFrame(stand, columns=["year", "pft", "dbh_class", "stems", "basal_area", "agb"]).to_csv(
     os.path.join(HERE, "census_stand.csv"), index=False, float_format="%.6g")
 print("wrote data/ and census_stand.csv")

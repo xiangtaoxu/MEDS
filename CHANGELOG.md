@@ -75,6 +75,18 @@ before and after.
 
 ### Changed
 
+- **Example 03's growth law is fitted to every tree alive at an interval's start**, the trees that
+  die within it too, as a cohort's growth is. The census measures growth only on the trees that live
+  to the next census, and the slowest growers are the likeliest to die. `prepare_census.py` gives a
+  tree that dies within an interval the growth it put on over the interval before (`died` = 1 in
+  `growth.csv.gz`), and `fit_vital_rates.py` fits growth on 1990-2010, the intervals with a census
+  before them (13 % of the rows are trees that died). The 1-2 cm stems' growth falls 10-30 % (most
+  for PFT 1), stems above 5 cm' by less than 8 %; mortality, fitted on the law's growth, steepens
+  (β 12/14/37 -> 15/19/59 yr cm⁻¹). Cross-validated R² of class means: growth 0.86 -> 0.88,
+  mortality 0.74 -> 0.83. Example 05's mortality pins follow. The run from the 1985 census ends 2010
+  at 29.6 m² ha⁻¹ (census 30.5; was 31.2) with 379 trees above 10 cm (416; was 417) and holds its
+  basal area to 2100 instead of gaining 0.04 m² ha⁻¹ yr⁻¹; from bare ground the stand reaches the
+  census's basal area in about 135 years instead of 90 and ends 4 % above it instead of 17 %.
 - **`pft.repro_carbon_efficiency` is now `pft.recruit_carbon_efficiency`**: the share of a tree's
   reproduction carbon that becomes recruits at `min_cohort_height` covers seed set, germination and
   seedling survival together, not only the carbon use. The old key is refused with the new name;
