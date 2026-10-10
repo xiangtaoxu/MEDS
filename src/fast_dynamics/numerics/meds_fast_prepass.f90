@@ -336,7 +336,8 @@ contains
       call stem_maintenance_respiration(wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),   &
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
                                    col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
-                                   col_cohort%stem_resp_factor25(1:n), wood, stem_resp_arr(1:n))
+                                   col_cohort%stem_resp_factor25(1:n), col_cohort%sap_volume(1:n),      &
+                                   col_cohort%stem_resp_sapwood25(1:n), wood, stem_resp_arr(1:n))
       call fine_root_maintenance_respiration(tscale_root, col_cohort%broot(1:n),                        &
                                    col_cohort%root_resp_factor25(1:n), root_resp_arr(1:n))
       do i = 1_ik, n

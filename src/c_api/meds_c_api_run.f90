@@ -26,6 +26,9 @@
 module meds_c_api_run
    use iso_c_binding
    use meds_kinds,             only : wp, ik
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
+   use meds_site_diag_types,   only : CS_NPP_LEAF, CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO, &
+                                      CS_GROWTH_RESP, CS_EXUDATE
    use meds_driver,            only : meds_run_t, driver_open, driver_step, driver_finalize,   &
                                       driver_free, driver_done
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area,    &
@@ -38,6 +41,7 @@ module meds_c_api_run
    public :: meds_run_n_patch, meds_run_n_cohort
    public :: meds_run_total_agb, meds_run_total_lai, meds_run_total_nplant
    public :: meds_run_total_basal_area, meds_run_soil_carbon, meds_run_get_real, meds_run_get_int
+   public :: meds_run_get_patch_real
 
    !----- Small registry: a handful of concurrent runs is plenty (the example opens two, one per   !
    !      stage, and could hold both at once). Fixed-size and module-`save` for the same reason    !
@@ -247,6 +251,41 @@ contains
          case (5_c_int) ; buf(1:n) = real(c%overtopping_lai(1:n), c_double)
          case (6_c_int) ; buf(1:n) = real(c%growth_avg(1:n),      c_double)
          case (7_c_int) ; buf(1:n) = real(c%wood_carbon(1:n),     c_double)
+         !----- Run only (a demography site has no fast loop): gross GPP over the last slow step. --!
+         case (8_c_int) ; buf(1:n) = real(c%gpp_accum(1:n),       c_double)
+         !----- Run only: the maintenance respiration over the last slow step [kgC/plant] the        !
+         !      allocator charged against that GPP -- leaves, stems (coarse roots included), fine     !
+         !      roots. ----------------------------------------------------------------------------!
+         case (11_c_int) ; buf(1:n) = real(c%leaf_resp_accum(1:n), c_double)
+         case (12_c_int) ; buf(1:n) = real(c%stem_resp_accum(1:n), c_double)
+         case (13_c_int) ; buf(1:n) = real(c%root_resp_accum(1:n), c_double)
+         !----- The live pools [kgC/plant] and the leaf lifespan the turnover runs on [yr]. ------!
+         case (14_c_int) ; buf(1:n) = real(c%leaf_carbon(1:n),          c_double)
+         case (15_c_int) ; buf(1:n) = real(c%fineroot_carbon(1:n),      c_double)
+         case (16_c_int) ; buf(1:n) = real(c%nonstructural_carbon(1:n), c_double)
+         case (17_c_int) ; buf(1:n) = real(c%llspan(1:n),               c_double)
+         !----- The last slow step's allocation [kgC/plant/yr]: NPP (leaf, fine-root, wood,        !
+         !      reproduction and storage growth) and its parts, the growth respiration and the root  !
+         !      exudate; NaN unless the output needs the slow cohort diagnostics that hold them (a   !
+         !      site NPP total in the output list switches them on). --------------------------------!
+         case (9_c_int, 10_c_int, 18_c_int:23_c_int)
+            if (.not. c%sdiag%active) then
+               buf(1:n) = ieee_value(1.0_c_double, ieee_quiet_nan)
+               return
+            end if
+            select case (field_id)
+            case (9_c_int)
+               buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF, 1:n) + c%sdiag%v(CS_NPP_FINEROOT, 1:n)          &
+                             + c%sdiag%v(CS_NPP_WOOD, 1:n) + c%sdiag%v(CS_NPP_STORAGE, 1:n)          &
+                             + c%sdiag%v(CS_NPP_REPRO, 1:n), c_double)
+            case (10_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_WOOD,     1:n), c_double)
+            case (18_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_LEAF,     1:n), c_double)
+            case (19_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_FINEROOT, 1:n), c_double)
+            case (20_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_STORAGE,  1:n), c_double)
+            case (21_c_int) ; buf(1:n) = real(c%sdiag%v(CS_NPP_REPRO,    1:n), c_double)
+            case (22_c_int) ; buf(1:n) = real(c%sdiag%v(CS_GROWTH_RESP,  1:n), c_double)
+            case (23_c_int) ; buf(1:n) = real(c%sdiag%v(CS_EXUDATE,      1:n), c_double)
+            end select
          end select
       end associate
    end subroutine meds_run_get_real
@@ -266,5 +305,23 @@ contains
          end select
       end associate
    end subroutine meds_run_get_int
+
+   !----- Copy-out per-patch getter (caller allocates buf of length n_patch). A cohort's      !
+   !      owner_patch indexes it, so a site total of a cohort quantity is                     !
+   !      sum(area(owner_patch) * nplant * x).                                                !
+   subroutine meds_run_get_patch_real(h, field_id, buf) bind(c, name="meds_run_get_patch_real")
+      integer(c_int), value, intent(in)  :: h, field_id
+      real(c_double),        intent(out) :: buf(*)
+      integer(ik) :: n
+      if (.not. live(h)) return
+      associate (p => g_run(h)%poly%site%patch)
+         n = p%n
+         if (n < 1_ik) return
+         select case (field_id)
+         case (0_c_int) ; buf(1:n) = real(p%area(1:n), c_double)   ! fraction of the site
+         case (1_c_int) ; buf(1:n) = real(p%age(1:n),  c_double)   ! [yr] since disturbance
+         end select
+      end associate
+   end subroutine meds_run_get_patch_real
 
 end module meds_c_api_run

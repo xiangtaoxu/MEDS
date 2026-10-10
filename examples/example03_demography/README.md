@@ -17,9 +17,9 @@ passes them to the engine's law-free apply-primitives through
 
 | PFT | wood density [g cm⁻³] | g_min [cm/yr] | g_max [cm/yr] | D₀ [cm] | k | b | γ [1/yr] | α [1/yr] | β [yr/cm] |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | 0.36 | 0.37 | 1.04 | 17 | 1.2 | 0.23 | 0.023 | 0.24 | 12 |
-| 2 | 0.50 | 0.17 | 0.60 | 8 | 2.8 | 0.18 | 0.019 | 0.08 | 14 |
-| 3 | 0.68 | 0.08 | 0.50 | 23 | 1.7 | 0.07 | 0.019 | 0.11 | 37 |
+| 1 | 0.36 | 0.04 | 1.31 | 14 | 0.5 | 0.25 | 0.025 | 0.25 | 15 |
+| 2 | 0.50 | 0.11 | 0.57 | 7 | 2.1 | 0.17 | 0.021 | 0.09 | 19 |
+| 3 | 0.68 | 0.04 | 0.77 | 53 | 1.1 | 0.06 | 0.020 | 0.15 | 59 |
 
 - **Growth** rises with dbh D from g_min to g_max, half-way at D₀, and shade shrinks it by e^(−b·L).
   L is the overtopping LAI, the leaf area of taller trees per m² of ground: the competition index the
@@ -27,7 +27,13 @@ passes them to the engine's law-free apply-primitives through
   census tree it is the leaf area of taller trees within 20 m, with height and leaf area from MEDS's
   allometry; trees of equal height share a layer, as in the engine. Zero and negative
   increments (the tape's millimetre, or a broken stem) are set to a tenth of the smallest positive
-  one, 0.0017 cm/yr, which raises the census's mean growth from 0.085 to 0.094 cm/yr.
+  one, 0.0017 cm/yr, which raises the census's mean growth from 0.071 to 0.081 cm/yr.
+- **Growth is that of every tree alive at an interval's start**, as a cohort's is. The census
+  measures growth only on the trees that live to the next census, and the slowest growers are the
+  likeliest to die, so a tree that dies within an interval keeps the growth it put on over the
+  interval before. That needs a census before it, so growth is fitted on 1990–2010, where 13 % of the
+  rows are trees that died. They lower the mean growth of 1–2 cm stems by 10–30 % (most for PFT 1),
+  and of stems above 5 cm by less than 8 %.
 - **Mortality** depends on growth alone, as in Camac et al. (2018), who fitted the same form to the BCI
   censuses. Its growth is the growth law's, not the tree's measured growth: a cohort's growth is the
   law's too.
@@ -58,7 +64,8 @@ The BCI 50-ha plot censuses 2–7 (1985–2010), Condit et al. 2019, Dryad
 that use it. Dryad refuses scripts, so download `bci.tree.zip` in a browser and export the tree
 tables `bci.tree2` … `bci.tree7` as `bci_1985.csv` … `bci_2010.csv`. The 1982 census is not used: it
 rounded small stems to 5 mm. Only processed summaries are committed: the coefficients and
-[`census_stand.csv`](census_stand.csv) (stems and basal area by PFT and size class, per census).
+[`census_stand.csv`](census_stand.csv) (stems, basal area and aboveground biomass by PFT and size class,
+per census).
 
 ## Run
 
@@ -89,27 +96,29 @@ censuses, the size distribution in 2010, and a run from near-bare ground.
 
 | Cross-validated on 1-ha blocks | trees (quadrats) | class means |
 |---|---|---|
-| growth, R² | 0.09 | 0.86 |
-| mortality, AUC / R² | 0.60 | 0.74 |
+| growth, R² | 0.10 | 0.88 |
+| mortality, AUC / R² | 0.60 | 0.83 |
 | recruitment, R² | 0.29 | plot total 110 stems ha⁻¹ yr⁻¹, as observed |
 
 | | stems ha⁻¹ | ≥ 10 cm ha⁻¹ | basal area m² ha⁻¹ | by PFT 1 / 2 / 3 |
 |---|---|---|---|---|
 | census 1985 | 4841 | 414 | 31.1 | 10.6 / 9.8 / 10.7 |
 | census 2010 | 4145 | 416 | 30.5 | 10.7 / 9.4 / 10.4 |
-| model 2010, from the 1985 census | 4055 | 417 | 31.2 | 9.6 / 10.5 / 11.1 |
-| model 2100, from the 1985 census | 3660 | 492 | 34.6 | 9.0 / 14.3 / 11.4 |
-| model, 100 years from bare ground | 3703 | 522 | 32.4 | 14.7 / 14.4 / 3.3 |
-| model, 300 years from bare ground | 3644 | 528 | 35.6 | 10.9 / 16.8 / 8.0 |
+| model 2010, from the 1985 census | 4136 | 379 | 29.6 | 9.1 / 10.1 / 10.5 |
+| model 2100, from the 1985 census | 3877 | 478 | 30.6 | 8.7 / 12.4 / 9.5 |
+| model, 100 years from bare ground | 4002 | 484 | 28.6 | 14.8 / 11.4 / 2.4 |
+| model, 300 years from bare ground | 3809 | 448 | 31.6 | 10.8 / 14.7 / 6.2 |
 
-- **From the census, the module tracks the plot for 25 years**: the stem decline, the trees above
-  10 cm, the basal area and the size distribution class by class.
-- **Run on to 2100, the stand gains basal area slowly** (0.04 m² ha⁻¹ yr⁻¹), most of it in PFT 2.
-  These are BCI's present rates run forward, not a prediction.
+- **From the census, the module tracks the plot's stems for 25 years**, the decline and the size
+  distribution class by class, but runs low on the larger trees: in 2010, 379 trees above 10 cm
+  against 416 and 29.6 m² ha⁻¹ of basal area against 30.5, most of the shortfall PFT 1's.
+- **Run on to 2100, the stand holds its basal area**: it dips to 29.1 m² ha⁻¹ in the 2030s and
+  recovers to 30.6, as PFT 2 gains and PFT 3 loses. These are BCI's present rates run forward, not a
+  prediction.
 - **From bare ground the stand goes through a succession.** Under an open canopy the light-wooded
-  PFT 1 grows fastest and rises with PFT 2, reaching the census's basal area within about 90 years;
+  PFT 1 grows fastest and rises with PFT 2, reaching the census's basal area in about 135 years;
   as the canopy closes PFT 1 declines, PFT 2 holds the canopy, and the dense-wooded PFT 3 builds up
-  slowly beneath. Basal area ends 17 % above the census's; the canopy thins upward to 43 m, as the
+  slowly beneath. Basal area ends 4 % above the census's; the canopy thins upward to 43 m, as the
   census stand does on the same height curve.
 
 <p align="center">

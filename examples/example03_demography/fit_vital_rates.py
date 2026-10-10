@@ -15,7 +15,10 @@ LAI_pft the leaf area index within 20 m of a quadrat's centre, all of it and the
 
 Growth rises with size from g_min to g_max, half-way at D0, and shade shrinks it by exp(-b L); it is
 fitted to each tree's mean by Gamma quasi-likelihood, which needs growth above zero, so increments of
-zero or less are set to a tenth of the smallest positive one. Mortality takes g from the growth law
+zero or less are set to a tenth of the smallest positive one. It is the growth of every tree alive at an
+interval's start, as a cohort's is: a survivor's own, and a tree that died within the interval its last
+measured growth (prepare_census.py) -- so from the 1990-1995 interval on, the first with a measurement
+before it. Mortality takes g from the growth law
 rather than the tree's measured growth, because a cohort's growth is the law's too; it is fitted by
 maximum likelihood over each census interval, P(die) = 1 - exp(-m dt), so m is a rate per year.
 Recruitment is fitted to each quadrat's rate weighted by its area x interval, which is the Poisson
@@ -119,6 +122,9 @@ def class_mean_r2(obs, pred, df):
 
 
 g = pd.read_csv(os.path.join(DATA, "growth.csv.gz"))
+g = g[g.interval >= 1990].reset_index(drop=True)              # the dying trees' last growth exists from here
+print(f"growth rows: {len(g)}, {g.died.sum()} of them trees that died within their interval "
+      f"({g.died.mean() * 100:.1f} %)")
 s = pd.read_csv(os.path.join(DATA, "survival.csv.gz"))
 r = pd.read_csv(os.path.join(DATA, "recruits.csv.gz")).dropna(subset=["dt"])
 epsilon = 0.1 * g.g[g.g > 0].min()

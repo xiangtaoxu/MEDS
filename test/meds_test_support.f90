@@ -96,7 +96,7 @@ contains
          p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
          p%hgt_max      = [ 46.0_wp, 46.0_wp, 46.0_wp ]
          p%reproduction_investment_fraction = [ 0.3_wp, 0.3_wp, 0.3_wp ]
-         p%repro_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
+         p%recruit_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
          p%include_pft = [ 1_ik, 1_ik, 1_ik ]
          p%min_cohort_height = 2.0_wp ; p%min_reproduction_height = 20.0_wp

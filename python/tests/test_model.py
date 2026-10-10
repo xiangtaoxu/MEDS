@@ -4,6 +4,7 @@
 - A run through the Python API (`python -m meds.model`) writes the same output files as meds_main,
   bit for bit, and the same parameter record.
 - Two runs in one Python process each write their own parameter record.
+- Patch areas weight the cohorts to the site totals the model reports.
 
 Each run is two days from the demography example's census on the fast loop's constant reference
 climate. MEDS_MAIN names the executable for the comparison (CTest sets it); without it that test is
@@ -25,8 +26,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MEDS_MAIN = os.environ.get("MEDS_MAIN")
 
 
-def two_days(run_dir: Path) -> Path:
-    """A two-day census run with hourly and daily output, written into run_dir."""
+def two_days(run_dir: Path, monthly: bool = False) -> Path:
+    """A two-day census run with hourly and daily output (and monthly, which keeps the slow cohort
+    diagnostics), written into run_dir."""
     cfg = RunConfig.load(ROOT / "meds_config_main.toml")
     for key, value in {"run.start_time": "2001-06-01 00:00:00", "run.end_time": "2001-06-03 00:00:00",
                        "run.n_threads": 1, "fast.fast_biophysics_on": True, "forcing.forcing_on": False,
@@ -34,7 +36,7 @@ def two_days(run_dir: Path) -> Path:
                        "init.census_file": str(ROOT / "data/census_example.csv"),
                        "state.write_state": False, "output.enabled": True, "output.dir": str(run_dir / "out"),
                        "output.prefix": "m", "output.fast.enabled": True, "output.daily.enabled": True,
-                       "output.monthly.enabled": False, "output.annual.enabled": False}.items():
+                       "output.monthly.enabled": monthly, "output.annual.enabled": False}.items():
         cfg.set(key, value)
     (run_dir / "out").mkdir(parents=True, exist_ok=True)
     return cfg.write(run_dir)
@@ -83,3 +85,45 @@ def test_each_run_in_a_process_keeps_its_own_record(tmp_path):
     sources = {k[0] for k in read_record(tmp_path / "second" / "out" / "m_parameters.csv")}
     assert not [s for s in sources if str(tmp_path / "first") in s], sources
     assert record(tmp_path / "first").keys() == record(tmp_path / "second").keys()
+
+
+def test_patch_areas_weight_cohorts_to_the_site_totals(tmp_path):
+    from meds.model import Run
+    with Run(two_days(tmp_path), verbose=False) as r:
+        r.step()
+        area = r.patches("area")["area"]
+        c = r.cohorts("agb", "nplant", "owner_patch")
+        assert len(area) == r.n_patch
+        assert area.sum() == pytest.approx(1.0, abs=1e-12)
+        site_agb = (area[c["owner_patch"] - 1] * c["nplant"] * c["agb"]).sum()
+        assert site_agb == pytest.approx(r.total_agb, rel=1e-12)
+
+
+def test_cohort_gpp_is_the_last_steps(tmp_path):
+    """A cohort's gpp is its gross GPP per plant over the last slow step: never negative, and a
+    day of the root config's sunshine gives the stand some."""
+    from meds.model import Run
+    with Run(two_days(tmp_path), verbose=False) as r:
+        r.step()
+        area = r.patches("area")["area"]
+        c = r.cohorts("gpp", "nplant", "owner_patch")
+        assert (c["gpp"] >= 0.0).all()
+        assert (area[c["owner_patch"] - 1] * c["nplant"] * c["gpp"]).sum() > 0.0
+        npp = r.cohorts("npp", "npp_wood")
+        assert np.isnan(npp["npp"]).all() or (np.isfinite(npp["npp"]).all() and np.isfinite(npp["npp_wood"]).all())
+
+
+def test_cohort_carbon_closes(tmp_path):
+    """A cohort's last-step GPP less its maintenance respiration is, per year, its NPP, growth
+    respiration and root exudate: the allocator's identity, read through the Python API."""
+    from meds.model import Run
+    with Run(two_days(tmp_path, monthly=True), verbose=False) as r:
+        r.step()
+        c = r.cohorts("gpp", "leaf_resp", "stem_resp", "root_resp", "npp", "npp_leaf", "npp_fineroot",
+                      "npp_wood", "npp_storage", "npp_repro", "growth_resp", "exudate", "leaf_carbon")
+    dt_yr = 1.0 / 365.2425                                     # a day, the slow step
+    net = (c["gpp"] - c["leaf_resp"] - c["stem_resp"] - c["root_resp"]) / dt_yr
+    parts = c["npp_leaf"] + c["npp_fineroot"] + c["npp_wood"] + c["npp_storage"] + c["npp_repro"]
+    assert np.allclose(parts, c["npp"], rtol=1e-12, atol=1e-15)
+    assert np.allclose(net, c["npp"] + c["growth_resp"] + c["exudate"], rtol=1e-9, atol=1e-12)
+    assert (c["leaf_carbon"] > 0.0).all()

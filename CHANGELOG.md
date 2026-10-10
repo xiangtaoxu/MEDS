@@ -16,6 +16,64 @@ before and after.
 
 ### Added
 
+- **The Python API reads each cohort's carbon budget**: `Run.cohorts` gains `gpp`, `leaf_resp`,
+  `stem_resp` and `root_resp` (the last slow step's GPP and maintenance respiration [kgC/plant]),
+  `npp` and its parts `npp_leaf`, `npp_fineroot`, `npp_wood`, `npp_storage`, `npp_repro`, with
+  `growth_resp` and `exudate` [kgC/plant/yr] (NaN unless the output keeps the slow cohort
+  diagnostics), and `leaf_carbon`, `fineroot_carbon`, `storage_carbon` [kgC/plant] and `llspan` [yr].
+  A test checks that a cohort's GPP less its maintenance respiration closes on its NPP, growth
+  respiration and exudate.
+- **Wood growth can be sink-limited**, in two forms, each optional, per PFT and off at 0:
+  `pft.max_relative_growth_rate` [1/yr] caps a cohort's wood growth in a step at that rate times its
+  wood carbon, and `pft.max_absolute_growth_rate` [cm/yr] caps its diameter growth at that rate times
+  dbh^`pft.max_absolute_growth_exponent` (dbh in cm, exponent 0 by default), as the wood carbon that
+  grows the stem by that much on the model's allometry. With both set the tighter applies. The
+  cap comes from a new function, `growth_sink_limitation` (`meds_sink_limitation`), the place for a
+  more mechanistic sink later. The allocator builds wood up to the cap and turns the rest of the residual
+  into root exudate, charged the same growth respiration as wood, so the cap moves carbon from wood to
+  the patch's below-ground labile litter without changing growth respiration. A new output, `root_exudate_site` [kgC/m²/yr], reports it, and `litter_fineroot_site`
+  (which reads that litter pool) now includes it. The parameter record lists the three keys. With the keys
+  absent every run is unchanged bit for bit.
+- **The light-plasticity slopes can be pinned per PFT**: with `[options].override_derived`, the PFT
+  file's `[derived]` table takes `kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and `kplastic_llspan`
+  (a cohort's trait is its PFT's top-of-canopy value times exp(k · LAI above it)), each optional, in
+  place of the values derived from `vcmax25` and `leaf_lifespan_toc`. Rd can then fall faster than
+  Vcmax down the canopy, as observed (Needham et al. 2025; Ma et al. 2025), where the derived Rd slope
+  equals Vcmax's. The parameter record lists the four slopes.
+- **Stem respiration can be charged on sapwood volume**: `pft.stem_resp_sapwood25` (optional, per PFT,
+  default 0) [µmol CO2 m⁻³ sapwood s⁻¹ at 25 °C] adds a term on the cohort's sapwood volume (its sapwood
+  carbon as dry mass over the wood density) to the surface term of `stem_resp_factor25`, under the same
+  wood-temperature response. A PFT sets the surface rate to 0 to respire by sapwood alone, which
+  charges saplings far less per m² of leaf and canopy trees more than the surface form (Ryan 1990). With
+  the key absent every run is unchanged bit for bit. The parameter record now lists `stem_resp_factor25`,
+  `stem_resp_sapwood25` and `root_resp_factor25`; `test_plant_respiration` checks the new term.
+- **`[trait_dynamics].fineroot_lifespan_plastic`** (default false; needs `trait_plasticity_on`): a
+  cohort's fine-root turnover is its PFT's `fineroot_turnover_rate` times the PFT's top-of-canopy leaf
+  lifespan over the cohort's own, so a shaded cohort, whose leaves live longer, replaces its roots as
+  slowly as its leaves.
+- **`pft.recruit_shade_decay`** (optional, per PFT, default 0): the recruit carbon efficiency falls as
+  exp(−k · LAI) of the patch a seed lands in, since under a deep canopy fewer seeds germinate and
+  fewer seedlings survive. The recruits and the seed lost to litter take the efficiency from one
+  helper (`cohort_recruit_efficiency`), so the two still add up to the reproduction carbon;
+  `test_slow_ledger` checks the recruit pool's credit against exp(−k · LAI).
+- **Example 05, forest regeneration** (`examples/example05_forest_regeneration/`): the coupled model
+  run through `meds.model.Run` from bare ground at Barro Colorado Island, 1600-2020, on ERA5-Land's
+  2003-2022 at the plot's cell (repeated; cut by `scripts/prepare_era5/make_forcing_file.py`) and the
+  CMIP7 CO2 history. The three PFTs are example 03's wood-density classes with its census-fitted Camac
+  mortality (pinned through `[derived]`, the treefall rate taken off gamma) and BCI height curve. Their
+  leaves are Panama's sun leaves (top-of-canopy lifespan 0.5, 0.7 and 0.9 yr; 100, 110 and 120 g m⁻²)
+  on example 04's Vcmax25, with Ma et al. (2025)'s light plasticity; fine roots turn over at 1.5 times
+  the leaves' rate, stems respire on sapwood volume, and diameter growth is sink-limited at twice the
+  census's 75th percentile (x dbh^0.5). Seed rain brings one sapling per m² a year, shared by the PFTs.
+  `calibrate_growth.py check` compares each cohort's 2005-2010 diameter growth with the census's,
+  measured as the census measures it, by PFT, size and overtopping LAI, and the stand's carbon budget
+  with BCI's (`calibration.json`); `plot_regeneration.py` draws the regrowth against the plot's
+  censuses and tower. By 2010 the stand holds 123 MgC ha⁻¹ aboveground (census 118) and 33 m² ha⁻¹ of
+  basal area (30.5), with GPP 32 MgC ha⁻¹ yr⁻¹ (tower 31).
+- **`meds.model.Run.patches()`** copies per-patch `area` (fraction of the site) and `age` out of a live
+  run, through the new C-API entry `meds_run_get_patch_real`; a cohort's `owner_patch` indexes them, so
+  stand totals can be built from cohorts. `test_model.py` checks that the area-weighted cohort biomass
+  equals `total_agb`.
 - **A Python demography run can start from a census** (#376). `Site(cfg, census=True)` reads the file the
   config's `[init].census_file` names and restructures the stand as `meds_main` does for
   `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
@@ -31,6 +89,22 @@ before and after.
 
 ### Changed
 
+- **Example 03's growth law is fitted to every tree alive at an interval's start**, the trees that
+  die within it too, as a cohort's growth is. The census measures growth only on the trees that live
+  to the next census, and the slowest growers are the likeliest to die. `prepare_census.py` gives a
+  tree that dies within an interval the growth it put on over the interval before (`died` = 1 in
+  `growth.csv.gz`), and `fit_vital_rates.py` fits growth on 1990-2010, the intervals with a census
+  before them (13 % of the rows are trees that died). The 1-2 cm stems' growth falls 10-30 % (most
+  for PFT 1), stems above 5 cm' by less than 8 %; mortality, fitted on the law's growth, steepens
+  (β 12/14/37 -> 15/19/59 yr cm⁻¹). Cross-validated R² of class means: growth 0.86 -> 0.88,
+  mortality 0.74 -> 0.83. Example 05's mortality pins follow. The run from the 1985 census ends 2010
+  at 29.6 m² ha⁻¹ (census 30.5; was 31.2) with 379 trees above 10 cm (416; was 417) and holds its
+  basal area to 2100 instead of gaining 0.04 m² ha⁻¹ yr⁻¹; from bare ground the stand reaches the
+  census's basal area in about 135 years instead of 90 and ends 4 % above it instead of 17 %.
+- **`pft.repro_carbon_efficiency` is now `pft.recruit_carbon_efficiency`**: the share of a tree's
+  reproduction carbon that becomes recruits at `min_cohort_height` covers seed set, germination and
+  seedling survival together, not only the carbon use. The old key is refused with the new name;
+  every shipped PFT file is renamed, and the parameter record's column with it.
 - **`meds_apply_rates` restructures the stand with the carbon path's own `restructure_stand`**
   instead of a copy of it kept to reproduce the empirical golden (removed with the empirical laws;
   see below; #376). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
@@ -251,6 +325,7 @@ before and after.
 
 ### Fixed
 
+- `meds.model.Run.total_basal_area` is documented in m2/m2, the unit the model returns (it said cm2/m2).
 - **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
   (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴
   times too large: the leaves' ψ did not move at all over a day. Only the segment conductance, which

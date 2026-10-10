@@ -396,6 +396,10 @@ module meds_config
       !       (sla/vcmax25/rd25/llspan) stay at their top-of-canopy PFT values (bit-identical to the   !
       !       static path). When ON, the slow-loop driver acclimates them to cumulative LAI above.     !
       logical     :: trait_plasticity_on = .false.
+      !----- Fine roots live as long as the leaves they feed: with plasticity on, a cohort's       !
+      !       fine-root turnover is its PFT's times (top-of-canopy leaf lifespan / its own), so a   !
+      !       shaded cohort replaces its roots as slowly as its leaves. OPT-IN: default .false.     !
+      logical     :: fineroot_lifespan_plastic = .false.
 
       !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
       !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
@@ -969,6 +973,8 @@ contains
          error stop tag//'init.soil_temp outside 233-333 K'
       if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                          &
          error stop tag//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
+      if (cfg%fineroot_lifespan_plastic .and. .not. cfg%trait_plasticity_on)                          &
+         error stop tag//'trait_dynamics.fineroot_lifespan_plastic needs trait_plasticity_on = true'
       if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
@@ -977,6 +983,11 @@ contains
       if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
       if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
       if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'
+      if (any(cfg%pft%stem_resp_sapwood25 < 0.0_wp)) error stop tag//'stem_resp_sapwood25 < 0'
+      if (any(cfg%pft%max_relative_growth_rate < 0.0_wp))                                          &
+         error stop tag//'max_relative_growth_rate < 0'
+      if (any(cfg%pft%max_absolute_growth_rate < 0.0_wp))                                          &
+         error stop tag//'max_absolute_growth_rate < 0'
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
          error stop tag//'min_recruit_size must exceed negligible_nplant'

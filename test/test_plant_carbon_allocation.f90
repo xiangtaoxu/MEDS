@@ -10,12 +10,23 @@
 !   4. WOOD RESIDUAL   : a budget that only covers the leaf demand => wood 0.                     !
 !   5. STORAGE GROWTH  : storage funds leaf growth EVEN when net < 0 (spring leaf-out).            !
 !   6. STARVING        : maintenance debt beyond storage => starving + deficit, no growth.         !
+!   7. SINK LIMIT      : relative = rate x wood x dt; absolute = the wood that grows the diameter    !
+!                        by rate x dbh^exponent x dt, under and over the height cap; the tighter     !
+!                        applies; 0 = off.                                                          !
+!   8. SINK CAP        : wood stops at the limit, the rest is exudate at cost (1+g), carbon closes, !
+!                        growth respiration is unchanged; a limit that does not bind changes       !
+!                        nothing.                                                                   !
 !==========================================================================================!
 program test_plant_carbon_allocation
    use meds_test_assert, only : check_close, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_plant_carbon_allocation, only : plant_carbon_allocation, growth_respiration
+   use meds_sink_limitation,         only : growth_sink_limitation
+   use meds_allometry,               only : size2wood_carbon, wood_to_dbh, dbh_to_height
    implicit none
+
+   !----- A stem for the sink-limit tests: wood density, height cap and aboveground share. -----!
+   real(wp), parameter :: RHO = 0.6_wp, HMAX = 35.0_wp, AGF = 0.7_wp
 
    call test_growth_respiration()
    call test_closure()
@@ -23,6 +34,8 @@ program test_plant_carbon_allocation
    call test_wood_residual()
    call test_storage_growth()
    call test_starving()
+   call test_sink_limitation()
+   call test_sink_cap()
 
    call test_report('test_plant_carbon_allocation')
 
@@ -105,5 +118,72 @@ contains
       call check_close('starving: storage drained',     gs, -0.3_wp)
       call check_closure('starving: closes', 0.0_wp, 1.0_wp, gl, gf, gw, gr, gs, gresp, def)
    end subroutine test_starving
+
+   !----- 7. The sink limits: relative = rate x wood x dt; absolute = the wood that grows the  !
+   !          diameter by rate x dt, exactly, on either side of the height cap; the tighter    !
+   !          applies; 0 = off. ---------------------------------------------------------------!
+   subroutine test_sink_limitation()
+      real(wp) :: d, w, cap
+      integer  :: k
+      call check_close('sink limit: 0.2/yr x 5 kgC x 0.5 yr', limit(5.0_wp, 10.0_wp, 0.2_wp, 0.0_wp, 0.5_wp), 0.5_wp)
+      call check_true ('sink limit: both rates 0 => no limit', limit(5.0_wp, 10.0_wp, 0.0_wp, 0.0_wp, 0.5_wp) > 1.0e30_wp)
+      call check_close('sink limit: no wood => no growth',  limit(-1.0_wp, 10.0_wp, 0.2_wp, 0.0_wp, 0.5_wp), 0.0_wp)
+      !----- A sapling below the height cap and a big tree above it (35 m is reached near 60 cm). -!
+      do k = 1, 2
+         d   = merge(3.0_wp, 90.0_wp, k == 1)
+         w   = size2wood_carbon(d, dbh_to_height(d, HMAX), RHO, AGF)
+         cap = limit(w, d, 0.0_wp, 0.4_wp, 0.5_wp)
+         call check_close('sink limit: absolute => dbh grows by rate x dt',                          &
+                          wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.2_wp, 1.0e-9_wp)
+         !----- With exponent 0.5 the cap is rate x sqrt(dbh): 0.4 x sqrt(d) x 0.5 yr. ----------!
+         cap = limit(w, d, 0.0_wp, 0.4_wp, 0.5_wp, 0.5_wp)
+         call check_close('sink limit: absolute x dbh^0.5 => dbh grows by rate x sqrt(dbh) x dt',     &
+                          wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.2_wp * sqrt(d), 1.0e-9_wp)
+      end do
+      !----- Both set: the tighter one. At 3 cm a 0.4 cm/yr cap is ~30 % of wood a year. -------!
+      d = 3.0_wp ; w = size2wood_carbon(d, dbh_to_height(d, HMAX), RHO, AGF)
+      call check_close('sink limit: both => the tighter (relative)', limit(w, d, 0.05_wp, 0.4_wp, 1.0_wp), 0.05_wp * w)
+      call check_close('sink limit: both => the tighter (absolute)', limit(w, d, 5.0_wp, 0.4_wp, 1.0_wp),  &
+                       limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp))
+   end subroutine test_sink_limitation
+
+   !----- growth_sink_limitation on the test stem; the absolute cap's dbh exponent defaults to 0. --!
+   real(wp) function limit(wood, dbh, rgr, agr, dt, expo)
+      real(wp), intent(in) :: wood, dbh, rgr, agr, dt
+      real(wp), intent(in), optional :: expo
+      real(wp) :: e
+      e = 0.0_wp
+      if (present(expo)) e = expo
+      limit = growth_sink_limitation(wood_carbon=wood, dbh=dbh, wood_density=RHO, hgt_max=HMAX,           &
+                                     aboveground_frac=AGF, max_relative_growth_rate=rgr,                  &
+                                     max_absolute_growth_rate=agr, max_absolute_growth_exponent=e,        &
+                                     dt_yr=dt)
+   end function limit
+
+   !----- 8. Wood stops at the sink limit; the rest is exuded, construction-charged. -------!
+   subroutine test_sink_cap()
+      real(wp) :: gl, gf, gw, gs, gr, gresp, def, ex
+      real(wp) :: gl0, gf0, gw0, gs0, gr0, gresp0, def0
+      logical  :: starv, starv0
+      ! g = 0.5: leaf 0.3 at cost 1.5 leaves 0.55, which would build 0.55/1.5 of wood. The sink
+      ! takes 0.1 (cost 0.15); the other 0.40 makes 0.40/1.5 of exudate at the same cost, so growth
+      ! respiration is what it would be without the limit.
+      call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
+           gl, gf, gw, gs, gr, gresp, def, starv,                                                &
+           wood_growth_max=limit(10.0_wp, 10.0_wp, 0.01_wp, 0.0_wp, 1.0_wp), exudate=ex)
+      call check_close('sink cap: wood = the limit',                 gw, 0.1_wp)
+      call check_close('sink cap: exudate = (residual - wood cost)/(1+g)', ex, 0.4_wp/1.5_wp)
+      call check_close('sink cap: growth resp on wood + exudate', gresp, 0.15_wp + 0.5_wp*(0.55_wp/1.5_wp))
+      call check_close('sink cap: closes with the exudate', (gl + gf + gw + gr + gs + ex) - def,  &
+                       (1.0_wp - 0.0_wp) - gresp)
+      ! A limit above the residual changes nothing, to the bit.
+      call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
+           gl0, gf0, gw0, gs0, gr0, gresp0, def0, starv0)
+      call plant_carbon_allocation(1.0_wp, 0.0_wp, 0.5_wp, 0.0_wp, 0.3_wp, 0.0_wp, 0.0_wp, 0.0_wp, &
+           gl, gf, gw, gs, gr, gresp, def, starv,                                                &
+           wood_growth_max=limit(10.0_wp, 10.0_wp, 0.0_wp, 0.0_wp, 1.0_wp), exudate=ex)
+      call check_true('sink cap: no limit => bit-identical wood', gw == gw0 .and. gresp == gresp0)
+      call check_close('sink cap: no limit => no exudate', ex, 0.0_wp)
+   end subroutine test_sink_cap
 
 end program test_plant_carbon_allocation

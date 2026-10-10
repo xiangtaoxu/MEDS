@@ -52,13 +52,13 @@ contains
 
    !----- One cohort's reproduction-carbon recruit contribution [plant/m2/yr]: the per-plant       !
    !       reproduction NPP over the step, as an annual rate, times the density and the            !
-   !       establishment efficiency, over the min-size recruit carbon (min_cohort_carbon, from      !
+   !       recruit carbon efficiency, over the min-size recruit carbon (min_cohort_carbon, from      !
    !       meds_allometry). Caller reduces these into the (PFT, patch) array and gates by include_pft.!
    elemental pure function npp_to_recruitment(nplant, npp_repro, dt_yr,                         &
-                                              repro_carbon_efficiency, carbon_min) result(rec)
-      real(wp), intent(in) :: nplant, npp_repro, dt_yr, repro_carbon_efficiency, carbon_min
+                                              recruit_carbon_efficiency, carbon_min) result(rec)
+      real(wp), intent(in) :: nplant, npp_repro, dt_yr, recruit_carbon_efficiency, carbon_min
       real(wp)             :: rec
-      rec = nplant * (npp_repro / dt_yr) * repro_carbon_efficiency / carbon_min
+      rec = nplant * (npp_repro / dt_yr) * recruit_carbon_efficiency / carbon_min
    end function npp_to_recruitment
 
 end module meds_demography_rates
