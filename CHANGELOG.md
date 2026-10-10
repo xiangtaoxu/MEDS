@@ -224,6 +224,17 @@ before and after.
     tests and the root config start from moves to `data/census_example.csv`.
   - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
     the runs read only the committed coefficients.
+- **`calibrate_fast` gives a run as many threads as its length earns.** A run took one thread, so a
+  fit's iteration waited for its 120-day seasonal runs (about 150 s on one thread) while most cores
+  stood idle. A run now takes one thread for every 15 simulated days, up to the new
+  `[fit].max_threads` (8): the seasonal runs and the 180-day chains run on 8 threads, the ten-day
+  windows on one. `--workers` and a queue worker's `--slots` count cores, a run takes as many as it
+  has threads, and a batch starts its longest runs first. A trial's name does not depend on its
+  thread count, so finished trials are still found.
+  - **The BCI fit** (example 04 on its clay soil, 5 nodes): 66.7 → 18.0 min, with the same 786
+    trials, the same costs and a byte-identical calibrated file, since MEDS's output is the same at
+    any thread count. On one idle node a ten-day window runs in 12.5 s on one thread and 2.2 s on
+    eight; a 120-day run in 151.5 s and 25.9 s.
 - **The flux-tower example is `examples/example04_column_biophysics/`, and
   `examples/example_biophysics/` is retired** (#378). The Barro Colorado Island example stands for the
   coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's

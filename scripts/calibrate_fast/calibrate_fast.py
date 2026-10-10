@@ -142,10 +142,12 @@ def cmd_check(args):
     keys = cal.keys()
     start = np.array([p.centre for p in keys])
     per_day = float(cal.fit_settings["timeout_per_day"])
+    max_threads = min(int(cal.fit_settings["max_threads"]), workers.capacity)
     states = chains.run_chains([w], cal.chain_lead_days, cal.base, keys, start, work / "chains", workers,
-                               args.runner, cal.overrides, per_day, log)
+                               args.runner, cal.overrides, per_day, log, max_threads)
     runner = trials.TrialRunner(keys, [w], cal.rows_for([w]), states, cal.base, cal.overrides, args.runner, workers,
-                                work / "trials", cal.step, per_day, cal.fixed_observation_keys(keys), log=log)
+                                work / "trials", cal.step, per_day, cal.fixed_observation_keys(keys), log=log,
+                                max_threads=max_threads)
     name = args.key or keys[0].name
     fk = fit.FreeKeys(runner, [[p.name for p in keys].index(name)], start.copy())
     u0 = fk.u_prior
@@ -155,9 +157,11 @@ def cmd_check(args):
     log(f"the gradient column of {name} moves the output: {moved} (|J| = {np.linalg.norm(J[:, 0]):.4g})")
 
     def run_again(subdir, write_state=False):
-        tdir = trials.build_trial(cal.base, keys, start, w, states[w.name], work / subdir, cal.overrides, write_state)
+        threads = trials.threads_for(w.days, max_threads)
+        tdir = trials.build_trial(cal.base, keys, start, w, states[w.name], work / subdir, cal.overrides, write_state,
+                                  threads)
         status = workers.run([Task(subdir, trials.command(args.runner, tdir / "main.toml"), str(tdir),
-                                   str(tdir / "run.log"), trials.timeout_for(w.days, per_day))])[subdir][0]
+                                   str(tdir / "run.log"), trials.timeout_for(w.days, per_day), threads)])[subdir][0]
         if status != "ok":
             raise trials.TrialError(f"{tdir.name}: {status}\n{trials.log_tail(tdir / 'run.log')}")
         return tdir, trials.finish(tdir, keys, start, cal.step)
@@ -211,14 +215,15 @@ def cmd_fit(args):
     start = np.array([p.centre for p in keys])
     default = np.array([p.default for p in keys])
     per_day = float(fs["timeout_per_day"])
+    max_threads = min(int(fs["max_threads"]), workers.capacity)
 
     def chains_at(values, windows):
         return chains.run_chains(windows, cal.chain_lead_days, cal.base, keys, values, work / "chains", workers,
-                                 args.runner, cal.overrides, per_day, log)
+                                 args.runner, cal.overrides, per_day, log, max_threads)
     rows = cal.rows_for(all_windows)
     runner = trials.TrialRunner(keys, fit_windows, rows, chains_at(start, all_windows), cal.base, cal.overrides,
                                 args.runner, workers, work / "trials", cal.step, per_day,
-                                cal.fixed_observation_keys(keys), args.keep_netcdf, log)
+                                cal.fixed_observation_keys(keys), args.keep_netcdf, log, max_threads)
     states_start = dict(runner.states)
     fit_rows = [rows[w.name] for w in fit_windows]
     out = {"variant": cal.variant, "config": str(cal.path),

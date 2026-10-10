@@ -1,15 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The workers that run trials and chains: each is one single-threaded MEDS process, and a fit runs
-hundreds at a time.
+"""The workers that run trials and chains: each is one MEDS process, and a fit runs hundreds at a time.
 
-- LocalWorkers: N processes at once on this machine (a workstation, or one node).
+A run uses as many threads as its length earns (trials.threads_for), and takes that many of its
+machine's cores: a long run (a seasonal run, a chain) finishes as soon as the ten-day windows beside
+it, and the cores the windows leave idle are not wasted. The long runs of a batch start first.
+
+- LocalWorkers: N cores on this machine (a workstation, or one node).
 - QueueWorkers: a directory queue shared by workers on many nodes. The driver writes one task file
   per run; each node's `calibrate_fast.py worker` (one per node, started inside the same Slurm
-  allocation) claims tasks by an atomic rename, runs them on its own cores and writes a done file.
-  One allocation holds the workers for the whole fit, so no run waits in the Slurm queue.
+  allocation) claims tasks by an atomic rename, one at a time and only when its cores have room,
+  runs them and writes a done file. One allocation holds the workers for the whole fit, so no run
+  waits in the Slurm queue.
 
 Both run a batch of tasks and return {task id: (status, seconds)}, status "ok", "timeout" or
-"exit <code>". A task is (id, command, directory, log file, timeout in seconds).
+"exit <code>". A task is (id, command, directory, log file, timeout in seconds, threads).
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import json
 import os
 import socket
 import subprocess
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -31,11 +36,12 @@ class Task:
     cwd: str
     log: str
     timeout: float
+    threads: int = 1
 
 
 def run_task(t: Task) -> tuple[str, float]:
     t0 = time.time()
-    env = dict(os.environ, OMP_NUM_THREADS="1")
+    env = dict(os.environ, OMP_NUM_THREADS=str(t.threads))
     try:
         with open(t.log, "w") as fh:
             res = subprocess.run(t.argv, cwd=t.cwd, stdout=fh, stderr=subprocess.STDOUT,
@@ -46,15 +52,54 @@ def run_task(t: Task) -> tuple[str, float]:
     return status, time.time() - t0
 
 
-class LocalWorkers:
-    """N processes at once on this machine, shared by every caller (the chains start together)."""
+def longest_first(tasks: list[Task]) -> list[Task]:
+    """The order a batch starts in: the most threads (the longest runs) first."""
+    return sorted(tasks, key=lambda t: -t.threads)
+
+
+class Cores:
+    """A machine's cores: a run takes as many as it has threads (at most all), and runs take them
+    in the order they asked, so a long run is not passed over by the short ones behind it."""
 
     def __init__(self, n: int):
-        self.ex = ThreadPoolExecutor(max(1, int(n)))
+        self.n = self.free = max(1, int(n))
+        self.cond = threading.Condition()
+        self.next_ticket = self.serving = 0
+
+    def take(self, threads: int) -> int:
+        k = min(max(1, int(threads)), self.n)
+        with self.cond:
+            ticket, self.next_ticket = self.next_ticket, self.next_ticket + 1
+            self.cond.wait_for(lambda: self.serving == ticket and self.free >= k)
+            self.free -= k
+            self.serving += 1
+            self.cond.notify_all()
+        return k
+
+    def give(self, k: int):
+        with self.cond:
+            self.free += k
+            self.cond.notify_all()
+
+
+class LocalWorkers:
+    """N cores on this machine, shared by every caller (the chains start together)."""
+
+    def __init__(self, n: int):
+        self.capacity = max(1, int(n))           # the most threads one run can use
+        self.cores = Cores(self.capacity)
+        self.ex = ThreadPoolExecutor(self.capacity)
+
+    def run_one(self, t: Task) -> tuple[str, float]:
+        k = self.cores.take(t.threads)
+        try:
+            return run_task(t)
+        finally:
+            self.cores.give(k)
 
     def run(self, tasks: list[Task]) -> dict:
-        futures = [self.ex.submit(run_task, t) for t in tasks]
-        return {t.id: f.result() for t, f in zip(tasks, futures)}
+        futures = {t.id: self.ex.submit(self.run_one, t) for t in longest_first(tasks)}
+        return {t.id: futures[t.id].result() for t in tasks}
 
     def close(self):
         self.ex.shutdown(wait=True)
@@ -62,6 +107,8 @@ class LocalWorkers:
 
 class QueueWorkers:
     """The driver's side of the directory queue at `root` (queue/, claimed/, done/)."""
+
+    capacity = 1 << 30                           # the workers' nodes set the threads they can give
 
     def __init__(self, root, poll: float = 0.5):
         self.root = Path(root)
@@ -72,7 +119,7 @@ class QueueWorkers:
     def run(self, tasks: list[Task]) -> dict:
         batch = uuid.uuid4().hex[:8]
         ids = {}
-        for t in tasks:
+        for t in longest_first(tasks):              # the queue is claimed in name order
             name = f"{batch}-{len(ids):06d}"
             ids[name] = t.id
             tmp = self.root / "queue" / f".{name}.tmp"
@@ -100,15 +147,17 @@ class QueueWorkers:
 
 
 def queue_worker(root, slots: int, poll: float = 0.5) -> None:
-    """A node's worker: claim tasks from root/queue until root/STOP exists."""
+    """A node's worker: claim tasks from root/queue until root/STOP exists. `slots` is the node's
+    cores; a run takes as many as it has threads (at most all). The worker claims one task at a time
+    and holds at most one that does not fit yet, so the other nodes get the rest."""
     root = Path(root)
     me = f"{socket.gethostname()}-{os.getpid()}"
     for sub in ("queue", "claimed", "done"):
         (root / sub).mkdir(parents=True, exist_ok=True)
-    running = {}
+    running, waiting = {}, None                  # name -> (future, cores); a claimed task with no room yet
     with ThreadPoolExecutor(slots) as ex:
         while True:
-            for name, fut in list(running.items()):
+            for name, (fut, _) in list(running.items()):
                 if fut.done():
                     status, secs = fut.result()
                     tmp = root / "done" / f".{name}.tmp"
@@ -116,17 +165,28 @@ def queue_worker(root, slots: int, poll: float = 0.5) -> None:
                     tmp.rename(root / "done" / f"{name}.json")
                     (root / "claimed" / f"{me}.{name}.json").unlink(missing_ok=True)
                     del running[name]
-            free = slots - len(running)
-            if free > 0:
-                for q in sorted((root / "queue").glob("*.json"))[:free]:
-                    claim = root / "claimed" / f"{me}.{q.name}"
-                    try:
-                        q.rename(claim)              # atomic: one worker wins
-                    except (FileNotFoundError, OSError):
-                        continue
-                    t = Task(**json.loads(claim.read_text()))
-                    running[q.stem] = ex.submit(run_task, t)
-            if (root / "STOP").exists() and not running and not any((root / "queue").glob("*.json")):
+            free = slots - sum(k for _, k in running.values())
+            while free > 0:
+                if waiting is None:
+                    for q in sorted((root / "queue").glob("*.json")):
+                        claim = root / "claimed" / f"{me}.{q.name}"
+                        try:
+                            q.rename(claim)          # atomic: one worker wins
+                        except (FileNotFoundError, OSError):
+                            continue
+                        waiting = (q.stem, Task(**json.loads(claim.read_text())))
+                        break
+                    if waiting is None:
+                        break                        # the queue is empty
+                name, t = waiting
+                k = min(max(1, t.threads), slots)
+                if k > free:
+                    break                            # wait for cores
+                running[name] = (ex.submit(run_task, t), k)
+                free -= k
+                waiting = None
+            if ((root / "STOP").exists() and not running and waiting is None
+                    and not any((root / "queue").glob("*.json"))):
                 return
             time.sleep(poll)
 

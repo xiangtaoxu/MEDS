@@ -233,6 +233,10 @@ calibrate_fast.py variants runs/off/fit.json runs/on/fit.json --out runs/variant
   the executable. The EEO vcmax25 prior needs `libmeds.so` in any case.
 - **Re-running:** a re-run of `fit` replays every trial it has run from the cache in `--work`. It
   costs only the work that is new, such as the post-fit steps after a change in the tool.
+- **Threads:** a run takes one thread for every 15 simulated days, up to `[fit].max_threads` (8).
+  The 120-day seasonal runs and the 180-day chains set an iteration's pace; the ten-day windows run
+  on one thread. `--workers` (one machine) and a queue worker's `--slots` count cores, and a run
+  takes as many as it has threads. MEDS's output is the same at any thread count, so the fit is too.
 - **On a Slurm cluster,** `--queue` hands the trials to a directory queue under `--work`. Start one
   `calibrate_fast.py worker --queue <work>/queue --slots <cores>` per node inside the same
   allocation; the driver hands trials to them.
