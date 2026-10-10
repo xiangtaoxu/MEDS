@@ -36,11 +36,12 @@ module meds_vegetation_dynamics
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    use meds_phenology, only : phenology_kernel, leaf_turnover_step
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
+   use meds_sink_limitation,      only : growth_sink_limitation
    use meds_litter_partition, only : necromass_to_litter
    use meds_biogeochem_types, only : litter_input_t
    use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
-                                        CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP,         &
+                                        CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
                                         cohort_diag_grow,                                      &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
                                         PD_MORT_C_BACKGROUND,                                &
@@ -480,13 +481,14 @@ contains
       real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       integer(ik) :: n, np, npft, j, pf, ip
       real(wp)    :: dbh_rate
-      real(wp), allocatable :: carbon_min(:)
+      real(wp), allocatable :: carbon_min(:), efficiency(:)
 
       n    = site%cohort%n
       np   = site%patch%n
       npft = cfg%pft%n
       allocate(mortality(n), recruitment(npft, max(np, 1_ik)))
       recruitment = 0.0_wp
+      efficiency  = cohort_recruit_efficiency(site, cfg)
 
       associate (cohort => site%cohort, pft => cfg%pft)
          allocate(carbon_min(npft))
@@ -514,10 +516,39 @@ contains
             if (pft%include_pft(pf) == 1_ik)                                                       &
             recruitment(pf, ip) = recruitment(pf, ip)                                              &
                  + npp_to_recruitment(cohort%nplant(j), npp_repro(j), dt_yr,                       &
-                                      pft%repro_carbon_efficiency(pf), carbon_min(pf))
+                                      efficiency(j), carbon_min(pf))
          end do
       end associate
    end subroutine compute_vital_rates
+
+   !---------------------------------------------------------------------------------------!
+   ! Each cohort's recruit carbon efficiency this step: the share of its reproduction carbon   !
+   ! that becomes recruits in its own patch. It is its PFT's recruit_carbon_efficiency, reduced !
+   ! by exp(-recruit_shade_decay * LAI) of that patch: under a deep canopy fewer seeds germinate !
+   ! and fewer seedlings live to min_cohort_height. The recruits (compute_vital_rates) and the   !
+   ! seed lost to litter (compute_carbon_allocation) both take it from here, so the two always  !
+   ! add up to the reproduction carbon.                                                        !
+   !---------------------------------------------------------------------------------------!
+   function cohort_recruit_efficiency(site, cfg) result(efficiency)
+      type(site_t),        intent(in) :: site
+      type(meds_config_t), intent(in) :: cfg
+      real(wp), allocatable :: efficiency(:)
+      real(wp), allocatable :: patch_lai(:)
+      integer(ik) :: j, pf, ip
+      allocate(efficiency(site%cohort%n), patch_lai(max(site%patch%n, 1_ik)))
+      patch_lai = 0.0_wp
+      associate (cohort => site%cohort, pft => cfg%pft)
+         do j = 1_ik, cohort%n
+            ip = cohort%owner_patch(j)
+            patch_lai(ip) = patch_lai(ip) + cohort%nplant(j) * cohort%leaf_area(j)
+         end do
+         do j = 1_ik, cohort%n
+            pf = cohort%pft(j)
+            efficiency(j) = pft%recruit_carbon_efficiency(pf)                                      &
+                          * exp(-pft%recruit_shade_decay(pf) * patch_lai(cohort%owner_patch(j)))
+         end do
+      end associate
+   end function cohort_recruit_efficiency
 
    !---------------------------------------------------------------------------------------!
    ! CARBON NPP assembler + slow-carbon ORCHESTRATOR. Per cohort it (1) gathers the daily GPP /  !
@@ -538,19 +569,20 @@ contains
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator (B1)
       integer(ik) :: n, j, pf, ip
-      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn
+      real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn, root_turn
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
       real(wp)    :: storage_maint, store_post, leaf_retained_c
-      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost
-      real(wp), allocatable :: co2_owed(:)
+      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost, exudate
+      real(wp), allocatable :: co2_owed(:), efficiency(:)
       logical     :: starving
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
       allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
+      efficiency = cohort_recruit_efficiency(site, cfg)
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
             pf  = cohort%pft(j)
@@ -599,12 +631,17 @@ contains
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
+            !----- Fine roots turn over at the PFT's rate, or, with fineroot_lifespan_plastic, as  !
+            !      much slower as the cohort's leaves live longer than at the top of the canopy. ---!
+            root_turn = pft%fineroot_turnover_rate(pf)
+            if (cfg%fineroot_lifespan_plastic .and. cohort%llspan(j) > 0.0_wp)                     &
+               root_turn = root_turn * pft%leaf_lifespan_toc(pf) / cohort%llspan(j)
             call cohort_carbon_demand(cfg%fast_biophysics_on,                                      &
                      cohort%gpp_accum(j), cohort%leaf_resp_accum(j), cohort%stem_resp_accum(j),    &
                      cohort%root_resp_accum(j), cfg%gpp_ref, cohort%leaf_area(j), dt_yr,           &
                      cohort%leaf_flush_tendency(j), cohort%leaf_shed_tendency(j),                  &
                      pft%pheno_flush_rate_max(pf), pft%pheno_shed_rate_max(pf), leaf_turn,         &
-                     pft%fineroot_turnover_rate(pf),                                               &
+                     root_turn,                                                                    &
                      pft%pheno_min_leaf_cover(pf), pft%pheno_bare_leaf_cover(pf),                  &
                      cohort%leaf_carbon(j), cohort%fineroot_carbon(j), leaf_target, dt_day, r2l,   &
                      gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
@@ -617,7 +654,16 @@ contains
                      storage_demand=store_demand, repro_frac=repro_frac,                           &
                      growth_leaf=g_leaf, growth_fineroot=g_fineroot, growth_wood=g_wood,          &
                      npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
-                     deficit=deficit, starving=starving)
+                     deficit=deficit, starving=starving,                                           &
+                     wood_growth_max=growth_sink_limitation(                                       &
+                        wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
+                        wood_density=cohort%p_wood_density(j), hgt_max=cohort%p_hgt_max(j),         &
+                        aboveground_frac=cohort%p_aboveground_frac(j),                              &
+                        max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
+                        max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
+                        max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
+                        dt_yr=dt_yr),                                                               &
+                     exudate=exudate)
             !----- NET per-pool change = growth - shed (leaf/root); litter = shed. ---------------!
             npp%leaf(j)          = g_leaf     - leaf_shed_c
             npp%fineroot(j)      = g_fineroot - fineroot_shed_c
@@ -642,6 +688,7 @@ contains
                cohort%sdiag%v(CS_NPP_REPRO,    j) = g_repro    / dt_yr
                cohort%sdiag%v(CS_GROWTH_RESP,  j) = growth_resp / dt_yr
                cohort%sdiag%v(CS_STORAGE_RESP, j) = storage_maint / dt_yr
+               cohort%sdiag%v(CS_EXUDATE,      j) = exudate / dt_yr
                cohort%sdiag%w(j)                  = 1.0_wp
             end if
             !----- THE ALLOCATOR'S OUTPUTS ALL GET A DESTINATION NOW (plan §10.2.2 items 1, 2, 3).    !
@@ -663,14 +710,14 @@ contains
             !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
             !      soil-carbon pools (B1, OPT-IN [soil_carbon].soil_carbon_on -- default .false.       !
             !      keeps this bit-identical). The SEED LOSS joins them: reproduction carbon is        !
-            !      debited in full from the parent, and only `repro_carbon_efficiency` of it ever     !
+            !      debited in full from the parent, and only the recruit carbon efficiency of it ever !
             !      establishes -- the remaining ~99.9% is dead seed and dead seedling, which is        !
             !      NECROMASS, not nothing. It enters as `storage_c`, which necromass_to_litter pools   !
             !      with the canopy and splits on f_labile_leaf: seed tissue is labile and canopy-      !
             !      derived, which is what that argument means. -----------------------------------!
             if (cfg%soil_carbon_on) then
                seed_lost = g_repro * cohort%nplant(j)                                              &
-                         * (1.0_wp - min(max(pft%repro_carbon_efficiency(pf), 0.0_wp), 1.0_wp))
+                         * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
                !----- Only the NON-resorbed share of the leaf shed becomes litter (#151); the rest   !
                !      went to storage above. Their sum is leaf_shed_c, so the leaf pool's full removal !
                !      is matched exactly by (storage credit + litter input).  --------------------------!
@@ -685,6 +732,9 @@ contains
                lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
                lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
                lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+               !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
+               !      labile, below-ground carbon, where the microbes respire it. -------------------!
+               lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
             end if
          end do
       end associate

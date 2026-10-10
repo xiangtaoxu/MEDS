@@ -1105,6 +1105,7 @@ contains
       !      UNCONDITIONAL (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
       !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
+      cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -1174,7 +1175,8 @@ contains
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
       call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
-      call req_pa(tp, 'pft.repro_carbon_efficiency',          cfg%pft%repro_carbon_efficiency,          npft, miss)
+      call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
+      call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
@@ -1184,6 +1186,10 @@ contains
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
       call req_pa_log(tp, 'pft.is_woody',           cfg%pft%is_woody,           npft, miss)
       call req_pa(tp,     'pft.stem_resp_factor25', cfg%pft%stem_resp_factor25, npft, miss)
+      call opt_pa(tp,     'pft.stem_resp_sapwood25', cfg%pft%stem_resp_sapwood25, npft, miss)
+      call opt_pa(tp,     'pft.max_relative_growth_rate', cfg%pft%max_relative_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_rate', cfg%pft%max_absolute_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_exponent', cfg%pft%max_absolute_growth_exponent, npft, miss)
       call req_pa(tp,     'pft.root_resp_factor25', cfg%pft%root_resp_factor25, npft, miss)
       !----- Canopy optics: shortwave as reflect/transmit per band, longwave as EMISSIVITY. -----!
       call req_pa(tp, 'pft.leaf_reflect_vis',  cfg%pft%leaf_reflect_vis,  npft, miss)
@@ -1320,6 +1326,17 @@ contains
          if (nout == npft) cfg%pft%mort_alpha = buf(1:npft)
          call toml_real_array(tp, 'derived.mort_beta', buf, nout)
          if (nout == npft) cfg%pft%mort_beta = buf(1:npft)
+         !----- ... and the light-plasticity slopes: a cohort's trait is its PFT's top-of-canopy  !
+         !      value times exp(k * LAI above it) [1/(m2/m2)]. Each one is pinned on its own, so Rd !
+         !      can fall faster than Vcmax down the canopy (lower Rd/Vcmax in shade).  -----------!
+         call toml_real_array(tp, 'derived.kplastic_vcmax', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_vm0 = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_rd', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_llspan', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_llspan = buf(1:npft)
       end if
 
       call validate_config(cfg)
@@ -1341,7 +1358,7 @@ contains
          return
       end if
       write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
-           //'reproduction_investment_fraction,repro_carbon_efficiency,'                            &
+           //'reproduction_investment_fraction,recruit_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_reproduction_height,'                                              &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
@@ -1352,16 +1369,19 @@ contains
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
            //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
-           //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
+           //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
+           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
+           //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
+           //'max_absolute_growth_rate,max_absolute_growth_exponent'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 50 ITEMS: i0 + 9 + i0 + 2 + i0 + 36. A format SHORTER than the value              !
+            !----- 61 ITEMS: i0 + 9 + i0 + 2 + i0 + 47. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,36(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,47(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
-                 p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
+                 p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
                  p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
@@ -1376,7 +1396,12 @@ contains
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_lifespan_toc(pf),                                                            &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
-                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
+                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
+                 p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
+                 p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
+                 p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
+                 p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
+                 p%max_absolute_growth_exponent(pf)
          end do
       end associate
       close(u)

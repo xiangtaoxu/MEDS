@@ -71,6 +71,9 @@ module meds_config_keys
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &
                     'patch count exceeds output.cohort_max or patch_max; raise the cap'),        &
+      retired_key_t('pft.repro_carbon_efficiency', 'renamed pft.recruit_carbon_efficiency: the '// &
+                    'share of reproduction carbon that becomes recruits (seed set, '//         &
+                    'germination and seedling survival together)'),                            &
       retired_key_t('output.carbon_fluxes', 'renamed [output].carbon'),                          &
       retired_key_t('output.water_fluxes', 'renamed [output].water'),                            &
       retired_key_t('output.energy_fluxes', 'renamed [output].energy'),                          &

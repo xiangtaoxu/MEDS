@@ -48,7 +48,10 @@ module meds_pft_params
       !       (growth_dbh_slope/cap/max, growth_lai_slope) were REMOVED: the phenomenological      !
       !       growth law is an experiment "example" and now lives in the Python example.           !
       real(wp), allocatable :: reproduction_investment_fraction(:) !< [--] growth fraction diverted to reproduction
-      real(wp), allocatable :: repro_carbon_efficiency(:)          !< [--] reproduction carbon -> establishable recruits
+      real(wp), allocatable :: recruit_carbon_efficiency(:)        !< [--] share of reproduction carbon that becomes
+                                                                   !<      recruits: seed set, germination and seedling
+                                                                   !<      survival up to min_cohort_height together
+      real(wp), allocatable :: recruit_shade_decay(:)              !< [1/(m2/m2)] that share falls as exp(-k * patch LAI)
       !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018 PNAS,  !
       !       a power law centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp, always   !
       !       positive). Shared scalars for now (PFT-specific later). --------------------------!
@@ -179,13 +182,21 @@ module meds_pft_params
       real(wp),    allocatable :: hyd_specific_root_length(:), hyd_fine_root_radius(:)
       real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
       real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
+      !----- SINK limitation (meds_sink_limitation): wood carbon grows by at most this fraction of  !
+      !      itself a year, and the stem diameter by at most rate x dbh^exponent a year; the tighter !
+      !      one applies, and the carbon left over is exuded by the roots. A rate of 0 turns that    !
+      !      limit off (default); the exponent defaults to 0, a size-independent diameter cap.        !
+      real(wp),    allocatable :: max_relative_growth_rate(:) !< [1/yr] maximum relative growth rate of wood
+      real(wp),    allocatable :: max_absolute_growth_rate(:) !< [cm/yr] maximum diameter growth of a 1 cm stem
+      real(wp),    allocatable :: max_absolute_growth_exponent(:) !< [--] its scaling with dbh [cm]
       real(wp),    allocatable :: growth_resp_factor(:)     !< [--]     construction cost (fraction of metabolic NPP)
       !----- MAINTENANCE respiration of the non-leaf tissues. Per-PFT in ED2, and hard-coded as   !
       !      three run-uniform literals in the fast driver until now, so every PFT respired its    !
       !      stem and roots identically no matter how they differed. (Leaf dark respiration is     !
       !      already per-PFT, through rd_vcmax_ratio.) -------------------------------------------!
       logical,     allocatable :: is_woody(:)               !< .false. (e.g. grass) => stem respiration is 0
-      real(wp),    allocatable :: stem_resp_factor25(:)     !< [umol CO2/m2 stem/s @25C] baseline stem rate
+      real(wp),    allocatable :: stem_resp_factor25(:)     !< [umol CO2/m2 stem/s @25C] stem rate per surface
+      real(wp),    allocatable :: stem_resp_sapwood25(:)    !< [umol CO2/m3 sapwood/s @25C] stem rate per sapwood volume
       real(wp),    allocatable :: root_resp_factor25(:)     !< [umol CO2/kgC fine root/s @25C] baseline root rate
       !----- CANOPY OPTICS (the two-stream's per-PFT table). These were literals in the fast     !
       !      driver, broadcast over every PFT, which meant two PFTs could not differ in how they  !
@@ -272,7 +283,11 @@ contains
       integer(ik),       intent(in)    :: n
       pft%n = n
       allocate(pft%dbh_critical(n), pft%hgt_max(n), pft%wood_density(n))
-      allocate(pft%reproduction_investment_fraction(n), pft%repro_carbon_efficiency(n))
+      allocate(pft%reproduction_investment_fraction(n), pft%recruit_carbon_efficiency(n))
+      allocate(pft%recruit_shade_decay(n))
+      pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy
+      allocate(pft%stem_resp_sapwood25(n))
+      pft%stem_resp_sapwood25 = 0.0_wp      ! optional key; 0 = stem respiration by surface alone
       allocate(pft%mort_gamma(n), pft%mort_alpha(n), pft%mort_beta(n))
       allocate(pft%seed_rain_recruits(n), pft%include_pft(n))
       allocate(pft%photosynthetic_pathway(n), pft%vcmax25(n), pft%jmax_vcmax_ratio(n),       &
@@ -304,6 +319,11 @@ contains
                pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
                pft%wood_carbon_density(n))
       pft%storage_turnover_rate = 0.0_wp   ! #177: optional key; 0 reproduces pre-#177 behaviour
+      allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
+               pft%max_absolute_growth_exponent(n))
+      pft%max_relative_growth_rate     = 0.0_wp   ! optional keys; a rate of 0 = that sink limit off
+      pft%max_absolute_growth_rate     = 0.0_wp
+      pft%max_absolute_growth_exponent = 0.0_wp
       pft%retained_carbon_fraction = 0.0_wp ! #151: optional key; 0 = all shed carbon to litter
       !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
@@ -378,7 +398,7 @@ contains
       pft%mort_beta  = pft%mort_beta_0  * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_beta_exp
       !----- Light trait-plasticity slopes, ED2 trait_plasticity_scheme=2 (Lloyd et al. 2010).      !
       !       Vcmax/Rd decrease in shade (slope < 0); SLA and leaf lifespan increase. Consumed only  !
-      !       when trait_plasticity_on; overridable from the [pft] config. --------------------------!
+      !       when trait_plasticity_on; the PFT file's [derived] table can pin each one. ----------!
       lnexp            = max(lnexp_min_pft, min(lnexp_max, -2.788_wp + 0.01439_wp * pft%vcmax25))
       pft%kplastic_vm0 = -exp(lnexp)                                   ! Vcmax down in the understorey
       pft%kplastic_rd  = pft%kplastic_vm0                              ! ED2 default: Rd tracks Vcmax

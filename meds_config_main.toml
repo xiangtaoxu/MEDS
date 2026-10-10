@@ -397,6 +397,8 @@ gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, u
 [trait_dynamics]
 # trait_plasticity_on = false     # acclimate each cohort's leaf traits (sla, vcmax25, rd25, llspan)
                                   #   to the leaf area above it; false keeps the PFT's top-of-canopy values
+# fineroot_lifespan_plastic = false  # with plasticity on: fine-root turnover x (top-of-canopy leaf lifespan
+                                  #   / the cohort's), so shaded roots are replaced as slowly as shaded leaves
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model

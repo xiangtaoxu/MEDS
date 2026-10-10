@@ -26,8 +26,11 @@
 ! the driver maps it straight over the cohort Structure-of-Arrays (GPU/SIMD-safe, issue-#7 N/A).   !
 !                                                                                          !
 ! Carbon closure (holds every call, growth side):                                               !
-!   (growth_leaf + growth_fineroot + growth_wood + growth_repro + npp_store) - deficit             !
+!   (growth_leaf + growth_fineroot + growth_wood + growth_repro + npp_store + exudate) - deficit   !
 !        == (gpp - resp_maint) - growth_resp                                                       !
+! `exudate` is the carbon a sink limit on wood growth (meds_sink_limitation) turns into root       !
+! exudate instead of wood; like tissue it costs (1+g), so growth_resp covers it. It is zero        !
+! without a limit.                                                                                  !
 ! The driver then subtracts this step's shed (litter) from leaf/fine-root to get the net pool      !
 ! change. `deficit` (unpaid maintenance once storage is exhausted) + `starving` flag a cohort the  !
 ! STATEFUL updater must resolve by destroying tissue; this pure kernel never mutates a pool.       !
@@ -56,7 +59,8 @@ contains
    elemental pure subroutine plant_carbon_allocation(gpp, resp_maint, growth_resp_frac, storage, &
                                     leaf_demand, fineroot_demand, storage_demand, repro_frac,     &
                                     growth_leaf, growth_fineroot, growth_wood, npp_store,         &
-                                    growth_repro, growth_resp, deficit, starving)
+                                    growth_repro, growth_resp, deficit, starving,                 &
+                                    wood_growth_max, exudate)
       real(wp), intent(in)  :: gpp              !< [kgC/plant] gross primary production this step (>= 0)
       real(wp), intent(in)  :: resp_maint       !< [kgC/plant] maintenance respiration this step (>= 0)
       real(wp), intent(in)  :: growth_resp_frac !< [--] construction-cost fraction g (PFT trait)
@@ -73,7 +77,11 @@ contains
       real(wp), intent(out) :: growth_resp      !< [kgC/plant] growth respiration on realized growth (>= 0)
       real(wp), intent(out) :: deficit          !< [kgC/plant] unpaid maintenance after storage exhausted (>= 0)
       logical,  intent(out) :: starving         !< .true. => storage could not cover the maintenance debt
-      real(wp) :: net, g, cost, avail, store_left, draw, debt, store_hcap_per_dt, c_repro, c_wood
+      !----- The SINK limit (growth_sink_limitation): the most wood the step can build. Pass both or !
+      !      neither; without them wood takes the whole residual, as it always has. ---------------!
+      real(wp), intent(in),  optional :: wood_growth_max  !< [kgC/plant] sink-limited wood growth this step
+      real(wp), intent(out), optional :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
+      real(wp) :: net, g, cost, avail, store_left, draw, debt, store_hcap_per_dt, c_repro, c_wood, c_exudate
 
       growth_leaf = 0.0_wp
       growth_fineroot = 0.0_wp
@@ -115,10 +123,21 @@ contains
       growth_repro = c_repro / cost
       growth_resp  = growth_resp + growth_respiration(growth_repro, g)
       avail        = avail - c_repro
-      !----- P4: wood is the residual sink -- build everything left, construction-charged. -------!
+      !----- P4: wood is the residual sink -- build everything left, construction-charged, up to the !
+      !          sink limit. What the sink cannot use leaves as root exudate, which is made and      !
+      !          exported at the same (1+g) cost as tissue, so growth respiration is the same        !
+      !          whether or not the limit binds. Below the limit nothing changes. ------------------!
       c_wood      = max(avail, 0.0_wp)
       growth_wood = c_wood / cost
-      growth_resp = growth_resp + growth_respiration(growth_wood, g)
+      c_exudate   = 0.0_wp
+      if (present(wood_growth_max)) then
+         if (growth_wood > wood_growth_max) then
+            c_exudate   = growth_wood - max(wood_growth_max, 0.0_wp)
+            growth_wood = max(wood_growth_max, 0.0_wp)
+         end if
+      end if
+      growth_resp = growth_resp + growth_respiration(growth_wood + c_exudate, g)
+      if (present(exudate)) exudate = c_exudate
 
       npp_store = store_hcap_per_dt - draw
    end subroutine plant_carbon_allocation

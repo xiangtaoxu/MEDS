@@ -94,6 +94,37 @@ kernel funds, in order:
 Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below the maturity height
 sets $`f_r=0`$.
 
+### Sink limitation of wood growth
+
+Carbon supply is not the only limit on growth: cambial cell division and expansion run at a bounded
+rate however much carbon the leaves fix (sink limitation; Körner 2015). Wood growth is therefore capped
+by `growth_sink_limitation` (`meds_sink_limitation`), which returns the most wood the step can build.
+It has two forms, each a per-PFT trait that is off at zero; with both set the tighter applies:
+
+```math
+a_{\mathrm{wood}}^{\max} = \min\!\Big(r_{\max}\,C_{\mathrm{wood}}\,\Delta t,\;\;
+W\big(D + g_{\max}D^{c}\Delta t\big) - W(D)\Big) \qquad(1b)
+```
+
+The first is **relative**: $`r_{\max}`$ is the PFT's `max_relative_growth_rate` [yr⁻¹] and
+$`C_{\mathrm{wood}}`$ the cohort's wood carbon at the step's start. The second is **absolute**:
+$`g_{\max}`$ is the PFT's `max_absolute_growth_rate` [cm yr⁻¹], the most a 1 cm stem's diameter can grow,
+$c$ its `max_absolute_growth_exponent` (default 0) with $D$ in cm, and $`W(D)`$ the wood carbon of a stem of
+diameter $D$ on the model's allometry (`size2wood_carbon`), so a step the limit binds grows the diameter
+by exactly $`g_{\max}D^{c}\Delta t`$. The cambium lays down a bounded width of wood, so the absolute form
+scales with the stem's surface rather than its mass: per unit wood it is far more generous to a sapling
+than to a large tree. At BCI the upper quantiles of census diameter growth at a given light rise about
+as $`D^{0.5}`$ (example 05), between a size-independent width ($`c=0`$) and the relative form ($`c\approx1`$). When the residual would build more than that, the kernel builds
+$`a_{\mathrm{wood}}^{\max}`$ and turns the rest of the residual into **root exudate**,
+$`E = C_{\mathrm{resid}}/(1+g) - a_{\mathrm{wood}}^{\max}`$. Making and exporting exudate costs the same
+$`(1+g)`$ per unit as tissue, so growth respiration (eq. 2) is the same whether or not the limit binds;
+the limit only changes where the carbon ends up. The driver puts $E$ in the patch's below-ground labile
+litter (`labile_soil`), where soil respiration returns it to the air. A
+cohort below the limit is unaffected, so the limit only bites where carbon is plentiful (open-grown
+trees), and $`r_{\max}=0`$ (the default) means no limit at all. The form is deliberately simple; a
+mechanistic sink (temperature- or water-limited cambial activity) replaces the body of
+`growth_sink_limitation` without touching the allocator.
+
 When $`C_{\mathrm{net}}<0`$ (e.g. a leafless canopy at bud-break, where GPP≈0 but stem/root maintenance
 still runs), the maintenance debt is paid **from storage first**, and then leaf/fine-root growth may still
 draw the **remaining** reserves — so spring leaf-out is storage-funded, not deadlocked. Only a plant whose
@@ -104,15 +135,16 @@ priority order is therefore **maintenance debt → leaf/fine-root growth (NPP th
 
 ## 3. Growth respiration on realized growth
 
-Building one unit of **growth tissue** (leaf, fine root, wood, or reproduction) consumes $`(1+g)`$ carbon,
+Building one unit of **growth tissue** (leaf, fine root, wood, or reproduction), or exporting one unit of
+root exudate (§2), consumes $`(1+g)`$ carbon,
 where $g$ = `growth_resp_factor`: the fraction $g$ is respired as **growth (construction) respiration**.
 Storage refill is a 1:1 carbon transfer (nonstructural sugar has no construction cost), so it is exempt.
 Charging $`(1+g)`$ *inside* the funding step resolves — exactly and without iteration — the circularity
 that growth respiration reduces the carbon available for growth, which changes the growth. If the pools
-built are $`a_{\mathrm{leaf}},a_{\mathrm{root}},a_{\mathrm{wood}},a_{\mathrm{repro}}`$, then
+built are $`a_{\mathrm{leaf}},a_{\mathrm{root}},a_{\mathrm{wood}},a_{\mathrm{repro}}`$ and the exudate is $E$, then
 
 ```math
-R_g = g\,(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}}) \qquad(2)
+R_g = g\,(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + E) \qquad(2)
 ```
 
 This corrects the pre-refactor engine, which charged growth respiration on the whole pre-allocation balance
@@ -138,11 +170,11 @@ driver forms the net leaf/root change $`\mathrm{npp}_{\mathrm{leaf}}=a_{\mathrm{
 (and likewise for root). The **growth-side** budget the kernel closes on every call is
 
 ```math
-\big(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + \mathrm{npp}_{\mathrm{store}}\big) \;-\; \mathrm{deficit} \;=\; (G - R_m) \;-\; R_g \qquad(3)
+\big(a_{\mathrm{leaf}} + a_{\mathrm{root}} + a_{\mathrm{wood}} + a_{\mathrm{repro}} + \mathrm{npp}_{\mathrm{store}} + E\big) \;-\; \mathrm{deficit} \;=\; (G - R_m) \;-\; R_g \qquad(3)
 ```
 
 with `deficit` the unpaid maintenance on the starving branch (it *adds back* — carbon the plant owes but
-has not yet removed from any pool). Adding the driver's shed, the full **plant-pool change = GPP −
+has not yet removed from any pool) and $E$ the root exudate of the sink limit (zero without one). Adding the driver's shed, the full **plant-pool change = GPP −
 (maintenance + growth respiration) − litter**, where the litter $`\ell_{\mathrm{leaf}}+\ell_{\mathrm{root}}`$
 feeds the (deferred) demography→litter→$`R_h`$ biogeochemistry seam. Because growth respiration is charged
 on realized growth and the shed decays the current pool, this path **closes in carbon but is not
@@ -156,6 +188,9 @@ bit-identical** to the pre-refactor engine.
 | $`c_s`$ | `storage_cushion` | storage target as a multiple of the leaf target |
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_r`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
+| $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |
+| $`g_{\max}`$ | `max_absolute_growth_rate` (optional, default 0 = off) | sink limit on the diameter growth of a 1 cm stem [cm yr⁻¹]; the residual above it is exuded |
+| $c$ | `max_absolute_growth_exponent` (optional, default 0) | how that limit scales with diameter, $`g_{\max}D^{c}`$ |
 | $`L^{*}`$ inputs | `sla`, `hgt_max`, … | full-canopy leaf carbon via `size2leaf_carbon` |
 
 The flush and senescence rates, `min_leaf_cover` and `bare_leaf_cover` are phenology traits (see
@@ -197,6 +232,7 @@ the core engine (`demography ⊥ plant`), which only ever *applies* the tendency
 |---|---|
 | daily GROWTH allocation (master, elemental) | `meds_plant_carbon_allocation`: `plant_carbon_allocation` (+ private `fill_carbon_demand`, the $`(1+g)`$ funder) |
 | growth (construction) respiration | `meds_plant_carbon_allocation`: `growth_respiration(npp_growth, g)` |
+| sink limit on wood growth | `meds_sink_limitation`: `growth_sink_limitation` (relative and absolute limits, the tighter applies) |
 | leaf loss (turnover + senescence) + flush cap | `meds_phenology`: `leaf_turnover_step` |
 | turnover-first carbon demand per cohort | `meds_vegetation_dynamics`: `cohort_carbon_demand` |
 | per-cohort orchestration (slow loop) | `meds_vegetation_dynamics`: `compute_carbon_allocation` (rates → shed-first → flush-capped demands → one elemental call → net npp + litter) |

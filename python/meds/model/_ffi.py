@@ -41,3 +41,4 @@ for _n in ("total_agb", "total_lai", "total_nplant", "total_basal_area", "soil_c
 # array copy-out
 _sig("meds_run_get_real", None, [c_int, c_int, _dptr])
 _sig("meds_run_get_int",  None, [c_int, c_int, _iptr])
+_sig("meds_run_get_patch_real", None, [c_int, c_int, _dptr])

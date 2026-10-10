@@ -72,7 +72,7 @@ module meds_output_registry
                                     PY_RAINF, N_PYDIAG,                                          &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
-                                    CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
+                                    CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
                                     PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
                                     PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
@@ -606,6 +606,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_GROWTH_RESP, w=W_NPLANT)
       call add_variable(reg, 'storage_resp_site', 'storage maintenance respiration', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_STORAGE_RESP, w=W_NPLANT)
+      call add_variable(reg, 'root_exudate_site', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_EXUDATE, w=W_NPLANT)
       !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
       !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
       call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &
