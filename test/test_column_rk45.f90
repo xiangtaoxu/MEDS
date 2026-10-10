@@ -69,7 +69,7 @@ program test_column_rk45
    !      that gives the LAI ~3 the old view asserted while being consistent with the allometry.  !
    call column_cohort_init(col_cohort, cfg%pft, [1_ik], [20.0_wp], [0.0224_wp])
    call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)

@@ -33,18 +33,26 @@ again would double-count it. That one sentence is the whole accounting rule for 
 
 ## 2. Stem maintenance respiration
 
-Woody tissue respires per unit of **stem surface area** (the ED2 / Chambers et al. 2004 form), not per
-unit sapwood or structural carbon — so a cohort's stem burden follows its geometry (diameter, height,
-branch area) rather than its wood pool:
+Woody tissue respires on two bases, each with its own per-PFT rate at 25 °C: the **stem surface
+area** (the ED2 / Chambers et al. 2004 form) and the **sapwood volume**, the living wood (Ryan 1990).
+A PFT sets one rate to 0 to use the other alone; `stem_resp_sapwood25` defaults to 0, so a PFT file
+that does not name it respires by surface alone:
 
 ```math
-R_{\mathrm{stem}} \;=\; r^{\mathrm{stem}}_{25}\,10^{\,\sigma\,\mathrm{dbh}}\;\; s(T_w)\;\; A_{\mathrm{stem}},
+R_{\mathrm{stem}} \;=\; s(T_w)\,\Big[\,r^{\mathrm{stem}}_{25}\,10^{\,\sigma\,\mathrm{dbh}}\,A_{\mathrm{stem}}
+\;+\; r^{\mathrm{sap}}_{25}\,V_{\mathrm{sap}}\Big],
 \qquad
-A_{\mathrm{stem}} \;=\; \frac{\pi\,(10^{-2}\,\mathrm{dbh})\,h \;+\; \pi\,\mathrm{WAI}/n}{f_{\mathrm{ag}}} \qquad(3)
+A_{\mathrm{stem}} \;=\; \frac{\pi\,(10^{-2}\,\mathrm{dbh})\,h \;+\; \pi\,\mathrm{WAI}/n}{f_{\mathrm{ag}}},
+\qquad
+V_{\mathrm{sap}} \;=\; \frac{2\,C_{\mathrm{sap}}}{1000\,\rho} \qquad(3)
 ```
 
-with $`r^{\mathrm{stem}}_{25}`$ = `stem_resp_factor25` the per-PFT baseline
-$`[\mathrm{\mu mol\,CO_2\,m^{-2}\,stem\,s^{-1}}]`$ at 25 °C, $h$ the cohort height [m], $n$ = `nplant`
+with $`r^{\mathrm{stem}}_{25}`$ = `stem_resp_factor25` the per-PFT surface rate
+$`[\mathrm{\mu mol\,CO_2\,m^{-2}\,stem\,s^{-1}}]`$ and $`r^{\mathrm{sap}}_{25}`$ = `stem_resp_sapwood25`
+the per-PFT sapwood rate $`[\mathrm{\mu mol\,CO_2\,m^{-3}\,sapwood\,s^{-1}}]`$, both at 25 °C;
+$`C_{\mathrm{sap}}`$ the cohort's sapwood carbon [kgC/plant] (the sapwood fraction of its wood carbon,
+which counts the coarse roots as $`A_{\mathrm{stem}}`$ does through $`f_{\mathrm{ag}}`$), as dry mass
+over the PFT's wood density $\rho$ [g cm⁻³]; $h$ the cohort height [m], $n$ = `nplant`
 $`[\mathrm{plant\,m^{-2}}]`$, and WAI the **per-ground** wood area index (hence the $`/n`$ returning the
 branch term to a per-plant area). The result is per plant
 $`[\mathrm{\mu mol\,CO_2\,plant^{-1}\,s^{-1}}]`$; the caller multiplies by `nplant` for the patch total.
@@ -57,7 +65,16 @@ Three details are load-bearing:
   $`f_{\mathrm{ag}}`$ = `aboveground_frac` scales it to the whole woody plant, so belowground structure
   respires in proportion. It is a per-PFT trait gathered per cohort — the same number demography and
   cohort fusion read — never a run-uniform constant.
-- **The woody gate.** `is_woody = .false.` (a grass) returns exactly zero, whatever the baseline.
+- **The woody gate.** `is_woody = .false.` (a grass) returns exactly zero, whatever the rates.
+- **Surface or sapwood.** Maintenance respiration of stems is linear in sapwood (live-cell) volume in
+  conifers (Ryan 1990; Ryan et al. 1995), while tropical stem efflux follows surface and volume both
+  (Cavaleri et al. 2006; Rowland et al. 2018). The two bases spread a stand's stem respiration over
+  sizes differently: per m² of leaf, the surface term rises about 3-fold from a 1 cm to a 120 cm stem
+  on the tropical allometry, the sapwood term about 40-fold, so the sapwood basis charges saplings far
+  less and canopy trees more. Volume rather than carbon: biomass grows as $`\rho^{0.976}`$, so
+  $`V_{\mathrm{sap}}`$ barely depends on the wood density, and denser sapwood respires less per gram
+  (Westerband et al. 2022). A volume basis is only as good as the sapwood fraction behind it (Rowland et
+  al. 2018), which is why a sapwood rate is best set against a stand's total stem respiration.
 
 The size scaler $\sigma$ = `stem_resp_size_scaler` ships at **0** (flat in diameter) — a module default
 on `wood_params_t`, not a TOML key. ED2's positive DBH exponent (~0.0041 cm⁻¹) is noisy and pulls against
@@ -165,7 +182,8 @@ canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophy
 | Symbol | Config key | Meaning |
 |---|---|---|
 | — | `is_woody` | woody gate; `.false.` ⇒ stem respiration is identically 0 |
-| $`r^{\mathrm{stem}}_{25}`$ | `stem_resp_factor25` | stem baseline $`[\mathrm{\mu mol\,CO_2\,m^{-2}\,stem\,s^{-1}}]`$ at 25 °C (shipped 0.06) |
+| $`r^{\mathrm{stem}}_{25}`$ | `stem_resp_factor25` | stem rate per surface $`[\mathrm{\mu mol\,CO_2\,m^{-2}\,stem\,s^{-1}}]`$ at 25 °C (shipped 0.06) |
+| $`r^{\mathrm{sap}}_{25}`$ | `stem_resp_sapwood25` | stem rate per sapwood volume $`[\mathrm{\mu mol\,CO_2\,m^{-3}\,sapwood\,s^{-1}}]`$ at 25 °C (optional, default 0) |
 | $`r^{\mathrm{root}}_{25}`$ | `root_resp_factor25` | fine-root baseline $`[\mathrm{\mu mol\,CO_2\,kgC^{-1}\,s^{-1}}]`$ at 25 °C (shipped 0.30) |
 | $`f_{\mathrm{ag}}`$ | `aboveground_frac` | aboveground fraction of woody carbon; scales the stem area (eq 3) |
 | $g$ | `growth_resp_factor` | construction-cost fraction charged on realized growth (shipped 0.3) |
@@ -187,4 +205,4 @@ canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophy
 | growth respiration (eq 6) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
 | growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_prepass` |
 | per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required) |
-| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, size scaler, root pool scaling, per-PFT trait differentiation); growth respiration in `test/test_plant_carbon_allocation.f90` |
+| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, size scaler, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |

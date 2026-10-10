@@ -19,7 +19,7 @@ module meds_config_io
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
+   use meds_config,     only : soil_column_config_t,                                              &
                                LWP_CONTROL_LINEAR_DECLINE, pft_stomata_psi_onset
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -999,20 +999,14 @@ contains
       cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
       cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
       cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)
-      cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
-      cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
-      if (toml_has(tm, 'hydraulics.conductance')) then
-         select case (trim(adjustl(toml_string(tm, 'hydraulics.conductance', 'whole_plant'))))
-         case ('whole_plant') ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_WHOLE_PLANT
-         case ('segment')     ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_SEGMENT
-         case default
-            error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
-         end select
-      end if
-      cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
-      cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
-      cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
+      cfg%hydraulics%root_beta     = toml_real(tm, 'hydraulics.root_beta',     cfg%hydraulics%root_beta)
+      cfg%hydraulics%root_depth_b1 = toml_real(tm, 'hydraulics.root_depth_b1', cfg%hydraulics%root_depth_b1)
+      cfg%hydraulics%root_depth_b2 = toml_real(tm, 'hydraulics.root_depth_b2', cfg%hydraulics%root_depth_b2)
+      cfg%hydraulics%specific_root_length = toml_real(tm, 'hydraulics.specific_root_length',                &
+                                                      cfg%hydraulics%specific_root_length)
+      cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
+                                                      cfg%hydraulics%fine_root_radius)
 
       !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
@@ -1111,6 +1105,7 @@ contains
       !      UNCONDITIONAL (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
       !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
+      cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -1180,7 +1175,8 @@ contains
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
       call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
-      call req_pa(tp, 'pft.repro_carbon_efficiency',          cfg%pft%repro_carbon_efficiency,          npft, miss)
+      call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
+      call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
@@ -1190,6 +1186,10 @@ contains
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
       call req_pa_log(tp, 'pft.is_woody',           cfg%pft%is_woody,           npft, miss)
       call req_pa(tp,     'pft.stem_resp_factor25', cfg%pft%stem_resp_factor25, npft, miss)
+      call opt_pa(tp,     'pft.stem_resp_sapwood25', cfg%pft%stem_resp_sapwood25, npft, miss)
+      call opt_pa(tp,     'pft.max_relative_growth_rate', cfg%pft%max_relative_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_rate', cfg%pft%max_absolute_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_exponent', cfg%pft%max_absolute_growth_exponent, npft, miss)
       call req_pa(tp,     'pft.root_resp_factor25', cfg%pft%root_resp_factor25, npft, miss)
       !----- Canopy optics: shortwave as reflect/transmit per band, longwave as EMISSIVITY. -----!
       call req_pa(tp, 'pft.leaf_reflect_vis',  cfg%pft%leaf_reflect_vis,  npft, miss)
@@ -1260,9 +1260,13 @@ contains
       call opt_pa(tp, 'pft.wood_water_sat',      cfg%pft%hyd_wood_water_sat,      npft, miss)
       call opt_pa(tp, 'pft.wood_psi50',          cfg%pft%hyd_wood_psi50,          npft, miss)
       call opt_pa(tp, 'pft.wood_kexp',           cfg%pft%hyd_wood_kexp,           npft, miss)
-      call opt_pa(tp, 'pft.k_plant_max',         cfg%pft%hyd_k_plant_max,         npft, miss)
       call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
       call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
+      call opt_pa(tp, 'pft.root_beta',           cfg%pft%hyd_root_beta,           npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b1',       cfg%pft%hyd_root_depth_b1,       npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
+      call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
+      call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
@@ -1322,6 +1326,17 @@ contains
          if (nout == npft) cfg%pft%mort_alpha = buf(1:npft)
          call toml_real_array(tp, 'derived.mort_beta', buf, nout)
          if (nout == npft) cfg%pft%mort_beta = buf(1:npft)
+         !----- ... and the light-plasticity slopes: a cohort's trait is its PFT's top-of-canopy  !
+         !      value times exp(k * LAI above it) [1/(m2/m2)]. Each one is pinned on its own, so Rd !
+         !      can fall faster than Vcmax down the canopy (lower Rd/Vcmax in shade).  -----------!
+         call toml_real_array(tp, 'derived.kplastic_vcmax', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_vm0 = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_rd', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_llspan', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_llspan = buf(1:npft)
       end if
 
       call validate_config(cfg)
@@ -1343,7 +1358,7 @@ contains
          return
       end if
       write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
-           //'reproduction_investment_fraction,repro_carbon_efficiency,'                            &
+           //'reproduction_investment_fraction,recruit_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
            //'min_cohort_height,min_reproduction_height,'                                              &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
@@ -1354,16 +1369,19 @@ contains
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
            //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
-           //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
+           //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
+           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
+           //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
+           //'max_absolute_growth_rate,max_absolute_growth_exponent'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 50 ITEMS: i0 + 9 + i0 + 2 + i0 + 36. A format SHORTER than the value              !
+            !----- 61 ITEMS: i0 + 9 + i0 + 2 + i0 + 47. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,36(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,47(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
-                 p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
+                 p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
                  p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
                  p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
@@ -1378,7 +1396,12 @@ contains
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_lifespan_toc(pf),                                                            &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
-                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
+                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
+                 p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
+                 p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
+                 p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
+                 p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
+                 p%max_absolute_growth_exponent(pf)
          end do
       end associate
       close(u)

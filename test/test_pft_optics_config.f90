@@ -18,7 +18,7 @@ program test_pft_optics_config
    use meds_config_io,      only : write_pft_params_csv
    use meds_plant_types,    only : hydro_params_table_t
    use meds_fast_types,     only : apply_hydraulics_config
-   use meds_hydr_lib,       only : plc_retained
+   use meds_hydr_lib,       only : plc_retained, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, water_content
    use meds_site_state_types, only : site_t
    use meds_init,           only : init_bare_ground, add_cohort, finalize_init
@@ -96,15 +96,17 @@ program test_pft_optics_config
       real(wp) :: plc1, plc2
       cfg%pft%hyd_wood_psi50(2)  = -0.8_wp        ! vs the shared -2.0
       cfg%pft%hyd_leaf_pi0(2)    = -2.5_wp        ! vs the shared -1.5
-      cfg%pft%hyd_k_plant_max(2) =  3.0e-4_wp     ! vs the shared 6.0e-4
+      cfg%pft%hyd_wood_kmax(2)   =  2.0_wp        ! vs the conductivity of its wood density
       call apply_hydraulics_config(cfg%hydraulics, cfg%pft, tab)
       call check_close(tab%pft(1)%wood_psi50, cfg%hydraulics%wood_psi50, 1.0e-12_wp,              &
                        'PFT 1 with no override takes the shared [hydraulics] value')
       call check_close(tab%pft(2)%wood_psi50, -0.8_wp,   1.0e-12_wp, 'PFT 2 takes its own psi50')
       call check_close(tab%pft(2)%leaf_curve%pi0, -2.5_wp,   1.0e-12_wp, 'PFT 2 takes its own leaf pi0')
-      call check_close(tab%pft(2)%k_plant_max, 3.0e-4_wp, 1.0e-15_wp, 'PFT 2 takes its own conductance')
-      !----- One override must not require restating the other twelve. -------------------------!
-      call check_close(tab%pft(2)%wood_kmax, cfg%hydraulics%wood_kmax, 1.0e-12_wp,                &
+      call check_close(tab%pft(2)%wood_kmax, 2.0_wp, 1.0e-12_wp, 'PFT 2 takes its own conductivity')
+      call check_close(tab%pft(1)%wood_kmax, wood_kmax_from_density(cfg%pft%wood_density(1)),     &
+                       1.0e-12_wp, 'PFT 1 with no override takes the conductivity of its wood density')
+      !----- One override must not require restating the others. -------------------------------!
+      call check_close(tab%pft(2)%vessel_curl, cfg%hydraulics%vessel_curl, 1.0e-12_wp,            &
                        'an unset trait still falls back to the shared value, per PFT')
       !----- And it MATTERS: at the same potential the more vulnerable xylem has lost more. -----!
       plc1 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)

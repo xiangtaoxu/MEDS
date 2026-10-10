@@ -175,6 +175,7 @@
 # npp_repro_site = "M Y"                              # [carbon, site] NPP allocated to reproduction (kgC/m2/yr)
 # growth_resp_site = "M Y"                            # [carbon, site] growth respiration (kgC/m2/yr)
 # storage_resp_site = "M Y"                           # [carbon, site] storage maintenance respiration (kgC/m2/yr)
+# root_exudate_site = "M Y"                           # [carbon, site] root exudate: carbon the growth sink could not use (kgC/m2/yr)
 # agb_growth_site = "M Y"                             # [structure, site] site AGB growth rate (kgC/m2/yr)
 # agb_mort_site = "M Y"                               # [structure, site] site AGB mortality loss rate (kgC/m2/yr)
 # mort_rate_site = "M Y"                              # [structure, site] nplant-weighted mortality rate (1/yr)

@@ -28,8 +28,8 @@ module meds_output_registry
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
                                    XTYPE_DOUBLE, XTYPE_INT, ragged_dim
-   use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB,        &
-                                      cm2_to_m2
+   use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
+   use meds_constants,         only : cm2_to_m2
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
@@ -72,7 +72,7 @@ module meds_output_registry
                                     PY_RAINF, N_PYDIAG,                                          &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
-                                    CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
+                                    CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
                                     PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
                                     PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
@@ -606,6 +606,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_GROWTH_RESP, w=W_NPLANT)
       call add_variable(reg, 'storage_resp_site', 'storage maintenance respiration', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_STORAGE_RESP, w=W_NPLANT)
+      call add_variable(reg, 'root_exudate_site', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_EXUDATE, w=W_NPLANT)
       !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
       !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
       call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &

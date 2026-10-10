@@ -29,7 +29,7 @@ library. `scripts/calibrate_fast` builds every trial with it.
 ```python
 from meds.config import RunConfig
 from meds.model import run
-cfg = RunConfig.load("examples/example_flux_tower_bci/meds_config_eval.toml")
+cfg = RunConfig.load("examples/example04_column_biophysics/meds_config_eval.toml")
 cfg.set("pft.vcmax25", 50.0, file="pft", pft=1)              # the first PFT's top-of-canopy Vcmax25
 cfg.set("run.end_time", "2012-09-01 00:00:00")
 run(cfg.write("trial"))                                       # trial/main.toml + trial/pft.toml

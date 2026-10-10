@@ -443,8 +443,7 @@ contains
       associate (sc => cfg%soil_column)
          call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
                                      sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, cfg%hydraulics%root_beta,                     &
-                                     cfg%hydraulics%root_depth, sc%psi_fc, ledger%soil)
+                                     sc%curve_par_n, sc%psi_fc, ledger%soil)
       end associate
       ledger%soil_ready = .true.
    end subroutine ensure_soil_geometry

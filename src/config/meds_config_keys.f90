@@ -46,8 +46,24 @@ module meds_config_keys
    end type retired_key_t
    type(retired_key_t), parameter :: RETIRED(*) = [                                          &
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
-                    '[hydraulics].root_beta (0 < beta < 1) and root_depth; root_beta = '//        &
-                    'exp(-b*root_depth) gives the old exponential decay b per metre'),           &
+                    '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
+                    'root_depth_b1 and root_depth_b2'),                                          &
+      retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
+                    'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
+                    'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &
+      retired_key_t('hydraulics.specific_root_area', 'the soil->root conductance takes root '//   &
+                    'length: set [hydraulics].specific_root_length [m/kgC] and fine_root_radius '// &
+                    '[m], or their pft.* values'),                                               &
+      retired_key_t('hydraulics.k_plant_max', 'the plant''s conductance is its sapwood''s, '//      &
+                    'wood_kmax * sapwood area / (height * vessel_curl), with wood_kmax from the '// &
+                    'PFT''s wood density (Xu et al. 2016); set pft.wood_kmax to override it'),   &
+      retired_key_t('pft.k_plant_max', 'the plant''s conductance is its sapwood''s, wood_kmax '//    &
+                    '* sapwood area / (height * vessel_curl): set pft.wood_kmax [kg/m/s/MPa], '// &
+                    'which defaults to the PFT''s wood density (Xu et al. 2016)'),             &
+      retired_key_t('hydraulics.conductance', 'the sapwood (segment) conductance is the only '//   &
+                    'form: wood_kmax * sapwood area / (height * vessel_curl)'),                  &
+      retired_key_t('hydraulics.wood_kmax', 'wood_kmax follows each PFT''s wood density (Xu et '// &
+                    'al. 2016: 3.3 kg/m/s/MPa at 0.6 g/cm3); set pft.wood_kmax to override it'), &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &
@@ -55,6 +71,9 @@ module meds_config_keys
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &
                     'patch count exceeds output.cohort_max or patch_max; raise the cap'),        &
+      retired_key_t('pft.repro_carbon_efficiency', 'renamed pft.recruit_carbon_efficiency: the '// &
+                    'share of reproduction carbon that becomes recruits (seed set, '//         &
+                    'germination and seedling survival together)'),                            &
       retired_key_t('output.carbon_fluxes', 'renamed [output].carbon'),                          &
       retired_key_t('output.water_fluxes', 'renamed [output].water'),                            &
       retired_key_t('output.energy_fluxes', 'renamed [output].energy'),                          &

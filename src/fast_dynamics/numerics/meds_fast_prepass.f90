@@ -58,7 +58,7 @@ contains
    ! [umol/m2/s], positive to the canopy air. `biophys` is intent(in): callers that need the CAS     !
    ! temperature persisted write biophys%cas%can_temp = tcas themselves right after the call.         !
    !---------------------------------------------------------------------------------------!
-   subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,   &
+   subroutine column_prepass(cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, root_frac, &
                              tcas, qcas, press, rho, t_ground, h_coeff_leaf, g_transp_leaf,                     &
                              cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, nee_biotic, &
                              gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
@@ -71,6 +71,7 @@ contains
       type(patch_biophys_t),   intent(in)    :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
+      real(wp),                intent(in)    :: root_frac(:)   !< [-] the patch's fine roots by layer (sum 1)
       real(wp),                intent(out)   :: tcas, qcas, press, rho, t_ground
       real(wp),                intent(out)   :: h_coeff_leaf(:), g_transp_leaf(:)
       real(wp),                intent(out)   :: cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2, &
@@ -89,7 +90,7 @@ contains
                                        biophys%wood_temp, aero, tcas, qcas, press, rho, t_ground)
 
       !----- 2. root-zone environment (root + heterotrophic respiration drivers). ------------------!
-      call root_zone_environment(col_config%soil, biophys%soil_e%soil_temp, biophys%soil_w%theta,       &
+      call root_zone_environment(col_config%soil, root_frac, biophys%soil_e%soil_temp, biophys%soil_w%theta, &
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
@@ -99,7 +100,7 @@ contains
                                     gpp_coh, leaf_resp_coh, cdiag)
 
       !----- 4. stem + fine-root maintenance respiration. -----------------------------------------!
-      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, col_cohort, &
+      call canopy_maintenance_respiration(col_config%wood, col_config%root, col_config%soil, root_frac, col_cohort, &
                                           biophys%wood_temp, biophys%soil_e%soil_temp, ra_stem, ra_root, &
                                           stem_resp_coh, root_resp_coh)
 
@@ -153,15 +154,16 @@ contains
    ! root_zone_environment -- root-weighted soil temperature and the column-mean soil moisture     !
    ! that drive fine-root and heterotrophic respiration.                                             !
    !---------------------------------------------------------------------------------------!
-   pure subroutine root_zone_environment(soil, soil_temp, theta, soil_temp_root, theta_mean)
+   pure subroutine root_zone_environment(soil, root_frac, soil_temp, theta, soil_temp_root, theta_mean)
       type(soil_params_t), intent(in)  :: soil
+      real(wp),            intent(in)  :: root_frac(:)      !< [-]     the patch's fine roots by layer
       real(wp),            intent(in)  :: soil_temp(:)      !< [K]     per-layer soil temperature
       real(wp),            intent(in)  :: theta(:)          !< [m3/m3] per-layer soil moisture
       real(wp),            intent(out) :: soil_temp_root    !< [K]     root-fraction-weighted mean
       real(wp),            intent(out) :: theta_mean        !< [m3/m3] depth-weighted column mean
       integer(ik) :: k, nsl
       nsl = soil%n_active
-      soil_temp_root = weighted_mean(soil_temp(1:nsl), soil%root_frac, nsl)
+      soil_temp_root = weighted_mean(soil_temp(1:nsl), root_frac, nsl)
       theta_mean = 0.0_wp
       do k = 1_ik, nsl
          theta_mean     = theta_mean     + theta(k) * soil%dz(k)
@@ -311,11 +313,12 @@ contains
    ! [umol/plant/s] and as patch totals [umol/m2 ground/s]. Elemental kernels: the array actuals    !
    ! drive the broadcast; the parameter records and the patch-uniform soil temperature broadcast.   !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_maintenance_respiration(wood, root, soil, col_cohort, wood_temp, soil_temp,      &
+   subroutine canopy_maintenance_respiration(wood, root, soil, root_frac, col_cohort, wood_temp, soil_temp, &
                                              ra_stem, ra_root, stem_resp_coh, root_resp_coh)
       type(wood_params_t),   intent(in)  :: wood
       type(root_params_t),   intent(in)  :: root
-      type(soil_params_t),   intent(in)  :: soil                !< root profile + active layer count (#178)
+      real(wp),              intent(in)  :: root_frac(:)        !< [-] the patch's fine roots by layer
+      type(soil_params_t),   intent(in)  :: soil                !< active layer count (#178)
       type(column_cohort_t), intent(in)  :: col_cohort
       real(wp),              intent(in)  :: wood_temp(:)        !< [K] per-cohort wood temperature
       real(wp),              intent(in)  :: soil_temp(:)        !< [K] PER-LAYER soil temperature (#178)
@@ -326,14 +329,15 @@ contains
       n = col_cohort%n
       !----- The temperature response is summed OVER LAYERS, not taken at a mean (#178). It is   !
       !      patch-uniform, so it is evaluated once here and broadcast over the cohort array. ----!
-      tscale_root = root_zone_temp_scale(soil_temp, soil%root_frac, soil%n_active, root)
+      tscale_root = root_zone_temp_scale(soil_temp, root_frac, soil%n_active, root)
       ra_stem = 0.0_wp ; ra_root = 0.0_wp
       if (present(stem_resp_coh)) stem_resp_coh(1:n) = 0.0_wp
       if (present(root_resp_coh)) root_resp_coh(1:n) = 0.0_wp
       call stem_maintenance_respiration(wood_temp(1:n), col_cohort%dbh(1:n), col_cohort%height(1:n),   &
                                    col_cohort%wai(1:n), col_cohort%nplant(1:n),                          &
                                    col_cohort%aboveground_frac(1:n), col_cohort%is_woody(1:n),          &
-                                   col_cohort%stem_resp_factor25(1:n), wood, stem_resp_arr(1:n))
+                                   col_cohort%stem_resp_factor25(1:n), col_cohort%sap_volume(1:n),      &
+                                   col_cohort%stem_resp_sapwood25(1:n), wood, stem_resp_arr(1:n))
       call fine_root_maintenance_respiration(tscale_root, col_cohort%broot(1:n),                        &
                                    col_cohort%root_resp_factor25(1:n), root_resp_arr(1:n))
       do i = 1_ik, n

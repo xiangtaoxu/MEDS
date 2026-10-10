@@ -220,7 +220,7 @@ Errors, not warnings, except V5.
   and shortwave interval means are returned in the right interval, and the canopy-air-top
   temperature shift is $`-(g/c_p)(z_c - z_T)`$.
 
-## 10. P4 — `examples/example_flux_tower_bci/`
+## 10. P4 — `examples/example04_column_biophysics/`
 
 A download script (Zenodo, pinned checksum), the site TOML, the forcing build, a five-year run
 from the 2010 census with sub-daily output (`MEDS_BCI_CENSUS_INIT_PLAN.md`; it replaced the

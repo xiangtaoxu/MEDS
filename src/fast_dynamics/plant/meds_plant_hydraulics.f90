@@ -3,8 +3,8 @@
 ! meds_plant_hydraulics -- the plant-hydraulics NETWORK SOLVER: the coupled matrix-exponential   !
 ! sub-step integrator (solve_plant_water, + its batch wrapper solve_plant_water_batch) that        !
 ! assembles the tissue CONSTITUTIVE curves (pressure-volume + Kirchhoff conductance, now in         !
-! meds_hydr_lib) into a 2-node leaf<->wood ODE, plus the optional soil->root rhizosphere        !
-! conductance helper. Every fast-loop integrator (split/ARK/RK45) now calls this ONCE per macro-  !
+! meds_hydr_lib) into a 2-node leaf<->wood ODE, plus the roots: each cohort's rooting depth and  !
+! profile, and the soil->root (rhizosphere) conductance of each layer. Every fast-loop integrator (split/ARK/RK45) now calls this ONCE per macro-  !
 ! step as the Act-1 pre-pass (MEDS_ED2_RK45_DESIGN.md sec 1/4/5) and freezes its returned time-     !
 ! averaged sapflow/root_uptake for the whole step -- the retired plant_water_tendency (a per-stage  !
 ! psi RHS) is no longer needed now that internal water MASS, not psi, is the fast-loop prognostic   !
@@ -16,7 +16,7 @@ module meds_plant_hydraulics
    use meds_constants, only : pi, grav_head, safe_exp, tiny_num
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_params_table_t, hydro_opts_t,  &
                                hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
-                                NROOT_MAX, HYDRO_NODES_2, HYDRO_COND_SEGMENT, HYDRO_SUBSTEP_FIXED
+                                NROOT_MAX, HYDRO_NODES_2, HYDRO_SUBSTEP_FIXED
    use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, plc_retained
    use meds_water_retention, only : capacitance, water_content
    use meds_numerics,         only : adaptive_step_update
@@ -24,9 +24,11 @@ module meds_plant_hydraulics
    private
 
    public :: solve_plant_water, solve_plant_water_batch, rhizosphere_cond
-   public :: root_fraction_profile, effective_root_boundary
+   public :: root_fraction_profile, effective_root_boundary, cohort_root_depth, cohort_root_profile
 
    real(wp),    parameter :: c_floor   = 1.0e-12_wp  !< capacitance floor (linearization only)
+   real(wp),    parameter :: min_spacing_ratio = 2.0_wp  !< r_half / r_root floor: closer, the roots all but
+                                                         !<   touch and the single-root form no longer holds
    real(wp),    parameter :: k_floor   = 1.0e-15_wp  !< conductance floor (keeps M finite)
    real(wp),    parameter :: sinhc_eps = 1.0e-8_wp   !< sinhc series threshold
    real(wp),    parameter :: safety    = 0.9_wp
@@ -52,20 +54,41 @@ contains
       end if
    end function edge_cond
 
-   !----- Per-layer soil->root (rhizosphere) conductance [kg/s/MPa] per plant (Katul et al. 2003),   !
-   !      from soil hydraulic conductivity, fine-root biomass, specific root area, and the layer's    !
-   !      root fraction. This is ED2's `gw_cond`; call it per soil layer to fill env%rhizo_cond_layer  !
-   !      for the multi-layer root boundary (MEDS_MULTILAYER_ROOTS_DESIGN).                            !
-   pure real(wp) function rhizosphere_cond(soil_cond, broot, sra, root_frac, dz, nplant) result(gw)
-      real(wp), intent(in) :: soil_cond   !< [kg/m/s/MPa] soil hydraulic conductivity (per MPa gradient)
-      real(wp), intent(in) :: broot       !< [kgC] fine-root biomass (per plant)
-      real(wp), intent(in) :: sra         !< [m2/kgC] specific root area
-      real(wp), intent(in) :: root_frac   !< [-] fraction of roots in this layer
-      real(wp), intent(in) :: dz          !< [m] layer thickness
-      real(wp), intent(in) :: nplant      !< [pl/m2] plant density
-      real(wp) :: rai
-      rai = broot * sra * root_frac * nplant                     ! root area index [m2/m2]
-      gw  = soil_cond * sqrt(max(rai, 0.0_wp)) / (pi * dz) / max(nplant, tiny_num)
+   !----- A cohort's rooting depth [m]: root_depth_b1 * height^root_depth_b2 (ED2's height allometry, !
+   !      IALLOM 1: 5 m for a 35 m tree), capped at the soil column. -------------------------------------!
+   pure real(wp) function cohort_root_depth(height, hp, soil_depth) result(depth)
+      real(wp),             intent(in) :: height      !< [m] cohort height
+      type(hydro_params_t), intent(in) :: hp          !< the cohort's PFT
+      real(wp),             intent(in) :: soil_depth  !< [m] depth of the soil column's bottom
+      depth = min(hp%root_depth_b1 * max(height, 0.0_wp)**hp%root_depth_b2, soil_depth)
+   end function cohort_root_depth
+
+   !----- A cohort's fine roots in each soil layer [-], summing to one: ED2's exponential profile    !
+   !      within its own rooting depth D, (1 - beta^(d/D)) / (1 - beta) above depth d. Layers below D !
+   !      hold none. -----------------------------------------------------------------------------------!
+   pure subroutine cohort_root_profile(height, hp, z_top, z_bot, frac)
+      real(wp),             intent(in)  :: height      !< [m] cohort height
+      type(hydro_params_t), intent(in)  :: hp          !< the cohort's PFT
+      real(wp),             intent(in)  :: z_top(:)    !< [m] depth of each layer's top (>= 0)
+      real(wp),             intent(in)  :: z_bot(:)    !< [m] depth of each layer's bottom (> z_top)
+      real(wp),             intent(out) :: frac(:)     !< [-] the cohort's fine roots in each layer
+      real(wp) :: depth
+      depth = cohort_root_depth(height, hp, z_bot(size(z_bot)))
+      frac = root_fraction_profile(hp%root_beta, depth, z_top, z_bot) / (1.0_wp - hp%root_beta)
+   end subroutine cohort_root_profile
+
+   !----- One layer's soil->root (rhizosphere) conductance [kg/s/MPa] per plant: steady radial flow  !
+   !      to a single root (Gardner 1960), 2 pi K L / ln(r_half / r_root). L is the plant's root      !
+   !      length in the layer and r_half half the distance between the layer's roots, (pi L_v)^-1/2  !
+   !      from the patch's root-length density L_v. It grows with root length, falling only by the     !
+   !      logarithm as roots crowd, so it does not depend on how the soil is layered or the stand split  !
+   !      into cohorts (#375). Whether absorbing length grows in proportion to root carbon is #377.     !
+   pure real(wp) function rhizosphere_cond(soil_cond, root_length, half_spacing, root_radius) result(g)
+      real(wp), intent(in) :: soil_cond     !< [kg/m/s/MPa] soil hydraulic conductivity (per MPa gradient)
+      real(wp), intent(in) :: root_length   !< [m] the plant's fine-root length in the layer
+      real(wp), intent(in) :: half_spacing  !< [m] half the distance between the layer's roots
+      real(wp), intent(in) :: root_radius   !< [m] absorbing-root radius
+      g = 2.0_wp * pi * soil_cond * root_length / log(max(half_spacing / root_radius, min_spacing_ratio))
    end function rhizosphere_cond
 
    !----- Reduce the root boundary to an effective (conductance, soil potential) at the wood node.    !
@@ -249,14 +272,10 @@ contains
 
    contains
 
-      !----- Maximum (plc=1) internal conductance, per plant [kg/s/MPa]. -------------------!
+      !----- Maximum (plc=1) internal conductance, per plant [kg/s/MPa]: the sapwood's specific    !
+      !      conductivity over its cross-section and the path, height * vessel_curl. --------------!
       real(wp) function cond_max() result(kc)
-         if (o%cond_mode == HYDRO_COND_SEGMENT) then
-            kc = p%wood_kmax * env%sap_area / max(env%height*p%vessel_curl, tiny_num)
-         else
-            kc = p%k_plant_max * env%leaf_area
-         end if
-         kc = max(kc, k_floor)
+         kc = max(p%wood_kmax * env%sap_area / max(env%height*p%vessel_curl, tiny_num), k_floor)
       end function cond_max
 
       !----- Frozen linear-system coefficients + Ohm's-law steady state at the sub-step start   !
@@ -340,14 +359,13 @@ contains
    ! guard a caller-side precondition check instead) from the data-layout change, matching BB1's own       !
    ! "land it bit-identical and still serial first" discipline.                                            !
    !---------------------------------------------------------------------------------------!
-   subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area,                   &
-                                      height, leaf_area,                                              &
+   subroutine solve_plant_water_batch(n, nsl, transp, bleaf, bsap, broot, sap_area, height,           &
                                       soil_psi_layer, root_z_layer, rhizo_cond_layer, pft, ptab, o, dt, psi, &
                                       sapflow, root_uptake, root_uptake_layer, psi_leaf, psi_wood,    &
                                       plc, nsub, converged)
       integer(ik),          intent(in)    :: n, nsl
       real(wp),             intent(in)    :: transp(n), bleaf(n), bsap(n), broot(n), sap_area(n)
-      real(wp),             intent(in)    :: height(n), leaf_area(n)
+      real(wp),             intent(in)    :: height(n)
       real(wp),             intent(in)    :: soil_psi_layer(nsl), root_z_layer(nsl)      !< per-layer, all cohorts
       real(wp),             intent(in)    :: rhizo_cond_layer(nsl, n)                    !< per-(layer,cohort)
       !----- PER-PFT parameters (#179): the batch selects the cohort's entry and hands the SAME      !
@@ -371,7 +389,7 @@ contains
       do i = 1_ik, n
          env%transp    = transp(i)
          env%bleaf     = bleaf(i) ; env%bsap = bsap(i) ; env%broot = broot(i)
-         env%sap_area  = sap_area(i) ; env%height = height(i) ; env%leaf_area = leaf_area(i)
+         env%sap_area  = sap_area(i) ; env%height = height(i)
          !----- Per-layer root boundary, UNCONDITIONAL since Phase 1 retired the multilayer_roots flag  !
          !      (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md). The per-cohort kernel below KEEPS its           !
          !      n_root_layer <= 1 scalar branch: src/plant is a standalone library that must be usable    !

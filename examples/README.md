@@ -18,16 +18,14 @@ README that shows how to reproduce it (run from the repository root):
   from Python: growth, mortality (Camac et al. 2018) and recruitment are fitted to five intervals of
   the Barro Colorado Island 50-ha plot census, and the cohort-and-patch engine runs them from the
   1985 census (it tracks the next 25 years) and from near-bare ground.
-- **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
-  a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
-  tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing
-  leaf and canopy-air temperatures that the meteorological forcing never contained. This is the one
-  example that drives the **full coupled model from Python** (`meds.model.Run`), with the time loop
-  on the Python side — so it also plots a spin-up trajectory sampled from the running model.
-- **[`example_flux_tower_bci/`](example_flux_tower_bci/)** — forcing built from a flux tower's own
-  meteorology at Barro Colorado Island, Panama: a site TOML declares the data, the tool checks it
-  against the sun and the data, fills gaps with a flag on every value, and states the tower's 41 m
-  heights so MEDS moves each sample to every patch's canopy-air top. Also scores its longwave gap
-  fill on hidden observations. The run starts from the 2010 census of the BCI 50-ha plot, with no
-  spin-up, and is compared with the tower's carbon, water and energy fluxes. The data are
-  downloaded or read in place, never committed.
+- **[`example04_column_biophysics/`](example04_column_biophysics/)** — the coupled column at the
+  Barro Colorado Island flux tower, Panama: canopy radiation, leaf gas exchange, energy balances,
+  plant hydraulics and soil water every 15 minutes. It starts from the plot's 2010 census, calibrates
+  the fast parameters against the tower, compares five years with its fluxes, and shows ten days
+  at half-hourly output.
+- **[`example05_forest_regeneration/`](example05_forest_regeneration/)** — the whole model at once,
+  driven from Python: a forest regrowing from bare ground at Barro Colorado Island from 1600 to 2020,
+  with the column of example 04 every 15 minutes and the demography of example 03 every day, three
+  PFTs (early, mid and late successional) with Panama's sun leaves and a sink limit on diameter
+  growth, checked against the census's growth and the forest's carbon budget, on ERA5-Land weather
+  repeated and the CO₂ of its history.

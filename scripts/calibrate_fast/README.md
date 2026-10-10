@@ -8,7 +8,7 @@ every decision in it, is
 rules that work at any tower, with the tower's numbers coming from its own data and climate.
 
 Barro Colorado Island is the worked example:
-[`examples/example_flux_tower_bci/calibration.toml`](../../examples/example_flux_tower_bci/calibration.toml),
+[`examples/example04_column_biophysics/calibration.toml`](../../examples/example04_column_biophysics/calibration.toml),
 with what the rules chose there and the results in the example's README.
 
 **The user decides, the tool recommends and reports.** Every setting of a site's `calibration.toml`

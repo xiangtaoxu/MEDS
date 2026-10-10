@@ -95,12 +95,28 @@ K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_
 \;\xrightarrow[\Delta\psi\to0]{}\; k_{\text{cond}}\,k(\psi)
 ```
 
-$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance. `[hydraulics].conductance`
-picks its form: `"whole_plant"` (default), $`k_{\text{cond}}=k_{plant\_max}\cdot\text{leaf area}`$, or
-`"segment"`, $`k_{\text{cond}}=w_{kmax}\cdot A_{sap}/(H\cdot\text{vessel\_curl})`$ from stem allometry
-(Huber value $`H_v=A_{sap}/A_{leaf}`$). `wood_kmax` and `vessel_curl` are read only in segment
-mode, and `k_plant_max` only in whole-plant mode. Before v0.3.1 there was no key for the mode, so
-`wood_kmax` and `vessel_curl` were accepted and never used. For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
+$k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance, the sapwood's over the
+path from the stem base to the crown:
+
+```math
+k_{\text{cond}}=\frac{K_s\,A_{sap}}{H\cdot\text{vessel\_curl}},\qquad
+K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right)
+```
+
+$A_{sap}$ is the sapwood area of the stem allometry, $H$ the plant's height, and `vessel_curl`
+(1.5, as in ED2) lengthens the path beyond the height. $K_s$ [kg m⁻¹ s⁻¹ MPa⁻¹], the sapwood
+specific conductivity, is a PFT trait: by default it follows the PFT's wood density $\rho$
+[g cm⁻³] through the fit of Xu et al. (2016, New Phytol 212:80) to 72 species of neotropical
+seasonally dry forests, as ED2 codes it (`plant_hydro_scheme` 2). The fit is lognormal, so the
+residual variance 0.6186 turns its median into the mean (×1.36); $\rho$ outside 0.35–0.95 takes
+the nearest edge. $K_s$ is 6.0 at $\rho$ = 0.35, 3.3 at 0.60 and 1.4 at 0.95; `pft.wood_kmax`
+overrides it. Wood density explains a fifth of the variance ($R^2$ 0.21): one species' $K_s$ can
+lie a factor of 2 either side. Branches of Panama canopy trees span about 1.6–12, and 2–4 at
+$\rho$ = 0.6 (Meinzer et al. 2008), and FATES's default is 3.0. For a 35 m BCI canopy
+tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
+$k_{\text{cond}}$ = 0.019 kg s⁻¹ MPa⁻¹: 1.9 mmol m⁻² s⁻¹ MPa⁻¹ per unit leaf area, and
+63 g m⁻² s⁻¹ MPa⁻¹ per unit sapwood, inside the 25–131 measured from soil to branch on Panama
+canopy trees (Meinzer et al. 2003). For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
 uniform-grid **lookup table** $G(r)$ and read by linear interpolation on the hot path (the closed
 forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$ is a runtime
 scale.
@@ -114,23 +130,47 @@ its `[hydraulics].multilayer_roots` switch — the per-layer path is the only on
 The **multi-layer** formulation (unconditional since the switch was deleted; ED2-faithful; see
 `MEDS_MULTILAYER_ROOTS_DESIGN.md`) couples to the prognostic soil column — per-layer soil ψ and the
 **unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$ (`soil_hydr_cond_from_theta`) — and sums the soil layers the
-roots reach, in parallel to the common wood node. Per-layer root+rhizosphere conductance
-(Katul 2003; MEDS `rhizosphere_cond`, = ED2 `gw_cond`):
+roots reach, in parallel to the common wood node.
+
+**Each cohort has its own roots.** It roots to a depth set by its height (ED2's IALLOM 1 allometry,
+Christoffersen 2013), capped at the soil column's bottom $z_{\text{bot}}$:
 
 ```math
-g_k=\frac{K_{soil}(k)\,\sqrt{\text{RAI}_k}}{\pi\,\Delta z_k}\cdot\frac{1}{n_{plant}},\qquad
-\text{RAI}_k=b_{root}\cdot\text{SRA}\cdot\text{root\_frac}(k)\cdot n_{plant}
+D=\min\!\left(b_{1Rd}\,h^{\,b_{2Rd}},\ z_{\text{bot}}\right)
 ```
 
-with the ED2 cumulative-exponential root profile
-$`\text{root\_frac}(k)=\beta^{\,d_{k-1}/D}-\beta^{\,d_k/D}`$ ($\beta=$ `[hydraulics].root_beta`, $D$ =
-`[hydraulics].root_depth`, both depths clamped to $[0,D]$), renormalized to sum to one over the
-column, so a shallow column still holds all the roots and a layer below $D$ holds none. The profile
-is a plant trait, so it lives in `[hydraulics]`. Before v0.3.1 it came from `[soil_column].root_beta`
-as a per-layer $`e^{-2d}`$ weight, and the `[hydraulics]` pair was never read; a config that still
-sets `[soil_column].root_beta` is refused. The default $`\beta=e^{-4}`$, $D$ = 2 m is that same
-$`e^{-2d}`$ profile, so a default run keeps its roots. ED2's own default is $\beta=0.001$, which puts
-more of the roots near the surface. The parallel network collapses to an effective boundary,
+with $`b_{1Rd}`$ = `root_depth_b1` (1.114 m) and $`b_{2Rd}`$ = `root_depth_b2` (0.4223), which give 5 m
+for a 35 m tree and 1.8 m for a 3 m sapling. Within $D$ its fine roots fall off exponentially, as in
+ED2's `distrib_root`: the share above depth $d$ is
+
+```math
+Y(d)=\frac{1-\beta^{\,\min(d,D)/D}}{1-\beta},
+```
+
+so a layer between $d_{k-1}$ and $d_k$ holds $`Y(d_k)-Y(d_{k-1})`$, the shares sum to one, and a layer
+below $D$ holds none ($\beta$ = `root_beta`, 0.1, the share the profile would leave below $D$ if it went
+on; ED2's default). The patch's profile, which weights the root-zone temperature of fine-root
+respiration and spreads the uptake when no layer supplies any, is its cohorts' profiles weighted by
+their fine-root carbon.
+
+**Soil to root, layer by layer: a single root** (Gardner 1960; Cowan 1965). Water flows radially to a
+root of radius $`r_{\text{root}}`$ from a soil cylinder whose radius is half the distance between roots,
+so per plant
+
+```math
+g_k=\frac{2\pi\,K_{soil}(k)\,L_k}{\ln\!\left(r_{\text{half},k}/r_{\text{root}}\right)},\qquad
+L_k=b_{root}\cdot\text{SRL}\cdot Y_k,\qquad
+r_{\text{half},k}=\left(\pi\,\frac{\sum_{\text{cohorts}} n_{plant}\,L_k}{\Delta z_k}\right)^{-1/2}
+```
+
+where $L_k$ is the plant's fine-root length in the layer (SRL = `specific_root_length`, m kgC⁻¹),
+$`r_{\text{half},k}`$ comes from the patch's root-length density in the layer, and $`r_{\text{root}}`$ =
+`fine_root_radius` (the logarithm is floored at ln 2 for very crowded roots). The conductance grows with
+root length and falls only by the logarithm as roots crowd, so it does not depend on how the soil is
+layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
+\Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
+orders of magnitude more weakly (#375). Whether the absorbing length really grows in proportion to fine-root carbon is open
+(#377). The parallel network collapses to an effective boundary,
 
 ```math
 G_{\text{root}}=\sum_k g_k, \qquad
@@ -179,20 +219,20 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | $w_{sat}$ | `leaf_water_sat`, `wood_water_sat` | saturated water content [kg H₂O / kgC] |
 | $\psi_{50}$ | `wood_psi50` | xylem potential at 50 % loss of conductance [MPa] |
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
-| $`k_{plant\_max}`$ | `k_plant_max` | max whole-plant conductance [kg s⁻¹ MPa⁻¹ m⁻²_leaf] |
-| — | `conductance` | `"whole_plant"` (default) or `"segment"`: which of the two rows below sets $k_{\text{cond}}$ |
-| $K_s$ | `wood_kmax` | sapwood specific conductivity (segment mode) [kg m⁻¹ s⁻¹ MPa⁻¹] |
-| — | `vessel_curl` | tortuosity / path-length factor (segment mode) [–] |
+| $K_s$ | `pft.wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; default from wood density (Xu et al. 2016) |
+| — | `vessel_curl` | tortuosity / path-length factor [–] |
 | — | `rhizo_cond` | rhizosphere conductance (single-BC) [kg s⁻¹ MPa⁻¹] |
-| $\beta$ | `root_beta` | ED2 root-profile decay [–], $0<\beta<1$ (feeds `root_fraction_profile`) |
-| $D$ | `root_depth` | maximum rooting depth [m] |
-| SRA | `specific_root_area` | specific root area [m² kgC⁻¹] (multi-layer rhizosphere conductance) |
+| $\beta$ | `root_beta` | the root profile within the rooting depth [–], $0<\beta<1$ (ED2: 0.1) |
+| $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
+| SRL | `specific_root_length` | fine-root length per unit fine-root carbon [m kgC⁻¹] |
+| $`r_{\text{root}}`$ | `fine_root_radius` | absorbing-root radius [m] |
 | $b_{1SA}, b_{2SA}$ | `sapwood_area_b1`, `sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |
 
 ## References
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.
 - Bartlett, Scoffoni & Sack (2012); Tyree & Hammel (1972) — pressure–volume theory.
-- Katul, Leuning & Oren (2003) — rhizosphere conductance.
+- Gardner (1960) *Soil Science* 89:63–73; Cowan (1965) *J. Appl. Ecol.* 2:221–239 — single-root rhizosphere conductance.
+- Christoffersen (2013), PhD thesis, University of Arizona — the rooting-depth allometry (ED2 IALLOM 1).
 - ED2 `ED/src/dynamics/plant_hydro.f90`; `docs/dev_plans/archive/MEDS_HYDRAULICS_DESIGN.md` (§4 governing
   equations, §16 per-layer roots); `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`.
 
@@ -203,6 +243,6 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
 | vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
 | Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre, written out) |
-| multi-layer root boundary | `meds_plant_hydraulics`: `rhizosphere_cond`, `root_fraction_profile`, `effective_root_boundary` |
+| multi-layer root boundary | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`, `rhizosphere_cond`, `effective_root_boundary` |
 | network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`) |
 | config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

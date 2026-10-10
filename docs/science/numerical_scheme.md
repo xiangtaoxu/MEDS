@@ -418,7 +418,7 @@ silently interleaved file.
 
 ### What it buys, measured
 
-50-year `example_biophysics` spin-up (bare-ground start, `ark`, forced, 4 threads on 4 physical cores):
+A 50-year spin-up at Ithaca NY on ERA5-Land forcing (bare-ground start, `ark`, 4 threads on 4 physical cores):
 
 | `dt_fast` | wall | CPU | final stand |
 |---|---|---|---|

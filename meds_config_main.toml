@@ -46,7 +46,7 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 # Fast (sub-daily) biophysics loop, nested within dt_slow: when on, the driver runs
 # nint(dt_slow/dt_fast) sub-steps and the slow loop is driven by the carbon they produce.
 # Off here so this reference config is a pure demographic spin-up with no forcing file;
-# examples/example_biophysics/ turns it on. With it off, growth runs on the [carbon].gpp_ref
+# examples/example04_column_biophysics/ turns it on. With it off, growth runs on the [carbon].gpp_ref
 # stub instead of solved photosynthesis.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
 dt_fast             = "900s"   # fast biophysics timestep. No longer stability-limited: the CAS<->atm
@@ -107,17 +107,24 @@ wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
 wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
 wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
 wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
-conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "segment": the sapwood's
-k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
-wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
-# ---- the root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the soil ----
-#      column; layers below root_depth hold no roots. It sets the per-layer water uptake and rhizosphere
-#      conductance, the root-zone temperature of root respiration and the root-weighted soil state.
-#      exp(-4) with a 2 m depth is the exponential exp(-2 * depth [m]).
-root_beta          = 0.01831563888873418   # [-]  ED2 root-profile decay (0,1); smaller = shallower rooting
-root_depth         = 2.0   # [m]      maximum rooting depth
-specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
+# ---- the plant's maximum internal conductance is its sapwood's, wood_kmax * sapwood area /
+#      (height * vessel_curl). wood_kmax is a PFT trait: by default exp(2.348 - 2.455 rho + 0.6186/2)
+#      [kg/m/s/MPa] from the PFT's wood density rho (Xu et al. 2016, tropical trees; ED2), which
+#      pft.wood_kmax overrides.
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
+# ---- roots, plant traits (pft.<key> overrides each per PFT). A cohort roots to root_depth_b1 *
+#      height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1: 5 m at 35 m), capped at the soil
+#      column; its fine roots fall off within that depth as ED2's (1 - root_beta^(d/D)) / (1 - root_beta)
+#      above depth d. Its root length (fine-root carbon * specific_root_length) sets each layer's
+#      soil->root conductance, 2 pi K L / ln(r_half / fine_root_radius) (Gardner 1960).
+root_beta            = 0.1        # [-]     share of the profile that would lie below the rooting depth (0,1)
+root_depth_b1        = 1.1140580  # [m]     rooting depth = b1 * height[m]^b2
+root_depth_b2        = 0.4223014  # [-]
+specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root carbon: 10 m per g dry mass, the
+                                  #         tropical fine roots of Panama (Wurzburger & Wright 2015; Cordeiro et
+                                  #         al. 2024) and GRooT, times 2 g dry per g C. All fine-root carbon counts:
+                                  #         the 0-1 mm roots hold 92 % of the length.
+fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 [soil]
 # Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults
@@ -390,6 +397,8 @@ gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, u
 [trait_dynamics]
 # trait_plasticity_on = false     # acclimate each cohort's leaf traits (sla, vcmax25, rd25, llspan)
                                   #   to the leaf area above it; false keeps the PFT's top-of-canopy values
+# fineroot_lifespan_plastic = false  # with plasticity on: fine-root turnover x (top-of-canopy leaf lifespan
+                                  #   / the cohort's), so shaded roots are replaced as slowly as shaded leaves
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
@@ -552,7 +561,7 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
 #   potential temperature and humidity are conserved, and the wind follows the patch's own log
 #   profile. Values below are ERA5-Land's; a flux tower gives its sensor heights above the ground,
-#   height_above = "ground" and wind_exposure = "local" (examples/example_flux_tower_bci).
+#   height_above = "ground" and wind_exposure = "local" (examples/example04_column_biophysics).
 # tq_height             = 2.0            # [m] height of air temperature and humidity
 # wind_height           = 10.0           # [m] height of the wind
 # height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement

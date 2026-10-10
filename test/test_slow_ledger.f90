@@ -58,8 +58,7 @@ program test_slow_ledger
 
    associate (sc => cfg%soil_column)
       call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth, sc%theta_sat, &
-                                  sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,            &
-                                  cfg%hydraulics%root_beta, cfg%hydraulics%root_depth, sc%psi_fc, soil)
+                                  sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
    end associate
 
    !----- Give every reservoir a non-zero value, so a perturbation below is a change to a store !
@@ -177,9 +176,10 @@ contains
    !       the parents were debited for. Two assertions, because the fix has two halves: the      !
    !       CADENCE (it used to be credited only on month boundaries, from that one day's rate     !
    !       scaled up to stand for the month) and the CARBON LINK (the credit must follow          !
-   !       repro_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
+   !       recruit_carbon_efficiency, which is what makes pool x carbon_min the debited carbon). ---!
+   !       A third: under recruit_shade_decay the credit falls as exp(-k * LAI) of the patch.      !
    subroutine check_recruit_pool()
-      real(wp) :: p1, p2, p_lo, p_hi
+      real(wp) :: p1, p2, p_lo, p_hi, p_one, p_shade, lai
       call pool_after_steps(3_ik, 1.0e-3_wp, p1)
       call pool_after_steps(6_ik, 1.0e-3_wp, p2)
       call check(p1 > 0.0_wp, 'recruit pool: credited on an ordinary step, not only at month end')
@@ -192,27 +192,37 @@ contains
       call pool_after_steps(3_ik, 1.0e-3_wp, p_lo)
       call pool_after_steps(3_ik, 2.0e-3_wp, p_hi)
       call check_close(p_hi, 2.0_wp * p_lo, 1.0e-9_wp,                                             &
-                       'recruit pool: the credit follows repro_carbon_efficiency')
+                       'recruit pool: the credit follows recruit_carbon_efficiency')
+      !----- One step, so both runs see the same stand and its LAI exactly. ----------------------!
+      call pool_after_steps(1_ik, 1.0e-3_wp, p_one, lai=lai)
+      call pool_after_steps(1_ik, 1.0e-3_wp, p_shade, shade_decay=0.5_wp)
+      call check(lai > 0.1_wp, 'recruit pool: the shade test stand has leaves')
+      call check_close(p_shade, p_one * exp(-0.5_wp * lai), 1.0e-9_wp,                             &
+                       'recruit pool: the credit falls as exp(-recruit_shade_decay * patch LAI)')
    end subroutine check_recruit_pool
 
    !----- Run `nstep` ordinary (non-month-boundary) slow steps on a fresh stand and return the    !
    !       accumulated recruit pool. Seed rain is off, so what accumulates is reproduction alone. !
-   subroutine pool_after_steps(nstep, repro_eff, pool)
+   subroutine pool_after_steps(nstep, repro_eff, pool, shade_decay, lai)
       integer(ik), intent(in)  :: nstep
       real(wp),    intent(in)  :: repro_eff
       real(wp),    intent(out) :: pool
+      real(wp), optional, intent(in)  :: shade_decay   !< pft.recruit_shade_decay (default 0)
+      real(wp), optional, intent(out) :: lai           !< the stand's LAI before the first step
       type(meds_config_t) :: c
       type(site_t)        :: st
       integer(ik)         :: k
       c = build_test_config()
       c%fast_biophysics_on = .true.
       c%demography_on      = .false.
-      c%pft%repro_carbon_efficiency(:) = repro_eff
+      c%pft%recruit_carbon_efficiency(:) = repro_eff
+      if (present(shade_decay)) c%pft%recruit_shade_decay(:) = shade_decay
       c%pft%seed_rain_recruits(:)      = 0.0_wp
       c%pft%leaf_lifespan_toc(:)       = 100.0_wp   ! keep turnover from eating the supply
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above min_reproduction_height
       call finalize_init(st)
+      if (present(lai)) lai = sum(st%cohort%nplant(1:st%cohort%n) * st%cohort%leaf_area(1:st%cohort%n))
       do k = 1_ik, nstep
          st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
          st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
@@ -378,6 +388,7 @@ contains
 
    subroutine check_routing()
       real(wp) :: co2_on, co2_off, lit_lossy, lit_perfect, dummy
+      real(wp) :: lab0, lab1, wood0, wood1, n0, dd, dty
       !----- Each variant runs on a FRESH stand. vegetation_dynamics COMMITS growth, so calling it !
       !      twice on one site compares two different forests and the second comparison passes for !
       !      the wrong reason -- which is exactly what happened before this was rebuilt, and the    !
@@ -399,13 +410,40 @@ contains
       !      error here would quietly turn a starving forest into a CO2 source.  -----------------!
       call run_variant(0.3_wp, 1.0_wp, co2_on, dummy, starve=.true.)
       call check(co2_on < 0.0_wp, 'routing: a starving stand OWES the canopy air a negative flux')
+
+      !----- SINK LIMIT: the wood a binding limit leaves unbuilt reaches the soil as exudate, one for !
+      !      one, and since exudate costs (1+g) like wood the CO2 owed does not change. Mortality is   !
+      !      off in both runs: it rises as growth falls, so the limited stand would also lose more     !
+      !      trees to litter. -------------------------------------------------------------------!
+      call run_variant(0.3_wp, 1.0_wp, co2_on, dummy, lab_soil=lab0, wood=wood0, nplant0=n0,       &
+                       immortal=.true.)
+      call run_variant(0.3_wp, 1.0_wp, co2_off, dummy, max_rgr=1.0e-3_wp, lab_soil=lab1, wood=wood1, &
+                       immortal=.true.)
+      call check(wood1 < wood0, 'sink limit: a binding limit builds less wood')
+      call check_close(lab1 - lab0, (wood0 - wood1) * n0, 1.0e-9_wp,                               &
+                       'sink limit: the unbuilt wood arrives as below-ground labile litter')
+      call check_close(co2_off, co2_on, 1.0e-9_wp,                                                 &
+                       'sink limit: the exudate pays the growth respiration the wood would have')
+      !----- An ABSOLUTE limit that binds grows the stem by exactly the limit: 0.2 cm/yr for a step. -!
+      call run_variant(0.3_wp, 1.0_wp, dummy, dummy, max_agr=0.2_wp, ddbh=dd, dt_yr=dty, immortal=.true.)
+      call check_close(dd, 0.2_wp * dty, 1.0e-9_wp, 'sink limit: a binding absolute limit grows dbh by rate x dt')
    end subroutine check_routing
 
    !----- One slow step on a FRESH stand, returning the two quantities this PR routes. ------------!
-   subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve)
+   subroutine run_variant(g_resp, repro_eff, co2_rate, litter_total, starve, max_rgr,              &
+                          lab_soil, wood, nplant0, immortal, max_agr, ddbh, dt_yr)
       real(wp), intent(in)  :: g_resp, repro_eff
       real(wp), intent(out) :: co2_rate, litter_total
       logical, optional, intent(in) :: starve
+      real(wp), optional, intent(in)  :: max_rgr    !< pft.max_relative_growth_rate (default 0, no limit)
+      real(wp), optional, intent(out) :: lab_soil   !< patch 1's below-ground labile litter
+      real(wp), optional, intent(out) :: wood       !< the cohort's wood carbon after the step
+      real(wp), optional, intent(out) :: nplant0    !< the cohort's density before the step
+      logical,  optional, intent(in)  :: immortal   !< .true. => no background or low-growth mortality
+      real(wp), optional, intent(in)  :: max_agr    !< pft.max_absolute_growth_rate (default 0, no limit)
+      real(wp), optional, intent(out) :: ddbh       !< the cohort's dbh growth over the step
+      real(wp), optional, intent(out) :: dt_yr      !< the step's length [yr]
+      real(wp) :: dbh_start
       type(meds_config_t) :: c
       type(site_t)        :: st
       c = build_test_config()
@@ -413,13 +451,22 @@ contains
       c%demography_on      = .false.        ! isolate allocation from the structural operators
       c%soil_carbon_on     = .true.
       c%pft%growth_resp_factor(:)      = g_resp
-      c%pft%repro_carbon_efficiency(:) = repro_eff
+      c%pft%recruit_carbon_efficiency(:) = repro_eff
       !----- A LONG leaf lifespan, so turnover does not eat the whole supply before reproduction  !
       !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
       !      reproduction, then wood -- with the default ~1 yr lifespan this cohort's daily leaf   !
       !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
       !      is made, which is how the first version of this test passed while asserting nothing.  !
       c%pft%leaf_lifespan_toc(:) = 100.0_wp
+      if (present(max_rgr)) c%pft%max_relative_growth_rate(:) = max_rgr
+      if (present(max_agr)) c%pft%max_absolute_growth_rate(:) = max_agr
+      if (present(dt_yr))   dt_yr = c%dt_years
+      if (present(immortal)) then
+         if (immortal) then
+            c%pft%mort_gamma(:) = 0.0_wp
+            c%pft%mort_alpha(:) = 0.0_wp
+         end if
+      end if
       call init_bare_ground(st, c, 1_ik)
       !----- 40 cm => ~25 m, clear of min_reproduction_height (20 m): a cohort below it allocates  !
       !      NOTHING to reproduction, and the seed-loss assertion would then be vacuously true.  --!
@@ -437,7 +484,12 @@ contains
             st%cohort%nonstructural_carbon(1:st%cohort%n) = 0.0_wp
          end if
       end if
+      if (present(nplant0)) nplant0 = st%cohort%nplant(1)
+      dbh_start = st%cohort%dbh(1)
       call vegetation_dynamics(st, c)
+      if (present(ddbh)) ddbh = st%cohort%dbh(1) - dbh_start
+      if (present(lab_soil)) lab_soil = st%patch%litter_in(1)%labile_soil
+      if (present(wood))     wood     = st%cohort%wood_carbon(1)
       co2_rate     = st%patch%slow_co2_rate(1)
       !----- The litter accumulator is patch state now, so it is read off the site rather than
       !      returned: st%patch%litter_in(1), in lockstep with patch 1.

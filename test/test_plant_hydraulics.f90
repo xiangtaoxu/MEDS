@@ -18,15 +18,15 @@
 program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
-   use meds_constants,         only : grav_head
+   use meds_constants,         only : grav_head, pi
    use meds_hydr_lib,      only : plc_retained, flux_potential, kirchhoff_edge, hydro_table_t, build_hydro_table, &
-                                  flux_potential_lin, kirchhoff_edge_tab
+                                  flux_potential_lin, kirchhoff_edge_tab, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
                                     psi_from_water_content, clamp_water_to_capacity, water_curve_t
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
-                                HYDRO_SUBSTEP_FIXED, HYDRO_COND_SEGMENT
+                                HYDRO_SUBSTEP_FIXED
    use meds_plant_hydraulics, only : solve_plant_water
-   use meds_plant_hydraulics, only : root_fraction_profile
+   use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile, rhizosphere_cond
    implicit none
 
 
@@ -36,12 +36,13 @@ program test_plant_hydraulics
    call test_hydro_table()
    call test_no_flow_equilibrium()
    call test_steady_ohm()
-   call test_segment_conductance()
+   call test_sapwood_conductance()
    call test_vs_reference()
    call test_general_kexp_solver()
    call test_diurnal()
    call test_degenerate()
    call test_multilayer_roots()
+   call test_cohort_roots()
    call test_biomass_seam()
    call test_seam_capacity_clamp()
 
@@ -61,11 +62,11 @@ contains
       p%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       p%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
-      p%k_plant_max = 6.0e-4_wp ; p%wood_kmax = 8.0_wp ; p%vessel_curl = 1.5_wp
+      p%wood_kmax = 9.0_wp ; p%vessel_curl = 1.5_wp      ! 3.0e-3 kg/s/MPa over the 20 m path
       env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
       env%bleaf = 0.5_wp ; env%bsap = 5.0_wp ; env%broot = 2.0_wp
-      env%sap_area = 0.01_wp ; env%height = 20.0_wp ; env%leaf_area = 5.0_wp
-      o = hydro_opts_t()   ! defaults: 2-node, EXPM, KPLANT, adaptive, gravity on
+      env%sap_area = 0.01_wp ; env%height = 20.0_wp
+      o = hydro_opts_t()   ! defaults: 2-node, EXPM, adaptive, gravity on
    end subroutine defaults
 
    !=======================================================================================!
@@ -203,28 +204,36 @@ contains
    end subroutine test_no_flow_equilibrium
 
    !=======================================================================================!
-   !----- [hydraulics].conductance = "segment": the maximum conductance is the sapwood's,          !
-   !      wood_kmax * sap_area / (height * vessel_curl), in place of k_plant_max * leaf_area. With  !
-   !      k_plant_max set so the two are equal, both modes take the same step; a changed wood_kmax  !
-   !      then moves the segment step only, which is what makes the key live. -------------------!
-   subroutine test_segment_conductance()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: f_plant, f_seg, f_seg2
-      real(wp) :: psi0(N_HYDRO), psi_a(N_HYDRO), psi_b(N_HYDRO), psi_c(N_HYDRO)
-      print '(a)', '-- Segment conductance --'
+   !----- The maximum conductance is the sapwood's, wood_kmax * sap_area / (height * vessel_curl):  !
+   !      doubling the conductivity, doubling the sapwood area and halving the path factor give the !
+   !      same step, and a faster one than the base. wood_kmax follows wood density (Xu et al.    !
+   !      2016): 3.27 at 0.6 g/cm3, falling with density, and held at the fit's 0.35-0.95. -------!
+   subroutine test_sapwood_conductance()
+      type(hydro_params_t) :: p, p2 ; type(hydro_env_t) :: env, env2 ; type(hydro_opts_t) :: o
+      type(hydro_flux_t) :: f0, fk, fa, fc
+      real(wp) :: psi0(N_HYDRO), psi(N_HYDRO)
+      print '(a)', '-- Sapwood conductance --'
       call defaults(p, env, o)
-      p%k_plant_max = p%wood_kmax * env%sap_area / (env%height * p%vessel_curl) / env%leaf_area
       psi0(:) = 0.0_wp ; psi0(NODE_LEAF) = env%soil_psi - 0.5_wp ; psi0(NODE_WOOD) = env%soil_psi
-      psi_a = psi0 ; psi_b = psi0 ; psi_c = psi0
-      call solve_plant_water(env, p, o, 900.0_wp, psi_a, f_plant)
-      o%cond_mode = HYDRO_COND_SEGMENT
-      call solve_plant_water(env, p, o, 900.0_wp, psi_b, f_seg)
-      call check('segment = whole-plant at equal conductance: psi_leaf', psi_b(NODE_LEAF), psi_a(NODE_LEAF), 1.0e-10_wp)
-      call check('segment = whole-plant at equal conductance: sapflow', f_seg%sapflow, f_plant%sapflow, 1.0e-14_wp)
-      p%wood_kmax = 2.0_wp * p%wood_kmax
-      call solve_plant_water(env, p, o, 900.0_wp, psi_c, f_seg2)
-      call check_true('a larger wood_kmax raises the segment sapflow', f_seg2%sapflow > f_seg%sapflow)
-   end subroutine test_segment_conductance
+      psi = psi0 ; call solve_plant_water(env, p, o, 900.0_wp, psi, f0)
+      p2 = p ; p2%wood_kmax = 2.0_wp*p%wood_kmax
+      psi = psi0 ; call solve_plant_water(env, p2, o, 900.0_wp, psi, fk)
+      env2 = env ; env2%sap_area = 2.0_wp*env%sap_area
+      psi = psi0 ; call solve_plant_water(env2, p, o, 900.0_wp, psi, fa)
+      p2 = p ; p2%vessel_curl = 0.5_wp*p%vessel_curl
+      psi = psi0 ; call solve_plant_water(env, p2, o, 900.0_wp, psi, fc)
+      call check('2 x sapwood area = 2 x wood_kmax: sapflow', fa%sapflow, fk%sapflow, 1.0e-14_wp)
+      call check('vessel_curl / 2 = 2 x wood_kmax: sapflow',  fc%sapflow, fk%sapflow, 1.0e-14_wp)
+      call check_true('a larger wood_kmax raises the sapflow', fk%sapflow > f0%sapflow)
+      call check('wood_kmax at 0.6 g/cm3 (Xu et al. 2016)', wood_kmax_from_density(0.6_wp),       &
+                 exp(2.348_wp - 2.455_wp*0.6_wp + 0.5_wp*0.6186_wp), 1.0e-12_wp)
+      call check_true('denser wood conducts less',                                               &
+                      wood_kmax_from_density(0.8_wp) < wood_kmax_from_density(0.4_wp))
+      call check('below the fitted range: the 0.35 value', wood_kmax_from_density(0.2_wp),        &
+                 wood_kmax_from_density(0.35_wp), 0.0_wp)
+      call check('above the fitted range: the 0.95 value', wood_kmax_from_density(1.1_wp),        &
+                 wood_kmax_from_density(0.95_wp), 0.0_wp)
+   end subroutine test_sapwood_conductance
 
    !=======================================================================================!
    subroutine test_steady_ohm()
@@ -272,7 +281,7 @@ contains
       integer(ik) :: i
       dtr   = dt/real(nstep, wp)
       g     = grav_head*env%height
-      kc    = p%k_plant_max*env%leaf_area
+      kc    = p%wood_kmax*env%sap_area/(env%height*p%vessel_curl)
       bwood = env%bsap + env%broot
       psiL  = psiL0 ; psiW = psiW0
       do i = 1_ik, nstep
@@ -342,7 +351,7 @@ contains
       real(wp) :: psi(N_HYDRO)
       print '(a)', '-- Degenerate (near-leafless) --'
       call defaults(p, env, o)
-      env%bleaf = 1.0e-8_wp ; env%leaf_area = 1.0e-8_wp ; env%transp = 0.0_wp
+      env%bleaf = 1.0e-8_wp ; env%transp = 0.0_wp
       psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.4_wp
       call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
       call check_true('leafless psi_leaf finite', abs(psi(NODE_LEAF)) < 1.0e3_wp)
@@ -440,6 +449,40 @@ contains
       call check('DRY-DOWN: per-layer uptake still conserves',                                   &
            flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
    end subroutine test_multilayer_roots
+
+   !=======================================================================================!
+   ! Cohort roots: the rooting depth follows ED2's height allometry (5 m for a 35 m tree) and   !
+   ! stops at the soil column; a cohort's profile sums to one within its own depth and holds     !
+   ! ED2's (1 - beta^(d/D)) / (1 - beta) above depth d; and the single-root conductance is        !
+   ! Gardner's value, so a layer split in two keeps its total.                                     !
+   !=======================================================================================!
+   subroutine test_cohort_roots()
+      type(hydro_params_t) :: hp                       ! the defaults: ED2 IALLOM 1, beta 0.1
+      real(wp)    :: edges(13), frac(12), depth, lv, half, g, g_half
+      integer(ik) :: k
+      print '(a)', '-- Cohort roots --'
+      call check('a 35 m tree roots to 5 m (ED2 IALLOM 1)', cohort_root_depth(35.0_wp, hp, 10.0_wp), 5.0_wp, 1.0e-3_wp)
+      call check('the rooting depth stops at the soil column', cohort_root_depth(35.0_wp, hp, 2.0_wp), 2.0_wp, 0.0_wp)
+      call check_true('a 3 m sapling roots shallower than 2 m', cohort_root_depth(3.0_wp, hp, 10.0_wp) < 2.0_wp)
+      edges = [(0.5_wp * k, k = 0, 12)]                ! 0 to 6 m in 0.5 m layers
+      call cohort_root_profile(35.0_wp, hp, edges(1:12), edges(2:13), frac)
+      depth = cohort_root_depth(35.0_wp, hp, 6.0_wp)
+      call check('the profile sums to one', sum(frac), 1.0_wp, 1.0e-12_wp)
+      call check_true('no roots below the rooting depth', all(frac(11:12) == 0.0_wp))
+      call check('ED2''s share above 1 m', sum(frac(1:2)),                                         &
+                 (1.0_wp - hp%root_beta**(1.0_wp / depth)) / (1.0_wp - hp%root_beta), 1.0e-12_wp)
+      !----- 0.01 plants/m2 with 1000 m of root each in a 0.4 m layer; the same density in two 0.2 m !
+      !      halves gives each plant 500 m per half, and the same half-spacing. ------------------------!
+      lv   = 0.01_wp * 1000.0_wp / 0.4_wp
+      half = 1.0_wp / sqrt(pi * lv)
+      g      = rhizosphere_cond(1.0e-6_wp, 1000.0_wp, half, 1.5e-4_wp)
+      g_half = rhizosphere_cond(1.0e-6_wp,  500.0_wp, half, 1.5e-4_wp)
+      call check('Gardner: 2 pi K L / ln(r_half / r_root)', g,                                     &
+                 2.0_wp * pi * 1.0e-6_wp * 1000.0_wp / log(half / 1.5e-4_wp), 1.0e-15_wp)
+      call check('a layer split in two keeps its conductance', 2.0_wp * g_half, g, 1.0e-15_wp)
+      call check('twice the root length at the same spacing, twice the conductance',               &
+                 rhizosphere_cond(1.0e-6_wp, 2000.0_wp, half, 1.5e-4_wp), 2.0_wp * g, 1.0e-15_wp)
+   end subroutine test_cohort_roots
 
    !=======================================================================================!
    ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3, user-directed revision of the design !

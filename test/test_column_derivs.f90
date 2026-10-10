@@ -72,6 +72,20 @@ program test_column_derivs
 
 contains
 
+   !----- A fixed root profile for the soil-only tests, e^(-2 d) over each layer, normalized: the  !
+   !      roots belong to the cohorts in the model (cohort_root_profile); a soil test needs only a  !
+   !      sink that sums to one. --------------------------------------------------------------------!
+   pure function exp_root_profile(soil, nsl) result(frac)
+      type(soil_params_t), intent(in) :: soil
+      integer(ik),         intent(in) :: nsl
+      real(wp) :: frac(nsl)
+      integer(ik) :: k
+      do k = 1_ik, nsl
+         frac(k) = exp(2.0_wp * soil%soil_layer_z(k)) - exp(2.0_wp * soil%soil_layer_z(k+1_ik))
+      end do
+      frac = frac / sum(frac)
+   end function exp_root_profile
+
 
 
    !----- A representative 3-cohort daytime surface setup (frozen pre-pass + aerodynamics). -----!
@@ -277,7 +291,7 @@ contains
       nsl = 10_ik
       print '(a)', 'test_soil_energy_tendency:'
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
       forcing%g_top = 120.0_wp ; forcing%geothermal = 0.0_wp
@@ -309,7 +323,7 @@ contains
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       hopts = soil_opts_t()
       do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
       psi_e = 0.0_wp ; root_uptake = 0.0_wp
@@ -431,7 +445,7 @@ contains
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
       do k = 1_ik, nsl
-         uptake_chk(k) = frozen%roots%uptake * col_config%soil%root_frac(k)
+         uptake_chk(k) = frozen%roots%uptake * frozen%roots%root_share(k)
       end do
       call soil_water_time_deriv(y%theta, col_config%soil, col_config%soil_water_opts, nsl, frozen%hydrology%q_top,        &
                                  uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
@@ -1106,13 +1120,13 @@ contains
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
       call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
       col_config%soil_water_opts = soil_opts_t()
       hp%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       hp%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       hp%wood_psi50 = -2.0_wp
-      hp%wood_kexp = 2.0_wp ; hp%k_plant_max = 6.0e-4_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
+      hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
       allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n), frozen%plant%bsap(n), &
@@ -1120,7 +1134,7 @@ contains
                frozen%plant%sap_area(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
-      frozen%roots%root_share(1:nsl) = col_config%soil%root_frac(1:nsl)   ! Phase 1: per-layer sink placement
+      frozen%roots%root_share(1:nsl) = exp_root_profile(col_config%soil, nsl)   ! Phase 1: per-layer sink placement
       frozen%plant%nplant = 0.3_wp ; frozen%plant%bleaf = 0.5_wp ; frozen%plant%bsap = 5.0_wp ; frozen%plant%broot = 2.0_wp
       frozen%plant%sap_area = 0.01_wp
       !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !

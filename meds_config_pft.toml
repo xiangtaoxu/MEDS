@@ -9,7 +9,9 @@ wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-
 dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
 hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
-repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
+recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of reproduction carbon that becomes
+                                    #      recruits: seed set, germination and seedling survival together
+# recruit_shade_decay = [0.0, 0.0, 0.0]   # [1/(m2/m2)] that share x exp(-k * patch LAI); optional, default 0
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
@@ -78,7 +80,9 @@ aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction 
 #----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
 #      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
 is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
-stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C]
+stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C] per stem surface (cylinder + branches)
+# stem_resp_sapwood25 = [0.0, 0.0, 0.0]  # [umol CO2/m3 sapwood/s @25C] per sapwood volume, added to the
+#                                         # surface term; optional, default 0 (set the surface rate to 0 to use it alone)
 root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
 
 #----- CANOPY OPTICS (the two-stream's per-PFT table). Shortwave as reflectance + transmittance
@@ -105,6 +109,10 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fr
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
 # storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
 # retained_carbon_fraction = [0.0, 0.0, 0.0]       # [--] shed leaf carbon kept (resorbed) rather than littered
+# max_relative_growth_rate = [0.0, 0.0, 0.0]       # [1/yr] sink limit on wood growth per unit wood carbon
+# max_absolute_growth_rate = [0.0, 0.0, 0.0]       # [cm/yr] sink limit on diameter growth of a 1 cm stem;
+#                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
+# max_absolute_growth_exponent = [0.0, 0.0, 0.0]   # [--] that limit scales as dbh[cm]^exponent (0 = size-independent)
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
@@ -126,9 +134,14 @@ struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of th
 # wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
 # wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
 # wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
-# k_plant_max        = [6.0e-4, 6.0e-4, 6.0e-4]    # [kg/s/MPa/m2 leaf] whole-plant conductance
-# wood_kmax          = [8.0, 8.0, 8.0]             # [kg/m/s/MPa] sapwood specific conductivity
+# wood_kmax          = [5.3, 3.3, 1.8]             # [kg/m/s/MPa] sapwood specific conductivity; absent,
+#                                                  #   it follows wood_density (Xu et al. 2016), shown here
 # vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
+# root_beta          = [0.1, 0.1, 0.1]             # [--]  root profile within the rooting depth
+# root_depth_b1      = [1.114058, 1.114058, 1.114058]   # [m] rooting depth = b1 * height^b2
+# root_depth_b2      = [0.4223014, 0.4223014, 0.4223014] # [--]
+# specific_root_length = [2.0e4, 2.0e4, 2.0e4]     # [m/kgC] fine-root length per unit fine-root carbon
+# fine_root_radius   = [2.5e-4, 2.5e-4, 2.5e-4]    # [m]  fine-root radius
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
@@ -162,11 +175,17 @@ height_allometry = "power"  # the height curve: "power" (b1Ht, b2Ht above) or "g
 # gmm_k = 21.8     # [cm^gmm_b] half-saturation
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
-# mortality-hazard parameters instead of deriving them from wood density:
+# mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity
+# slopes instead of deriving them from vcmax25 and leaf_lifespan_toc (a cohort's trait is its PFT's
+# top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2)). Each key is optional:
 # [derived]
 # mort_gamma = [...]   # length = number of PFTs
 # mort_alpha = [...]
 # mort_beta  = [...]
+# kplastic_vcmax  = [...]   # < 0: Vcmax25 falls in shade
+# kplastic_rd     = [...]   # < 0: Rd25 falls in shade (derived: the same as kplastic_vcmax)
+# kplastic_sla    = [...]   # > 0: SLA rises in shade
+# kplastic_llspan = [...]   # >= 0: leaf lifespan lengthens in shade
 
 # ------------------------------------------------------------------------------------------
 # Leaf-phenology cue parameters (per PFT; docs/science/plant_phenology.md). The gate is the
