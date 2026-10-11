@@ -8,7 +8,9 @@
 #   - phenology on the water cue alone, shed_rate_max 0.15 / 0.15 / 0.05 / 0.02 per day;
 #   - stomata: g1 on Lin et al. (2015)'s wood-density slope (-3.97 per g/cm3), anchored to example 04's
 #     calibrated 2.82 at 0.60; a stomatal stress slope of 0.4 per MPa (Sabot et al. 2022's fits for
-#     tropical trees) that starts below field capacity; g0 is example 04's.
+#     tropical trees) that starts below field capacity; g0 is example 04's;
+#   - height: Chave et al. (2014) with the stress index of the Palo Verde forcing cell;
+#   - leaf lifespan 1 yr and fine-root turnover 1.5 per yr for every PFT, on the leaves' turnover gate.
 # Comments further down that mention BCI or three PFTs are example 05's: they say where a value came from.
 # Every per-PFT array has length 4.
 
@@ -16,8 +18,8 @@
 #----- Wood, size and recruitment (example 03). ----------------------------------------------------
 wood_density       = [0.35, 0.52, 0.74, 0.87]   # [g/cm3] Ds, D, BD, E: Xu et al. (2016) Fig. 2b; Ds at the ED2 floor 0.35
 dbh_critical       = [300.0, 300.0, 300.0, 300.0] # [cm] unused by the carbon path: only height is capped
-hgt_max            = [46.0, 46.0, 46.0, 46.0]    # [m] the BCI height curve stays below it (43 m at 300 cm)
-min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.47 cm on the BCI height curve
+hgt_max            = [46.0, 46.0, 46.0, 46.0]    # [m] Chave's curve at E = 0.134 reaches it near 185 cm
+min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.61 cm on Chave's curve at E = 0.134
 recruit_carbon_efficiency = [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]  # [--] reproduction carbon -> recruits
 seed_rain_recruits = [0.3333, 0.3333, 0.3333, 0.3333]   # [plant/m2/yr] from outside, every patch: one sapling per m2
                                                # a year shared by the PFTs
@@ -50,8 +52,9 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @2
 # Reproduction: about 0.5 MgC/ha/yr of flowers and fruit fall in BCI's litter traps, 9-10 % of the
 # litterfall (Chave et al. 2010, Table 1, Leigh 1999's traps), 2-5 % of a tropical forest's NPP
 # (Malhi et al. 2011: 5-15 % of canopy NPP).
-reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth fraction to reproduction ...
-min_reproduction_height = 5.27             # [m] ... above this height (calibrate_growth.py)
+# A cohort reproduces from 0.33 of the local maximum height (reproduction_height_fraction, the default):
+# 11.7 m on Chave's curve here, about 12 cm dbh.
+reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth fraction to reproduction
 
 #----- Sink limit on wood growth: a cohort's diameter grows at most max_absolute_growth_rate x dbh[cm]^0.5
 #      a year, and the carbon it cannot use is exuded by the roots. The shape is BCI's census: the 75th
@@ -169,8 +172,9 @@ kplastic_rd     = [-0.3042, -0.2622, -0.2217, -0.2033]   # Ma et al. (2025): -(0
 kplastic_sla    = [0.199, 0.199, 0.199, 0.199]
 kplastic_llspan = [0.120, 0.120, 0.120, 0.120]
 
-# The Barro Colorado height curve (Cano et al. 2019, Biogeosciences 16:847, eq. 7), as in example 03;
-# leaf area and biomass follow from the height.
+# Height on Chave et al. (2014)'s pantropical curve (eq. 6a) with the stress index E of the Palo Verde
+# forcing cell (10.4 N, 85.3 W) in /ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc, Chave's own E raster
+# on the ERA5-Land grid; leaf area and biomass follow from the height.
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899
@@ -181,12 +185,8 @@ ca_b2      = 0.464
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5
-height_allometry = "gmm"
-gmm_a      = 58.0           # [m] asymptotic height
-gmm_b      = 0.73           # [--] exponent on dbh
-gmm_k      = 21.8           # [cm^gmm_b] half-saturation
-
-# No [phenology] section: every PFT is evergreen, losing leaves to background turnover alone.
+height_allometry = "chave2014"
+chave_e    = 0.134          # [--] Chave's stress index at the forcing cell
 
 #----- Phenology (plan section 6.1, rev. 3): one water-only set for all four PFTs. -----#
 [phenology]

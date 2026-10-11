@@ -44,6 +44,19 @@ The trait tables are in §6.2; the questions they raise are D12–D15.
 - **Vcmax25 from Xu's A_area–WD relation** (§6.2). Jmax, TPU and Rd follow as ratios, and the
   shade slopes are recomputed.
 
+**Revision 6 (owner, 2026-10-11): settled in beta (#386–#388) and in the example.**
+- **Height:** Chave et al. (2014) eq. 6a is a MEDS option (#386). E comes from Chave's own E raster on
+  the ERA5-Land grid (`/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc`), not from ERA5-Land's climate
+  (D13): 0.134 at the Palo Verde forcing cell. The owner is developing a height allometry to replace it.
+- **Leaf and root turnover (#387):** leaf lifespan 1 yr and fine roots 1.5 per yr for every PFT;
+  background turnover runs only while no leaves drop, fine roots age on the same gate and are not shed
+  with the leaves (root length sets the root–soil conductance); 30 % of all leaf and root loss is resorbed.
+- **Reproduction (#388):** from 0.33 of the local maximum height (11.7 m, about 12 cm dbh here).
+- **Soil depth:** 2 m (the design runs settled on 2 m after revision 5's 1.5 m).
+- **Open:** in April the nearly bare Ds and D cohorts' leaf potential collapses to -25 to -100 MPa
+  (their water stores hit the floor while the soil throttles uptake but not sapflow, #104). This goes to
+  the coupled soil–plant water solve (branch `feat/spac-water-solver`), not to a fix here.
+
 ## 1. What example06 has to show
 
 One set of PFTs and one phenology parameter set, run unchanged in every grid cell, should give:
@@ -585,8 +598,9 @@ taken as monthly maxima. A regional extract needs NASA Earthdata access (D9).
   PV's 2 m and Xu's 3 m collapse them (§6.3). Texture: example04's BCI clay or a generic medium loam.
   Spatially varying soil is a later plan (runtime plan OR2).
 - **D12 Ds's wood density. Settled (rev. 3):** 0.35 everywhere (ED2's floor). Xu's 0.25 is not used.
-- **D13 Chave's E. Settled (rev. 3):** computed from ERA5-Land's monthly climate (§6.2). Still open:
-  confirm that Chave's CWD uses a fixed 100 mm/month ET, or adopt his definition. For site and
+- **D13 Chave's E. Settled (rev. 6):** Chave's own E raster on the ERA5-Land grid. Computing E from
+  ERA5-Land (rev. 3) gave -0.16 at Palo Verde against the raster's 0.137: Chave's TS is WorldClim bio4 as
+  stored (x1000) and his CWD does not use a fixed 100 mm/month ET. For site and
   grid-cell runs E is one config number. Region runs need E per cell, the first spatially varying
   parameter, carried as a second field of §8.1's mask raster.
 - **D14 Ds's photoperiod. Settled (rev. 3):** off for the first try; every PFT follows water only.
@@ -625,7 +639,7 @@ taken as monthly maxima. A regional extract needs NASA Earthdata access (D9).
   read as π0 × 10⁴. The fix has a unit test in `test_plant_hydraulics`; ctest passes 67/67.
 - **Run:** the PV 2009 inventory at the ERA5-Land cell (7.8 km away), July 2008 – December 2010.
   - Four PFTs from §6.2, all on the water cue (variant D).
-  - Example05's height curve: Chave (2014) is not yet a MEDS option.
+  - Example05's height curve (Chave 2014 was not yet a MEDS option; it is now, #386).
   - 2 m of clay loam (Carsel & Parrish 1988), starting wet.
   - Demography restructuring off, so growth and mortality only.
 - **Cost:** 68 s on 12 threads. Energy and water closed with 0 failures in about 1.05 million
