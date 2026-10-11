@@ -95,7 +95,7 @@ before and after.
 
 ### Changed
 
-- **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed.**
+- **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
   Fine roots turn over on the same gate, so they age and regrow with the canopy, but they are not shed
