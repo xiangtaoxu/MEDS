@@ -92,7 +92,12 @@ kernel funds, in order:
 4. **wood** — the residual sink: everything left becomes structural growth.
 
 Wood needs no explicit demand (it simply absorbs the remainder), and any cohort below the maturity height
-sets $`f_r=0`$.
+sets $`f_r=0`$. The maturity height is a share, `reproduction_height_fraction`, of the **local maximum
+height** $`H_{\max}`$, the height of a 100 cm tree on the run's height curve, capped at `hgt_max`
+(`meds_allometry::local_hmax`). Where the local allometry makes trees short, they mature short: this is
+the relative size at onset of maturity of Thomas (1996), whose 37 Malaysian species matured at 0.20–0.75
+of their asymptotic height, 0.42 on average. Under Chave et al. (2014)'s curve the stress index E scales
+every height by the same factor, so a given share of $`H_{\max}`$ falls at the same diameter at every site.
 
 ### Sink limitation of wood growth
 

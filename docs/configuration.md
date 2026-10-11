@@ -155,7 +155,9 @@ Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, l
 0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
 (`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
 seasonal or hotter the site, the larger E and the shorter its trees. Every curve is capped at
-`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives.
+`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+its height reaches `[pft].reproduction_height_fraction` of the local maximum height, the height of a
+100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local allometry.
 
 ## How a run starts
 

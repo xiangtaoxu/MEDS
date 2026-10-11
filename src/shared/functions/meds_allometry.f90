@@ -18,6 +18,7 @@
 !   ln height(dbh)     = 0.893 - E + 0.760 ln(dbh) - 0.0340 ln(dbh)^2 + 0.243^2/2, capped    [m]  !
 !   The 0.243^2/2 turns the fit's log-scale median into the mean, as BIOMASS's retrieveH does.   !
 !   dbh(height) is the smaller root of that quadratic in ln(dbh), the rising branch.            !
+!   local_hmax         = height(HMAX_DBH = 100 cm), capped: the local maximum height    [m]       !
 !   crown_area(dbh,h)  = ca_b1 * (dbh^2*h)^ca_b2                                [m2]          !
 !   agb(dbh,h,rho)     = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2                  [kgC/plant]   !
 !   leaf_area(dbh,h)   = lai_b1 * (dbh^2*h)^lai_b2                              [m2/plant]    !
@@ -42,7 +43,7 @@ module meds_allometry
    private
 
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
-             dbh_to_leaf_area
+             dbh_to_leaf_area, local_hmax
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
@@ -58,6 +59,9 @@ module meds_allometry
    real(wp),    parameter :: CHAVE_B   = 0.760_wp
    real(wp),    parameter :: CHAVE_C   = -0.0340_wp
    real(wp),    parameter :: CHAVE_RSE = 0.243_wp
+   !----- The local maximum height is the height of a tree this wide on the local curve: one     !
+   !       definition for every curve, saturating or not (Chave's has no asymptote). -----------!
+   real(wp),    parameter :: HMAX_DBH  = 100.0_wp     !< [cm]
    !----- Newton's method for agb -> dbh under the gMM height (agb_to_dbh_gmm). -------------!
    integer,     parameter :: NEWTON_MAX_ITER = 50
    real(wp),    parameter :: NEWTON_TOL      = 1.0e-12_wp    !< [ln cm] change in ln(dbh)
@@ -133,6 +137,15 @@ contains
       end select
       h = min(h, hgt_max)
    end function dbh_to_height
+
+   !----- The local maximum height [m]: a HMAX_DBH-wide tree's height on the local curve, capped  !
+   !       at hgt_max. Chave's E scales every height by the same factor, so a fixed share of it is    !
+   !       reached at the same diameter at every site, at a height that follows the local stature. !
+   elemental pure function local_hmax(hgt_max) result(h)
+      real(wp), intent(in) :: hgt_max
+      real(wp)             :: h
+      h = dbh_to_height(HMAX_DBH, hgt_max)
+   end function local_hmax
 
    !----- Height -> diameter [cm] (inverse of the uncapped curve). -----------------------!
    elemental pure function height_to_dbh(h) result(dbh)

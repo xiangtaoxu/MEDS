@@ -4,7 +4,8 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, set_allometry,                              &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE
+                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE, &
+                                local_hmax
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -134,6 +135,20 @@ program test_allometry
    call check_close(agb_to_dbh(agb, rho, 30.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (capped)')
    wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
    call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
+
+   !=== The local maximum height is a 100 cm tree's height, capped at hgt_max. Chave's E scales it  !
+   !    like every other height, so a fixed share of it falls at the same diameter at any E. ======!
+   call check_close(local_hmax(100.0_wp), dbh_to_height(100.0_wp, 100.0_wp), 0.0_wp,               &
+                    'local_hmax is the height of a 100 cm tree')
+   call check_close(local_hmax(20.0_wp), 20.0_wp, 0.0_wp, 'local_hmax caps at hgt_max')
+   h        = local_hmax(100.0_wp)
+   dbh_back = height_to_dbh(0.4_wp * h)
+   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
+                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
+                      HEIGHT_CHAVE, chave_e_in=1.0_wp)
+   call check_close(local_hmax(100.0_wp), h * exp(-0.8_wp), 1.0e-12_wp, 'local_hmax scales by exp(-dE)')
+   call check_close(height_to_dbh(0.4_wp * local_hmax(100.0_wp)), dbh_back, 1.0e-9_wp,               &
+                    'a share of local_hmax falls at the same dbh at any E')
 
    write(*,'(a)') '   PASS'
 end program test_allometry
