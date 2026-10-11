@@ -15,7 +15,8 @@
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
-   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile
+   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile, &
+                                     leaf_node_psi
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config, only : meds_config_t, CTRL_L2_STRICT
@@ -404,8 +405,9 @@ contains
       !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
       !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
       do ih = 1_ik, n
-         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih), &
-               col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_curve, col_cohort%bleaf(ih))
+         psi_scratch(NODE_LEAF, ih) = leaf_node_psi(biophys%leaf_water_mass(ih), col_cohort%bleaf(ih),   &
+               biophys%wood_water_mass(ih), col_cohort%bsap(ih) + col_cohort%broot(ih), col_cohort%height(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih)), col_config%hydraulics_opts)
       end do
       do ih = 1_ik, n
          psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih), &
@@ -440,11 +442,10 @@ contains
       !----- Per-cohort HYDRAULIC diagnostics, captured from the SAME solve the physics commits.    !
       !      psi_wood / plc were computed on every dt_fast and discarded; plc in particular is the    !
       !      one number that says whether a cohort is losing conductance, which nothing downstream    !
-      !      of here could previously see. Taken AFTER the HR floor, so the reported uptake is the    !
-      !      realized (non-negative) one the soil sink actually used.  ------------------------------!
+      !      of here could previously see. The root uptake is reported below, once the soil has said  !
+      !      how much of this request it delivers. ---------------------------------------------------!
       if (present(cdiag)) then
          cdiag(CD_SAPFLOW,     1:n) = sapflow_b(1:n)
-         cdiag(CD_ROOT_UPTAKE, 1:n) = root_uptake_b(1:n)
          cdiag(CD_PSI_WOOD,    1:n) = psi_wood_b(1:n)
          cdiag(CD_PLC,         1:n) = plc_b(1:n)
       end if
@@ -466,12 +467,12 @@ contains
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
       !      sink forcing (not the raw transpiration demand), then a SCRATCH advance_soil_water_column      !
-      !      for soil_evap / infiltration / uptake_total (the soil's TRUE, possibly fwilt-limited        !
-      !      realized supply). throughfall_total (sec 3.4, P2c) is what SURVIVES the canopy -- the         !
-      !      raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus what the             !
-      !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%rainfall         !
-      !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
-      !      water from nothing (double-counted at the whole-column boundary). ------------------------!
+      !      for soil_evap / infiltration / uptake_total (the soil's TRUE realized supply, less only    !
+      !      what the residual floor returned). throughfall_total (sec 3.4, P2c) is what SURVIVES the    !
+      !      canopy -- the raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus  !
+      !      what the interception sweep above caught otherwise; feeding the soil the UN-reduced         !
+      !      forc%rainfall here while ALSO crediting the intercepted share to the canopy surface store  !
+      !      would create water from nothing (double-counted at the whole-column boundary). -----------!
       !----- PRECIP ROUTING under a pack (C4). snow_accumulate has                                      !
       !      ALREADY taken forc%snowfall AND forc%rainfall into the pack, so ONLY meltwater may reach the   !
       !      ground -- adding throughfall on top double-counts the rainfall at the boundary. -----------!
@@ -521,15 +522,19 @@ contains
 
       !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
       !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !
-      !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly in the         !
-      !      common (non-limited) case. sapflow_frozen/uptake_frozen are what column_derivs' mass ODE    !
-      !      reads directly; frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root    !
+      !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly unless the     !
+      !      residual floor returned water (a layer the fixed sink would have drawn below theta_res).   !
+      !      sapflow_frozen/uptake_frozen are what column_derivs' mass ODE reads directly;              !
+      !      frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root          !
       !      sink authority in column_derivs, so the two sides of the wood<->soil interface use the       !
       !      identical number by construction. ---------------------------------------------------------!
       scale = 1.0_wp
       if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
       frozen%plant%sapflow_frozen(1:n) = sapflow_b(1:n)
       frozen%plant%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
+      !----- The root uptake a cohort actually gets: what its wood is credited and, summed over the    !
+      !      cohorts, what the soil gives up -- not the request, which the soil may cut. --------------!
+      if (present(cdiag)) cdiag(CD_ROOT_UPTAKE, 1:n) = frozen%plant%uptake_frozen(1:n)
 
       !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's qwflux_wl/qloss): both     !
       !      the mass FLUX (sapflow_b/uptake_frozen, already frozen above) AND the upwind reference        !

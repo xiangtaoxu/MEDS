@@ -78,8 +78,8 @@ module meds_soil_types
       real(wp) :: drainage       = 0.0_wp                !< [kg/m2/s] bottom-face drainage
       real(wp) :: runoff_surf    = 0.0_wp                !< [kg/m2/s] surface runoff
       real(wp) :: soil_evap      = 0.0_wp                !< [kg/m2/s] ground evaporation
-      real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after theta_wp cap)
-      real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] capped (unmet) sink
+      real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after the residual floor)
+      real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] requested sink the layers could not supply
       real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
       !----- POST-SOLVE mass corrections, PER LAYER. These move water with NO face, so the soil ENERGY  !
       !      column cannot see them: it consumes the corrected theta but advects enthalpy only on the    !

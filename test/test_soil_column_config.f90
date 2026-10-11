@@ -59,7 +59,7 @@ program test_soil_column_config
    call build_column(sc, p2)
    call check_close(p2%theta_sat(1), 0.55_wp, 1.0e-14_wp, 'theta_sat did not reach the layers')
    call check_close(p2%theta_res(1), 0.02_wp, 1.0e-14_wp, 'theta_res did not reach the layers')
-   call check(p2%theta_fc(1) > p2%theta_wp(1),           'field capacity must exceed wilting point')
+   call check(p2%theta_fc(1) > p2%theta_res(1),          'field capacity must exceed residual content')
    call check(p2%theta_fc(1) < p2%theta_sat(1),          'field capacity must be below saturation')
    sc%theta_sat = 0.43_wp ; sc%theta_res = 0.078_wp
 
@@ -69,8 +69,8 @@ program test_soil_column_config
    sc%curve_par_a = -0.26_wp ; sc%curve_par_n = 5.65_wp
    call build_column(sc, p2)
    call check(p2%retention == SOIL_RETENTION_CAMPBELL,   'retention family did not reach the column')
-   call check(p2%theta_fc(1) > p2%theta_wp(1) .and. p2%theta_fc(1) < p2%theta_sat(1),            &
-              'Campbell field capacity lies between wilting point and saturation')
+   call check(p2%theta_fc(1) > p2%theta_res(1) .and. p2%theta_fc(1) < p2%theta_sat(1),           &
+              'Campbell field capacity lies between residual content and saturation')
    sc%retention = SOIL_RETENTION_VG
    sc%curve_par_a = 3.6_wp ; sc%curve_par_n = 1.56_wp                  ! the van Genuchten defaults
 

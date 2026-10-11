@@ -358,21 +358,16 @@ contains
       call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
                       face_sum < 1.0e-16_wp, face_sum)
 
-      !----- REVIEW 2026-09 (item 2 #3): a caller whose root_uptake is ALREADY the realized,        !
-      !      psi-limited sink (advance_soil_water_column's uptake_total, which the plant water ODE debits   !
-      !      from wood) must be able to hand it over as-is. On soil inside the wilting ramp the         !
-      !      default path limits it (uptk < sum), the apply_wilt_limit=.false. path must not. ---------!
+      !----- The root sink is the plant's request as given, on dry soil too: the plant hydraulics     !
+      !      already prices it at each layer's water potential and conductance, and the plant water ODE  !
+      !      debits exactly this number from the wood, so the soil must not cut it a second time. ------!
       block
-         real(wp) :: theta_dry(n_soil_layer_max), uptk_limited, uptk_asis, requested
-         theta_dry = 0.10_wp                                  ! psi ~ -39 m: psi_open (-3.37) > psi > psi_wilt (-153)
+         real(wp) :: theta_dry(n_soil_layer_max), uptk_asis, requested
+         theta_dry = 0.10_wp                                  ! psi ~ -39 m (about -0.4 MPa)
          requested = sum(root_uptake(1:nsl))
          call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
-                                    uptk_limited, qface)
-         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
-                                    uptk_asis, qface, apply_wilt_limit=.false.)
-         call check_true('dry soil: default path applies the wilting ramp (uptake < requested)',     &
-                         uptk_limited > 0.0_wp .and. uptk_limited < 0.99_wp * requested, uptk_limited / requested)
-         call check('dry soil: apply_wilt_limit=.false. takes the sink as-is (uptake == requested)',   &
+                                    uptk_asis, qface)
+         call check('dry soil: the sink is the request as given (uptake == requested)',            &
                     uptk_asis, requested, 1.0e-12_wp * requested)
          colsum = 0.0_wp
          do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
@@ -1002,8 +997,8 @@ contains
    !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
    !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
    !                                                                                                  !
-   ! face_and_sink adds nothing unguarded: kface is a log-linear blend of those K, gface and the       !
-   ! psi-limited sink f_wilt_ramp are functions of the already-clamped psi, and cc is unused by the    !
+   ! face_and_sink adds nothing unguarded: kface is a log-linear blend of those K, gface is constant,  !
+   ! the root sink does not depend on the state, and cc is unused by the                              !
    ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
    ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !
    ! the water tendency at theta_sat exactly. That is the assertion below, at eps = 0.05 -- about six   !

@@ -20,7 +20,7 @@ module meds_config_io
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : soil_column_config_t,                                              &
-                               LWP_CONTROL_LINEAR_DECLINE, pft_stomata_psi_onset
+                               pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -247,8 +247,6 @@ contains
       s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)
       s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
-      s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
-      s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
       s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
       s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
       s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
@@ -1119,15 +1117,6 @@ contains
       call req_temp_response (tm, 'leaf_physiology.temp_response_form', cfg%temp_response_form, miss)
       call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
-      call req_l(tm, 'leaf_physiology.wstress_nonstomatal', cfg%leaf_wstress_nonstomatal, miss)
-      !----- The stomatal control at low leaf water potential (#332); optional, one option today. ----!
-      if (toml_has(tm, 'leaf_physiology.low_water_potential_control')) then
-         select case (trim(adjustl(toml_string(tm, 'leaf_physiology.low_water_potential_control', ''))))
-         case ('linear_decline') ; cfg%low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE
-         case default
-            error stop 'load_meds_config: leaf_physiology.low_water_potential_control must be "linear_decline"'
-         end select
-      end if
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)
@@ -1221,11 +1210,11 @@ contains
       call req_pa(tp, 'pft.theta_cj_c4',      cfg%pft%theta_cj_c4,      npft, miss)
       call req_pa(tp, 'pft.theta_ic_c4',      cfg%pft%theta_ic_c4,      npft, miss)
       call req_pa(tp, 'pft.katul_lambda25',   cfg%pft%katul_lambda25,   npft, miss)
-      call req_pa(tp, 'pft.wstress_psi_open', cfg%pft%wstress_psi_open, npft, miss)
-      call req_pa(tp, 'pft.wstress_psi_close',cfg%pft%wstress_psi_close,npft, miss)
       call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
       call req_pa(tp, 'pft.wstress_sref_stomata',cfg%pft%wstress_sref_stomata,npft, miss)
       call opt_pa(tp, 'pft.stomata_psi_onset',   cfg%pft%stomata_psi_onset,   npft, miss)
+      call opt_pa(tp, 'pft.wstress_psi_open',    cfg%pft%wstress_psi_open,    npft, miss)
+      call opt_pa(tp, 'pft.wstress_psi_close',   cfg%pft%wstress_psi_close,   npft, miss)
       call opt_pa(tp, 'pft.leaf_surf_water_max', cfg%pft%leaf_surf_water_max, npft, miss)
       call opt_pa(tp, 'pft.wood_surf_water_max', cfg%pft%wood_surf_water_max, npft, miss)
 
@@ -1388,7 +1377,7 @@ contains
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
                  p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c3(pf), p%theta_ip_c3(pf),           &
                  p%theta_cj_c4(pf), p%theta_ic_c4(pf),                                                  &
-                 p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
+                 p%katul_lambda25(pf), pft_wstress_psi_open(cfg, pf), pft_wstress_psi_close(cfg, pf),   &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &

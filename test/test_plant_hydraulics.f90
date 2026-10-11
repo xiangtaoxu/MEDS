@@ -25,7 +25,7 @@ program test_plant_hydraulics
                                     psi_from_water_content, clamp_water_to_capacity, water_curve_t
    use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 HYDRO_SUBSTEP_FIXED
-   use meds_plant_hydraulics, only : solve_plant_water
+   use meds_plant_hydraulics, only : solve_plant_water, leaf_node_psi
    use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile, rhizosphere_cond
    implicit none
 
@@ -45,6 +45,8 @@ program test_plant_hydraulics
    call test_cohort_roots()
    call test_biomass_seam()
    call test_seam_capacity_clamp()
+   call test_leafless_leaf_psi()
+   call test_kirchhoff_far_tail()
 
    call test_report('test_plant_hydraulics')
 
@@ -561,5 +563,54 @@ contains
       w_capped = clamp_water_to_capacity(w0, curve, 0.0_wp)
       call check('fully-bare tissue clamps to exactly 0', w_capped, 0.0_wp, 0.0_wp)
    end subroutine test_seam_capacity_clamp
+
+   !=======================================================================================!
+   ! A leafless cohort (leaf carbon 0, an empty leaf store) has no leaf curve to read: its leaf    !
+   ! node takes the wood potential less the gravity head to the crown, not the floored reading    !
+   ! (about pi0 * 1e4 MPa). A cohort with leaves still reads its own leaf water.                    !
+   !=======================================================================================!
+   subroutine test_leafless_leaf_psi()
+      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
+      real(wp) :: bwood, w_wood, w_leaf, psi_w, psi_l
+      print '(a)', '-- Leafless cohort: leaf node at the wood potential less gravity --'
+      call defaults(p, env, o)
+      bwood  = env%bsap + env%broot
+      w_wood = water_content(-1.2_wp, p%wood_curve, bwood)
+      psi_w  = psi_from_water_content(w_wood, p%wood_curve, bwood)
+      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, env%height, p, o)
+      call check('leafless: wood psi less gravity', psi_l, psi_w - grav_head*env%height, 1.0e-12_wp)
+      o%gravity_on = .false.
+      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, env%height, p, o)
+      call check('leafless, gravity off: wood psi', psi_l, psi_w, 1.0e-12_wp)
+      o%gravity_on = .true.
+      w_leaf = water_content(-0.8_wp, p%leaf_curve, env%bleaf)
+      psi_l  = leaf_node_psi(w_leaf, env%bleaf, w_wood, bwood, env%height, p, o)
+      call check('with leaves: the leaf curve', psi_l, psi_from_water_content(w_leaf, p%leaf_curve, env%bleaf), 0.0_wp)
+      call check('with leaves: -0.8 MPa recovered', psi_l, -0.8_wp, 1.0e-9_wp)
+   end subroutine test_leafless_leaf_psi
+
+   !=======================================================================================!
+   ! Far beyond the table (a leaf dried to the apoplastic floor reads about pi0 * 1e4 MPa), the     !
+   ! Kirchhoff potential approaches its asymptote psi50 * (pi/a)/sin(pi/a), and the wood-to-leaf    !
+   ! edge keeps a positive conductance, so the leaf can refill. The table and the quadrature agree. !
+   !=======================================================================================!
+   subroutine test_kirchhoff_far_tail()
+      real(wp), parameter :: kexp = 4.0_wp, psi50 = -3.209_wp, kcond = 5.0e-3_wp
+      type(hydro_table_t) :: tab
+      real(wp) :: g_inf, psi_far
+      print '(a)', '-- Kirchhoff potential far beyond the table --'
+      call build_hydro_table(tab, kexp)
+      g_inf   = (pi/kexp) / sin(pi/kexp)
+      psi_far = -25040.0_wp
+      call check('quadrature reaches the asymptote', flux_potential(psi_far, psi50, kexp), psi50*g_inf, 1.0e-4_wp)
+      call check('table reaches the asymptote', flux_potential_lin(psi_far, psi50, tab), psi50*g_inf, 1.0e-4_wp)
+      call check('table at its edge = quadrature', flux_potential_lin(8.0_wp*psi50, psi50, tab),         &
+                 flux_potential(8.0_wp*psi50, psi50, kexp), 1.0e-9_wp)
+      call check_true('desiccated-leaf edge conductance is positive',                                    &
+                      kirchhoff_edge_tab(-1.33_wp, psi_far, kcond, psi50, tab) > 0.0_wp)
+      call check('desiccated-leaf flux = k (Phi_wood - Phi_inf)',                                        &
+                 kirchhoff_edge_tab(-1.33_wp, psi_far, kcond, psi50, tab) * (-1.33_wp - psi_far),        &
+                 kcond * (flux_potential(-1.33_wp, psi50, kexp) - psi50*g_inf), 1.0e-6_wp)
+   end subroutine test_kirchhoff_far_tail
 
 end program test_plant_hydraulics

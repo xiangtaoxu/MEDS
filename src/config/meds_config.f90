@@ -33,7 +33,7 @@ module meds_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps
-   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset
+   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -41,7 +41,6 @@ module meds_config
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
-   public :: LWP_CONTROL_LINEAR_DECLINE
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -75,13 +74,6 @@ module meds_config
    !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
    !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
    !      stays "ark" for compatibility. ------------------------------------------------------------!
-   !----- STOMATAL CONTROL AT LOW LEAF WATER POTENTIAL ([leaf_physiology].low_water_potential_control, !
-   !      #332). Without one, a plant transpires with an empty internal store: beta_stomata scales g1 !
-   !      only, so conductance falls to the residual g0 and never reaches zero (issue #95). This     !
-   !      multiplies the conductance the stomatal model calculates, g0 included, by a factor that    !
-   !      falls LINEARLY from 1 at the turgor-loss point psi_tlp to 0 at 2*psi_tlp. It replaced a    !
-   !      hard shutdown at 2*psi_tlp, whose step no calibration could see past. -------------------!
-   integer(ik), parameter :: LWP_CONTROL_LINEAR_DECLINE = 1_ik  !< "linear_decline" (the only option)
    !----- RESERVED: a "dynamic vapour pressure" control -- the substomatal air held at the Kelvin     !
    !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
    !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
@@ -231,12 +223,6 @@ module meds_config
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
-      !----- The stomatal control at low leaf water potential (LWP_CONTROL_*, #332): the stomatal     !
-      !      conductance times a factor falling linearly from 1 at psi_tlp to 0 at 2*psi_tlp, on the    !
-      !      previous day's daily-max leaf potential. The thermodynamic route -- the substomatal air   !
-      !      at its Kelvin humidity, so the driving gradient shrinks with psi with no threshold at all  !
-      !      -- was built and removed (issue #96); once #96 is in, this control matters less. -------!
-      integer(ik) :: low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE !< [leaf_physiology]
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
@@ -353,16 +339,6 @@ module meds_config
       integer(ik) :: temp_response_form        !< TRESP_ARRHENIUS | TRESP_PEAKED
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
-      !----- NON-STOMATAL (capacity) water-stress limb: a linear psi_leaf ramp downregulating       !
-      !      Vcmax/Jmax/TPU (Sabot 2022 / Zhou 2013's beta_nonstomata). OFF by default (issue #47): !
-      !      the term is rarely measured directly, its two parameters (wstress_psi_open/_close) are !
-      !      weakly constrained, and it acts as a LINEAR AMPLIFIER on psi_leaf -- with the ramp of  !
-      !      the shipped PFT file, slope 0.5 per MPa, so a 1 MPa error in psi_leaf becomes a 50%    !
-      !      error in Vcmax. Before the transpiration corrector (#91), psi_leaf was not converged   !
-      !      in dt_fast (daytime mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb     !
-      !      turned that into a 33% GPP shift; with it off, daily GPP is dt_fast-independent to     !
-      !      0.05%. The stomatal limb (beta_stomata, driven by psi_SOIL) is unaffected and stays on. !
-      logical     :: leaf_wstress_nonstomatal  !< if .true., apply the psi_leaf capacity limb
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
       real(wp) :: kc25, ko25, gstar25                   !< [Pa]    Michaelis constants + CO2 compensation point
       real(wp) :: ea_kc, ea_ko, ea_gstar                !< [J/mol] activation energies (Bernacchi et al. 2001)
@@ -563,12 +539,35 @@ contains
       end if
    end function pft_stomata_psi_onset
 
+   !----- The current leaf potential [MPa] at which the fast water-stress limb (beta_nonstomata,  !
+   !      on Vcmax/Jmax/TPU) starts and completes: the [pft] wstress_psi_open / wstress_psi_close   !
+   !      where given, else the PFT's turgor-loss point and twice it. A leaf keeps its capacity    !
+   !      while it holds turgor and loses it as it wilts. ------------------------------------------!
+   pure real(wp) function pft_wstress_psi_open(cfg, ipft) result(psi_open)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_open = pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%wstress_psi_open)) then
+         if (cfg%pft%wstress_psi_open(ipft) > HYD_UNSET) psi_open = cfg%pft%wstress_psi_open(ipft)
+      end if
+   end function pft_wstress_psi_open
+
+   pure real(wp) function pft_wstress_psi_close(cfg, ipft) result(psi_close)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_close = 2.0_wp * pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%wstress_psi_close)) then
+         if (cfg%pft%wstress_psi_close(ipft) > HYD_UNSET) psi_close = cfg%pft%wstress_psi_close(ipft)
+      end if
+   end function pft_wstress_psi_close
+
    !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
    !---------------------------------------------------------------------------------------!
    subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
       character(len=*), parameter :: tag = 'meds_config: '
+      integer(ik) :: ipft
 
       !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the    !
       !      sapwood conductance needs a positive conductivity and path factor, shared and per PFT. --!
@@ -735,24 +734,9 @@ contains
          !      bias entirely (-33.1% -> +0.9% at 900 s, and flat in dt_fast), so it is the LAGGED     !
          !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
          !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
-         !      and expensive in carbon. -------------------------------------------------------------!
-         !----- ...and the size of that bias depends ENTIRELY on whether the non-stomatal        !
-         !      (capacity) water-stress limb is active. It is a linear ramp on Vcmax/Jmax/TPU in    !
-         !      psi_leaf, so it AMPLIFIES the psi error into a carbon error. With it off (the        !
-         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%. The     !
-         !      table below predates the transpiration corrector (#91), which removed most of the    !
-         !      psi error it amplifies; it has not been re-measured (numerical_scheme.md 5a). ------!
-         if (cfg%dt_fast > 225.0_wp .and. cfg%leaf_wstress_nonstomatal) then
-            print '(a)', 'WARNING [meds_config]: dt_fast > 225 s WITH the non-stomatal water-stress'
-            print '(a)', '  limb on ([leaf_physiology].wstress_nonstomatal) biases the CARBON budget.'
-            print '(a)', '  That limb is a linear amplifier on any psi_leaf error. Measured on a high-LAI'
-            print '(a)', '  sunlit stand vs a 12.5 s reference, before the transpiration corrector (#91):'
-            print '(a)', '    dt_fast    150 s   300 s   450 s   900 s'
-            print '(a)', '    GPP       -3.8%  -12.6%  -19.8%  -33.1%'
-            print '(a)', '    ET        -2.6%   -8.7%  -14.5%  -23.8%'
-            print '(a)', '  With the limb off those become -0.0% / -1.2% at 900 s. No conservation'
-            print '(a)', '  budget detects either. Prefer dt_fast <= 225 s, or leave the limb off.'
-         else if (cfg%dt_fast > 900.0_wp) then
+         !      and expensive in carbon. The transpiration corrector (#91) removed most of that psi    !
+         !      error; the table predates it (numerical_scheme.md 5a). ------------------------------!
+         if (cfg%dt_fast > 900.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
             print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
             print '(a)', '  converge; above it neither has been measured.'
@@ -1022,9 +1006,11 @@ contains
       if (any(cfg%pft%katul_lambda25 <= 0.0_wp))     error stop tag//'katul_lambda25 <= 0'
       if (any(cfg%pft%wstress_lambda_exp < 0.0_wp .or. cfg%pft%wstress_lambda_exp > 8.0_wp)) &
          error stop tag//'wstress_lambda_exp must be in [0,8]'
-      if (any(cfg%pft%wstress_psi_open > 0.0_wp))    error stop tag//'wstress_psi_open must be <= 0'
-      if (any(cfg%pft%wstress_psi_close >= cfg%pft%wstress_psi_open))                      &
-         error stop tag//'wstress_psi_close must be below wstress_psi_open'
+      do ipft = 1_ik, cfg%pft%n
+         if (pft_wstress_psi_open(cfg, ipft) > 0.0_wp) error stop tag//'wstress_psi_open must be <= 0'
+         if (pft_wstress_psi_close(cfg, ipft) >= pft_wstress_psi_open(cfg, ipft))           &
+            error stop tag//'wstress_psi_close must be below wstress_psi_open'
+      end do
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
          error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
       if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &

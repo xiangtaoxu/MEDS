@@ -607,7 +607,7 @@ module meds_fast_types
 
    !----- ROOT ZONE: the realized aggregate uptake, where it is placed, and the soil-side hydraulic  !
    !      boundary the corrector re-solves against. uptake is the pre-pass's plant-side REQUEST      !
-   !      rescaled by the soil's OWN fwilt-limited supply -- the SAME number both the soil-water     !
+   !      rescaled by the soil's OWN realized supply -- the SAME number both the soil-water          !
    !      tendency's root sink and the per-cohort uptake_frozen are built from, so the wood<->soil   !
    !      interface closes to the soil's TRUE realized supply. root_share is THIS dt_fast's realized  !
    !      per-layer uptake shares (sum = 1), built from solve_plant_water_batch's own breakdown so   !
@@ -784,6 +784,9 @@ module meds_fast_types
       !      With a CAS that is constant over the step every stage returns the same temperature and    !
       !      the integral collapses to it, so this degenerates correctly. -----------------------------!
       real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
+      !----- Each cohort's transpiration over the step [kg/m2 ground], b-weighted the same way: the  !
+      !      water its leaves were debited and the canopy air credited, which the diagnostics report. !
+      real(wp), allocatable :: transp_coh(:)
    end type column_bflux_t
 
 

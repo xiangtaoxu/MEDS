@@ -18,12 +18,13 @@ module meds_plant_hydraulics
                                hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
                                 NROOT_MAX, HYDRO_NODES_2, HYDRO_SUBSTEP_FIXED
    use meds_hydr_lib,      only : root_fraction_profile, kirchhoff_edge, kirchhoff_edge_tab, plc_retained
-   use meds_water_retention, only : capacitance, water_content
+   use meds_water_retention, only : capacitance, water_content, psi_from_water_content
    use meds_numerics,         only : adaptive_step_update
    implicit none
    private
 
    public :: solve_plant_water, solve_plant_water_batch, rhizosphere_cond
+   public :: leaf_node_psi, crown_gravity_head
    public :: root_fraction_profile, effective_root_boundary, cohort_root_depth, cohort_root_profile
 
    real(wp),    parameter :: c_floor   = 1.0e-12_wp  !< capacitance floor (linearization only)
@@ -38,6 +39,36 @@ module meds_plant_hydraulics
 
 
 contains
+
+   !----- The water-potential drop from the wood node to the crown [MPa]: the hydrostatic head of  !
+   !      the cohort's height, or zero with gravity switched off. ----------------------------------!
+   pure real(wp) function crown_gravity_head(height, o) result(grav)
+      real(wp),           intent(in) :: height   !< [m] cohort height
+      type(hydro_opts_t), intent(in) :: o
+      if (o%gravity_on) then ; grav = grav_head*height ; else ; grav = 0.0_wp ; end if
+   end function crown_gravity_head
+
+   !----- The leaf node's water potential [MPa], read from the leaf water and its pressure-volume   !
+   !      curve. A cohort with no leaves -- a deciduous canopy shed to bare -- has an empty leaf store  !
+   !      and no curve to read: the reading would be meaningless (the relative water content floors   !
+   !      at 1e-4, about -15,000 MPa). Its leaf node instead sits at the wood potential less the       !
+   !      gravity head to the crown, the value the leaf node relaxes to with no transpiration and the   !
+   !      one Xu et al. (2016) give a leafless cohort. So a bare cohort's predawn potential, which the  !
+   !      stomata and the phenology water cue read, follows its stem and roots. -----------------------!
+   pure real(wp) function leaf_node_psi(leaf_water, bleaf, wood_water, bwood, height, p, o) result(psi_l)
+      real(wp),             intent(in) :: leaf_water  !< [kg H2O/plant] leaf water
+      real(wp),             intent(in) :: bleaf       !< [kgC/plant] leaf carbon
+      real(wp),             intent(in) :: wood_water  !< [kg H2O/plant] wood (sapwood + fine-root) water
+      real(wp),             intent(in) :: bwood       !< [kgC/plant] sapwood + fine-root carbon
+      real(wp),             intent(in) :: height      !< [m] cohort height
+      type(hydro_params_t), intent(in) :: p
+      type(hydro_opts_t),   intent(in) :: o
+      if (p%leaf_curve%water_sat*bleaf > tiny_num) then
+         psi_l = psi_from_water_content(leaf_water, p%leaf_curve, bleaf)
+      else
+         psi_l = psi_from_water_content(wood_water, p%wood_curve, bwood) - crown_gravity_head(height, o)
+      end if
+   end function leaf_node_psi
 
    !----- Wood<->leaf edge conductance: the EXACT closed form for wood_kexp in {1,2}, else the     !
    !       precomputed lookup table (kirchhoff_edge_tab). At kexp in {1,2} the table is never        !
@@ -165,7 +196,7 @@ contains
       call effective_root_boundary(env, rhz, soil_psi) ! multi-layer aggregate OR scalar BC (identical if <=1)
       rhz      = max(rhz, k_floor)                     ! ground the network (avoid singular M)
       bwood    = env%bsap + env%broot
-      if (o%gravity_on) then ; grav = grav_head*env%height ; else ; grav = 0.0_wp ; end if
+      grav     = crown_gravity_head(env%height, o)
       k_cond   = cond_max()                            ! max (plc=1) internal conductance [kg/s/MPa]
 
       psi_l0 = psi(NODE_LEAF) ; psi_w0 = psi(NODE_WOOD)

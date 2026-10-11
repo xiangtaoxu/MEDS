@@ -18,7 +18,7 @@ module meds_fast_step
                                      column_budget_t, ark_workspace_t
    use meds_fast_ark,         only : column_fast_step_ark
    use meds_fast_rk45,        only : column_fast_step_rk45, rk45_state_railed, rk45_ledgers_stop
-   use meds_water_retention, only : psi_from_water_content
+   use meds_plant_hydraulics, only : leaf_node_psi
    implicit none
    private
 
@@ -78,8 +78,10 @@ contains
       !      buffer with the previous patch's (or uninitialised) values under time_integrator=rk45. -!
       if (present(psi_leaf_coh)) then
          do jcoh = 1_ik, col_cohort%n
-            psi_leaf_coh(jcoh) = psi_from_water_content(biophys%leaf_water_mass(jcoh), &
-                  col_config%hydraulics_table%pft(col_cohort%pft(jcoh))%leaf_curve, col_cohort%bleaf(jcoh))
+            psi_leaf_coh(jcoh) = leaf_node_psi(biophys%leaf_water_mass(jcoh), col_cohort%bleaf(jcoh),       &
+                  biophys%wood_water_mass(jcoh), col_cohort%bsap(jcoh) + col_cohort%broot(jcoh),          &
+                  col_cohort%height(jcoh), col_config%hydraulics_table%pft(col_cohort%pft(jcoh)),         &
+                  col_config%hydraulics_opts)
          end do
       end if
 

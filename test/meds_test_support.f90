@@ -82,7 +82,6 @@ contains
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
       cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
-      cfg%leaf_wstress_nonstomatal = .false.   ! issue #47: capacity limb OFF (see meds_config_t)
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
       cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp
@@ -121,8 +120,6 @@ contains
          p%theta_cj_c4      = [ 0.80_wp, 0.80_wp, 0.80_wp ]
          p%theta_ic_c4      = [ 0.95_wp, 0.95_wp, 0.95_wp ]
          p%katul_lambda25   = [ 600.0_wp, 800.0_wp, 350.0_wp ]
-         p%wstress_psi_open = [ -0.5_wp, -0.5_wp, -0.5_wp ]
-         p%wstress_psi_close= [ -2.5_wp, -3.0_wp, -2.0_wp ]
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!

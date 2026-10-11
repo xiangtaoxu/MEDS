@@ -112,17 +112,19 @@ program test_pft_optics_config
       plc1 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(1)%wood_psi50, tab%pft(1)%wood_kexp)
       plc2 = 1.0_wp - plc_retained(-1.5_wp, tab%pft(2)%wood_psi50, tab%pft(2)%wood_kexp)
       call check(plc2 > plc1, 'a more vulnerable PFT loses more conductance at the same psi')
-      !----- The stomatal closure (2x the turgor-loss point) follows the PFT's OWN pressure-volume  !
-      !      curve, the one the plant-water solver stores its leaf water on; it used to take the     !
-      !      shared [hydraulics] values whatever the PFT said. ----------------------------------!
+      !----- The fast water-stress limb (the turgor-loss point to twice it) follows the PFT's OWN   !
+      !      pressure-volume curve, the one the plant-water solver stores its leaf water on. -------!
       call build_fast_context(cfg, ctx)
-      call check_close(ctx%col_config%leaf_photo%pft(2)%psi_tlp,                                  &
+      call check_close(ctx%col_config%leaf_photo%pft(2)%psi_open,                                 &
                        pv_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,           &
-                       'PFT 2 stomata close on its own turgor-loss point')
-      call check_close(ctx%col_config%leaf_photo%pft(1)%psi_tlp,                                  &
+                       'PFT 2 loses capacity from its own turgor-loss point')
+      call check_close(ctx%col_config%leaf_photo%pft(2)%psi_close,                                &
+                       2.0_wp * pv_psi_tlp(-2.5_wp, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp,  &
+                       'PFT 2 has lost it at twice its turgor-loss point')
+      call check_close(ctx%col_config%leaf_photo%pft(1)%psi_open,                                 &
                        pv_psi_tlp(cfg%hydraulics%leaf_pi0, cfg%hydraulics%leaf_elastic_mod), 1.0e-12_wp, &
                        'PFT 1 with no override keeps the shared turgor-loss point')
-      call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_config%leaf_photo%pft(2)%psi_tlp, 0.0_wp, &
+      call check_close(pft_leaf_psi_tlp(cfg, 2_ik), ctx%col_config%leaf_photo%pft(2)%psi_open, 0.0_wp, &
                        'the phenology reads the same per-PFT turgor-loss point')
    end block
 

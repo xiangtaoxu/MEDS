@@ -16,7 +16,7 @@
 module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_plant_hydraulics, only : solve_plant_water_batch
+   use meds_plant_hydraulics, only : solve_plant_water_batch, leaf_node_psi
    use meds_water_retention, only : psi_from_water_content, water_content
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
@@ -36,7 +36,6 @@ module meds_fast_be_stage
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
-   use meds_plant_hydraulics, only : solve_plant_water_batch
    use meds_therm_lib, only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, &
                               temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
@@ -433,7 +432,9 @@ contains
          !      are now selected by the cohort's PFT.  --------------------------------------------!
          do i = 1_ik, n
             associate (hp => col_config%hydraulics_table%pft(frozen%plant%pft(i)))
-               psi_c(NODE_LEAF, i) = psi_from_water_content(y%leaf_water_mass(i), hp%leaf_curve, frozen%plant%bleaf(i))
+               psi_c(NODE_LEAF, i) = leaf_node_psi(y%leaf_water_mass(i), frozen%plant%bleaf(i),           &
+                     y%wood_water_mass(i), frozen%plant%bsap(i) + frozen%plant%broot(i),                     &
+                     frozen%plant%height(i), hp, col_config%hydraulics_opts)
                psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_curve, &
                      frozen%plant%bsap(i) + frozen%plant%broot(i))
             end associate
@@ -448,7 +449,7 @@ contains
          if (present(hydro_nonconv)) hydro_nonconv = count(.not. conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
          !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
-         !      rescaled by the soil's own fwilt-limited supply). That keeps "one flux, both sides"       !
+         !      rescaled by the soil's own realized supply). That keeps "one flux, both sides"            !
          !      across an interface spanning two OPERATOR-SPLIT solves, so the whole-column water         !
          !      ledger closes exactly.                                                                    !
          !                                                                                          !

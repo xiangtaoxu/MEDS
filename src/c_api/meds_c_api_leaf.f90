@@ -172,11 +172,11 @@ contains
       !      absorptance / phi_psii. The pylib is NOT part of the default build or of ctest, so nothing  !
       !      caught it -- see issue #100.                                                                !
       !                                                                                          !
-      !      psi_tlp, low_psi_control, wstress_nonstomatal and medlyn_vpd_min are absent from         !
-      !      leaf_params_c and take their type defaults (-2.0 MPa, linear decline, .false., 0.05 kPa;    !
-      !      meds.canopy builds its parameters from the run's config instead). Exposing them across the C ABI !
-      !      is a deliberate follow-up, not an oversight: adding a field to a bind(c) struct is an ABI   !
-      !      break for any existing caller. --------------------------------------------------------!
+      !      psi_onset and medlyn_vpd_min are absent from leaf_params_c and take their type defaults  !
+      !      (0 MPa, 0.05 kPa; meds.canopy builds its parameters from the run's config instead).       !
+      !      Exposing them across the C ABI is a deliberate follow-up, not an oversight: adding a field !
+      !      to a bind(c) struct is an ABI break for any existing caller. psi_open/psi_close do cross: !
+      !      the caller sets the ramp of the fast limb, which is always applied. ---------------------!
       p = leaf_photo_params_t(pathway=p_c%pathway, vcmax25=p_c%vcmax25, jmax25=p_c%jmax25,        &
              tpu25=p_c%tpu25, rd25=p_c%rd25, kp25=p_c%kp25, g0=p_c%g0, g1=p_c%g1, d0=p_c%d0,      &
              quantum_yield=p_c%quantum_yield, theta_j=p_c%theta_j,                                &

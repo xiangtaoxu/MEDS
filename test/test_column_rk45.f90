@@ -191,13 +191,9 @@ program test_column_rk45
    call test_rk45_reports_psi_leaf()
 
    !=== J. REVIEW 2026-09 (item 2 #3): on moderately DRY soil the wood<->soil interface must cancel !
-   !       to machine precision. frozen%roots%uptake is advance_soil_water_column's realized supply, which already  !
-   !       carries the psi-wilting ramp; the RK45 RHS used to pass it back through the ramp, so the    !
-   !       soil lost fwilt*uptake while wood gained uptake -- water created from nothing whenever       !
-   !       psi_open > psi_soil > psi_wilt. The existing dry-down (theta ~ theta_res, fwilt ~ 0) and     !
-   !       moist tests (fwilt = 1) both sit where the product uptake*(1-fwilt) vanishes; this one sits  !
-   !       in the middle of the ramp, where it does not, and asks for closure at the ledger's own       !
-   !       round-off rather than at its 1e-4 relative tolerance. ======================================!
+   !       to machine precision: the soil loses exactly the uptake the wood gains. The existing         !
+   !       dry-down sits near theta_res and the moist tests in wet soil; this one sits in between, and  !
+   !       asks for closure at the ledger's own round-off rather than at its 1e-4 relative tolerance. ==!
    call test_rk45_dry_uptake_seam()
 
    call test_report('test_column_rk45')
@@ -537,10 +533,11 @@ contains
    !      on the following step -- plus closure of both whole-column ledgers.                            !
    !                                                                                                    !
    !      MEASURED, and worth recording rather than implying otherwise: over 48 h this bottoms out at    !
-   !      theta = 0.0807 against theta_res = 0.078, so the commit floor never actually fires. Both       !
-   !      sinks self-limit before it: the root sink is psi-limited (fwilt shuts it off) and ground        !
-   !      evaporation is capped at (theta(1)-theta_res)*dz*rho_w/dt inside the scratch solve, so the      !
-   !      frozen q_top cannot over-extract either. The floor is therefore a DEFENSIVE guard on an        !
+   !      theta = 0.0840 against theta_res = 0.078, so the commit floor never actually fires. Both       !
+   !      sinks self-limit before it: the root sink falls with the soil->root conductance (and stops     !
+   !      where a layer is drier than the wood), and both it and ground evaporation are capped at what   !
+   !      the layer holds above theta_res inside the scratch solve, so the frozen q_top and root sink    !
+   !      cannot over-extract either. The floor is therefore a DEFENSIVE guard on an                     !
    !      invariant that nothing else on this path enforces (RK45's old frozen%hydrology%floor_enth compensation was   !
    !      an enthalpy term, never a state edit), and its ledger booking is UNEXERCISED by this suite --   !
    !      a mutation that unbooks floor_mass_rk/floor_enth_rk passes. The invariant below is the right    !
@@ -707,7 +704,7 @@ contains
    subroutine test_rk45_dry_uptake_seam()
       integer(ik) :: istep
       real(wp)    :: w_worst, psi_top
-      theta_seed = 0.14_wp                               ! psi ~ -10 m: inside the f_wilt ramp
+      theta_seed = 0.14_wp                               ! psi ~ -10 m: moderately dry
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
@@ -720,9 +717,8 @@ contains
       psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
                                     col_config%soil%theta_res(1), col_config%soil%vg_alpha(1), col_config%soil%vg_n(1))
       theta_seed = theta0
-      call check_true('RK45 dry seam: the fixture really sits inside the wilting ramp (psi_open > psi > psi_wilt)',   &
-              psi_top < col_config%soil_water_opts%psi_open .and. psi_top > col_config%soil_water_opts%psi_wilt,      &
-              psi_top)
+      call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
+              psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
       call check_true('RK45 dry seam: the RK45 path itself ran (no ARK rescue)', budget%rk45_rescue == 0_ik,          &
               real(budget%rk45_rescue, wp))
       call check_true('RK45 dry seam: whole-column WATER closes to round-off (soil debit == wood credit)',            &

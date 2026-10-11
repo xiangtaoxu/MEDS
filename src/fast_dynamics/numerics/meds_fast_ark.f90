@@ -36,9 +36,10 @@ module meds_fast_ark
                                      bflux_bweight, clamp_cas, clamp_theta, clamp_soil_energy, soil_water_store, &
                                      soil_energy_store, plant_water_store, canopy_film_store, deposit_condensate, &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps, &
-                                     assemble_soil_energy_forcing, apply_process_mask
+                                     assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area
    use meds_fast_be_stage, only : column_be_stage, advance_water_mass_full, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
+   use meds_site_diag_types, only : CD_TRANSP
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
@@ -158,6 +159,9 @@ contains
             allocate(bf%tissue_leaf_int(n), bf%tissue_wood_int(n))
             bf%tissue_leaf_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%leaf_temp(1:n) + GAMMA*sf3%leaf_temp(1:n))
             bf%tissue_wood_int(1:n) = dt * ((1.0_wp - GAMMA)*sf2%wood_temp(1:n) + GAMMA*sf3%wood_temp(1:n))
+            !----- ...and each cohort's transpiration, the transp_bw the leaf water was debited. -------!
+            allocate(bf%transp_coh(n))
+            bf%transp_coh(1:n) = dt * transp_bw(1:n)
          end if
       end associate
    end subroutine ark2_column_step
@@ -508,6 +512,11 @@ contains
       else
          biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
       end if
+      !----- The transpiration each cohort's leaves lost over the step: the b-weighted amount over the  !
+      !      accepted sub-steps, which the leaf water was debited and the canopy air credited. --------!
+      if (present(cdiag) .and. allocated(acc%transp_coh))                                           &
+         cdiag(CD_TRANSP, 1:n) = transp_per_leaf_area(acc%transp_coh(1:n), dt_fast, col_cohort%nplant(1:n), &
+                                                      col_cohort%leaf_area(1:n))
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)

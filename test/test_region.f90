@@ -235,9 +235,9 @@ program test_region
    call refused('hydraulics.k_plant_max is refused, naming the sapwood conductance',                 &
                 '[hydraulics]'//nl()//'k_plant_max = 3.0e-4'//nl()//site_block(1_ik), .false., .false., &
                 'is retired: the plant''s conductance is its sapwood''s')
-   call refused('leaf_physiology.low_water_potential_control is linear_decline',                    &
-                '[leaf_physiology]'//nl()//'low_water_potential_control = "clamp"'//nl()//          &
-                site_block(1_ik), .false., .false., 'low_water_potential_control must be')
+   call refused('leaf_physiology.low_water_potential_control is retired',                           &
+                '[leaf_physiology]'//nl()//'low_water_potential_control = "linear_decline"'//nl()// &
+                site_block(1_ik), .false., .false., 'is retired: the linear decline of gs')
    !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
    !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
    call refused('format = "netcdf" is refused, naming ED_default',                                  &

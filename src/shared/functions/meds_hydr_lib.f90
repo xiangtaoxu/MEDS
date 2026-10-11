@@ -36,6 +36,7 @@ module meds_hydr_lib
    !----- Fixed-grid Kirchhoff lookup table (POD value type: trivially copyable + GPU-mappable). -!
    integer,  parameter :: HYDRO_TABLE_NTAB = 512        !< uniform intervals over [0, R_MAX]
    real(wp), parameter :: HYDRO_TABLE_RMAX = 8.0_wp     !< table domain in r = psi/psi50
+   real(wp), parameter :: KIRCH_PANEL      = 0.25_wp    !< widest quadrature panel in r
    type :: hydro_table_t
       real(wp)    :: kexp  = 0.0_wp                       !< shape the table was built for (staleness guard)
       real(wp)    :: r_max = HYDRO_TABLE_RMAX             !< table domain [0, r_max]
@@ -96,13 +97,32 @@ contains
       end if
    end function flux_potential
 
-   !----- integral_0^r du/(1+u^kexp) by 7-point Gauss-Legendre quadrature: exact for polynomials !
-   !      up to degree 13, and far below any model tolerance for this smooth integrand. The sum is !
-   !      written out rather than handed a function, because ifx allocates a lock-guarded record   !
-   !      on every call that passes a contained function as an argument, which made more than four !
-   !      threads slower than four (#325). u=0 is guarded as in plc_retained. -------------------!
+   !----- integral_0^r du/(1+u^kexp). The integrand falls from 1 to near 0 around u ~ 1, so one     !
+   !      7-point rule over all of [0, r] is accurate only for small r: at r = 7,800 it missed the    !
+   !      whole integral (about 1e-6 instead of 1.11 at kexp 4), and a wood-to-leaf edge with a       !
+   !      desiccated leaf then read a negative conductance. Panels no wider than KIRCH_PANEL cover    !
+   !      [0, min(r, HYDRO_TABLE_RMAX)]; beyond the table's edge the tail is added analytically. ----!
    pure real(wp) function kirchhoff_integral(r, kexp) result(g)
       real(wp), intent(in) :: r, kexp
+      real(wp)    :: rc, w
+      integer(ik) :: k, npan
+      rc   = min(max(r, 0.0_wp), HYDRO_TABLE_RMAX)
+      npan = max(1_ik, int(ceiling(rc / KIRCH_PANEL), ik))
+      w    = rc / real(npan, wp)
+      g    = 0.0_wp
+      do k = 1_ik, npan
+         g = g + kirchhoff_panel(real(k - 1_ik, wp)*w, real(k, wp)*w, kexp)
+      end do
+      if (r > HYDRO_TABLE_RMAX) g = g + kirchhoff_tail(HYDRO_TABLE_RMAX, r, kexp)
+   end function kirchhoff_integral
+
+   !----- integral_a^b du/(1+u^kexp) on one panel (0 <= a <= b) by 7-point Gauss-Legendre: exact   !
+   !      for polynomials up to degree 13, far below any model tolerance on a short panel. The sum   !
+   !      is written out rather than handed a function, because ifx allocates a lock-guarded record  !
+   !      on every call that passes a contained function as an argument, which made more than four  !
+   !      threads slower than four (#325). u=0 is guarded as in plc_retained. --------------------!
+   pure real(wp) function kirchhoff_panel(a, b, kexp) result(g)
+      real(wp), intent(in) :: a, b, kexp
       real(wp), parameter :: node(7)   = [ -0.9491079123427585_wp, -0.7415311855993945_wp,     &
                                            -0.4058451513773972_wp,  0.0000000000000000_wp,     &
                                             0.4058451513773972_wp,  0.7415311855993945_wp,     &
@@ -113,8 +133,8 @@ contains
                                             0.1294849661688697_wp ]
       real(wp)    :: mid, half, u, acc
       integer(ik) :: k
-      mid  = 0.5_wp * r                          ! the nodes on [-1,1], mapped onto [0,r]
-      half = 0.5_wp * r
+      mid  = 0.5_wp * (a + b)                    ! the nodes on [-1,1], mapped onto [a,b]
+      half = 0.5_wp * (b - a)
       acc  = 0.0_wp
       do k = 1_ik, 7_ik
          u = mid + half * node(k)
@@ -125,7 +145,20 @@ contains
          end if
       end do
       g = half * acc
-   end function kirchhoff_integral
+   end function kirchhoff_panel
+
+   !----- integral_a^b du/(1+u^kexp) far out on the curve (a >= HYDRO_TABLE_RMAX): the integrand is  !
+   !      u^-kexp to leading order there, so the tail is (b^(1-kexp) - a^(1-kexp)) / (1 - kexp). It   !
+   !      is positive and, for kexp > 1, bounded as b -> infinity, so the potential beyond the table  !
+   !      keeps rising toward its asymptote instead of following an extrapolated slope. -------------!
+   pure real(wp) function kirchhoff_tail(a, b, kexp) result(g)
+      real(wp), intent(in) :: a, b, kexp
+      if (abs(kexp - 1.0_wp) < 1.0e-9_wp) then
+         g = log(b / a)
+      else
+         g = (b**(1.0_wp - kexp) - a**(1.0_wp - kexp)) / (1.0_wp - kexp)
+      end if
+   end function kirchhoff_tail
 
    !----- Kirchhoff edge conductance K_eff = k_cond * <plc> [kg/s/MPa]. k_cond is the maximum    !
    !      (plc=1) whole-plant/segment conductance already scaled to per-plant [kg/s/MPa]. The     !
@@ -146,10 +179,10 @@ contains
    !     Fixed-grid lookup table for the general-exponent Kirchhoff integral.               !
    !=======================================================================================!
 
-   !----- Build the table G(r) = integral_0^r du/(1+u^kexp) on a uniform grid over [0, R_MAX]. --!
-   !      Uses the exact 7-pt quadrature at each node (one-time cost; psi50=1 => flux_potential     !
-   !      returns G(r) directly). A subroutine (not an array-returning fn) to avoid the nvfortran    !
-   !      array-temp trap.                                                                            !
+   !----- Build the table G(r) = integral_0^r du/(1+u^kexp) on a uniform grid over [0, R_MAX],      !
+   !      one 7-point panel per interval added to the last node, so the table rises monotonically by !
+   !      construction (one-time cost). A subroutine (not an array-returning fn) to avoid the        !
+   !      nvfortran array-temp trap.                                                                  !
    pure subroutine build_hydro_table(tab, kexp)
       type(hydro_table_t), intent(out) :: tab
       real(wp),            intent(in)  :: kexp
@@ -160,23 +193,29 @@ contains
       tab%n     = int(HYDRO_TABLE_NTAB, ik)
       h         = HYDRO_TABLE_RMAX / real(HYDRO_TABLE_NTAB, wp)
       tab%inv_h = 1.0_wp / h
-      do j = 0, HYDRO_TABLE_NTAB
-         tab%g(j) = flux_potential(real(j, wp)*h, 1.0_wp, kexp)   ! psi50=1 => G(r) itself
+      tab%g(0) = 0.0_wp
+      do j = 1, HYDRO_TABLE_NTAB
+         tab%g(j) = tab%g(j-1) + kirchhoff_panel(real(j-1, wp)*h, real(j, wp)*h, kexp)
       end do
    end subroutine build_hydro_table
 
    !----- Kirchhoff potential Phi(psi) via linear interpolation of the table [MPa]. ------------!
    !      G depends only on kexp; psi50 enters here as a runtime multiply (so a psi50 change needs   !
-   !      no rebuild). r beyond r_max clamps onto the final interval (G asymptotes for kexp>1).       !
+   !      no rebuild). Beyond r_max the analytic tail is added to the last node (kirchhoff_tail): a   !
+   !      linear extrapolation of the last interval, over thousands of intervals for a desiccated     !
+   !      leaf, could turn the potential's sign.                                                     !
    pure real(wp) function flux_potential_lin(psi, psi50, tab) result(phi)
       real(wp),            intent(in) :: psi, psi50
       type(hydro_table_t), intent(in) :: tab
       real(wp) :: r, x, t
       integer  :: idx
       r   = max(psi/psi50, 0.0_wp)
+      if (r >= tab%r_max) then
+         phi = psi50 * ( tab%g(HYDRO_TABLE_NTAB) + kirchhoff_tail(tab%r_max, r, tab%kexp) )
+         return
+      end if
       x   = r * tab%inv_h
-      idx = int(x)
-      if (idx >= HYDRO_TABLE_NTAB) idx = HYDRO_TABLE_NTAB - 1
+      idx = min(int(x), HYDRO_TABLE_NTAB - 1)
       t   = x - real(idx, wp)
       phi = psi50 * ( tab%g(idx)*(1.0_wp - t) + tab%g(idx+1)*t )
    end function flux_potential_lin

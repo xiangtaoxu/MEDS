@@ -89,6 +89,27 @@ before and after.
 
 ### Changed
 
+- **Water stress is one fast and one slow control, and the soil no longer has a wilting point** (#384).
+  - *Fast:* the capacity limb on Vcmax/Jmax/TPU is always on and reads the leaf's current water
+    potential, from the PFT's turgor-loss point (1) to twice it (0). As the leaf wilts, A and with it
+    gs fall to the cuticular g0 within the day. `pft.wstress_psi_open`/`_close` are optional overrides.
+  - *Slow:* beta_stomata on g1 (Katul lambda) on the previous day's predawn potential, unchanged.
+  - *Removed:* the linear gs decline on the predawn potential (`[leaf_physiology].low_water_potential_control`,
+    #332) and the capacity limb's switch (`[leaf_physiology].wstress_nonstomatal`, #47); both keys are
+    refused as retired.
+  - *Soil:* the root sink is the plant's request as given. The wilting ramp on it (`[soil].psi_wilt`,
+    `[soil].psi_open`, retired) and the hard-coded -1.5 MPa wilting-point give-back cut the same water
+    the plant hydraulics already limits, and pinned dry root-zone layers at -1.5 MPa while the wood was
+    at -2 to -4 MPa. A layer now gives at most what it holds above theta_res in one step (the rule
+    ground evaporation follows); the shortfall is booked as `uptake_deficit`.
+  - *Example 04 (BCI):* default-run GPP and LE fall by at most 0.12 % in the late dry seasons
+    (March-April 2016: -0.11 %, -0.12 %); the calibrated run moves by less than 0.001 %.
+  - *Palo Verde dry forest (example 06 test, 2008-2010):* the canopy trees' leaf water no longer hits
+    its floor (249 cohort-hours, 80 unconverged hydraulic solves -> 25 hours in near-leafless Ds
+    saplings, 0 unconverged); transpiration 592 -> 517 mm/yr; the stand LAI's dry-season minimum
+    2.83 -> 1.26 (2009) and 2.10 -> 1.14 (2010), almost all of it from the soil change.
+  - *Step size:* 900 s against 150 s on that dry season moves transpiration by -0.9 % and NPP by +0.7 %.
+
 - **Example 03's growth law is fitted to every tree alive at an interval's start**, the trees that
   die within it too, as a cohort's growth is. The census measures growth only on the trees that live
   to the next census, and the slowest growers are the likeliest to die. `prepare_census.py` gives a
@@ -336,6 +357,22 @@ before and after.
 
 ### Fixed
 
+- **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered** (#384), the water
+  the wood is credited, not the plant's request before the soil limits it. They were the same number
+  except where the soil cut the request.
+- **`transp_cohort` and `transp_leaf_site` report the water the leaves lose** (#384): the transpiration
+  the fast integrator takes from the leaves over each step, not the leaf solve's stomatal estimate
+  (gs·VPD/P, without the boundary layer or the leaf energy balance), which ran high. Over 914 days at
+  the example 06 test stand (Palo Verde), transpiration goes from 1291 to 1003 mm on clay loam and from
+  658 to 478 mm on sand. A plant's leaf and wood water now changes over each step by the reported root
+  uptake less the reported transpiration, to round-off (1e-13 of uptake), under ARK and RK45.
+- **A leafless cohort's leaf water potential is its wood's less the gravity head** (#384), not the
+  pressure-volume curve read at an empty store (pi0/1e-4, -15,000 to -25,000 MPa), which entered the
+  daily maximum the stomata and the phenology read.
+- **The Kirchhoff conductance table holds for any `wood_kexp`** (#384). For exponents other than 1 or
+  2 the table extrapolated past its range and its single quadrature failed at large potentials, so the
+  flux potential changed sign there and a leaf overdrawn far below its wood never refilled. The table
+  is now built panel by panel, with the analytic tail beyond it.
 - `meds.model.Run.total_basal_area` is documented in m2/m2, the unit the model returns (it said cm2/m2).
 - **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
   (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴

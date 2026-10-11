@@ -17,7 +17,8 @@
 !==========================================================================================!
 module meds_fast_config
    use meds_kinds,       only : wp, ik
-   use meds_config,      only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset,              &
+   use meds_config,      only : meds_config_t, pft_stomata_psi_onset, pft_wstress_psi_open,         &
+                                pft_wstress_psi_close,                                             &
                                 CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT,    &
                                 CTRL_I, CTRL_PI
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, leaf_photo_table_t
@@ -66,15 +67,12 @@ contains
          p%theta_cj_c4    = t%theta_cj_c4(ipft)
          p%theta_ic_c4    = t%theta_ic_c4(ipft)
          p%lambda25       = t%katul_lambda25(ipft)
-         p%psi_open       = t%wstress_psi_open(ipft)
-         p%psi_close      = t%wstress_psi_close(ipft)
+         p%psi_open       = pft_wstress_psi_open(cfg, ipft)    ! turgor loss unless the PFT file sets it
+         p%psi_close      = pft_wstress_psi_close(cfg, ipft)   ! twice it unless the PFT file sets it
          p%lambda_psi_exp = t%wstress_lambda_exp(ipft)
          p%sref_stomata   = t%wstress_sref_stomata(ipft)
-         p%psi_tlp        = pft_leaf_psi_tlp(cfg, ipft)   ! the PFT's own pressure-volume curve
          p%psi_onset      = pft_stomata_psi_onset(cfg, ipft)
       end associate
-      p%wstress_nonstomatal = cfg%leaf_wstress_nonstomatal
-      p%low_psi_control     = cfg%low_water_potential_control
       !----- Copy the shared biochemistry constants. --------------------------------------!
       p%kc25 = cfg%kc25 ; p%ko25 = cfg%ko25 ; p%gstar25 = cfg%gstar25
       p%ea_kc = cfg%ea_kc ; p%ea_ko = cfg%ea_ko ; p%ea_gstar = cfg%ea_gstar

@@ -4,7 +4,7 @@
 ! MEDS_COLUMN_HYDROLOGY_DESIGN.md). It advances one patch's prognostic soil moisture + ponding !
 ! (+ a lumped aquifer) over a fast step dt: canopy-throughfall infiltration (conductivity-       !
 ! limited), ground evaporation, the multi-layer soil-water balance (implicit backward-Euler       !
-! Thomas), and a water-potential-limited root-uptake sink; it returns the boundary fluxes plus     !
+! Thomas), and the root-uptake sink the plant hydraulics asks for; it returns the boundary fluxes plus !
 ! the per-layer matric potential psi_soil that closes the plant-hydraulics boundary condition.      !
 ! Exposes the store in two forms (like meds_soil_energy):                                            !
 !   * soil_water_time_deriv    -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] (for the IMEX-ARK       !
@@ -104,9 +104,9 @@ contains
       type(chydro_flux_t),    intent(out)   :: flux
 
       integer(ik) :: n, k, rc, nsub
-      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, clip_l, floor_l, sink_l
+      real(wp), dimension(n_soil_layer_max) :: theta0, theta1, clip_l, floor_l, sink_l, sink_req
       real(wp) :: psi1, kn1, e_soil, q_inf_max, q_avail, infl, q_top
-      real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give
+      real(wp) :: q_liq, drain_amt, uptake_amt, clip_ex, deficit, want, give, avail, capped
       real(wp) :: site_drain, wsurf, runoff, w0, w1
       real(wp) :: w_surf0
       real(wp) :: e_surf0, esurf, t_pond              ! pond enthalpy (#78 item 4)
@@ -147,10 +147,27 @@ contains
       infl      = min(q_avail, q_inf_max * rho_h2o)
       q_top     = (infl - e_soil) / rho_h2o                              ! [m/s down], constant over substeps
 
+      !----- The root sink takes no more from a layer in one step than the layer holds above         !
+      !      theta_res (in layer 1, less what the step evaporates) -- the availability rule the ground  !
+      !      evaporation above follows. The plant prices its request at the step-start state and the   !
+      !      solve holds it fixed, so only a nearly empty layer asked for more than it has can reach    !
+      !      this; without it that sink drives the implicit solve below the retention curve's domain.  !
+      !      The shortfall is booked as uptake_deficit. ----------------------------------------------!
+      sink_req(1:n) = forcing%root_uptake(1:n)
+      capped = 0.0_wp
+      do k = 1_ik, n
+         avail = max(0.0_wp, theta0(k) - params%theta_res(k)) * params%dz(k) * rho_h2o
+         if (k == 1_ik) avail = max(0.0_wp, avail - e_soil * dt)
+         if (sink_req(k) * dt > avail) then
+            capped      = capped + sink_req(k) * dt - avail
+            sink_req(k) = avail / dt
+         end if
+      end do
+
       !----- Advance the interior (adaptive/fixed substepping of the implicit solve). --------!
       theta1(1:n) = theta0(1:n)
       call soil_water_advance(theta1, params, opts, rc, n, dt, q_top,                          &
-                              forcing%root_uptake, drain_amt, uptake_amt, flux%w_flux, sink_l,  &
+                              sink_req, drain_amt, uptake_amt, flux%w_flux, sink_l,             &
                               nsub, ok)
 
       !----- FACE-FLUX CONSISTENCY (the contract the soil ENERGY column depends on). ---------!
@@ -161,9 +178,8 @@ contains
       !      a huge spurious heat flux. The column mass_resid below CANNOT see this: it checks the      !
       !      column against its BOUNDARY fluxes, and any interior face error cancels in that sum.       !
       !      Checked pre-clip, since the clip/give-back corrections are separate bookkeeping applied     !
-      !      after the solve. The sink is the one the solver REMOVED (sink_l, psi-limited by the wilting  !
-      !      ramp), not the plant's request forcing%root_uptake: in a layer drier than psi_open the two   !
-      !      differ, and checking against the request reported the difference as a face error (#331). ---!
+      !      after the solve. The sink is the one the solver REMOVED (sink_l), summed over its own       !
+      !      sub-steps (#331). -------------------------------------------------------------------------!
       face_resid = 0.0_wp
       do k = 1_ik, n
          if (k == 1_ik) then
@@ -176,7 +192,7 @@ contains
          else
             f_out = flux%w_flux(k) * rho_h2o * dt
          end if
-         f_sink = sink_l(k)                                           ! realized, psi-limited [kg/m2]
+         f_sink = sink_l(k)                                           ! realized [kg/m2]
          face_resid = face_resid + abs((theta1(k) - theta0(k)) * params%dz(k) * rho_h2o           &
                                        - (f_in - f_out - f_sink))
       end do
@@ -187,16 +203,20 @@ contains
       !      (capillary rise into layer n) -- every consumer must tolerate that sign. ------------------!
       site_drain = drain_amt / dt
 
-      !----- Post-solve clip + theta_wp cap (design 5.1 step 5), all bookkept. --------------!
+      !----- Post-solve saturation clip + residual floor (design 5.1 step 5), all bookkept. ------!
       !      Each correction below moves water with NO face, so the soil ENERGY column (which advects   !
       !      enthalpy on the faces but consumes the CORRECTED theta) cannot see it. The two that are     !
       !      genuine boundary crossings with a well-defined temperature -- the saturation clip (water     !
       !      leaves layer k for the pond) and the theta_res hard floor (water is created in layer k) --   !
       !      are recorded PER LAYER so the caller can move the matching enthalpy at layer k's own         !
-      !      temperature. The two GIVE-BACKs are deliberately NOT recorded: they undo part of the root    !
-      !      sink, whose enthalpy counterpart is keyed to transpiration at LEAF temperature rather than   !
-      !      to the realized per-layer mass, so compensating them belongs with that deferred rework       !
-      !      (see the root_heat_sink assembly in meds_fast_ark/meds_fast_time_derivs) and cannot be done here alone. !
+      !      temperature. The GIVE-BACK is deliberately NOT recorded: it undoes part of the root sink,    !
+      !      whose enthalpy counterpart is keyed to transpiration at LEAF temperature rather than to the  !
+      !      realized per-layer mass, so compensating it belongs with that deferred rework (see the       !
+      !      root_heat_sink assembly in meds_fast_ark/meds_fast_time_derivs) and cannot be done here alone. !
+      !                                                                                          !
+      !      There is no wilting point here. The plant hydraulics already limits uptake -- its soil->root !
+      !      conductance falls with K(theta), and a layer drier than the wood gives nothing -- so a soil- !
+      !      side wilting threshold would cut the same water twice. ------------------------------------!
       clip_ex = 0.0_wp
       deficit = 0.0_wp
       clip_l(1:n)  = 0.0_wp
@@ -207,18 +227,12 @@ contains
             clip_ex   = clip_ex + clip_l(k)
             theta1(k) = params%theta_sat(k)
          end if
-         if (theta1(k) < params%theta_wp(k) .and. forcing%root_uptake(k) > 0.0_wp) then
-            want      = (params%theta_wp(k) - theta1(k)) * params%dz(k) * rho_h2o
-            give      = min(want, max(0.0_wp, uptake_amt - deficit))     ! total give back <= total extracted
-            theta1(k) = theta1(k) + give / (params%dz(k) * rho_h2o)
-            deficit   = deficit + give
-         end if
          !----- Residual floor: theta cannot fall below theta_res (the constitutive curves need    !
-         !      Se >= 0). A numerical undershoot is water the solver over-removed; SOURCE the        !
-         !      correction from the site's extracted root water (deficit), same as the give-back     !
-         !      above, so it is BOOKKEPT (reduces uptake_total) rather than silently created. Any     !
-         !      remainder once the extracted water is exhausted is hard-floored below and shows up in !
-         !      the mass-budget residual (Debug error-stop).  --------------------------------------!
+         !      Se >= 0). An undershoot is water the root sink, fixed over the step, over-removed;   !
+         !      SOURCE the correction from the site's extracted root water (deficit) so it is        !
+         !      BOOKKEPT (reduces uptake_total) rather than silently created. Any remainder once the  !
+         !      extracted water is exhausted is hard-floored below and shows up in the mass-budget   !
+         !      residual (Debug error-stop).  -------------------------------------------------------!
          if (theta1(k) < params%theta_res(k)) then
             want      = (params%theta_res(k) - theta1(k)) * params%dz(k) * rho_h2o
             give      = min(want, max(0.0_wp, uptake_amt - deficit))
@@ -303,7 +317,7 @@ contains
       flux%runoff_surf    = runoff
       flux%soil_evap      = e_soil
       flux%uptake_total   = max(0.0_wp, uptake_amt - deficit) / dt
-      flux%uptake_deficit = deficit / dt
+      flux%uptake_deficit = (deficit + capped) / dt
       flux%clip_excess    = clip_ex / dt
       flux%clip_layer(1:n)  = clip_l(1:n)  / dt
       flux%floor_layer(1:n) = floor_l(1:n) / dt
@@ -444,11 +458,11 @@ contains
       real(wp),            intent(out) :: theta_out(n_soil_layer_max)
       real(wp),            intent(out) :: drainage_amt, uptake_amt
       real(wp),            intent(out) :: wface_amt(n_soil_layer_max)   !< [m] downward water depth across face k
-      real(wp),            intent(out) :: sink_amt(n_soil_layer_max)    !< [kg/m2] realized (psi-limited) root sink over h
+      real(wp),            intent(out) :: sink_amt(n_soil_layer_max)    !< [kg/m2] root sink over h
       logical,             intent(out) :: ok
 
-      real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface, kface_solve
-      real(wp), dimension(n_soil_layer_max) :: a, b, c, rhs, dpsi, sk, dsk
+      real(wp), dimension(n_soil_layer_max) :: psi_m, theta_m, kk, cc, kface, gface, qface
+      real(wp), dimension(n_soil_layer_max) :: a, b, c, rhs, dpsi, sk
       integer(ik) :: k, iter, maxit
       real(wp)    :: qbot, dqbot, in_k, out_k, err, theta_prev
 
@@ -462,8 +476,7 @@ contains
       ok = .false.
 
       do iter = 1_ik, maxit
-         call face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,           &
-                            kk, cc, kface, gface, sk, dsk)
+         call face_and_sink(params, rc, n, psi_m, theta_m, root_uptake, kk, cc, kface, gface, sk)
          call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot, dqbot)
          do k = 1_ik, n - 1_ik
             qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
@@ -479,7 +492,7 @@ contains
             else
                c(k) = 0.0_wp
             end if
-            b(k)  = cc(k) * params%dz(k) / h - a(k) - c(k) + dsk(k) * params%dz(k)
+            b(k)  = cc(k) * params%dz(k) / h - a(k) - c(k)
             !----- The aquifer bottom face is head-driven, so its outflow depends on psi_n and must  !
             !      enter the Jacobian or the (stiff, Delta = dz(n)/2) term is only lagged. Zero on    !
             !      free-drain and bedrock, so those stay bit-identical. -----------------------------!
@@ -513,16 +526,12 @@ contains
       !      the water that solve moved. Re-reading the conductances at the new heads broke on dry soil !
       !      under heavy rain (#352): the solve lifts a dry top layer to a saturated head, and the      !
       !      saturated conductivity times that head gradient drained the layer below residual in one    !
-      !      sub-step, after which the column never recovered. Only the root sink is re-read at the new !
-      !      heads: the wilting ramp keeps it within the plant's request, which is all the plant side   !
-      !      is ever credited. ---------------------------------------------------------------------!
-      kface_solve(1:n) = kface(1:n)
+      !      sub-step, after which the column never recovered. The root sink is the plant's request,    !
+      !      fixed over the step, so it needs no re-reading either. ---------------------------------!
       qbot = qbot + dqbot * dpsi(n)
-      call face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
-                         kk, cc, kface, gface, sk, dsk)
       wface_amt = 0.0_wp
       do k = 1_ik, n - 1_ik
-         qface(k)     = kface_solve(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
+         qface(k)     = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
          wface_amt(k) = qface(k) * h                             ! [m] downward depth crossing face k over h
       end do
       uptake_amt = 0.0_wp
@@ -543,35 +552,28 @@ contains
    ! soil_water_time_deriv -- the EXPLICIT Richards RHS dtheta_k/dt [1/s] at the current state, for !
    ! the IMEX-ARK fast integrator (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md). Same flux-divergence + root    !
    ! sink form as soil_water_step_implicit's conservative update, but evaluated ONCE at the current !
-   ! theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the Zeng-Decker gravity  !
-   ! factor, and the psi-limited sink are IDENTICAL to the split -- no re-derivation. The top flux    !
-   ! q_top and root_uptake are the frozen surface BCs. Commits nothing.                              !
+   ! theta (no Celia/frozen BE solve): reuses face_and_sink so upstream K, the gravity factor and    !
+   ! the root sink are IDENTICAL to the split -- no re-derivation. The top flux q_top and           !
+   ! root_uptake are the frozen surface BCs; root_uptake is taken as given. Commits nothing.        !
    !                                                                                                !
    !---------------------------------------------------------------------------------------!
    pure subroutine soil_water_time_deriv(theta, params, opts, n, q_top, root_uptake,              &
-                                         dtheta_dt, drainage_rate, uptake_rate, qface_out,       &
-                                         apply_wilt_limit)
+                                         dtheta_dt, drainage_rate, uptake_rate, qface_out)
       real(wp),            intent(in)  :: theta(n_soil_layer_max)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: n
       real(wp),            intent(in)  :: q_top, root_uptake(n_soil_layer_max)
-      !----- .true. (default): root_uptake is the plant's DEMAND per layer and the psi-wilting ramp   !
-      !      f_wilt_ramp limits it here, exactly as the implicit sibling does. .false.: root_uptake is !
-      !      ALREADY the realized, psi-limited sink (e.g. advance_soil_water_column's uptake_total that    !
-      !      the plant water ODE debits from wood) and must be applied as-is -- limiting it a second   !
-      !      time would make the soil lose less than the wood gains. -------------------------------!
-      logical, optional,   intent(in)  :: apply_wilt_limit
       real(wp),            intent(out) :: dtheta_dt(n_soil_layer_max)   !< [1/s]     dtheta/dt per layer (0 for k>n)
       real(wp),            intent(out) :: drainage_rate                 !< [kg/m2/s] bottom drainage
-      real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total psi-limited root uptake
+      real(wp),            intent(out) :: uptake_rate                   !< [kg/m2/s] total root uptake
       !----- [m/s] DOWNWARD interior Darcy flux below node k (k = 1..n-1), the same quantity and sign     !
       !      convention as the implicit sibling's flux%w_flux. Exported so an explicit integrator can     !
       !      advect soil enthalpy on the faces ITS OWN theta trajectory is using, instead of on the       !
       !      implicit scratch solve's frozen faces (issue #78 item 3). Undefined for k >= n. -------------!
       real(wp),            intent(out) :: qface_out(n_soil_layer_max)
 
-      real(wp), dimension(n_soil_layer_max) :: psi_m, kk, cc, kface, gface, qface, sk, dsk
+      real(wp), dimension(n_soil_layer_max) :: psi_m, kk, cc, kface, gface, qface, sk
       real(wp)    :: qbot, in_k, out_k
       integer(ik) :: k, rc
 
@@ -583,16 +585,7 @@ contains
          psi_m(k) = soil_psi_from_theta(rc, theta(k), params%theta_sat(k), params%theta_res(k),   &
                                       curve_a(params, k), curve_n(params, k))
       end do
-      call face_and_sink(params, opts, rc, n, psi_m, theta, root_uptake,                  &
-                         kk, cc, kface, gface, sk, dsk)
-      if (present(apply_wilt_limit)) then
-         if (.not. apply_wilt_limit) then
-            do k = 1_ik, n
-               sk(k)  = root_uptake(k) / (rho_h2o * params%dz(k))
-               dsk(k) = 0.0_wp
-            end do
-         end if
-      end if
+      call face_and_sink(params, rc, n, psi_m, theta, root_uptake, kk, cc, kface, gface, sk)
       call bottom_flux(params, opts, n, psi_m(n), kk(n), qbot)
       do k = 1_ik, n - 1_ik
          qface(k) = kface(k) * ((psi_m(k) - psi_m(k+1)) / params%dz_node(k) + gface(k))
@@ -611,29 +604,26 @@ contains
       qface_out(1:n) = qface(1:n)
    end subroutine soil_water_time_deriv
 
-   !----- Fill node K/C, the log-linear face K, the gravity factor, and the psi-limited sink   !
-   !      + its psi-derivative, all at the current iterate (psi_m, theta_m).                    !
+   !----- Fill node K/C, the log-linear face K, the gravity factor, and the root sink, all at the !
+   !      current iterate (psi_m, theta_m). The sink is the plant's per-layer request as given:   !
+   !      the plant hydraulics already prices it at the layer's water potential and conductance.  !
    !---------------------------------------------------------------------------------------!
-   pure subroutine face_and_sink(params, opts, rc, n, psi_m, theta_m, root_uptake,              &
-                                 kk, cc, kface, gface, sk, dsk)
+   pure subroutine face_and_sink(params, rc, n, psi_m, theta_m, root_uptake, kk, cc, kface, gface, sk)
       type(soil_params_t), intent(in)  :: params
-      type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: rc, n
       real(wp),            intent(in)  :: psi_m(n_soil_layer_max), theta_m(n_soil_layer_max)
       real(wp),            intent(in)  :: root_uptake(n_soil_layer_max)
       real(wp),            intent(out) :: kk(n_soil_layer_max), cc(n_soil_layer_max)
       real(wp),            intent(out) :: kface(n_soil_layer_max), gface(n_soil_layer_max)
-      real(wp),            intent(out) :: sk(n_soil_layer_max), dsk(n_soil_layer_max)
+      real(wp),            intent(out) :: sk(n_soil_layer_max)
       integer(ik) :: k
-      real(wp)    :: w_below, fwilt, dfwilt
+      real(wp)    :: w_below
       do k = 1_ik, n
          kk(k) = soil_hydr_cond_from_theta(rc, theta_m(k), params%theta_sat(k), params%theta_res(k),      &
                                 curve_a(params,k), curve_n(params,k), params%ksat(k))
          cc(k) = soil_moist_cap_from_psi(rc, psi_m(k), params%theta_sat(k), params%theta_res(k),        &
                                 curve_a(params,k), curve_n(params,k))
-         call f_wilt_ramp(psi_m(k), opts%psi_wilt, opts%psi_open, fwilt, dfwilt)
-         sk(k)  = root_uptake(k) / (rho_h2o * params%dz(k)) * fwilt
-         dsk(k) = root_uptake(k) / (rho_h2o * params%dz(k)) * dfwilt
+         sk(k) = root_uptake(k) / (rho_h2o * params%dz(k))
       end do
       do k = 1_ik, n - 1_ik
          !----- ED2's inter-layer rule (rk4_derivs): ln K interpolated linearly between the nodes  !
@@ -663,24 +653,6 @@ contains
 
    !----- (curve_a / curve_n moved to meds_column_state_types, beside soil_params_t -- they are  !
    !       a property of that type, and the diagnostic psi read-off needs the same mapping.)  ---!
-
-   !----- Smooth wilting ramp f_wilt(psi) in [0,1] and its derivative. ---------------------!
-   pure subroutine f_wilt_ramp(psi, psi_wilt, psi_open, f, df)
-      real(wp), intent(in)  :: psi, psi_wilt, psi_open
-      real(wp), intent(out) :: f, df
-      real(wp) :: span
-      span = psi_open - psi_wilt                          ! > 0 (psi_open the less negative)
-      if (psi >= psi_open) then
-         f = 1.0_wp
-         df = 0.0_wp
-      else if (psi <= psi_wilt) then
-         f = 0.0_wp
-         df = 0.0_wp
-      else
-         f = (psi - psi_wilt) / span
-         df = 1.0_wp / span
-      end if
-   end subroutine f_wilt_ramp
 
    !----- Ground evaporation: pore-space RH (Philip) + Swenson-Lawrence DSL resistance. ----!
    !---------------------------------------------------------------------------------------!

@@ -84,7 +84,7 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}}
 ```math
 \Phi(\psi)=\int_0^{\psi} k(s)\,ds=\psi_{50}\!\int_0^{r}\frac{du}{1+u^{a}}
 =\begin{cases}\psi_{50}\ln(1+r) & a=1\\ \psi_{50}\arctan(r) & a=2\\
-\psi_{50}\cdot\text{(7-pt Gauss–Legendre)} & \text{else}\end{cases}
+\psi_{50}\cdot\text{(7-pt Gauss–Legendre panels)} & \text{else}\end{cases}
 ```
 
 The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction — the
@@ -117,9 +117,11 @@ tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
 $k_{\text{cond}}$ = 0.019 kg s⁻¹ MPa⁻¹: 1.9 mmol m⁻² s⁻¹ MPa⁻¹ per unit leaf area, and
 63 g m⁻² s⁻¹ MPa⁻¹ per unit sapwood, inside the 25–131 measured from soil to branch on Panama
 canopy trees (Meinzer et al. 2003). For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
-uniform-grid **lookup table** $G(r)$ and read by linear interpolation on the hot path (the closed
-forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$ is a runtime
-scale.
+uniform-grid **lookup table** $G(r)$ over $`0\le r\le 8`$ and read by linear interpolation on the hot
+path (the closed forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$
+is a runtime scale. It is built panel by panel, so it rises monotonically, and past $r = 8$ the
+tail $\int u^{-a}\,du$ is added analytically, so the potential keeps approaching its asymptote even
+for a leaf dried far beyond the vulnerability curve.
 
 ## 4. Root water uptake
 
@@ -242,7 +244,7 @@ machine-precision water budget from the converged storage change $\Delta W$.
 |---|---|
 | PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
 | vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
-| Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre, written out) |
+| Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre panels, written out; `kirchhoff_tail` past the table) |
 | multi-layer root boundary | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`, `rhizosphere_cond`, `effective_root_boundary` |
 | network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`) |
 | config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |

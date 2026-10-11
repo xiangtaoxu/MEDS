@@ -117,7 +117,6 @@ stomatal_model     = "medlyn"
 temp_response_form = "peaked"
 colimitation       = "quadratic"
 use_boundary_layer = false
-wstress_nonstomatal = false
 kc25    = 40.49
 ko25    = 27840.0
 gstar25 = 4.275

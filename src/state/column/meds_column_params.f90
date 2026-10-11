@@ -40,8 +40,6 @@ module meds_column_params
    real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
    real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
 
-   real(wp),    parameter :: PSI_WP = -152.96_wp           !< [m] -1.5 MPa head (wilting-point derivation)
-
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
    !      interface elevations z <= 0 below ground; dz, dz_node are positive magnitudes). Fixed- !
    !      size (n_soil_layer_max) so the hydrology kernel stays allocatable-free and GPU-eligible.!
@@ -60,7 +58,6 @@ module meds_column_params
       real(wp) :: psi_sat(n_soil_layer_max)   = 0.0_wp       !< [m] Campbell air-entry potential (option)
       real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
-      real(wp) :: theta_wp(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] wilting point (DERIVED)
    end type soil_params_t
 
    !----- Per-column soil THERMAL texture (geometry + porosity arrive via soil_params_t). ----!
@@ -83,7 +80,7 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Assemble a per-column soil_params_t: the ED2 negative-z geometry (exponential generator !
    ! OR an explicit soil_layer_z interface array), uniform texture broadcast, and the DERIVED  !
-   ! thresholds theta_fc/theta_wp (from the retention curve). The roots are the cohorts' own   !
+   ! threshold theta_fc (from the retention curve). The roots are the cohorts' own            !
    ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                          !
    !---------------------------------------------------------------------------------------!
    pure subroutine build_soil_hydr_params(n_active, retention, soil_depth, grid_growth, theta_sat,  &
@@ -138,11 +135,9 @@ contains
          params%vg_n(1:n_active)     = par_n
       end if
 
-      !----- Derived thresholds (from the retention curve). -------------------------------!
+      !----- Derived threshold (from the retention curve). --------------------------------!
       params%theta_fc(1:n_active) =                                                          &
          soil_theta_from_psi(retention, psi_fc_m, theta_sat, theta_res, par_a, par_n)
-      params%theta_wp(1:n_active) =                                                          &
-         soil_theta_from_psi(retention, PSI_WP, theta_sat, theta_res, par_a, par_n)
    end subroutine build_soil_hydr_params
 
    !---------------------------------------------------------------------------------------!
