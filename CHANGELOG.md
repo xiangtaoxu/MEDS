@@ -336,6 +336,13 @@ before and after.
 
 ### Fixed
 
+- **A leafless cohort's leaf water potential is its wood's less the gravity head**, not the pressure-
+  volume curve read at an empty store (pi0/1e-4, -15,000 to -25,000 MPa), which entered the daily
+  maximum the stomata and the phenology read.
+- **The Kirchhoff conductance table holds for any `wood_kexp`.** For exponents other than 1 or 2 the
+  table extrapolated past its range and its single quadrature failed at large potentials, so the flux
+  potential changed sign there and a leaf overdrawn far below its wood never refilled. The table is
+  now built panel by panel, with the analytic tail beyond it.
 - `meds.model.Run.total_basal_area` is documented in m2/m2, the unit the model returns (it said cm2/m2).
 - **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
   (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴

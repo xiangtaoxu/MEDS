@@ -15,7 +15,8 @@
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
-   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile
+   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile, &
+                                     leaf_node_psi
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
    use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
    use meds_config, only : meds_config_t, CTRL_L2_STRICT
@@ -404,8 +405,9 @@ contains
       !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
       !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
       do ih = 1_ik, n
-         psi_scratch(NODE_LEAF, ih) = psi_from_water_content(biophys%leaf_water_mass(ih), &
-               col_config%hydraulics_table%pft(col_cohort%pft(ih))%leaf_curve, col_cohort%bleaf(ih))
+         psi_scratch(NODE_LEAF, ih) = leaf_node_psi(biophys%leaf_water_mass(ih), col_cohort%bleaf(ih),   &
+               biophys%wood_water_mass(ih), col_cohort%bsap(ih) + col_cohort%broot(ih), col_cohort%height(ih), &
+               col_config%hydraulics_table%pft(col_cohort%pft(ih)), col_config%hydraulics_opts)
       end do
       do ih = 1_ik, n
          psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih), &

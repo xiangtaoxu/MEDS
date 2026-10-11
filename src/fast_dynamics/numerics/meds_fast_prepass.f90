@@ -23,14 +23,16 @@ module meds_fast_prepass
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
                                      CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
-   use meds_water_retention,  only : soil_psi_from_theta, psi_from_water_content
+   use meds_water_retention,  only : soil_psi_from_theta
+   use meds_plant_hydraulics, only : leaf_node_psi
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_fast_types, only : patch_biophys_t
    use meds_column_params, only : soil_params_t
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_column_state_types, only : cas_state_t, soil_carbon_t
-   use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, wood_params_t, root_params_t
+   use meds_plant_types, only : leaf_photo_table_t, hydro_params_t, hydro_params_table_t, hydro_opts_t, &
+                                wood_params_t, root_params_t
    use meds_biogeochem_types, only : n_soil_pool
    use meds_fast_types,       only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, cas_atm_conductances
@@ -94,7 +96,8 @@ contains
                                  soil_temp_root, theta_mean)
 
       !----- 3. leaf gas exchange + the frozen leaf-energy coefficients. ---------------------------!
-      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_table, col_config%veg_thermal,  &
+      call canopy_leaf_gas_exchange(col_config%leaf_photo, col_config%hydraulics_table,                   &
+                                    col_config%hydraulics_opts, col_config%veg_thermal,                &
                                     col_config%soil, col_cohort, forc, aero, biophys,                   &
                                     qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,                  &
                                     gpp_coh, leaf_resp_coh, cdiag)
@@ -192,11 +195,13 @@ contains
    ! which is exactly the regime this feedback exists for. Renaming the kernel dummy is deferred     !
    ! because `psi` is a published Python keyword (meds.plant.leaf) -- see issue #99.                 !
    !---------------------------------------------------------------------------------------!
-   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, veg_thermal, soil, col_cohort, forc, aero,  &
+   subroutine canopy_leaf_gas_exchange(leaf_photo, hyd_table, hyd_opts, veg_thermal, soil, col_cohort,    &
+                                       forc, aero,                                                       &
                                        biophys, qcas, press, rho, gpp, ra_leaf, h_coeff_leaf, g_transp_leaf,      &
                                        gpp_coh, leaf_resp_coh, cdiag)
       type(leaf_photo_table_t),   intent(in)  :: leaf_photo   !< per-PFT leaf parameters (once per run)
       type(hydro_params_table_t), intent(in)  :: hyd_table              !< PER-PFT leaf PV curve (#179)
+      type(hydro_opts_t),         intent(in)  :: hyd_opts               !< gravity switch (leafless cohorts)
       type(veg_thermal_params_t), intent(in)  :: veg_thermal  !< effective exchange areas
       type(soil_params_t),        intent(in)  :: soil         !< surface-layer retention (dmax_psi seed)
       type(column_cohort_t),      intent(in)  :: col_cohort
@@ -229,8 +234,9 @@ contains
          par_arr(i)      = cohort_leaf_par(forc%abs_par(i), col_cohort%lai(i), forc%par_per_w)
          vpd_arr(i)      = max(sat_vapor_pressure(biophys%leaf_temp(i)) - e_air, 0.0_wp)
          gb_arr(i)       = aero%leaf_gbw(i) * rho_mol_arr(i)
-         psi_leaf_arr(i) = psi_from_water_content(biophys%leaf_water_mass(i), hyd_table%pft(col_cohort%pft(i))%leaf_curve, &
-               col_cohort%bleaf(i))
+         psi_leaf_arr(i) = leaf_node_psi(biophys%leaf_water_mass(i), col_cohort%bleaf(i),                 &
+               biophys%wood_water_mass(i), col_cohort%bsap(i) + col_cohort%broot(i), col_cohort%height(i),   &
+               hyd_table%pft(col_cohort%pft(i)), hyd_opts)
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
                     soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))
