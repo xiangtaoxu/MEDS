@@ -28,7 +28,7 @@ module meds_phenology
    implicit none
    private
 
-   public :: phenology_kernel, leaf_turnover_step
+   public :: phenology_kernel, leaf_turnover_step, turnover_gate
 
    !----- Northern-equivalent day of the summer solstice: the cold sum counts from here, while !
    !      days shorten (doy_effective shifts the southern hemisphere by half a year).          !
@@ -36,6 +36,9 @@ module meds_phenology
    !----- A flush rate at or below this is dormant: a senescing canopy then snaps to bare     !
    !      rather than leaving an exponential tail (a numerical "off", not a trait).            !
    real(wp),    parameter :: DORMANT_FLUSH_EPS = 1.0e-6_wp    !< [1/day]
+   !----- A shed tendency at or below this counts as no leaf drop. Background turnover runs only  !
+   !      then, so a drop is never counted twice: the leaves a drought takes are not also aged out. !
+   real(wp),    parameter :: NO_DROP_SHED_TENDENCY = 0.01_wp   !< [-]
 
 contains
 
@@ -159,8 +162,8 @@ contains
    !  One step of leaf loss and the flush cap, in whatever carbon unit `leaf` is in. The      !
    !  carbon layer calls it per cohort; the C-API exposes it so Python applies the same rule. !
    !                                                                                         !
-   !    background = leaf_turnover_rate * leaf_flush_tendency * leaf * dt   (old leaves turned !
-   !                 over while new ones grow; none in dormancy)                               !
+   !    background = leaf_turnover_rate * turnover_gate * leaf * dt   (old leaves turned over    !
+   !                 while new ones grow; none in dormancy and none while leaves drop)          !
    !    senescence = shed_rate_max * leaf_shed_tendency * leaf * dt, stopping where leaf_cover !
    !                 (leaf / leaf_full) reaches min_leaf_cover                                 !
    !    flush_cap  = flush_rate_max * leaf_flush_tendency * leaf_full * dt                     !
@@ -182,7 +185,8 @@ contains
       real(wp) :: pool
 
       pool       = max(leaf, 0.0_wp)
-      background = min(max(leaf_turnover_rate, 0.0_wp) / yr_day * leaf_flush_tendency * pool * dt, pool)
+      background = min(max(leaf_turnover_rate, 0.0_wp) / yr_day                                    &
+                       * turnover_gate(leaf_flush_tendency, leaf_shed_tendency) * pool * dt, pool)
       senescence = min(max(shed_rate_max, 0.0_wp) * leaf_shed_tendency * pool * dt,                  &
                        max(0.0_wp, pool - background - min_leaf_cover * leaf_full))
       if (flush_rate_max * leaf_flush_tendency <= DORMANT_FLUSH_EPS .and. senescence > 0.0_wp      &
@@ -191,5 +195,14 @@ contains
          senescence = pool - background
       flush_cap  = max(flush_rate_max, 0.0_wp) * leaf_flush_tendency * leaf_full * dt
    end subroutine leaf_turnover_step
+
+   !----- The share of the background turnover rate that acts today: the flush tendency while no  !
+   !      leaves drop, nothing while they do (and nothing in dormancy, where the flush is 0). The   !
+   !      fine roots' background turnover runs on the same gate, so roots age with the leaves. ----!
+   pure real(wp) function turnover_gate(leaf_flush_tendency, leaf_shed_tendency) result(gate)
+      real(wp), intent(in) :: leaf_flush_tendency, leaf_shed_tendency   !< [-]
+      gate = 0.0_wp
+      if (leaf_shed_tendency <= NO_DROP_SHED_TENDENCY) gate = leaf_flush_tendency
+   end function turnover_gate
 
 end module meds_phenology

@@ -84,14 +84,19 @@ program test_c_api_phenology
                     'with no light memory, the first day sets it to par_hours')
 
    !=== 5. meds_leaf_turnover_step carries every argument through (background turnover,     !
-   !       senescence, the flush cap), each a distinct product of its inputs.                !
+   !       senescence, the flush cap), each a distinct product of its inputs. Background      !
+   !       turnover acts only while no leaves drop, so it is checked with no shed tendency.   !
    call meds_leaf_turnover_step(0.5_c_double, 1.0_c_double, 0.5_c_double, 1.0_c_double,              &
                                 0.06_c_double, 0.1_c_double, 0.5_c_double, 0.0_c_double,              &
                                 0.02_c_double, 1.0_c_double, sen, bg, cap)
    call check_close(sen, 0.05_wp, 1.0e-15_wp, 'leaf turnover: senescence = shed_rate_max*tendency*leaf*dt')
+   call check_close(bg, 0.0_wp, 0.0_wp, 'leaf turnover: no background while leaves drop')
+   call check_close(cap, 0.03_wp, 1.0e-15_wp, 'leaf turnover: flush cap = flush_rate_max*tendency*full*dt')
+   call meds_leaf_turnover_step(0.5_c_double, 1.0_c_double, 0.5_c_double, 0.0_c_double,              &
+                                0.06_c_double, 0.1_c_double, 0.5_c_double, 0.0_c_double,              &
+                                0.02_c_double, 1.0_c_double, sen, bg, cap)
    call check_close(bg, 0.5_wp / yr_day * 0.5_wp * 0.5_wp, 1.0e-15_wp,                              &
                     'leaf turnover: background = rate/yr * flush tendency * leaf * dt')
-   call check_close(cap, 0.03_wp, 1.0e-15_wp, 'leaf turnover: flush cap = flush_rate_max*tendency*full*dt')
 
    !=== 6. meds_daylength passes latitude and day of year through: 12 h at the equator,      !
    !       a long day at 60 N in June, polar night at 80 N in December.                      !

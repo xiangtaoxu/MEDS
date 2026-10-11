@@ -76,6 +76,7 @@ leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (spherical: mean 57.
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [0.5]  # [--] x (leaf + fine root): 0.5 keeps the earlier 1 x leaf carbon (root_to_leaf_ratio 1)
 growth_resp_factor     = [0.3]
+retained_carbon_fraction = [0.0]   # [--] no resorption: the calibration predates it (default 0.3)
 leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
