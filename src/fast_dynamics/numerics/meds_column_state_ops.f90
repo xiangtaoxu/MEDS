@@ -23,7 +23,7 @@
 !==========================================================================================!
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, tiny_num
+   use meds_constants,        only : rho_h2o, tiny_num, mmh2o
    use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
                                      stage_bflux_t, column_bflux_t, process_mask_t,                    &
@@ -35,7 +35,7 @@ module meds_column_state_ops
 
    public :: state_size, state_to_array, array_to_state, tend_to_array, state_entry_rules
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
-   public :: bflux_zero, bflux_add, bflux_bweight
+   public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
    public :: assemble_soil_energy_forcing, apply_process_mask
    public :: clamp_cas, clamp_theta, clamp_soil_energy
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
@@ -252,8 +252,8 @@ contains
       !      integrals on entry (F2018 8.5.10). An explicit `acc = column_bflux_t()` here is redundant !
       !      and nvfortran 25.11 rejects it in this module ("Empty structure constructor", F-0155). ---!
       if (present(n)) then
-         allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n))
-         acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp
+         allocate(acc%tissue_leaf_int(n), acc%tissue_wood_int(n), acc%transp_coh(n))
+         acc%tissue_leaf_int = 0.0_wp ; acc%tissue_wood_int = 0.0_wp ; acc%transp_coh = 0.0_wp
       end if
    end subroutine bflux_zero
 
@@ -284,7 +284,21 @@ contains
          acc%tissue_leaf_int = acc%tissue_leaf_int + s%tissue_leaf_int
          acc%tissue_wood_int = acc%tissue_wood_int + s%tissue_wood_int
       end if
+      if (allocated(acc%transp_coh) .and. allocated(s%transp_coh)) acc%transp_coh = acc%transp_coh + s%transp_coh
    end subroutine bflux_add
+
+   !----- A cohort's transpiration over a fast step, as the rate per leaf area the diagnostics report  !
+   !      [mol H2O/m2 leaf/s], from its amount over the step [kg/m2 ground]. A leafless cohort reports  !
+   !      zero. --------------------------------------------------------------------------------------!
+   elemental pure function transp_per_leaf_area(amount, dt, nplant, leaf_area) result(rate)
+      real(wp), intent(in) :: amount      !< [kg/m2 ground] over dt
+      real(wp), intent(in) :: dt          !< [s]
+      real(wp), intent(in) :: nplant      !< [plant/m2]
+      real(wp), intent(in) :: leaf_area   !< [m2 leaf/plant]
+      real(wp) :: rate
+      rate = 0.0_wp
+      if (nplant * leaf_area > tiny_num) rate = amount / dt / (nplant * leaf_area) / mmh2o
+   end function transp_per_leaf_area
 
    !----- out = (1-b)*y + b*Y2, the ARS stage-3 extrapolation base. The plant water, the films   !
    !      and the pond are frozen through the stages, so for them this is y again (up to rounding). !

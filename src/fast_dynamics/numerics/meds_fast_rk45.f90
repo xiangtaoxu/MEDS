@@ -35,7 +35,8 @@ module meds_fast_rk45
                                      clamp_theta, clamp_cas, clamp_soil_energy, soil_water_store,   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
-                                     diagnose_soil_temps
+                                     diagnose_soil_temps, transp_per_leaf_area
+   use meds_site_diag_types,  only : CD_TRANSP
    use meds_fast_control,     only : state_wrms_grouped,                                         &
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
@@ -142,7 +143,7 @@ contains
    ! exactly as it would for any other oversized step -- no separate detection logic needed. ---------------!
    pure subroutine rk45_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_out, &
-                                    tissue_leaf_int, tissue_wood_int, cond_enth_out,                   &
+                                    tissue_leaf_int, tissue_wood_int, transp_int, cond_enth_out,       &
                                     atm_heat_out, atm_vap_out, face_resid_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
@@ -163,6 +164,7 @@ contains
       real(wp),    optional,  intent(out)   :: cond_enth_out !< [J/m2] its liquid enthalpy, b-weighted at the stage CAS temps
       real(wp), optional,     intent(out) :: atm_heat_out, atm_vap_out   !< [J/m2],[kg/m2] net CAS->atm sensible/vapour over dt
       real(wp),    optional,  intent(out)   :: tissue_leaf_int(n), tissue_wood_int(n)  !< [K*s]
+      real(wp),    optional,  intent(out)   :: transp_int(n)   !< [kg/m2] each cohort's transpiration over dt
       !----- PER-LAYER FACE CLOSURE (#189): sum over interior layers of |the mass this step's       !
       !      committed theta actually moved - the mass the SOIL-ENERGY equation was charged for|.    !
       !      Zero by construction while the energy advects on its own stage's water faces, which is  !
@@ -179,13 +181,14 @@ contains
       !----- Per-stage tissue temperatures, kept so the store's energy can be set from their TIME    !
       !      INTEGRAL rather than from the last stage -- see column_bflux_t's note. RK45 is the       !
       !      accuracy baseline, so paying n x 6 here is the right trade. ------------------------------!
-      real(wp) :: tleaf_s(n,6), twood_s(n,6)
+      real(wp) :: tleaf_s(n,6), twood_s(n,6), transp_s(n,6)
       real(wp) :: bw_face(n_soil_layer_max), f_in, f_out, uptk, face_resid
       integer(ik) :: kf
 
       call column_derivs(y, frozen, col_config, n, nsl, k1, sf_out=surf_tend)
       call stage_bnd(y, frozen, surf_tend, rnet(1), atm_enth(1), atm_vap(1), cond(1), cond_enth(1), atm_heat(1))
       tleaf_s(1:n,1) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,1) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,1) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage) ; call state_accum(y_stage, dt*A21, k1, n, nsl)
       call clamp_theta(y_stage, col_config, nsl, nfire=clamp_stage_n)
@@ -194,6 +197,7 @@ contains
       call column_derivs(y_stage, frozen, col_config, n, nsl, k2, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,2) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,2) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A31, k1, n, nsl) ; call state_accum(y_stage, dt*A32, k2, n, nsl)
@@ -203,6 +207,7 @@ contains
       call column_derivs(y_stage, frozen, col_config, n, nsl, k3, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,3) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,3) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A41, k1, n, nsl) ; call state_accum(y_stage, dt*A42, k2, n, nsl)
@@ -213,6 +218,7 @@ contains
       call column_derivs(y_stage, frozen, col_config, n, nsl, k4, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,4) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,4) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A51, k1, n, nsl) ; call state_accum(y_stage, dt*A52, k2, n, nsl)
@@ -223,6 +229,7 @@ contains
       call column_derivs(y_stage, frozen, col_config, n, nsl, k5, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,5) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,5) = surf_tend%transp_c(1:n)
 
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A61, k1, n, nsl) ; call state_accum(y_stage, dt*A62, k2, n, nsl)
@@ -234,6 +241,7 @@ contains
       call column_derivs(y_stage, frozen, col_config, n, nsl, k6, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,6) = surf_tend%wood_temp(1:n)
+      transp_s(1:n,6) = surf_tend%transp_c(1:n)
 
       !----- y_out = y + dt*(B1*k1 + B3*k3 + B4*k4 + B6*k6)  [5th order; b2=b5=0]. -----------!
       call state_init(y, n, nsl, y_out)
@@ -335,6 +343,10 @@ contains
          tissue_wood_int(1:n) = dt * (B1*twood_s(1:n,1) + B3*twood_s(1:n,3)                       &
                                       + B4*twood_s(1:n,4) + B6*twood_s(1:n,6))
       end if
+      !----- ...and each cohort's transpiration, the same b-weighted stage fluxes its leaf water was    !
+      !      debited and the canopy air credited. -----------------------------------------------------!
+      if (present(transp_int)) transp_int(1:n) = dt * (B1*transp_s(1:n,1) + B3*transp_s(1:n,3)       &
+                                                     + B4*transp_s(1:n,4) + B6*transp_s(1:n,6))
 
       !----- NO clip / theta_res-floor term any more (#78 item 3). Those were the SCRATCH solve's        !
       !      post-solve corrections, and they entered here as whole-column BOUNDARY flux -- clipped      !
@@ -373,7 +385,7 @@ contains
                                   w_out_acc, e_in_acc, e_out_acc, dt_warm_out,                    &
                                   clamp_stage_n, clamp_commit_n, clamp_mass, clamp_energy, cond_acc,  &
                                   cond_enth_acc, atm_heat_acc, atm_vap_acc, face_resid_acc,           &
-                                  ood_max, tissue_leaf_acc, tissue_wood_acc)
+                                  ood_max, tissue_leaf_acc, tissue_wood_acc, transp_acc)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
@@ -398,6 +410,7 @@ contains
       real(wp), optional,     intent(inout) :: atm_heat_acc, atm_vap_acc   !< [J/m2],[kg/m2] net CAS->atm export, accepted sub-steps
       !----- [K*s] per-cohort tissue-temperature time integrals over the accepted march. Caller zeroes.!
       real(wp),    optional,  intent(inout) :: tissue_leaf_acc(n), tissue_wood_acc(n)
+      real(wp),    optional,  intent(inout) :: transp_acc(n)   !< [kg/m2] per-cohort transpiration, accepted march
       !----- [m3/m3] running MAX theta excursion outside [theta_res, theta_sat] at a stage-1 RHS input   !
       !      (issue #78 item 2 telemetry -- see column_budget_t%theta_ood_max). Measured on EVERY trial, !
       !      accepted or not: a rejected trial's out-of-domain probe is still a place the RHS was        !
@@ -409,7 +422,7 @@ contains
       real(wp) :: w_out, e_in, e_out, dt_try, dt_warm
       real(wp) :: cmass_i, cenergy_i, cond_i, cond_enth_i, face_i
       real(wp)    :: atm_heat_i, atm_vap_i
-      real(wp) :: tl_int_i(n), tw_int_i(n)
+      real(wp) :: tl_int_i(n), tw_int_i(n), tr_int_i(n)
       integer(ik) :: ccommit_i, kood
       logical  :: clamped
 
@@ -441,7 +454,7 @@ contains
          call rk45_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, w_out, e_in, e_out,               &
                                clamp_stage_n=clamp_stage_n, clamp_commit_n=ccommit_i,              &
                                clamp_mass=cmass_i, clamp_energy=cenergy_i, cond_out=cond_i,       &
-                               tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i,                &
+                               tissue_leaf_int=tl_int_i, tissue_wood_int=tw_int_i, transp_int=tr_int_i, &
                                cond_enth_out=cond_enth_i, atm_heat_out=atm_heat_i, atm_vap_out=atm_vap_i, &
                                face_resid_out=face_i)
          !----- named temporary: never pass a derived-type-valued function result straight into a  !
@@ -485,6 +498,7 @@ contains
                tissue_leaf_acc(1:n) = tissue_leaf_acc(1:n) + tl_int_i(1:n)
                tissue_wood_acc(1:n) = tissue_wood_acc(1:n) + tw_int_i(1:n)
             end if
+            if (present(transp_acc)) transp_acc(1:n) = transp_acc(1:n) + tr_int_i(1:n)
             t = t + dt ; nsteps = nsteps + 1_ik
             err_prev = err
             if (.not. clamped) dt_warm = dt
@@ -545,7 +559,7 @@ contains
       real(wp)    :: surf_water0, surf_water1, surf_enth0, surf_enth1
       real(wp)    :: surf_overflow, surf_deficit, leaf_cap_i, wood_cap_i, intercept_total
       real(wp)    :: tissue_store0, tissue_store1
-      real(wp)    :: tl_int_acc(col_cohort%n), tw_int_acc(col_cohort%n)
+      real(wp)    :: tl_int_acc(col_cohort%n), tw_int_acc(col_cohort%n), tr_int_acc(col_cohort%n)
       real(wp)    :: cap_leaf_a(col_cohort%n), cap_wood_a(col_cohort%n)
       type(error_control_t) :: ec
       integer(ik) :: n, nsl, k, i, nsteps, nrej
@@ -573,7 +587,7 @@ contains
       if (col_config%integrator%dt_init > tiny_num) dt0 = min(col_config%integrator%dt_init, dt_fast)
       ec = col_config%integrator%error_control
       ec%p_order = RK45_P_ORDER
-      tl_int_acc(1:n) = 0.0_wp ; tw_int_acc(1:n) = 0.0_wp
+      tl_int_acc(1:n) = 0.0_wp ; tw_int_acc(1:n) = 0.0_wp ; tr_int_acc(1:n) = 0.0_wp
       call adaptive_rk45_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, nsteps, nrej,             &
                               w_out_acc, e_in_acc, e_out_acc, dt_warm_out=dt_warm_next,           &
                               clamp_stage_n=budget%clamp_stage_n, clamp_commit_n=budget%clamp_commit_n, &
@@ -581,7 +595,7 @@ contains
                               cond_acc=cond_dep, cond_enth_acc=cond_dep_enth,                     &
                               atm_heat_acc=budget%atm_heat_export, atm_vap_acc=budget%atm_vap_export, &
                               ood_max=budget%theta_ood_max, face_resid_acc=face_acc,                 &
-                              tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc)
+                              tissue_leaf_acc=tl_int_acc, tissue_wood_acc=tw_int_acc, transp_acc=tr_int_acc)
       biophys%adapt_dt_last = dt_warm_next
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
       !----- PER-LAYER FACE CLOSURE (#189). On this path theta is RK45's own, so the check has to be   !
@@ -768,6 +782,9 @@ contains
       else
          biophys%leaf_temp(1:n) = frozen%tissue%t_leaf0(1:n) ; biophys%wood_temp(1:n) = frozen%tissue%t_wood0(1:n)
       end if
+      !----- The transpiration each cohort's leaves lost over the step, as on the ARK path. ---------!
+      if (present(cdiag)) cdiag(CD_TRANSP, 1:n) = transp_per_leaf_area(tr_int_acc(1:n), dt_fast,          &
+                                                                       col_cohort%nplant(1:n), col_cohort%leaf_area(1:n))
       do i = 1_ik, n
          tissue_store1 = tissue_store1 + cap_leaf_a(i) * biophys%leaf_temp(i)                             &
                                        + cap_wood_a(i) * biophys%wood_temp(i)

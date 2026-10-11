@@ -784,6 +784,9 @@ module meds_fast_types
       !      With a CAS that is constant over the step every stage returns the same temperature and    !
       !      the integral collapses to it, so this degenerates correctly. -----------------------------!
       real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
+      !----- Each cohort's transpiration over the step [kg/m2 ground], b-weighted the same way: the  !
+      !      water its leaves were debited and the canopy air credited, which the diagnostics report. !
+      real(wp), allocatable :: transp_coh(:)
    end type column_bflux_t
 
 

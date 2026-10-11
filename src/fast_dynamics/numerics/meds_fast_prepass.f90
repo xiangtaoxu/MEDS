@@ -19,7 +19,7 @@ module meds_fast_prepass
    use meds_constants,        only : tiny_num, cp_air, r_gas, grav_head, kgCday_2_umols
    use meds_config,           only : meds_config_t
    use meds_site_diag_types,  only : CD_ANET, CD_AGROSS, CD_GSW, CD_GBW, CD_CI, CD_CS, CD_RD,      &
-                                     CD_TRANSP, CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,       &
+                                     CD_BETA_STOM, CD_BETA_NONSTOM, CD_LEAF_TEMP,                  &
                                      CD_WOOD_TEMP, CD_LEAF_VPD, CD_PSI_LEAF, CD_ABS_PAR, CD_ABS_SW, &
                                      CD_ABS_LW, CD_WIND, CD_LEAF_WATER, CD_WOOD_WATER, CD_GPP_RATE, &
                                      CD_LEAF_PAR, CD_GB_MOL, CD_PSI_PREDAWN, CD_CA, CD_PRESSURE
@@ -219,7 +219,7 @@ contains
             psi_leaf_arr(col_cohort%n)
       real(wp) :: dmax_psi_arr(col_cohort%n), dmax_psi_seed
       real(wp) :: a_gross_arr(col_cohort%n), gs_arr(col_cohort%n), rd_arr(col_cohort%n)
-      real(wp) :: a_net_arr(col_cohort%n), ci_arr(col_cohort%n), cs_arr(col_cohort%n), transp_arr(col_cohort%n)
+      real(wp) :: a_net_arr(col_cohort%n), ci_arr(col_cohort%n), cs_arr(col_cohort%n)
       real(wp) :: bstom_arr(col_cohort%n), bnstom_arr(col_cohort%n)
       real(wp) :: e_air, gsw_ms
       integer(ik) :: i, n
@@ -252,7 +252,7 @@ contains
                                       psi_leaf_arr, gb_arr, leaf_photo, col_cohort%pft(1:n),                  &
                                       col_cohort%vcmax25(1:n), col_cohort%rd25(1:n), a_gross_arr, gs_arr, rd_arr, &
                                       psi=dmax_psi_arr(1:n),                                            &
-                                      a_net=a_net_arr, ci=ci_arr, cs=cs_arr, transp=transp_arr,         &
+                                      a_net=a_net_arr, ci=ci_arr, cs=cs_arr,                            &
                                       beta_stom=bstom_arr, beta_nonstom=bnstom_arr)
          do i = 1_ik, n
             cdiag(CD_ANET,         i) = a_net_arr(i)
@@ -262,7 +262,6 @@ contains
             cdiag(CD_CI,           i) = ci_arr(i)
             cdiag(CD_CS,           i) = cs_arr(i)
             cdiag(CD_RD,           i) = rd_arr(i)
-            cdiag(CD_TRANSP,       i) = transp_arr(i)
             cdiag(CD_BETA_STOM,    i) = bstom_arr(i)
             cdiag(CD_BETA_NONSTOM, i) = bnstom_arr(i)
             cdiag(CD_LEAF_TEMP,    i) = biophys%leaf_temp(i)

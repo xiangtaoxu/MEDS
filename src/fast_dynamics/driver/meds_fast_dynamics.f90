@@ -1184,7 +1184,7 @@ contains
       row(PD_RECO)         = nee + gpp
       !----- Transpiration as a WATER flux [kg/m2/s]: the latent flux is the canopy-air -> atmosphere  !
       !      total, so this is the evaporative flux the CAS actually shed, not a stomatal-only term.    !
-      !      The stomatal share is available per cohort (CD_TRANSP) for anyone who needs the split.     !
+      !      Each cohort's own transpiration is available per cohort (CD_TRANSP) for the split.         !
       row(PD_TRANSP)       = le_flux / latent_heat_vap
       row(PD_SOIL_TEMP_TOP) = soil_temp_top
       !----- Whole-column budget residuals. These are the numbers that decide whether anything above  !

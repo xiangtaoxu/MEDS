@@ -530,7 +530,7 @@ contains
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_CS)
       call add_variable(reg, 'rd_cohort', 'leaf dark respiration', 'umol/m2 leaf/s',             &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_RD)
-      call add_variable(reg, 'transp_cohort', 'leaf transpiration', 'mol/m2 leaf/s',             &
+      call add_variable(reg, 'transp_cohort', 'leaf transpiration (the water the leaves lose)', 'mol/m2 leaf/s', &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_TRANSP)
       call add_variable(reg, 'beta_stomata_cohort', 'stomatal water-stress factor', '-',         &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_BETA_STOM)

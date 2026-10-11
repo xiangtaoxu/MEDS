@@ -38,6 +38,7 @@ module meds_constants
 
    !----- Canopy-air CO2 balance + soil respiration (carbon <-> mole conversions). --------!
    real(wp), parameter :: mmdry          = 0.0289655_wp        !< [kg/mol] dry-air molar mass (~28.97 g/mol)
+   real(wp), parameter :: mmh2o          = 0.01801528_wp       !< [kg/mol] water molar mass (~18.02 g/mol)
    real(wp), parameter :: umol_2_kgC     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
    real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
    real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
