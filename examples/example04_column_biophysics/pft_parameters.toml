@@ -24,7 +24,7 @@ recruit_carbon_efficiency          = [1.0e-3]
 seed_rain_recruits = [0.01]      # [plant/m2/yr]
 include_pft        = [1]
 min_cohort_height       = 2.0    # [m] shared scalar (recruit/birth size)
-min_reproduction_height = 20.0   # [m] shared scalar
+reproduction_height_fraction = 0.47440838365101196   # [--] reproduce from this share of the local maximum height (20 m: the power curve's 100 cm tree is 42.16 m)
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
 vcmax25            = [45.0]

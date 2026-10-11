@@ -1173,7 +1173,8 @@ contains
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
-      call req_r(tp, 'pft.min_reproduction_height', cfg%pft%min_reproduction_height, miss)
+      if (toml_has(tp, 'pft.reproduction_height_fraction'))                                       &
+         cfg%pft%reproduction_height_fraction = toml_real(tp, 'pft.reproduction_height_fraction', 0.0_wp)
 
       !----- Leaf-photosynthesis per-PFT traits. ------------------------------------------!
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
@@ -1353,7 +1354,7 @@ contains
       write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
            //'reproduction_investment_fraction,recruit_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
-           //'min_cohort_height,min_reproduction_height,'                                              &
+           //'min_cohort_height,reproduction_height_fraction,'                                         &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c3,theta_ip_c3,'   &
            //'theta_cj_c4,theta_ic_c4,'                                                               &
@@ -1376,7 +1377,7 @@ contains
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
-                 p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
+                 p%include_pft(pf), p%min_cohort_height, p%reproduction_height_fraction,                &
                  p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
                  p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c3(pf), p%theta_ip_c3(pf),           &

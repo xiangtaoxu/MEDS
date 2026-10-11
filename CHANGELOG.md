@@ -117,6 +117,16 @@ before and after.
   with empty storage, and the wet-season stand LAI stayed at 3.3-3.6 (MODIS: 5.3 in October). The
   examples now set 0.5, which is exactly their earlier storage (root_to_leaf_ratio 1), so their
   results are unchanged.
+- **Reproduction starts at a share of the local maximum height** (#388): `pft.reproduction_height_fraction`
+  [-], optional with default 0.33, replaces the required `pft.min_reproduction_height` [m]. A cohort
+  reproduces once its height reaches that share of the local maximum height, the height of a 100 cm tree on the run's height curve capped at
+  `hgt_max` (`local_hmax`), so where the local allometry makes trees short (a large Chave E) they mature
+  short; under Chave's curve a given share falls at the same diameter at every site. A config converts
+  as fraction = old height / local maximum height: examples 03-05 and the region test keep their
+  thresholds exactly (20 m = 0.4744 on the power curve, 0.6055 on BCI's gMM curve; example 05's fitted
+  5.27 m = 0.1595), and `calibrate_growth.py` now fits the fraction. The reference
+  `meds_config_pft.toml` takes the default, so its threshold moves from 20 m to 13.9 m (0.33 of the
+  power curve's 42.2 m).
 - **Water stress is one fast and one slow control, and the soil no longer has a wilting point** (#384).
   - *Fast:* the capacity limb on Vcmax/Jmax/TPU is always on and reads the leaf's current water
     potential, from the PFT's turgor-loss point (1) to twice it (0). As the leaf wilts, A and with it

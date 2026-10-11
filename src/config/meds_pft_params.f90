@@ -18,7 +18,8 @@
 !     in the rate module from the carbon diverted to reproduction.                             !
 !                                                                                          !
 ! Two shared height thresholds: `min_cohort_height` (the smallest tracked cohort; recruits are !
-! born here) and `min_reproduction_height` (the height a cohort must exceed to reproduce). The !
+! born here) and `reproduction_height_fraction` (a cohort reproduces from that share of the    !
+! local maximum height, meds_allometry::local_hmax). The                                      !
 ! default table seeds three strategies (pioneer/mid/climax) differing only in wood density and !
 ! maximum diameter.                                                                          !
 !==========================================================================================!
@@ -68,7 +69,7 @@ module meds_pft_params
       integer(ik), allocatable :: include_pft(:)        !< 1 = PFT may recruit, 0 = excluded
       !----- Shared height thresholds. ----------------------------------------------------!
       real(wp) :: min_cohort_height          !< [m] smallest tracked cohort; recruits born here
-      real(wp) :: min_reproduction_height    !< [m] height a cohort must exceed to reproduce
+      real(wp) :: reproduction_height_fraction  !< [-] share of the local maximum height to reproduce
       !----- Leaf photosynthesis / stomatal traits (per PFT; see meds_fast_config). -------!
       integer(ik), allocatable :: photosynthetic_pathway(:) !< PATH_C3 | PATH_C4
       real(wp), allocatable :: vcmax25(:)            !< [umol/m2/s] max carboxylation at 25 degC
@@ -327,6 +328,7 @@ contains
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
       pft%retained_carbon_fraction = 0.3_wp ! #151: optional key; 30% of leaf and root loss resorbed
+      pft%reproduction_height_fraction = 0.33_wp ! optional key; within Thomas (1996)'s 0.20-0.75
       !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!

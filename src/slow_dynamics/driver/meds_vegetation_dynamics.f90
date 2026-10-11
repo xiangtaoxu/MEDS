@@ -19,7 +19,7 @@ module meds_vegetation_dynamics
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
-                                         storage_carbon_target
+                                         storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -628,8 +628,12 @@ contains
 
             store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
                                                              r2l * leaf_target) - store_post)
+            !----- Reproduction starts at a share of the local maximum height, so where the local   !
+            !      allometry makes trees short they mature short (Thomas 1996's relative size at     !
+            !      onset of maturity). --------------------------------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
-                                 cohort%height(j) >= pft%min_reproduction_height)
+                                 cohort%height(j) >= pft%reproduction_height_fraction                &
+                                                     * local_hmax(cohort%p_hgt_max(j)))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
