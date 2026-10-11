@@ -4,7 +4,7 @@ program test_allometry
    use meds_kinds,       only : wp, ik
    use meds_allometry,   only : dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh,         &
                                 dbh_to_leaf_area, set_allometry,                              &
-                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM
+                                size2leaf_carbon, size2wood_carbon, wood_to_dbh, HEIGHT_GMM, HEIGHT_CHAVE
    use meds_test_support, only : banner, check, check_close
    implicit none
 
@@ -110,6 +110,30 @@ program test_allometry
    call check_close(agb_to_dbh(agb, rho, 35.0_wp), dbh, 1.0e-9_wp, 'gMM agb_to_dbh inverse (capped)')
    wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
    call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'gMM wood_to_dbh inverse')
+
+   !=== Chave et al. (2014) eq. 6a at E = 0.2 and its two inverses. The expected heights are     !
+   !    BIOMASS's retrieveH: exp(0.893 - E + 0.760 ln D - 0.0340 (ln D)^2 + 0.243^2/2). =========!
+   call set_allometry(1.139963_wp, 0.564899_wp, 0.03365_wp, 0.976_wp,         &
+                      0.370_wp, 0.464_wp, 0.23384770_wp, 0.6410495_wp, 0.5_wp, &
+                      HEIGHT_CHAVE, chave_e_in=0.2_wp)
+   call check_close(dbh_to_height(1.0_wp, 100.0_wp), 2.0596261794_wp, 1.0e-9_wp, 'Chave height at 1 cm')
+   call check_close(dbh_to_height(10.0_wp, 100.0_wp), 9.8969302660_wp, 1.0e-9_wp, 'Chave height at 10 cm')
+   call check_close(dbh_to_height(30.0_wp, 100.0_wp), 18.4325408427_wp, 1.0e-9_wp, 'Chave height at 30 cm')
+   call check_close(dbh_to_height(60.0_wp, 100.0_wp), 26.1607976122_wp, 1.0e-9_wp, 'Chave height at 60 cm')
+   call check_close(dbh_to_height(100.0_wp, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'Chave height caps at hgt_max')
+   do i = 1_ik, 3_ik
+      dbh = dvec(i)
+      call check_close(height_to_dbh(dbh_to_height(dbh, 100.0_wp)), dbh, 1.0e-9_wp,                &
+                       'Chave dbh<->height round trip')
+      agb = dbh_to_agb(dbh, dbh_to_height(dbh, 100.0_wp), rho)
+      call check_close(agb_to_dbh(agb, rho, 100.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (uncapped)')
+   end do
+   dbh = 120.0_wp
+   call check_close(dbh_to_height(dbh, 30.0_wp), 30.0_wp, 1.0e-12_wp, 'a 120 cm stem is at a 30 m cap')
+   agb = dbh_to_agb(dbh, dbh_to_height(dbh, 30.0_wp), rho)
+   call check_close(agb_to_dbh(agb, rho, 30.0_wp), dbh, 1.0e-9_wp, 'Chave agb_to_dbh inverse (capped)')
+   wood_c = size2wood_carbon(80.0_wp, dbh_to_height(80.0_wp, 100.0_wp), rho, agf)
+   call check_close(wood_to_dbh(wood_c, rho, 100.0_wp, agf), 80.0_wp, 1.0e-9_wp, 'Chave wood_to_dbh inverse')
 
    write(*,'(a)') '   PASS'
 end program test_allometry

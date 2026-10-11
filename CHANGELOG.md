@@ -16,6 +16,12 @@ before and after.
 
 ### Added
 
+- **Chave et al. (2014)'s height curve** (#386): `[allometry].height_allometry = "chave2014"` sets height
+  from diameter by Chave's pantropical eq. 6a, ln H = 0.893 - E + 0.760 ln D - 0.0340 (ln D)^2, at its
+  mean (+ 0.243^2/2, as BIOMASS's retrieveH), with the site's stress index E as `[allometry].chave_e`.
+  Height to diameter and biomass to diameter are its exact inverses (the smaller root of a quadratic
+  in ln D), capped at `hgt_max` like the other two curves. `test_allometry` checks the heights against
+  retrieveH and both inverses. Configs that do not set the option are unchanged.
 - **The Python API reads each cohort's carbon budget**: `Run.cohorts` gains `gpp`, `leaf_resp`,
   `stem_resp` and `root_resp` (the last slow step's GPP and maintenance respiration [kgC/plant]),
   `npp` and its parts `npp_leaf`, `npp_fineroot`, `npp_wood`, `npp_storage`, `npp_repro`, with
