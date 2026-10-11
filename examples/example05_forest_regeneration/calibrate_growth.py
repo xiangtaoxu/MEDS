@@ -69,7 +69,7 @@ WORK = os.path.join(HERE, "output", "calibration")
 RESULT = os.path.join(HERE, "calibration.json")
 
 #: The fitted parameters and their boxes.
-FIT = {"min_reproduction_height": (5.0, 30.0),   # [m] reproduction starts above it
+FIT = {"reproduction_height_fraction": (0.15, 0.9),   # [--] of the local maximum height (5-30 m at BCI)
        "fineroot_turnover": (1.5, 5.0),          # [--] fine-root turnover x leaf_lifespan_toc
        "vcmax_scale": (0.7, 1.2)}                # [--] on the PFT file's Vcmax25
 #: Stand totals of the trial's second year, (mean, sd) each, added to the loss as ((x - mean) / sd)^2.
@@ -107,7 +107,7 @@ def apply(cfg, par):
     cfg.set("derived.kplastic_rd", k_rd, file="pft")
     cfg.set("pft.fineroot_turnover_rate",
             [par["fineroot_turnover"] / ll for ll in cfg.get("pft.leaf_lifespan_toc", file="pft")], file="pft")
-    cfg.set("pft.min_reproduction_height", par["min_reproduction_height"], file="pft")
+    cfg.set("pft.reproduction_height_fraction", par["reproduction_height_fraction"], file="pft")
     return cfg
 
 

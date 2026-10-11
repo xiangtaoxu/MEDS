@@ -151,8 +151,14 @@ penalty. Growth, competition and reproduction parameters are per-PFT but ship un
 Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
 `[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
 instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado
-Island; either curve is capped at `[pft].hgt_max`, and biomass, leaf area and crown area take the
-height it gives.
+Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, ln H = 0.893 − E +
+0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
+(`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
+seasonal or hotter the site, the larger E and the shorter its trees. Every curve is capped at
+`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
+height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
+allometry.
 
 ## How a run starts
 

@@ -19,7 +19,7 @@ module meds_vegetation_dynamics
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
-                                         storage_carbon_target
+                                         storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -35,7 +35,7 @@ module meds_vegetation_dynamics
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
-   use meds_phenology, only : phenology_kernel, leaf_turnover_step
+   use meds_phenology, only : phenology_kernel, leaf_turnover_step, turnover_gate
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_sink_limitation,      only : growth_sink_limitation
    use meds_litter_partition, only : necromass_to_litter
@@ -574,7 +574,7 @@ contains
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
-      real(wp)    :: storage_maint, store_post, leaf_retained_c
+      real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
       real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost, exudate
       real(wp), allocatable :: co2_owed(:), efficiency(:)
       logical     :: starving
@@ -628,8 +628,12 @@ contains
 
             store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
                                                              r2l * leaf_target) - store_post)
+            !----- Reproduction starts at a share of the local maximum height, so where the local   !
+            !      allometry makes trees short they mature short (Thomas 1996's relative size at     !
+            !      onset of maturity). --------------------------------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
-                                 cohort%height(j) >= pft%min_reproduction_height)
+                                 cohort%height(j) >= pft%reproduction_height_fraction                &
+                                                     * local_hmax(cohort%p_hgt_max(j)))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
@@ -647,7 +651,8 @@ contains
                      pft%pheno_min_leaf_cover(pf), pft%pheno_bare_leaf_cover(pf),                  &
                      cohort%leaf_carbon(j), cohort%fineroot_carbon(j), leaf_target, dt_day, r2l,   &
                      gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
-                     fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c)
+                     fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c,           &
+                     fineroot_retained_c)
             !----- Allocate the daily carbon to GROWTH (growth respiration charged on realized     !
             !      growth INSIDE the kernel; storage funds leaf/root growth even when net < 0). ---!
             call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
@@ -671,11 +676,11 @@ contains
             npp%fineroot(j)      = g_fineroot - fineroot_shed_c
             npp%wood(j)          = g_wood
             !----- The storage maintenance leaves the pool HERE, as part of this step's tendency,     !
-            !      and the resorbed leaf carbon ARRIVES here for the same reason (#151). npp%leaf     !
-            !      above already carries the FULL leaf_shed_c removal, so this credit moves carbon    !
-            !      between two pools rather than creating any -- which is precisely the closure the   !
-            !      design note warns is easy to get wrong.                                             !
-            npp%nonstructural(j) = npp_store - storage_maint + leaf_retained_c
+            !      and the resorbed leaf and fine-root carbon ARRIVES here for the same reason (#151). !
+            !      npp%leaf and npp%fineroot above already carry the FULL shed removals, so this       !
+            !      credit moves carbon between pools rather than creating any -- which is precisely    !
+            !      the closure the design note warns is easy to get wrong.                             !
+            npp%nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
             npp_repro(j)         = g_repro
             !----- SLOW-loop diagnostics: the NPP allocation split and growth respiration were pure  !
             !      locals here -- computed every step for every cohort and discarded, so the carbon   !
@@ -720,11 +725,11 @@ contains
             if (cfg%soil_carbon_on) then
                seed_lost = g_repro * cohort%nplant(j)                                              &
                          * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
-               !----- Only the NON-resorbed share of the leaf shed becomes litter (#151); the rest   !
-               !      went to storage above. Their sum is leaf_shed_c, so the leaf pool's full removal !
-               !      is matched exactly by (storage credit + litter input).  --------------------------!
+               !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
+               !      (#151); the rest went to storage above, so each pool's full removal is matched  !
+               !      exactly by (storage credit + litter input).  -----------------------------------!
                call necromass_to_litter((leaf_shed_c - leaf_retained_c) * cohort%nplant(j),          &
-                        fineroot_shed_c * cohort%nplant(j),                                          &
+                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j),                  &
                         0.0_wp, seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                 &
                         pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                            &
                         lab_g, lab_s, str_g, str_s, lig_g, lig_s)
@@ -978,15 +983,18 @@ contains
    ! the POST-SHED pools. The leaf loss and the flush cap come from the phenology kernel's       !
    ! leaf_turnover_step, the same rule the Python mirror applies: senescence at shed_rate_max *  !
    ! leaf_shed_tendency down to min_leaf_cover of the full canopy, plus background turnover      !
-   ! while the canopy flushes. Every input is a plain scalar (the caller's per-kernel-call       !
-   ! convention), so no cohort/PFT SoA type needs to be named here. ----------------------------!
+   ! while the canopy flushes and drops no leaves. Fine roots do not drop with the leaves: they   !
+   ! keep the plant's water uptake (root length sets the root-soil conductance), and only their  !
+   ! background turnover follows the leaves' gate, so they age and regrow with the canopy.       !
+   ! Every input is a plain scalar (the caller's per-kernel-call convention), so no cohort/PFT   !
+   ! SoA type needs to be named here. -----------------------------------------------------------!
    pure subroutine cohort_carbon_demand(fast_biophysics_on,                                       &
             gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum, gpp_ref, leaf_area, dt_yr, &
             leaf_flush_tendency, leaf_shed_tendency, flush_rate_max, shed_rate_max, leaf_turn,     &
             fineroot_turnover_rate, min_leaf_cover, bare_leaf_cover,                               &
             leaf_carbon, fineroot_carbon, leaf_target, dt_day, r2l,                                &
             gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand, fineroot_demand,     &
-            retained_frac, leaf_retained_c)
+            retained_frac, leaf_retained_c, fineroot_retained_c)
       logical,  intent(in)  :: fast_biophysics_on
       real(wp), intent(in)  :: gpp_accum, leaf_resp_accum, stem_resp_accum, root_resp_accum
       real(wp), intent(in)  :: gpp_ref, leaf_area, dt_yr
@@ -997,14 +1005,14 @@ contains
       real(wp), intent(in)  :: leaf_carbon, fineroot_carbon, leaf_target, dt_day, r2l
       real(wp), intent(out) :: gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c
       real(wp), intent(out) :: leaf_demand, fineroot_demand
-      !----- #151: the share of this step's SENESCENCE resorbed back into the non-structural     !
-      !      pool. Reported separately from leaf_shed_c, which stays the FULL removal from the    !
-      !      leaf pool -- crediting storage while removing only the litter share would CREATE      !
-      !      carbon. Background turnover is not resorbed: the turnover rate it comes from is       !
-      !      calibrated against observed litterfall, which already has resorption in it. ---------!
+      !----- #151: the share of this step's leaf and fine-root LOSS (senescence and background    !
+      !      turnover alike) resorbed back into the non-structural pool. Reported separately from  !
+      !      leaf_shed_c and fineroot_shed_c, which stay the FULL removals from the two pools --    !
+      !      crediting storage while removing only the litter share would CREATE carbon. ---------!
       real(wp), intent(in)  :: retained_frac        !< [-] retained_carbon_fraction for this PFT
-      real(wp), intent(out) :: leaf_retained_c      !< [kgC/plant] resorbed to storage this step
-      real(wp) :: senescence, background, flush_cap, leaf_post, root_post, root_pool
+      real(wp), intent(out) :: leaf_retained_c      !< [kgC/plant] leaf carbon resorbed this step
+      real(wp), intent(out) :: fineroot_retained_c  !< [kgC/plant] fine-root carbon resorbed this step
+      real(wp) :: senescence, background, flush_cap, leaf_post, root_post, root_pool, retained
 
       if (fast_biophysics_on) then
          gross_gpp  = gpp_accum
@@ -1019,10 +1027,14 @@ contains
                               bare_leaf_cover, dt_day, senescence, background, flush_cap)
       leaf_shed_c     = senescence + background
       root_pool       = max(fineroot_carbon, 0.0_wp)
-      fineroot_shed_c = min(max(fineroot_turnover_rate, 0.0_wp) / yr_day * root_pool * dt_day, root_pool)
+      fineroot_shed_c = min(max(fineroot_turnover_rate, 0.0_wp) / yr_day                            &
+                            * turnover_gate(leaf_flush_tendency, leaf_shed_tendency) * root_pool * dt_day, &
+                            root_pool)
       leaf_post = leaf_carbon     - leaf_shed_c
       root_post = fineroot_carbon - fineroot_shed_c
-      leaf_retained_c = min(max(retained_frac, 0.0_wp), 1.0_wp) * senescence
+      retained            = min(max(retained_frac, 0.0_wp), 1.0_wp)
+      leaf_retained_c     = retained * leaf_shed_c
+      fineroot_retained_c = retained * fineroot_shed_c
       !----- Flush-capped GROWTH demands toward target, from the post-shed pools. -------------!
       leaf_demand     = min(max(0.0_wp, leaf_target       - leaf_post), flush_cap)
       fineroot_demand = min(max(0.0_wp, r2l * leaf_target - root_post), flush_cap * r2l)

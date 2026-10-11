@@ -17,7 +17,7 @@ them from sub-daily PAR, as the coupled model's fast loop does).
 `Phenology.step` applies the coupled model's own leaf rule (`leaf_step`, the Fortran
 leaf_turnover_step through the C-API) with carbon never limiting the flush: senescence at
 shed_rate_max * leaf_shed_tendency down to min_leaf_cover, background turnover while the canopy
-flushes, and a flush of up to flush_rate_max * leaf_flush_tendency per day toward full cover.
+flushes and drops no leaves, and a flush of up to flush_rate_max * leaf_flush_tendency per day toward full cover.
 Requires the compiled libmeds.so (see meds._libmeds).
 """
 from __future__ import annotations
@@ -206,7 +206,7 @@ def leaf_step(leaf_cover, leaf_flush_tendency, leaf_shed_tendency, params, dt=1.
     Returns (new_leaf_cover, senescence, background). The loss terms come from the Fortran
     leaf_turnover_step (the carbon layer calls the same routine); the flush then refills the
     post-loss canopy toward full by up to flush_rate_max * leaf_flush_tendency * dt, with carbon
-    never limiting. Litter is senescence * (1 - resorption) + background.
+    never limiting. Litter is (senescence + background) * (1 - resorption).
     """
     sen, bg, cap = c_double(), c_double(), c_double()
     _pheno_lib().meds_leaf_turnover_step(

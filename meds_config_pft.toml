@@ -15,7 +15,8 @@ recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of re
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
-min_reproduction_height = 20.0             # [m] height a cohort must exceed before it reproduces (all PFTs)
+# reproduction_height_fraction = 0.33        # [--] OPTIONAL (default 0.33): reproduce from this share of the
+#                                           #      local maximum height, the height of a 100 cm tree
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
 # (Used by the leaf gas-exchange model; not yet coupled to demographic growth.)
 photosynthetic_pathway = [1, 1, 2]                  # pioneer C3, climax C3, a C4 grass
@@ -108,9 +109,10 @@ storage_cushion        = [3.0, 3.0, 3.0]            # [--] storage target as a m
                                                     #      fine-root target (three full flushes); also the
                                                     #      starting storage of an inventory cohort
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+# retained_carbon_fraction = [0.3, 0.3, 0.3]       # [--] OPTIONAL (default 0.3): share of all leaf and fine-root
+#                                                  #      loss resorbed to storage rather than littered
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
 # storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
-# retained_carbon_fraction = [0.0, 0.0, 0.0]       # [--] shed leaf carbon kept (resorbed) rather than littered
 # max_relative_growth_rate = [0.0, 0.0, 0.0]       # [1/yr] sink limit on wood growth per unit wood carbon
 # max_absolute_growth_rate = [0.0, 0.0, 0.0]       # [cm/yr] sink limit on diameter growth of a 1 cm stem;
 #                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
@@ -169,12 +171,17 @@ ca_b2      = 0.464          # crown-area exponent
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
-height_allometry = "power"  # the height curve: "power" (b1Ht, b2Ht above) or "gmm" (below), both capped at hgt_max
+height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (below); all capped at hgt_max
 # The gMM curve, read only with height_allometry = "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b).
 # These are Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
 # gmm_a = 58.0     # [m] asymptotic height
 # gmm_b = 0.73     # [--] exponent on dbh
 # gmm_k = 21.8     # [cm^gmm_b] half-saturation
+# Chave et al. (2014) eq. 6a, read only with height_allometry = "chave2014":
+# ln height = 0.893 - chave_e + 0.760 ln dbh - 0.0340 (ln dbh)^2 + 0.243^2/2 (the mean, as BIOMASS's retrieveH).
+# chave_e is the site's stress index, E = 1e-3 (0.178 TS - 0.938 CWD - 6.61 PS) (Chave eq. 6b): below 0 at
+# wet, aseasonal sites (taller trees), above 0 where it is dry, seasonal or hot (shorter trees).
+# chave_e = 0.0   # [--] Chave's environmental stress index
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity

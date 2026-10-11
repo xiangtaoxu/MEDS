@@ -143,19 +143,22 @@ The carbon layer calls `leaf_turnover_step` once per cohort and step, *before* g
 carbon and $`c = L/L_{\mathrm{full}}`$ the **leaf cover**:
 
 ```math
-B = \min\!\Big(\tfrac{k_{\mathrm{turn}}}{365.2425}\, f\, L\, dt,\ L\Big), \qquad
+B = \min\!\Big(\tfrac{k_{\mathrm{turn}}}{365.2425}\, g\, L\, dt,\ L\Big), \qquad
 S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\mathrm{full}}\big)\Big), \qquad
 \Delta_{\mathrm{fl}} = k_{\mathrm{fl}}\, f\, L_{\mathrm{full}}\, dt \qquad(9)
 ```
 
 - **Background turnover** $B$: old leaves replaced while new ones grow, at $`k_{\mathrm{turn}}`$ [yr⁻¹]
   (the reciprocal of the cohort's leaf lifespan, `leaf_lifespan_toc` with light plasticity). It is
-  scaled by the flush tendency, so a dormant canopy does not turn over.
+  scaled by the **turnover gate** $g$ (`turnover_gate`): the flush tendency $f$ while no leaves drop
+  ($`s \le 0.01`$), and 0 while they do. A dormant canopy does not turn over, and the leaves a drought
+  takes are not also aged out: background turnover is the leaf loss of a canopy that drops nothing.
 - **Senescence** $S$ at the shed potential, which stops where the leaf cover reaches
   $`c_{\min}`$ = `min_leaf_cover`. The two losses add.
 - **Flush cap** $`\Delta_{\mathrm{fl}}`$: the leaf growth demand is $`\min(L_{\mathrm{full}} - L_{\mathrm{post}},\ \Delta_{\mathrm{fl}})`$
   against the post-loss pool $`L_{\mathrm{post}} = L - B - S`$, funded from NPP and then storage by the
-  allocation ladder (`plant_carbon_allocation.md`). Fine roots follow at `root_to_leaf_ratio`.
+  allocation ladder (`plant_carbon_allocation.md`). Fine roots regrow toward `root_to_leaf_ratio` of
+  the full canopy under the same cap.
 - **Snap to bare**: a dormant canopy (flush rate $`k_{\mathrm{fl}} f \le 10^{-6}`$ day⁻¹) whose
   senescence would leave it below $`c_{\mathrm{bare}}`$ = `bare_leaf_cover` goes bare, when its floor
   lies below that cover. A sharp flush light gate (§7) turns the flush off in autumn and the
@@ -163,10 +166,14 @@ S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\
   then keeps a small residual cover, about $`k_{\mathrm{fl}} f / (k_{\mathrm{sh}} s)`$, that it keeps
   refilling and shedding.
 
-**Resorption** (`retained_carbon_fraction`) returns a share of the senescence loss $S$ to storage; the
-background turnover $B$ is not resorbed, because the turnover rate is calibrated against observed
-litterfall, which already has resorption in it. The litter is $`B + (1-f_r)\,S`$. Fine roots turn over
-at `fineroot_turnover_rate` with no phenology.
+**Fine roots** do not drop with the leaves. Their length sets the root–soil conductance
+(`plant_hydraulics.md`), so a drop would cut the water uptake a leafless plant needs to rehydrate and
+flush again. They turn over at `fineroot_turnover_rate` under the leaves' gate $g$ — so roots age
+while the canopy flushes and drops nothing, and not during a drop or in dormancy — and regrow under the
+flush cap.
+
+**Resorption** (`retained_carbon_fraction`, $`f_r`$, default 0.3) returns a share of **all** leaf loss
+$`B + S`$ and all fine-root loss to storage; the litter is $`(1-f_r)`$ of each loss.
 
 The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so the Python front end
 (`meds.plant.pheno.leaf_step`) applies exactly the carbon layer's rule.
@@ -175,7 +182,7 @@ The same routine is exposed through the C-API (`meds_leaf_turnover_step`), so th
 
 | habit | flush mask | shed mask | `min_leaf_cover` | what happens |
 |---|---|---|---|---|
-| no cues (default) | – | – | – | always flushing; loses leaves only to background turnover |
+| no cues (default) | – | – | – | always flushing; loses leaves only to background turnover ($`g = 1`$) |
 | temperate deciduous (Harvard) | TEMP + LIGHT | TEMP + LIGHT | 0 | low `par_min`: flush on warmth while days are long; senesce to bare on cold once days shorten |
 | evergreen conifer (Hyytiälä) | TEMP + LIGHT | TEMP + LIGHT | the share kept through winter (0.9) | high `par_min`: flush on warmth and many bright hours; autumn needle fall stops at the floor |
 | drought deciduous (Palo Verde) | WATER + LIGHT | WATER + LIGHT | the share kept through the dry season (0.27) | low `par_min`: senesces as the days shorten and after a long drought; flushes once the days lengthen and the leaves are wet |

@@ -98,7 +98,7 @@ contains
          p%recruit_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
          p%include_pft = [ 1_ik, 1_ik, 1_ik ]
-         p%min_cohort_height = 2.0_wp ; p%min_reproduction_height = 20.0_wp
+         p%min_cohort_height = 2.0_wp ; p%reproduction_height_fraction = 0.47440838365101196_wp  ! 20 m
          p%mort_rho_ref = 0.6_wp
          p%mort_gamma_0 = 0.0094_wp ; p%mort_gamma_exp = -1.8392_wp
          p%mort_alpha_0 = 0.05_wp   ; p%mort_alpha_exp = -1.1493_wp

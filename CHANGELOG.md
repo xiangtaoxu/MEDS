@@ -16,6 +16,12 @@ before and after.
 
 ### Added
 
+- **Chave et al. (2014)'s height curve** (#386): `[allometry].height_allometry = "chave2014"` sets height
+  from diameter by Chave's pantropical eq. 6a, ln H = 0.893 - E + 0.760 ln D - 0.0340 (ln D)^2, at its
+  mean (+ 0.243^2/2, as BIOMASS's retrieveH), with the site's stress index E as `[allometry].chave_e`.
+  Height to diameter and biomass to diameter are its exact inverses (the smaller root of a quadratic
+  in ln D), capped at `hgt_max` like the other two curves. `test_allometry` checks the heights against
+  retrieveH and both inverses. Configs that do not set the option are unchanged.
 - **The Python API reads each cohort's carbon budget**: `Run.cohorts` gains `gpp`, `leaf_resp`,
   `stem_resp` and `root_resp` (the last slow step's GPP and maintenance respiration [kgC/plant]),
   `npp` and its parts `npp_leaf`, `npp_fineroot`, `npp_wood`, `npp_storage`, `npp_repro`, with
@@ -89,6 +95,20 @@ before and after.
 
 ### Changed
 
+- **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
+  Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
+  while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
+  Fine roots turn over on the same gate, so they age and regrow with the canopy, but they are not shed
+  with the leaves: root length sets the root-soil conductance, and a drop would cut a leafless plant's
+  water uptake. `retained_carbon_fraction` now resorbs that share of all leaf loss (senescence and
+  background turnover) and of all fine-root loss, and its default is 0.3 (was 0, on senescence only).
+  Examples 03-05 have no phenology, so the gate is exactly 1 for them, and they set the fraction to 0:
+  their results are unchanged to round-off (a year of example 04: daily outputs within 2e-7). In the
+  example 06 regrowth test at Palo Verde (150 years from 3 seedlings per
+  m2 per PFT; leaf lifespan 1 yr and fine roots 1.5 per yr, were 0.5-0.9 yr and 1.67-3 per yr),
+  above-ground biomass at age 20 rose from 21.4 to 31.9 dry Mg/ha and at age 150 from 122 to 190. The
+  2008-2010 inventory run keeps its leaf habits: Ds and D fall to at most 0.10 of full cover, BD keeps
+  0.46-0.63 and E 0.92-0.96.
 - **`storage_cushion` counts leaf and fine root, and the shipped value is 3** (#385; was 1 on leaf
   alone). A cohort's storage target, and an inventory cohort's starting storage, is `storage_cushion`
   times its leaf plus fine-root carbon, the carbon one full flush rebuilds (`storage_carbon_target`).
@@ -97,6 +117,16 @@ before and after.
   with empty storage, and the wet-season stand LAI stayed at 3.3-3.6 (MODIS: 5.3 in October). The
   examples now set 0.5, which is exactly their earlier storage (root_to_leaf_ratio 1), so their
   results are unchanged.
+- **Reproduction starts at a share of the local maximum height** (#388): `pft.reproduction_height_fraction`
+  [-], optional with default 0.33, replaces the required `pft.min_reproduction_height` [m]. A cohort
+  reproduces once its height reaches that share of the local maximum height, the height of a 100 cm tree on the run's height curve capped at
+  `hgt_max` (`local_hmax`), so where the local allometry makes trees short (a large Chave E) they mature
+  short; under Chave's curve a given share falls at the same diameter at every site. A config converts
+  as fraction = old height / local maximum height: examples 03-05 and the region test keep their
+  thresholds exactly (20 m = 0.4744 on the power curve, 0.6055 on BCI's gMM curve; example 05's fitted
+  5.27 m = 0.1595), and `calibrate_growth.py` now fits the fraction. The reference
+  `meds_config_pft.toml` takes the default, so its threshold moves from 20 m to 13.9 m (0.33 of the
+  power curve's 42.2 m).
 - **Water stress is one fast and one slow control, and the soil no longer has a wilting point** (#384).
   - *Fast:* the capacity limb on Vcmax/Jmax/TPU is always on and reads the leaf's current water
     potential, from the PFT's turgor-loss point (1) to twice it (0). As the leaf wilts, A and with it

@@ -110,8 +110,9 @@ module meds_config
       real(wp) :: ca_b1 = 0.0_wp, ca_b2 = 0.0_wp      !< crown-area scale / exponent
       real(wp) :: lai_b1 = 0.0_wp, lai_b2 = 0.0_wp    !< per-stem leaf-area scale / exponent
       real(wp) :: light_ext = 0.0_wp                  !< Beer-Lambert extinction through overtopping LAI
-      integer(ik) :: height_form = HEIGHT_POWER       !< the height curve: power law or gMM
+      integer(ik) :: height_form = HEIGHT_POWER       !< the height curve: power law, gMM or Chave (2014)
       real(wp) :: gmm_a = 0.0_wp, gmm_b = 0.0_wp, gmm_k = 0.0_wp   !< gMM height coefficients
+      real(wp) :: chave_e = 0.0_wp                    !< Chave (2014) stress index E
    end type allometry_config_t
 
    !----- SOIL COLUMN: the site's geometry, texture and thermal properties. Consumed once per run  !
@@ -493,7 +494,7 @@ contains
       call set_allometry(cfg%allom%b1Ht, cfg%allom%b2Ht, cfg%allom%agb_c1, cfg%allom%agb_c2,       &
                          cfg%allom%ca_b1, cfg%allom%ca_b2, cfg%allom%lai_b1, cfg%allom%lai_b2,      &
                          cfg%allom%light_ext, cfg%allom%height_form, cfg%allom%gmm_a,               &
-                         cfg%allom%gmm_b, cfg%allom%gmm_k)
+                         cfg%allom%gmm_b, cfg%allom%gmm_k, cfg%allom%chave_e)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)

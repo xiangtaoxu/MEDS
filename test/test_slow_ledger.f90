@@ -220,7 +220,7 @@ contains
       c%pft%seed_rain_recruits(:)      = 0.0_wp
       c%pft%leaf_lifespan_toc(:)       = 100.0_wp   ! keep turnover from eating the supply
       call init_bare_ground(st, c, 1_ik)
-      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above min_reproduction_height
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above the reproduction height
       call finalize_init(st)
       if (present(lai)) lai = sum(st%cohort%nplant(1:st%cohort%n) * st%cohort%leaf_area(1:st%cohort%n))
       do k = 1_ik, nstep
@@ -468,7 +468,7 @@ contains
          end if
       end if
       call init_bare_ground(st, c, 1_ik)
-      !----- 40 cm => ~25 m, clear of min_reproduction_height (20 m): a cohort below it allocates  !
+      !----- 40 cm => ~25 m, clear of the reproduction height (20 m): a cohort below it allocates  !
       !      NOTHING to reproduction, and the seed-loss assertion would then be vacuously true.  --!
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
       call finalize_init(st)

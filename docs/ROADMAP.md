@@ -53,9 +53,10 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
   the model's parameter; leaf lifespan is emergent (plan D2).
 
 - **`root_phen_factor`** — *Candidate.* [#258](https://github.com/xiangtaoxu/MEDS/issues/258) The fine-root side of phenological shedding.
-  Leaf resorption shipped in v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling
-  did not. Phenology stays leaf-only by design, so if adopted it belongs in the carbon layer beside
-  the resorption split.
+  Resorption (`retained_carbon_fraction`, default 0.3) covers all leaf and fine-root loss, and fine
+  roots age on the leaves' turnover gate, but they are not shed with the leaves: root length sets the
+  root–soil conductance, so a drop would cut a leafless plant's water uptake. A drought-driven root
+  dieback would act per soil layer, on that layer's water, not on the leaves.
 
 ---
 
