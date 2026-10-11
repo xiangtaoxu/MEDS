@@ -14,7 +14,7 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
-   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_GMM
+   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
@@ -453,7 +453,8 @@ contains
    end subroutine req_sw_partition
 
    !----- [allometry].height_allometry: "power" (the default, and every config written before the  !
-   !       option) or "gmm", which then needs its three coefficients. -------------------------!
+   !       option), "gmm", which then needs its three coefficients, or "chave2014", which needs the !
+   !       site's stress index chave_e. ---------------------------------------------------------!
    subroutine opt_height_allometry(t, cfg, m)
       type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t), intent(inout) :: m
@@ -466,6 +467,9 @@ contains
          call req_r(t, 'allometry.gmm_a', cfg%allom%gmm_a, m)
          call req_r(t, 'allometry.gmm_b', cfg%allom%gmm_b, m)
          call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
+      case ('chave2014')
+         cfg%allom%height_form = HEIGHT_CHAVE
+         call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
       case default   ; call note_missing(m, 'allometry.height_allometry')
       end select
    end subroutine opt_height_allometry
