@@ -1,6 +1,6 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_plant_phenology -- unit tests for the leaf-phenology kernel and leaf_turnover_step.  !
+! test_plant_phenology -- unit tests for the phenology kernel, leaf_turnover_step and gate. !
 !                                                                                          !
 ! The kernel turns daily cues into two smoothed tendencies (leaf_flush_tendency,            !
 ! leaf_shed_tendency) and the potential rates rate_max * tendency. The tests:                !
@@ -27,7 +27,7 @@ program test_plant_phenology
    use meds_time,            only : daylength
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t,     &
                                     CUE_NONE, CUE_TEMP, CUE_LIGHT, CUE_WATER, CUE_ALL
-   use meds_phenology,       only : phenology_kernel, leaf_turnover_step
+   use meds_phenology,       only : phenology_kernel, leaf_turnover_step, turnover_gate
    implicit none
 
    real(wp), parameter :: twopi = 6.283185307179586_wp
@@ -295,11 +295,17 @@ contains
                               1.0_wp, sen, bg, cap)
       call check_close('dormant: no background turnover', bg,  0.0_wp, 0.0_wp)
       call check_close('dormant: no flush cap',           cap, 0.0_wp, 0.0_wp)
-      !----- Senescence = shed_rate_max * tendency * pool * dt; background adds to it. -------!
+      !----- Senescence = shed_rate_max * tendency * pool * dt; background stops while leaves   !
+      !      drop, so a drop is not also counted as ageing (turnover_gate). ---------------------!
       call leaf_turnover_step(0.5_wp, 1.0_wp, 0.5_wp, 1.0_wp, 0.06_wp, 0.1_wp, TURN, 0.0_wp, 0.02_wp, &
                               1.0_wp, sen, bg, cap)
       call check_close('senescing: senescence = rate*pool*dt', sen, 0.05_wp, 1.0e-15_wp)
-      call check_close('senescing: background still acts',    bg,  TURN / yr_day * 0.5_wp * 0.5_wp, 1.0e-15_wp)
+      call check_close('senescing: no background turnover',   bg,  0.0_wp, 0.0_wp)
+      !----- The gate: the flush tendency while no leaves drop, 0 while they do or in dormancy. -!
+      call check_close('gate: no drop -> flush tendency',      turnover_gate(0.7_wp, 0.0_wp),   0.7_wp, 0.0_wp)
+      call check_close('gate: a trace of drop still counts as none', turnover_gate(0.7_wp, 0.005_wp), 0.7_wp, 0.0_wp)
+      call check_close('gate: dropping -> 0',                  turnover_gate(1.0_wp, 0.2_wp),   0.0_wp, 0.0_wp)
+      call check_close('gate: dormant -> 0',                   turnover_gate(0.0_wp, 0.0_wp),   0.0_wp, 0.0_wp)
       !----- The leaf-cover floor: senescence stops at min_leaf_cover of the full canopy, ---!
       !      which is what makes a PFT evergreen (an emergent habit, not a flag).          --!
       call leaf_turnover_step(0.82_wp, 1.0_wp, 1.0_wp, 1.0_wp, 0.06_wp, 0.3_wp, 0.0_wp, 0.8_wp, 0.02_wp, &

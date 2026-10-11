@@ -182,7 +182,7 @@ module meds_pft_params
       real(wp),    allocatable :: hyd_wood_kmax(:), hyd_vessel_curl(:)
       real(wp),    allocatable :: hyd_root_beta(:), hyd_root_depth_b1(:), hyd_root_depth_b2(:)
       real(wp),    allocatable :: hyd_specific_root_length(:), hyd_fine_root_radius(:)
-      real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] active-shed carbon returned to storage
+      real(wp),    allocatable :: retained_carbon_fraction(:)  !< [-] share of leaf and fine-root loss resorbed
       real(wp),    allocatable :: storage_turnover_rate(:)  !< [1/yr] non-structural pool turnover
       !----- SINK limitation (meds_sink_limitation): wood carbon grows by at most this fraction of  !
       !      itself a year, and the stem diameter by at most rate x dbh^exponent a year; the tighter !
@@ -326,7 +326,7 @@ contains
       pft%max_relative_growth_rate     = 0.0_wp   ! optional keys; a rate of 0 = that sink limit off
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
-      pft%retained_carbon_fraction = 0.0_wp ! #151: optional key; 0 = all shed carbon to litter
+      pft%retained_carbon_fraction = 0.3_wp ! #151: optional key; 30% of leaf and root loss resorbed
       !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
