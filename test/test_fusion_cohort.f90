@@ -10,6 +10,7 @@ program test_fusion_cohort
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
+   use meds_allometry,       only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -175,8 +176,9 @@ program test_fusion_cohort
                        'carbon fuse: wood_carbon not conserved')
       call check_close(site%cohort%nplant(1)*site%cohort%nonstructural_carbon(1), nc_t, 1.0e-9_wp, &
                        'carbon fuse: nonstructural (storage) not conserved')
-      !----- Prove storage was CARRIED, not reset to the allometric storage_cushion*leaf_carbon. -!
-      alloc_store = cfg%pft%storage_cushion(1) * site%cohort%leaf_carbon(1)
+      !----- Prove storage was CARRIED, not reset to the allometric storage target. -------------!
+      alloc_store = storage_carbon_target(cfg%pft%storage_cushion(1), site%cohort%leaf_carbon(1),   &
+                                          site%cohort%fineroot_carbon(1))
       call check(abs(site%cohort%nonstructural_carbon(1) - alloc_store) > 1.0e-6_wp,               &
                  'carbon fuse must CARRY off-allometry storage, not snap it to allometry (BUG2)')
    end block

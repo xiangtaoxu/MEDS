@@ -150,7 +150,7 @@ module meds_pft_params
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
-      real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf target
+      real(wp),    allocatable :: storage_cushion(:)        !< [--]     storage target as a multiple of the leaf + fine-root target
       !----- STORAGE MAINTENANCE (#177). Fractional turnover of the non-structural pool [1/yr],
       !      charged as respiration and DECREMENTED from the pool -- ED2's growth_balive.f90
       !      `storage_maintenance = bstorage * storage_turnover_rate * year_o_day`. ED2 applies NO

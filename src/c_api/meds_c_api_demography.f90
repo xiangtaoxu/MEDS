@@ -30,7 +30,7 @@ module meds_c_api_demography
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
    use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
-                                          size2leaf_carbon, size2wood_carbon
+                                          size2leaf_carbon, size2wood_carbon, storage_carbon_target
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
@@ -192,7 +192,7 @@ contains
                wc_new     = size2wood_carbon(dbh_new, height_new, cohort%p_wood_density(i),            &
                                              cohort%p_aboveground_frac(i))
                fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
-               nc_new     = cohort%p_storage_cushion(i) * lc_new
+               nc_new     = storage_carbon_target(cohort%p_storage_cushion(i), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !
                !      rate (empirical behaviour -- records the request even when dbh is capped). ----!
                call fill_cohort_deriv(cohort, i, site%deriv, cfg%dt_years, m(i), g(i),                &

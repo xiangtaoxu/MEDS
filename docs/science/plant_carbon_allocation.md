@@ -81,13 +81,13 @@ and the reserve then funded growth (GPP +22 %, LAI +12 %).
 ## 2. PARTEH-H1 allocation ladder
 
 Targets come from allometry: leaf $`L^{*}=`$ `size2leaf_carbon`, fine root $`q\,L^{*}`$ (with $q$ the
-root:leaf ratio), storage $`c_s\,L^{*}`$. A **demand** is the deficit `target − pool`; the leaf and
+root:leaf ratio), storage $`c_s\,(1+q)\,L^{*}`$, the carbon of $`c_s`$ full flushes. A **demand** is the deficit `target − pool`; the leaf and
 fine-root demands arrive already **flush-capped** ($`\Delta_{\mathrm{fl}} = r_{\mathrm{fl}} L^{*} dt`$),
 so a dormant canopy ($`r_{\mathrm{fl}}=0`$) presents zero growth demand. When $`C_{\mathrm{net}}\ge0`$ the
 kernel funds, in order:
 
 1. **leaf + fine-root growth** toward the flush-capped demand — funded from NPP, then storage;
-2. **storage refill** toward $`c_s L^{*}`$ — NPP only, no construction cost;
+2. **storage refill** toward $`c_s (1+q) L^{*}`$ — NPP only, no construction cost;
 3. **reproduction** — a fraction $`f_r`$ of the post-storage residual (zero below the maturity height);
 4. **wood** — the residual sink: everything left becomes structural growth.
 
@@ -185,7 +185,7 @@ bit-identical** to the pre-refactor engine.
 | Symbol | Config key | Meaning |
 |---|---|---|
 | $g$ | `growth_resp_factor` | construction-cost fraction charged on growth |
-| $`c_s`$ | `storage_cushion` | storage target as a multiple of the leaf target |
+| $`c_s`$ | `storage_cushion` | storage target as a multiple of the leaf + fine-root target |
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_r`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
 | $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |
