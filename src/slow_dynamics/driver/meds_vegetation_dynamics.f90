@@ -18,7 +18,8 @@ module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
-   use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon
+   use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
+                                         storage_carbon_target
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
@@ -625,7 +626,8 @@ contains
             co2_owed(cohort%owner_patch(j)) = co2_owed(cohort%owner_patch(j))                           &
                                             + cohort%nplant(j) * storage_maint
 
-            store_demand = max(0.0_wp, pft%storage_cushion(pf) * leaf_target - store_post)
+            store_demand = max(0.0_wp, storage_carbon_target(pft%storage_cushion(pf), leaf_target,      &
+                                                             r2l * leaf_target) - store_post)
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%min_reproduction_height)
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !

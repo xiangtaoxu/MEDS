@@ -89,6 +89,14 @@ before and after.
 
 ### Changed
 
+- **`storage_cushion` counts leaf and fine root, and the shipped value is 3** (was 1 on leaf alone). A
+  cohort's storage target, and an inventory cohort's starting storage, is `storage_cushion` times its
+  leaf plus fine-root carbon, the carbon one full flush rebuilds (`storage_carbon_target`). At 1 x
+  leaf a drought-deciduous canopy tree could not pay for its next flush: in the example 06 test stand
+  (Palo Verde, 2008-2010) the large trees of every PFT stayed leafless through the wet season with
+  empty storage, and the wet-season stand LAI stayed at 3.3-3.6 (MODIS: 5.3 in October). The examples
+  now set 0.5, which is exactly their earlier storage (root_to_leaf_ratio 1), so their results are
+  unchanged.
 - **Water stress is one fast and one slow control, and the soil no longer has a wilting point** (#384).
   - *Fast:* the capacity limb on Vcmax/Jmax/TPU is always on and reads the leaf's current water
     potential, from the PFT's turgor-loss point (1) to twice it (0). As the leaf wilts, A and with it

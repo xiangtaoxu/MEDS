@@ -23,7 +23,7 @@ module meds_site_state_types
    use meds_constants,  only : pio4, tiny_num, cp_liq
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
-                               dbh_to_wai, sapwood_fraction
+                               dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t, litter_input_t
@@ -106,7 +106,7 @@ module meds_site_state_types
       real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] = leaf_area / sla
       real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] = root_to_leaf_ratio*leaf_carbon
       real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] = agb / aboveground_frac
-      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] = storage_cushion*leaf_carbon
+      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] starts at storage_cushion*(leaf + fine root)
       !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
       !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
       !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
@@ -162,7 +162,7 @@ module meds_site_state_types
       !----- Gathered carbon-allometry traits (for the on-allometry pool diagnostics above). --!
       real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
       real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
-      real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
+      real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf + fine root
       !----- Gathered WOOD-allometry traits (feed the cached wood_area / sapwood_* above). ----!
       real(wp),    allocatable :: p_wai_b1(:), p_wai_b2(:)                  !< [--] ED2 b1WAI / b2WAI
       real(wp),    allocatable :: p_sapwood_area_b1(:), p_sapwood_area_b2(:)!< [--] ED2 b1SA / b2SA
@@ -1118,7 +1118,8 @@ contains
       cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%sla(i), tiny_num)
       cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
-      cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
+      cohort%nonstructural_carbon(i) = storage_carbon_target(cohort%p_storage_cushion(i), cohort%leaf_carbon(i),  &
+                                                             cohort%fineroot_carbon(i))
       call set_cohort_wood_geometry(cohort, i)
    end subroutine set_cohort_size
 

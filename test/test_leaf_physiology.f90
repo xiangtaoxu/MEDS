@@ -267,8 +267,8 @@ program test_leaf_physiology
                     'fast-limb sweep: converged, gs >= g0')
          !----- to the Ci solve's tolerance (1e-3 ppm): near the g0 floor Cs - Ci is ~30 ppm, so the  !
          !      back-computed gs carries ~1e-5 relative noise (Katul switches to its g0 pass there). !
-         call check(flux%gs <= prev * (1.0_wp + 1.0e-4_wp) + 1.0e-12_wp,                          &
-                    'fast-limb sweep: gs never rises as the leaf dries')
+         if (i > 0_ik) call check(flux%gs <= prev * (1.0_wp + 1.0e-4_wp) + 1.0e-12_wp,            &
+                                  'fast-limb sweep: gs never rises as the leaf dries')
          if (i > 0_ik) jump = max(jump, prev - flux%gs)
          if (flux%gs > cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp)) then
             call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,           &

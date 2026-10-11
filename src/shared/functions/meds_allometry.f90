@@ -39,6 +39,7 @@ module meds_allometry
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
+   public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
    public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
    public :: height_form, gmm_a, gmm_b, gmm_k, HEIGHT_POWER, HEIGHT_GMM
@@ -231,6 +232,15 @@ contains
       real(wp)             :: leaf_carbon         !< [kgC/plant]
       leaf_carbon = dbh_to_leaf_area(dbh, h) / max(sla, tiny_num)
    end function size2leaf_carbon
+
+   !----- A cohort's storage target: storage_cushion times the carbon one full flush rebuilds, its    !
+   !      leaves plus its fine roots. It is also the starting storage of a cohort set on allometry. --!
+   elemental pure function storage_carbon_target(storage_cushion, leaf_carbon, fineroot_carbon) result(storage)
+      real(wp), intent(in) :: storage_cushion              !< [--]
+      real(wp), intent(in) :: leaf_carbon, fineroot_carbon !< [kgC/plant]
+      real(wp)             :: storage                      !< [kgC/plant]
+      storage = storage_cushion * (leaf_carbon + fineroot_carbon)
+   end function storage_carbon_target
 
    elemental pure function size2wood_carbon(dbh, h, rho, aboveground_frac) result(wood_carbon)
       real(wp), intent(in) :: dbh, h, rho, aboveground_frac
