@@ -449,7 +449,7 @@ contains
          if (present(hydro_nonconv)) hydro_nonconv = count(.not. conv_c(1:n))
          !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
          !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
-         !      rescaled by the soil's own fwilt-limited supply). That keeps "one flux, both sides"       !
+         !      rescaled by the soil's own realized supply). That keeps "one flux, both sides"            !
          !      across an interface spanning two OPERATOR-SPLIT solves, so the whole-column water         !
          !      ledger closes exactly.                                                                    !
          !                                                                                          !

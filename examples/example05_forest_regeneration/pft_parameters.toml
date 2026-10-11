@@ -82,8 +82,6 @@ theta_ip_c3        = [0.95, 0.95, 0.95]
 theta_cj_c4        = [0.80, 0.80, 0.80]
 theta_ic_c4        = [0.95, 0.95, 0.95]
 katul_lambda25     = [800.0, 800.0, 800.0]
-wstress_psi_open   = [-0.5, -0.5, -0.5]
-wstress_psi_close  = [-3.0, -3.0, -3.0]
 wstress_lambda_exp = [1.0, 1.0, 1.0]
 wstress_sref_stomata = [2.0, 2.0, 2.0]
 

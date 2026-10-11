@@ -52,12 +52,9 @@ fast_biophysics_on  = false    # master gate for the fast biophysics loop
 dt_fast             = "900s"   # fast biophysics timestep. No longer stability-limited: the CAS<->atm
                                # surface layer is re-solved at every stage, so the period-2 canopy-air
                                # oscillation that forced 150 s is gone (peak-to-peak 7.7 K -> 0.10 K at
-                               # 900 s). Carbon at 900 s is fine too -- PROVIDED the non-stomatal
-                               # water-stress limb stays off (the default; see [leaf_physiology].
-                               # wstress_nonstomatal): with it off, daily GPP is dt_fast-independent to
-                               # 0.05% and ET to ~1%; with it ON, 900 s costs -33% GPP / -24% ET,
-                               # because psi_leaf is not converged in dt_fast and that limb amplifies
-                               # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
+                               # 900 s). The fast water-stress limb reads the leaf potential at the
+                               # start of each step, so carbon under drought depends on dt_fast; see
+                               # docs/science/numerical_scheme.md sec 5a-6.
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). Every key
 #      is optional, at the default shown. ----
 # time_integrator     = "ark"        # "ark" (ESDIRK2) | "rk45" (explicit, for comparison)
@@ -143,8 +140,6 @@ intercept_alpha = 1.0         # [-]      Beer interception efficiency
 intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
 dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
 dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
-psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
-psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
 ground_albedo_vis = 0.15      # [-]      bare-soil albedo, visible
 ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
 ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
@@ -408,16 +403,6 @@ stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
 temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
 colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
 use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
-wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) water-stress limb --
-                                   # a linear psi_leaf ramp on Vcmax/Jmax/TPU. OFF: rarely measured
-                                   # directly, weakly constrained, and a linear AMPLIFIER on a
-                                   # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
-                                   # psi error into a 33% GPP shift at dt_fast = 900 s). The
-                                   # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
-low_water_potential_control = "linear_decline"  # #332: the conductance the stomatal model calculates
-                                   # (g0 included) times a factor falling linearly from 1 at the leaf
-                                   # turgor-loss point to 0 at twice it, on the previous day's predawn
-                                   # leaf potential. The only option; optional (this is the default).
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC

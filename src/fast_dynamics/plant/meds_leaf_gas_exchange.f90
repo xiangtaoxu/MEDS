@@ -28,7 +28,7 @@ module meds_leaf_gas_exchange
 
    !----- from meds_leaf_stomata.f90 -----------------------------------------------------!
 
-   public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda, low_psi_gs_factor
+   public :: stomata_gs_leuning, stomata_gs_medlyn, katul_lambda
 
    real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
@@ -44,7 +44,6 @@ module meds_leaf_gas_exchange
    !----- Which stomatal conductance a pass of the Ci solve uses (solve_leaf_gas_exchange). -----!
    integer(ik), parameter :: GS_FROM_MODEL = 1_ik      !< the configured stomatal model
    integer(ik), parameter :: GS_CUTICULAR  = 2_ik      !< the cuticular floor g0 (the fallback)
-   integer(ik), parameter :: GS_PINNED     = 3_ik      !< a fixed conductance (Katul, low potential)
 
    !----- Everything the Ci residual reads: the leaf's biochemistry at its temperature, its air,  !
    !      its stomatal model, and the conductance rule of the current pass. It is passed to the   !
@@ -64,8 +63,6 @@ module meds_leaf_gas_exchange
       real(wp)    :: vpd, ddef                                !< [Pa], [mol/mol] water deficit
       real(wp)    :: g0, g1, d0, lambda                       !< the stomatal model's parameters
       real(wp)    :: vpd_min                                  !< [kPa] the Medlyn model's least VPD
-      real(wp)    :: f_lwp                                    !< low-water-potential factor on gs
-      real(wp)    :: gs_pin = 0.0_wp                          !< [mol/m2/s] the GS_PINNED conductance
    end type ci_problem_t
 
 
@@ -173,19 +170,6 @@ contains
    !---------------------------------------------------------------------------------------!
    ! Medlyn et al. (2011) unified stomatal optimization (USO) conductance.                 !
    !---------------------------------------------------------------------------------------!
-   !----- The low-water-potential factor on the calculated stomatal conductance (#332): 1 at or above  !
-   !      the turgor-loss point, falling linearly to 0 at twice it, 0 below. psi is the previous      !
-   !      day's daily-max (predawn) leaf potential [MPa]. -----------------------------------------!
-   elemental pure function low_psi_gs_factor(psi, psi_tlp) result(f)
-      real(wp), intent(in) :: psi, psi_tlp      !< [MPa]; psi_tlp < 0
-      real(wp) :: f
-      if (psi_tlp >= 0.0_wp) then
-         f = 1.0_wp
-      else
-         f = min(max((psi - 2.0_wp * psi_tlp) / (-psi_tlp), 0.0_wp), 1.0_wp)
-      end if
-   end function low_psi_gs_factor
-
    pure function stomata_gs_medlyn(a_net, cs, vpd, g0, g1, vpd_min) result(gs)
       real(wp), intent(in) :: a_net   !< [umol/m2/s] net assimilation
       real(wp), intent(in) :: cs      !< [umol/mol]  leaf-surface CO2
@@ -235,8 +219,6 @@ contains
       type(leaf_flux_t),         intent(out) :: flux
 
       real(wp) :: t_leaf, pressure, ca_ppm, o2_ppm, ddef, beta_nonstomata, beta_stomata, g1_eff
-      real(wp) :: f_lwp             !< low-water-potential factor on the calculated gs (1 = none)
-      real(wp) :: gs_pin            !< Katul: the conductance the factor pins the solve to
       real(wp) :: vcmax, jmax, jrate, tpu, rd, kc_ppm, ko_ppm, gstar_ppm
       real(wp) :: Aj_light, kp_eff, lambda_eff
       real(wp) :: lo0, hi0, ci_sol, An_open
@@ -270,55 +252,27 @@ contains
       tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       rd    = temp_response(tresp, p%rd25,    p%ea_rd,    p%hd_rd,    p%ds_rd,    t_leaf)
 
-      !----- Water stress, split into two independently-tunable limbs (Sabot 2022 / Zhou 2013): !
-      !   beta_nonstomata -- capacity limb: a linear psi_LEAF ramp downregulating Vcmax/Jmax/TPU, !
-      !     applied to ALL stomatal models (a leaf-biochemistry effect, scheme-independent).      !
-      !   beta_stomata    -- stomatal limb: 1 above the onset potential psi_onset and             !
-      !     exp(sref*(psi - psi_onset)) below it, downregulating the                               !
-      !     Leuning/Medlyn slope g1 and the Katul marginal WUE lambda (lambda ~                   !
-      !     beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's g1<->lambda).     !
-      !----- The capacity limb is OFF by default (issue #47): rarely measured directly, weakly  !
-      !      constrained, and a LINEAR AMPLIFIER on psi_leaf -- see meds_config_t%leaf_wstress_  !
-      !      nonstomatal. beta = 1 when off, so Vcmax/Jmax/TPU pass through untouched. ----------!
-      beta_nonstomata = 1.0_wp
-      if (p%wstress_nonstomatal) then
-         beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
-         beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
-         vcmax = vcmax * beta_nonstomata
-         jmax  = jmax  * beta_nonstomata
-         tpu   = tpu   * beta_nonstomata
-      end if
+      !----- Water stress: two controls on two time scales (Sabot 2022 / Zhou 2013; Xu et al. 2016   !
+      !      likewise has a fast leaf-potential term and a slow daily one).                          !
+      !   beta_nonstomata -- the FAST control: the leaf's own current water potential (env%psi_leaf, !
+      !     the step-start value) scales Vcmax/Jmax/TPU, 1 at psi_open and falling linearly to 0 at  !
+      !     psi_close (by default the PFT's turgor-loss point and twice it). Every stomatal model    !
+      !     ties gs to A, so a leaf losing turgor closes within the day: at beta = 0 gross A is 0,   !
+      !     net A is -Rd, and gs falls to the cuticular g0. Rd is not scaled.                       !
+      !   beta_stomata    -- the SLOW control: 1 above the onset potential psi_onset and             !
+      !     exp(sref*(psi - psi_onset)) below it, on the previous day's predawn leaf potential       !
+      !     (env%psi), downregulating the Leuning/Medlyn slope g1 and the Katul marginal WUE lambda  !
+      !     (lambda ~ beta_stomata^(-lambda_psi_exp); lambda_psi_exp = 2 recovers Sabot's            !
+      !     g1<->lambda). ------------------------------------------------------------------------!
+      beta_nonstomata = (env%psi_leaf - p%psi_close) / (p%psi_open - p%psi_close)
+      beta_nonstomata = min(max(beta_nonstomata, 0.0_wp), 1.0_wp)
+      vcmax = vcmax * beta_nonstomata
+      jmax  = jmax  * beta_nonstomata
+      tpu   = tpu   * beta_nonstomata
       !----- No stress above the onset (Sabot et al. 2022 Eq. 5 has none while the soil is at field     !
       !      capacity), so a tall tree in wet soil, whose predawn potential is its gravity head, keeps   !
       !      its full g1. Below the onset the decline is exponential, at the rate sref. ---------------!
       beta_stomata = min(1.0_wp, exp(p%sref_stomata * (env%psi - p%psi_onset)))
-      !----- LOW-WATER-POTENTIAL CONTROL (#332). The Sabot beta above scales g1 only, so as it goes to  !
-      !      0 the conductance falls to the RESIDUAL g0 and never reaches zero -- measured at ~2.6       !
-      !      mm/day of transpiration still leaving a plant whose wood store was empty and whose predawn  !
-      !      potential was -116 MPa (#95). So the conductance the stomatal model calculates, g0          !
-      !      included, is multiplied by f_lwp, which falls LINEARLY from 1 at the turgor-loss point to  !
-      !      0 at twice it. The solve below stays coupled: A and Ci are those of the reduced gs, so a    !
-      !      leaf with f_lwp = 0 exchanges no CO2 or water. It replaced a hard shutdown at 2*psi_tlp, a  !
-      !      step no calibration could see past.                                                       !
-      !                                                                                          !
-      !      CARBON NOTE (#332, option kept by the owner). Rd is untouched: it is computed as before  !
-      !      and charged in full as leaf respiration. What the factor changes is GROSS A. The solve   !
-      !      ties net A to the stomata, net A = gs*(Cs - Ci)/1.6, so as gs -> 0 net A -> 0 and the     !
-      !      leaf photosynthesises at the internal compensation point on the CO2 it respires: gross   !
-      !      A -> Rd, its respiration refixed. The canopy sums gross A as GPP and Rd as leaf          !
-      !      respiration (canopy_leaf_gas_exchange, meds_fast_prepass), so a fully closed leaf is     !
-      !      carbon-neutral by day -- credited GPP = Rd, charged Rd -- where the former clamp set     !
-      !      gross A = 0 and lost Rd. At night gross A = 0 and the leaf loses Rd, as before. This is  !
-      !      the standard coupled leaf model, and the same refixation already happens whenever gs is  !
-      !      small. A tower's GPP, partitioned from NEE, cannot see refixed CO2. ---------------------!
-      !                                                                                          !
-      !      The driver feeds env%psi the previous day's daily-MAX leaf water potential -- the   !
-      !      model's predawn potential -- so f_lwp is set once a day from a slow, integrated measure,  !
-      !      not from a noisy sub-daily psi. Phenology compares dmax against the same tlp            !
-      !      (pheno_state_t%dry_psi_sum). A thermodynamic limit on transpiration (issue #96) would     !
-      !      make this control matter less. ----------------------------------------------------!
-      f_lwp = 1.0_wp
-      if (p%low_psi_control == 1_ik) f_lwp = low_psi_gs_factor(env%psi, p%psi_tlp)   ! linear decline
       g1_eff       = p%g1 * beta_stomata
       lambda_eff   = katul_lambda(p%lambda25, beta_stomata, p%lambda_psi_exp)
 
@@ -348,12 +302,12 @@ contains
                           ca = ca_ppm, gb = env%gb, boundary_layer = do_boundary_layer,               &
                           vpd = env%vpd, ddef = ddef, g0 = p%g0, g1 = g1_eff, d0 = p%d0,              &
                           vpd_min = p%medlyn_vpd_min,                                                 &
-                          lambda = lambda_eff, f_lwp = f_lwp)
+                          lambda = lambda_eff)
 
       !----- Closed/night branch: no positive-assimilation root (best-case net <= 0). ------!
       An_open = ci_net_assimilation(prob, ca_ppm)
       if (An_open <= 0.0_wp) then
-         gs_sol = f_lwp * p%g0
+         gs_sol = p%g0
          An     = An_open
          cs_sol = ca_ppm
          if (do_boundary_layer) cs_sol = ca_ppm - gbw_2_gbc * An / env%gb
@@ -370,12 +324,12 @@ contains
       !       stomatal model yields no consistent open solution (no sign change -- e.g. Katul      !
       !       under strong water stress where lambda -> large), fall back to the cuticular floor   !
       !       g0 (closed stomata), which always brackets when net A(Ca) > 0. The explicit-gs       !
-      !       residual serves Leuning/Medlyn, the g0 fallback and the pinned pass; Katul's own     !
-      !       pass uses the optimality residual (ci_residual). ------------------------------------!
+      !       residual serves Leuning/Medlyn and the g0 fallback; Katul's own pass uses the        !
+      !       optimality residual (ci_residual). --------------------------------------------------!
       lo0 = gstar_ppm + lo_eps_ppm
       hi0 = ca_ppm
       prob%gs_rule = GS_FROM_MODEL
-      do                                                 ! at most three passes: model, g0-pinned, f_lwp-pinned
+      do                                                 ! at most two passes: model, then g0-pinned
          call bisect_ci(prob, lo0, hi0, ci_sol, converged)
          !----- No sign change -> retry with the cuticular floor g0. ----------------------------!
          if (.not. converged .and. prob%gs_rule /= GS_CUTICULAR) then
@@ -396,30 +350,14 @@ contains
                cycle
             end if
          end if
-         !----- Katul: the optimum is the calculated gs; scale it by f_lwp and re-solve with gs      !
-         !       pinned there, so A/gs/Ci/E stay consistent (Leuning/Medlyn scale inside the solve). -!
-         if (sm == SM_KATUL .and. prob%gs_rule == GS_FROM_MODEL .and. f_lwp < 1.0_wp) then
-            gs_pin = p%g0
-            if (cs_sol - ci_sol > tiny_num) gs_pin = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
-            prob%gs_pin  = f_lwp * gs_pin
-            prob%gs_rule = GS_PINNED
-            cycle
-         end if
          exit
       end do
-      !----- f_lwp = 0: the solve's limit, written exactly. With no conductance the leaf exchanges   !
-      !       nothing -- net A = 0 and gross A = Rd, its respiration refixed at the Ci the solve found  !
-      !       (see the CARBON NOTE above: the canopy counts that gross A as GPP). ---------------------!
-      if (f_lwp <= 0.0_wp) then
-         call fill_flux(rd, 0.0_wp, 0.0_wp, ci_sol, ca_ppm, rd, LIM_NONE, converged)
-         return
-      end if
       !----- Back-compute gs from the diffusion identity; if the boundary layer pushed Cs at  !
       !       or below Ci (degenerate), pin gs to g0 and report Cs as the surface CO2. -------!
       if (cs_sol - ci_sol > tiny_num) then
-         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), f_lwp * p%g0)
+         gs_sol = max(gsw_2_gsc * An / (cs_sol - ci_sol), p%g0)
       else
-         gs_sol = f_lwp * p%g0
+         gs_sol = p%g0
          ci_sol = cs_sol
       end if
       call fill_flux(A_gross, An, gs_sol, ci_sol, cs_sol, rd, pick_limit(Ac, Aj, Ap, An), converged)
@@ -507,8 +445,8 @@ contains
       end if
    end function ci_residual
 
-   !----- Explicit-conductance residual for Leuning / Medlyn, the cuticular fallback and the     !
-   !       pinned pass: the trial Ci must satisfy the CO2 diffusion identity Ci = Cs - A / gs_co2, !
+   !----- Explicit-conductance residual for Leuning / Medlyn and the cuticular fallback: the    !
+   !       trial Ci must satisfy the CO2 diffusion identity Ci = Cs - A / gs_co2,                 !
    !       where the current conductance rule supplies gs. Returns Ci - Ci_predicted. ----------!
    pure real(wp) function residual_explicit_gs(prob, ci) result(r)
       type(ci_problem_t), intent(in) :: prob
@@ -521,15 +459,12 @@ contains
       !----- Stomatal conductance from the current rule. ---------------------------------------!
       select case (prob%gs_rule)
       case (GS_CUTICULAR)
-         gs = prob%f_lwp * prob%g0                       ! closed-stomata fallback: gs pinned to g0
-      case (GS_PINNED)
-         gs = prob%gs_pin                                ! Katul, scaled by the low-psi factor
+         gs = prob%g0                                    ! closed-stomata fallback: gs pinned to g0
       case default
          if (prob%stomatal_model == SM_LEUNING) then
-            gs = prob%f_lwp * stomata_gs_leuning(An_loc, cs_surf, prob%gstar, prob%vpd, prob%g0,       &
-                                                 prob%g1, prob%d0)
+            gs = stomata_gs_leuning(An_loc, cs_surf, prob%gstar, prob%vpd, prob%g0, prob%g1, prob%d0)
          else
-            gs = prob%f_lwp * stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1, prob%vpd_min)
+            gs = stomata_gs_medlyn(An_loc, cs_surf, prob%vpd, prob%g0, prob%g1, prob%vpd_min)
          end if
       end select
       !----- Ci predicted by CO2 diffusion through the stomata (gs is a WATER conductance, so     !

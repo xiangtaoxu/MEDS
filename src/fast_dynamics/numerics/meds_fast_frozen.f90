@@ -468,12 +468,12 @@ contains
 
       !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
       !      sink forcing (not the raw transpiration demand), then a SCRATCH advance_soil_water_column      !
-      !      for soil_evap / infiltration / uptake_total (the soil's TRUE, possibly fwilt-limited        !
-      !      realized supply). throughfall_total (sec 3.4, P2c) is what SURVIVES the canopy -- the         !
-      !      raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus what the             !
-      !      interception sweep above caught otherwise; feeding the soil the UN-reduced forc%rainfall         !
-      !      here while ALSO crediting the intercepted share to the canopy surface store would create        !
-      !      water from nothing (double-counted at the whole-column boundary). ------------------------!
+      !      for soil_evap / infiltration / uptake_total (the soil's TRUE realized supply, less only    !
+      !      what the residual floor returned). throughfall_total (sec 3.4, P2c) is what SURVIVES the    !
+      !      canopy -- the raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus  !
+      !      what the interception sweep above caught otherwise; feeding the soil the UN-reduced         !
+      !      forc%rainfall here while ALSO crediting the intercepted share to the canopy surface store  !
+      !      would create water from nothing (double-counted at the whole-column boundary). -----------!
       !----- PRECIP ROUTING under a pack (C4). snow_accumulate has                                      !
       !      ALREADY taken forc%snowfall AND forc%rainfall into the pack, so ONLY meltwater may reach the   !
       !      ground -- adding throughfall on top double-counts the rainfall at the boundary. -----------!
@@ -523,9 +523,10 @@ contains
 
       !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
       !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !
-      !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly in the         !
-      !      common (non-limited) case. sapflow_frozen/uptake_frozen are what column_derivs' mass ODE    !
-      !      reads directly; frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root    !
+      !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly unless the     !
+      !      residual floor returned water (a layer the fixed sink would have drawn below theta_res).   !
+      !      sapflow_frozen/uptake_frozen are what column_derivs' mass ODE reads directly;              !
+      !      frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root          !
       !      sink authority in column_derivs, so the two sides of the wood<->soil interface use the       !
       !      identical number by construction. ---------------------------------------------------------!
       scale = 1.0_wp

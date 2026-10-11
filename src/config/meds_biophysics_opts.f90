@@ -70,8 +70,6 @@ module meds_biophysics_opts
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction
       real(wp)    :: dsl_dmax       = 0.015_wp           !< [m] DSL max thickness (soil evap)
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
-      real(wp)    :: psi_wilt = -152.96_wp               !< [m] wilting head (~ -1.5 MPa) for the sink f_wilt
-      real(wp)    :: psi_open = -3.37_wp                 !< [m] onset head (~ -0.033 MPa) for the f_wilt ramp
       logical     :: debug_error = .false.
       !----- Ground optics under the canopy: the bare soil's shortwave albedo per band and its        !
       !      longwave emissivity, as the canopy radiation solver sees the ground (blended with snow   !

@@ -33,7 +33,6 @@ program test_biophysics_opts_config
    write(u,'(a)') 'linearize  = "picard"'
    write(u,'(a)') 'rtol       = 2.5e-4'
    write(u,'(a)') 'max_picard = 9'
-   write(u,'(a)') 'psi_wilt   = -160.0'
    write(u,'(a)') 'ground_albedo_nir = 0.25'
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
@@ -66,7 +65,6 @@ program test_biophysics_opts_config
    call check_true('soil.linearize "picard" -> SOIL_LIN_PICARD',  s%linearize == SOIL_LIN_PICARD, real(s%linearize, wp))
    call check('soil.rtol overridden',       s%rtol,     2.5e-4_wp, 1.0e-12_wp)
    call check('soil.max_picard overridden', real(s%max_picard, wp), 9.0_wp, 0.0_wp)
-   call check('soil.psi_wilt overridden',   s%psi_wilt, -160.0_wp, 1.0e-9_wp)
    call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
    call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
    call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)

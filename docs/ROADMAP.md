@@ -92,7 +92,8 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   +14–26 % and removes a split error of 0.011–0.018 % of column water. On ARK the committed soil state
   and the fluxes its soil-heat stages use come from one solve, so the borrowed-flux defect class is
   absent there. The drought result behind closing #93 (2.3 % at 900 s) was measured under
-  `ARREST_GS_CLAMP`, which #335 replaced; re-measure it in that round.
+  `ARREST_GS_CLAMP`, since replaced (#335) and then removed in favour of the always-on capacity
+  limb on the current leaf potential; re-measure it in that round.
 - **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Closed
   2026-09-30, no change.* A wood store below its apoplastic floor maps to a potential of about
   −10⁴ MPa, and the hydraulics then take many sub-steps to refill it. Measured on the current scheme

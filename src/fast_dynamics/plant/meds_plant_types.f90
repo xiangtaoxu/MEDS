@@ -56,7 +56,7 @@ module meds_plant_types
       real(wp) :: vpd        !< [Pa]   leaf-to-air vapour-pressure deficit
       real(wp) :: ca         !< [umol/mol] reference (canopy-air) CO2 mole fraction
       real(wp) :: pressure   !< [Pa]   air pressure
-      real(wp) :: psi_leaf   !< [MPa]  leaf water potential (<= 0); drives beta_nonstomata (capacity)
+      real(wp) :: psi_leaf   !< [MPa]  current leaf water potential (<= 0); drives beta_nonstomata (fast)
       real(wp) :: gb         !< [mol H2O/m2/s] boundary-layer conductance (<= 0 => skip, Cs = Ca)
       !----- THE WATER-STATUS POTENTIAL DRIVING THE STOMATAL LIMB (<= 0; default 0 = well-watered).  !
       !                                                                                          !
@@ -108,7 +108,7 @@ module meds_plant_types
       !      of the feature until issue #95 caught it. Reporting them makes that failure mode        !
       !      visible in the output file instead of only in a code read.                              !
       real(wp)    :: beta_stomata    = 1.0_wp  !< [-] stomatal limb min(1, exp(sref*(psi-psi_onset))) (1 = unstressed)
-      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] capacity limb, the psi_leaf ramp on Vcmax/Jmax/TPU
+      real(wp)    :: beta_nonstomata = 1.0_wp  !< [-] fast limb, the psi_leaf ramp on Vcmax/Jmax/TPU
    end type leaf_flux_t
 
    !----- Flat per-PFT parameter set (per-PFT traits + shared biochemistry), self-contained !
@@ -125,23 +125,16 @@ module meds_plant_types
       real(wp) :: theta_j
       real(wp) :: theta_cj_c3, theta_ip_c3
       real(wp) :: theta_cj_c4, theta_ic_c4
+      !----- psi_open/psi_close [MPa]: the current leaf potential at which the fast limb          !
+      !      beta_nonstomata is 1 and 0. A MEDS run sets them per PFT (pft_wstress_psi_open/_close:   !
+      !      the turgor-loss point and twice it unless the PFT file gives them). ------------------!
       real(wp) :: lambda25, psi_open, psi_close, lambda_psi_exp, sref_stomata
-      !----- Leaf turgor-loss point [MPa], from pv_psi_tlp(leaf_pi0, leaf_elastic_mod). Below it the  !
-      !      stomatal conductance is scaled down linearly, to zero at TWICE it -- see              !
-      !      low_psi_gs_factor in meds_leaf_gas_exchange. ---------------------------------------!
-      real(wp) :: psi_tlp = -2.0_wp
       !----- Predawn leaf potential [MPa] below which the stomatal water stress begins: beta_stomata  !
       !      is 1 above it and exp(sref_stomata*(psi - psi_onset)) below. A MEDS run sets it per PFT   !
       !      (pft_stomata_psi_onset: half the turgor-loss point unless the PFT file gives it); the 0    !
       !      here, stress from any negative potential, is what a caller building the record by hand   !
       !      gets. --------------------------------------------------------------------------------!
       real(wp) :: psi_onset = 0.0_wp
-      !----- LWP_CONTROL_* selector (meds_config): 1 = linear decline, the only option (#332). ----!
-      integer(ik) :: low_psi_control = 1_ik
-      !----- Apply the NON-STOMATAL (capacity) water-stress limb? Default .false. -- see            !
-      !      meds_config_t%leaf_wstress_nonstomatal for why (issue #47). The stomatal limb has no    !
-      !      such switch: it is driven by psi and is the better-constrained of the two. --------!
-      logical  :: wstress_nonstomatal = .false.
       !----- Shared biochemistry constants at 25 degC + activation/deactivation terms. -----!
       real(wp) :: kc25, ko25, gstar25
       real(wp) :: ea_kc, ea_ko, ea_gstar, ea_vcmax, ea_jmax, ea_rd

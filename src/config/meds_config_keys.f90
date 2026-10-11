@@ -64,6 +64,18 @@ module meds_config_keys
                     'form: wood_kmax * sapwood area / (height * vessel_curl)'),                  &
       retired_key_t('hydraulics.wood_kmax', 'wood_kmax follows each PFT''s wood density (Xu et '// &
                     'al. 2016: 3.3 kg/m/s/MPa at 0.6 g/cm3); set pft.wood_kmax to override it'), &
+      retired_key_t('leaf_physiology.wstress_nonstomatal', 'the leaf-potential limb on '//      &
+                    'Vcmax/Jmax/TPU is always on: it is the fast water-stress control, from the '// &
+                    'turgor-loss point to twice it (pft.wstress_psi_open/_close override)'),     &
+      retired_key_t('leaf_physiology.low_water_potential_control', 'the linear decline of gs '// &
+                    'on the daily predawn potential is gone: the always-on leaf-potential limb '// &
+                    'on Vcmax/Jmax/TPU closes the stomata within the day instead'),              &
+      retired_key_t('soil.psi_wilt', 'there is no soil-side wilting point: the plant hydraulics '// &
+                    'limits root uptake (the soil->root conductance falls with K(theta), and a '//   &
+                    'layer drier than the wood gives nothing), so a wilting ramp cut the same '//    &
+                    'water twice'),                                                              &
+      retired_key_t('soil.psi_open', 'there is no soil-side wilting ramp: the plant hydraulics '// &
+                    'limits root uptake (see soil.psi_wilt)'),                                   &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &

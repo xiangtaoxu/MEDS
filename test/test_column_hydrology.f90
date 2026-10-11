@@ -14,6 +14,7 @@
 program test_column_hydrology
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
+   use meds_constants,        only : rho_h2o
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_column_state_types, only : soil_column_t
@@ -43,7 +44,7 @@ program test_column_hydrology
    call test_snow_free_evap()
    call test_evap_moisture_response()
    call test_clip_layer_decomposition()
-   call test_face_check_wilting_sink()
+   call test_face_check_root_sink()
    call test_storm_on_dry_column()
 
    call test_report('test_column_hydrology')
@@ -110,33 +111,55 @@ contains
    end subroutine test_constitutive
 
    !=======================================================================================!
-   !----- #331: the per-face check must subtract the sink the solver REMOVED. A top layer drier     !
-   !      than psi_open has its root uptake cut by the wilting ramp; the check used to subtract the   !
-   !      plant's request instead, and reported the difference (here ~0.02 kg/m2) as a face error    !
-   !      -- which [energy].debug_error turns into a stop. ----------------------------------------!
-   subroutine test_face_check_wilting_sink()
+   !----- The root sink is the plant's request as given, and the per-face check subtracts the sink   !
+   !      the solver REMOVED (#331). On a moderately dry top layer the two are the same number. A     !
+   !      nearly empty column asked for 20 times layer 1's water (capillary rise refills a layer      !
+   !      asked for only twice it) gives at most what the layer holds: theta stays at or above        !
+   !      theta_res, the shortfall is booked as uptake_deficit, the per-face check still reads        !
+   !      machine zero, and the column closes. Without the availability cap this request drove the    !
+   !      solve out of the retention curve's domain (a 1e8 kg/m2 mass residual). --------------------!
+   subroutine test_face_check_root_sink()
       type(soil_params_t)    :: params
       type(soil_column_t)    :: col
       type(chydro_forcing_t) :: forcing
       type(soil_opts_t)      :: opts
       type(chydro_flux_t)    :: flux
       real(wp), parameter    :: dt = 900.0_wp, demand = 1.0e-4_wp    ! [s], [kg/m2/s] from layer 1
-      print '(a)', 'test_face_check_wilting_sink:'
+      real(wp) :: avail
+      print '(a)', 'test_face_check_root_sink:'
       call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1) = 0.10_wp                                 ! psi ~ -39 m: the ramp passes ~3/4 of it
       forcing%precip_ground = 0.0_wp
       forcing%root_uptake   = 0.0_wp
-      forcing%root_uptake(1) = demand
       forcing%t_ground = 298.15_wp ; forcing%q_air = 0.010_wp
       forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
       opts%bottom_bc = SOIL_BC_FREE_DRAIN
+
+      col%theta(1) = 0.10_wp                                 ! psi ~ -39 m: moderately dry
+      forcing%root_uptake(1) = demand
       call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-      call check_true('the wilting ramp cuts the top layer''s uptake',                            &
-                      flux%uptake_total < 0.9_wp * demand, flux%uptake_total / demand)
-      call check_true('the per-face check reads machine zero on the realized sink',               &
+      call check('moderately dry: the sink is the request as given', flux%uptake_total, demand,    &
+                 1.0e-12_wp * demand)
+      call check_true('moderately dry: the per-face check reads machine zero',                     &
                       flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
-      call check_true('and the column still closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
-   end subroutine test_face_check_wilting_sink
+      call check_true('moderately dry: the column closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
+
+      call loam_column(SOIL_RETENTION_VG, params, col)
+      col%theta(1:params%n_active) = params%theta_res(1:params%n_active) + 0.002_wp   ! nearly empty,
+                                                             ! so nothing below can refill layer 1
+      avail = (col%theta(1) - params%theta_res(1)) * params%dz(1) * rho_h2o
+      forcing%root_uptake(1) = 20.0_wp * avail / dt           ! far more than layer 1 holds or gets
+      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
+      call check_true('nearly empty: theta stays at or above theta_res',                           &
+                      col%theta(1) >= params%theta_res(1), col%theta(1) - params%theta_res(1))
+      call check_true('nearly empty: the layer gives no more than it holds (uptake_deficit > 0)',  &
+                      flux%uptake_deficit > 0.0_wp, flux%uptake_deficit)
+      call check('nearly empty: realized uptake + returned water == the request',                 &
+                 flux%uptake_total + flux%uptake_deficit, forcing%root_uptake(1),                 &
+                 1.0e-12_wp * forcing%root_uptake(1))
+      call check_true('nearly empty: the per-face check reads machine zero',                       &
+                      flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
+      call check_true('nearly empty: the column closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
+   end subroutine test_face_check_root_sink
 
    !=======================================================================================!
    !----- #352: a storm front on a dry column. The BCI blow-up of 2017-04-17 began in this solve; the  !
@@ -331,8 +354,7 @@ contains
       call loam_column(SOIL_RETENTION_VG, params, col)
       theta = 0.25_wp ; theta(1) = 0.30_wp ; theta(2) = 0.12_wp
       uptake = 0.0_wp
-      call soil_water_time_deriv(theta, params, opts, 10_ik, 0.0_wp, uptake, dtheta, drain, upt, qface, &
-                                 apply_wilt_limit=.false.)
+      call soil_water_time_deriv(theta, params, opts, 10_ik, 0.0_wp, uptake, dtheta, drain, upt, qface)
       k1   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(1), params%theta_sat(1), params%theta_res(1), &
                                        params%vg_alpha(1), params%vg_n(1), params%ksat(1))
       k2   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(2), params%theta_sat(2), params%theta_res(2), &

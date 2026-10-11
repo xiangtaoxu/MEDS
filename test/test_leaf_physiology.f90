@@ -4,13 +4,14 @@
 program test_leaf_physiology
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_kelvin
-   use meds_config,             only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset
+   use meds_config,             only : meds_config_t, pft_leaf_psi_tlp, pft_stomata_psi_onset,  &
+                                       pft_wstress_psi_open, pft_wstress_psi_close
    use meds_pft_params,         only : HYD_UNSET
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
                                  kattge_knorr_entropy, kattge_knorr_jv_ratio
    use meds_leaf_gas_exchange,only : assimilation_demand_c3
-   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn, low_psi_gs_factor
+   use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
    use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
    use meds_fast_config, only : leaf_gas_exchange
    use meds_test_support, only : banner, build_test_config, check, check_close
@@ -20,7 +21,7 @@ program test_leaf_physiology
    type(leaf_env_t)    :: env
    type(leaf_flux_t)   :: flux, flux2
    real(wp) :: a_gross, ac, aj, ap, an0, an1, an2, prev
-   real(wp) :: psi_tlp, jump, gs_top, sref0, gs_model
+   real(wp) :: psi_tlp, jump, gs_top
    integer(ik) :: i, j
    integer(ik), dimension(3) :: sms = [ SM_LEUNING, SM_MEDLYN, SM_KATUL ]
 
@@ -194,19 +195,18 @@ program test_leaf_physiology
       cfg%leaf_use_boundary_layer = .false.
    end block
 
-   !=== 7-. The capacity limb is OFF by default (issue #47), so psi_leaf must be INERT. ======!
-   !     Guards the default: if someone re-enables it silently, this fires before the sweeps below. !
+   !=== 7-. The fast limb is idle while the leaf holds turgor: psi_leaf above the turgor-loss   !
+   !     point is inert. ====================================================================!
+   psi_tlp = pft_leaf_psi_tlp(cfg, 1_ik)
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%A_net
-   env%psi_leaf = -5.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
-   call check_close(an1, an0, 1.0e-12_wp, 'psi_leaf is inert when wstress_nonstomatal is off (default)')
+   env%psi_leaf = 0.9_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
+   call check_close(an1, an0, 1.0e-12_wp, 'psi_leaf above the turgor-loss point is inert')
 
-   !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as psi_leaf drops. =======!
-   !     The capacity limb still EXISTS and is still tested -- it is opt-in, not deleted, so every  !
-   !     assertion below enables it explicitly. ====================================================!
-   cfg%leaf_wstress_nonstomatal = .true.
+   !=== 7. Water stress (PFT 1, Medlyn): A_net falls monotonically as the leaf wilts past its      !
+   !     turgor-loss point, to -Rd once the fast limb has shut the biochemistry. ===================!
    env = std_env() ; env%psi_leaf =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an0 = flux%A_net
-   env%psi_leaf = -1.5_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
-   env%psi_leaf = -5.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an2 = flux%A_net
+   env%psi_leaf = 1.5_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an1 = flux%A_net
+   env%psi_leaf = 2.5_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; an2 = flux%A_net
    call check(an0 > an1 .and. an1 > an2, 'A_net must decrease as the leaf dries')
    call check_close(an2, -flux%rd, 1.0e-6_wp, 'fully stressed C3 leaf nets -Rd (beta_nonstomata = 0)')
 
@@ -232,8 +232,8 @@ program test_leaf_physiology
    end do
    cfg%stomatal_model = SM_MEDLYN
 
-   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the capacity !
-   !     limb is OFF, so a drop in SOIL water potential must close stomata (gs falls) through g1. ==!
+   !=== 7d. Stomatal-limb stress (Sabot beta_stomata via psi): with psi_leaf = 0 the fast limb  !
+   !     is idle, so a drop in the predawn potential must close stomata (gs falls) through g1. ===!
    env = std_env() ; env%psi_leaf = 0.0_wp
    env%psi =  0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an0 = flux%gs
    env%psi = -1.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)  ; an1 = flux%gs
@@ -241,63 +241,48 @@ program test_leaf_physiology
    call check(flux2%converged, 'stomatal-limb (psi) solve must converge')
    call check(an0 > an1 .and. an1 > an2, 'gs must fall as soil water potential drops (beta_stomata on g1)')
 
-   cfg%leaf_wstress_nonstomatal = .false.     ! back to the shipped default for the rest of the suite
-
-   !=== 7e. Low-water-potential control (#332): the conductance the stomatal model calculates is    !
-   !     multiplied by a factor falling LINEARLY from 1 at psi_tlp to 0 at 2*psi_tlp, and the solve  !
-   !     stays coupled (A and Ci are those of the reduced gs). A gentle stomatal limb keeps the     !
-   !     leaf open enough across the band to see the factor. ======================================!
-   psi_tlp = pft_leaf_psi_tlp(cfg, 1_ik)
-   call check_close(low_psi_gs_factor(0.5_wp * psi_tlp, psi_tlp), 1.0_wp, 1.0e-14_wp, 'lwp factor: 1 above psi_tlp')
-   call check_close(low_psi_gs_factor(psi_tlp, psi_tlp),          1.0_wp, 1.0e-14_wp, 'lwp factor: 1 at psi_tlp')
-   call check_close(low_psi_gs_factor(1.25_wp * psi_tlp, psi_tlp), 0.75_wp, 1.0e-14_wp, 'lwp factor: linear')
-   call check_close(low_psi_gs_factor(1.5_wp * psi_tlp, psi_tlp), 0.5_wp, 1.0e-14_wp, 'lwp factor: 0.5 half way')
-   call check_close(low_psi_gs_factor(2.0_wp * psi_tlp, psi_tlp), 0.0_wp, 1.0e-14_wp, 'lwp factor: 0 at 2*psi_tlp')
-   call check_close(low_psi_gs_factor(3.0_wp * psi_tlp, psi_tlp), 0.0_wp, 1.0e-14_wp, 'lwp factor: 0 below')
-   sref0 = cfg%pft%wstress_sref_stomata(1)
-   cfg%pft%wstress_sref_stomata(1) = 0.3_wp
-   !----- half way through the band, gs is half the Medlyn conductance of the leaf as solved. -----!
-   cfg%stomatal_model = SM_MEDLYN
-   env = std_env() ; env%psi_leaf = 0.0_wp ; env%psi = 1.5_wp * psi_tlp
-   call leaf_gas_exchange(env, cfg, 1_ik, flux)
-   gs_model = stomata_gs_medlyn(flux%A_net, flux%cs, env%vpd, cfg%pft%stomatal_g0(1),              &
-                                cfg%pft%stomatal_g1(1) * min(1.0_wp, exp(0.3_wp * (env%psi                    &
-                                - pft_stomata_psi_onset(cfg, 1_ik)))), cfg%medlyn_vpd_min)
-   call check(flux%converged, 'lwp mid-band: the solve converges')
-   call check_close(flux%gs, 0.5_wp * gs_model, 1.0e-4_wp * gs_model,                              &
-                    'lwp mid-band: gs is 0.5 x the Medlyn conductance at the solved A and Cs')
-   !----- for every stomatal model: continuous, never rising as psi falls, diffusion-consistent,   !
-   !      and shut past 2*psi_tlp -- no CO2 or water exchanged by day, respiration only at night. --!
+   !=== 7e. The fast limb (beta_nonstomata) on the leaf's current potential: 1 down to the     !
+   !     turgor-loss point, falling linearly to 0 at twice it (the defaults; the PFT file may set  !
+   !     wstress_psi_open/_close). Every stomatal model ties gs to A, so as the leaf wilts gs falls !
+   !     continuously to the cuticular g0, and a wilted leaf nets -Rd by day. ======================!
+   call check_close(pft_wstress_psi_open(cfg, 1_ik),  psi_tlp,          1.0e-14_wp,                 &
+                    'fast limb starts at the turgor-loss point')
+   call check_close(pft_wstress_psi_close(cfg, 1_ik), 2.0_wp * psi_tlp, 1.0e-14_wp,                 &
+                    'fast limb completes at twice the turgor-loss point')
+   env = std_env() ; env%psi_leaf = 0.9_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check_close(flux%beta_nonstomata, 1.0_wp, 0.0_wp, 'fast limb: 1 while the leaf holds turgor')
+   env%psi_leaf = 1.5_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check_close(flux%beta_nonstomata, 0.5_wp, 1.0e-12_wp, 'fast limb: 0.5 half way')
+   env%psi_leaf = 2.0_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+   call check_close(flux%beta_nonstomata, 0.0_wp, 0.0_wp, 'fast limb: 0 at twice the turgor-loss point')
    do j = 1_ik, size(sms)
       cfg%stomatal_model = sms(j)
-      env = std_env() ; env%psi_leaf = 0.0_wp
-      env%psi = psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; gs_top = flux%gs
+      env = std_env()
+      env%psi_leaf = psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux) ; gs_top = flux%gs
       jump = 0.0_wp ; prev = huge(1.0_wp)
       do i = 0_ik, 280_ik
-         env%psi = psi_tlp * (0.8_wp + 1.4_wp * real(i, wp) / 280.0_wp)
+         env%psi_leaf = psi_tlp * (0.8_wp + 1.4_wp * real(i, wp) / 280.0_wp)
          call leaf_gas_exchange(env, cfg, 1_ik, flux)
-         call check(flux%converged .and. flux%gs >= 0.0_wp, 'lwp sweep: converged, gs >= 0')
-         call check(flux%gs <= prev + 1.0e-12_wp, 'lwp sweep: gs never rises as psi falls')
+         call check(flux%converged .and. flux%gs >= cfg%pft%stomatal_g0(1) * (1.0_wp - 1.0e-12_wp),   &
+                    'fast-limb sweep: converged, gs >= g0')
+         !----- to the Ci solve's tolerance (1e-3 ppm): near the g0 floor Cs - Ci is ~30 ppm, so the  !
+         !      back-computed gs carries ~1e-5 relative noise (Katul switches to its g0 pass there). !
+         call check(flux%gs <= prev * (1.0_wp + 1.0e-4_wp) + 1.0e-12_wp,                          &
+                    'fast-limb sweep: gs never rises as the leaf dries')
          if (i > 0_ik) jump = max(jump, prev - flux%gs)
-         !----- off the (scaled) g0 floor, where gs is the diffusion identity's; as in the Katul test. -!
-         if (flux%gs > low_psi_gs_factor(env%psi, psi_tlp) * cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp) &
-             .and. flux%gs > 1.0e-9_wp) then
+         if (flux%gs > cfg%pft%stomatal_g0(1) * (1.0_wp + 1.0e-6_wp)) then
             call check_close(flux%gs * (flux%cs - flux%ci) / 1.6_wp, flux%A_net, 1.0e-6_wp,           &
-                             'lwp sweep: A, gs, Ci and Cs stay diffusion-consistent')
+                             'fast-limb sweep: A, gs, Ci and Cs stay diffusion-consistent')
          end if
          prev = flux%gs
       end do
-      call check(jump < 0.05_wp * gs_top, 'lwp sweep: no step larger than 5% of gs at psi_tlp')
-      env%psi = 2.1_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
-      call check(flux%gs < 1.0e-9_wp .and. flux%transpiration < 1.0e-12_wp,                         &
-                 'lwp past 2*psi_tlp: no conductance, no transpiration')
-      call check(abs(flux%A_net) < 1.0e-3_wp, 'lwp past 2*psi_tlp: no net CO2 exchange by day')
-      env%par = 0.0_wp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
-      call check(flux%gs == 0.0_wp .and. flux%transpiration == 0.0_wp, 'lwp past 2*psi_tlp at night: shut')
-      call check_close(flux%A_net, -flux%rd, 1.0e-12_wp, 'lwp past 2*psi_tlp at night: the leaf respires')
+      call check(jump < 0.05_wp * gs_top, 'fast-limb sweep: no step larger than 5% of gs at the turgor-loss point')
+      env%psi_leaf = 2.1_wp * psi_tlp ; call leaf_gas_exchange(env, cfg, 1_ik, flux)
+      call check_close(flux%gs, cfg%pft%stomatal_g0(1), 1.0e-9_wp, 'wilted leaf by day: gs is the cuticular g0')
+      call check_close(flux%A_gross, 0.0_wp, 1.0e-12_wp, 'wilted leaf by day: no photosynthesis')
+      call check_close(flux%A_net, -flux%rd, 1.0e-12_wp, 'wilted leaf by day: the leaf respires')
    end do
    cfg%stomatal_model = SM_MEDLYN
-   cfg%pft%wstress_sref_stomata(1) = sref0
 
    !=== 7f. The stomatal stress begins at an onset: half the turgor-loss point unless the PFT     !
    !     file sets stomata_psi_onset. Above it beta_stomata is 1, so the gravity head a tall tree   !

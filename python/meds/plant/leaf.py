@@ -90,8 +90,8 @@ class Params:
     theta_cj_c4: float = 0.80      # [--]  C4 co-limitation curvature 1
     theta_ic_c4: float = 0.95      # [--]  C4 co-limitation curvature 2
     lambda25: float = 600.0        # [umol CO2/mol H2O]  Katul marginal water-use efficiency
-    psi_open: float = -0.5         # [MPa]  leaf potential at beta = 1 (no water stress)
-    psi_close: float = -2.5        # [MPa]  leaf potential at beta = 0 (full water stress)
+    psi_open: float = -2.0         # [MPa]  leaf potential where the fast limb starts (MEDS: the turgor-loss point)
+    psi_close: float = -4.0        # [MPa]  ... and where it has shut Vcmax/Jmax/TPU (MEDS: twice it)
     lambda_psi_exp: float = 1.0    # [--]  Katul lambda water-stress exponent
     sref_stomata: float = 2.0      # [1/MPa]  Sabot stomatal water-stress sensitivity (beta_stomata=exp(sref*psi))
     kc25: float = 40.49            # [Pa]  Rubisco CO2 Michaelis constant
@@ -117,7 +117,7 @@ class Params:
 #----- C4 defaults: the vetted C4-grass traits from the example PFT config (PFT 3). ---------#
 _C4_DEFAULTS = dict(pathway=Pathway.C4, vcmax25=40.0, jmax25=160.0, rd25=1.0, kp25=0.7,
                     g0=0.04, g1=1.6, quantum_yield=0.04, theta_cj_c4=0.80, theta_ic_c4=0.95,
-                    lambda25=350.0, psi_close=-2.0)
+                    lambda25=350.0)
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,8 @@ def gas_exchange(par, leaf_temp, vpd, ca, params, *,
 
     `psi` [MPa, <=0] is the SUPPLY-side water potential driving the Sabot stomatal limb
     (beta_stomata = min(1, exp(sref_stomata * psi))), as distinct from `psi_leaf`, the
-    instantaneous demand-side tension driving the non-stomatal capacity limb. Sabot et al. (2022)
+    current demand-side tension driving the fast capacity limb on Vcmax/Jmax/TPU (always applied,
+    1 at psi_open falling to 0 at psi_close). Sabot et al. (2022)
     write it as soil/predawn potential; MEDS supplies the cohort's own predawn (previous-day
     daily-max) LEAF potential, which is both what the underlying field measurement is and the
     plant's own integration over its rooted profile. The two coincide only in wet soil -- under

@@ -197,31 +197,42 @@ would fall below the cuticular floor $g_0$, the solver re-solves g0-pinned (§5)
 
 ---
 
-## 4. Water stress — two limbs
+## 4. Water stress — a fast and a slow control
 
 MEDS follows the two-factor decomposition of Sabot et al. (2022) / Zhou et al. (2013): drought
-acts on **capacity** (biochemistry) and on the **stomatal** aperture independently. Both are
-per-PFT and tunable.
+acts on **capacity** (biochemistry) and on the **stomatal** aperture independently. The two act on
+different time scales, as in Xu et al. (2016)'s ED2 scheme: capacity on the leaf's own current water
+potential, the aperture on the previous day's predawn potential.
 
-### 4.1 Non-stomatal (capacity) limb — $\beta_{ns}$
+### 4.1 The fast control: capacity, on the current leaf potential — $\beta_{ns}$
 
-A linear ramp in **leaf** water potential, applied to $V_{cmax}$, $J_{max}$, and TPU for **all**
-stomatal models (capacity downregulation is a biochemistry effect, scheme-independent):
+A linear ramp in the **current leaf** water potential (the step-start $`\psi_{leaf}`$ the plant-water
+solver holds), applied to $V_{cmax}$, $J_{max}$ and TPU for **all** stomatal models (capacity
+downregulation is a biochemistry effect, scheme-independent). $R_d$ is not scaled.
 
 ```math
 \beta_{ns} = \mathrm{clamp}\!\left(\frac{\psi_{leaf} - \psi_{close}}{\psi_{open} - \psi_{close}},\,0,\,1\right),
 \qquad \{V_{cmax}, J_{max}, \mathrm{TPU}\} \mathrel{*}= \beta_{ns}
 ```
 
-Parameters: `wstress_psi_open` ($\psi_{open}$, $\beta_{ns}=1$), `wstress_psi_close`
-($\psi_{close}$, $\beta_{ns}=0$).
+$`\psi_{open}`$ is the PFT's leaf turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$
+and $`\psi_{close}`$ twice it, from the same pressure-volume curve the hydraulics solver stores leaf
+water on (each PFT's own `leaf_pi0` and `leaf_elastic_mod`, else the `[hydraulics]` values). A PFT
+file may set `wstress_psi_open` and `wstress_psi_close` instead. A leaf keeps its capacity while it
+holds turgor and loses it as it wilts.
 
-### 4.2 Stomatal limb — $\beta_s$ (Sabot 2022)
+Every stomatal model ties $`g_s`$ to $`A`$, so this is what closes the stomata *within the day*: as the
+leaf wilts, $`A`$ and with it $`g_s`$ fall, continuously, to the cuticular $`g_0`$. At
+$`\psi_{leaf}\le\psi_{close}`$ the leaf by day has $`A_g=0`$, $`A_n=-R_d`$ and $`g_s=g_0`$; it then loses
+only the cuticular water $`g_0 D`$. That makes $`g_0`$ the leaf's minimum conductance, a physical trait,
+rather than a fitted intercept: a large $`g_0`$ keeps transpiration running from a wilted leaf.
 
-An exponential in **soil / predawn** water potential, downregulating the *aperture*:
+### 4.2 The slow control: stomatal aperture, on the predawn potential — $\beta_s$ (Sabot 2022)
+
+An exponential in the **predawn** water potential, downregulating the *aperture*:
 
 ```math
-\beta_s = \min\!\bigl(1,\ \exp(s_{ref}\,\psi)\bigr)
+\beta_s = \min\!\bigl(1,\ \exp\bigl(s_{ref}\,(\psi - \psi_{onset})\bigr)\bigr)
 ```
 
 - **Leuning / Medlyn:** scale the slope, $`g_{1,\text{eff}} = g_1\,\beta_s`$.
@@ -229,22 +240,21 @@ An exponential in **soil / predawn** water potential, downregulating the *apertu
   Because Medlyn gives $g_1 \propto \lambda^{-1/2}$, the exponent $e = 2$ makes the Katul and
   Leuning/Medlyn responses *identical* for the same $\beta_s$.
 
-Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp` ($e$).
+Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp` ($e$), and
+`stomata_psi_onset` ($`\psi_{onset}`$, default half the PFT's turgor-loss point, so the gravity head a
+tall tree has in wet soil does not read as drought).
 
 > **Note.** The stomatal driver is the *supply-side* potential $\psi$ (via `leaf_env_t%psi`,
-> default 0 = well-watered); the capacity driver is midday $\psi_{leaf}$, the *demand-side*
+> default 0 = well-watered); the capacity driver is the current $\psi_{leaf}$, the *demand-side*
 > tension. Sabot writes $\psi$ as soil/predawn potential; MEDS supplies the cohort's own **predawn
 > (previous-day daily-max) leaf** potential — see below. The field was called `psi_soil` until
 > issue #99; it was renamed because it never carried a soil potential. This mirrors ED2's Katul
 > `stoma_beta` (with $`s_{ref}\,e \equiv`$ ED2's `stoma_beta`, and $\psi \equiv$ ED2's
-> `dmax_leaf_psi` — the same quantity, same name); the divergences are tracked in **issue #47**.
+> `dmax_leaf_psi`); the divergences are tracked in **issue #47**.
 
-> **What actually drives $`\beta_s`$ (issue #95).** `psi` is an *optional* argument, and until
-> recently the fast-loop driver never passed it — so $`\psi=0`$ and $`\beta_s\equiv 1`$: there
-> was **no stomatal water stress at all**. Over 8 dry days GPP stayed flat at ~98.5 µmol m⁻² s⁻¹ while
-> the wood store sat empty. It is now fed the **previous day's daily-maximum leaf water potential** —
-> the model's predawn potential, which is what the field measurement behind $`s_{ref}`$ actually is,
-> and the plant's own integration over its rooted profile (so it already carries rooting depth,
+> **What drives $`\beta_s`$.** The **previous day's daily-maximum leaf water potential** — the
+> model's predawn potential, which is what the field measurement behind $`s_{ref}`$ actually is, and
+> the plant's own integration over its rooted profile (so it already carries rooting depth,
 > per-PFT vulnerability, and the gravity head that no single soil layer's $`\psi`$ does). Unset
 > cohorts are seeded from the surface-layer soil potential — the one place a genuine soil $`\psi`$
 > enters this path.
@@ -258,32 +268,28 @@ Parameters: `wstress_sref_stomata` ($s_{ref}$, ~2 MPa⁻¹), `wstress_lambda_exp
 > time is ~9 s at $`\theta`$ 0.25 but ~4.8 **days** at $`\theta`$ 0.10, so a droughted cohort never
 > equilibrates overnight — which is why the kernel field is named plainly `psi` (issue #99).
 
-### 4.3 Where this diverges from ED2 — deliberately (issue #47)
+### 4.3 Where this diverges from ED2 (issue #47)
 
-MEDS uses the Sabot two-limb scheme; ED2's `farq_katul.f90` uses a Manzoni-style single
-`stoma_beta` plus a turgor-loss capacity term. **The decision is to keep Sabot and state the
-difference**, rather than adopt ED2's forms. Three divergences, and why each one stands:
+ED2's `farq_katul.f90` (Xu et al. 2016's scheme, `H2O_PLANT_LIM = 4`) has the same two time scales:
+a turgor-loss capacity term on the leaf potential at the start of each step, and a Manzoni-style
+`stoma_beta` on the day's running maximum potential. The forms differ:
 
 | | MEDS | ED2 (`farq_katul.f90`) |
 |---|---|---|
-| **capacity shape** | linear ramp in $\psi_{leaf}$ between $\psi_{open}$ and $\psi_{close}$ | $`1/\bigl(1+0.1(\psi_{leaf}/\psi_{tlp})^{6}\bigr)`$, a 6th-power turgor-loss curve |
+| **capacity shape** | linear ramp in $\psi_{leaf}$ from $\psi_{tlp}$ to $2\psi_{tlp}$ | $`1/\bigl(1+0.1(\psi_{leaf}/\psi_{tlp})^{6}\bigr)`$, a 6th-power turgor-loss curve |
 | **capacity targets** | $V_{cmax}$, $J_{max}$ **and** TPU | $J_{max}$ and quantum yield $\alpha$ only ($V_{cmax}$ and TPU are commented out) |
 | **stomatal scope** | Leuning/Medlyn $g_1$ **and** Katul $\lambda$ | Katul $\lambda$ only |
-| **stomatal driver** | predawn (previous-day daily-max) leaf $\psi$ | `dmax_leaf_psi` — the same quantity |
+| **stomatal driver** | predawn (previous-day daily-max) leaf $\psi$ | `dmax_leaf_psi`, the current day's running maximum |
 | **parameter split** | $s_{ref}$ (shared with the $g_1$ limb) $\times$ $e$ (Katul-only) | one `stoma_beta` |
 
-**Capacity shape and targets.** ED2's turgor-loss form is anchored on a measurable trait,
-$\psi_{tlp}$, which is an advantage; but it is applied to $J_{max}$ and $\alpha$ while leaving
-$V_{cmax}$ untouched, which makes the capacity limb act only on the light-limited branch. The Sabot
-formulation downregulates all three potential rates together, which is what the underlying
-observations describe, and it keeps the limb's effect independent of which limitation a leaf happens
+**Capacity shape and targets.** Both anchor the capacity term on $\psi_{tlp}$. ED2 applies it to
+$J_{max}$ and $\alpha$ while leaving $V_{cmax}$ untouched, which makes it act only on the
+light-limited branch. MEDS downregulates all three potential rates together, which is what the
+underlying observations describe, and keeps the effect independent of which limitation a leaf happens
 to be under. MEDS also applies it for **every** stomatal model, not just Katul, because capacity
-downregulation is biochemistry and should not depend on the aperture scheme selected.
-
-The cost of the linear ramp is that it is a **linear amplifier on a $\psi_{leaf}$ that is itself
-`dt_fast`-dependent** — at 900 s a 1 MPa $\psi_{leaf}$ error became a 33 % GPP shift. That is why
-`wstress_nonstomata` ships **off** and the shipped configs say so. ED2's 6th power would amplify the
-same error harder still, not less; this is an argument about the input, not the curve.
+downregulation is biochemistry and should not depend on the aperture scheme selected. The ramp is
+linear, so its response to an error in $\psi_{leaf}$ is linear too; ED2's 6th power would amplify
+the same error harder.
 
 **Stomatal scope.** Restricting $\beta_s$ to Katul, as ED2 does, would leave the two explicit
 schemes with no stomatal drought response at all. MEDS applies it to both, and the exponent
@@ -295,91 +301,15 @@ $`\texttt{stoma\_beta} = -s_{ref}\,e`$. For Katul alone only the product matters
 degenerate there; it earns its keep because $s_{ref}$ *alone* drives the Leuning/Medlyn limb, which
 ED2 has no equivalent of.
 
-> **The `psi_soil` wiring this issue also filed is already closed.** #47 recorded that the driver
-> left the stomatal potential at 0 while `soil_psi_root` was computed only after the leaf call. That
-> was fixed under issue #95: the field is `psi`, the driver passes `dmax_psi_leaf` on both call
-> paths, and unset cohorts are seeded from the surface-layer soil potential. See the #95 note in
-> §4.2 for what it was worth — $`\beta_s \equiv 1`$, i.e. no stomatal water stress at all.
+### 4.4 No separate shut-off
 
-### Low-water-potential control: stopping a plant that has run out of water
-
-$`\beta_s`$ scales $`g_1`$ only, so as it goes to zero the conductance falls to the residual
-$`g_0`$ and never reaches it. Measured: ~2.6 mm day⁻¹ still leaving a plant whose wood store was
-empty (#95). A control on top of the $`\beta_s`$ ramp is therefore needed.
-`[leaf_physiology].low_water_potential_control` selects it; `"linear_decline"` is the only option and
-the default.
-
-**`"linear_decline"` (#332).** The conductance the stomatal model calculates, $`g_0`$ included, is
-multiplied by
-
-```math
-f_{lwp}(\psi) = \min\!\left(1,\ \max\!\left(0,\ \frac{\psi - 2\psi_{tlp}}{-\psi_{tlp}}\right)\right),
-```
-
-which is 1 at the turgor-loss point $`\psi_{tlp}=\pi_0\varepsilon/(\pi_0+\varepsilon)`$ and above, falls
-linearly, and is 0 at $`2\psi_{tlp}`$ and below. $`\psi_{tlp}`$ comes from the same PV curve the
-hydraulics solver uses, from each PFT's own `leaf_pi0` and `leaf_elastic_mod` (a PFT that sets neither
-takes the `[hydraulics]` values). $`\psi`$ is the *daily-max* leaf potential of the previous day, so the
-factor is set once a day on a slow, integrated measure, not per step on a noisy sub-daily $`\psi`$.
-
-- **The solve stays coupled.** For Leuning and Medlyn the factor multiplies the model's $`g_s(A, C_s,
-  D)`$ inside the $`C_i`$ solve, so $`A`$, $`C_i`$ and $`E`$ are those of the reduced conductance. For
-  Katul the optimum is solved first and the solve is repeated with $`g_s`$ pinned at $`f_{lwp}`$ times
-  it.
-- **A shut leaf** ($`f_{lwp}=0`$) exchanges neither water nor CO₂: by day its net assimilation is 0,
-  its respiration refixed at the compensation point; at night it respires, $`A_n=-R_d`$.
-- **What this does to the carbon budget.** $`R_d`$ is unchanged and charged in full as leaf
-  respiration; the factor changes *gross* assimilation. The solve ties net assimilation to the
-  stomata, $`A_n = g_s (C_s - C_i)/1.6`$, so as $`g_s \to 0`$, $`A_n \to 0`$ and the leaf photosynthesises
-  at its internal compensation point on the CO₂ it respires: $`A_g \to R_d`$. The canopy sums $`A_g`$ as
-  GPP and $`R_d`$ as leaf respiration, so a fully closed leaf is carbon-neutral by day (credited
-  $`R_d`$ of GPP, charged $`R_d`$). The former hard shutdown set $`A_g = 0`$ and lost $`R_d`$. At night
-  $`A_g = 0`$ and the leaf loses $`R_d`$, as before. This is the standard coupled leaf model, and the
-  same refixation already happens whenever $`g_s`$ is small. A tower's GPP, partitioned from NEE,
-  cannot see refixed CO₂, so where cohorts are shut the model's GPP includes CO₂ the tower's cannot
-  count.
-- **It replaced a hard shutdown.** Until #332 the stomata shut completely below $`2\psi_{tlp}`$
-  ($`A_g=0`$, $`A_n=-R_d`$, $`g_s=0`$, $`E=0`$) and were untouched above it. That all-or-nothing step
-  made every flux jump as a parameter moved $`\psi_{tlp}`$ or the predawn potential across it, which
-  no gradient-based calibration could see past (the BCI calibration, #330). The linear decline
-  closes from $`\psi_{tlp}`$ on, so it acts earlier than the clamp did, and is continuous.
-- **A thermodynamic limit** on transpiration, the substomatal air held at its Kelvin humidity (issue
-  #96), would make this control matter less.
-
-The measurements below were taken with the former hard shutdown (then `ARREST_GS_CLAMP`, against
-`ARREST_NONE`, no control); the linear decline shuts at the same $`2\psi_{tlp}`$.
-
-Measured on the 8-day dry case ($`\theta=0.12`$, no rain), converged over six cadences:
-
-| | wood store, day 8 | cumulative ET | error at $`dt_{fast}`$ = 900 s |
-|---|---|---|---|
-| no control | 1.229 kg plant⁻¹ | 27.5 mm | **54.9 %** |
-| hard shutdown at $`2\psi_{tlp}`$ | 1.940 kg plant⁻¹ | 15.8 mm | **2.3 %** |
-
-The last column is the load-bearing one. Without an arrestor the drought trajectory converges only
-*slowly*, because nothing bounds the drawdown until the state reaches a numerical floor — so the
-day-8 answer at production cadence is 55 % wrong. The closure removes **96 % of that cadence error at
-zero recurring cost**, which is why the structural fix proposed in issue #93 (making soil water
-prognostic inside the ARK stages, at +14–26 % on every step of every run) was closed: an exact uptake
-seam could at best address the residual 2.3 %.
-
-The closure also bounds a defect it was not designed for. The frozen-uptake seam (issue #92) leaves
-the wood store with a `dt`-dependent deficit that, in dry soil and **without** an arrestor, grows
-without limit — −4.2 % on day 1 to **−65.5 %** by day 10 at 900 s, with $`\psi_{wood}`$ pinned on the
-−10000 MPa clamp from day 5. With `ARREST_GS_CLAMP` it plateaus at **+2.3 %** from day 6 onward and
-$`\psi_{wood}`$ recovers to −5.0 MPa. In moist soil the deficit is negligible either way (2e-4 %,
-decaying) because the overnight wood↔soil relaxation resets it.
-
-One caveat: days 1–2 are identical under both settings, because the feedback rolls over **once a
-day** and cannot respond until the day after the potential drops. Drought *onset* therefore carries a
-~9 % wood-water error at 900 s regardless of arrestor, relaxing to 2.3 % once the closure engages.
-
-> ⚠️ **Earlier figures here were wrong.** This section previously quoted "the wood store refills from
-> 0 to 2.29 kg plant⁻¹ and transpiration collapses from ~7 to 0.013 mm day⁻¹". Those came from a probe
-> that never set `aenv%theta_atm`, leaving it at its 298.15 K default while the forcing drove the
-> canopy over 282–294 K — Monin–Obukhov then saw a permanent stable layer and floored `ustar`,
-> suppressing turbulent exchange ~44×. The conclusion held; the magnitudes were inflated. Fixed in
-> issue #97, which also found that **no column test set `theta_atm` either**.
+$`\beta_s`$ scales $`g_1`$ only, so on its own it leaves a drought-stressed leaf the conductance
+$`g_0 + 1.6\,A/C_s`$ (Medlyn's "1 +" term) for as long as it still photosynthesises. The fast control
+removes the $`A`$-driven part as the leaf wilts, so no further factor on $`g_s`$ is needed: what is
+left is $`g_0`$, the cuticular loss, which a real leaf has too. At a VPD of 3.5 kPa a $`g_0`$ of
+0.46 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.016 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
+shipped PFT file loses 0.35 mmol m⁻² s⁻¹, which is why $`g_0`$ should be set to a measured minimum
+conductance.
 
 **Dynamic vapour pressure — built, measured, REMOVED (issue #96).** The substomatal air is in
 equilibrium with leaf water at $`\psi_{leaf}`$, so its humidity is the Kelvin value
@@ -430,7 +360,8 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently. See
 | $g_1$ | `stomatal_g1` | stomatal slope (Leuning `--` / Medlyn kPa$^{0.5}$) |
 | $D_0$ | `stomatal_d0` | Leuning humidity sensitivity |
 | $\lambda_{25}$ | `katul_lambda25` | Katul marginal WUE (well-watered) |
-| $`\psi_{open},\psi_{close}`$ | `wstress_psi_open`, `wstress_psi_close` | capacity-limb ramp bounds |
+| $`\psi_{open},\psi_{close}`$ | `wstress_psi_open`, `wstress_psi_close` | fast-limb ramp bounds (optional; default $`\psi_{tlp}`$, $`2\psi_{tlp}`$) |
+| $`\psi_{onset}`$ | `stomata_psi_onset` | where the stomatal limb starts (optional; default $`\psi_{tlp}/2`$) |
 | $s_{ref}$ | `wstress_sref_stomata` | stomatal-limb sensitivity (Sabot) |
 | $e$ | `wstress_lambda_exp` | Katul $\lambda$ exponent on $\beta_s$ |
 

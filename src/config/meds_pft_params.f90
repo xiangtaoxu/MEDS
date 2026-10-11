@@ -92,8 +92,10 @@ module meds_pft_params
       real(wp), allocatable :: theta_cj_c4(:)        !< [--]    C4 co-limitation curvature 1
       real(wp), allocatable :: theta_ic_c4(:)        !< [--]    C4 co-limitation curvature 2
       real(wp), allocatable :: katul_lambda25(:)     !< [umol CO2/mol H2O] Katul marginal water-use efficiency
-      real(wp), allocatable :: wstress_psi_open(:)   !< [MPa]   leaf potential at which beta = 1 (<= 0)
-      real(wp), allocatable :: wstress_psi_close(:)  !< [MPa]   leaf potential at which beta = 0 (< psi_open)
+      !< [MPa] current leaf potential at which the fast limb beta_nonstomata is 1 (<= 0) and 0 (below
+      !<       it). OPTIONAL: HYD_UNSET means the PFT's turgor-loss point and twice it (pft_wstress_psi_*)
+      real(wp), allocatable :: wstress_psi_open(:)
+      real(wp), allocatable :: wstress_psi_close(:)
       real(wp), allocatable :: wstress_lambda_exp(:) !< [--]    Katul lambda water-stress exponent
       !< [1/MPa] Sabot stomatal-stress sensitivity: beta_stomata = exp(sref*(psi - psi_onset)) below the
       !<         onset, psi = predawn leaf psi
@@ -330,6 +332,8 @@ contains
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!
       pft%hyd_leaf_pi0 = HYD_UNSET ; pft%hyd_leaf_elastic_mod = HYD_UNSET
       pft%stomata_psi_onset = HYD_UNSET   ! the same sentinel: half the PFT's turgor-loss point
+      pft%wstress_psi_open  = HYD_UNSET   ! ... and the turgor-loss point / twice it
+      pft%wstress_psi_close = HYD_UNSET
       pft%leaf_surf_water_max = 0.1_wp ; pft%wood_surf_water_max = 0.1_wp   ! optional keys: CLM5's dewmx
       pft%hyd_leaf_apoplast_frac = HYD_UNSET ; pft%hyd_leaf_water_sat = HYD_UNSET
       pft%hyd_wood_pi0 = HYD_UNSET ; pft%hyd_wood_elastic_mod = HYD_UNSET

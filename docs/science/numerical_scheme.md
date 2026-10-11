@@ -267,8 +267,8 @@ High-LAI sunlit stand, 24 h, scored against a 12.5 s reference:
 | ET, capacity limb **on** | −2.6% | −5.8% | −8.7% | −14.5% | −23.8% |
 | ET, capacity limb **off** (default) | −0.0% | — | — | −0.7% | −1.2% |
 
-*Measured 2026-07-31, the day before the transpiration corrector (#91) landed; the limb-on rows have
-not been re-measured since.*
+*Measured 2026-07-31, the day before the transpiration corrector (#91) landed. The capacity limb was
+optional then; it is now always on, the fast water-stress control (re-measured below).*
 
 **Two findings sit behind that table, and the second is the one to remember.**
 
@@ -286,9 +286,13 @@ the shipped PFT file, so a 1 MPa error in ψ becomes a ~50% error in capacity. I
 not the source** — and the clamp at `beta = 0` is never reached, so this is straight linear
 amplification rather than a saturation artefact.
 
-That limb is **off by default** (issue #47): it is rarely measured directly and its two parameters are
-weakly constrained, so wiring an unconverged ψ into carbon through it is not a trade worth making.
-The *stomatal* limb (driven by ψ_soil, not ψ_leaf) is better constrained and stays on.
+That limb is now **always on**: it is the fast water-stress control, from the turgor-loss point to
+twice it (`leaf_gas_exchange.md` §4). With the corrector in place the ψ error it would amplify is
+small. Re-measured 2026-10-10 on the Palo Verde dry-forest stand (example 06's test, July 2008 to May
+2009, `dt_fast` 900 against 150 s): transpiration −0.9 % and NPP +0.7 % over the period; monthly NPP
+within 0.4 % in the wet season and +4.2 % at the onset of the drought; LAI identical until the
+canopy shed, then up to +18 % in the month the canopy had lost most of its leaves (1.26 against
+1.07).
 
 **The transpiration corrector (#91) removed most of that ψ error.** Re-measured 2026-09-30 on the
 established Ithaca stand over July (`dt_fast` 12.5, 75 and 900 s):
@@ -342,17 +346,15 @@ accept** (§5a), so unlike before, a spin-up and a flux-tower study genuinely wa
 | general production, including spin-ups and coupled carbon–water | `ark` at `dt_fast = 900 s` (the default) |
 | sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
 | anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for daily ψ, which converges after the first day of a restart (§5a); shorten the step to study sub-daily excursions, and check `psi_wood` |
-| the non-stomatal water-stress limb enabled | `dt_fast` ≤ 225 s: before the corrector the limb turned the ψ error into −33% GPP, and that has not been re-measured |
 | a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
 
-**What the `dt_fast = 900 s` row costs.** With the default configuration (non-stomatal water-stress
-limb off) it is cheap: daily GPP within 0.05% and ET within 1.2% of a resolved reference, canopy-air
-temperature within 0.16 K. Soil-surface temperature is the loosest at 0.70 K. **Turn the capacity limb
-on and the same step costs −33% GPP** (§5a), so if you enable
-`[leaf_physiology].wstress_nonstomatal` you should also drop `dt_fast` to ≤ 225 s; `meds_config`
-warns when you do not. Leaf water potential converges at 900 s on `ark` apart from the first day after
-a restart (§5a).
+**What the `dt_fast = 900 s` row costs.** Little: daily GPP within 0.05% and ET within 1.2% of a
+resolved reference on a well-watered stand, canopy-air temperature within 0.16 K. Soil-surface
+temperature is the loosest at 0.70 K. Under drought the fast water-stress limb reads the step-start
+leaf potential; on the Palo Verde dry season 900 s against 150 s moves transpiration by −0.9 % and
+NPP by +0.7 % over the season (§5a). Leaf water potential converges at 900 s on `ark` apart from the
+first day after a restart (§5a).
 
 Configuration essentials:
 
@@ -447,7 +449,7 @@ The two runs above differ **only** in `dt_fast`, so everything below is the semi
 50-year footprint. Every patch-area-weighted site aggregate agrees to **≤ 0.5%**: stem density 0.40%,
 basal area 0.31%, AGB 0.44%, LAI 0.04%, soil moisture 0.39%, leaf temperature 0.02%, soil temperature
 0.04%. (AGB is 0.44% *lower* at 900 s — the same sign as the carbon bias of §5a, two orders of
-magnitude smaller than the effect that motivates the ≤ 225 s guidance when the non-stomatal limb is on.)
+magnitude smaller than the capacity-limb bias measured before the transpiration corrector, §5a.)
 
 **But the demography took a different path**, and this is the part to carry away. The runs end with 113
 vs 115 cohorts, and at year 35 they held 82 vs 67 before reconverging; patch ages differ by ~8% and
@@ -463,7 +465,7 @@ than a convergence proof.
 
 1. **Leaf water potential at 900 s: converged on `ark`, apart from a start-up transient.** Before the
    transpiration corrector (#91) daytime-mean ψ ran −0.23 MPa at 12.5 s against −1.19 MPa at 900 s,
-   and showed up as a 33% GPP shift through the non-stomatal water-stress limb. Re-measured on the
+   and showed up as a 33% GPP shift through the capacity water-stress limb (then optional, now always on). Re-measured on the
    established Ithaca stand in July (§5a), daily-mean ψ at 900 s matches 12.5 s to 0.001 MPa after
    the first day; the first day after a restart still differs (−1.83 against −0.28 MPa). `psi_wood`
    keeps 0.17 MPa at 900 s on the midday probe, through the frozen uptake seam.

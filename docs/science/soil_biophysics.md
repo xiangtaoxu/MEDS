@@ -42,10 +42,14 @@ upstream pick. The linearization is either a single **frozen-coefficient** solve
 modified-Picard** iterate (`opts%linearize`), and the step is sub-cycled by adaptive step-doubling
 (`soil_water_advance`) — BE is L-stable, so sub-stepping only buys accuracy.
 
-The **root sink** is the transpiration demand distributed **per layer** — tracking the realized uptake
-the plant-hydraulics solve returns, unconditionally (the `multilayer_roots` switch is deleted; there is
-no root-fraction-weighted fallback) — and gated by a smooth wilting ramp $`f_{wilt}(\psi)\in[0,1]`$
-between `psi_wilt` and `psi_open`, whose $\psi$-derivative enters the implicit matrix. **Ground
+The **root sink** is the uptake the plant-hydraulics solve asks of each layer, taken as given (the
+`multilayer_roots` switch is deleted; there is no root-fraction-weighted fallback). There is no
+soil-side wilting point: the plant hydraulics already limits uptake, because the soil→root
+conductance falls with $`K(\theta)`$ and a layer drier than the wood gives nothing, so a wilting
+threshold here would cut the same water twice. The sink is fixed over the step, so a layer gives at
+most what it holds above $`\theta_{res}`$ in one step (in layer 1, less what the step evaporates) —
+the availability rule the ground evaporation follows — and the shortfall is booked as
+`uptake_deficit`; the residual floor stays as the last resort. **Ground
 evaporation** combines a Philip pore-space relative humidity with a Swenson-Lawrence
 dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$ from the aerodynamics kernel
 — and it is the **single authority** for the ground latent flux (it drives both the CAS vapour twin and
