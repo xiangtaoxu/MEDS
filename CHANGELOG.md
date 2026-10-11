@@ -357,6 +357,9 @@ before and after.
 
 ### Fixed
 
+- **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered**, the water the
+  wood is credited, not the plant's request before the soil limits it. They were the same number
+  except where the soil cut the request.
 - **A leafless cohort's leaf water potential is its wood's less the gravity head**, not the pressure-
   volume curve read at an empty store (pi0/1e-4, -15,000 to -25,000 MPa), which entered the daily
   maximum the stomata and the phenology read.

@@ -442,11 +442,10 @@ contains
       !----- Per-cohort HYDRAULIC diagnostics, captured from the SAME solve the physics commits.    !
       !      psi_wood / plc were computed on every dt_fast and discarded; plc in particular is the    !
       !      one number that says whether a cohort is losing conductance, which nothing downstream    !
-      !      of here could previously see. Taken AFTER the HR floor, so the reported uptake is the    !
-      !      realized (non-negative) one the soil sink actually used.  ------------------------------!
+      !      of here could previously see. The root uptake is reported below, once the soil has said  !
+      !      how much of this request it delivers. ---------------------------------------------------!
       if (present(cdiag)) then
          cdiag(CD_SAPFLOW,     1:n) = sapflow_b(1:n)
-         cdiag(CD_ROOT_UPTAKE, 1:n) = root_uptake_b(1:n)
          cdiag(CD_PSI_WOOD,    1:n) = psi_wood_b(1:n)
          cdiag(CD_PLC,         1:n) = plc_b(1:n)
       end if
@@ -533,6 +532,9 @@ contains
       if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
       frozen%plant%sapflow_frozen(1:n) = sapflow_b(1:n)
       frozen%plant%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
+      !----- The root uptake a cohort actually gets: what its wood is credited and, summed over the    !
+      !      cohorts, what the soil gives up -- not the request, which the soil may cut. --------------!
+      if (present(cdiag)) cdiag(CD_ROOT_UPTAKE, 1:n) = frozen%plant%uptake_frozen(1:n)
 
       !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's qwflux_wl/qloss): both     !
       !      the mass FLUX (sapflow_b/uptake_frozen, already frozen above) AND the upwind reference        !
