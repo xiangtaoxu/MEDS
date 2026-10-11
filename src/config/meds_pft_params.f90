@@ -328,6 +328,7 @@ contains
       pft%max_absolute_growth_rate     = 0.0_wp
       pft%max_absolute_growth_exponent = 0.0_wp
       pft%retained_carbon_fraction = 0.3_wp ! #151: optional key; 30% of leaf and root loss resorbed
+      pft%reproduction_height_fraction = 0.33_wp ! optional key; within Thomas (1996)'s 0.20-0.75
       !----- #179: HYD_UNSET marks "no per-PFT value given"; the table builder then takes the       !
       !      [hydraulics] scalar. A sentinel rather than pre-filling from [hydraulics] here, because !
       !      alloc_pft_table runs before the [hydraulics] block is read.  -----------------------------!

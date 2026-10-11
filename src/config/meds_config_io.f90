@@ -1173,7 +1173,8 @@ contains
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
-      call req_r(tp, 'pft.reproduction_height_fraction', cfg%pft%reproduction_height_fraction, miss)
+      if (toml_has(tp, 'pft.reproduction_height_fraction'))                                       &
+         cfg%pft%reproduction_height_fraction = toml_real(tp, 'pft.reproduction_height_fraction', 0.0_wp)
 
       !----- Leaf-photosynthesis per-PFT traits. ------------------------------------------!
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
