@@ -215,11 +215,13 @@ explain.
 - **Floor:** `min_leaf_cover` = 0 for every PFT, so the depth of shedding emerges, but only once a
   leafless cohort has a defined ψ (P0.1). Until then, use a tiny shared floor (0.01) with
   `bare_leaf_cover` below it, so snap-to-bare never fires.
-- **Background turnover:** `leaf_lifespan_toc` per PFT from the leaf economics (as in example05).
-  Senescence adds the dry-season loss on top. Issue #379, where phenology would scale each PFT's own
-  turnover, would change this but is not needed for this phase.
-- **Fine roots:** ED2 keeps fine roots through leaf shedding (`root_phen_factor`). In MEDS fine roots
-  follow leaf *growth*, not leaf loss, so a bare cohort should keep its roots. Confirm in P0.2.
+- **Background turnover:** decided 2026-10-11: `leaf_lifespan_toc` = 1.0 yr for every PFT, and
+  background turnover runs only while no leaves drop (the turnover gate, feat/leaf-root-turnover), so
+  the drought drop is the phenology's alone and is not also counted as ageing. 30 % of all leaf and
+  fine-root loss is resorbed (`retained_carbon_fraction`, the new default).
+- **Fine roots:** decided 2026-10-11: fine roots keep their carbon through a leaf drop, because root
+  length sets the root–soil (Gardner) conductance and a drop would cut a leafless tree's uptake. They
+  turn over at 1.5 / leaf lifespan = 1.5 yr⁻¹ on the leaves' turnover gate and regrow with the flush.
 - **Storage:** carbon storage must pay for a reflush; ED2 set `storage_reflush_times` to 2 for this
   scheme. P2 checks that a D cohort ends the dry season with enough storage to reflush, and that a
   failed reflush shows up in the output (Xu's carbon starvation).
@@ -355,8 +357,8 @@ E → late.
 
 | Inherited by nearest WD class | Ds (early) | D (mid) | BD (late) | E (late) |
 |---|---|---|---|---|
-| `leaf_lifespan_toc` [yr] | 0.5 | 0.7 | 0.9 | 0.9 |
-| `fineroot_turnover_rate` [yr⁻¹] (1.5 / lifespan) | 3.0 | 2.143 | 1.667 | 1.667 |
+| `leaf_lifespan_toc` [yr] (2026-10-11: 1.0 for all; was 0.5, 0.7, 0.9, 0.9) | 1.0 | 1.0 | 1.0 | 1.0 |
+| `fineroot_turnover_rate` [yr⁻¹] (1.5 / lifespan) | 1.5 | 1.5 | 1.5 | 1.5 |
 | `max_absolute_growth_rate` [cm yr⁻¹ at 1 cm] | 0.422 | 0.306 | 0.118 | 0.118 |
 | mortality pins `mort_gamma`, `mort_alpha`, `mort_beta` | early | mid | late | late |
 

@@ -27,12 +27,14 @@ include_pft        = [1, 1, 1, 1]
 #      Fort Sherman (Xu et al. 2017, Ecology Letters 20:1097, Appendix 3) and seedlings in gaps at the
 #      Barro Colorado Nature Monument (Kitajima et al. 2013, Annals of Botany 112:685), where leaves
 #      live from about 0.3 yr (light wood) to 0.4-2.4 yr (dense wood), and canopy sun leaves at the PNM
-#      crane 0.2-0.9 yr (Kitajima et al. 1997, 2005). Leaves turn over at 1 / their lifespan; LMA is the
+#      crane 0.2-0.9 yr (Kitajima et al. 1997, 2005). Those spans include the drought drop; here the
+#      drop is the phenology's, and background turnover runs only while no leaves drop, so every PFT's
+#      baseline lifespan is 1 yr. LMA is the
 #      crane PFTs' 100-120 g/m2; Vcmax25 is example 04's calibrated BCI leaf for all three PFTs. SLA is
 #      carbon-based: 2000 / LMA. Fine-root carbon equals leaf carbon (ED2's q = 1), and fine roots turn
-#      over at 1.5 / the leaf lifespan, slower in the shade as the leaves are
-#      ([trait_dynamics].fineroot_lifespan_plastic).
-leaf_lifespan_toc  = [0.5, 0.7, 0.9, 0.9]         # [yr]
+#      over at 1.5 / the leaf lifespan on the leaves' turnover gate, slower in the shade as the leaves are
+#      ([trait_dynamics].fineroot_lifespan_plastic); 30 % of all leaf and fine-root loss is resorbed.
+leaf_lifespan_toc  = [1.0, 1.0, 1.0, 1.0]         # [yr]
 sla                = [20.8, 20.6, 18.6, 15.8]   # [m2/kgC] 2 x Xu's SLA (m2/kg dry): 10.4, 10.3, 9.3, 7.9
 vcmax25            = [65.64, 50.85, 36.62, 30.18]   # [umol/m2/s] from Xu (2016) A_area-WD (Table 1), inverted with MEDS's leaf (vcmax_from_aarea.py); Jmax, TPU, Rd follow the ratios
 root_to_leaf_ratio = [1.0, 1.0, 1.0, 1.0]
@@ -94,7 +96,7 @@ huber_value            = [1.5e-4, 1.5e-4, 1.5e-4, 1.5e-4]
 aboveground_frac       = [0.7, 0.7, 0.7, 0.7]
 storage_cushion        = [3.0, 3.0, 3.0, 3.0]   # owner 2026-10-10: enough reserve to re-flush
 growth_resp_factor     = [0.3, 0.3, 0.3, 0.3]
-fineroot_turnover_rate = [3.0, 2.143, 1.667, 1.667]  # [1/yr] 1.5 / leaf_lifespan_toc
+fineroot_turnover_rate = [1.5, 1.5, 1.5, 1.5]  # [1/yr] 1.5 / leaf_lifespan_toc
 wood_carbon_density    = [300.0, 300.0, 300.0, 300.0]
 f_labile_leaf          = [0.70, 0.70, 0.70, 0.70]
 f_labile_stem          = [0.05, 0.05, 0.05, 0.05]
