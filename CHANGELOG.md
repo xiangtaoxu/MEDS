@@ -103,7 +103,7 @@ before and after.
   with empty storage, and the wet-season stand LAI stayed at 3.3-3.6 (MODIS: 5.3 in October). The
   examples now set 0.5, which is exactly their earlier storage (root_to_leaf_ratio 1), so their
   results are unchanged.
-- **Reproduction starts at a share of the local maximum height**: `pft.reproduction_height_fraction`
+- **Reproduction starts at a share of the local maximum height** (#388): `pft.reproduction_height_fraction`
   [-], optional with default 0.33, replaces the required `pft.min_reproduction_height` [m]. A cohort
   reproduces once its height reaches that share of the local maximum height, the height of a 100 cm tree on the run's height curve capped at
   `hgt_max` (`local_hmax`), so where the local allometry makes trees short (a large Chave E) they mature
