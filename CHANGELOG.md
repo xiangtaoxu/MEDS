@@ -137,6 +137,13 @@ before and after.
     (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
     solver's own curve kernels, and the Mualem pore connectivity is one constant,
     `VG_PORE_CONNECTIVITY` (0.5).
+- **A run stops on the step a cohort's state leaves its bounds** (#389). Each step, the driver checks
+  every cohort's density, carbon pools, SLA, internal water and leaf and wood films: each must be
+  finite and not negative. A violation stops the run and names the field, the cohort and its patch,
+  where before it surfaced only through something derived from it, often years later. The check
+  shares status 4 with the soil-carbon plausibility check, renamed `DRIVER_ERR_SOILC` ->
+  `DRIVER_ERR_BOUNDS` (Python `ERR_SOILC` -> `ERR_BOUNDS`). `meds.demography.Site.apply_rates`
+  rejects rates that are not finite, and negative mortality or recruitment.
 - **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
@@ -455,6 +462,33 @@ before and after.
   conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
   1. The water network has no conductivity floor and starts the pond at the head at which it neither
   gives nor takes water; the day completes with both whole-column ledgers closed.
+- **A cohort's geometry is derived from its carbon, never integrated** (#389).
+  - **The bug:** the slow update advanced dbh, height, basal area, AGB and leaf area by their own
+    rates beside the carbon pools. On a leafless cohort the leaf carbon floored at 0 while the
+    integrated leaf area drifted to -1e-20 m². The negative leaf area gave a negative film capacity,
+    the film clamp wrote a negative film, and the split's film-conservation test, relative to a net
+    of 3e-30, stopped the Palo Verde regrowth with doubled `gmax` in 1951 ("canopy film water not
+    conserved").
+  - **The fix:** only `nplant` and the four carbon pools have tendencies. The geometry has one
+    writer, `set_cohort_size_from_carbon`, called after every operator that moves carbon or SLA:
+    birth (`set_cohort_size` sets the pools from dbh, then derives the geometry from them), the
+    daily update, trait acclimation, re-acclimation, fusion, fission and the restart read. A state
+    file still carries height, AGB and leaf area for its readers, but the model no longer reads
+    them back. Conservation tests scale with the sum of |terms|, not the net (`conserved` in
+    `meds_numerics`).
+  - **Also:** `advance_plant_traits` left the leaf area stale when SLA fell. Cohort fusion blended
+    SLA on leaf area, so two cohorts with different SLA fused into one with a different leaf area;
+    SLA now blends on leaf carbon, and fusion asserts the leaf area. Fusion's weighted means (traits,
+    tissue temperatures and water, the cohort diagnostics) share one function, `pair_mean`, with no
+    size threshold: the old 1e-30 cutoff left a leafless cohort's SLA unblended (leaf carbon 1e-193 at
+    BCI), and the new assertion caught it. `conserved` allows the double format's floor, tiny/epsilon
+    (~1e-292): below it an optimized build flushes to zero (a leafless pair's leaf area of 1.4e-307
+    fused to 0).
+  - **Effect:** the Palo Verde regrowth with doubled `gmax` runs its 150 years (AGB 6.21 kgC/m² in
+    1951, 11.00 in 2021), and the slow ledger closes on every phase. BCI 1991-2021 from a restart:
+    AGB 16.97 kgC/m² and LAI 6.05 in 2021 (16.84 and 6.20 before), from fusion's SLA blend and the
+    leaf area no longer left stale. Example 04's year moves by at most 0.1 % in any output
+    (heterotrophic respiration; GPP 0.02 %). A restart is still exact.
 - **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered** (#384), the water
   the wood is credited, not the plant's request before the soil limits it. They were the same number
   except where the soil cut the request.

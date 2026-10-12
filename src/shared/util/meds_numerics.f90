@@ -22,6 +22,11 @@ module meds_numerics
    public :: thomas_solve, quadratic_smaller_root, adaptive_step_update
    public :: logistic, clamp01, clamp, weighted_mean
    public :: matrix_exp, matrix_exp_fixed, matmul_sq, ascending_order
+   public :: conserved, ROUNDOFF_RTOL, pair_mean
+
+   !----- Relative size of the round-off that summing or rescaling a stored amount may leave,  !
+   !      for the conservation tests of operators that only move an amount between stores.     !
+   real(wp), parameter :: ROUNDOFF_RTOL = 1.0e-12_wp
 
 contains
 
@@ -272,5 +277,40 @@ contains
          xbar = xbar + x(k) * w(k)
       end do
    end function weighted_mean
+
+   !---------------------------------------------------------------------------------------!
+   ! True when an amount an operator only moves between stores is unchanged after it, to the  !
+   ! round-off of summing it: |after - before| <= rtol * magnitude, with `magnitude` the sum of !
+   ! the ABSOLUTE values of the terms (what reordering or rescaling a floating-point sum         !
+   ! perturbs). A tolerance relative to the NET total fails on round-off alone whenever the     !
+   ! total is near zero or its terms differ in sign (#389). Below tiny/epsilon (~1e-292 in      !
+   ! double) even epsilon of the magnitude is a subnormal number, which an optimized build      !
+   ! flushes to zero, so the floating-point format itself resolves nothing smaller: that is the !
+   ! absolute floor (BCI: two leafless cohorts' leaf area of 1.4e-307 fused to exactly 0). A    !
+   ! NaN on either side fails.                                                                  !
+   !---------------------------------------------------------------------------------------!
+   elemental pure logical function conserved(before, after, magnitude, rtol) result(ok)
+      real(wp), intent(in) :: before, after   !< the amount before and after the operator
+      real(wp), intent(in) :: magnitude       !< sum of the absolute values of its terms
+      real(wp), intent(in) :: rtol            !< relative tolerance
+      ok = abs(after - before) <= rtol * magnitude + tiny(magnitude) / epsilon(magnitude)
+   end function conserved
+
+   !---------------------------------------------------------------------------------------!
+   ! The weighted mean of two values, written a + (b - a)*wb/(wa + wb) so that it stays       !
+   ! between a and b for any non-negative weights, however small. Only with no weight at all   !
+   ! does it keep `a` (a fusion's survivor). There is no size threshold: a leafless cohort's    !
+   ! leaf carbon decays toward 1e-190 and is still the weight its SLA blends on, and a          !
+   ! threshold that skipped the blend below 1e-30 broke the leaf area fusion conserves (#389). !
+   !---------------------------------------------------------------------------------------!
+   elemental pure real(wp) function pair_mean(a, wa, b, wb) result(m)
+      real(wp), intent(in) :: a, wa   !< the first value and its weight (>= 0)
+      real(wp), intent(in) :: b, wb   !< the second value and its weight (>= 0)
+      if (wa + wb > 0.0_wp) then
+         m = a + (b - a) * (wb / (wa + wb))
+      else
+         m = a
+      end if
+   end function pair_mean
 
 end module meds_numerics

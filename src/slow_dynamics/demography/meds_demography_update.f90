@@ -2,17 +2,21 @@
 !==========================================================================================!
 ! meds_demography_update -- APPLY/refresh of (derived) cohort + patch state.                     !
 !                                                                                          !
-! update_cohort_states is the PURE APPLIER: it advances the cohort SoA by the per-cohort TENDENCY !
-! bundle (cohort_deriv_block) that the slow-loop driver computed this step -- state += rate*dt for !
-! geometry/pools, and nplant *= exp(dln*dt) (log-space, floored) for mortality. It is MODE-        !
+! update_cohort_states is the PURE APPLIER: it advances the cohort's PROGNOSTIC state -- the four  !
+! carbon pools (state += rate*dt, floored at 0) and nplant (nplant *= exp(dln*dt), log-space,      !
+! floored) -- by the per-cohort TENDENCY bundle (cohort_deriv_block) the slow-loop driver computed  !
+! this step, and then DERIVES the geometry (dbh, height, basal area, AGB, leaf area and the wood     !
+! caches) from the committed carbon through the allometry. Geometry is never integrated: it is a   !
+! function of the carbon, so it cannot drift from it or leave its range (#389: leaf area integrated !
+! by its own rate went negative on a bare cohort while its leaf carbon sat at 0). It is MODE-        !
 ! AGNOSTIC: whether the tendencies came from the carbon flip or the empirical growth law is the    !
 ! driver's concern, invisible here. The derived-type SEAM (host) unpacks the SoA and calls the     !
 ! bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads cleanly while     !
 ! the host keeps ALL state in normal memory (the discipline the former growth_step used).          !
 !                                                                                          !
 ! fill_cohort_deriv is the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and !
-! empirical (C-API) computers: given the new-state values (however the caller derived them) it backs !
-! out every field's time-derivative and advances the growth-average ring buffer with the caller's  !
+! empirical (C-API) computers: given the new carbon pools (however the caller derived them) it     !
+! backs out their time-derivatives and advances the growth-average ring buffer with the caller's   !
 ! sample -- so the field list and the fill/evict logic live in ONE place.                          !
 !                                                                                          !
 ! update_patch_states advances the slow per-PATCH state (patch ageing now; the soil-carbon step    !
@@ -21,7 +25,8 @@
 module meds_demography_update
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num, lnexp_min, lnexp_max
-   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block, set_cohort_wood_geometry
+   use meds_site_state_types, only : site_t, patch_block, cohort_block, cohort_deriv_block,      &
+                                     set_cohort_size_from_carbon
    implicit none
    private
 
@@ -30,32 +35,25 @@ module meds_demography_update
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! Build the per-cohort tendency for slot i from the supplied NEW-state values (the caller   !
-   ! computed them via the carbon flip or the empirical forward allometry). Every geometry/pool !
-   ! field's rate is (new - old)/dt; mortality is the log-space rate -mortality. It ALSO advances !
+   ! Build the per-cohort tendency for slot i from the supplied NEW carbon pools (the caller     !
+   ! computed them from NPP or from the empirical forward allometry). Each pool's rate is        !
+   ! (new - old)/dt; mortality is the log-space rate -mortality. It ALSO advances                 !
    ! the moving-average ring buffer with `ring_sample` (carbon: the realized dbh rate; empirical: !
    ! the supplied growth rate) -- the fill-while-filling / evict-when-full logic that both callers !
    ! share. Mutates cohort's ring buffer (growth_*); fills deriv(i).                             !
    !---------------------------------------------------------------------------------------!
    subroutine fill_cohort_deriv(cohort, i, deriv, dt_yr, mortality, ring_sample,                   &
-                                dbh_new, height_new, basal_area_new, agb_new, leaf_area_new,        &
                                 leaf_carbon_new, fineroot_carbon_new, wood_carbon_new,              &
                                 nonstructural_carbon_new, n_window, hist_pos)
       type(cohort_block),       intent(inout) :: cohort
       integer(ik),              intent(in)    :: i
       type(cohort_deriv_block), intent(inout) :: deriv
       real(wp),                 intent(in)    :: dt_yr, mortality, ring_sample
-      real(wp),                 intent(in)    :: dbh_new, height_new, basal_area_new, agb_new, leaf_area_new
       real(wp),                 intent(in)    :: leaf_carbon_new, fineroot_carbon_new, wood_carbon_new
       real(wp),                 intent(in)    :: nonstructural_carbon_new
       integer(ik),              intent(in)    :: n_window, hist_pos
 
-      !----- Back out every field's time-derivative for the applier. -----------------------!
-      deriv%d_dbh_dt(i)                  = (dbh_new                  - cohort%dbh(i))                  / dt_yr
-      deriv%d_height_dt(i)               = (height_new               - cohort%height(i))               / dt_yr
-      deriv%d_basal_area_dt(i)           = (basal_area_new           - cohort%basal_area(i))           / dt_yr
-      deriv%d_agb_dt(i)                  = (agb_new                  - cohort%agb(i))                  / dt_yr
-      deriv%d_leaf_area_dt(i)            = (leaf_area_new            - cohort%leaf_area(i))            / dt_yr
+      !----- Back out each prognostic pool's time-derivative for the applier. ---------------!
       deriv%d_leaf_carbon_dt(i)          = (leaf_carbon_new          - cohort%leaf_carbon(i))          / dt_yr
       deriv%d_fineroot_carbon_dt(i)      = (fineroot_carbon_new      - cohort%fineroot_carbon(i))      / dt_yr
       deriv%d_wood_carbon_dt(i)          = (wood_carbon_new          - cohort%wood_carbon(i))          / dt_yr
@@ -82,43 +80,34 @@ contains
       type(cohort_deriv_block), intent(in)    :: deriv
       real(wp),                 intent(in)    :: dt_yr, negligible
       integer(ik) :: i
-      call update_cohort_states_kernel(cohort%n, cohort%dbh, cohort%height, cohort%basal_area,     &
-                                       cohort%agb, cohort%leaf_area, cohort%leaf_carbon,           &
-                                       cohort%fineroot_carbon, cohort%wood_carbon,                 &
-                                       cohort%nonstructural_carbon, cohort%nplant,                 &
-                                       deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt,    &
-                                       deriv%d_agb_dt, deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt,&
+      call update_cohort_states_kernel(cohort%n, cohort%leaf_carbon, cohort%fineroot_carbon,      &
+                                       cohort%wood_carbon, cohort%nonstructural_carbon,            &
+                                       cohort%nplant, deriv%d_leaf_carbon_dt,                      &
                                        deriv%d_fineroot_carbon_dt, deriv%d_wood_carbon_dt,          &
                                        deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt,        &
                                        dt_yr, negligible)
-      !----- Re-derive the cached WOOD geometry from the dbh / basal_area / wood_carbon this      !
-      !      step just committed. The kernel advances those three by their own tendencies, so     !
-      !      without this the wood cache would describe yesterday's tree while the leaf cache     !
-      !      describes today's -- the exact staleness the single centralized reorder exists to    !
-      !      prevent. Host-side and outside the offload region: it is branchy allometry, and the  !
-      !      kernel above is arithmetic-only by design.                                           !
+      !----- The geometry follows the committed carbon: dbh from wood carbon, leaf area from leaf  !
+      !      carbon x SLA, and the wood caches from that dbh -- the single flip fusion and fission  !
+      !      already use. Host-side and outside the offload region: it is branchy allometry, and    !
+      !      the kernel above is arithmetic-only by design.                                         !
       do i = 1_ik, cohort%n
-         call set_cohort_wood_geometry(cohort, i)
+         call set_cohort_size_from_carbon(cohort, i)
       end do
    end subroutine update_cohort_states
 
    !---------------------------------------------------------------------------------------!
-   ! Bare-array OFFLOAD kernel: geometry/pools are additive (state += rate*dt; pools floored at !
-   ! 0); nplant follows the log-space mortality rate (nplant *= exp(dln*dt)), floored downward   !
+   ! Bare-array OFFLOAD kernel: the carbon pools are additive (state += rate*dt, floored at 0);  !
+   ! nplant follows the log-space mortality rate (nplant *= exp(dln*dt)), floored downward       !
    ! so density never rises and never drops below `negligible`. Arithmetic-only over plain       !
    ! arrays, so the `map` clauses are clean and the host keeps all state in normal memory.        !
    !---------------------------------------------------------------------------------------!
-   subroutine update_cohort_states_kernel(n, dbh, height, basal_area, agb, leaf_area,             &
-                                   leaf_carbon, fineroot_carbon, wood_carbon, nonstructural_carbon, &
-                                   nplant, d_dbh_dt, d_height_dt, d_basal_area_dt, d_agb_dt,        &
-                                   d_leaf_area_dt, d_leaf_carbon_dt, d_fineroot_carbon_dt,          &
-                                   d_wood_carbon_dt, d_nonstructural_carbon_dt, dln_nplant_dt,      &
-                                   dt_yr, negligible)
+   subroutine update_cohort_states_kernel(n, leaf_carbon, fineroot_carbon, wood_carbon,           &
+                                   nonstructural_carbon, nplant, d_leaf_carbon_dt,                  &
+                                   d_fineroot_carbon_dt, d_wood_carbon_dt, d_nonstructural_carbon_dt,&
+                                   dln_nplant_dt, dt_yr, negligible)
       integer(ik), intent(in)    :: n
-      real(wp),    intent(inout) :: dbh(:), height(:), basal_area(:), agb(:), leaf_area(:)
       real(wp),    intent(inout) :: leaf_carbon(:), fineroot_carbon(:), wood_carbon(:), nonstructural_carbon(:)
       real(wp),    intent(inout) :: nplant(:)
-      real(wp),    intent(in)    :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:), d_agb_dt(:), d_leaf_area_dt(:)
       real(wp),    intent(in)    :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:), d_wood_carbon_dt(:)
       real(wp),    intent(in)    :: d_nonstructural_carbon_dt(:), dln_nplant_dt(:)
       real(wp),    intent(in)    :: dt_yr, negligible
@@ -126,18 +115,12 @@ contains
       real(wp)    :: dln, floor_dln
 
       !$omp target teams distribute parallel do simd                                        &
-      !$omp&        map(to: d_dbh_dt, d_height_dt, d_basal_area_dt, d_agb_dt, d_leaf_area_dt,     &
-      !$omp&               d_leaf_carbon_dt, d_fineroot_carbon_dt, d_wood_carbon_dt,              &
+      !$omp&        map(to: d_leaf_carbon_dt, d_fineroot_carbon_dt, d_wood_carbon_dt,             &
       !$omp&               d_nonstructural_carbon_dt, dln_nplant_dt)                              &
-      !$omp&        map(tofrom: dbh, height, basal_area, agb, leaf_area, leaf_carbon,             &
-      !$omp&                    fineroot_carbon, wood_carbon, nonstructural_carbon, nplant)        &
+      !$omp&        map(tofrom: leaf_carbon, fineroot_carbon, wood_carbon, nonstructural_carbon,  &
+      !$omp&                    nplant)                                                       &
       !$omp&        private(dln, floor_dln)
       do i = 1_ik, n
-         dbh(i)        = dbh(i)        + d_dbh_dt(i)        * dt_yr
-         height(i)     = height(i)     + d_height_dt(i)     * dt_yr
-         basal_area(i) = basal_area(i) + d_basal_area_dt(i) * dt_yr
-         agb(i)        = agb(i)        + d_agb_dt(i)        * dt_yr
-         leaf_area(i)  = leaf_area(i)  + d_leaf_area_dt(i)  * dt_yr
          leaf_carbon(i)          = max(leaf_carbon(i)          + d_leaf_carbon_dt(i)          * dt_yr, 0.0_wp)
          fineroot_carbon(i)      = max(fineroot_carbon(i)      + d_fineroot_carbon_dt(i)      * dt_yr, 0.0_wp)
          wood_carbon(i)          = max(wood_carbon(i)          + d_wood_carbon_dt(i)          * dt_yr, 0.0_wp)
