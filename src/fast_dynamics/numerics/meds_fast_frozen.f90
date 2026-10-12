@@ -333,8 +333,8 @@ contains
       !      depletion mid-step) can overdraw the store, driving leaf/wood_surf_water NEGATIVE -- which         !
       !      corrupts the NEXT step's frozen interception rate (intercept_canopy_layer's own internal            !
       !      floor silently "fixes" a negative starting bucket, fabricating mass that was never really            !
-      !      lost) rather than genuinely closing the ledger. Re-evaluates sf0 afterward so the SAME             !
-      !      call's transp_c (feeding the hydraulics batch solve below) sees the final, scaled conductance.      !
+      !      lost) rather than genuinely closing the ledger. sf0 is evaluated again below, so the            !
+      !      transpiration demand the water network is given sees the final, scaled conductance.               !
       !      Zero-effect when canopy_water_on is off (film_evap is 0 there, scale stays 1). -------------------!
       if (col_config%canopy_water_on) then
          do i = 1_ik, n
@@ -345,8 +345,19 @@ contains
             if (sf0%film_evap_wood(i) > tiny_num) frozen%film%g_film_w(i) = frozen%film%g_film_w(i)          &
                  * min(1.0_wp, avail_wood / (sf0%film_evap_wood(i)*dt_fast))
          end do
-         call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       end if
+      !----- The transpiration demand the water network is given is this solve's, so the leaf here    !
+      !      must be charged what the stages will charge it. The leaf pays the full vapour enthalpy of  !
+      !      what it transpires and is credited the liquid enthalpy of the sapflow that replaces it      !
+      !      (qwflux_wl, set from the network's flows below). Without the credit this solve charges the  !
+      !      leaf ~4.4e5 J/kg too much, a cooler leaf transpires ~4% less, and the stages hold that.     !
+      !      So the credit is estimated from the first solve's transpiration, as if the sapflow matched  !
+      !      it, and the solve is repeated. ----------------------------------------------------------!
+      do i = 1_ik, n
+         t_up_wl = merge(biophys%wood_temp(i), biophys%leaf_temp(i), sf0%transp_c(i) >= 0.0_wp)
+         frozen%tissue%qwflux_wl(i) = sf0%transp_c(i) * internal_energy_liquid(t_up_wl)
+      end do
+      call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       !----- THE BOUNDARY WATER reaching the ground (C4). Under a pack, snow_accumulate has already      !
       !      taken forc%snowfall AND forc%rainfall into the pack, so only meltwater reaches the ground;     !
       !      on bare ground it is what SURVIVES the canopy, throughfall_total (sec 3.4, P2c) -- feeding     !
