@@ -51,6 +51,11 @@ module meds_config_keys
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
                     '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
                     'root_depth_b1 and root_depth_b2'),                                          &
+      retired_key_t('soil_column.n_layer', 'the soil layers are SoilGrids'' depths (5, 15, 30, '// &
+                    '60, 100, 150, 200 cm, then deeper) cut at soil_column.depth; set '//        &
+                    'soil_column.layer_bottoms [m] for other layers'),                           &
+      retired_key_t('soil_column.grid_growth', 'the layers no longer thicken by a growth '//     &
+                    'factor: see soil_column.n_layer'),                                          &
       retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
                     'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
                     'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &

@@ -100,6 +100,13 @@ contains
             call soil_water_relations(c(ic), tau - h, psim, dum1, wm, dum2, km, dum1)
             if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok_psi = .false.
             if (.not. fd_agrees(dw,   (wp_ - wm) / (2*h),    1.0e-4_wp, 1.0e-9_wp))  ok_w = .false.
+            !----- Mualem's 1 - (1 - Se^(1/m))^m is the difference of two numbers within Se^(1/m) of !
+            !      one: where Se^(1/m) < 1e-4, K carries round-off of order 1e-16 / Se^(1/m), which a  !
+            !      finite difference amplifies past the tolerance (with L = -1, K there is above the   !
+            !      1e-20 floor). The derivative is checked where a difference can resolve it. --------!
+            if (c(ic)%retention == SOIL_RETENTION_VG .and. tau < c(ic)%se_switch) then
+               if (tau ** (c(ic)%par_n / (c(ic)%par_n - 1.0_wp)) < 1.0e-4_wp) cycle
+            end if
             if (.not. fd_agrees(dk,   (kp - km) / (2*h),     1.0e-4_wp, 1.0e-20_wp)) ok_k = .false.
          end do
          call check_true(trim(label(ic))//': dpsi/dtau matches finite differences', ok_psi)

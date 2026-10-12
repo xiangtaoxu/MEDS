@@ -34,7 +34,8 @@ program test_spac_solver
                                     water_curve_t, rwc_from_psi, pv_psi_tlp, soil_psi_from_theta
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
-   use meds_column_params, only : soil_params_t, build_soil_hydr_params
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK
    implicit none
@@ -85,7 +86,9 @@ contains
       type(soil_params_t), intent(out) :: s
       integer(ik),         intent(in)  :: nsl
       real(wp),            intent(in)  :: depth, growth
-      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, depth, growth, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,    &
+      real(wp) :: bottoms(n_soil_layer_max)
+      call geometric_layer_bottoms(depth, nsl, growth, bottoms)
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, bottoms, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,          &
                                   0.7607_wp, 1.3554_wp, -3.37_wp, s)
    end subroutine make_soil
 

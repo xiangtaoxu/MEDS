@@ -53,8 +53,12 @@ module meds_water_retention
    integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
 
    !----- Mualem's pore-connectivity exponent L in the van Genuchten-Mualem conductivity,         !
-   !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2 (Mualem 1976's 0.5). The one place it is set. -----!
-   real(wp), parameter :: VG_PORE_CONNECTIVITY = 0.5_wp
+   !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2. The one place it is set. -1 after Schaap & Leij     !
+   !      (2000, SSSA J. 64:843), as ED2 uses with van Genuchten (soil_hydro_scheme 2). With        !
+   !      Mualem's 0.5 a soil of n near 1.4 conducts less than ED2's 1.16e-13 m/s from about       !
+   !      -0.7 MPa, far wetter than UNSODA's measurements; -1 keeps it above that to about -2 MPa.  !
+   !      A film-flow term for drier soil is #390. ------------------------------------------------!
+   real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
 
    !----- Read-off floors, which keep a diagnostic finite; the solver's curves have none. -----!
    real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)

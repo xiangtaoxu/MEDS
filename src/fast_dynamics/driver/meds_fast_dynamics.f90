@@ -20,7 +20,7 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t
+   use meds_config,           only : meds_config_t, soil_column_layers
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
@@ -143,16 +143,19 @@ contains
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
+      real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms
+      integer(ik) :: n_soil_layer
       !----- The physical soil column, from [soil_column]. These were eleven hydraulic and three   !
       !      thermal LITERALS here, so the column's depth, layer count and texture could not be    !
       !      changed without a recompile -- and `depth` is the value the docs flag as shallower     !
       !      than the annual thermal damping depth, which made that defect unreachable from a       !
-      !      config file. Defaults reproduce the old literals exactly. --------------------------!
+      !      config file. Its layers come from soil_column_layers. ------------------------------!
       associate (sc => cfg%soil_column)
-         call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
-                                     sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, sc%psi_fc, ctx%col_config%soil)
-         call build_soil_therm_params(sc%n_layer, sc%solid_conductivity, sc%dry_conductivity,      &
+         call soil_column_layers(sc, soil_bottoms, n_soil_layer)
+         call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat,       &
+                                     sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,        &
+                                     sc%psi_fc, ctx%col_config%soil)
+         call build_soil_therm_params(n_soil_layer, sc%solid_conductivity, sc%dry_conductivity,    &
                                       sc%dry_heat_capacity, ctx%col_config%soil_thermal)
       end associate
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!

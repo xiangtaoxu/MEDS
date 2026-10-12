@@ -16,6 +16,16 @@ before and after.
 
 ### Added
 
+- **A soil pedotransfer function** (`meds_pedotransfer`, #391): `soil_hydraulics_from_texture` gives a soil
+  layer's van Genuchten θ_sat, θ_res, α and n (Hodnett & Tomasella 2002, Table 8; ED2's
+  `soil_hydro_scheme` 2) and its saturated conductivity (Ottoni et al. 2019) from sand, silt, clay,
+  organic carbon, CEC, pH and bulk density, and scales them for coarse fragments (Saxton & Rawls 2006).
+  It is elemental, so one call covers a profile. Against 12,297 measured retention curves (GSHP) it
+  gave the smallest error in plant-available water of the five functions tried (median 0.035 m³ m⁻³
+  from SoilGrids at 0.1°; Rosetta3 0.047, Cosby 0.067); the science page has the numbers and its weak
+  spot (boreal, organic-rich acid soils). `test_pedotransfer` checks the authors' worked example (α
+  0.2452 kPa⁻¹, n 1.3674, θ_sat 0.4993, θ_res 0.2134), its Ks and the coarse-fragment scaling. No
+  configuration calls it yet: `[soil_column]` still takes the curve's parameters directly.
 - **Chave et al. (2014)'s height curve** (#386): `[allometry].height_allometry = "chave2014"` sets height
   from diameter by Chave's pantropical eq. 6a, ln H = 0.893 - E + 0.760 ln D - 0.0340 (ln D)^2, at its
   mean (+ 0.243^2/2, as BIOMASS's retrieveH), with the site's stress index E as `[allometry].chave_e`.
@@ -143,7 +153,7 @@ before and after.
     `xylem_sapflow`, `supply_limited_transpiration`), and through the soil in `meds_soil_water`
     (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
     solver's own curve kernels, and the Mualem pore connectivity is one constant,
-    `VG_PORE_CONNECTIVITY` (0.5).
+    `VG_PORE_CONNECTIVITY`.
 - **A run stops on the step a cohort's state leaves its bounds** (#389). Each step, the driver checks
   every cohort's density, carbon pools, SLA, internal water and leaf and wood films: each must be
   finite and not negative. A violation stops the run and names the field, the cohort and its patch,
@@ -151,6 +161,51 @@ before and after.
   shares status 4 with the soil-carbon plausibility check, renamed `DRIVER_ERR_SOILC` ->
   `DRIVER_ERR_BOUNDS` (Python `ERR_SOILC` -> `ERR_BOUNDS`). `meds.demography.Site.apply_rates`
   rejects rates that are not finite, and negative mortality or recruitment.
+- **Soil layers: SoilGrids' depths cut at the column depth** (#391; config breaking: `[soil_column].n_layer`
+  and `grid_growth` are refused, naming the replacement).
+  - **The rule.** Every column cuts one list of layer bottoms at `[soil_column].depth`: 0.05, 0.15, 0.30,
+    0.60, 1.00, 1.50, 2.00, 3.00, 4.50, 6.50, 9, 12, 16, 21 and 27 m (`SOIL_LAYER_TEMPLATE`). A remainder
+    thinner than half of the list layer it falls in joins the layer above.
+  - **The override.** `[soil_column].layer_bottoms = [...]` [m] replaces the list for a measured profile.
+    The column then ends at its last bottom unless `depth` cuts it.
+  - **Why.** The exponential grid scaled every layer with the depth: a 0.5 m column on 16 layers had a
+    0.26 cm top layer, a 6 m one 3.2 cm. Now the top layer is 5 cm everywhere, a shallow soil gets few
+    layers (0.3 m: 5, 10 and 15 cm), per-layer soil maps match the layers one to one, and the columns of
+    a region share one depth axis.
+  - **Code.** `build_soil_hydr_params` takes the layer bottoms; the exponential generator and its optional
+    interface argument are gone. `soil_column_layers` (`meds_config`) gives a column's layers, from the
+    template or the list.
+  - **`[energy].deep_depth`.** The default goes 3.12 -> 3.145 m, the derived optimum for the new default
+    2 m column (bottom node 1.75 m). Examples 04 and 05 go 6.72 -> 6.645 m.
+  - **Example 04** (BCI, five years, 6 m: 10 layers instead of 16), calibrated / default:
+    - GPP 8.261 / 10.148 -> 8.262 / 10.149;
+    - LE 68.53 / 83.41 -> 68.53 / 83.41 W m-2;
+    - NEE unchanged;
+    - the 0-15 cm soil water against the tower unchanged;
+    - run time 505 s instead of 543 s (-7 %).
+  - **A 1.4 m column at BCI** (6 layers instead of 16): GPP 8.252 -> 8.249, dry-season LE bias -8.94 ->
+    -8.77 W m-2, in 373 s instead of 432 s (-14 %).
+  - **Tests.** The column tests keep the geometric grids their numbers were written on, through
+    `test/meds_test_soil_grid.f90`. `test_soil_column_config` checks the default column, the cut, the
+    merge rule and the override.
+- **The van Genuchten conductivity uses Mualem's pore connectivity L = -1** (#391; was 0.5), after Schaap &
+  Leij (2000), as ED2 pairs with this curve (`soil_hydro_scheme` 2): K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2,
+  with L the named parameter `VG_PORE_CONNECTIVITY` in `meds_water_retention`. With 0.5, a soil of n
+  near 1.4 (the median of Hodnett & Tomasella's curve over Xu et al. 2016's Central America box)
+  conducts less than ED2's floor (1.16e-13 m/s) from about -0.7 MPa; with -1 it stays above to about -2.2 MPa. Against
+  UNSODA's measured unsaturated conductivity (89 soils, that curve with Ottoni Ks) the bias of log10 K
+  between -0.1 and -1.5 MPa goes from -2.28 to -0.85, and from +0.48 to +1.02 between -10 and -100 kPa.
+  A per-soil L estimated from texture did no better than a fixed one; a film-flow term for drier soil
+  is #390. Example 04 (BCI, five years), calibrated / default: GPP 8.261 / 10.148 unchanged, LE 68.76 /
+  83.72 -> 68.53 / 83.41 W m-2, NEE -2.582 / -3.386 -> -2.641 / -3.449 umol m-2 s-1, the 0-15 cm soil
+  water against the tower r 0.894 -> 0.903; LAI and AGB unchanged. The wet-soil checks of
+  `test_column_ark` and `test_column_rk45` now compare the column with the same day without the input:
+  with the faster drainage a free-draining column can end a day of light rain below where it began, and
+  the rain shows as the water it holds beyond the dry day (+0.109 summed theta).
+  `test_water_processes` checks dK/dSe by finite differences only where Se^(1/m) >= 1e-4: below it
+  Mualem's factor 1 - (1 - Se^(1/m))^m loses digits to cancellation, and with L = -1 K is large enough
+  there for that noise to fail the check (the analytic derivative agrees with a 60-digit difference to
+  4e-6).
 - **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.

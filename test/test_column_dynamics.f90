@@ -25,6 +25,8 @@ program test_column_dynamics
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
+   use meds_test_soil_grid, only : geometric_layer_bottoms
+   use meds_column_params, only : n_soil_layer_max
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
@@ -37,6 +39,7 @@ program test_column_dynamics
    use meds_water_retention,     only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 576_ik    ! 96 x 900 s = 24 h
    real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
@@ -106,7 +109,8 @@ program test_column_dynamics
                    col_cohort%sap_area(1))
 
    !----- Static column config: soil column + respiration parameters. ---------------------!
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
+   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
                           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    !----- Plant hydraulics: flatten cfg%hydraulics -> hydraulics_params + rhizo + build vuln table. ---!

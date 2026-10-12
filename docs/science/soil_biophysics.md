@@ -29,7 +29,11 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_water_retention`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
+retention curves (`meds_water_retention`). The van Genuchten conductivity is Mualem's,
+$`K = K_{sat}\,S_e^{L}\,[1-(1-S_e^{1/m})^m]^2`$, with pore connectivity $L=-1$ (Schaap & Leij 2000), as ED2
+uses with this curve: with Mualem's 0.5 a soil of $n$ near 1.4 conducts less than `K_MIN` from about
+−0.7 MPa, far wetter than measured (UNSODA); a film-flow term for drier soil is #390.
+Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
 interpolated linearly between the two nodes to the face, a thickness-weighted geometric mean,
 
 ```math
@@ -113,6 +117,72 @@ Every step closes a machine-precision water budget:
 and exports the time-mean per-face Darcy flux and each layer's uptake for the soil-energy solve's
 water enthalpy (§ Water–thermal coupling).
 
+### The soil layers
+
+Water and heat share one grid. Every column cuts one list of layer bottoms at its own depth
+(`soil_layer_grid`): SoilGrids 2.0's depths to 1 m (5, 15, 30, 60 and 100 cm), 150 and 200 cm, then 3,
+4.5, 6.5, 9, 12, 16, 21 and 27 m, each layer at most twice the one above. The last layer ends at the
+column depth, and a remainder thinner than half of the list layer it falls in joins the layer above,
+so no column ends in a sliver.
+
+- **The top layer is 5 cm in every column.** That is thin enough for the diurnal heat wave, whose
+  damping depth is about 0.1 m. The drying surface needs no thinner layer: the dry-surface-layer
+  resistance stands in for it.
+- **A shallow soil gets a few layers rather than thin ones:** 0.3 m is 5, 10 and 15 cm.
+- **Per-layer soil maps line up with the layers,** and every column of a region shares one depth axis.
+
+`[soil_column].layer_bottoms` replaces the list for a site with a measured profile, and the column
+then ends at its last bottom unless `depth` cuts it.
+
+### Hydraulic parameters from soil texture
+
+`soil_hydraulics_from_texture` (`meds_pedotransfer`) gives a layer's van Genuchten curve and saturated
+conductivity from what soil maps report: sand $Sa$, silt $Si$ and clay $Cl$ (% of the fine earth,
+< 2 mm), organic carbon $OC$ (%), cation exchange capacity CEC (cmol(c) kg⁻¹), pH in water, the fine
+earth's bulk density $\rho_b$ (g cm⁻³) and the volume share of coarse fragments $f_v$ — the
+quantities SoilGrids 2.0 maps per layer. The curve is Hodnett & Tomasella's (2002, Table 8), fitted to
+tropical soils and kept by ED2 as `soil_hydro_scheme` 2; each polynomial is in percent:
+
+```math
+\begin{aligned}
+\ln\alpha &= \big(-2.294 - 3.526\,Si + 2.440\,OC - 0.076\,\mathrm{CEC} - 11.331\,\mathrm{pH} + 0.019\,Si^2\big)/100\\
+\ln n &= \big(62.986 - 0.833\,Cl - 0.529\,OC + 0.593\,\mathrm{pH} + 0.007\,Cl^2 - 0.014\,Sa\,Si\big)/100\\
+\theta_{sat} &= \big(81.799 + 0.099\,Cl - 31.42\,\rho_b + 0.018\,\mathrm{CEC} + 0.451\,\mathrm{pH} - 0.0005\,Sa\,Cl\big)/100\\
+\theta_{res} &= \max\Big[0,\ \big(22.733 - 0.164\,Sa + 0.235\,\mathrm{CEC} - 0.831\,\mathrm{pH} + 0.0018\,Cl^2 + 0.0026\,Sa\,Cl\big)/100\Big]
+\end{aligned}
+\qquad(2a)
+```
+
+with $\alpha$ per kPa, turned into per metre of water head. The saturated conductivity of the fine
+earth follows Ottoni et al. (2019) from the water that drains between saturation and −33 kPa:
+
+```math
+K_{sat} = 19.31\ \mathrm{m\,d^{-1}}\,\big(\theta_{sat} - \theta(-33\ \mathrm{kPa})\big)^{1.948} \qquad(2b)
+```
+
+Coarse fragments hold no water, so the layer's curve is the fine earth's scaled by $1-f_v$; they slow
+the flow by Saxton & Rawls (2006, eqs. 19 and 22), written for their share of the mass $f_m$, with
+$\rho_p = 2.65$ g cm⁻³ the density of the grains and of the fragments:
+
+```math
+\theta_{sat,res} \leftarrow (1-f_v)\,\theta_{sat,res}, \qquad
+K_{sat} \leftarrow K_{sat}\,\frac{1-f_m}{1-f_m\,(1-\tfrac{3}{2}\rho_b/\rho_p)}, \qquad
+f_m = \frac{f_v}{(\rho_b/\rho_p)(1-f_v)+f_v} \qquad(2c)
+```
+
+**Why this function.** Against 12,297 measured retention curves (GSHP; Gupta et al. 2022) it gives the
+smallest error in plant-available water ($\theta$ from −33 to −1500 kPa) of the functions tried —
+Cosby (1984), Saxton & Rawls (2006), Tomasella & Hodnett (1998) and Rosetta3: a median of 0.026
+m³ m⁻³ from measured texture and 0.035 from SoilGrids at 0.1°, and 0.023 in tropical clays, where
+Rosetta3 overstates it by 0.07–0.09 and Cosby by 0.04. Its $K_{sat}$ is among the least biased against
+SoilKsatDB (Gupta et al. 2021) in the tropics, and at BCI its curve follows the flat measured dry
+branch (Kupers et al. 2019). It is closed-form, so it costs nothing at run time.
+
+**Where it is weak.** In boreal, organic-rich and acid soils CEC and low pH raise $`\theta_{res}`$, so
+the available water comes out about 0.04 m³ m⁻³ low (Hyytiälä's topsoil: $\theta$ at −1500 kPa 0.39
+against 0.07 measured). Like every texture-based function, $K_{sat}$ scatters by about a factor of ten
+and runs low where soil structure adds large pores.
+
 ---
 
 ## The soil thermal column
@@ -179,11 +249,13 @@ when the two magnitudes match:
 ```
 
 So the anchor **depth** is a physical choice, and the default is derived rather than fitted. For the
-default column (2 m, 10 layers, `grid_growth = 3`) in a mid-latitude mineral soil at $`\theta = 0.3`$:
-$`d = 1.973`$ m and $`|z_{node,10}| = 1.727`$ m, giving `deep_depth` $`= 1.727 + 1.973/\sqrt{2} = 3.12`$ m.
+default column (2 m on the default layers) in a mid-latitude mineral soil at $`\theta = 0.3`$:
+$`d = 1.973`$ m and the bottom node at $`|z_{node,7}| = 1.75`$ m, giving
+`deep_depth` $`= 1.75 + 1.973/\sqrt{2} = 3.145`$ m.
 
-Measured against the analytic profile (`test_soil_annual_damping`, a homogeneous column driven by a
-harmonic $`G_{top}`$ to periodic steady state — the constant-$`\kappa`$, constant-$`C`$ case where
+Measured against the analytic profile (`test_soil_annual_damping`, a homogeneous 2 m column of ten
+layers thickening with depth, bottom node at 1.727 m and so its anchor at 3.12 m, driven by a harmonic
+$`G_{top}`$ to periodic steady state — the constant-$`\kappa`$, constant-$`C`$ case where
 $`\exp(-z/d)`$ holds exactly):
 
 | bottom BC | amplitude at $`-1.73`$ m, relative to the surface | vs analytic | RMS error over the profile |
@@ -250,7 +322,9 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_water_retention`: `soil_water_relations` |
 | soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
+| soil layers | `meds_column_params`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`; `meds_config`: `soil_column_layers` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
+| hydraulic parameters from texture | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
@@ -261,6 +335,11 @@ and passes the resulting flux into the CO₂ source.
 - ED2 `../ED2/ED/src/dynamics/`: `lsm_hyd.f90`, `soil_respiration.f90` — the soil stores in the reference model.
 - Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — mixed-form Richards.
 - Brenner & Cancès (2017), *Adv. Water Resour.* — variable switching for Richards' equation.
+- Mualem (1976), *Water Resour. Res.* 12:513; Schaap & Leij (2000), *Soil Sci. Soc. Am. J.* 64:843 — the conductivity and its pore connectivity.
 - van Genuchten (1980); Clapp & Hornberger (1978) — soil retention curves.
+- Hodnett & Tomasella (2002), *Geoderma* 108:155 — van Genuchten parameters from texture for tropical soils.
+- Ottoni et al. (2019), *J. Hydrol.* 575:1345 — saturated conductivity from the drainable porosity.
+- Saxton & Rawls (2006), *Soil Sci. Soc. Am. J.* 70:1569 — coarse fragments.
+- Gupta et al. (2021), *Earth Syst. Sci. Data* 13:1593 (SoilKsatDB) and (2022), *Sci. Data* 9:444 (GSHP) — the measurements the function was chosen on.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
 - Design docs: `MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `MEDS_ENERGY_BALANCE_DESIGN.md`.

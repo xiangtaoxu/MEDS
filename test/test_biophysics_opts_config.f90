@@ -77,7 +77,7 @@ program test_biophysics_opts_config
    call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
                    e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
    call check('energy.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
-   call check('energy.deep_depth absent -> derived default 3.12', e%deep_depth, 3.12_wp, 1.0e-12_wp)
+   call check('energy.deep_depth absent -> derived default 3.145', e%deep_depth, 3.145_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)

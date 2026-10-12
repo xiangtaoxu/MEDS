@@ -22,10 +22,10 @@
 !==========================================================================================!
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
-   use meds_config,             only : meds_config_t
+   use meds_config,             only : meds_config_t, soil_column_layers
    use meds_site_state_types,   only : site_t
    use meds_column_state_types, only : cas_set_depth
-   use meds_column_params,      only : soil_params_t, build_soil_hydr_params
+   use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
@@ -38,6 +38,8 @@ program test_slow_ledger
                                        slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
+   real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
+   integer(ik) :: n_soil_layer
 
    real(wp), parameter :: RHO = 1.2_wp        !< the density the canopy-air store is valued at
    type(meds_config_t) :: cfg
@@ -57,8 +59,9 @@ program test_slow_ledger
    call check(site%cohort%n == 2_ik .and. site%patch%n == 1_ik, 'fixture: 2 cohorts in 1 patch')
 
    associate (sc => cfg%soil_column)
-      call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth, sc%theta_sat, &
-                                  sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
+      call soil_column_layers(sc, soil_bottoms, n_soil_layer)
+      call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat, sc%theta_res, &
+                                  sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, soil)
    end associate
 
    !----- Give every reservoir a non-zero value, so a perturbation below is a change to a store !

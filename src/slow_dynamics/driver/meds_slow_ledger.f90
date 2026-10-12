@@ -33,10 +33,10 @@
 module meds_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : rho_h2o
-   use meds_config,             only : meds_config_t
+   use meds_config,             only : meds_config_t, soil_column_layers
    use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity,                    &
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
-   use meds_column_params,      only : soil_params_t, build_soil_hydr_params
+   use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
    use meds_budget_check,       only : budget_rtol_flux
@@ -439,11 +439,14 @@ contains
    subroutine ensure_soil_geometry(ledger, cfg)
       type(slow_ledger_t), intent(inout) :: ledger
       type(meds_config_t), intent(in)    :: cfg
+      real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms
+      integer(ik) :: n_soil_layer
       if (ledger%soil_ready) return
       associate (sc => cfg%soil_column)
-         call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,           &
-                                     sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a,          &
-                                     sc%curve_par_n, sc%psi_fc, ledger%soil)
+         call soil_column_layers(sc, soil_bottoms, n_soil_layer)
+         call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat,       &
+                                     sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,        &
+                                     sc%psi_fc, ledger%soil)
       end associate
       ledger%soil_ready = .true.
    end subroutine ensure_soil_geometry
