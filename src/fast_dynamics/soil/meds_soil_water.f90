@@ -1,29 +1,30 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_soil_water -- the soil's water BOUNDARY processes, in the form the soil-plant water       !
-! network takes them (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.2): functions of the top and bottom     !
-! layers' state that return their flux and its derivatives.                                     !
+! meds_soil_water -- how water moves through and out of the soil column, in the form the        !
+! soil-plant water solver takes it (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.2): each flux with its      !
+! derivatives in the state at its ends.                                                          !
+!   * soil_water_flux         -- Darcy flow between two layers, or the pond and the top layer;    !
 !   * ground_evaporation_rate -- evaporation from the top layer: Philip's pore-space humidity and !
 !                                the Swenson-Lawrence dry-surface-layer resistance;              !
 !   * bottom_flux             -- drainage through the bottom face: free drainage, a sealed       !
 !                                bedrock, or a head-driven aquifer.                               !
-! The column's water itself -- storage, Darcy flow between layers and from the pond, root uptake  !
-! -- is solved with the plants' in meds_water_network. Canopy interception lives in                !
-! meds_plant_biophysics (a per-cohort film).                                                       !
+! How much water a layer holds is in meds_water_retention, the flow from a layer into the roots in !
+! meds_hydr_lib; meds_spac_solver solves them together with the plants' water. Canopy            !
+! interception lives in meds_plant_biophysics (a per-cohort film).                                 !
 !==========================================================================================!
 module meds_soil_water
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o, grav, r_wv, tiny_num, p_std, safe_exp
+   use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
    use meds_soil_types, only : chydro_forcing_t
    use meds_column_params, only : soil_params_t, curve_a, curve_n
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
    use meds_water_retention,  only : soil_theta_from_psi
-   use meds_water_paths,      only : smooth_max0
+   use meds_hydr_lib,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity
    implicit none
    private
 
-   public :: ground_evaporation_rate, bottom_flux
+   public :: soil_water_flux, ground_evaporation_rate, bottom_flux
 
    !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
    !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
@@ -34,6 +35,27 @@ module meds_soil_water
    real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp
 
 contains
+
+   !----- The Darcy flux of soil water [kg/m2/s] between two soil nodes a and b (two layers, or the  !
+   !      pond and the top layer), positive from a to b, with its derivatives in the potentials and   !
+   !      conductivities at the two ends. The face conductivity is the thickness-weighted geometric  !
+   !      mean K_a^(1-w_b) K_b^w_b (ED2's rule for soil layers; the pond counts as a saturated layer  !
+   !      as thick as the top one, w_b = 1/2). The driving force is the difference of potentials     !
+   !      plus the drop in elevation z_a - z_b [m], over the node distance [m]. Potentials in MPa,   !
+   !      conductivities in m/s. -----------------------------------------------------------------!
+   elemental subroutine soil_water_flux(k_a, k_b, w_b, psi_a, psi_b, z_drop, dist, q,               &
+                                        dq_dpsi_a, dq_dpsi_b, dq_dk_a, dq_dk_b)
+      real(wp), intent(in)  :: k_a, k_b, w_b, psi_a, psi_b, z_drop, dist
+      real(wp), intent(out) :: q, dq_dpsi_a, dq_dpsi_b, dq_dk_a, dq_dk_b
+      real(wp) :: k_face, drive
+      k_face = k_a ** (1.0_wp - w_b) * k_b ** w_b
+      drive  = ((psi_a - psi_b) / grav_head + z_drop) / dist
+      q      = rho_h2o * k_face * drive
+      dq_dpsi_a =  rho_h2o * k_face / (grav_head * dist)
+      dq_dpsi_b = -dq_dpsi_a
+      dq_dk_a   = (1.0_wp - w_b) * q / max(k_a, tiny_num)
+      dq_dk_b   = w_b * q / max(k_b, tiny_num)
+   end subroutine soil_water_flux
 
    !---------------------------------------------------------------------------------------!
    ! BOTTOM-FACE Darcy flux [m/s, DOWN-positive]. One authority for all three bottom BCs.    !
@@ -124,7 +146,8 @@ contains
       q_sat      = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
       call smooth_max0(alpha_soil * q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
       !----- The dry surface layer, referenced to the air-dry water content. ---------------------!
-      theta_air  = soil_theta_from_psi_l(params%retention, params, 1_ik, PSI_AIR_DRY)
+      theta_air  = soil_theta_from_psi(params%retention, PSI_AIR_DRY, params%theta_sat(1), params%theta_res(1),  &
+                                       curve_a(params, 1_ik), curve_n(params, 1_ik))
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
       call smooth_max0(theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
       dvap    = 2.12e-5_wp * (forcing%t_ground / 273.15_wp) ** 1.75_wp
@@ -138,15 +161,5 @@ contains
       de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * q_sat * dalpha / resist
       de_dtheta = -e_soil * dr_dtheta / resist
    end subroutine ground_evaporation_rate
-
-   !----- theta(psi) with the layer-k curve params (thin wrapper). ------------------------!
-   pure function soil_theta_from_psi_l(rc, params, k, psi) result(theta)
-      integer(ik),         intent(in) :: rc, k
-      type(soil_params_t), intent(in) :: params
-      real(wp),            intent(in) :: psi
-      real(wp)                        :: theta
-      theta = soil_theta_from_psi(rc, psi, params%theta_sat(k), params%theta_res(k),             &
-                                curve_a(params,k), curve_n(params,k))
-   end function soil_theta_from_psi_l
 
 end module meds_soil_water

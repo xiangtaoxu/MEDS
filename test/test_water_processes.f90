@@ -1,18 +1,19 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_water_processes -- the soil-plant water network's process library                    !
+! test_water_processes -- the water relations and flows the soil-plant water solver uses        !
 ! (MEDS_SPAC_WATER_NETWORK_PLAN.md P1): every analytic derivative against a central finite   !
-! difference, over dry, wet and saturated states, and every value against the functions the   !
-! existing solvers use, where those functions' floors do not bind.                             !
+! difference, over dry, wet and saturated states, and every value against the read-offs of    !
+! meds_water_retention, where those read-offs' floors do not bind.                            !
 !                                                                                          !
-!   1. SOIL STORES  : two van Genuchten soils and a Campbell soil; the two branches of the      !
-!                     unknown meet with equal value and slope; theta and K match                !
-!                     meds_water_retention; theta -> unknown -> theta round-trips.              !
-!   2. TISSUE STORE : the pressure-volume curve matches psi_from_rwc / water_content.           !
-!   3. POND STORE   : smooth at empty and at the depression depth; water -> head round-trips.  !
-!   4. DARCY        : the pond face at zero head is today's infiltration capacity.              !
+!   1. SOIL LAYERS  : two van Genuchten soils and a Campbell soil; the two branches of the      !
+!                     unknown meet with equal value and slope; theta and K match the            !
+!                     read-offs; theta -> unknown -> theta round-trips.                         !
+!   2. TISSUES      : the pressure-volume curve matches psi_from_rwc / water_content.           !
+!   3. POND         : smooth at empty and at the depression depth; water -> head round-trips.  !
+!   4. SOIL FLUX    : the pond face at zero head is the infiltration capacity.                  !
 !   5. ROOT UPTAKE  : equals Gardner's conductance x driving force; nothing flows backwards.    !
-!   6. XYLEM        : equals the Kirchhoff edge x driving force, exponent 2 and a tabled 3.      !
+!   6. XYLEM        : equals the Kirchhoff mean conductance x driving force, exponent 2 and a   !
+!                     tabled 3.                                                                 !
 !   7. TRANSPIRATION: zero at an empty leaf, the demand above the closing water content.        !
 !   8. EVAPORATION  : the closed form where no dry surface layer forms.                          !
 !==========================================================================================!
@@ -20,15 +21,16 @@ program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o
-   use meds_water_storage, only : soil_curve_t, soil_curve_setup, soil_store, soil_unknown_from_theta,     &
-                                  tissue_store, tissue_rwc_from_water, pond_store, pond_unknown_from_water, &
-                                  SOIL_SPECIFIC_STORAGE, POND_DEPRESSION_DEPTH
-   use meds_water_paths, only : smooth_max0, darcy_flow, root_conductance_geometry, root_uptake_flow,       &
-                                xylem_flow, xylem_max_conductance, supply_limited_transpiration
+   use meds_water_retention, only : soil_layer_curve_t, build_soil_layer_curve, soil_water_relations,          &
+                                    soil_unknown_from_theta, tissue_water_relations, tissue_rwc_from_water,      &
+                                    pond_water_relations, pond_head_from_water, SOIL_SPECIFIC_STORAGE,          &
+                                    POND_DEPRESSION_DEPTH
+   use meds_hydr_lib,    only : smooth_max0, rhizosphere_conductance, root_water_uptake, xylem_sapflow, xylem_max_conductance,  &
+                                supply_limited_transpiration, hydro_table_t, build_hydro_table, flux_potential,   &
+                                flux_potential_lin, plc_retained
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_from_psi,       &
                                     soil_hydr_cond_from_theta, water_curve_t, psi_from_rwc, water_content
-   use meds_hydr_lib, only : hydro_table_t, build_hydro_table, kirchhoff_edge, kirchhoff_edge_tab
-   use meds_soil_water, only : ground_evaporation_rate
+   use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
    use meds_soil_types, only : chydro_forcing_t
@@ -36,10 +38,10 @@ program test_water_processes
    use meds_biophysics_opts, only : soil_opts_t
    implicit none
 
-   call test_soil_stores()
-   call test_tissue_store()
-   call test_pond_store()
-   call test_darcy()
+   call test_soil_water_relations()
+   call test_tissue_water_relations()
+   call test_pond_water_relations()
+   call test_soil_water_flux()
    call test_root_uptake()
    call test_xylem()
    call test_transpiration()
@@ -55,8 +57,8 @@ contains
    end function fd_agrees
 
    !=======================================================================================!
-   subroutine test_soil_stores()
-      type(soil_curve_t) :: c(3)
+   subroutine test_soil_water_relations()
+      type(soil_layer_curve_t) :: c(3)
       character(len=24)  :: label(3)
       real(wp) :: tau, h, psi, dpsi, w, dw, k, dk, psip, psim, wp_, wm, kp, km, dum1, dum2
       real(wp) :: worst_psi, worst_w, worst_k, theta, theta_ref, k_ref, tau_back, head
@@ -64,9 +66,9 @@ contains
       integer  :: ic, i
       logical  :: ok_psi, ok_w, ok_k, ok_val, ok_k_val, ok_round
       !----- BCI's clay (example 04), a sand, and a Campbell loam. ----------------------------!
-      call soil_curve_setup(SOIL_RETENTION_VG, 0.4314_wp, 0.0981_wp, 0.7607_wp, 1.3554_wp, 4.54e-6_wp, 0.05_wp, c(1))
-      call soil_curve_setup(SOIL_RETENTION_VG, 0.38_wp, 0.05_wp, 3.5_wp, 2.7_wp, 8.0e-5_wp, 0.10_wp, c(2))
-      call soil_curve_setup(SOIL_RETENTION_CAMPBELL, 0.45_wp, 0.0_wp, -0.25_wp, 6.0_wp, 5.0e-6_wp, 0.20_wp, c(3))
+      call build_soil_layer_curve(SOIL_RETENTION_VG, 0.4314_wp, 0.0981_wp, 0.7607_wp, 1.3554_wp, 4.54e-6_wp, 0.05_wp, c(1))
+      call build_soil_layer_curve(SOIL_RETENTION_VG, 0.38_wp, 0.05_wp, 3.5_wp, 2.7_wp, 8.0e-5_wp, 0.10_wp, c(2))
+      call build_soil_layer_curve(SOIL_RETENTION_CAMPBELL, 0.45_wp, 0.0_wp, -0.25_wp, 6.0_wp, 5.0e-6_wp, 0.20_wp, c(3))
       label = [character(len=24) :: 'vG clay (BCI)', 'vG sand', 'Campbell loam']
       do ic = 1, 3
          ok_psi = .true. ; ok_w = .true. ; ok_k = .true.
@@ -79,9 +81,9 @@ contains
             if (abs(tau - c(ic)%se_switch) < 1.0e-6_wp) cycle            ! straddles the join
             if (abs(tau - (c(ic)%se_switch - c(ic)%slope_switch * c(ic)%psi_switch)) < 1.0e-6_wp) cycle
             h = 1.0e-7_wp * max(abs(tau), 1.0e-3_wp)
-            call soil_store(c(ic), tau, psi, dpsi, w, dw, k, dk)
-            call soil_store(c(ic), tau + h, psip, dum1, wp_, dum2, kp, dum1)
-            call soil_store(c(ic), tau - h, psim, dum1, wm, dum2, km, dum1)
+            call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
+            call soil_water_relations(c(ic), tau + h, psip, dum1, wp_, dum2, kp, dum1)
+            call soil_water_relations(c(ic), tau - h, psim, dum1, wm, dum2, km, dum1)
             if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok_psi = .false.
             if (.not. fd_agrees(dw,   (wp_ - wm) / (2*h),    1.0e-4_wp, 1.0e-9_wp))  ok_w = .false.
             if (.not. fd_agrees(dk,   (kp - km) / (2*h),     1.0e-4_wp, 1.0e-20_wp)) ok_k = .false.
@@ -91,8 +93,8 @@ contains
          call check_true(trim(label(ic))//': dK/dtau matches finite differences', ok_k)
          !----- The two branches meet with the same value and slope. ------------------------!
          tau = c(ic)%se_switch
-         call soil_store(c(ic), tau - 1.0e-9_wp, psi_lo, dpsi_lo, w_lo, dw_lo, dum1, dum2)
-         call soil_store(c(ic), tau + 1.0e-9_wp, psi_hi, dpsi_hi, w_hi, dw_hi, dum1, dum2)
+         call soil_water_relations(c(ic), tau - 1.0e-9_wp, psi_lo, dpsi_lo, w_lo, dw_lo, dum1, dum2)
+         call soil_water_relations(c(ic), tau + 1.0e-9_wp, psi_hi, dpsi_hi, w_hi, dw_hi, dum1, dum2)
          call check_true(trim(label(ic))//': branches meet (potential)', abs(psi_hi - psi_lo) < 1.0e-8_wp)
          call check_true(trim(label(ic))//': branches meet (slope of potential)',                     &
                          abs(dpsi_hi - dpsi_lo) <= 1.0e-5_wp * abs(dpsi_lo))
@@ -108,7 +110,7 @@ contains
                                               c(ic)%theta_res, c(ic)%par_a, c(ic)%par_n, c(ic)%ksat)
             if ((theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res) < 1.0e-8_wp) cycle
             tau = soil_unknown_from_theta(c(ic), theta_ref)
-            call soil_store(c(ic), tau, psi, dpsi, w, dw, k, dk)
+            call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
             theta = w / (rho_h2o * c(ic)%dz)
             if (abs(theta - theta_ref) > 1.0e-10_wp) ok_val = .false.
             if (k_ref > 1.0e-12_wp .and. abs(k - k_ref) > 1.0e-8_wp * k_ref) ok_k_val = .false.
@@ -120,16 +122,16 @@ contains
          call check_true(trim(label(ic))//': theta -> unknown -> potential round-trips', ok_round)
          !----- Above saturation the layer holds theta_sat + S_s * head. ---------------------!
          tau = soil_unknown_from_theta(c(ic), c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
-         call soil_store(c(ic), tau, psi, dpsi, w, dw, k, dk)
+         call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
          call check_close(trim(label(ic))//': head above saturation', psi / grav_head, 0.5_wp, 1.0e-9_wp)
          call check_close(trim(label(ic))//': conductivity above saturation', k, c(ic)%ksat, 0.0_wp)
          tau_back = soil_unknown_from_theta(c(ic), w / (rho_h2o * c(ic)%dz))
          call check_close(trim(label(ic))//': supersaturated round trip', tau_back, tau, 1.0e-9_wp)
       end do
-   end subroutine test_soil_stores
+   end subroutine test_soil_water_relations
 
    !=======================================================================================!
-   subroutine test_tissue_store()
+   subroutine test_tissue_water_relations()
       type(water_curve_t) :: leaf
       real(wp) :: r, h, psi, dpsi, w, dw, psip, psim, wpl, wm, dum, worst
       integer  :: i
@@ -138,10 +140,10 @@ contains
       ok_d = .true. ; ok_v = .true.
       do i = 1, 120
          r = 0.01_wp * real(i, wp)                                  ! 0.01 .. 1.2
-         call tissue_store(leaf, 0.3_wp, 0.05_wp, r, psi, dpsi, w, dw)
+         call tissue_water_relations(leaf, 0.3_wp, 0.05_wp, r, psi, dpsi, w, dw)
          h = 1.0e-7_wp
-         call tissue_store(leaf, 0.3_wp, 0.05_wp, r + h, psip, dum, wpl, dum)
-         call tissue_store(leaf, 0.3_wp, 0.05_wp, r - h, psim, dum, wm, dum)
+         call tissue_water_relations(leaf, 0.3_wp, 0.05_wp, r + h, psip, dum, wpl, dum)
+         call tissue_water_relations(leaf, 0.3_wp, 0.05_wp, r - h, psim, dum, wm, dum)
          if (abs(r - (leaf%pi0 + leaf%elastic_mod) / leaf%elastic_mod) > 1.0e-6_wp) then
             if (.not. fd_agrees(dpsi, (psip - psim) / (2*h), 1.0e-5_wp, 1.0e-10_wp)) ok_d = .false.
          end if
@@ -153,91 +155,91 @@ contains
       end do
       call check_true('tissue: derivatives match finite differences', ok_d)
       call check_true('tissue: potential and water match the pressure-volume curve', ok_v)
-   end subroutine test_tissue_store
+   end subroutine test_tissue_water_relations
 
    !=======================================================================================!
-   subroutine test_pond_store()
+   subroutine test_pond_water_relations()
       real(wp) :: h, psi, dpsi, w, dw, wpl, wm, dum, hh
       integer  :: i
       logical  :: ok_d, ok_r
       ok_d = .true. ; ok_r = .true.
       do i = -20, 60
          h = 1.0e-4_wp * real(i, wp) + 1.0e-7_wp               ! -2 mm .. 6 mm, off the corners
-         call pond_store(h, psi, dpsi, w, dw)
+         call pond_water_relations(h, psi, dpsi, w, dw)
          hh = 1.0e-9_wp
-         call pond_store(h + hh, dum, dum, wpl, dum)
-         call pond_store(h - hh, dum, dum, wm, dum)
+         call pond_water_relations(h + hh, dum, dum, wpl, dum)
+         call pond_water_relations(h - hh, dum, dum, wm, dum)
          if (.not. fd_agrees(dw, (wpl - wm) / (2*hh), 1.0e-5_wp, 1.0e-6_wp)) ok_d = .false.
-         if (h > 0.0_wp .and. abs(pond_unknown_from_water(w) - h) > 1.0e-12_wp) ok_r = .false.
+         if (h > 0.0_wp .and. abs(pond_head_from_water(w) - h) > 1.0e-12_wp) ok_r = .false.
       end do
       call check_true('pond: dW/dh matches finite differences, smooth at empty and full', ok_d)
       call check_true('pond: water -> head round-trips', ok_r)
-      call pond_store(0.0_wp, psi, dpsi, w, dw)
+      call pond_water_relations(0.0_wp, psi, dpsi, w, dw)
       call check_close('pond: empty pond holds nothing', w, 0.0_wp, 0.0_wp)
-      call pond_store(0.05_wp, psi, dpsi, w, dw)
+      call pond_water_relations(0.05_wp, psi, dpsi, w, dw)
       call check_close('pond: 5 cm of head holds 50 kg/m2 less half the depression depth', w,           &
                        rho_h2o * (0.05_wp - 0.5_wp * POND_DEPRESSION_DEPTH), 1.0e-10_wp)
-   end subroutine test_pond_store
+   end subroutine test_pond_water_relations
 
    !=======================================================================================!
-   subroutine test_darcy()
+   subroutine test_soil_water_flux()
       real(wp) :: q, qa, qb, dqa, dqb, dka, dkb, dum, h, ka, kb, pa, pb, psi1, k1, ks, z1, q_ref
       logical  :: ok
       ka = 3.0e-7_wp ; kb = 8.0e-9_wp ; pa = -0.02_wp ; pb = -0.6_wp
-      call darcy_flow(ka, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, q, dqa, dqb, dka, dkb)
+      call soil_water_flux(ka, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, q, dqa, dqb, dka, dkb)
       ok = .true.
       h = 1.0e-7_wp
-      call darcy_flow(ka, kb, 0.4_wp, pa + h, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
-      call darcy_flow(ka, kb, 0.4_wp, pa - h, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb, 0.4_wp, pa + h, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb, 0.4_wp, pa - h, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dqa, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
-      call darcy_flow(ka, kb, 0.4_wp, pa, pb + h, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
-      call darcy_flow(ka, kb, 0.4_wp, pa, pb - h, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb, 0.4_wp, pa, pb + h, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb, 0.4_wp, pa, pb - h, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dqb, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
       h = 1.0e-6_wp * ka
-      call darcy_flow(ka + h, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
-      call darcy_flow(ka - h, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
+      call soil_water_flux(ka + h, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
+      call soil_water_flux(ka - h, kb, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dka, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
       h = 1.0e-6_wp * kb
-      call darcy_flow(ka, kb + h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
-      call darcy_flow(ka, kb - h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb + h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qa, dum, dum, dum, dum)
+      call soil_water_flux(ka, kb - h, 0.4_wp, pa, pb, 0.07_wp, 0.07_wp, qb, dum, dum, dum, dum)
       if (.not. fd_agrees(dkb, (qa - qb) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
       call check_true('darcy: derivatives match finite differences', ok)
       !----- The pond face at zero head: today's infiltration capacity,                           !
       !      sqrt(K1 Ksat) (1 + (-psi1)/(-z1)), times the water density. -------------------------!
       psi1 = -3.0_wp ; k1 = 2.0e-9_wp ; ks = 4.5e-6_wp ; z1 = -0.015_wp
-      call darcy_flow(ks, k1, 0.5_wp, 0.0_wp, grav_head * psi1, -z1, -z1, q, dum, dum, dum, dum)
+      call soil_water_flux(ks, k1, 0.5_wp, 0.0_wp, grav_head * psi1, -z1, -z1, q, dum, dum, dum, dum)
       q_ref = sqrt(k1 * ks) * (1.0_wp + (-psi1) / (-z1)) * rho_h2o
       call check_close('darcy: pond face at zero head = infiltration capacity', q, q_ref, 1.0e-12_wp * q_ref)
-   end subroutine test_darcy
+   end subroutine test_soil_water_flux
 
    !=======================================================================================!
    subroutine test_root_uptake()
       real(wp) :: g, u, dus, duw, duk, up, um, dum, h, k, ps, pw, z, ref
       logical  :: ok
-      g = root_conductance_geometry(0.02_wp, 35.0_wp, 0.01_wp, 2.5e-4_wp)
+      g = rhizosphere_conductance(0.02_wp, 35.0_wp, 0.01_wp, 2.5e-4_wp)
       k = 1.0e-8_wp ; ps = -0.3_wp ; pw = -0.9_wp ; z = -0.4_wp
-      call root_uptake_flow(g, k, ps, z, pw, u, dus, duw, duk)
+      call root_water_uptake(g, k, ps, z, pw, u, dus, duw, duk)
       ref = 0.02_wp * 2.0_wp * pi * (rho_h2o * k / grav_head) * 35.0_wp / log(0.01_wp / 2.5e-4_wp)      &
             * (ps + grav_head * z - pw)
       call check_close('root: uptake = cohort x Gardner conductance x driving force', u, ref, 1.0e-10_wp * ref)
       ok = .true.
       h = 1.0e-7_wp
-      call root_uptake_flow(g, k, ps + h, z, pw, up, dum, dum, dum)
-      call root_uptake_flow(g, k, ps - h, z, pw, um, dum, dum, dum)
+      call root_water_uptake(g, k, ps + h, z, pw, up, dum, dum, dum)
+      call root_water_uptake(g, k, ps - h, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(dus, (up - um) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
-      call root_uptake_flow(g, k, ps, z, pw + h, up, dum, dum, dum)
-      call root_uptake_flow(g, k, ps, z, pw - h, um, dum, dum, dum)
+      call root_water_uptake(g, k, ps, z, pw + h, up, dum, dum, dum)
+      call root_water_uptake(g, k, ps, z, pw - h, um, dum, dum, dum)
       if (.not. fd_agrees(duw, (up - um) / (2*h), 1.0e-6_wp, 0.0_wp)) ok = .false.
-      call root_uptake_flow(g, k * (1.0_wp + 1.0e-6_wp), ps, z, pw, up, dum, dum, dum)
-      call root_uptake_flow(g, k * (1.0_wp - 1.0e-6_wp), ps, z, pw, um, dum, dum, dum)
+      call root_water_uptake(g, k * (1.0_wp + 1.0e-6_wp), ps, z, pw, up, dum, dum, dum)
+      call root_water_uptake(g, k * (1.0_wp - 1.0e-6_wp), ps, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(duk, (up - um) / (2.0e-6_wp * k), 1.0e-6_wp, 0.0_wp)) ok = .false.
       !----- On the ramp: half a width of driving force. --------------------------------------!
-      call root_uptake_flow(g, k, pw - grav_head * z + 5.0e-4_wp, z, pw, u, dus, duw, duk)
-      call root_uptake_flow(g, k, pw - grav_head * z + 5.0e-4_wp + h, z, pw, up, dum, dum, dum)
-      call root_uptake_flow(g, k, pw - grav_head * z + 5.0e-4_wp - h, z, pw, um, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp, z, pw, u, dus, duw, duk)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp + h, z, pw, up, dum, dum, dum)
+      call root_water_uptake(g, k, pw - grav_head * z + 5.0e-4_wp - h, z, pw, um, dum, dum, dum)
       if (.not. fd_agrees(dus, (up - um) / (2*h), 1.0e-5_wp, 0.0_wp)) ok = .false.
       call check_true('root: derivatives match finite differences, on and off the ramp', ok)
-      call root_uptake_flow(g, k, -2.0_wp, z, pw, u, dus, duw, duk)
+      call root_water_uptake(g, k, -2.0_wp, z, pw, u, dus, duw, duk)
       call check_close('root: no flow from soil drier than the wood', u, 0.0_wp, 0.0_wp)
    end subroutine test_root_uptake
 
@@ -257,34 +259,50 @@ contains
          pl = pw - 0.6_wp + 0.03_wp * real(i, wp)          ! crosses pw - pl = 0 at i = 20
          if (i == 20) pl = pw - 3.0e-7_wp                  ! inside the midpoint expansion
          h = 1.0e-7_wp
-         call xylem_flow(kc, pw, pl, grav, -2.5_wp, 2.0_wp, tab2, s, dsw, dsl)
-         ref = kirchhoff_edge(pw, pl, kc, -2.5_wp, 2.0_wp) * (pw - pl - grav)
+         call xylem_sapflow(kc, pw, pl, grav, -2.5_wp, 2.0_wp, tab2, s, dsw, dsl)
+         ref = kirchhoff_mean(pw, pl, kc, -2.5_wp, 2.0_wp, tab2) * (pw - pl - grav)
          if (abs(s - ref) > 1.0e-9_wp * abs(ref) + 1.0e-11_wp * kc) okv = .false.
-         call xylem_flow(kc, pw + h, pl, grav, -2.5_wp, 2.0_wp, tab2, sp, dum, dum)
-         call xylem_flow(kc, pw - h, pl, grav, -2.5_wp, 2.0_wp, tab2, sm, dum, dum)
+         call xylem_sapflow(kc, pw + h, pl, grav, -2.5_wp, 2.0_wp, tab2, sp, dum, dum)
+         call xylem_sapflow(kc, pw - h, pl, grav, -2.5_wp, 2.0_wp, tab2, sm, dum, dum)
          if (.not. fd_agrees(dsw, (sp - sm) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok2 = .false.
-         call xylem_flow(kc, pw, pl + h, grav, -2.5_wp, 2.0_wp, tab2, sp, dum, dum)
-         call xylem_flow(kc, pw, pl - h, grav, -2.5_wp, 2.0_wp, tab2, sm, dum, dum)
+         call xylem_sapflow(kc, pw, pl + h, grav, -2.5_wp, 2.0_wp, tab2, sp, dum, dum)
+         call xylem_sapflow(kc, pw, pl - h, grav, -2.5_wp, 2.0_wp, tab2, sm, dum, dum)
          if (.not. fd_agrees(dsl, (sp - sm) / (2*h), 1.0e-4_wp, 1.0e-12_wp)) ok2 = .false.
          !----- A tabled vulnerability exponent: the table's slope is piecewise, so the analytic  !
          !      slope (the exact retained fraction) agrees only to the table's resolution. -------!
-         call xylem_flow(kc, pw, pl, grav, -2.5_wp, 3.0_wp, tab3, s, dsw, dsl)
-         !----- At near-equal ends kirchhoff_edge_tab leaves its table for the exact retained      !
-         !      fraction; the network stays on the table, so the two differ there by its resolution. !
-         ref = kirchhoff_edge_tab(pw, pl, kc, -2.5_wp, tab3) * (pw - pl - grav)
+         call xylem_sapflow(kc, pw, pl, grav, -2.5_wp, 3.0_wp, tab3, s, dsw, dsl)
+         !----- At near-equal ends the reference leaves its table for the exact retained fraction;   !
+         !      the solver stays on the table, so the two differ there by its resolution. ----------!
+         ref = kirchhoff_mean(pw, pl, kc, -2.5_wp, 3.0_wp, tab3) * (pw - pl - grav)
          if (i /= 20 .and. abs(s - ref) > 1.0e-9_wp * abs(ref) + 1.0e-11_wp * kc) okv = .false.
          h = 1.0e-4_wp
-         call xylem_flow(kc, pw + h, pl, grav, -2.5_wp, 3.0_wp, tab3, sp, dum, dum)
-         call xylem_flow(kc, pw - h, pl, grav, -2.5_wp, 3.0_wp, tab3, sm, dum, dum)
+         call xylem_sapflow(kc, pw + h, pl, grav, -2.5_wp, 3.0_wp, tab3, sp, dum, dum)
+         call xylem_sapflow(kc, pw - h, pl, grav, -2.5_wp, 3.0_wp, tab3, sm, dum, dum)
          if (.not. fd_agrees(dsw, (sp - sm) / (2*h), 2.0e-2_wp, 1.0e-8_wp * kc)) then
             ok3 = .false.
             print '(a,i3,4es14.6)', '    table case i, pw, pl, analytic, fd: ', i, pw, pl, dsw, (sp - sm) / (2*h)
          end if
       end do
-      call check_true('xylem: sapflow = Kirchhoff edge x driving force (exponents 2 and 3)', okv)
+      call check_true('xylem: sapflow = Kirchhoff mean conductance x driving force (exponents 2 and 3)', okv)
       call check_true('xylem: derivatives match finite differences (exponent 2, incl. equal ends)', ok2)
       call check_true('xylem: derivatives match the table to its resolution (exponent 3)', ok3)
    end subroutine test_xylem
+
+   !----- The reference Kirchhoff mean conductance, written independently of xylem_sapflow:        !
+   !      k (Phi(up) - Phi(down)) / (up - down) from the closed form (exponent 2) or the table,      !
+   !      and the retained fraction at the midpoint for near-equal ends. -------------------------!
+   pure real(wp) function kirchhoff_mean(psi_up, psi_down, k, psi50, kexp, tab) result(keff)
+      real(wp),            intent(in) :: psi_up, psi_down, k, psi50, kexp
+      type(hydro_table_t), intent(in) :: tab
+      if (abs(psi_up - psi_down) <= 1.0e-6_wp) then
+         keff = k * plc_retained(0.5_wp * (psi_up + psi_down), psi50, kexp)
+      else if (abs(kexp - 2.0_wp) < 1.0e-9_wp) then
+         keff = k * (flux_potential(psi_up, psi50, kexp) - flux_potential(psi_down, psi50, kexp)) / (psi_up - psi_down)
+      else
+         keff = k * (flux_potential_lin(psi_up, psi50, tab) - flux_potential_lin(psi_down, psi50, tab))           &
+                / (psi_up - psi_down)
+      end if
+   end function kirchhoff_mean
 
    !=======================================================================================!
    subroutine test_transpiration()

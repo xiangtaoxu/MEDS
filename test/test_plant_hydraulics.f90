@@ -16,14 +16,14 @@ program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,             only : wp, ik
    use meds_constants,         only : grav_head, pi
-   use meds_hydr_lib,      only : plc_retained, flux_potential, kirchhoff_edge, hydro_table_t, build_hydro_table, &
-                                  flux_potential_lin, kirchhoff_edge_tab, wood_kmax_from_density
+   use meds_hydr_lib,      only : plc_retained, flux_potential, hydro_table_t, build_hydro_table,            &
+                                  flux_potential_lin, wood_kmax_from_density, root_fraction_profile,      &
+                                  xylem_max_conductance, rhizosphere_conductance, xylem_sapflow
    use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
                                     psi_from_water_content, clamp_water_to_capacity, water_curve_t
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_plant_hydraulics, only : leaf_node_psi
-   use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile
-   use meds_water_paths, only : xylem_max_conductance, root_conductance_geometry
+   use meds_plant_hydraulics, only : cohort_root_depth, cohort_root_profile
    implicit none
 
    call test_pv_curve()
@@ -87,22 +87,25 @@ contains
    !=======================================================================================!
    subroutine test_kirchhoff_edge()
       real(wp), parameter :: psi50 = -2.0_wp, kexp = 2.0_wp, kcond = 3.0e-3_wp
-      real(wp) :: psi_l, psi_w, avg_plc, keff, keff0, pmid
-      print '(a)', '-- Kirchhoff edge --'
+      type(hydro_table_t) :: tab
+      real(wp) :: psi_l, psi_w, avg_plc, s, s0, dum1, dum2, pmid
+      print '(a)', '-- Kirchhoff mean conductance of the xylem --'
+      call build_hydro_table(tab, kexp)
       psi_l = -1.2_wp ; psi_w = -0.4_wp
-      keff  = kirchhoff_edge(psi_w, psi_l, kcond, psi50, kexp)
-      avg_plc = keff/kcond
+      !----- With no gravity head the sapflow over the drop is the Kirchhoff mean conductance. ---!
+      call xylem_sapflow(kcond, psi_w, psi_l, 0.0_wp, psi50, kexp, tab, s, dum1, dum2)
+      avg_plc = s / ((psi_w - psi_l) * kcond)
       !----- <plc> lies between the two endpoint retained fractions. -------------------!
       call check_true('<plc> in (plc(leaf), plc(wood))',                                       &
            avg_plc > plc_retained(psi_l,psi50,kexp) .and. avg_plc < plc_retained(psi_w,psi50,kexp))
       !----- <plc> = (Phi(up)-Phi(down))/(up-down). -----------------------------------!
       call check('<plc> = DeltaPhi/Deltapsi', avg_plc,                                          &
            (flux_potential(psi_w,psi50,kexp)-flux_potential(psi_l,psi50,kexp))/(psi_w-psi_l),  &
-           1.0e-12_wp)
+           1.0e-11_wp)
       !----- |dpsi|->0 limit is the pointwise value at the mean. -----------------------!
       pmid  = -0.9_wp
-      keff0 = kirchhoff_edge(pmid, pmid - 1.0e-9_wp, kcond, psi50, kexp)
-      call check('Kirchhoff dpsi->0 limit', keff0/kcond, plc_retained(pmid,psi50,kexp), 1.0e-6_wp)
+      call xylem_sapflow(kcond, pmid, pmid - 1.0e-9_wp, 0.0_wp, psi50, kexp, tab, s0, dum1, dum2)
+      call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * kcond), plc_retained(pmid,psi50,kexp), 1.0e-6_wp)
    end subroutine test_kirchhoff_edge
 
    !=======================================================================================!
@@ -141,13 +144,13 @@ contains
    !=======================================================================================!
    ! The precomputed lookup table (build_hydro_table + flux_potential_lin) reproduces the      !
    ! exact 7-pt-quadrature Kirchhoff potential for a general (non-{1,2}) exponent, and the       !
-   ! table-backed edge conductance matches the exact edge. kexp is stamped for the staleness      !
+   ! table-backed xylem conductance matches the quadrature's. kexp is stamped for the staleness      !
    ! guard, and psi50 is a runtime scale (one table serves any psi50).                             !
    !=======================================================================================!
    subroutine test_hydro_table()
       real(wp), parameter :: kexp = 3.0_wp, psi50 = -2.0_wp, kcond = 3.0e-3_wp
       type(hydro_table_t) :: tab
-      real(wp) :: psi, err, emax, psi_l, psi_w
+      real(wp) :: psi, err, emax, psi_l, psi_w, s, dum1, dum2
       integer(ik) :: i
       print '(a)', '-- Kirchhoff lookup table --'
       call build_hydro_table(tab, kexp)
@@ -160,11 +163,12 @@ contains
          emax = max(emax, err)
       end do
       call check_true('linear table within 1e-4 MPa of quadrature (kexp=3)', emax < 1.0e-4_wp)
-      !----- Table-backed edge conductance matches the exact Kirchhoff edge. -------------------!
+      !----- The table-backed xylem conductance matches the quadrature's Kirchhoff mean. -------!
       psi_l = -1.7_wp ; psi_w = -0.6_wp
-      call check('kirchhoff_edge_tab ~ kirchhoff_edge (kexp=3)',                                  &
-           kirchhoff_edge_tab(psi_w, psi_l, kcond, psi50, tab),                                   &
-           kirchhoff_edge(psi_w, psi_l, kcond, psi50, kexp), 1.0e-6_wp)
+      call xylem_sapflow(kcond, psi_w, psi_l, 0.0_wp, psi50, kexp, tab, s, dum1, dum2)
+      call check('table-backed xylem conductance ~ quadrature (kexp=3)', s / (psi_w - psi_l),     &
+           kcond * (flux_potential(psi_w, psi50, kexp) - flux_potential(psi_l, psi50, kexp))       &
+           / (psi_w - psi_l), 1.0e-6_wp)
       !----- psi50 is a runtime scale: the SAME table serves a different psi50. ----------------!
       call check('table serves a different psi50 (r-normalized)',                                &
            flux_potential_lin(-3.0_wp, -3.0_wp, tab), flux_potential(-3.0_wp, -3.0_wp, kexp),    &
@@ -259,16 +263,16 @@ contains
       !      halves gives each plant 500 m per half, and the same half-spacing. ------------------------!
       lv   = 0.01_wp * 1000.0_wp / 0.4_wp
       half = 1.0_wp / sqrt(pi * lv)
-      !----- root_conductance_geometry is per m2 of ground and per m/s of soil conductivity: for one  !
+      !----- rhizosphere_conductance is per m2 of ground and per m/s of soil conductivity: for one  !
       !      plant on a m2 with soil conductivity K [m/s] it is Gardner's 2 pi (rho K / grav_head) L /  !
       !      ln(r_half / r_root). --------------------------------------------------------------!
-      g      = root_conductance_geometry(1.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
-      g_half = root_conductance_geometry(1.0_wp,  500.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
+      g      = rhizosphere_conductance(1.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
+      g_half = rhizosphere_conductance(1.0_wp,  500.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
       call check('Gardner: 2 pi (rho K / grav_head) L / ln(r_half / r_root)', g,                    &
                  2.0_wp * pi * (1000.0_wp * 1.0e-9_wp / grav_head) * 1000.0_wp / log(half / 1.5e-4_wp), 1.0e-15_wp)
       call check('a layer split in two keeps its conductance', 2.0_wp * g_half, g, 1.0e-15_wp)
       call check('twice the plants at the same spacing, twice the conductance',                    &
-                 root_conductance_geometry(2.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp, 2.0_wp * g, 1.0e-15_wp)
+                 rhizosphere_conductance(2.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp, 2.0_wp * g, 1.0e-15_wp)
    end subroutine test_cohort_roots
 
    !=======================================================================================!
@@ -344,7 +348,7 @@ contains
    subroutine test_kirchhoff_far_tail()
       real(wp), parameter :: kexp = 4.0_wp, psi50 = -3.209_wp, kcond = 5.0e-3_wp
       type(hydro_table_t) :: tab
-      real(wp) :: g_inf, psi_far
+      real(wp) :: g_inf, psi_far, s, dum1, dum2
       print '(a)', '-- Kirchhoff potential far beyond the table --'
       call build_hydro_table(tab, kexp)
       g_inf   = (pi/kexp) / sin(pi/kexp)
@@ -353,10 +357,9 @@ contains
       call check('table reaches the asymptote', flux_potential_lin(psi_far, psi50, tab), psi50*g_inf, 1.0e-4_wp)
       call check('table at its edge = quadrature', flux_potential_lin(8.0_wp*psi50, psi50, tab),         &
                  flux_potential(8.0_wp*psi50, psi50, kexp), 1.0e-9_wp)
-      call check_true('desiccated-leaf edge conductance is positive',                                    &
-                      kirchhoff_edge_tab(-1.33_wp, psi_far, kcond, psi50, tab) > 0.0_wp)
-      call check('desiccated-leaf flux = k (Phi_wood - Phi_inf)',                                        &
-                 kirchhoff_edge_tab(-1.33_wp, psi_far, kcond, psi50, tab) * (-1.33_wp - psi_far),        &
+      call xylem_sapflow(kcond, -1.33_wp, psi_far, 0.0_wp, psi50, kexp, tab, s, dum1, dum2)
+      call check_true('desiccated-leaf sapflow is positive', s > 0.0_wp)
+      call check('desiccated-leaf sapflow = k (Phi_wood - Phi_inf)', s,                                   &
                  kcond * (flux_potential(-1.33_wp, psi50, kexp) - psi50*g_inf), 1.0e-6_wp)
    end subroutine test_kirchhoff_far_tail
 

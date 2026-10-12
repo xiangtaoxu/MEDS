@@ -228,8 +228,7 @@ file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/canopy/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/water/*.f90)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
 target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_fast_kernels)
@@ -644,21 +643,21 @@ if(MEDS_BUILD_TESTS)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_fast_kernels meds_testassert)
+   target_link_libraries(test_column_hydrology PRIVATE meds_fast meds_testassert)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
 
-   #----- The soil-plant water network's process library: values and analytic derivatives. ---#
+   #----- The soil-plant water solver's water relations and flows: values and derivatives. ---#
    add_executable(test_water_processes test/test_water_processes.f90)
    target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_water_processes)
    add_test(NAME water_processes COMMAND test_water_processes)
 
-   #----- The soil-plant water network solver on synthetic stands and soils. ------------------#
-   add_executable(test_water_network test/test_water_network.f90)
-   target_link_libraries(test_water_network PRIVATE meds_fast_kernels meds_testassert)
-   meds_fortran_flags(test_water_network)
-   add_test(NAME water_network COMMAND test_water_network)
+   #----- The soil-plant water solver on synthetic stands and soils. -------------------------#
+   add_executable(test_spac_solver test/test_spac_solver.f90)
+   target_link_libraries(test_spac_solver PRIVATE meds_fast meds_testassert)
+   meds_fortran_flags(test_spac_solver)
+   add_test(NAME spac_solver COMMAND test_spac_solver)
 
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)

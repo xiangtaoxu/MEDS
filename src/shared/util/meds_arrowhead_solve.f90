@@ -1,124 +1,125 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! meds_grouped_solve -- a linear solve for systems whose unknowns split into a shared core and  !
-! groups that each touch only themselves and the core, the core through their FIRST unknown:  !
+! meds_arrowhead_solve -- a linear solve for a block arrowhead system: a shared core bordered by  !
+! diagonal blocks that each touch only themselves and the core, the core through their FIRST    !
+! unknown:                                                                                 !
 !                                                                                          !
-!      [ A        b_1 e_1'  ...  b_G e_1' ] [x_0]   [r_0]                                  !
+!      [ A        b_1 e_1'  ...  b_B e_1' ] [x_0]   [r_0]                                  !
 !      [ e_1 c_1'   D_1                   ] [x_1] = [r_1]                                  !
 !      [ ...               ...            ] [...]   [...]                                  !
-!      [ e_1 c_G'                    D_G  ] [x_G]   [r_G]                                  !
+!      [ e_1 c_B'                    D_B  ] [x_B]   [r_B]                                  !
 !                                                                                          !
-! b_g is the core's column for group g's first unknown, c_g that unknown's row over the core,    !
-! and e_1 picks the group's first unknown. Each group's block is eliminated onto the core: the   !
-! Schur update is the rank-1 product (D_g^-1)_11 b_g c_g', so the cost grows as groups x core^2  !
-! + core^3, not as (core + groups)^3. The core system that remains is solved by LU with partial  !
-! pivoting, and the groups are recovered from it. The factorisation is kept apart from the blocks, !
-! which it leaves as they were, and takes additions to the blocks' diagonals (a Newton matrix's    !
-! storage terms), so the same blocks can be factored again with other additions.                  !
+! b_j is the core's column for block j's first unknown, c_j that unknown's row over the core,    !
+! and e_1 picks the block's first unknown. Each block is eliminated onto the core (a Schur       !
+! complement): its update is the rank-1 product (D_j^-1)_11 b_j c_j', so the cost grows as        !
+! blocks x core^2 + core^3, not as (core + blocks)^3. The core system that remains is solved by  !
+! LU with partial pivoting, and the blocks are recovered from it. The factorisation is kept      !
+! apart from the blocks, which it leaves as they were, and takes additions to the diagonals (a   !
+! Newton matrix's storage terms), so the same blocks can be factored again with other additions. !
 !                                                                                          !
-! The soil-plant water network is one such system -- soil layers and the pond are the core, each !
-! cohort a group whose wood meets the soil and whose leaves meet only the wood (a root node, when  !
-! it comes, will be a group's first unknown in the wood's place) -- but nothing here knows that    !
-! (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.3). Factor once, then solve for as many right-hand sides as  !
-! needed: the network's error estimate reuses the last Newton factorisation.                       !
+! The soil-plant water solve (meds_spac_solver) is one such system -- the pond and the soil      !
+! layers are the core, each cohort a block whose wood meets the soil and whose leaves meet only  !
+! the wood (a root store, when it comes, will be a block's first unknown in the wood's place) --  !
+! but nothing here knows that (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.3). Factor once, then solve for !
+! as many right-hand sides as needed: the solver's error estimate reuses the last factorisation. !
 !==========================================================================================!
-module meds_grouped_solve
+module meds_arrowhead_solve
    use meds_kinds, only : wp, ik
    implicit none
    private
 
-   public :: grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
+   public :: arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
 
    !----- One system: the blocks, filled by the caller, and their factorisation. ---------------!
-   type :: grouped_system_t
+   type :: arrowhead_system_t
       integer(ik) :: nc = 0_ik            !< core unknowns
-      integer(ik) :: ng = 0_ik            !< groups
-      integer(ik) :: mg = 0_ik            !< unknowns per group
+      integer(ik) :: nb = 0_ik            !< blocks
+      integer(ik) :: mb = 0_ik            !< unknowns per block
       real(wp),    allocatable :: a(:,:)      !< (nc, nc)     core block
-      real(wp),    allocatable :: b(:,:)      !< (nc, ng)     core rows, each group's first column
-      real(wp),    allocatable :: c(:,:)      !< (nc, ng)     each group's first row, over the core columns
-      real(wp),    allocatable :: d(:,:,:)    !< (mg, mg, ng) group blocks
+      real(wp),    allocatable :: b(:,:)      !< (nc, nb)     core rows, each block's first column
+      real(wp),    allocatable :: c(:,:)      !< (nc, nb)     each block's first row, over the core columns
+      real(wp),    allocatable :: d(:,:,:)    !< (mb, mb, nb) the diagonal blocks
       real(wp),    allocatable :: lu(:,:)     !< (nc, nc)     the LU of the Schur complement
-      real(wp),    allocatable :: dinv(:,:,:) !< (mg, mg, ng) the group blocks' inverses
+      real(wp),    allocatable :: dinv(:,:,:) !< (mb, mb, nb) their inverses
       integer(ik), allocatable :: piv(:)      !< (nc) the core LU's row interchanges
-   end type grouped_system_t
+   end type arrowhead_system_t
 
 contains
 
-   !----- Size a system for nc core unknowns and ng groups of mg, keeping the storage when the    !
+   !----- Size a system for nc core unknowns and nb blocks of mb, keeping the storage when the    !
    !      shape is unchanged. The blocks are zeroed. ---------------------------------------------!
-   pure subroutine grouped_allocate(s, nc, ng, mg)
-      type(grouped_system_t), intent(inout) :: s
-      integer(ik),            intent(in)    :: nc, ng, mg
-      if (s%nc /= nc .or. s%ng /= ng .or. s%mg /= mg .or. .not. allocated(s%a)) then
+   pure subroutine arrowhead_allocate(s, nc, nb, mb)
+      type(arrowhead_system_t), intent(inout) :: s
+      integer(ik),              intent(in)    :: nc, nb, mb
+      if (s%nc /= nc .or. s%nb /= nb .or. s%mb /= mb .or. .not. allocated(s%a)) then
          if (allocated(s%a))   deallocate(s%a, s%b, s%c, s%d, s%lu, s%dinv, s%piv)
-         allocate(s%a(nc, nc), s%b(nc, ng), s%c(nc, ng), s%d(mg, mg, ng), s%lu(nc, nc), s%dinv(mg, mg, ng),  &
+         allocate(s%a(nc, nc), s%b(nc, nb), s%c(nc, nb), s%d(mb, mb, nb), s%lu(nc, nc), s%dinv(mb, mb, nb),  &
                   s%piv(nc))
-         s%nc = nc ; s%ng = ng ; s%mg = mg
+         s%nc = nc ; s%nb = nb ; s%mb = mb
       end if
       s%a = 0.0_wp ; s%b = 0.0_wp ; s%c = 0.0_wp ; s%d = 0.0_wp
-   end subroutine grouped_allocate
+   end subroutine arrowhead_allocate
 
-   !----- Factor the system whose blocks' diagonals carry the additions add_core and add_group:     !
-   !      invert each group block, fold the groups into the core by their rank-1 updates, and       !
-   !      LU-factor the core. The blocks are left as they were. ok is false if a group block or the  !
+   !----- Factor the system whose blocks' diagonals carry the additions add_core and add_block:     !
+   !      invert each block, fold the blocks into the core by their rank-1 updates, and            !
+   !      LU-factor the core. The blocks are left as they were. ok is false if a block or the        !
    !      core is singular. ----------------------------------------------------------------------!
-   pure subroutine grouped_factor(s, add_core, add_group, ok)
-      type(grouped_system_t), intent(inout) :: s
-      real(wp),               intent(in)    :: add_core(:), add_group(:, :)   !< (nc), (mg, ng)
-      logical,                intent(out)   :: ok
-      integer(ik) :: g, i, j
+   pure subroutine arrowhead_factor(s, add_core, add_block, ok)
+      type(arrowhead_system_t), intent(inout) :: s
+      real(wp),                 intent(in)    :: add_core(:), add_block(:, :)   !< (nc), (mb, nb)
+      logical,                  intent(out)   :: ok
+      integer(ik) :: ib, i, j
       real(wp)    :: e11, cj
       ok = .true.
       s%lu = s%a
       do i = 1_ik, s%nc
          s%lu(i, i) = s%lu(i, i) + add_core(i)
       end do
-      do g = 1_ik, s%ng
-         s%dinv(:, :, g) = s%d(:, :, g)
-         do i = 1_ik, s%mg
-            s%dinv(i, i, g) = s%dinv(i, i, g) + add_group(i, g)
+      do ib = 1_ik, s%nb
+         s%dinv(:, :, ib) = s%d(:, :, ib)
+         do i = 1_ik, s%mb
+            s%dinv(i, i, ib) = s%dinv(i, i, ib) + add_block(i, ib)
          end do
-         call invert_small(s%dinv(:, :, g), s%mg, ok)
+         call invert_small(s%dinv(:, :, ib), s%mb, ok)
          if (.not. ok) return
-         e11 = s%dinv(1, 1, g)
+         e11 = s%dinv(1, 1, ib)
          do j = 1_ik, s%nc
-            cj = e11 * s%c(j, g)
+            cj = e11 * s%c(j, ib)
             if (cj == 0.0_wp) cycle
             do i = 1_ik, s%nc
-               s%lu(i, j) = s%lu(i, j) - s%b(i, g) * cj
+               s%lu(i, j) = s%lu(i, j) - s%b(i, ib) * cj
             end do
          end do
       end do
       call lu_factor(s%lu, s%piv, s%nc, ok)
-   end subroutine grouped_factor
+   end subroutine arrowhead_factor
 
-   !----- Solve the factored system for one right-hand side (r_core, r_group) -> (x_core, x_group). !
-   pure subroutine grouped_solve(s, r_core, r_group, x_core, x_group)
-      type(grouped_system_t), intent(in)  :: s
-      real(wp),               intent(in)  :: r_core(:), r_group(:, :)   !< (nc), (mg, ng)
-      real(wp),               intent(out) :: x_core(:), x_group(:, :)
+   !----- Solve the factored system for one right-hand side (r_core, r_block) -> (x_core, x_block). !
+   pure subroutine arrowhead_solve(s, r_core, r_block, x_core, x_block)
+      type(arrowhead_system_t), intent(in)  :: s
+      real(wp),                 intent(in)  :: r_core(:), r_block(:, :)   !< (nc), (mb, nb)
+      real(wp),                 intent(out) :: x_core(:), x_block(:, :)
       real(wp)    :: rc(s%nc), cx
-      integer(ik) :: g, i, l
+      integer(ik) :: ib, i, l
       rc = r_core(1:s%nc)
-      !----- Each group's own solution, D_g^-1 r_g, folded onto the core through its first unknown. -!
-      do g = 1_ik, s%ng
-         do i = 1_ik, s%mg
-            x_group(i, g) = 0.0_wp
-            do l = 1_ik, s%mg
-               x_group(i, g) = x_group(i, g) + s%dinv(i, l, g) * r_group(l, g)
+      !----- Each block's own solution, D_j^-1 r_j, folded onto the core through its first unknown. -!
+      do ib = 1_ik, s%nb
+         do i = 1_ik, s%mb
+            x_block(i, ib) = 0.0_wp
+            do l = 1_ik, s%mb
+               x_block(i, ib) = x_block(i, ib) + s%dinv(i, l, ib) * r_block(l, ib)
             end do
          end do
-         if (x_group(1, g) /= 0.0_wp) rc = rc - s%b(:, g) * x_group(1, g)
+         if (x_block(1, ib) /= 0.0_wp) rc = rc - s%b(:, ib) * x_block(1, ib)
       end do
       call lu_solve(s%lu, s%piv, s%nc, rc)
       x_core(1:s%nc) = rc
-      !----- Back to the groups: x_g = D_g^-1 r_g - D_g^-1 e_1 (c_g' x_0). --------------------------!
-      do g = 1_ik, s%ng
-         cx = sum(s%c(:, g) * rc)
-         x_group(1:s%mg, g) = x_group(1:s%mg, g) - s%dinv(1:s%mg, 1, g) * cx
+      !----- Back to the blocks: x_j = D_j^-1 r_j - D_j^-1 e_1 (c_j' x_0). --------------------------!
+      do ib = 1_ik, s%nb
+         cx = sum(s%c(:, ib) * rc)
+         x_block(1:s%mb, ib) = x_block(1:s%mb, ib) - s%dinv(1:s%mb, 1, ib) * cx
       end do
-   end subroutine grouped_solve
+   end subroutine arrowhead_solve
 
    !----- Invert a small dense block in place: closed form for 1x1 and 2x2, Gauss-Jordan with      !
    !      partial pivoting otherwise. ok is false if it is singular. -------------------------------!
@@ -237,4 +238,4 @@ contains
       end do
    end subroutine lu_solve
 
-end module meds_grouped_solve
+end module meds_arrowhead_solve

@@ -4,9 +4,9 @@
 ! cohort: the hydrostatic head from its wood to its crown, its leaves' water potential, and its   !
 ! roots -- how deep they reach and how its fine roots spread over the soil layers.               !
 !                                                                                          !
-! How the plant's water MOVES -- uptake, sapflow, transpiration -- is solved together with the  !
-! soil's in the soil-plant water network (meds_water_network; MEDS_SPAC_WATER_NETWORK_PLAN.md),  !
-! from the flow laws in meds_water_paths and the stores in meds_water_storage.                    !
+! How the plant's water MOVES -- uptake, sapflow, transpiration -- is in meds_hydr_lib, how much  !
+! a tissue holds in meds_water_retention, and meds_spac_solver solves them together with the     !
+! soil's (MEDS_SPAC_WATER_NETWORK_PLAN.md).                                                       !
 !==========================================================================================!
 module meds_plant_hydraulics
    use meds_kinds,     only : wp, ik
@@ -18,7 +18,7 @@ module meds_plant_hydraulics
    private
 
    public :: leaf_node_psi, crown_gravity_head
-   public :: root_fraction_profile, cohort_root_depth, cohort_root_profile
+   public :: cohort_root_depth, cohort_root_profile
 
 contains
 

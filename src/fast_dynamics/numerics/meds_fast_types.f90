@@ -30,7 +30,7 @@ module meds_fast_types
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
-   use meds_water_network, only : water_network_t
+   use meds_spac_solver, only : spac_solver_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_water_retention, only : water_curve_t
@@ -631,7 +631,7 @@ module meds_fast_types
    end type column_frozen_t
 
    !----- Storage the fast step reuses from step to step on one thread (#195): the soil-plant water  !
-   !      network (both schemes) and the ARK march's states and stages. Every routine that writes     !
+   !      solver (both schemes) and the ARK march's states and stages. Every routine that writes     !
    !      into it fills its fields in place, so the arrays are allocated again only when the cohort    !
    !      count changes (when the thread moves to a patch with a different number of cohorts). The    !
    !      step's stages are a record of their own so that the march can hand them to the step beside   !
@@ -642,7 +642,7 @@ module meds_fast_types
    end type ark_stages_t
 
    type :: fast_workspace_t
-      type(water_network_t) :: water                         !< the soil-plant water network
+      type(spac_solver_t)   :: spac                          !< the soil-plant water solver
       type(column_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
       type(ark_stages_t)    :: stages                        !< the ARK step's stages
    end type fast_workspace_t

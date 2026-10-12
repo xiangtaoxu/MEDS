@@ -319,7 +319,7 @@ contains
       !      flow, and the ARK commits its theta. -----------------------------------------------------!
       w_surface0 = biophys%soil_w%w_surface
 
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%water, &
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
                                n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- STATE^n pond enthalpy, snapshotted HERE (#78 item 4). It must be read before anything      !
