@@ -113,7 +113,8 @@ Four rules, applied in order. The long form, with the library graph and a lookup
   cutoff there broke the leaf area fusion conserves (#389).
 - **A conservation tolerance scales with the terms, not the net.** `conserved(before, after,
   magnitude, rtol)` with magnitude = sum of |terms|: a net near zero turned a 1e-12 relative
-  tolerance into 1e-42 absolute (#389).
+  tolerance into 1e-42 absolute (#389). Its only absolute floor is the format's, tiny/epsilon
+  (~1e-292), below which an optimized build flushes the arithmetic to zero.
 - **Conservation is asserted, not assumed** — but **a closed budget proves bookkeeping, not
   plausibility.** Several real leaks sat behind ledgers that balanced, because the ledger declared
   the same quantity it consumed. Watch consecutive-step traces.

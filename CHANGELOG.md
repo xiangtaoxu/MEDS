@@ -421,8 +421,14 @@ before and after.
     SLA now blends on leaf carbon, and fusion asserts the leaf area. Fusion's weighted means (traits,
     tissue temperatures and water, the cohort diagnostics) share one function, `pair_mean`, with no
     size threshold: the old 1e-30 cutoff left a leafless cohort's SLA unblended (leaf carbon 1e-193 at
-    BCI), and the new assertion caught it.
-  - **Effect:** @@EFFECT@@
+    BCI), and the new assertion caught it. `conserved` allows the double format's floor, tiny/epsilon
+    (~1e-292): below it an optimized build flushes to zero (a leafless pair's leaf area of 1.4e-307
+    fused to 0).
+  - **Effect:** the Palo Verde regrowth with doubled `gmax` runs its 150 years (AGB 6.21 kgC/m² in
+    1951, 11.00 in 2021), and the slow ledger closes on every phase. BCI 1991-2021 from a restart:
+    AGB 16.97 kgC/m² and LAI 6.05 in 2021 (16.84 and 6.20 before), from fusion's SLA blend and the
+    leaf area no longer left stale. Example 04's year moves by at most 0.1 % in any output
+    (heterotrophic respiration; GPP 0.02 %). A restart is still exact.
 - **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered** (#384), the water
   the wood is credited, not the plant's request before the soil limits it. They were the same number
   except where the soil cut the request.

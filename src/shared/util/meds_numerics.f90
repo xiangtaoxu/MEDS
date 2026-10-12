@@ -283,13 +283,17 @@ contains
    ! round-off of summing it: |after - before| <= rtol * magnitude, with `magnitude` the sum of !
    ! the ABSOLUTE values of the terms (what reordering or rescaling a floating-point sum         !
    ! perturbs). A tolerance relative to the NET total fails on round-off alone whenever the     !
-   ! total is near zero or its terms differ in sign (#389). A NaN on either side fails.         !
+   ! total is near zero or its terms differ in sign (#389). Below tiny/epsilon (~1e-292 in      !
+   ! double) even epsilon of the magnitude is a subnormal number, which an optimized build      !
+   ! flushes to zero, so the floating-point format itself resolves nothing smaller: that is the !
+   ! absolute floor (BCI: two leafless cohorts' leaf area of 1.4e-307 fused to exactly 0). A    !
+   ! NaN on either side fails.                                                                  !
    !---------------------------------------------------------------------------------------!
    elemental pure logical function conserved(before, after, magnitude, rtol) result(ok)
       real(wp), intent(in) :: before, after   !< the amount before and after the operator
       real(wp), intent(in) :: magnitude       !< sum of the absolute values of its terms
       real(wp), intent(in) :: rtol            !< relative tolerance
-      ok = abs(after - before) <= rtol * magnitude
+      ok = abs(after - before) <= rtol * magnitude + tiny(magnitude) / epsilon(magnitude)
    end function conserved
 
    !---------------------------------------------------------------------------------------!

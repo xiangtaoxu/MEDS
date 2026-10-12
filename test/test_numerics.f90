@@ -180,6 +180,11 @@ contains
                       conserved(0.0_wp, 0.0_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
       call check_true('conserved: something from nothing fails',                                     &
                       .not. conserved(0.0_wp, 1.0e-30_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
+      !----- The BCI fusion: leaf area at the bottom of the double range flushed to zero. The format !
+      !      resolves nothing below tiny/epsilon, so that is not a conservation failure. ----------!
+      call check_true('conserved: an amount below what the format resolves may flush to zero',        &
+                      conserved(1.4029406990646508e-307_wp, 0.0_wp, 1.4029406990646508e-307_wp,       &
+                                ROUNDOFF_RTOL), 0.0_wp)
       nan_v = ieee_value(nan_v, ieee_quiet_nan)
       call check_true('conserved: a NaN fails', .not. conserved(1.0_wp, nan_v, 1.0_wp, ROUNDOFF_RTOL), 0.0_wp)
    end subroutine test_conserved
