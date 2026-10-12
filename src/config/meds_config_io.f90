@@ -186,9 +186,10 @@ contains
       type(toml_table_t),         intent(in)    :: tm
       type(soil_column_config_t), intent(inout) :: c
       character(len=64) :: str
-      c%n_layer     = toml_int (tm, 'soil_column.n_layer',     c%n_layer)
+      !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
+      call toml_real_array(tm, 'soil_column.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
+      if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
       c%depth       = toml_real(tm, 'soil_column.depth',       c%depth)
-      c%grid_growth = toml_real(tm, 'soil_column.grid_growth', c%grid_growth)
       if (toml_has(tm, 'soil_column.retention')) then
          str = toml_string(tm, 'soil_column.retention', '')
          select case (trim(str))

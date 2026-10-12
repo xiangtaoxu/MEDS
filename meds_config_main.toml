@@ -149,14 +149,12 @@ ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
 # [soil] is the solver (tolerances, bottom BC, substepping); this is the ground itself:
 # the vertical grid, the hydraulic texture and the thermal texture.
 #
-# Every key is OPTIONAL and defaults to the value shown, which is the literal that used to be
-# hard-coded in build_fast_context -- so omitting the whole block reproduces the old behaviour
-# exactly. The values below are a loam-ish placeholder, NOT a measured soil: replace them for a
-# real site. Validated at load: a layer count over the compile-time ceiling, a non-positive
-# depth, theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one
-# produces a silently wrong column rather than a crash.
+# Every key is OPTIONAL and defaults to the value shown. The values below are a loam-ish
+# placeholder, NOT a measured soil: replace them for a real site. Validated at load: a
+# non-positive depth, layer_bottoms that do not increase or do not reach the depth,
+# theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one produces a
+# silently wrong column rather than a crash.
 [soil_column]
-n_layer     = 10           # [-]      active soil layers (<= n_soil_layer_max = 20)
 depth       = 2.0          # [m]      total column depth
 #
 #   NOTE ON `depth`. 2.0 m is SHALLOWER than the ~2.5 m annual thermal damping depth at a
@@ -164,7 +162,11 @@ depth       = 2.0          # [m]      total column depth
 #   decaying into it. Deepening the column is the fix (not extrapolating the gradient, which is
 #   degenerate); this key is what makes it reachable. Changing it changes soil temperature.
 #
-grid_growth = 3.0          # [-]      layer-thickness growth with depth (0 = uniform grid)
+#   The layers are SoilGrids 2.0's depths (bottoms 0.05, 0.15, 0.30, 0.60, 1.00 m), then 1.5,
+#   2.0, 3.0, 4.5, 6.5, 9.0, 12, 16, 21 and 27 m, cut at `depth`; a remainder thinner than half
+#   the layer it falls in joins the layer above. layer_bottoms replaces that list (a measured
+#   profile); the column then ends at its last bottom unless `depth` is set.
+# layer_bottoms = [0.05, 0.15, 0.30, 0.60, 1.00, 1.50, 2.00]   # [m] layer bottoms, positive down
 retention   = "van_genuchten"   # van_genuchten | campbell
 theta_sat   = 0.43         # [m3/m3]  porosity
 theta_res   = 0.078        # [m3/m3]  residual water content
@@ -205,11 +207,11 @@ bottom_bc      = "geothermal" # geothermal (adiabatic base, REFLECTS the annual 
                               #      annual damping depth ~ mean annual AIR temperature + 1..2 K.
                               #      An error here is a steady flux into the column base, i.e. a
                               #      mean-annual bias of about the same size at depth.
-#deep_depth    = 3.12         # [m]  depth of the anchor PLANE. The default is the derived optimum
-                              #      for the DEFAULT column (2 m, 10 layers, grid_growth 3): a purely
-                              #      resistive termination reflects least at l = d/sqrt(2), giving
-                              #      1.727 + 1.973/sqrt(2) = 3.12 m. CHANGE IT if you change the
-                              #      column depth or the soil's thermal texture.
+#deep_depth    = 3.145        # [m]  depth of the anchor PLANE. The default is the derived optimum
+                              #      for the DEFAULT column (2 m on the default layers, bottom node
+                              #      1.75 m): a purely resistive termination reflects least at
+                              #      l = d/sqrt(2), giving 1.75 + 1.973/sqrt(2) = 3.145 m. CHANGE IT if
+                              #      you change the column depth or the soil's thermal texture.
 
 [snow]
 # Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0). The snow store is

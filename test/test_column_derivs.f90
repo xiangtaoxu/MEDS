@@ -22,6 +22,7 @@ program test_column_derivs
                                    sat_vapor_pressure_temp_deriv, enthalpy_vapor, temp_to_internal_energy, internal_energy_to_temp
    use meds_budget_check,   only : budget_t, budget_accumulate
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t, build_soil_hydr_params, &
                                   build_soil_therm_params
    use meds_column_state_types, only : soil_energy_column_t
@@ -44,6 +45,7 @@ program test_column_derivs
    use meds_fast_types,       only : error_control_t, ark_workspace_t
    use meds_config,           only : CTRL_PI
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !
    !      freezes each step; the parameters travel separately, as in the model). --------------------!
    type(column_config_t) :: col_config
@@ -290,7 +292,8 @@ contains
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_energy_tendency:'
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp
@@ -322,7 +325,8 @@ contains
       integer(ik) :: k, nsl
       nsl = 10_ik
       print '(a)', 'test_soil_water_tendency:'
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       hopts = soil_opts_t()
       do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
@@ -1114,7 +1118,8 @@ contains
       !      only the frozen sapflow/uptake, not the PV-curve/conductance params any more). -----------!
       type(hydro_params_t) :: hp
       integer(ik) :: i, k
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
       col_config%soil_water_opts = soil_opts_t()

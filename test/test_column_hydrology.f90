@@ -16,6 +16,7 @@ program test_column_hydrology
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o
    use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_column_state_types, only : soil_column_t
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
@@ -27,6 +28,7 @@ program test_column_hydrology
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
 
    call test_constitutive()
@@ -73,10 +75,12 @@ contains
       type(soil_params_t), intent(out) :: params
       type(soil_column_t), intent(out) :: col
       if (retention == SOIL_RETENTION_CAMPBELL) then
-         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.44_wp, 0.0_wp,            &
+         call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+         call build_soil_hydr_params(10_ik, retention, test_bottoms, 0.44_wp, 0.0_wp,            &
               4.53e-6_wp, -0.26_wp, 5.65_wp, -3.37_wp, params)
       else
-         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
+         call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+         call build_soil_hydr_params(10_ik, retention, test_bottoms, 0.43_wp, 0.078_wp,          &
               2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
       end if
       col%theta(1:10) = 0.30_wp
@@ -412,7 +416,8 @@ contains
       type(chydro_flux_t)  :: flux
       real(wp) :: dt, e_in, e_to_soil, e_left, e_runoff
       print '(a)', 'test_pond_subfreezing_inflow:'
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
       col%theta(1:10) = 0.25_wp
       col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
@@ -446,7 +451,8 @@ contains
       !----- WET clay (low Ksat, small suction) under a downpour: conductivity-limited so     !
       !      infiltration is capped and the excess ponds/runs off (Hortonian). A bone-dry clay !
       !      would instead have huge suction-driven capacity (Green-Ampt) -- not the cap case.  !
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.38_wp, 0.068_wp,     &
            5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
       col%theta(1:10) = 0.36_wp
       col%w_surface = 0.0_wp

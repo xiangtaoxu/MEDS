@@ -20,7 +20,6 @@
 !==========================================================================================!
 module meds_column_params
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num
    use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
@@ -28,10 +27,24 @@ module meds_column_params
    public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
+   public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
    public :: curve_a, curve_n
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
    integer(ik), parameter :: n_snow_layer_max = 1_ik        !< MVP single bulk layer; P1 raises to ED2 nzs~8
+
+   !----- The soil layers every column cuts at its own depth: bottoms [m, down] at         !
+   !      SoilGrids 2.0's depths to 1 m (0-5, 5-15, 15-30, 30-60, 60-100 cm), its          !
+   !      100-200 cm interval split at 1.5 m, then thickening to 27 m (each layer at       !
+   !      most twice the one above). Every column's top layer is 5 cm, a shallow soil      !
+   !      gets few layers rather than thin ones, per-layer soil maps match the layers      !
+   !      one to one, and every column shares one depth axis. ---------------------------- !
+   real(wp), parameter :: SOIL_LAYER_TEMPLATE(15) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp,     &
+                          1.50_wp, 2.00_wp, 3.00_wp, 4.50_wp, 6.50_wp, 9.00_wp, 12.0_wp, 16.0_wp, 21.0_wp, 27.0_wp]
+   !----- A remainder below the cut thinner than this share of the list layer it           !
+   !      falls in joins the layer above, so no column ends in a sliver. ----------------- !
+   real(wp), parameter :: LAYER_MERGE_SHARE = 0.5_wp
+   real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
 
    !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
    !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
@@ -78,40 +91,54 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Assemble a per-column soil_params_t: the ED2 negative-z geometry (exponential generator !
-   ! OR an explicit soil_layer_z interface array), uniform texture broadcast, and the DERIVED  !
-   ! threshold theta_fc (from the retention curve). The roots are the cohorts' own            !
-   ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                          !
+   ! A column's layer bottoms [m, positive down]: `list` (SOIL_LAYER_TEMPLATE or a         !
+   ! config list) cut at `depth`. The last layer ends at the depth; a remainder thinner    !
+   ! than LAYER_MERGE_SHARE of the list layer it falls in joins the layer above. A list    !
+   ! that ends above the depth gets one more layer down to it (the config refuses one).    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine build_soil_hydr_params(n_active, retention, soil_depth, grid_growth, theta_sat,  &
-                                theta_res, ksat, par_a, par_n, psi_fc_m, params, soil_layer_z_in)
-      integer(ik),         intent(in)  :: n_active, retention
-      real(wp),            intent(in)  :: soil_depth, grid_growth, theta_sat, theta_res
-      real(wp),            intent(in)  :: ksat, par_a, par_n, psi_fc_m
-      type(soil_params_t), intent(out) :: params
-      real(wp), optional,  intent(in)  :: soil_layer_z_in(:)
+   pure subroutine soil_layer_grid(depth, list, n_list, bottoms, n_layer)
+      real(wp),    intent(in)  :: depth, list(:)
+      integer(ik), intent(in)  :: n_list
+      real(wp),    intent(out) :: bottoms(n_soil_layer_max)
+      integer(ik), intent(out) :: n_layer
       integer(ik) :: k
-      real(wp)    :: denom
+      real(wp)    :: top
+      bottoms = 0.0_wp
+      n_layer = 0_ik
+      top     = 0.0_wp
+      do k = 1_ik, n_list
+         if (list(k) >= depth - GRID_TOL) exit                 ! list layer k holds the cut
+         n_layer = n_layer + 1_ik
+         bottoms(n_layer) = list(k)
+         top = list(k)
+      end do
+      if (k <= n_list .and. n_layer > 0_ik) then
+         if (depth - top < LAYER_MERGE_SHARE * (list(k) - top)) n_layer = n_layer - 1_ik
+      end if
+      n_layer = n_layer + 1_ik
+      bottoms(n_layer) = depth
+   end subroutine soil_layer_grid
+
+   !---------------------------------------------------------------------------------------!
+   ! Assemble a per-column soil_params_t: the ED2 negative-z geometry from the layer       !
+   ! bottoms (soil_layer_grid), uniform texture broadcast, and the DERIVED threshold       !
+   ! theta_fc (from the retention curve). The roots are the cohorts' own                   !
+   ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                       !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine build_soil_hydr_params(n_active, retention, layer_bottoms, theta_sat, theta_res,  &
+                                ksat, par_a, par_n, psi_fc_m, params)
+      integer(ik),         intent(in)  :: n_active, retention
+      real(wp),            intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
+      real(wp),            intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
+      type(soil_params_t), intent(out) :: params
+      integer(ik) :: k
 
       params%n_active  = n_active
       params%retention = retention
 
       !----- Interface elevations soil_layer_z(k) <= 0 (k=1 surface, deeper = more negative). -!
-      if (present(soil_layer_z_in)) then
-         params%soil_layer_z(1:n_active+1) = soil_layer_z_in(1:n_active+1)
-      else
-         if (abs(grid_growth) < tiny_num) then          ! uniform grid: the exact 0/0 limit of below
-            do k = 1_ik, n_active + 1_ik
-               params%soil_layer_z(k) = -soil_depth * real(k - 1_ik, wp) / real(n_active, wp)
-            end do
-         else
-            denom = exp(grid_growth) - 1.0_wp
-            do k = 1_ik, n_active + 1_ik
-               params%soil_layer_z(k) = -soil_depth                                         &
-                  * (exp(grid_growth * real(k - 1_ik, wp) / real(n_active, wp)) - 1.0_wp) / denom
-            end do
-         end if
-      end if
+      params%soil_layer_z(1)              = 0.0_wp
+      params%soil_layer_z(2:n_active + 1) = -layer_bottoms(1:n_active)
 
       !----- Thicknesses, node elevations, internode spacings (dz, dz_node > 0). ----------!
       do k = 1_ik, n_active

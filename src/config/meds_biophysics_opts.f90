@@ -111,14 +111,14 @@ module meds_biophysics_opts
       !      boundary is, and it is a PHYSICAL choice, not a numerical one: a purely resistive           !
       !      termination reflects least when l_deep = d/sqrt(2), d the annual damping depth.             !
       !                                                                                          !
-      !      The default is that optimum for the DEFAULT column (2 m, 10 layers, grid_growth 3, the      !
+      !      The default is that optimum for the DEFAULT column (2 m on the default layers, the          !
       !      [soil_column] defaults) and a mid-latitude mineral soil at theta = 0.3:                     !
-      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(10)| = 1.727 m                             !
-      !          deep_depth = 1.727 + 1.973/sqrt(2)  = 3.12 m                                            !
+      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(7)| = 1.75 m                               !
+      !          deep_depth = 1.75 + 1.973/sqrt(2)   = 3.145 m                                           !
       !      A measured sweep puts the optimum at 3.0-3.1 m, i.e. the derivation is right to within one   !
       !      sweep step (test_soil_annual_damping; docs/science/soil_biophysics.md).  CHANGE THIS if you  !
       !      change the column depth or the soil's thermal texture -- the formula above is the recipe.    !
-      real(wp)    :: deep_depth  = 3.12_wp        !< [m] depth (positive) of the anchor plane
+      real(wp)    :: deep_depth  = 3.145_wp       !< [m] depth (positive) of the anchor plane
       !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
       real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.

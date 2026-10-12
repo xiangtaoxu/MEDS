@@ -22,6 +22,7 @@ program test_column_energy
    use meds_constants,        only : rho_h2o, t_3ple, cp_ice, latent_heat_fusion, k_water, k_ice, pi
    use meds_soil_types, only : energy_forcing_t, energy_flux_t
    use meds_column_state_types, only : soil_energy_column_t
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : soil_thermal_params_t, soil_params_t, build_soil_hydr_params,          &
                                  build_soil_therm_params, n_soil_layer_max
    use meds_water_retention, only : SOIL_RETENTION_VG
@@ -31,6 +32,7 @@ program test_column_energy
                                      sat_vapor_pressure_temp_deriv, internal_energy_liquid
    use meds_soil_energy,      only : soil_energy_step_implicit
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    call test_inverter()
    call test_clausius()
@@ -119,7 +121,8 @@ contains
       real(wp)    :: tmin(n_soil_layer_max), tmax(n_soil_layer_max), tnow, kap, cef
       integer(ik) :: k, istep, nstep_yr, iyr
 
-      call build_soil_hydr_params(nl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,       &
+      call geometric_layer_bottoms(2.0_wp, nl, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(nl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,       &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(nl, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:nl) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
@@ -251,7 +254,8 @@ contains
       type(soil_params_t),         intent(out) :: soil
       type(soil_thermal_params_t), intent(out) :: therm
       type(energy_forcing_t),      intent(out) :: forcing
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,      &
+      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,      &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(10_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1:10) = 0.30_wp ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp
@@ -347,7 +351,8 @@ contains
       type(soil_thermal_params_t), intent(out) :: therm
       type(energy_forcing_t),      intent(out) :: forcing
       real(wp),                    intent(in)  :: theta, depth
-      call build_soil_hydr_params(1_ik, SOIL_RETENTION_VG, depth, 3.0_wp, 0.43_wp, 0.078_wp,        &
+      call geometric_layer_bottoms(depth, 1_ik, 3.0_wp, test_bottoms)
+      call build_soil_hydr_params(1_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
            2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
       call build_soil_therm_params(1_ik, 3.0_wp, 0.15_wp, 2.0e6_wp, therm)
       forcing%soil_water(1) = theta ; forcing%w_flux = 0.0_wp ; forcing%root_heat_sink = 0.0_wp

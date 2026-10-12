@@ -114,6 +114,23 @@ and exports the per-layer matric potential `psi_soil` [MPa] that closes the **pl
 boundary condition (see [plant_hydraulics](plant_hydraulics.md)), plus the time-mean per-face Darcy
 flux for optional advective soil heat.
 
+### The soil layers
+
+Water and heat share one grid. Every column cuts one list of layer bottoms at its own depth
+(`soil_layer_grid`): SoilGrids 2.0's depths to 1 m (5, 15, 30, 60 and 100 cm), 150 and 200 cm, then 3,
+4.5, 6.5, 9, 12, 16, 21 and 27 m, each layer at most twice the one above. The last layer ends at the
+column depth, and a remainder thinner than half of the list layer it falls in joins the layer above,
+so no column ends in a sliver.
+
+- **The top layer is 5 cm in every column.** That is thin enough for the diurnal heat wave, whose
+  damping depth is about 0.1 m. The drying surface needs no thinner layer: the dry-surface-layer
+  resistance stands in for it.
+- **A shallow soil gets a few layers rather than thin ones:** 0.3 m is 5, 10 and 15 cm.
+- **Per-layer soil maps line up with the layers,** and every column of a region shares one depth axis.
+
+`[soil_column].layer_bottoms` replaces the list for a site with a measured profile, and the column
+then ends at its last bottom unless `depth` cuts it.
+
 ### Hydraulic parameters from soil texture
 
 `soil_hydraulics_from_texture` (`meds_pedotransfer`) gives a layer's van Genuchten curve and saturated
@@ -229,11 +246,13 @@ when the two magnitudes match:
 ```
 
 So the anchor **depth** is a physical choice, and the default is derived rather than fitted. For the
-default column (2 m, 10 layers, `grid_growth = 3`) in a mid-latitude mineral soil at $`\theta = 0.3`$:
-$`d = 1.973`$ m and $`|z_{node,10}| = 1.727`$ m, giving `deep_depth` $`= 1.727 + 1.973/\sqrt{2} = 3.12`$ m.
+default column (2 m on the default layers) in a mid-latitude mineral soil at $`\theta = 0.3`$:
+$`d = 1.973`$ m and the bottom node at $`|z_{node,7}| = 1.75`$ m, giving
+`deep_depth` $`= 1.75 + 1.973/\sqrt{2} = 3.145`$ m.
 
-Measured against the analytic profile (`test_soil_annual_damping`, a homogeneous column driven by a
-harmonic $`G_{top}`$ to periodic steady state — the constant-$`\kappa`$, constant-$`C`$ case where
+Measured against the analytic profile (`test_soil_annual_damping`, a homogeneous 2 m column of ten
+layers thickening with depth, bottom node at 1.727 m and so its anchor at 3.12 m, driven by a harmonic
+$`G_{top}`$ to periodic steady state — the constant-$`\kappa`$, constant-$`C`$ case where
 $`\exp(-z/d)`$ holds exactly):
 
 | bottom BC | amplitude at $`-1.73`$ m, relative to the surface | vs analytic | RMS error over the profile |
@@ -299,6 +318,7 @@ and passes the resulting flux into the CO₂ source.
 |---|---|
 | soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | explicit water tendency (ARK) | `meds_soil_water`: `soil_water_time_deriv` |
+| soil layers | `meds_column_params`: `SOIL_LAYER_TEMPLATE`, `soil_layer_grid`; `meds_config`: `soil_column_layers` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
 | hydraulic parameters from texture | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
