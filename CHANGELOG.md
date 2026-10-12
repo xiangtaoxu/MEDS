@@ -95,6 +95,55 @@ before and after.
 
 ### Changed
 
+- **Soil and plant water are solved together, as one network** (#397;
+  `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
+  every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
+  uptake (Gardner, no hydraulic redistribution), the xylem (Kirchhoff mean) and the boundary flows,
+  and solved by implicit Euler on adaptive sub-steps, with Newton in each store's own unknown (soil
+  effective saturation dry, potential wet; tissue relative water content; pond head) and a
+  block-arrowhead solve that eliminates each cohort onto the soil. Water is advanced by the flows, so the network
+  conserves it to round-off. It replaces the implicit Richards solver, the plant-hydraulics
+  matrix-exponential solver, the uptake rescale, the residual floors and caps, the tissue-water floor,
+  the ARK transpiration corrector and RK45's in-stage soil water and saturation clip; both schemes take
+  water from it.
+  - **Transpiration** is the stomata's demand limited by the water the leaves hold below the closing
+    potential, solved in the network; the energy stages hold it at the network's for the step, as
+    they hold ground evaporation. The demand solve credits the liquid enthalpy of the sapflow that
+    replaces what the leaf transpires (without it the leaf transpired ~4 % less).
+  - **The pond is a store**: rain enters it, it exchanges water both ways with the top layer by
+    Darcy's law, and spills above `w_pond_max`. A layer past saturation stores water through a
+    specific storage of 1e-4 m⁻¹ and drives the excess to the pond and the next layer.
+  - **Root uptake** leaves each layer at that layer's own temperature (`root_heat` per layer).
+  - Example 04, five BCI years: LE 68.76 → 67.99 W m⁻², H 65.64 → 66.99 W m⁻², GPP 8.261 → 8.249
+    µmol m⁻² s⁻¹, Rn 121.00 → 120.90 W m⁻² (tower: 70.38, 30.75, 7.18, 136.42); daily LE RMSE against
+    the tower 18.78 → 18.94 W m⁻², r 0.54 both; whole-column ledgers 0 fails in 1.5e7 checks; run time
+    5:08 → 6:11 (8 threads).
+  - dt-convergence (BCI dry season, 900 against 150 s): window-mean LE −0.2 W m⁻² (was +0.3), largest
+    hourly difference in the mean diurnal cycle 1.9 W m⁻² (was 2.9); the midday `psi_leaf` probe
+    agrees to 0.005 MPa between 75 and 900 s.
+  - Cost on the BCI profile run (6 months, 33 patches): 12 threads 9.28 → 10.53 s (+13.5 %), one
+    thread 61.3 → 72.8 s (+19 %).
+  - 150-year regrowth from 1871 at Palo Verde and BCI (ERA5-Land recycled, soil map v2, with #389's
+    fix): both complete, whole-column ledgers 0 fails in 5e7-1e8 checks; beta stops at BCI on the
+    recycled April storm (1994, and 2014 with #389's fix). At Palo Verde beta's monthly-mean leaf
+    potential falls to -570 MPa in the dry season and the evergreen PFT sheds ~60 % of its leaves; the
+    network's lowest is -5.6 MPa and the evergreen keeps them (year-150 AGB 9.3 against 6.1 kgC m⁻²,
+    GPP equal). Example 06's PFT parameters were fitted under the old behaviour. Wall time to 2011
+    against beta: +2 % at Palo Verde, +24 % at BCI (about +20 % per cohort).
+  - The water work counters are renamed for the network: `work_water_nsub_site` (accepted
+    sub-steps), `work_water_newton_site` (Newton iterations), `work_water_reject_site` (rejected
+    sub-steps) and `work_water_nfail_site` (sub-steps taken unconverged), replacing
+    `work_soil_nsub_site`, `work_hydro_nsub_site`, `work_hydro_thrash_site` and `work_nonconv_site`.
+  - The fast step's thread workspace (`fast_workspace_t`, was `ark_workspace_t`) now holds the
+    solver too, for both schemes, so its arrays are allocated only when a patch's shape changes.
+  - **Where the code lives**: the solver is `numerics/meds_spac_solver`, with its linear solve in
+    `meds_arrowhead_solve`; how much water a store holds is in `meds_water_retention`
+    (`soil_water_relations`, `tissue_water_relations`, `pond_water_relations`), how water moves into
+    and through the plant in `meds_hydr_lib` (`rhizosphere_conductance`, `root_water_uptake`,
+    `xylem_sapflow`, `supply_limited_transpiration`), and through the soil in `meds_soil_water`
+    (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
+    solver's own curve kernels, and the Mualem pore connectivity is one constant,
+    `VG_PORE_CONNECTIVITY` (0.5).
 - **A run stops on the step a cohort's state leaves its bounds** (#389). Each step, the driver checks
   every cohort's density, carbon pools, SLA, internal water and leaf and wood films: each must be
   finite and not negative. A violation stops the run and names the field, the cohort and its patch,
@@ -400,8 +449,26 @@ before and after.
   - **Unchanged:** the default `clearidx`, which stays 3–11% high. #369 lists that and the other open
     uncertainties of the shortwave-to-PAR partition.
 
+### Removed
+
+- **`[soil]` keys `linearize`, `substep`, `h_init`, `max_substep` and `max_picard`** (#397):
+  the soil-water solver they configured is gone. A config that sets one stops with a message naming
+  the water network; `rtol` and `atol` remain and set its error.
+- **The commit-clamp outputs** `work_clamp_commit_site`, `work_clamp_mass_site` and
+  `work_clamp_energy_site` (#397): nothing clamps a committed state any more, so they were always
+  zero. `work_clamp_stage_site` stays.
+- **Read-offs and wrappers without a caller** (#397): `soil_hydr_cond_from_theta`,
+  `soil_moist_cap_from_psi`, `kirchhoff_edge`, `kirchhoff_edge_tab` and `dplc_dpsi`; the solver's
+  curves and `xylem_sapflow` are what the model and the tests use.
+- **RK45's warning above `dt_fast` = 300 s** (#397): it warned that RK45 lacked the ARK's
+  transpiration corrector; both schemes now solve leaf water implicitly in the network.
+
 ### Fixed
 
+- **The BCI 1994-04-20 NaN** (example 06 regrowth; #397): a trace of pond water over dry soil and a
+  conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
+  1. The water network has no conductivity floor and starts the pond at the head at which it neither
+  gives nor takes water; the day completes with both whole-column ledgers closed.
 - **A cohort's geometry is derived from its carbon, never integrated** (#389).
   - **The bug:** the slow update advanced dbh, height, basal area, AGB and leaf area by their own
     rates beside the carbon pools. On a leafless cohort the leaf carbon floored at 0 while the

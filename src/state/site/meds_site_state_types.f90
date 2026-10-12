@@ -385,16 +385,13 @@ module meds_site_state_types
       !      them over a period like any other diagnostic. --------------------------------------------!
       real(wp)           :: work_integ_steps = 0.0_wp   !< accepted integrator sub-steps
       real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
-      real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
-      real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
-      real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics)
-      !----- THRASH detector (issue #104, plan E1b/E3). Counts dt_fast steps in which the plant-       !
-      !      hydraulics solver spent more than HYDRO_NSUB_THRASH sub-steps PER COHORT. Measured, that   !
-      !      is 1.0-1.2 in every physically ordinary state and ~136 once a wood store collapses onto    !
-      !      its water floor -- a 13x wall-clock event that until now produced no output at all. This   !
-      !      is a COST counter, but a nonzero value is also a correctness flag: the states that cause    !
-      !      it are ones whose stores are pinned and whose answer is not to be trusted. ----------------!
-      real(wp)           :: work_hydro_thrash = 0.0_wp  !< dt_fast steps with pathological hydraulics sub-stepping
+      !----- The soil-plant water network's work. A nonzero work_water_nfail is also a correctness     !
+      !      flag: a sub-step taken at the shortest length although Newton had not converged keeps      !
+      !      water exactly but leaves the stores off their curves. -------------------------------------!
+      real(wp)           :: work_water_nsub   = 0.0_wp   !< accepted sub-steps
+      real(wp)           :: work_water_newton = 0.0_wp   !< Newton iterations
+      real(wp)           :: work_water_reject = 0.0_wp   !< rejected sub-steps
+      real(wp)           :: work_water_nfail  = 0.0_wp   !< sub-steps taken although unconverged
       !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). Same cadence and     !
       !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
       !      cost: how often a scheme had to leave its own model to stay standing, and how much         !
@@ -402,9 +399,6 @@ module meds_site_state_types
       !      whether it actually ran the integrator it was configured for. --------------------------!
       real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid on split
       real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
-      real(wp)           :: work_clamp_commit= 0.0_wp   !< COMMITTED-state clamp activations (unbookkept)
-      real(wp)           :: work_clamp_mass  = 0.0_wp   !< [kg/m2] water created/destroyed by commit clamps
-      real(wp)           :: work_clamp_energy= 0.0_wp   !< [J/m2]  energy created/destroyed by commit clamps
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !

@@ -28,7 +28,7 @@ program test_column_dynamics
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
-                                        ark_workspace_t
+                                        fast_workspace_t
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
@@ -75,7 +75,7 @@ program test_column_dynamics
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
    real(wp) :: ustar_noon, dtheta_noon      ! #97: midday turbulence regime (see the check below)
@@ -332,12 +332,11 @@ program test_column_dynamics
    !      one whose soil surface reached 345 K, because a misplacement between LAYERS still sums        !
    !      correctly against the boundary.                                                               !
    !                                                                                                    !
-   !      This run is on the ARK path, where the scratch solve's theta is committed VERBATIM -- so its   !
-   !      faces genuinely ARE this column's own and the invariant holds by construction. What is        !
-   !      asserted here is that construction: the scratch solve's own per-layer face closure, at the    !
-   !      saturated corner where its clip and runoff paths are live. The RK45 statement of the same     !
-   !      invariant -- the one that can actually be violated, since RK45 integrates its own theta while !
-   !      a frozen scratch sits there offering its faces -- is asserted in test_column_rk45. ----------!
+   !      This run is on the ARK path, which commits the water network's theta -- so its faces          !
+   !      genuinely ARE this column's own and the invariant holds by construction. What is asserted     !
+   !      here is that construction: the network's own per-layer face closure, at the saturated        !
+   !      corner where its pond and runoff paths are live. The RK45 statement of the same invariant is  !
+   !      asserted in test_column_rk45. ----------------------------------------------------------------!
    call check_true('SATURATED: per-layer face closure holds (no borrowed advective face)',                            &
            budget%soil_face_mass%worst < 1.0e-8_wp, budget%soil_face_mass%worst)
    call check_true('SATURATED: the face check actually ran', budget%soil_face_mass%n_check > 0_ik,                    &
@@ -777,14 +776,8 @@ contains
       t = build_tol_set(c)
       call check_true('tol: rtol_all overrides ALL groups', all(t%rtol == 1.0e-7_wp), maxval(abs(t%rtol - 1.0e-7_wp)))
       call check_true('tol: atol_scale scales atol', t%atol(GRP_THETA) == c%soil%atol * 1.0e-2_wp, t%atol(GRP_THETA))
-      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solvers, not just the ARK march. Note:  !
-      !      the plant-hydraulics sub-solver (hydraulics_opts) is DELIBERATELY no longer pushed from here          !
-      !      (MEDS_ED2_RK45_DESIGN.md sec 4/6, P2): its retired outer group (GRP_PSI, psi-space [MPa])      !
-      !      became GRP_LEAF_W/GRP_WOOD_W (mass-space [kg/plant]) when internal water mass replaced        !
-      !      psi as the fast-loop prognostic state, but hydraulics_opts's OWN internal step-doubling still          !
-      !      operates in psi space (solve_plant_water's matrix exponential) -- feeding it from a mass-       !
-      !      space group would be a unit mismatch, not a unification, so it now keeps its own type          !
-      !      default (build_fast_context no longer touches it at all). --------------------------------!
+      !----- (c) PUSH-DOWN: the dials must reach the nested sub-solver, not just the ARK march: the     !
+      !      soil-plant water network takes the GRP_THETA pair for soil and plant stores alike. -------!
       call build_fast_context(c, fx)
       call check_true('tol: dial reaches the soil-WATER sub-solver',                                                  &
               fx%col_config%soil_water_opts%rtol   == 1.0e-7_wp, fx%col_config%soil_water_opts%rtol)

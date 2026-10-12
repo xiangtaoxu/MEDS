@@ -29,7 +29,7 @@ program test_column_ark
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_fast_frozen,        only : build_column_frozen
-   use meds_fast_types,         only : column_frozen_t, column_state_t, ark_workspace_t
+   use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
    use meds_water_retention,     only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
    implicit none
@@ -47,7 +47,7 @@ program test_column_ark
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_rk45(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
    real(wp)    :: psi_leaf_diag
@@ -113,7 +113,7 @@ program test_column_ark
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
       call reset_state()
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%spac, n, nsl, fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
@@ -211,8 +211,8 @@ contains
    !       no psi-limit, rainfall==0) and assert the 7 conservation budgets close. -------------------!
    !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
-   !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
-   !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
+   !      and the ARK commits the water network's theta, so it inherits it unchanged. A column started  !
+   !      DRY must wet from below with both ledgers closed. -------------------------------------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_balance store term (store_hcap_per_dt > 0), available on ARK and     !
    !      RK45. Two assertions:                                                                       !
@@ -259,7 +259,7 @@ contains
       forc%enthalpy_atm = cas_enthalpy_of_temp(t0, 0.008_wp)
       biophys%wood_water_mass(1:n) = 0.8_wp * biophys%wood_water_mass(1:n)        ! dried wood
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%spac, n, nsl, fz, ys)
       refill = sum((fz%plant%uptake_frozen(1:n) - fz%plant%sapflow_frozen(1:n)) * col_cohort%nplant(1:n))
       call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
       call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &
@@ -487,18 +487,14 @@ contains
    !=======================================================================================!
    ! N2b -- psi_leaf must be CONVERGED IN dt_fast, and the plant total must still conserve.
    !
-   ! WHAT THIS CATCHES. build_column_frozen runs solve_plant_water_batch, an exact matrix
-   ! exponential over the whole dt_fast, whose OWN end-of-step leaf potential is dt-converged
-   ! (measured flat at -0.331 MPa from dt_fast 25 s to 900 s). The persisted state, however, is
-   ! a separate explicit Euler step, and it used to be charged the ENDPOINT-refreshed
-   ! transpiration while being credited the STATE-n-consistent sapflow. Because the kernel defines
-   ! sapflow = dw_l/dt + transp, that mismatch is not a discretisation error at all: it is exactly
-   ! dt*(transp_prepass - transp_realised), a flux inconsistency growing LINEARLY in dt. The leaf --
-   ! the smallest store in the column -- absorbed all of it, and psi_leaf ran away with dt_fast:
-   ! -0.334 MPa at 5 s vs -1.788 MPa at 900 s on the 3 h midday probe, while every OTHER state and
-   ! every flux converged. With the corrector in advance_water_mass_full the same probe gives
-   ! -0.333 vs -0.328 MPa (error 1.454 -> 0.0046 MPa), and BOTH versions agree at dt = 5 s to
-   ! 8e-4 MPa -- the fix changes the discretisation, not the dt->0 limit.
+   ! WHAT THIS CATCHES. The leaf is the smallest store in the column, so any mismatch between the
+   ! transpiration charged to it and the sapflow credited to it lands there, and psi_leaf runs away
+   ! with dt_fast. It has happened: the old explicit plant-water step was charged the
+   ! ENDPOINT-refreshed transpiration while being credited the STATE-n sapflow, a flux
+   ! inconsistency growing LINEARLY in dt, and psi_leaf went from -0.334 MPa at 5 s to -1.788 MPa
+   ! at 900 s on the 3 h midday probe while every OTHER state and every flux converged. Now the
+   ! water network solves the leaf implicitly with the soil, and the energy stages hold
+   ! transpiration at the network's value, so the leaf is charged and credited the same step.
    !
    ! No conservation ledger sees this. The whole-column water budget closes either way, because
    ! the plant store absorbing a flux mismatch IS a closed budget -- which is exactly why this
