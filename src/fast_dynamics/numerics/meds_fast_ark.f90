@@ -16,9 +16,9 @@
 !   * the column_state_t algebra + ledgers   -> meds_column_state_ops                          !
 ! Nothing outside this module imports `meds_fast_ark` except the dispatcher and the RHS test.   !
 !                                                                                          !
-! Soil water is committed ONCE per dt_fast from the scratch advance_soil_water_column solve (the ARK   !
-! stages move theta at that solve's steady rate); the pond is carried in column_state_t but committed !
-! the same way.                                                                                      !
+! Soil and plant water are the soil-plant water network's (meds_spac_solver, run in                !
+! build_column_frozen): the stages move theta at its steady rate, plant water is advanced at its     !
+! rates once per step, and the end-of-step theta and pond are committed from it once per dt_fast.    !
 ! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !
 ! aquifer); see meds_budget_check and the ledgers at the end of column_fast_step_ark.              !
 !==========================================================================================!
@@ -33,17 +33,17 @@ module meds_fast_ark
    use meds_fast_types, only : patch_biophys_t
    use meds_fast_time_derivs, only : surface_derivs
    use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero, bflux_add, &
-                                     bflux_bweight, clamp_cas, clamp_theta, clamp_soil_energy, soil_water_store, &
+                                     bflux_bweight, clamp_cas, clamp_soil_energy, soil_water_store, &
                                      soil_energy_store, plant_water_store, canopy_film_store, deposit_condensate, &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps, &
                                      assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area
-   use meds_fast_be_stage, only : column_be_stage, advance_water_mass_full, advance_surf_water_full
+   use meds_fast_be_stage, only : column_be_stage, advance_plant_water, advance_surf_water_full
    use meds_fast_frozen, only : build_column_frozen
    use meds_site_diag_types, only : CD_TRANSP
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
-                               ark_stages_t, ark_workspace_t
+                               ark_stages_t, fast_workspace_t
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
@@ -70,16 +70,12 @@ contains
    ! "ARK2"). Stiffly accurate on both tableaux, so the two ESDIRK stages map onto imex_euler's       !
    ! "last BE solve = committed state" structure with dt -> gamma*dt. The biotic CO2 source is folded !
    ! IMPLICIT (stays in the CO2 BE numerator), so f_E == 0 and the scheme reduces to a clean 2-solve  !
-   ! ESDIRK2. PLANT WATER MASS IS OPERATOR-SPLIT OUT of the tableau, exactly like psi was before it     !
-   ! (MEDS_ED2_RK45_DESIGN.md sec 1/4/5): mass is frozen through the stages, then advanced once over    !
-   ! the full dt (advance_water_mass_full -- now a trivial closed-form Euler step, no iteration, since   !
-   ! the frozen sapflow/uptake pre-pass already absorbed the only stiff physics), and excluded from the  !
-   ! embedded error. y_err = (Y3-base3)-(Y2-y_n) is the free embedded 1st-order estimate for the         !
-   ! adaptive controller (2 solves/step vs step-doubling's 3). The mass update re-solves the plant      !
-   ! hydraulics once per step (the transpiration corrector), and that solve's work is added to the      !
-   ! hydraulics WORK counters (section 5.3) on top of the pre-pass's. -----------------------------------!
-   subroutine ark2_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n, &
-                               floor_mass, floor_n, hydro_nsub, hydro_nonconv)
+   ! ESDIRK2. Soil and plant WATER are the soil-plant water network's: the stages move soil water at  !
+   ! its steady rate and pass plant water through, which is then advanced once over the full dt at    !
+   ! the network's rates (advance_plant_water) and excluded from the embedded error. y_err =           !
+   ! (Y3-base3)-(Y2-y_n) is the free embedded 1st-order estimate for the adaptive controller (2 solves !
+   ! per step vs step-doubling's 3). ------------------------------------------------------------!
+   subroutine ark2_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, stages, niter, bf, clamp_n)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
       type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
@@ -90,23 +86,8 @@ contains
       integer(ik), optional, intent(in)  :: niter
       type(column_bflux_t), optional, intent(out) :: bf   !< b-weighted boundary-flux AMOUNTS over dt (ledger)
       !----- STAGE-clamp activations (see column_budget_t%clamp_stage_n). The ARK clamps its ARS       !
-      !      stage-3 extrapolation base and NOTHING else in the SOIL/CAS state -- y_out is committed    !
-      !      unclamped there -- so that asymmetry against RK45 is a result, not an omission.            !
-      !                                                                                          !
-      !      Its commit counter is NOT zero, though, and the claim that it was "0 by construction"      !
-      !      was the whole of #148: the tissue-water floor in advance_water_mass_full is a commit       !
-      !      clamp that creates water, and it was simply not reported. It is now, through the same     !
-      !      clamp_mass / clamp_commit_n channel. -----------------------------------------------------!
+      !      stage-3 extrapolation base and nothing else; y_out is committed unclamped. ---------------!
       integer(ik), optional, intent(inout) :: clamp_n
-      !----- The tissue-water floor is a COMMIT clamp that creates water (#148). ACCUMULATED here     !
-      !      because a march calls this many times per dt_fast; the caller zeroes once per step.      !
-      real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
-      integer(ik), optional, intent(inout) :: floor_n
-      !----- The corrector's hydraulics work (sub-steps, unconverged cohorts), ACCUMULATED like      !
-      !      clamp_n: work done on a rejected attempt was still done. ----------------------------!
-      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
-      real(wp)    :: fmass_i
-      integer(ik) :: fcount_i, hnsub_i, hnonconv_i
       real(wp), parameter :: GAMMA = 0.2928932188134524_wp   ! 1 - 1/sqrt(2)
       real(wp), parameter :: BETA  = 2.4142135623730951_wp   ! (1-gamma)/gamma = 1 + sqrt(2)
       type(stage_bflux_t)   :: bf2, bf3
@@ -118,29 +99,22 @@ contains
 
          !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
          call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
-         !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
-         !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
-         !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
-         !      step (which the adaptive controller then rejects and shrinks normally) -- in range it is an  !
-         !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
-         !      with NaN. --------------------------------------------------------------------------------!
+         !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot the CAS enthalpy   !
+         !      into a wild temperature where qsat(T) overflows to NaN; clamp it to a physical range so the  !
+         !      stage stays FINITE. This only bites on a genuinely oversized step (which the adaptive        !
+         !      controller then rejects and shrinks normally) -- in range it is an identity, so no accuracy  !
+         !      cost. Without the CAS clamp a big transient poisons the whole march with NaN. Soil water      !
+         !      needs no clamp: it moves at the water network's steady rate, so the extrapolation lands      !
+         !      between its start and end values. ---------------------------------------------------!
          call state_extrap(y, BETA, Y2, n, nsl, base3)
-         call clamp_theta(base3, col_config, nsl, nfire=clamp_n)
          call clamp_cas(base3, nfire=clamp_n)
          call column_be_stage(base3, frozen, col_config, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
          call state_init(Y3, n, nsl, y_out)
-         !----- operator-split mass: closed-form Euler over the FULL dt from y_n, using the SAME b-weighted !
-         !      (1-gamma, gamma) per-cohort transp the CAS's own vapour balance used (bf2/bf3's ledger is    !
-         !      b-weighted identically, sec 1/3/4/5) -- NOT a separate endpoint evaluation, so the mass       !
-         !      debit and the CAS credit agree to within the tableau's own stage algebra. --------------------!
+         !----- Plant water over the FULL dt at the network's rates, debited the SAME b-weighted          !
+         !      (1-gamma, gamma) per-cohort transpiration the CAS's own vapour balance was credited        !
+         !      (bf2/bf3's ledger is b-weighted identically), so debit and credit are one number. --------!
          transp_bw(1:n) = (1.0_wp - GAMMA)*sf2%transp_c(1:n) + GAMMA*sf3%transp_c(1:n)
-         call advance_water_mass_full(y, frozen, col_config, n, nsl, dt, transp_bw, y_out,                          &
-                                      floor_mass=fmass_i, floor_n=fcount_i,                              &
-                                      hydro_nsub=hnsub_i, hydro_nonconv=hnonconv_i)
-         if (present(floor_mass))    floor_mass    = floor_mass    + fmass_i
-         if (present(floor_n))       floor_n       = floor_n       + fcount_i
-         if (present(hydro_nsub))    hydro_nsub    = hydro_nsub    + hnsub_i
-         if (present(hydro_nonconv)) hydro_nonconv = hydro_nonconv + hnonconv_i
+         call advance_plant_water(y, frozen, n, dt, transp_bw, y_out)
          !----- operator-split canopy-SURFACE water (sec 3.4, P2c): same b-weighting discipline, using the  !
          !      SAME sf2/sf3 (already captured above for transp_bw) -- film_evap_leaf/wood are zero when     !
          !      canopy_water_on is off, so this is a no-op then. --------------------------------------------!
@@ -150,7 +124,6 @@ contains
          !----- embedded 1st-order error estimate (mass is split out -> zeroed). -------------------------!
          call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
          !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
-         !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
          if (present(bf)) then
             call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
             !----- b-weighted TIME INTEGRAL of the tissue temperatures, same b^I = (0, 1-gamma, gamma)   !
@@ -185,7 +158,7 @@ contains
    ! (p=1 embedded -> exponent -1/2). Reports the step + reject count.                                 !
    !---------------------------------------------------------------------------------------!
    subroutine adaptive_ark_march(y0, frozen, col_config, n, nsl, t_end, ec, dt_init, y_out, ws, nsteps, nrej, niter, acc, &
-                                 dt_warm_out, clamp_n, floor_mass, floor_n, hydro_nsub, hydro_nonconv)
+                                 dt_warm_out, clamp_n)
       type(column_state_t),  intent(in)  :: y0
       type(column_frozen_t), intent(in)  :: frozen
       type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
@@ -193,7 +166,7 @@ contains
       real(wp),              intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
       type(column_state_t),  intent(inout) :: y_out  !< filled in place
-      type(ark_workspace_t), intent(inout) :: ws     !< this thread's march and stage storage
+      type(fast_workspace_t), intent(inout) :: ws    !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
       !----- section 8e WARM START: the controller proposal to seed the NEXT call with. Only steps that  !
@@ -206,25 +179,12 @@ contains
       !      that was then thrown away still says the controller was probing too far, which is the      !
       !      signal wanted. Accumulated (intent(inout)), so the caller zeroes it. -----------------------!
       integer(ik), optional, intent(inout) :: clamp_n
-      !----- Tissue-water floor creation over the whole march, same accumulate-and-caller-zeroes      !
-      !      discipline (#148). -------------------------------------------------------------------!
-      real(wp),    optional, intent(inout) :: floor_mass   !< [kg/m2 ground]
-      integer(ik), optional, intent(inout) :: floor_n
-      !----- The corrector's hydraulics work over the whole march, rejected trials included. ---!
-      integer(ik), optional, intent(inout) :: hydro_nsub, hydro_nonconv
 
       type(column_bflux_t) :: bfsub
       real(wp)             :: t, dt, err, err_prev, fac, dt_floor
       integer(ik)          :: np
       real(wp)             :: dt_try, dt_warm
       logical              :: clamped
-      !----- The tissue-water floor's mass, PER ATTEMPT: ark2_column_step accumulates into it, and only  !
-      !      an ACCEPTED sub-step's water reaches the committed state, so only that is handed to the    !
-      !      caller -- the ledger declares it as created water (#333). A rejected attempt's floor was    !
-      !      never committed; counting it would credit water the column never received. ---------------!
-      real(wp)             :: fmass_try
-      integer(ik)          :: fn_try
-
       associate (y => ws%y_march, y_new => ws%y_new, y_err => ws%y_err, y_lo => ws%y_lo)
          np = 8_ik ; if (present(niter)) np = max(1_ik, niter)
          if (present(acc)) call bflux_zero(acc, n)
@@ -245,10 +205,8 @@ contains
             dt_try = dt
             dt = min(dt, t_end - t)
             clamped = dt < dt_try - tiny_num
-            fmass_try = 0.0_wp ; fn_try = 0_ik
             call ark2_column_step(y, frozen, col_config, n, nsl, dt, y_new, y_err, ws%stages, niter=np, bf=bfsub,          &
-                                  clamp_n=clamp_n, floor_mass=fmass_try, floor_n=fn_try,             &
-                                  hydro_nsub=hydro_nsub, hydro_nonconv=hydro_nonconv)
+                                  clamp_n=clamp_n)
             call state_sub(y_new, y_err, n, nsl, y_lo)               ! the 1st-order embedded solution
             !----- per-group WRMS over the WHOLE column state (see state_wrms_grouped's header). The ARK's  !
             !      theta and water-mass terms are structurally zero here -- both ride operator-split maps     !
@@ -266,8 +224,6 @@ contains
             if (err /= err .or. dt /= dt) then
                if (dt <= dt_floor) then
                   call state_init(y_new, n, nsl, y) ; t = t + dt_floor ; nsteps = nsteps + 1_ik
-                  if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! committed: declare it
-                  if (present(floor_n))    floor_n    = floor_n    + fn_try
                   exit
                end if
                nrej = nrej + 1_ik ; dt = max(dt * ec%fmin, dt_floor) ; cycle
@@ -281,8 +237,6 @@ contains
                   error stop 'adaptive_ark_march: L2 strict -- floor step cannot meet tolerance'
                call state_init(y_new, n, nsl, y)
                if (present(acc)) call bflux_add(acc, bfsub)          ! accumulate ONLY accepted substeps
-               if (present(floor_mass)) floor_mass = floor_mass + fmass_try   ! ...and their floor water
-               if (present(floor_n))    floor_n    = floor_n    + fn_try
                t = t + dt ; nsteps = nsteps + 1_ik
                err_prev = err                                        ! remember for the PI controller
                !----- WARM-START SEED = the step that was just ACCEPTED, recorded BEFORE the controller's    !
@@ -303,14 +257,10 @@ contains
       end associate
    end subroutine adaptive_ark_march
    !=======================================================================================!
-   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md). Shares the   !
-   !  split's frozen pre-pass (build_column_frozen), packs the state into the pure column vector,     !
-   !  advances one dt_fast with the ARK stepper, then unpacks. PARTIAL rainfall>0 guard-lift: the ARK   !
-   !  now carries the split's soil-boundary water-enthalpy advection (rain/runoff/drainage liquid      !
-   !  enthalpy, in column_be_stage) and persists the scratch hydrology's ponding/aquifer/water-table   !
-   !  (column_state_t still doesn't advance them prognostically -> a lagged operator split, so the      !
-   !  whole-WATER budget closes only to the split-error tolerance, not machine). STILL restricted to   !
-   !  free-drain + no Zeng-Decker: those bottom BCs need prognostic aquifer/z_wt in the state vector.  !
+   !  INTEG_ARK path: the coupled IMEX-ARK fast step (docs/dev_plans/archive/MEDS_IMEX_ARK_DESIGN.md).  !
+   !  Builds the frozen record (build_column_frozen, which also runs the step's water network), packs  !
+   !  the state into the column vector, advances one dt_fast with the ARK stepper, commits the        !
+   !  network's water, and closes the ledgers. ------------------------------------------------------!
    !=======================================================================================!
    subroutine column_fast_step_ark(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
                                    ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, cdiag)
@@ -324,7 +274,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
-      type(ark_workspace_t),   intent(inout) :: ws    !< this thread's reusable step storage (#195)
+      type(fast_workspace_t),  intent(inout) :: ws    !< this thread's reusable step storage (#195)
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
       logical,     optional,   intent(out)   :: converged
@@ -358,25 +308,22 @@ contains
       !----- CLAMP counters are ACCUMULATED down the call chain (intent(inout) all the way to the      !
       !      kernels), so this sub-step's tally starts clean here. The commit counters stay 0 on this   !
       !      path: the ARK clamps its stage-3 extrapolation base only, never y_out. -------------------!
-      budget%clamp_stage_n = 0_ik ; budget%clamp_commit_n = 0_ik ; budget%theta_ood_max = 0.0_wp
-      budget%clamp_mass    = 0.0_wp ; budget%clamp_energy = 0.0_wp
+      budget%clamp_stage_n = 0_ik ; budget%theta_ood_max = 0.0_wp
 
       !----- §5.1: a reduced column freezes a store while its fluxes still act on the neighbours, so it  !
       !      cannot conserve by construction -- suppress the HARD stops (soft n_fail counters still run). !
       halt_budgets = col_config%energy%debug_error .and. mask_is_full(col_config%mask)
 
-      !----- The bottom-BC guard is GONE (Phase 0/3). All three BCs are now pure boundary conditions   !
-      !      with no prognostic state behind them: bedrock seals the face, free drainage takes the       !
-      !      unit-gradient limit, and the aquifer is head-driven against a saturated zone at the column  !
-      !      base. The ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits all  !
-      !      three unchanged. -------------------------------------------------------------------------!
+      !----- All three bottom BCs are pure boundary conditions with no prognostic state behind them      !
+      !      (bedrock, free drainage, a head-driven aquifer); the water network takes each as a boundary  !
+      !      flow, and the ARK commits its theta. -----------------------------------------------------!
       w_surface0 = biophys%soil_w%w_surface
 
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
-                               frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%spac, &
+                               n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- STATE^n pond enthalpy, snapshotted HERE (#78 item 4). It must be read before anything      !
-      !      commits to biophys%soil_w: the pond commit below overwrites w_surface_enth with the scratch's  !
+      !      commits to biophys%soil_w: the pond commit below overwrites w_surface_enth with the network's  !
       !      end-of-step value, so a snapshot taken alongside e_soil0 further down reads the COMMITTED  !
       !      value and the store change collapses to exactly zero. That is what it did -- the whole-    !
       !      column residual came out equal to -e_pond0 to six figures, which is what identified it.    !
@@ -401,35 +348,29 @@ contains
          call adaptive_ark_march(y, frozen, col_config, n, nsl, dt_fast, ec, dt0, y_out, ws, nsteps, nrej,         &
                                  niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), acc=acc, &
                                  dt_warm_out=dt_warm_next,                                          &
-                                 clamp_n=budget%clamp_stage_n,                                  &
-                                 floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,   &
-                                 hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
+                                 clamp_n=budget%clamp_stage_n)
          biophys%adapt_dt_last = dt_warm_next
       else
          nsub = max(1_ik, col_config%integrator%fixed_substeps) ; nrej = 0_ik ; ycur = y ; call bflux_zero(acc, n)
          do isub = 1_ik, nsub
             call ark2_column_step(ycur, frozen, col_config, n, nsl, dt_fast/real(nsub, wp), ytmp, yerr, ws%stages, &
                                   niter=merge(NEWT_COUPLED, 1_ik, col_config%integrator%coupled_newton), bf=bfsub, &
-                                  clamp_n=budget%clamp_stage_n,                                 &
-                                  floor_mass=budget%clamp_mass, floor_n=budget%clamp_commit_n,  &
-                                  hydro_nsub=budget%hydro_nsub, hydro_nonconv=budget%hydro_nonconv)
+                                  clamp_n=budget%clamp_stage_n)
             call bflux_add(acc, bfsub)
             ycur = ytmp
          end do
          y_out = ycur ; nsteps = nsub
       end if
-      !----- section 5.3 WORK counters: record what the march actually cost. hydro_nsub/hydro_nonconv  !
-      !      start from the pre-pass's solve (build_column_frozen) and the march adds the corrector's   !
-      !      solve on every ARK attempt. --------------------------------------------------------------!
+      !----- section 5.3 WORK counters: record what the march actually cost (the water network's own  !
+      !      work is recorded where it ran, in build_column_frozen). ----------------------------------!
       budget%integ_nsteps = nsteps ; budget%integ_nrej = nrej
 
-      !----- SOIL WATER is operator-split out: the ESDIRK stages only moved theta at the scratch solve's    !
-      !      steady rate; commit the AUTHORITATIVE end-of-step theta from that solve HERE, once,               !
-      !      so a single consistent theta feeds the state commit, the soil_temp read-off, and BOTH the      !
-      !      soil_water and whole_water storage terms (w_soil1 below). ------------------------------------!
+      !----- SOIL WATER is the water network's: the ESDIRK stages moved theta at its steady rate; commit !
+      !      its end-of-step theta HERE, once, so a single consistent theta feeds the state commit, the    !
+      !      soil_temp read-off, and BOTH the soil_water and whole_water storage terms (w_soil1 below). ---!
       y_out%theta(1:nsl) = frozen%hydrology%theta1(1:nsl)
-      !----- pond: same treatment as theta -- committed from the scratch solve, but THROUGH the state !
-      !      vector so there is one authority. Phase 1 replaces these two lines with a stage RHS. -----!
+      !----- pond: same treatment as theta -- the network's end-of-step pond, committed THROUGH the     !
+      !      state vector so there is one authority. ------------------------------------------------!
       y_out%w_surface      = frozen%hydrology%w_surface1
       y_out%w_surface_enth = frozen%hydrology%w_surface_enth1     ! #78 item 4: paired with the mass
 
@@ -458,12 +399,8 @@ contains
 
       !----- unpack into biophys + re-derive the diagnostic soil temperatures + leaf temperatures. -----!
       call unpack_column_state(y_out, n, nsl, biophys)
-      !----- persist the scratch hydrology's ponding/aquifer/water-table (lagged operator split).       !
-      !      §5.1: these are part of the SOIL-WATER store, so they must obey the same freeze as theta   !
-      !      -- otherwise mask%soil_water=.false. means something different on this path than on the    !
-      !      split path (which restores the whole soil_column_t), and the two schemes are no longer     !
-      !      running the same reduced system. They are the ONLY writes to biophys%soil_w besides theta, and !
-      !      the hydrology ran on soil_w_scratch, so skipping them leaves the store at state^n. --------!
+      !----- The pond: part of the SOIL-WATER store, so it obeys the same §5.1 freeze as theta. It is the !
+      !      only write to biophys%soil_w besides theta, so skipping it leaves the store at state^n. -----!
       if (col_config%mask%soil_water) then
          biophys%soil_w%w_surface      = y_out%w_surface
          biophys%soil_w%w_surface_enth = y_out%w_surface_enth
@@ -604,47 +541,29 @@ contains
       !      soil_energy_step_implicit is zero by construction and so cannot see a post-solve deposit. ----!
       call budget_check(budget%soil_energy, e_soil0, e_soil1, acc%soil_enth_in + cond_dep_enth,            &
                         acc%soil_enth_out, dt_fast, budget_energy_rate_floor, 'soil_energy (ark)', halt_budgets)
-      !----- SOIL WATER (fully frozen now): storage theta^n -> theta1 (w_soil0 -> w_soil1, both from the    !
-      !      scratch solve), inflow q_top*rho, outflow drainage + realized uptake -- all from the frozen    !
-      !      hflux, which closed its OWN mass budget to machine precision inside advance_soil_water_column. -----!
-      !----- ...and the paired MASS, for the same reason (see the soil_energy note just above). ---------!
-      !----- ...plus the scratch's own two post-solve corrections: clipped water LEFT the soil for the  !
-      !      pond, floored water was CREATED in it -- both are in the committed theta1. -----------------!
+      !----- SOIL WATER: storage theta^n -> theta1 (both the water network's), in through the top face   !
+      !      net of evaporation and exfiltration (q_top), out through the bottom and to the roots -- the   !
+      !      network's own flows, which moved its water exactly -- plus the condensate deposit (see the    !
+      !      soil_energy note just above). ---------------------------------------------------------!
       call budget_check(budget%soil_water,  w_soil0, w_soil1,                                              &
-                        (frozen%hydrology%q_top*rho_h2o + frozen%hydrology%floor_mass)*dt_fast + cond_dep_mass,                    &
-                        (frozen%hydrology%drainage + frozen%roots%uptake                                    &
-                         + frozen%hydrology%clip_mass)*dt_fast,                                             &
+                        frozen%hydrology%q_top*rho_h2o*dt_fast + cond_dep_mass,                            &
+                        (frozen%hydrology%drainage + frozen%roots%uptake)*dt_fast,                         &
                         dt_fast, budget_water_rate_floor, 'soil_water (ark)', halt_budgets)
-      !----- whole-WATER: rainfall IN; drainage + runoff + CAS-vapour OUT; ponding + plant internal water !
-      !      MASS in the store. The soil + ponding + drainage/runoff/rainfall terms are frozen fast-step    !
-      !      amounts; the CAS-vapour exchange g_atm_vapour*(shv-shv_atm) is the ARK-accumulated part (acc%           !
-      !      whole_wat_out). The plant's OWN w_plant0/1 store term (above) now absorbs the transp<->        !
-      !      uptake mismatch the OLD comment here described (the ARK re-evaluates transpiration per          !
-      !      ESDIRK stage as the CAS VPD evolves, while the committed soil theta lost the FROZEN scratch      !
-      !      uptake_total) -- exactly the closure split's P0 already has, so the tolerance inflation that     !
-      !      used to paper over that gap is gone; this closes to machine precision like the other 6 now. ----!
+      !----- whole-WATER: rainfall IN; drainage + runoff + CAS-vapour OUT; soil, ponding, plant internal  !
+      !      water and the films in the store. The soil, pond, plant, drainage and runoff terms are the     !
+      !      water network's step; the CAS-vapour exchange g_atm_vapour*(shv-shv_atm) is the ARK-          !
+      !      accumulated part (acc%whole_wat_out). -------------------------------------------------!
       !----- SNOW joins the ledgers (C4): the pack is a real mass + energy STORE, its accumulated      !
       !      rainfall enthalpy is a boundary INPUT, and SNOWFALL is a boundary water input -- forc%snowfall  !
       !      was absent from w_in here (split has always carried it), so with a pack the ledger saw     !
       !      mass appear with no source and leaked exactly snowfall*dt every step. Sublimation already     !
       !      leaves via the CAS vapour term and meltwater already moved pack -> soil as a paired        !
       !      transfer, so neither needs a term. All zero without snow. --------------------------------!
-      !----- frozen%hydrology%floor_mass: the theta_res floor's water is created inside the column and enters as a   !
-      !      boundary INPUT, exactly as its enthalpy (e_floor -> acc%whole_enth_in) already did; the      !
-      !      mass half was missing (2026-09 review, item 1A #5). -------------------------------------!
-      !----- budget%clamp_mass: the TISSUE-water floor (advance_water_mass_full, #148) creates water the !
-      !      same way -- when one step's transpiration debit would take a cohort's leaf or wood store    !
-      !      below zero -- and on this path it is the only commit clamp, summed over ACCEPTED sub-steps  !
-      !      only. It was reported but not declared, so every firing breached this ledger by exactly    !
-      !      the water it made (#333: 91 breaches in five BCI years under a calibrated set, all on the   !
-      !      three days the floor fired, residual = the floor's mass). Its energy needs no term: the    !
-      !      tissue store is cap*T with the step's FROZEN capacity at both ends. -----------------------!
       call budget_check(budget%whole_water,                                                                &
                         w_soil0 + cas_mass_capacity*shv0 + w_surface0 + w_plant0 + surf_water0 + frozen%snow%swe0,  &
                         w_soil1 + cas_mass_capacity*shv1 + frozen%hydrology%w_surface1 + w_plant1 + surf_water1 &
                         + frozen%snow%swe1, &
-                        acc%whole_wat_in + (forc%rainfall + forc%snowfall + biophys%shed_water_rate                &
-                                            + frozen%hydrology%floor_mass)*dt_fast + budget%clamp_mass,                &
+                        acc%whole_wat_in + (forc%rainfall + forc%snowfall + biophys%shed_water_rate)*dt_fast,       &
                         acc%whole_wat_out                                                                   &
                         + (frozen%hydrology%runoff_surf + frozen%hydrology%drainage)*dt_fast                &
                                           + surf_overflow - surf_deficit,                                 &

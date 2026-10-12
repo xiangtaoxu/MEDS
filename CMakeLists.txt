@@ -130,8 +130,9 @@ function(meds_fortran_flags tgt)
 endfunction()
 
 #----- FOUNDATION (src/shared/): kinds and constants (base/), the stateless constitutive laws      #
-#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, canopy        #
-#      optics, temperature response) and the calendar, numerics and budget checks (util/).         #
+#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, the soil      #
+#      pedotransfer function, canopy optics, temperature response) and the calendar, numerics      #
+#      and budget checks (util/).                                                                  #
 #                                                                                                  #
 #      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
 #      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
@@ -468,7 +469,7 @@ if(MEDS_BUILD_TESTS)
    #----- Assertions only, depending on nothing but a kind. Kept separate from meds_testsupport  #
    #      because nine tests deliberately link ONE narrow library each to keep that layer          #
    #      standalone-buildable, and they must be able to assert without linking the whole model.   #
-   add_library(meds_testassert STATIC test/meds_test_assert.f90)
+   add_library(meds_testassert STATIC test/meds_test_assert.f90 test/meds_test_soil_grid.f90)
    target_link_libraries(meds_testassert PUBLIC meds_shared)
    meds_fortran_flags(meds_testassert)
 
@@ -483,6 +484,13 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_numerics PRIVATE meds_shared meds_testassert)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
+
+   #----- Soil pedotransfer function: Hodnett & Tomasella (2002)'s worked example, Ks, coarse  #
+   #      fragments (links meds_shared only). --------------------------------------------------#
+   add_executable(test_pedotransfer test/test_pedotransfer.f90)
+   target_link_libraries(test_pedotransfer PRIVATE meds_shared meds_testassert)
+   meds_fortran_flags(test_pedotransfer)
+   add_test(NAME pedotransfer COMMAND test_pedotransfer)
 
    #----- No procedure is passed as an argument anywhere in src/ (#325): the ifx cost of doing  #
    #      so serialises threads. The script explains the rule it checks.                       #
@@ -643,9 +651,21 @@ if(MEDS_BUILD_TESTS)
 
    #----- Vertical soil-hydrology test links the biophysics library (state-free). ----------#
    add_executable(test_column_hydrology test/test_column_hydrology.f90)
-   target_link_libraries(test_column_hydrology PRIVATE meds_fast_kernels meds_testassert)
+   target_link_libraries(test_column_hydrology PRIVATE meds_fast meds_testassert)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
+
+   #----- The soil-plant water solver's water relations and flows: values and derivatives. ---#
+   add_executable(test_water_processes test/test_water_processes.f90)
+   target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
+   meds_fortran_flags(test_water_processes)
+   add_test(NAME water_processes COMMAND test_water_processes)
+
+   #----- The soil-plant water solver on synthetic stands and soils. -------------------------#
+   add_executable(test_spac_solver test/test_spac_solver.f90)
+   target_link_libraries(test_spac_solver PRIVATE meds_fast meds_testassert)
+   meds_fortran_flags(test_spac_solver)
+   add_test(NAME spac_solver COMMAND test_spac_solver)
 
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)

@@ -44,9 +44,7 @@ module meds_config_io
    use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK,          &
-                                    SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
-                                    SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
+                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
@@ -178,7 +176,7 @@ contains
    !=======================================================================================!
    !---------------------------------------------------------------------------------------!
    ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.     !
-   ! Distinct from [soil], which is the Richards SOLVER's options over this column. Every key !
+   ! Distinct from [soil], the water network's options over this column. Every key            !
    ! is optional and defaults to the literal that used to be hard-coded in build_fast_context, !
    ! so an absent block reproduces the old behaviour exactly.                                  !
    !---------------------------------------------------------------------------------------!
@@ -186,9 +184,10 @@ contains
       type(toml_table_t),         intent(in)    :: tm
       type(soil_column_config_t), intent(inout) :: c
       character(len=64) :: str
-      c%n_layer     = toml_int (tm, 'soil_column.n_layer',     c%n_layer)
+      !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
+      call toml_real_array(tm, 'soil_column.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
+      if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
       c%depth       = toml_real(tm, 'soil_column.depth',       c%depth)
-      c%grid_growth = toml_real(tm, 'soil_column.grid_growth', c%grid_growth)
       if (toml_has(tm, 'soil_column.retention')) then
          str = toml_string(tm, 'soil_column.retention', '')
          select case (trim(str))
@@ -208,7 +207,7 @@ contains
       c%dry_heat_capacity  = toml_real(tm, 'soil_column.dry_heat_capacity',  c%dry_heat_capacity)
    end subroutine load_soil_column
 
-   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water Richards opts
+   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water opts
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
       character(len=64) :: str
@@ -221,27 +220,8 @@ contains
          case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
          end select
       end if
-      if (toml_has(tm, 'soil.linearize')) then
-         str = toml_string(tm, 'soil.linearize', '')
-         select case (trim(str))
-         case ('frozen') ; s%linearize = SOIL_LIN_FROZEN
-         case ('picard') ; s%linearize = SOIL_LIN_PICARD
-         case default ; error stop 'load_meds_config: soil.linearize must be frozen|picard'
-         end select
-      end if
-      if (toml_has(tm, 'soil.substep')) then
-         str = toml_string(tm, 'soil.substep', '')
-         select case (trim(str))
-         case ('adaptive') ; s%substep = SOIL_SUBSTEP_ADAPTIVE
-         case ('fixed')    ; s%substep = SOIL_SUBSTEP_FIXED
-         case default ; error stop 'load_meds_config: soil.substep must be adaptive|fixed'
-         end select
-      end if
       s%rtol           = toml_real   (tm, 'soil.rtol',            s%rtol)
       s%atol           = toml_real   (tm, 'soil.atol',            s%atol)
-      s%h_init         = toml_real   (tm, 'soil.h_init',          s%h_init)
-      s%max_substep    = toml_int    (tm, 'soil.max_substep',     s%max_substep)
-      s%max_picard     = toml_int    (tm, 'soil.max_picard',      s%max_picard)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
       s%intercept_alpha= toml_real   (tm, 'soil.intercept_alpha', s%intercept_alpha)
       s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)

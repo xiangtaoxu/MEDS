@@ -13,43 +13,27 @@ module meds_soil_types
    implicit none
    private
 
-   public :: chydro_forcing_t, chydro_flux_t
+   public :: chydro_forcing_t
    public :: energy_forcing_t, energy_flux_t
    public :: snow_env_t, snow_flux_t, snow_melt_t
 
    !=======================================================================================!
-   !  Soil-column hydrology types + selector codes (meds_soil_water, design §4).  !
-   !  Fixed-size (n_soil_layer_max) so the kernel stays allocatable-free and GPU-eligible.   !
-   !  ED2 negative-z convention: elevation z <= 0 below ground; dz, dz_node are positive       !
-   !  magnitudes.                                                                               !
+   !  Soil-column water: the boundary the water network's evaporation reads. The soil's       !
+   !  parameters are soil_params_t (meds_column_params), its options soil_opts_t              !
+   !  (meds_biophysics_opts), its retention curves meds_water_retention.                       !
    !=======================================================================================!
-   !----- n_soil_layer_max + the prognostic column-state types live in meds_column_state_types    !
-   !      (src/shared); the SOIL_* solver selectors + soil_opts_t live in meds_biophysics_opts     !
-   !      (shared/config); the constitutive SOIL_RETENTION_* live in meds_hydr_lib. All re-exported !
-   !      below so the fast kernels + callers keep `use meds_canopy_types/meds_soil_types` unchanged. ----------!
 
-   !----- Soil-column boundary conditions (read-only). ------------------------------------!
+   !----- The soil column's surface boundary for the water network's evaporation (read-only). -----!
    type :: chydro_forcing_t
-      real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] ground-reaching liquid (post interception)
-      real(wp) :: root_uptake(n_soil_layer_max) = 0.0_wp  !< [kg/m2/s] per-layer transpiration DEMAND (x nplant)
-      real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temp (FORCED = T_air until soil energy)
+      real(wp) :: precip_ground = 0.0_wp                  !< [kg/m2/s] water reaching the ground (post interception)
+      real(wp) :: t_ground = 298.15_wp                    !< [K] ground skin temperature
       !----- Liquid fraction of the top soil layer, so ground evaporation from a FROZEN surface       !
-      !      saturates over ICE rather than over liquid (#89). Defaults to 1 (all liquid), which is   !
-      !      the pre-#89 behaviour, so any caller that does not set it is bit-identical. -------------!
+      !      saturates over ICE rather than over liquid (#89). Defaults to 1 (all liquid). -----------!
       real(wp) :: ground_fliq = 1.0_wp                    !< [-] top-layer liquid fraction
-      !----- PER-LAYER soil temperature and the rainfall temperature, needed because this kernel owns  !
-      !      the ponding store's ENTHALPY as well as its mass. Valuing the saturation clip requires     !
-      !      layer k's own temperature, and valuing the rain that ponds requires the rainfall           !
-      !      temperature. Both halves of a store must be owned in ONE place: split ownership lets the   !
-      !      store drift while both sides' books still close. Defaults make the enthalpy terms 0, so a  !
-      !      caller that does not set them gets mass-only behaviour, which is wrong for production. ----!
-      !----- Defaulted to a PHYSICAL temperature, not 0: internal_energy_liquid is referenced to
-      !      tsupercool_liq (~57 K), so a 0 K default would value every pond transfer at a large
-      !      NEGATIVE enthalpy rather than at zero. A caller that leaves these alone gets a
-      !      self-consistent (if arbitrary) thermal treatment and unchanged mass behaviour; a caller
-      !      that wants meaningful pond enthalpy must set both.
-      real(wp) :: soil_temp(n_soil_layer_max) = 298.15_wp !< [K] per-layer soil temperature (clip enthalpy)
-      real(wp) :: t_pond_inflow = 298.15_wp                    !< [K] temperature of precip_ground (pond inflow)
+      !----- The temperature that values precip_ground as it joins the pond. Defaulted to a PHYSICAL   !
+      !      temperature, not 0: internal_energy_liquid is referenced to tsupercool_liq (~57 K), so a 0 K !
+      !      default would value the pond's inflow at a large NEGATIVE enthalpy. ----------------------!
+      real(wp) :: t_pond_inflow = 298.15_wp               !< [K]
       real(wp) :: q_air    = 0.0_wp                       !< [kg/kg] canopy-air specific humidity (soil evap)
       real(wp) :: rho_air  = 1.2_wp                       !< [kg/m3] canopy-air density (soil evap)
       real(wp) :: r_aero   = 100.0_wp                     !< [s/m] aerodynamic resistance of the BARE-SOIL tile
@@ -71,54 +55,6 @@ module meds_soil_types
 
    !----- soil_opts_t (soil-water solver selectors + tolerances) lives in meds_biophysics_opts    !
    !      (shared/config); re-exported above.                                                     !
-
-   !----- Soil-column outputs + diagnostics. ----------------------------------------------!
-   type :: chydro_flux_t
-      real(wp) :: infiltration   = 0.0_wp                !< [kg/m2/s] top-face infiltration
-      real(wp) :: drainage       = 0.0_wp                !< [kg/m2/s] bottom-face drainage
-      real(wp) :: runoff_surf    = 0.0_wp                !< [kg/m2/s] surface runoff
-      real(wp) :: soil_evap      = 0.0_wp                !< [kg/m2/s] ground evaporation
-      real(wp) :: uptake_total   = 0.0_wp                !< [kg/m2/s] realized root uptake (after the residual floor)
-      real(wp) :: uptake_deficit = 0.0_wp                !< [kg/m2/s] requested sink the layers could not supply
-      real(wp) :: clip_excess    = 0.0_wp                !< [kg/m2/s] theta-clip water routed to ponding
-      !----- POST-SOLVE mass corrections, PER LAYER. These move water with NO face, so the soil ENERGY  !
-      !      column cannot see them: it consumes the corrected theta but advects enthalpy only on the    !
-      !      faces. Because internal_energy_liquid carries the tsupercool_liq datum (~1.0 MJ/kg in       !
-      !      ABSOLUTE terms), an uncompensated correction lands entirely in the diagnosed temperature    !
-      !      -- of order 3 K per kg/m2 in a 0.1 m layer. Exported per layer so the caller can debit /    !
-      !      credit each layer's enthalpy at ITS OWN temperature, leaving T unchanged (the correction    !
-      !      is numerical, so it must be temperature-NEUTRAL). ------------------------------------------!
-      real(wp) :: clip_layer(n_soil_layer_max)  = 0.0_wp !< [kg/m2/s] saturation-clip water LEAVING layer k
-                                                         !<           for the ponding store (>= 0)
-      real(wp) :: floor_layer(n_soil_layer_max) = 0.0_wp !< [kg/m2/s] theta_res hard-floor water CREATED in
-                                                         !<           layer k (>= 0; the last-resort guard
-                                                         !<           that also shows up in mass_resid)
-      real(wp) :: face_mass_resid = 0.0_wp              !< [kg/m2] |per-layer mass change - net face flux|, summed.
-                                                        !<   The interior-face contract the soil ENERGY column
-                                                        !<   relies on: w_flux must carry the mass that actually
-                                                        !<   moved, or the enthalpy advected on it is fiction.
-                                                        !<   mass_resid cannot see this -- interior face errors
-                                                        !<   cancel in a column-vs-boundary sum.
-      !----- PONDING-STORE ENTHALPY exports (issue #78 item 4). The pond is now a real thermal store, so   !
-      !      its seams stop being boundary losses and become paired transfers:                             !
-      !        * t_infil  -- the temperature of the water that infiltrates. It comes OUT OF THE POND        !
-      !          (rain enters the pond first, then infiltration draws from the mixture), so the soil's      !
-      !          top-face advection must use this, NOT t_film_valuation. With a dry pond it IS the rainfall           !
-          !          temperature, so the common case is unchanged.                                          !
-      !        * runoff_enth -- runoff is a genuine boundary energy OUTPUT now that the water it carries     !
-      !          had a temperature. Covers both the Dunne share (at t_pond_inflow, never entered the pond) and    !
-      !          the pond overflow (at the pond temperature).                                                !
-      !        * clip_layer's enthalpy is NO LONGER a boundary loss: it moves layer k -> pond, and both       !
-      !          ends are tracked stores, so it telescopes out of the whole-column ledger entirely. ---------!
-      real(wp) :: t_infil     = 0.0_wp                   !< [K] temperature of the infiltrating water
-      real(wp) :: runoff_enth = 0.0_wp                   !< [W/m2] enthalpy leaving with surface runoff
-      real(wp) :: psi_soil(n_soil_layer_max) = 0.0_wp    !< [MPa] per-layer matric potential (EXPORTED to hydraulics)
-      real(wp) :: w_flux(n_soil_layer_max)   = 0.0_wp    !< [m/s] time-mean DOWNWARD Darcy flux BELOW node k (k=1..n-1);
-                                                         !<       interior interfaces only (EXPORTED for advective heat)
-      real(wp) :: mass_resid     = 0.0_wp                !< [kg/m2] closed-budget residual (~0)
-      integer(ik) :: nsub = 0_ik                         !< sub-steps taken
-      logical  :: converged = .true.                     !< .false. on any cap-hit
-   end type chydro_flux_t
 
    !----- Soil-column thermal boundary conditions (read-only). ------------------------------!
    type :: energy_forcing_t

@@ -4,8 +4,11 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
-                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN,       &
+                                               set_cohort_size_from_carbon, cohort_bad_field,       &
+                                               cohort_field_name
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
@@ -181,6 +184,62 @@ program test_fusion_cohort
                                           site%cohort%fineroot_carbon(1))
       call check(abs(site%cohort%nonstructural_carbon(1) - alloc_store) > 1.0e-6_wp,               &
                  'carbon fuse must CARRY off-allometry storage, not snap it to allometry (BUG2)')
+   end block
+
+   !=== 6. Fusion of cohorts with different SLA conserves leaf AREA (#389): sla blends on leaf    !
+   !     carbon, the quantity it converts, so sum(nplant*leaf_carbon*sla) is what the fused        !
+   !     cohort shows. A leaf-area-weighted sla gave sum(LA*sla)/sum(LA) instead. =================!
+   block
+      real(wp) :: lai0
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp      ! shade-acclimated donor
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call set_cohort_size_from_carbon(site%cohort, 2_ik)
+      lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
+      call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
+                       'fusion of cohorts with different SLA must conserve leaf area')
+      !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
+      !      (the BCI case). A blend that skipped weights below 1e-30 kept one SLA here. ----------!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp
+      site%cohort%leaf_carbon(1) = 1.0e-193_wp ; site%cohort%leaf_carbon(2) = 3.0e-193_wp
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call set_cohort_size_from_carbon(site%cohort, 2_ik)
+      lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
+      call check(abs(site%cohort%nplant(1)*site%cohort%leaf_area(1) - lai0) <= 1.0e-12_wp * lai0,      &
+                 'fusion of leafless cohorts with different SLA must conserve their leaf area too')
+   end block
+
+   !=== 7. Geometry has ONE writer (#389): a cohort placed on the allometry from its dbh carries  !
+   !     exactly the geometry its carbon gives, so a restart that re-derives it gets the same bits. !
+   block
+      real(wp) :: g0(5)
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.4_wp, 17.3_wp)
+      call finalize_init(site)
+      g0 = [site%cohort%dbh(1), site%cohort%height(1), site%cohort%basal_area(1),                    &
+            site%cohort%agb(1), site%cohort%leaf_area(1)]
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call check(all([site%cohort%dbh(1), site%cohort%height(1), site%cohort%basal_area(1),          &
+                      site%cohort%agb(1), site%cohort%leaf_area(1)] == g0),                          &
+                 'birth geometry must be the geometry derived from the birth carbon, bit for bit')
+
+      !=== 8. The bounds guard names the first field out of bounds, and passes a sound cohort. ==!
+      call check(cohort_bad_field(site%cohort, 1_ik) == 0_ik, 'a fresh cohort is in bounds')
+      site%cohort%leaf_surf_water(1) = -1.0e-30_wp
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'leaf_surf_water',  &
+                 'a negative leaf film is out of bounds, however small')
+      site%cohort%nplant(1) = ieee_value(1.0_wp, ieee_quiet_nan)
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nplant',           &
+                 'a NaN density is out of bounds, and checked first')
    end block
 
    write(*,'(a)') '   PASS'

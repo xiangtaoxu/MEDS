@@ -22,15 +22,15 @@
 module meds_c_api_demography
    use iso_c_binding
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : pio4, tiny_num
+   use meds_constants,              only : tiny_num
    use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_config_io,              only : load_meds_config
    use meds_site_state_types,        only : site_t, site_free, cohort_deriv_alloc
    use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
    use meds_vegetation_dynamics,    only : vegetation_dynamics, restructure_stand, accumulate_recruit_pool
    use meds_diagnostic_reduce, only : total_agb, total_lai, total_nplant, total_basal_area, count_cohorts
-   use meds_allometry,              only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area,          &
-                                          size2leaf_carbon, size2wood_carbon, storage_carbon_target
+   use meds_allometry,              only : dbh_to_height, size2leaf_carbon, size2wood_carbon,    &
+                                          storage_carbon_target
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : sort_cohorts
    implicit none
@@ -151,7 +151,7 @@ contains
       integer(ik) :: n, np, npft, ip, pf, i, n_window
       real(wp), allocatable :: g(:), m(:), rec(:,:)
       real(wp)              :: seed_c
-      real(wp) :: dbh_new, height_new, ba_new, agb_new, la_new
+      real(wp) :: dbh_new, height_new
       real(wp) :: lc_new, fc_new, wc_new, nc_new
 
       associate (site => g_site(sh), cfg => g_cfg(ch))
@@ -170,8 +170,8 @@ contains
          n_window = growth_window_steps(cfg)
          site%growth_hist_pos = mod(site%growth_hist_pos, n_window) + 1_ik
          !----- Empirical growth + mortality via the TENDENCY seam: per cohort, forward-derive the   !
-         !      new geometry + on-allometry pools from the SUPPLIED growth rate [cm/yr] (capped at    !
-         !      dbh_critical, inlined; mirrors set_cohort_size), back out each field's time-           !
+         !      on-allometry pools of the new size from the SUPPLIED growth rate [cm/yr] (capped at   !
+         !      dbh_critical, inlined; mirrors set_cohort_size), back out each pool's time-            !
          !      derivative, and advance the moving-average ring buffer with the supplied rate (the     !
          !      empirical convention -- records the request even when dbh is capped); then let the     !
          !      core engine's pure applier advance the state. There is deliberately NO empirical        !
@@ -185,9 +185,6 @@ contains
                !      set_cohort_size, so a coefficient change updated the model and not the shim.     !
                dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
                height_new = dbh_to_height(dbh_new, cohort%p_hgt_max(i))
-               ba_new     = pio4 * dbh_new * dbh_new
-               agb_new    = dbh_to_agb(dbh_new, height_new, cohort%p_wood_density(i))
-               la_new     = dbh_to_leaf_area(dbh_new, height_new)
                lc_new     = size2leaf_carbon(dbh_new, height_new, cohort%sla(i))
                wc_new     = size2wood_carbon(dbh_new, height_new, cohort%p_wood_density(i),            &
                                              cohort%p_aboveground_frac(i))
@@ -196,7 +193,6 @@ contains
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !
                !      rate (empirical behaviour -- records the request even when dbh is capped). ----!
                call fill_cohort_deriv(cohort, i, site%deriv, cfg%dt_years, m(i), g(i),                &
-                                      dbh_new, height_new, ba_new, agb_new, la_new,                    &
                                       lc_new, fc_new, wc_new, nc_new, n_window, site%growth_hist_pos)
             end do
          end associate

@@ -196,8 +196,6 @@ spinup_struct_soil = 6.7763e-04
 [soil_column]
 depth       = 6.0                # [m]     room for the canopy trees' roots (5 m for a 35 m tree); BCI's
                                  #         Oxisol is over 2 m deep and the bedrock 3-18 m down
-n_layer     = 16                 # [-]     with grid_growth 4: 3 cm at the top, 1.35 m at the bottom
-grid_growth = 4.0
 theta_sat   = 0.60               # [m3/m3] porosity 0.62-0.70 at bulk density 0.8-1.0, surface-weighted
 theta_res   = 0.10               # [m3/m3] the plot's dry branch: 0.24-0.25 at -1.2 to -1.6 MPa
 curve_par_a = 2.0                # [1/m]   van Genuchten alpha: the aggregates' large pores drain at small suction
@@ -207,7 +205,7 @@ ksat        = 1.0e-5             # [m/s]
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 298.65                # [K] the tower's mean air temperature, 2012-08 to 2017-08
-deep_depth = 6.72                  # [m] the bottom node (5.32 m) + 1.973 / sqrt(2), the default's rule
+deep_depth = 6.645                  # [m] the bottom node (5.25 m) + 1.973 / sqrt(2), the default's rule
 
 [aerodynamics]
 z0m_ratio = 0.0535721   # set by calibrate_fast

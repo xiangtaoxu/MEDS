@@ -17,7 +17,8 @@ module meds_config
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params,               &
+                                  SOIL_LAYER_TEMPLATE, soil_layer_grid
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
                                    WIND_EXPOSURE_OPEN_TERRAIN, ARCHIVE_DT_SEC
@@ -32,7 +33,7 @@ module meds_config
    public :: meds_config_t, allometry_config_t, hydraulics_config_t, soil_column_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
-   public :: validate_config, growth_window_steps
+   public :: validate_config, growth_window_steps, soil_column_layers
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
@@ -84,9 +85,6 @@ module meds_config
    !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
-   !----- Above this dt_fast, an rk45 run is warned that it lacks the ARK-only transpiration       !
-   !      corrector (#160). Not a hard limit -- rk45 at a fine step is the intended use.            !
-   real(wp),    parameter :: RK45_UNCORRECTED_DT_WARN = 300.0_wp   !< [s]
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -125,14 +123,15 @@ module meds_config
    !       damping depth, so the fix for that was unreachable from a config file.                     !
    !                                                                                          !
    !       Every key is OPTIONAL and defaults to the literal it replaced, so a config without the     !
-   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which is    !
-   !       the Richards SOLVER's options (tolerances, bottom BC, substepping): this block is the       !
-   !       PHYSICAL column those options are solved over.                                              !
+   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which holds  !
+   !       the soil water's options (bottom BC, the water network's tolerances, the pond): this block   !
+   !       is the PHYSICAL column they apply to.                                                         !
    type :: soil_column_config_t
-      !----- Vertical grid. `grid_growth` = 0 gives a uniform grid; > 0 thickens layers with depth. -!
-      integer(ik) :: n_layer     = 10_ik      !< [-]  active soil layers (<= n_soil_layer_max)
-      real(wp)    :: depth       = 2.0_wp     !< [m]  total column depth (positive; z is negative down)
-      real(wp)    :: grid_growth = 3.0_wp     !< [-]  layer-thickness growth factor with depth
+      !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
+      !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
+      real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
+      integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
+      real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
       !----- Hydraulic texture (uniform over the column in this MVP; per-layer texture is future). --!
       integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
@@ -401,7 +400,7 @@ module meds_config
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
       !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%soil_water_opts)
+      type(soil_opts_t)   :: soil        !< [soil]         soil water and water-network opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
@@ -434,6 +433,22 @@ module meds_config
    end type meds_config_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! The column's layers: the bottoms [m, positive down] of `layer_bottoms` when the       !
+   ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_layers(sc, bottoms, n_layer)
+      type(soil_column_config_t), intent(in)  :: sc
+      real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
+      integer(ik),                intent(out) :: n_layer
+      if (sc%n_layer_bottoms > 0_ik) then
+         call soil_layer_grid(sc%depth, sc%layer_bottoms, sc%n_layer_bottoms, bottoms, n_layer)
+      else
+         call soil_layer_grid(sc%depth, SOIL_LAYER_TEMPLATE, size(SOIL_LAYER_TEMPLATE, kind=ik),   &
+                              bottoms, n_layer)
+      end if
+   end subroutine soil_column_layers
 
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
@@ -599,10 +614,17 @@ contains
       !      non-positive depth or a theta_sat <= theta_res divides by zero in the retention curve, !
       !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead. ----!
       associate (sc => cfg%soil_column)
-         if (sc%n_layer < 1_ik .or. sc%n_layer > n_soil_layer_max)                                &
-            error stop tag//'soil_column.n_layer outside 1..n_soil_layer_max'
          if (sc%depth <= 0.0_wp)          error stop tag//'soil_column.depth <= 0'
-         if (sc%grid_growth < 0.0_wp)     error stop tag//'soil_column.grid_growth < 0'
+         if (sc%n_layer_bottoms > 0_ik) then
+            if (sc%layer_bottoms(1) <= 0.0_wp .or. any(sc%layer_bottoms(2:sc%n_layer_bottoms)              &
+                <= sc%layer_bottoms(1:sc%n_layer_bottoms - 1)))                                     &
+               error stop tag//'soil_column.layer_bottoms must be positive depths [m] that increase'
+            if (sc%layer_bottoms(sc%n_layer_bottoms) < sc%depth)                                    &
+               error stop tag//'soil_column.layer_bottoms must reach soil_column.depth'
+         else if (sc%depth > SOIL_LAYER_TEMPLATE(size(SOIL_LAYER_TEMPLATE))) then
+            error stop tag//'soil_column.depth is below the deepest default layer (27 m): '//       &
+                       'set soil_column.layer_bottoms'
+         end if
          if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
          if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
          if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)             &
@@ -638,20 +660,22 @@ contains
       if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET) then
          block
             type(soil_params_t) :: sp
+            real(wp)            :: bottoms(n_soil_layer_max)
+            integer(ik)         :: n_layer
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
                error stop tag//'energy.bottom_bc = "dirichlet" requires energy.deep_temp [K] -- '// &
                           'the mean annual soil temperature below the damping depth. It is a site '//&
                           'property, like latitude; there is no safe default.'
             if (cfg%energy%deep_temp < 200.0_wp .or. cfg%energy%deep_temp > 330.0_wp)             &
                error stop tag//'energy.deep_temp outside 200..330 K -- it is an absolute temperature'
-            !----- Build the real grid rather than re-deriving the bottom node here: the exponential !
-            !      generator lives in ONE place and a second copy would drift from it silently. -----!
+            !----- Build the real grid rather than re-deriving the bottom node here: the grid rule  !
+            !      lives in ONE place and a second copy would drift from it silently. --------------!
             associate (sc => cfg%soil_column)
-               call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,   &
-                    sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,         &
-                    sc%psi_fc, sp)
+               call soil_column_layers(sc, bottoms, n_layer)
+               call build_soil_hydr_params(n_layer, sc%retention, bottoms, sc%theta_sat,          &
+                    sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, sp)
             end associate
-            if (cfg%energy%deep_depth <= abs(sp%z_node(cfg%soil_column%n_layer)))                &
+            if (cfg%energy%deep_depth <= abs(sp%z_node(n_layer)))                                &
                error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
                           '(it is measured down from the surface, and the anchor conducts to it)'
          end block
@@ -736,7 +760,8 @@ contains
          !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
          !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
          !      and expensive in carbon. The transpiration corrector (#91) removed most of that psi    !
-         !      error; the table predates it (numerical_scheme.md 5a). ------------------------------!
+         !      error; the soil-plant water network now solves leaf water implicitly with the soil's   !
+         !      on both schemes. The table predates both (numerical_scheme.md 5a). -------------------!
          if (cfg%dt_fast > 900.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
             print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
@@ -761,25 +786,6 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
-         !----- RK45 AT PRODUCTION CADENCE CARRIES AN ERROR THE DEFAULT PATH DOES NOT, and nothing  !
-         !      used to say so (#160). The transpiration corrector that fixed a ~1 MPa psi_leaf      !
-         !      error -- a 314x improvement, PR #91 -- lives in advance_water_mass_full, which the   !
-         !      ARK path calls and the RK45 path does not. A run that selects rk45 at a coarse       !
-         !      dt_fast therefore gets a psi_leaf the default scheme would not produce, silently.    !
-         !      WARN rather than stop: rk45 is the deliberate accuracy baseline and is exactly what  !
-         !      you want at a fine dt_fast, where the uncorrected error is small. The threshold is   !
-         !      the cadence at which psi_leaf WITHOUT the corrector is known not to converge          !
-         !      (docs/science/numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s  !
-         !      against -1.19 MPa at 900 s, measured before #91).                                                                 !
-         if (cfg%time_integrator == INTEG_RK45 .and. cfg%dt_fast > RK45_UNCORRECTED_DT_WARN) then
-            write(*,'(a)')    ' meds_config: WARNING -- time_integrator = "rk45" at dt_fast > 300 s.'
-            write(*,'(a,f8.1,a)') '   dt_fast = ', cfg%dt_fast, ' s.'
-            write(*,'(a)')    '   The transpiration corrector (PR #91) is ARK-only, so this run carries a'
-            write(*,'(a)')    '   psi_leaf error the default scheme does not -- up to ~1 MPa at 900 s. RK45'
-            write(*,'(a)')    '   is the ACCURACY BASELINE and is meant for a fine dt_fast; anything keyed'
-            write(*,'(a)')    '   to psi_leaf (hydraulic stress, phenology cues) inherits the error here.'
-            write(*,'(a)')    '   Use time_integrator = "ark" for production, or reduce dt_fast.'
-         end if
          !----- §7 C3: the sub-daily probe is the ONE fast-loop writer that is not thread-safe --      !
          !      it holds a `save`d unit and appends to a shared file, so under threads its rows would   !
          !      interleave in thread-arrival order and stop being a reproducible diagnostic. Serializing !

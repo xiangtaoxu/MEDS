@@ -180,8 +180,6 @@ soil_carbon_on = true             # starts empty, filled by the regrowing forest
 
 [soil_column]
 depth       = 6.0
-n_layer     = 16
-grid_growth = 4.0
 theta_sat   = 0.60
 theta_res   = 0.10
 curve_par_a = 2.0
@@ -191,4 +189,4 @@ ksat        = 1.0e-5
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 298.65
-deep_depth = 6.72
+deep_depth = 6.645

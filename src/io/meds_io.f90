@@ -23,7 +23,7 @@ module meds_io
    use meds_netcdf_c
    use meds_site_state_types, only : site_t
    use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
-                                           set_cohort_wood_geometry
+                                           set_cohort_size_from_carbon
    use meds_demography_update,      only : update_overtopping_lai
    use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
    use meds_therm_lib,              only : internal_energy_liquid
@@ -160,11 +160,12 @@ contains
       call dv(vc_pdry, 'dry_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi below the TLP, summed [MPa day]')
       call dv(vc_pwet, 'wet_psi_sum',         NC_DOUBLE, [d_cohort], 'predawn leaf psi above the TLP, summed [MPa day]')
       call dv(vc_plight, 'light_hours_mean', NC_DOUBLE, [d_cohort], 'running-mean hours of light at the cohort top [h/day]')
-      !----- The carbon pools and geometry as the running model holds them. Cohort fusion keeps the   !
-      !      pools and derives the geometry from them, so a fused cohort sits off the allometry for   !
-      !      its dbh; re-deriving them from dbh on read moved the leaf area (BCI: LAI 5.6380 written,  !
-      !      5.6389 read) and reset the fine-root carbon to the allometric value. overtopping_lai is  !
-      !      what the plastic traits were acclimated to. OPTIONAL on read (older files re-derive).  -!
+      !----- The carbon pools as the running model holds them. A cohort's pools sit off the        !
+      !      allometry for its dbh (fusion, phenology), so re-deriving them from dbh on read moved    !
+      !      the leaf area (BCI: LAI 5.6380 written, 5.6389 read). The reader derives the geometry   !
+      !      from the pools, as the run does (#389); height/basal_area/agb/leaf_area are written for !
+      !      the file's readers (the calibration's stand check). overtopping_lai is what the        !
+      !      plastic traits were acclimated to. OPTIONAL on read (older files re-derive from dbh). -!
       call dv(vc_hgt,  'height',               NC_DOUBLE, [d_cohort], 'height [m]')
       call dv(vc_ba,   'basal_area',           NC_DOUBLE, [d_cohort], 'basal area per plant [cm2]')
       call dv(vc_agb,  'agb',                  NC_DOUBLE, [d_cohort], 'aboveground biomass per plant [kgC]')
@@ -442,8 +443,8 @@ contains
    end subroutine state_write_state
 
    !---------------------------------------------------------------------------------------!
-   ! Reconstruct a site from a state file written by state_write_state. The cached geometry is   !
-   ! re-derived from dbh (gather_pft_params + set_cohort_size); the CSR map and within-patch   !
+   ! Reconstruct a site from a state file written by state_write_state. The geometry is      !
+   ! re-derived from the carbon pools (set_cohort_size_from_carbon); the CSR map and within-patch   !
    ! sort order are rebuilt. found=.false. (no error stop) if the file cannot be opened, so    !
    ! the caller can fall back. Errors out only on a genuine inconsistency (PFT-count mismatch).!
    !---------------------------------------------------------------------------------------!
@@ -549,26 +550,23 @@ contains
             call gv_dbl_opt(ncid, 'wood_surf_water',    ncoh, c%wood_surf_water(1:ncoh))
          end associate
          call gather_pft_params(site%cohort, cfg%pft)        ! p_dbh_critical / p_wood_density
-         !----- The pools and geometry the writing run held (see the writer). A file without them   !
-         !      re-derives them on the allometry from dbh, as every file did before. ---------------!
+         !----- The carbon pools the writing run held, and the geometry derived from them as the  !
+         !      run derives it (the file's height/agb/leaf_area are for its readers, not read back). !
+         !      A file without pools places each cohort on the allometry from its dbh. -----------!
          pools_ok = nc_inq_varid_f(ncid, 'leaf_carbon', vid) == NC_NOERR
          if (pools_ok) then
             associate (c => site%cohort)
-               call gv_dbl(ncid, 'height',               ncoh, c%height(1:ncoh))
-               call gv_dbl(ncid, 'basal_area',           ncoh, c%basal_area(1:ncoh))
-               call gv_dbl(ncid, 'agb',                  ncoh, c%agb(1:ncoh))
-               call gv_dbl(ncid, 'leaf_area',            ncoh, c%leaf_area(1:ncoh))
                call gv_dbl(ncid, 'leaf_carbon',          ncoh, c%leaf_carbon(1:ncoh))
                call gv_dbl(ncid, 'fineroot_carbon',      ncoh, c%fineroot_carbon(1:ncoh))
                call gv_dbl(ncid, 'wood_carbon',          ncoh, c%wood_carbon(1:ncoh))
                call gv_dbl(ncid, 'nonstructural_carbon', ncoh, c%nonstructural_carbon(1:ncoh))
             end associate
             do i = 1_ik, ncoh
-               call set_cohort_wood_geometry(site%cohort, i)  ! wood area + sapwood: functions of the above
+               call set_cohort_size_from_carbon(site%cohort, i)
             end do
          else
             do i = 1_ik, ncoh
-               call set_cohort_size(site%cohort, i)          ! height/basal_area/agb/leaf_area from dbh
+               call set_cohort_size(site%cohort, i)          ! pools from dbh, then the geometry
             end do
          end if
          olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR

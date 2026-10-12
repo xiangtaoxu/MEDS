@@ -68,7 +68,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
 | `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |
-| `[soil_column]` | The **physical ground**: layer count, depth, grid growth, hydraulic texture, retention family, thermal properties. |
+| `[soil_column]` | The **physical ground**: depth and layers, hydraulic texture, retention family, thermal properties. |
 | `[soil]`, `[energy]`, `[snow]`, `[aerodynamics]` | The **solvers over it**: selectors and tolerances. `[soil]` also holds the bare ground's optics: `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
 | `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
@@ -78,9 +78,20 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(Called `[io]` before v0.3.0; that spelling is now refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
-**`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
-above the compile-time ceiling or a saturated water content below the residual produces a silently
-wrong column rather than a crash, so the physical block is validated at load.
+**`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: layer bottoms
+that do not increase, or a saturated water content below the residual, produce a silently wrong column
+rather than a crash, so the physical block is validated at load.
+
+**The soil layers.**
+- **Default:** every column cuts one list of layer bottoms at its `depth`: SoilGrids 2.0's depths
+  (0.05, 0.15, 0.30, 0.60 and 1.00 m), then 1.5, 2, 3, 4.5, 6.5, 9, 12, 16, 21 and 27 m. A remainder
+  thinner than half of the layer it falls in joins the layer above.
+- **What that gives:** the top layer is 5 cm everywhere, shallow soils get few layers, and every column
+  shares one depth axis.
+- **Override:** `layer_bottoms = [...]` [m] replaces the list for a measured profile, and the column
+  ends at its last bottom unless `depth` cuts it.
+- **Refused keys:** `n_layer` and `grid_growth`.
+- **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
 ### The bottom thermal boundary — `[energy].bottom_bc`
 
@@ -92,7 +103,7 @@ happens to it there.
 |---|---|---|
 | `bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
 | `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
-| `deep_depth` | [m], default 3.12 | depth of the anchor plane below the surface; must lie below the bottom soil node |
+| `deep_depth` | [m], default 3.145 | depth of the anchor plane below the surface; must lie below the bottom soil node |
 
 `deep_temp` is the mean annual soil temperature below the damping depth — close to the mean annual
 air temperature of the forcing that drives the run, and a site property like latitude. It is required
@@ -102,7 +113,7 @@ this boundary condition exists to remove.
 
 `deep_depth` is a physical choice, not a numerical one, and the default is derived: a resistive
 termination reflects least when the anchor sits `d/sqrt(2)` below the bottom node, `d` being the
-annual damping depth. For the default column that is 1.727 + 1.973/√2 = 3.12 m. **Recompute it if you
+annual damping depth. For the default column that is 1.75 + 1.973/√2 = 3.145 m. **Recompute it if you
 change `[soil_column].depth` or the thermal texture** — the derivation, the measured sweep and what
 the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](science/soil_biophysics.md).
 
@@ -333,7 +344,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   must start at 00:00 or 01:00 on the 1st of a month.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
-  (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
+  (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
+  finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its

@@ -40,6 +40,9 @@ module meds_config_keys
    character(len=*), parameter :: PHENO_HABIT = 'leaf habit comes from the phenology parameters: '//    &
       'min_leaf_cover (the leaf cover senescence stops at) and the cue masks; background turnover '//  &
       'is not cold-suppressed'
+   character(len=*), parameter :: SOIL_NETWORK = 'soil water is solved with the plants'' water as '// &
+      'one network (implicit Euler, Newton, its own sub-steps), whose error is set by [soil].rtol '// &
+      'and [soil].atol; the Richards solver''s linearization and sub-step controls are gone'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -48,6 +51,11 @@ module meds_config_keys
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
                     '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
                     'root_depth_b1 and root_depth_b2'),                                          &
+      retired_key_t('soil_column.n_layer', 'the soil layers are SoilGrids'' depths (5, 15, 30, '// &
+                    '60, 100, 150, 200 cm, then deeper) cut at soil_column.depth; set '//        &
+                    'soil_column.layer_bottoms [m] for other layers'),                           &
+      retired_key_t('soil_column.grid_growth', 'the layers no longer thicken by a growth '//     &
+                    'factor: see soil_column.n_layer'),                                          &
       retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
                     'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
                     'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &
@@ -76,6 +84,11 @@ module meds_config_keys
                     'water twice'),                                                              &
       retired_key_t('soil.psi_open', 'there is no soil-side wilting ramp: the plant hydraulics '// &
                     'limits root uptake (see soil.psi_wilt)'),                                   &
+      retired_key_t('soil.linearize', SOIL_NETWORK),                                             &
+      retired_key_t('soil.max_picard', SOIL_NETWORK),                                            &
+      retired_key_t('soil.substep', SOIL_NETWORK),                                               &
+      retired_key_t('soil.h_init', SOIL_NETWORK),                                                &
+      retired_key_t('soil.max_substep', SOIL_NETWORK),                                           &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &
