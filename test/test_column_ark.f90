@@ -326,12 +326,13 @@ contains
    !       run completes, the soil wets, and the budgets close (ENERGY machine, WATER split-tol). ------!
    subroutine test_ark_budgets_wet()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
+      call march_dry_day(theta_dry)                       ! the same day without the rain
+      call reset_state()
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
@@ -340,8 +341,8 @@ contains
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       call check_true('ARK wet: ran 96 wet steps (no guard error stop)', budget%cas_energy%n_check == 576_ik,         &
               real(budget%cas_energy%n_check, wp))
-      call check_true('ARK wet: rain wetted the soil column (theta rose)', theta_col1 > theta_col0,                   &
-              theta_col1 - theta_col0)
+      call check_true('ARK wet: rain wetted the soil column (wetter than the day without rain)',   &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('ARK wet: ENERGY budgets close (incl. advection)',                                              &
               budget%cas_energy%n_fail == 0_ik .and. budget%soil_energy%n_fail == 0_ik                                &
               .and.               budget%whole_energy%n_fail == 0_ik, budget%whole_energy%worst)
@@ -389,21 +390,22 @@ contains
    !      by build_column_frozen). ---------------------------------------------------------------------!
    subroutine test_ark_shed_water()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      call march_dry_day(theta_dry)                       ! the same day without the shed water
+      call reset_state()
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (theta rose)',               &
-              theta_col1 > theta_col0, theta_col1 - theta_col0)
+      call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('ARK shed water: whole-column WATER still closes with shed_water_rate active',                  &
               budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
       call check_true('ARK shed water: whole-column ENERGY still closes (no separate energy wiring needed)',          &
@@ -416,20 +418,21 @@ contains
    !      frozen, so one test each there already covers both). --------------------------------------!
    subroutine test_rk45_shed_water()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      call march_dry_day(theta_dry)                       ! the same day without the shed water
+      call reset_state()
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',              &
-              theta_col1 > theta_col0, theta_col1 - theta_col0)
+      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('rk45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
               budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
       call check_true('rk45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
@@ -607,5 +610,21 @@ contains
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
    end subroutine set_diurnal_forcing
+
+
+   !----- The same 24 h with no rain and no shed water, from the state the caller set up: the       !
+   !      column's summed water content at the end. Free drainage empties a wet column whatever      !
+   !      falls on it, so an input wets the soil when the column ends wetter than this day does. --!
+   subroutine march_dry_day(theta_sum)
+      real(wp), intent(out) :: theta_sum
+      integer(ik) :: istep
+      biophys%shed_water_rate = 0.0_wp
+      do istep = 1_ik, 576_ik
+         call set_diurnal_forcing(istep)
+         forc%rainfall = 0.0_wp
+         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+      end do
+      theta_sum = sum(biophys%soil_w%theta(1:nsl))
+   end subroutine march_dry_day
 
 end program test_column_ark

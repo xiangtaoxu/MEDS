@@ -45,6 +45,14 @@ module meds_water_retention
    real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)
    real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< keep R strictly positive in the flaccid tail
 
+   !----- Mualem's pore-connectivity exponent L, in                                        !
+   !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2. -1 after Schaap & Leij (2000, SSSA J.      !
+   !      64:843), as ED2 uses with van Genuchten (soil_hydro_scheme 2). With Mualem's     !
+   !      0.5 a soil of n near 1.4 conducts less than K_MIN from about -0.7 MPa, far       !
+   !      wetter than UNSODA's measurements; -1 holds it above K_MIN to about -2 MPa.      !
+   !      A film-flow term for drier soil is #390. ----------------------------------------!
+   real(wp), parameter :: VG_PORE_CONNECTIVITY = -1.0_wp
+
 contains
 
    !=======================================================================================!
@@ -222,7 +230,10 @@ contains
       else
          m     = 1.0_wp - 1.0_wp / par_n
          tmp   = 1.0_wp - (1.0_wp - se ** (1.0_wp / m)) ** m
-         kcond = ksat * sqrt(se) * tmp * tmp                ! l = 0.5 Mualem pore-connectivity
+         !----- Below Se ~ 1e-3 the round-off in tmp would let Se^L (L < 0)                !
+         !      make K dip as the soil wets; K there is under 1e-16 Ks, and                !
+         !      the K_MIN floor below holds it flat. --------------------------------------!
+         kcond = ksat * se ** VG_PORE_CONNECTIVITY * tmp * tmp
       end if
       kcond = max(kcond, K_MIN)
    end function soil_hydr_cond_from_theta

@@ -105,6 +105,20 @@ before and after.
 
 ### Changed
 
+- **The van Genuchten conductivity uses Mualem's pore connectivity L = -1** (was 0.5), after Schaap &
+  Leij (2000), as ED2 pairs with this curve (`soil_hydro_scheme` 2): K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2,
+  with L the named parameter `VG_PORE_CONNECTIVITY` in `meds_water_retention`. With 0.5, a soil of n
+  near 1.4 (the median of Hodnett & Tomasella's curve over Xu et al. 2016's Central America box)
+  conducts less than `K_MIN` from about -0.7 MPa; with -1 it stays above to about -2.2 MPa. Against
+  UNSODA's measured unsaturated conductivity (89 soils, that curve with Ottoni Ks) the bias of log10 K
+  between -0.1 and -1.5 MPa goes from -2.28 to -0.85, and from +0.48 to +1.02 between -10 and -100 kPa.
+  A per-soil L estimated from texture did no better than a fixed one; a film-flow term for drier soil
+  is #390. Example 04 (BCI, five years), calibrated / default: GPP 8.261 / 10.148 unchanged, LE 68.76 /
+  83.72 -> 68.53 / 83.41 W m-2, NEE -2.582 / -3.386 -> -2.641 / -3.449 umol m-2 s-1, the 0-15 cm soil
+  water against the tower r 0.894 -> 0.903; LAI and AGB unchanged. The wet-soil checks of
+  `test_column_ark` and `test_column_rk45` now compare the column with the same day without the input:
+  with the faster drainage a free-draining column can end a day of light rain below where it began, and
+  the rain shows as the water it holds beyond the dry day (+0.109 summed theta).
 - **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.

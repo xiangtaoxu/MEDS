@@ -28,7 +28,11 @@ C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
 
 with matric potential $`\psi(\theta)`$, hydraulic conductivity $`K(\theta)`$, and specific moisture
 capacity $`C=d\theta/d\psi`$ from the **van Genuchten–Mualem** (default) or **Campbell / Clapp-Hornberger**
-retention curves (`meds_water_retention`). Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
+retention curves (`meds_water_retention`). The van Genuchten conductivity is Mualem's,
+$`K = K_{sat}\,S_e^{L}\,[1-(1-S_e^{1/m})^m]^2`$, with pore connectivity $L=-1$ (Schaap & Leij 2000), as ED2
+uses with this curve: with Mualem's 0.5 a soil of $n$ near 1.4 conducts less than `K_MIN` from about
+−0.7 MPa, far wetter than measured (UNSODA); a film-flow term for drier soil is #390.
+Interface conductivity is ED2's rule (`rk4_derivs`): $\ln K$
 interpolated linearly between the two nodes to the face, a thickness-weighted geometric mean,
 
 ```math
@@ -306,6 +310,7 @@ and passes the resulting flux into the CO₂ source.
 ## References
 - ED2 `../ED2/ED/src/dynamics/`: `lsm_hyd.f90`, `soil_respiration.f90` — the soil stores in the reference model.
 - Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — mixed-form Richards / modified-Picard.
+- Mualem (1976), *Water Resour. Res.* 12:513; Schaap & Leij (2000), *Soil Sci. Soc. Am. J.* 64:843 — the conductivity and its pore connectivity.
 - van Genuchten (1980); Clapp & Hornberger (1978) — soil retention curves.
 - Hodnett & Tomasella (2002), *Geoderma* 108:155 — van Genuchten parameters from texture for tropical soils.
 - Ottoni et al. (2019), *J. Hydrol.* 575:1345 — saturated conductivity from the drainable porosity.
