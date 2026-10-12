@@ -123,6 +123,13 @@ before and after.
     agrees to 0.005 MPa between 75 and 900 s.
   - Cost on the BCI profile run (6 months, 33 patches): 12 threads 9.28 → 10.53 s (+13.5 %), one
     thread 61.3 → 72.8 s (+19 %).
+  - 150-year regrowth from 1871 at Palo Verde and BCI (ERA5-Land recycled, soil map v2, with #389's
+    fix): both complete, whole-column ledgers 0 fails in 5e7-1e8 checks; beta stops at BCI on the
+    recycled April storm (1994, and 2014 with #389's fix). At Palo Verde beta's monthly-mean leaf
+    potential falls to -570 MPa in the dry season and the evergreen PFT sheds ~60 % of its leaves; the
+    network's lowest is -5.6 MPa and the evergreen keeps them (year-150 AGB 9.3 against 6.1 kgC m⁻²,
+    GPP equal). Example 06's PFT parameters were fitted under the old behaviour. Wall time to 2011
+    against beta: +2 % at Palo Verde, +24 % at BCI (about +20 % per cohort).
   - The water work counters are renamed for the network: `work_water_nsub_site` (accepted
     sub-steps), `work_water_newton_site` (Newton iterations), `work_water_reject_site` (rejected
     sub-steps) and `work_water_nfail_site` (sub-steps taken unconverged), replacing
