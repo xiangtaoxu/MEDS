@@ -520,6 +520,16 @@ before and after.
 
 ### Fixed
 
+- **The debug build traps no floating invalid in the test suite** (#NNN; four tests aborted after #392
+  and #397). `conserved` tested a NaN by comparing it, which raises IEEE invalid; it now asks
+  `ieee_is_nan` first. A Newton step of the soil-plant water network was bounded away from empty only
+  for layers on the dry side of their curve, so a wet layer's step could carry its saturation below
+  zero; release builds evaluated that trial to NaN and the line search halved it. Every soil layer now
+  takes at most `STEP_MAX_SHARE` of the way to empty, as the science page states. Results move at the
+  Newton tolerance: the first year differs by 1e-7, and 20 years of regrowth (1871-1891) change GPP
+  and ET by +0.3 % at BCI and under 0.05 % at Palo Verde, with 0.6 % fewer Newton iterations at BCI.
+  ifx Release and Debug 70/70.
+
 - **The BCI 1994-04-20 NaN** (example 06 regrowth; #397): a trace of pond water over dry soil and a
   conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
   1. The water network has no conductivity floor and starts the pond at the head at which it neither

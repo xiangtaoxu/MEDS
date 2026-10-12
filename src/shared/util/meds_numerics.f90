@@ -16,6 +16,7 @@
 module meds_numerics
    use meds_kinds,     only : wp, ik
    use meds_constants, only : safe_exp, tiny_num
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    implicit none
    private
 
@@ -287,13 +288,15 @@ contains
    ! double) even epsilon of the magnitude is a subnormal number, which an optimized build      !
    ! flushes to zero, so the floating-point format itself resolves nothing smaller: that is the !
    ! absolute floor (BCI: two leafless cohorts' leaf area of 1.4e-307 fused to exactly 0). A    !
-   ! NaN on either side fails.                                                                  !
+   ! NaN on either side fails; it is tested for before the comparison, which a NaN would make   !
+   ! raise IEEE invalid (a trap in the debug build).                                           !
    !---------------------------------------------------------------------------------------!
    elemental pure logical function conserved(before, after, magnitude, rtol) result(ok)
       real(wp), intent(in) :: before, after   !< the amount before and after the operator
       real(wp), intent(in) :: magnitude       !< sum of the absolute values of its terms
       real(wp), intent(in) :: rtol            !< relative tolerance
-      ok = abs(after - before) <= rtol * magnitude + tiny(magnitude) / epsilon(magnitude)
+      ok = .not. (ieee_is_nan(before) .or. ieee_is_nan(after) .or. ieee_is_nan(magnitude))
+      if (ok) ok = abs(after - before) <= rtol * magnitude + tiny(magnitude) / epsilon(magnitude)
    end function conserved
 
    !---------------------------------------------------------------------------------------!

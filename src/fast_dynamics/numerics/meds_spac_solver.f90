@@ -447,32 +447,40 @@ contains
       if (spac%ncoh > 0_ik) m = m + sum((res_coh * h / (tol * scale_coh)) ** 2)
    end function residual_merit
 
-   !----- The largest share of a Newton step every store can take: none is driven more than        !
-   !      STEP_MAX_SHARE of the way to empty, and none moves its saturation or relative water content  !
-   !      by more than STEP_MAX_DRY on the dry side. The pond and a wet soil layer, whose unknowns are  !
-   !      potentials, are not bounded. ---------------------------------------------------------!
+   !----- The largest share of a Newton step every store can take: no soil layer or tissue is      !
+   !      driven more than STEP_MAX_SHARE of the way to empty, and none on the dry side moves its      !
+   !      saturation or relative water content by more than STEP_MAX_DRY. A wet soil layer's unknown   !
+   !      is its potential, so only the first applies to it: it keeps a step that would carry it past  !
+   !      the branch point and below empty inside the curve. The pond's head is not bounded. -------!
    pure real(wp) function step_limit(spac, tau_soil, tau_coh, step_soil, step_coh) result(lam)
       type(spac_solver_t), intent(in) :: spac
       real(wp),            intent(in) :: tau_soil(:), tau_coh(:,:), step_soil(:), step_coh(:,:)
       integer(ik) :: k, i, j
       lam = 1.0_wp
       do k = 1_ik, spac%nsl
-         if (tau_soil(1_ik + k) <= spac%layer(k)%se_switch) call bound(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
+         call keep_from_empty(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
+         if (tau_soil(1_ik + k) <= spac%layer(k)%se_switch) call cap_dry_change(tau_soil(1_ik + k), step_soil(1_ik + k), lam)
       end do
       do i = 1_ik, spac%ncoh
          do j = 1_ik, COHORT_STORES
-            call bound(tau_coh(j, i), step_coh(j, i), lam)
+            call keep_from_empty(tau_coh(j, i), step_coh(j, i), lam)
+            call cap_dry_change(tau_coh(j, i), step_coh(j, i), lam)
          end do
       end do
    contains
-      !----- The cap on the change applies below full saturation (an RWC or Se of one), where the     !
-      !      potential steepens towards empty; above it the curve is gentle and Newton moves freely. ---!
-      pure subroutine bound(tau, d, lam)
+      !----- Fraction to the boundary: every store's unknown is zero when it is empty. -------------!
+      pure subroutine keep_from_empty(tau, d, lam)
          real(wp), intent(in)    :: tau, d
          real(wp), intent(inout) :: lam
          if (d < 0.0_wp) lam = min(lam, STEP_MAX_SHARE * tau / (-d))
+      end subroutine keep_from_empty
+      !----- The cap on the change applies below full saturation (an RWC or Se of one), where the     !
+      !      potential steepens towards empty; above it the curve is gentle and Newton moves freely. ---!
+      pure subroutine cap_dry_change(tau, d, lam)
+         real(wp), intent(in)    :: tau, d
+         real(wp), intent(inout) :: lam
          if (tau < 1.0_wp .and. abs(d) > STEP_MAX_DRY) lam = min(lam, STEP_MAX_DRY / abs(d))
-      end subroutine bound
+      end subroutine cap_dry_change
    end function step_limit
 
    !=======================================================================================!
