@@ -1,7 +1,8 @@
 # Soil and plant water as one network: process functions and one implicit solver
 
 Written 2026-10-11 on branch `feat/spac-water-solver` (from beta 0cbbb31). Design only: nothing here is
-implemented. The owner chose (2026-10-11) to solve soil and plant water together, and asked that the
+implemented. **Parked (owner, 2026-10-11) until example 06 is finished.** An independent review
+(§11) found the direction sound but the design incomplete; §11 lists the changes to make before P2. The owner chose (2026-10-11) to solve soil and plant water together, and asked that the
 work consolidate the code rather than add fixes for special cases, with functions designed around
 processes and generic numerical schemes. Decisions D1–D8 are in §9.
 
@@ -304,3 +305,71 @@ Each phase is a pull request into beta that leaves the test suite green.
 - Plans: `MEDS_PRODUCTION_INTEGRATOR_PLAN.md` (N2d, the reorder so soil water sees the realised uptake,
   and P1, the in-stage root sink that was reverted); `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 3 (#104);
   `MEDS_FROZEN_SEAM_CONTRACT.md` ("borrowing one solve's flux while committing another's state").
+
+## 11. Independent review (2026-10-11) and the changes it calls for
+
+A separate reviewer read this plan against the code. Verdict: sound only with changes. The diagnosis
+and the direction (one conservative implicit network, backward Euler with Newton on the mixed form)
+stand; the items below must be resolved in a revision before P2.
+
+**Critical**
+- **C1 Transpiration.** A transpiration fixed for the step, drawn from a finite leaf store, has no
+  solution once E·h exceeds the leaf's storage plus its maximum sapflow (stomata close only to g0, and
+  the Kirchhoff supply is bounded): the nearly bare cohorts of example 06 hit this, and
+  `MEDS_FROZEN_SEAM_CONTRACT.md` already rules a prescribed flux against a prognostic store inadmissible.
+  Deleting the ARK re-solve (which cut the ψ_leaf error at 900 s from 1.454 to 0.0046 MPa) also needs a
+  replacement that keeps the canopy air's vapour credit equal to the leaf's debit. Change: supply-limited
+  transpiration inside the network, E = E_demand·s(ψ_leaf), smooth, with its derivative; choose the
+  consistency mechanism by measurement before P3 (the network's E frozen in the stages, N2d's
+  energy-first order, or a second warm-started pass); the dt-convergence tests of
+  `numerical_scheme.md` §5a become P3 exit criteria. D4 is reopened.
+
+**Major**
+- **M1 Error estimate.** A predictor–corrector difference misbehaves on stiff modes (the leaf after each
+  change of E, the 0.4 s wood–soil mode after rain). Use warm-started step doubling, a filtered estimate,
+  or TR-BDF2, with a mass-weighted norm.
+- **M2 Curves for Newton.** A hard air-dry bound gives C = 0 and, at −1e4 m, leaves Philip's α at 0.49, so
+  evaporation never stops: use an oven-dry extension (C > 0, θ → 0 near −1e5 m; Webb 2000). For van
+  Genuchten with n < 2, dK/dψ is unbounded at saturation: add the air-entry modification (Ippisch et al.
+  2006). Replace every `max()` floor with a smooth form, and bound Newton steps in Se/RWC or log|ψ|, or
+  let each store choose its unknown (Se dry, ψ wet). Split P1 into a bit-identical move (P1a) and a
+  measured curve change (P1b).
+- **M3 Pond.** An empty pond and the overflow threshold are switching points: specify a smooth
+  depression-storage curve, the spill, and the face-K rule (it sets Horton runoff and moves example 04).
+- **M4 Enthalpy.** One upwind rule is right for soil (total internal energy) but not for the tissue
+  stores (cap·T with a frozen capacity, valued at the start-of-step temperature): applying it there
+  recreates #355. State the rule per store type with its valuation time, route condensate to the pond,
+  and add a #355 refill regression test.
+- **M5 Cost.** Line-search and error-estimate evaluations and every cohort×layer edge per iteration push
+  the realistic range to −4 % to +20 %, with a 2× tail if M1 or M2 misbehave. Use arrays of edge
+  parameters per edge kind (no polymorphic edges) and a merge gate (≤ +15 % on the BCI profile).
+- **M6 Size.** P3 touches about 4,800 lines of tests, the RK4 oracle, the ledgers, the IO counters and
+  the config template, and the warm-start step is new persisted patch state (restart, fusion, lockstep
+  reorder). Split into P3a (ARK on the network, old code still present) and P3b (RK45, deletions, keys).
+
+**Minor:** the diagnosis should also list the per-layer split by end-of-step supply and the ~24 cohorts
+pricing one frozen layer; the inventory misses the film rescale, the HR floors and the stage-3 θ clamp;
+"seven places to one" overclaims (film, snow, condensate and the slow-loop reconcile remain); commit
+masses through the flux form; a C¹ quadratic ramp, not softplus, for the no-HR floor; leafless cohorts
+at PLC ≈ 1 make the 2×2 block singular (write the Schur term as g·c/(g+c)); Kirchhoff derivatives need
+care as Δψ → 0.
+
+**Tests to add:** restart bit-reproducibility, thread-count invariance, gfortran and nvfortran builds,
+Debug `-fpe0` runs of the reproducers, the §5a dt-convergence tests, snow and frozen soil, arid cells,
+example 04's calibration objective, a Jacobian-versus-finite-difference check, an infeasible-demand case,
+extreme states (nplant 1e-8, leafless, extreme ψ), and bounds on Newton and sub-step statistics. Measure
+the #104 premise first (is the April collapse the uptake rescale or a fixed E on a tiny leaf store?), and
+prototype the solver offline on the dumped 1994-04-20 state in P0.
+
+**The reviewer's decisions:** D1 mixed form with a well-scaled per-node unknown; D2 off, with a C¹
+quadratic ramp; D3 agree, and move the RK4 oracle too; D4 disagree as written (C1); D5 an oven-dry
+extension near −1e5 m; D6 agree once M3 is specified; D7 leave #356 out of P3; D8 one mass-based set
+(Δθ, ΔRWC).
+
+**Modularity (owner's question, 2026-10-11), to be written into §4 in the revision.** The solver is
+generic, so a plant-only run (soil potentials prescribed) and a soil-only run (no plants, or a prescribed
+uptake) are two configurations of one assembly, not separate code. Three generic features make that
+real: a prescribed-potential node type; boundary terms that are either fixed fluxes or functions of a
+node's ψ; and network assembly driven by the active processes, exposed through the C-API so the Python
+front end can run a single plant or a single soil column. P2's single-plant and soil-column tests become
+those configurations.
