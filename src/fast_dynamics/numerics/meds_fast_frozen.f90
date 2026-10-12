@@ -15,17 +15,18 @@
 module meds_fast_frozen
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o, pi, tsupercool_liq, grav_head, cp_liq, t_3ple
-   use meds_plant_hydraulics, only : rhizosphere_cond, solve_plant_water_batch, cohort_root_profile, &
-                                     leaf_node_psi
+   use meds_plant_hydraulics, only : cohort_root_profile, crown_gravity_head
    use meds_site_diag_types, only : CD_PSI_WOOD, CD_PLC, CD_SAPFLOW, CD_ROOT_UPTAKE
-   use meds_water_retention, only : soil_hydr_cond_from_theta, soil_psi_from_theta, psi_from_water_content
-   use meds_config, only : meds_config_t, CTRL_L2_STRICT
+   use meds_water_retention, only : rwc_from_psi
+   use meds_hydr_lib, only : plc_retained
+   use meds_water_paths, only : xylem_max_conductance, root_conductance_geometry
+   use meds_water_network, only : water_network_t, water_network_allocate, water_network_start,          &
+                                  water_network_advance, WATER_NODE_POND, WATER_WOOD
+   use meds_config, only : meds_config_t, pft_wstress_psi_close
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_soil_types, only : chydro_forcing_t, chydro_flux_t, snow_melt_t
+   use meds_soil_types, only : chydro_forcing_t, snow_melt_t
    use meds_fast_types, only : patch_biophys_t
-   use meds_column_state_types, only : soil_column_t
    use meds_fast_time_derivs, only : surface_derivs
-   use meds_numerics, only : weighted_mean
    use meds_column_state_ops, only : clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
                                      canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
                                      diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
@@ -34,9 +35,7 @@ module meds_fast_frozen
                                column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, stage_bflux_t, &
                                column_bflux_t, error_control_t, column_tend_t, mask_is_full
    use meds_plant_biophysics, only : sensible_heat_coeff, leaf_film_coeff, intercept_canopy_layer
-   use meds_soil_water, only : advance_soil_water_column
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction
-   use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_therm_lib, only : internal_energy_liquid, temp_of_liquid_enthalpy, precip_enthalpy
    use meds_soil_types, only : snow_env_t, snow_flux_t
    use meds_biophysics_opts, only : snow_params_t
@@ -48,9 +47,6 @@ module meds_fast_frozen
 
    public :: build_column_frozen
 
-   !----- Per-cohort plant-hydraulics sub-step count above which the solve is judged pathological   !
-   !      rather than merely stiff (issue #104). Measured band: 1.0-1.2 ordinary, ~136 collapsed. --!
-   integer(ik), parameter :: HYDRO_NSUB_THRASH  = 16_ik
    !----- Prognostic-wood constants. ----------------------------------------------------------------!
    real(wp), parameter :: C2B_WOOD            = 2.0_wp  !< carbon -> biomass (carbon fraction 0.5)
    real(wp), parameter :: WOOD_MOIST_FRAC_ARK = 1.0_wp  !< [kg water/kg dry] fresh-sapwood moisture (MVP)
@@ -83,27 +79,16 @@ contains
       real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
 
       type(snow_stage_t)     :: snow_st   !< shared pre-column snow stage (C4, issue #76)
-      type(chydro_forcing_t) :: hforc ; type(chydro_flux_t) :: hflux
-      type(soil_column_t)    :: soil_w_scratch
+      type(chydro_forcing_t) :: hforc
+      type(water_network_t)  :: net
       type(surface_state_t)  :: y_stage ; type(surface_tend_t) :: sf0
       real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
            g_atm_co2
       integer(ik) :: i, k
-      !----- Act-1 hydraulics pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 1/3/5, P2): mirrors        !
-      !      the original pre-pass order exactly (hydraulics BEFORE the soil solve, psi                   !
-      !      diagnosed from state^n theta, the plant's own aggregate REQUEST becomes the soil's          !
-      !      root-sink forcing, a post-hoc rescale if the soil can't honour it in full). --------------!
-      real(wp) :: psi_soil_pre(nsl), psi_scratch(N_HYDRO, n), transp_pp(n)
-      integer(ik) :: ih                                  !< #179: per-PFT PV-curve loop index
-      real(wp) :: sapflow_b(n), root_uptake_b(n), root_uptake_layer_b(nsl, n)
-      real(wp) :: psi_leaf_b(n), psi_wood_b(n), plc_b(n)   !< batch outputs (unused downstream, complete SoA API)
-      real(wp) :: rhizo_cond_all(nsl, n), k_theta_layer(nsl), total_uptake_b, scale, share_tot
-      real(wp) :: root_frac(nsl, n), root_frac_patch(nsl), z_top(nsl), z_bot(nsl), root_len(nsl, n)
-      real(wp) :: half_spacing(nsl), root_carbon
-      real(wp) :: t_up_wl, soil_temp_root, u_liq_soil, u_liq_up, u_liq_leaf, u_liq_wood
-      real(wp) :: sapflow_gnd(n), uptake_gnd(n)
-      integer(ik) :: nsub_b(n)
-      logical     :: converged_b(n)
+      !----- The water network's step, read into the frozen record. ------------------------------!
+      real(wp) :: share_tot, face_resid, f_in, f_out, u_liq_soil_k(nsl)
+      real(wp) :: root_frac(nsl, n), root_frac_patch(nsl), z_top(nsl), z_bot(nsl), root_carbon
+      real(wp) :: t_up_wl, u_liq_up, u_liq_leaf, u_liq_wood, sapflow_gnd, uptake_gnd, transp_gnd
       !----- Canopy-SURFACE water pre-pass scratch (MEDS_ED2_RK45_DESIGN.md sec 3.4, P2c). ------------!
       real(wp) :: rain_above, combined_w, leaf_cap_i, wood_cap_i, throughfall_i, drip_i, throughfall_total
       real(wp) :: avail_leaf, avail_wood
@@ -118,7 +103,7 @@ contains
       allocate(frozen%tissue%qwflux_wl(n), frozen%tissue%q_wood_net(n))
       allocate(frozen%tissue%leaf_emiss(n), frozen%tissue%wood_emiss(n))
       !----- ZERO the advective-enthalpy terms AT ALLOCATION. They are only given their real values    !
-      !      further down (after the plant-hydraulics batch supplies sapflow/uptake), but the sf0       !
+      !      further down (after the water network supplies sapflow/uptake), but the sf0                !
       !      surface_derivs evaluations ABOVE that point already read them as veg_energy_balance's    !
       !      q_extra. Without this they are read UNINITIALISED -- undefined behaviour that injected       !
       !      whatever garbage the freshly-allocated heap happened to hold straight into the leaf energy   !
@@ -136,7 +121,7 @@ contains
          frozen%plant%bsap(n), frozen%plant%broot(n),            &
                frozen%plant%sap_area(n), frozen%plant%height(n), frozen%plant%leaf_area(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
-      allocate(frozen%roots%psi_soil_pre(nsl), frozen%roots%rhizo_cond(nsl, n))
+      allocate(frozen%roots%root_heat(nsl), frozen%tissue%transp_net(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
       allocate(y%leaf_water_mass(n), y%wood_water_mass(n))
       allocate(y%leaf_surf_water(n), y%wood_surf_water(n))
@@ -370,139 +355,32 @@ contains
          end do
          call surface_derivs(y_stage, frozen%cas, frozen%tissue, frozen%film, frozen%ground, frozen%snow, t_ground, n, sf0)
       end if
-      !----- UNITS: grav_head converts soil_psi_from_theta's METRES of head to the MPa the hydraulics   !
-      !      seam expects. -----------------------------------------------------------------------------!
-      psi_soil_pre(1:nsl) = grav_head * soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1:nsl), &
-           col_config%soil%theta_sat(1:nsl), col_config%soil%theta_res(1:nsl), col_config%soil%vg_alpha(1:nsl),          &
-           col_config%soil%vg_n(1:nsl))
-      !----- Per-layer rhizosphere conductance, UNCONDITIONAL since Phase 1 retired multilayer_roots.  !
-      !      K(theta) is layer-only, so it is hoisted out of the cohort loop (hot-path work now). ------!
-      do k = 1_ik, nsl
-         k_theta_layer(k) = soil_hydr_cond_from_theta(col_config%soil%retention, biophys%soil_w%theta(k),        &
-              col_config%soil%theta_sat(k), col_config%soil%theta_res(k), col_config%soil%vg_alpha(k),                   &
-              col_config%soil%vg_n(k), col_config%soil%ksat(k))
-      end do
-      !----- Each plant's fine-root length by layer, and half the distance between the patch's roots in  !
-      !      each layer, (pi L_v)^-1/2 from the root-length density of every cohort there. -------------!
-      do i = 1_ik, n
-         root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i)                                       &
-                              * col_config%hydraulics_table%pft(col_cohort%pft(i))%specific_root_length
-      end do
-      do k = 1_ik, nsl
-         half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(col_cohort%nplant(1:n) * root_len(k, 1:n))               &
-                                                  / col_config%soil%dz(k), tiny_num))
-      end do
-      do i = 1_ik, n
-         do k = 1_ik, nsl
-            rhizo_cond_all(k, i) = rhizosphere_cond(rho_h2o*k_theta_layer(k)/grav_head, root_len(k, i),         &
-                 half_spacing(k), col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
-         end do
-      end do
-      !----- Hand the kernel's own frozen boundary inputs to the post-stage corrector, so it can       !
-      !      re-solve on the SAME Category-0 coefficients this pre-pass used. -----------------------!
-      frozen%roots%psi_soil_pre(1:nsl)        = psi_soil_pre(1:nsl)
-      frozen%roots%rhizo_cond(1:nsl, 1:n)     = rhizo_cond_all(1:nsl, 1:n)
-      !----- PER-PFT PV curves (#179): the parameters are now a table, so these are loops rather   !
-      !      than elemental array calls. col_cohort%pft(ih) is the index.  --------------------------!
-      do ih = 1_ik, n
-         psi_scratch(NODE_LEAF, ih) = leaf_node_psi(biophys%leaf_water_mass(ih), col_cohort%bleaf(ih),   &
-               biophys%wood_water_mass(ih), col_cohort%bsap(ih) + col_cohort%broot(ih), col_cohort%height(ih), &
-               col_config%hydraulics_table%pft(col_cohort%pft(ih)), col_config%hydraulics_opts)
-      end do
-      do ih = 1_ik, n
-         psi_scratch(NODE_WOOD, ih) = psi_from_water_content(biophys%wood_water_mass(ih), &
-               col_config%hydraulics_table%pft(col_cohort%pft(ih))%wood_curve, col_cohort%bsap(ih) + col_cohort%broot(ih))
-      end do
-      transp_pp(1:n) = sf0%transp_c(1:n) / max(col_cohort%nplant(1:n), tiny_num)   ! [kg/plant/s] FULL demand
-      call solve_plant_water_batch(n, nsl, transp_pp(1:n), col_cohort%bleaf(1:n),                             &
-                                   col_cohort%bsap(1:n), col_cohort%broot(1:n), col_cohort%sap_area(1:n), &
-                                   col_cohort%height(1:n),                                                     &
-                                   psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), rhizo_cond_all(1:nsl, 1:n), &
-                                   col_cohort%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt_fast, &
-                                   psi_scratch(:, 1:n), sapflow_b(1:n), root_uptake_b(1:n), root_uptake_layer_b(1:nsl, 1:n), &
-                                   psi_leaf_b(1:n), psi_wood_b(1:n), plc_b(1:n), nsub_b(1:n), converged_b(1:n))
-      budget%hydro_nsub    = sum(nsub_b(1:n))            ! section 5.3 work counter (same seam as split)
-      budget%hydro_nonconv = count(.not. converged_b(1:n))
-      !----- THRASH check (issue #104, plan E1b/E3). solve_plant_water takes 1.0-1.2 sub-steps per     !
-      !      cohort in every physically ordinary state and ~136 once a wood store is pinned on its     !
-      !      water floor. The threshold sits an order of magnitude above the ordinary band and an       !
-      !      order below the collapsed one, so it fires on the pathology and nothing else. Under L2     !
-      !      this is fatal -- a run that silently goes 13x slower AND returns floored stores is not a   !
-      !      run anyone wants to keep. Under L1/L0 it is counted and reported through the existing      !
-      !      work-counter output path (work_hydro_thrash_site). ------------------------------------!
-      budget%hydro_thrash = merge(1_ik, 0_ik, budget%hydro_nsub > n * HYDRO_NSUB_THRASH)
-      if (budget%hydro_thrash == 1_ik .and. col_config%integrator%error_control%level == CTRL_L2_STRICT) &
-         error stop 'column_fast_step_ark: plant-hydraulics sub-stepping is pathological (issue #104) &
-                    &-- a tissue store has almost certainly collapsed onto its water floor. Inspect &
-                    &wood_water_mass; see docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md sec 5c(v).'
-      !----- HR (root efflux) intentionally NOT enabled anywhere in this model -- floor the aggregate  !
-      !      (the same floor the hydrology kernel applies). ---------------------------------------------!
-      root_uptake_b(1:n) = max(root_uptake_b(1:n), 0.0_wp)
-      root_uptake_layer_b(1:nsl, 1:n) = max(root_uptake_layer_b(1:nsl, 1:n), 0.0_wp)
-      !----- Per-cohort HYDRAULIC diagnostics, captured from the SAME solve the physics commits.    !
-      !      psi_wood / plc were computed on every dt_fast and discarded; plc in particular is the    !
-      !      one number that says whether a cohort is losing conductance, which nothing downstream    !
-      !      of here could previously see. The root uptake is reported below, once the soil has said  !
-      !      how much of this request it delivers. ---------------------------------------------------!
-      if (present(cdiag)) then
-         cdiag(CD_SAPFLOW,     1:n) = sapflow_b(1:n)
-         cdiag(CD_PSI_WOOD,    1:n) = psi_wood_b(1:n)
-         cdiag(CD_PLC,         1:n) = plc_b(1:n)
-      end if
-      total_uptake_b = sum(root_uptake_b(1:n) * col_cohort%nplant(1:n))
-      !----- THIS dt_fast's per-layer sink shares (Phase 1) -- the identical construction the split path  !
-      !      does inline, so the three schemes place the root mass AND heat sink in the same layers. -----!
-      frozen%roots%root_share(1:nsl) = 0.0_wp
-      do i = 1_ik, n
-         do k = 1_ik, nsl
-            frozen%roots%root_share(k) = frozen%roots%root_share(k) + root_uptake_layer_b(k, i) * col_cohort%nplant(i)
-         end do
-      end do
-      share_tot = sum(frozen%roots%root_share(1:nsl))
-      if (share_tot > tiny_num) then
-         frozen%roots%root_share(1:nsl) = frozen%roots%root_share(1:nsl) / share_tot
-      else
-         frozen%roots%root_share(1:nsl) = root_frac_patch(1:nsl)
-      end if
-
-      !----- FROZEN hydrology BCs: the plant's OWN aggregate uptake REQUEST becomes the soil's root-   !
-      !      sink forcing (not the raw transpiration demand), then a SCRATCH advance_soil_water_column      !
-      !      for soil_evap / infiltration / uptake_total (the soil's TRUE realized supply, less only    !
-      !      what the residual floor returned). throughfall_total (sec 3.4, P2c) is what SURVIVES the    !
-      !      canopy -- the raw forc%rainfall when canopy_water_on is off (unchanged), or rainfall minus  !
-      !      what the interception sweep above caught otherwise; feeding the soil the UN-reduced         !
-      !      forc%rainfall here while ALSO crediting the intercepted share to the canopy surface store  !
-      !      would create water from nothing (double-counted at the whole-column boundary). -----------!
-      !----- PRECIP ROUTING under a pack (C4). snow_accumulate has                                      !
-      !      ALREADY taken forc%snowfall AND forc%rainfall into the pack, so ONLY meltwater may reach the   !
-      !      ground -- adding throughfall on top double-counts the rainfall at the boundary. -----------!
+      !----- THE BOUNDARY WATER reaching the ground (C4). Under a pack, snow_accumulate has already      !
+      !      taken forc%snowfall AND forc%rainfall into the pack, so only meltwater reaches the ground;     !
+      !      on bare ground it is what SURVIVES the canopy, throughfall_total (sec 3.4, P2c) -- feeding     !
+      !      the soil the un-intercepted rainfall while also crediting the intercepted share to the         !
+      !      canopy film would create water at the whole-column boundary. ------------------------------!
       if (snow_st%exists) then
          hforc%precip_ground   = snow_st%melt_rate + biophys%shed_water_rate
       else
          hforc%precip_ground   = throughfall_total + biophys%shed_water_rate
       end if
       hforc%snow_free_frac     = 1.0_wp - snow_st%snowfac
-      hforc%root_uptake(1:nsl) = total_uptake_b * frozen%roots%root_share(1:nsl)
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch (#89). ------------------!
       hforc%ground_fliq        = biophys%soil_e%soil_fliq(1)
-      !----- The hydrology kernel owns the ponding store's ENTHALPY too (#78 item 4): it needs each     !
-      !      layer's temperature to value the saturation clip, and the temperature of the water         !
-      !      entering the pond. Under a pack that is the MELTWATER temperature, not frozen%hydrology%t_film_valuation --     !
-      !      t_film_valuation is pinned to tsupercool_liq so the ledger books no boundary input for melt. -----!
       hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
       !      precip_enthalpy values both at the air temperature above the canopy (forc%air_temp, the      !
       !      forcing moved to the canopy-air top), exactly as snow_accumulate does for a pack, and the    !
-      !      mixture enthalpy per kg is                                                                   !
-      !      expressed through temp_of_liquid_enthalpy (exact inverse of internal_energy_liquid; below    !
-      !      t_3ple it represents water that must still melt, which the pond/soil plateau then does with  !
-      !      soil heat). Valuing the snow as liquid at tcas, as this used to, created the fusion enthalpy  !
-      !      L_f per kg of sub-threshold snow at the boundary (ledger-consistent, physically wrong; 2026-09 !
-      !      review). Rain was valued at the canopy-air temperature until #355: the rain falls through the  !
-      !      air above the canopy, and at a cold front the canopy air is still warm (BCI 2017-04-17: rain   !
-      !      at 297.2 K into 294.9 K air), which handed the canopy and soil the rain's missing cooling. ---!
+      !      mixture enthalpy per kg is expressed through temp_of_liquid_enthalpy (exact inverse of       !
+      !      internal_energy_liquid; below t_3ple it represents water that must still melt, which the     !
+      !      pond/soil plateau then does with soil heat). Valuing the snow as liquid at tcas created the  !
+      !      fusion enthalpy L_f per kg of sub-threshold snow at the boundary (2026-09 review). Rain was    !
+      !      valued at the canopy-air temperature until #355: the rain falls through the air above the     !
+      !      canopy, and at a cold front the canopy air is still warm (BCI 2017-04-17: rain at 297.2 K     !
+      !      into 294.9 K air), which handed the canopy and soil the rain's missing cooling. ----------!
       hforc%t_pond_inflow = tcas
       if (snow_st%exists) then
          hforc%t_pond_inflow = snow_st%t_melt
@@ -510,43 +388,122 @@ contains
          hforc%t_pond_inflow = temp_of_liquid_enthalpy(precip_enthalpy(forc%rainfall, forc%snowfall, forc%air_temp) &
                                                        / (forc%rainfall + forc%snowfall))
       end if
-      !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. This !
-      !      path used to pin snow_free_frac at 1.0 because it modelled no snow at all; C4's shared     !
-      !      stage removed that limitation, so the weighting is real here now. ------------------------!
+      !----- Bare-soil aerodynamic resistance, AREA-weighted by the snow-free fraction set above. -----!
       hforc%r_aero             = 1.0_wp / max(aero%ggnet, tiny_num)
-      soil_w_scratch = biophys%soil_w
-      call advance_soil_water_column(soil_w_scratch, hforc, col_config%soil, col_config%soil_water_opts, dt_fast, hflux)
-      budget%soil_nsub = hflux%nsub                 ! section 5.3 work counter (same seam on both schemes)
-      frozen%ground%soil_evap = hflux%soil_evap
-      frozen%hydrology%q_top          = (hflux%infiltration - hflux%soil_evap) / rho_h2o
 
-      !----- Soil-limiting rescale (MEDS_ED2_RK45_DESIGN.md sec 3): scale down ONLY the credit         !
-      !      applied to wood_water_mass (not sapflow, an internal wood->leaf transfer) so the whole-    !
-      !      column ledger closes to the soil's TRUE realized supply -- scale==1 exactly unless the     !
-      !      residual floor returned water (a layer the fixed sink would have drawn below theta_res).   !
-      !      sapflow_frozen/uptake_frozen are what column_derivs' mass ODE reads directly;              !
-      !      frozen%roots%uptake (== hflux%uptake_total) is ALSO the soil-water tendency's root          !
-      !      sink authority in column_derivs, so the two sides of the wood<->soil interface use the       !
-      !      identical number by construction. ---------------------------------------------------------!
-      scale = 1.0_wp
-      if (total_uptake_b > tiny_num) scale = min(1.0_wp, hflux%uptake_total / total_uptake_b)
-      frozen%plant%sapflow_frozen(1:n) = sapflow_b(1:n)
-      frozen%plant%uptake_frozen(1:n)  = root_uptake_b(1:n) * scale
-      !----- The root uptake a cohort actually gets: what its wood is credited and, summed over the    !
-      !      cohorts, what the soil gives up -- not the request, which the soil may cut. --------------!
-      if (present(cdiag)) cdiag(CD_ROOT_UPTAKE, 1:n) = frozen%plant%uptake_frozen(1:n)
+      !----- THE SOIL-PLANT WATER NETWORK (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4): the pond, the soil      !
+      !      layers and every cohort's wood and leaves, solved together over the step with each           !
+      !      cohort's transpiration demand from the start-of-step surface solve above. Everything the     !
+      !      march needs about water is read from it below; the stages hold it fixed, as they always       !
+      !      held ground evaporation. --------------------------------------------------------------!
+      call run_water_network(dt_fast, cfg, col_config, col_cohort, biophys, hforc, root_frac(1:nsl, 1:n),     &
+                             sf0%transp_c(1:n), n, nsl, net)
 
-      !----- ADVECTIVE ENTHALPY (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's qwflux_wl/qloss): both     !
-      !      the mass FLUX (sapflow_b/uptake_frozen, already frozen above) AND the upwind reference        !
-      !      TEMPERATURE are frozen at state^n here -- computing the reference temperature from the        !
-      !      CURRENT (this-stage) leaf/wood/soil temperature would be circular (surface_derivs hasn't       !
-      !      run yet this call, and it's what PRODUCES those temperatures). Freezing both still closes      !
-      !      the energy ledger exactly (the same "one number, both sides" principle sapflow_frozen/          !
-      !      uptake_frozen already rely on for water) -- it trades some fidelity in the thermal upwind       !
-      !      choice for tractability, a documented, bounded approximation (see the design doc P2 notes).     !
-      !      HR is disabled project-wide (uptake floored >=0), so qloss's upwind is unconditionally the       !
-      !      root-frac-weighted mean soil temperature (weighted_mean is a generic weighted-sum, not      !
-      !      psi-specific, so it is reused verbatim for temperature here). -------------------------------!
+      !----- Work and convergence (section 5.3 work counters): the network's accepted sub-steps, its    !
+      !      Newton iterations, and the sub-steps it had to take although they did not converge or meet  !
+      !      the tolerance. -------------------------------------------------------------------------!
+      budget%soil_nsub     = net%nsub
+      budget%hydro_nsub    = net%nnewton
+      budget%hydro_nonconv = net%nfail
+      budget%hydro_thrash  = 0_ik
+
+      !----- Ground evaporation, the soil's boundary flows and the pond, as the network moved them. ----!
+      frozen%ground%soil_evap         = net%evap / dt_fast
+      frozen%hydrology%infiltration   = net%infil / dt_fast
+      frozen%hydrology%exfiltration   = net%exfil / dt_fast
+      frozen%hydrology%exfil_enth     = net%exfil_enth / dt_fast
+      frozen%hydrology%q_top          = (net%infil - net%exfil - net%evap) / (rho_h2o * dt_fast)
+      frozen%hydrology%drainage       = net%drain / dt_fast
+      frozen%hydrology%runoff_surf    = net%spill / dt_fast
+      frozen%hydrology%runoff_enth    = net%spill_enth / dt_fast
+      frozen%hydrology%precip_ground  = hforc%precip_ground
+      frozen%hydrology%t_pond_inflow  = hforc%t_pond_inflow
+      !----- The infiltrating water left the POND, so the soil top face is valued at the temperature    !
+      !      that carries exactly the enthalpy the pond gave up (#78 item 4). -------------------------!
+      frozen%hydrology%t_infil = hforc%t_pond_inflow
+      if (net%infil > tiny_num) frozen%hydrology%t_infil = temp_of_liquid_enthalpy(net%infil_enth / net%infil)
+      !----- t_film_valuation = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
+      !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
+      !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
+      frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
+      if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
+      frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
+      frozen%hydrology%t_bot           = biophys%soil_e%soil_temp(nsl)
+      frozen%hydrology%w_surface1      = net%w_core(WATER_NODE_POND)
+      frozen%hydrology%w_surface_enth1 = net%e_pond
+      frozen%hydrology%w_flux_frozen(1:nsl)   = 0.0_wp
+      frozen%hydrology%w_flux_frozen(1:nsl-1) = net%face(1:nsl-1) / (rho_h2o * dt_fast)
+      allocate(frozen%hydrology%theta1(nsl))
+      do k = 1_ik, nsl
+         frozen%hydrology%theta1(k) = net%w_core(1_ik + k) / (rho_h2o * col_config%soil%dz(k))
+      end do
+      frozen%hydrology%theta_rate(1:nsl) = (frozen%hydrology%theta1(1:nsl) - biophys%soil_w%theta(1:nsl)) / dt_fast
+
+      !----- PER-LAYER FACE CLOSURE (#189): what each layer's water changed by, against the flows the   !
+      !      soil energy will advect -- faces, root uptake, and at the top infiltration, exfiltration    !
+      !      and evaporation. The network moves every store's water by these flows, so this reads        !
+      !      round-off; it is kept as the check that the faces handed on are the ones that moved the    !
+      !      water. A network sub-step taken unconverged counts as a failed check, so the end-of-run      !
+      !      report says so. -----------------------------------------------------------------------!
+      face_resid = 0.0_wp
+      do k = 1_ik, nsl
+         f_in = 0.0_wp ; f_out = 0.0_wp
+         if (k > 1_ik)   f_in  = net%face(k-1)
+         if (k < nsl)    f_out = net%face(k)
+         if (k == nsl)   f_out = net%drain
+         if (k == 1_ik)  f_in  = net%infil - net%exfil - net%evap
+         face_resid = face_resid + abs((frozen%hydrology%theta1(k) - biophys%soil_w%theta(k))              &
+                                       * col_config%soil%dz(k) * rho_h2o - (f_in - f_out - sum(net%uptake(k, 1:n))))
+      end do
+      budget%soil_face_mass%resid   = face_resid
+      budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, face_resid)
+      budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + face_resid
+      budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
+      if (net%nfail > 0_ik) budget%soil_face_mass%n_fail = budget%soil_face_mass%n_fail + 1_ik
+
+      !----- Root uptake: in total, by layer, and by cohort; and the enthalpy it takes out of each      !
+      !      layer at that layer's start-of-step temperature (plan §12.2 M4) -- the same number the    !
+      !      cohort's wood is credited below. A patch whose roots took nothing places its (zero) sink    !
+      !      by its root profile. --------------------------------------------------------------------!
+      frozen%roots%uptake = sum(net%uptake(1:nsl, 1:n)) / dt_fast
+      do k = 1_ik, nsl
+         u_liq_soil_k(k) = internal_energy_liquid(biophys%soil_e%soil_temp(k))
+         frozen%roots%root_share(k) = sum(net%uptake(k, 1:n))
+         frozen%roots%root_heat(k)  = sum(net%uptake(k, 1:n)) * u_liq_soil_k(k) / dt_fast
+      end do
+      share_tot = sum(frozen%roots%root_share(1:nsl))
+      if (share_tot > tiny_num) then
+         frozen%roots%root_share(1:nsl) = frozen%roots%root_share(1:nsl) / share_tot
+      else
+         frozen%roots%root_share(1:nsl) = root_frac_patch(1:nsl)
+      end if
+      do i = 1_ik, n
+         frozen%roots%qloss_frozen(i)     = sum(net%uptake(1:nsl, i) * u_liq_soil_k(1:nsl)) / dt_fast
+         frozen%plant%sapflow_frozen(i)  = net%sapflow(i) / (max(col_cohort%nplant(i), tiny_num) * dt_fast)
+         frozen%plant%uptake_frozen(i)   = sum(net%uptake(1:nsl, i)) / (max(col_cohort%nplant(i), tiny_num) * dt_fast)
+         frozen%tissue%transp_net(i)     = net%transp(i) / dt_fast
+      end do
+      frozen%tissue%transp_held = .true.
+
+      !----- Per-cohort HYDRAULIC diagnostics, from the same network the physics commits: sapflow and   !
+      !      root uptake per plant, and the wood's end-of-step potential and loss of conductance. -------!
+      if (present(cdiag)) then
+         do i = 1_ik, n
+            cdiag(CD_SAPFLOW,     i) = frozen%plant%sapflow_frozen(i)
+            cdiag(CD_ROOT_UPTAKE, i) = frozen%plant%uptake_frozen(i)
+            cdiag(CD_PSI_WOOD,    i) = net%psi_group(WATER_WOOD, i)
+            associate (hp => col_config%hydraulics_table%pft(col_cohort%pft(i)))
+               cdiag(CD_PLC, i) = 1.0_wp - plc_retained(net%psi_group(WATER_WOOD, i), hp%wood_psi50, hp%wood_kexp)
+            end associate
+         end do
+      end if
+
+      !----- ADVECTIVE ENTHALPY of the plant water (MEDS_ED2_RK45_DESIGN.md sec 2/6, P2 -- ED2's        !
+      !      qwflux_wl/qloss): the mass flows are the network's, and the upwind temperatures are frozen   !
+      !      at state^n -- computing them from the current (stage) leaf/wood temperature would be         !
+      !      circular, since surface_derivs is what produces those temperatures. Freezing both still      !
+      !      closes the energy ledger exactly (one number, both sides). The root water arrives at each     !
+      !      layer's own temperature (qloss_frozen, above).                                               !
       !                                                                                                  !
       !      Each tissue's own WATER is valued at the tissue's start-of-step temperature, the way the        !
       !      canopy film is valued at the liquid enthalpy its water arrived with. The tissue heat store is   !
@@ -557,79 +514,26 @@ contains
       !      warmed the wood whenever it refilled: ~10 W/m2 every night at BCI, and at the 2017-04-17 storm  !
       !      front, when wet soil refilled the dry-season wood with ~7 kg/m2 in a quarter hour, it put the  !
       !      wood 13 K above the canopy air and drove H to +600 W/m2 at zero net radiation (#355). The leaf  !
-      !      still pays the full vapour enthalpy of what it transpires (surface_derivs); its water store's   !
-      !      outflow is counted at the pre-pass transpiration demand (sf0), frozen like everything here.     !
-      soil_temp_root = weighted_mean(biophys%soil_e%soil_temp(1:nsl), root_frac_patch, nsl)
-      u_liq_soil = internal_energy_liquid(soil_temp_root)
+      !      still pays the full vapour enthalpy of what it transpires (surface_derivs). -------------------!
       frozen%tissue%water_store_enth = 0.0_wp
       do i = 1_ik, n
-         t_up_wl   = merge(biophys%wood_temp(i), biophys%leaf_temp(i), sapflow_b(i) >= 0.0_wp)
-         u_liq_up  = internal_energy_liquid(t_up_wl)
+         t_up_wl    = merge(biophys%wood_temp(i), biophys%leaf_temp(i), net%sapflow(i) >= 0.0_wp)
+         u_liq_up   = internal_energy_liquid(t_up_wl)
          u_liq_leaf = internal_energy_liquid(biophys%leaf_temp(i))
          u_liq_wood = internal_energy_liquid(biophys%wood_temp(i))
-         sapflow_gnd(i) = frozen%plant%sapflow_frozen(i) * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         uptake_gnd(i)  = frozen%plant%uptake_frozen(i)  * col_cohort%nplant(i)   ! [kg/m2 ground/s]
-         frozen%roots%qloss_frozen(i) = uptake_gnd(i) * u_liq_soil          ! what the soil gives up, in full
-         frozen%tissue%qwflux_wl(i)   = sapflow_gnd(i) * u_liq_up - (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
-         frozen%tissue%q_wood_net(i)  = uptake_gnd(i) * (u_liq_soil - u_liq_wood) - sapflow_gnd(i) * (u_liq_up - u_liq_wood)
+         sapflow_gnd = net%sapflow(i) / dt_fast                                  ! [kg/m2 ground/s]
+         uptake_gnd  = sum(net%uptake(1:nsl, i)) / dt_fast
+         transp_gnd  = net%transp(i) / dt_fast
+         frozen%tissue%qwflux_wl(i)  = sapflow_gnd * u_liq_up - (sapflow_gnd - transp_gnd) * u_liq_leaf
+         frozen%tissue%q_wood_net(i) = frozen%roots%qloss_frozen(i) - uptake_gnd * u_liq_wood                &
+                                       - sapflow_gnd * (u_liq_up - u_liq_wood)
          frozen%tissue%water_store_enth = frozen%tissue%water_store_enth                                     &
-                                        + (uptake_gnd(i) - sapflow_gnd(i)) * u_liq_wood                       &
-                                        + (sapflow_gnd(i) - sf0%transp_c(i)) * u_liq_leaf
+                                        + (uptake_gnd - sapflow_gnd) * u_liq_wood                             &
+                                        + (sapflow_gnd - transp_gnd) * u_liq_leaf
       end do
-
-      !----- FROZEN boundary hydrology for the guard-lift: the rain/drainage/runoff water-enthalpy       !
-      !      advection (state^n temps, matching the split) + the scratch's end-of-step ponding/aquifer/  !
-      !      water-table (soil_w_scratch was advanced in place by advance_soil_water_column). ---------------!
-      frozen%hydrology%infiltration = hflux%infiltration ; frozen%hydrology%drainage    = hflux%drainage
-      frozen%hydrology%precip_ground = hforc%precip_ground
-      frozen%hydrology%runoff_surf  = hflux%runoff_surf
-      !----- t_film_valuation = tsupercool_liq under a pack makes internal_energy_liquid vanish, so meltwater !
-      !      infiltrates its MASS at zero enthalpy -- the enthalpy already moved, paired, inside        !
-      !      advance_snow_stage. Without this the melt energy is counted twice at soil layer 1. -------!
-      frozen%hydrology%t_film_valuation = hforc%t_pond_inflow   ! one valuation for the boundary inflow AND the film
-      if (snow_st%exists) frozen%hydrology%t_film_valuation = tsupercool_liq
-      !----- what the film is valued at (see surface_derivs). --------------------------------!
-      frozen%film%film_liquid_enthalpy = internal_energy_liquid(frozen%hydrology%t_film_valuation)
-      !----- The infiltrating water comes OUT OF THE POND, so the soil top-face advection is        !
-      !      referenced to the pond temperature the kernel just reported (#78 item 4). -----------!
-      frozen%hydrology%t_infil = hflux%t_infil
-      frozen%hydrology%runoff_enth = hflux%runoff_enth
-      frozen%roots%uptake       = hflux%uptake_total
-      !----- Interior face fluxes + the post-solve mass corrections, from the SAME scratch solve. The   !
-      !      clip/floor enthalpies are valued HERE, at each layer's state^n temperature, because that   !
-      !      is the temperature the correction has to be neutral against -- and it is the only place    !
-      !      the per-layer soil temperature is in scope. ---------------------------------------------!
-      frozen%hydrology%w_flux_frozen(1:nsl) = hflux%w_flux(1:nsl)
-      !----- PER-LAYER FACE CLOSURE (#189). advance_soil_water_column already measures, per layer,    !
-      !      |the mass that actually moved - the mass its own faces were charged for| -- and until    !
-      !      now published it to a field nothing read. Record it here, where the budget is in scope.  !
-      !      On the ARK path this IS the committed-path check: theta1 below is committed verbatim and !
-      !      w_flux_frozen is the same solve's face flux, so consistency here is consistency of what  !
-      !      the column actually keeps. RK45 integrates its own theta and records its own residual at !
-      !      its commit. ----------------------------------------------------------------------------!
-      budget%soil_face_mass%resid   = hflux%face_mass_resid
-      budget%soil_face_mass%worst   = max(budget%soil_face_mass%worst, abs(hflux%face_mass_resid))
-      budget%soil_face_mass%abs_sum = budget%soil_face_mass%abs_sum + abs(hflux%face_mass_resid)
-      budget%soil_face_mass%n_check = budget%soil_face_mass%n_check + 1_ik
-      !----- A solve that did not converge (it ran out of sub-steps, or its iteration failed) counts as !
-      !      a failed check of the column, so the end-of-run report says so. Its flag used to go       !
-      !      unread: at the #352 storm front 26 failed solves were used as if they were sound. ---------!
-      if (.not. hflux%converged) budget%soil_face_mass%n_fail = budget%soil_face_mass%n_fail + 1_ik
-      do k = 1_ik, nsl
-         frozen%hydrology%clip_enth(k)  = hflux%clip_layer(k)  * internal_energy_liquid(biophys%soil_e%soil_temp(k))
-         frozen%hydrology%floor_enth(k) = hflux%floor_layer(k) * internal_energy_liquid(biophys%soil_e%soil_temp(k))
-      end do
-      frozen%hydrology%clip_mass  = sum(hflux%clip_layer(1:nsl))
-      frozen%hydrology%floor_mass = sum(hflux%floor_layer(1:nsl))
-      frozen%hydrology%t_bot        = biophys%soil_e%soil_temp(nsl)
-      frozen%hydrology%w_surface1   = soil_w_scratch%w_surface
-      frozen%hydrology%w_surface_enth1 = soil_w_scratch%w_surface_enth
-      frozen%hydrology%t_pond_inflow        = hforc%t_pond_inflow
-      !----- the AUTHORITATIVE committed soil moisture: soil_w_scratch was advanced IN PLACE by the robust  !
-      !      advance_soil_water_column above, so its theta IS the end-of-step (relieved) soil water. -----------!
-      allocate(frozen%hydrology%theta1(nsl))
-      frozen%hydrology%theta1(1:nsl) = soil_w_scratch%theta(1:nsl)
-      frozen%hydrology%theta_rate(1:nsl) = (soil_w_scratch%theta(1:nsl) - biophys%soil_w%theta(1:nsl)) / dt_fast
+      !----- No scratch post-solve corrections exist any more: the network never clips or floors. ------!
+      frozen%hydrology%clip_enth(1:nsl) = 0.0_wp ; frozen%hydrology%floor_enth(1:nsl) = 0.0_wp
+      frozen%hydrology%clip_mass = 0.0_wp ; frozen%hydrology%floor_mass = 0.0_wp
 
       !----- pack the prognostic state: plant water MASS is now NATIVE (MEDS_ED2_RK45_DESIGN.md sec 4, !
       !      P2) -- a direct copy from the persisted state, no psi round-trip needed any more. ----------!
@@ -643,6 +547,68 @@ contains
       y%leaf_water_mass(1:n) = biophys%leaf_water_mass(1:n)
       y%wood_water_mass(1:n) = biophys%wood_water_mass(1:n)
    end subroutine build_column_frozen
+
+   !---------------------------------------------------------------------------------------!
+   ! run_water_network -- one patch's soil and plant water over the fast step, as one network      !
+   ! (meds_water_network; MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4). Builds the network from the       !
+   ! patch's columns -- each cohort's xylem conductance from its sapwood, its rooting from its      !
+   ! height and fine-root carbon, and each layer's root spacing from the patch's root-length        !
+   ! density -- starts it from the stores' state^n water, and advances it. e_demand is each         !
+   ! cohort's transpiration demand from the start-of-step surface solve [kg/m2 ground/s]; the        !
+   ! network takes less where a leaf runs short of water (§12.2 C1).                                 !
+   !---------------------------------------------------------------------------------------!
+   subroutine run_water_network(dt_fast, cfg, col_config, col_cohort, biophys, hforc, root_frac, e_demand, &
+                                n, nsl, net)
+      real(wp),               intent(in)    :: dt_fast
+      type(meds_config_t),    intent(in)    :: cfg
+      type(column_config_t),  intent(in)    :: col_config
+      type(column_cohort_t),  intent(in)    :: col_cohort
+      type(patch_biophys_t),  intent(in)    :: biophys
+      type(chydro_forcing_t), intent(in)    :: hforc
+      integer(ik),            intent(in)    :: n, nsl
+      real(wp),               intent(in)    :: root_frac(nsl, n)   !< [-] each cohort's fine roots by layer
+      real(wp),               intent(in)    :: e_demand(n)         !< [kg/m2 ground/s]
+      type(water_network_t),  intent(inout) :: net
+      real(wp)    :: root_len(nsl, n), half_spacing(nsl)
+      integer(ik) :: i, k
+      call water_network_allocate(net, nsl, n)
+      do i = 1_ik, n
+         associate (hp => col_config%hydraulics_table%pft(col_cohort%pft(i)))
+            net%pft(i)      = col_cohort%pft(i)
+            net%nplant(i)   = col_cohort%nplant(i)
+            net%bleaf(i)    = col_cohort%bleaf(i)
+            net%bwood(i)    = col_cohort%bsap(i) + col_cohort%broot(i)
+            net%grav(i)     = crown_gravity_head(col_cohort%height(i), col_config%hydraulics_opts)
+            net%k_xylem(i)  = col_cohort%nplant(i) * xylem_max_conductance(hp%wood_kmax, col_cohort%sap_area(i), &
+                                                                           col_cohort%height(i), hp%vessel_curl)
+            net%e_demand(i) = e_demand(i)
+            net%r_close(i)  = rwc_from_psi(pft_wstress_psi_close(cfg, col_cohort%pft(i)), hp%leaf_curve%pi0,      &
+                                           hp%leaf_curve%elastic_mod)
+            root_len(1:nsl, i) = col_cohort%broot(i) * root_frac(1:nsl, i) * hp%specific_root_length
+         end associate
+      end do
+      !----- Half the distance between a layer's roots, (pi L_v)^-1/2 from the root-length density of  !
+      !      every cohort there, and each cohort's share of the layer's root conductance. -----------!
+      do k = 1_ik, nsl
+         half_spacing(k) = 1.0_wp / sqrt(pi * max(sum(col_cohort%nplant(1:n) * root_len(k, 1:n))                &
+                                                  / col_config%soil%dz(k), tiny_num))
+         do i = 1_ik, n
+            net%g_root(k, i) = root_conductance_geometry(col_cohort%nplant(i), root_len(k, i), half_spacing(k),   &
+                                  col_config%hydraulics_table%pft(col_cohort%pft(i))%fine_root_radius)
+         end do
+      end do
+      net%rain       = hforc%precip_ground
+      net%t_rain     = hforc%t_pond_inflow
+      net%t_soil(1:nsl) = biophys%soil_e%soil_temp(1:nsl)
+      net%w_pond_max = col_config%soil_water_opts%w_pond_max
+      net%rtol       = col_config%soil_water_opts%rtol
+      net%atol       = col_config%soil_water_opts%atol
+      call water_network_start(net, col_config%soil, col_config%hydraulics_table, biophys%soil_w%theta(1:nsl),       &
+                               biophys%soil_w%w_surface, biophys%soil_w%w_surface_enth,                            &
+                               biophys%leaf_water_mass(1:n), biophys%wood_water_mass(1:n))
+      call water_network_advance(net, col_config%soil, col_config%soil_water_opts, hforc,                          &
+                                 col_config%hydraulics_table, dt_fast)
+   end subroutine run_water_network
 
    !---------------------------------------------------------------------------------------!
    ! advance_snow_stage -- accumulate snowfall + rain-on-snow, advance the snow-surface energy     !

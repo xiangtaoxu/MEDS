@@ -63,6 +63,7 @@ program test_water_network
    call test_dry_layer_storm()
    call test_saturated()
    call test_accuracy()
+   call test_vanishing_stores()
    call test_report('test_water_network')
 
 contains
@@ -459,6 +460,38 @@ contains
       call check_true('accuracy: tissue water within 1e-2 RWC of the tight run', worst_rwc < 1.0e-2_wp, worst_rwc)
       print '(a,i6)', '  info : sub-steps over the day at the default tolerances: ', isub
    end subroutine test_accuracy
+
+   !=======================================================================================!
+   !----- Two stores the BCI regrowth stand (1994-04-20) showed: a cohort with 1e-22 kgC of leaves,  !
+   !      whose leaf store holds 1e-26 kg/m2 against its plant's 1e-9 tolerance, and a pond holding a !
+   !      trace of water over a dry top layer in light rain, which drains tens of millimetres an hour. !
+   !      A day of them: no sub-step forced, the leaf never above saturation, the pond never below  !
+   !      empty. --------------------------------------------------------------------------------!
+   subroutine test_vanishing_stores()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), leaf_w(3), wood_w(3), w0, flows, rwc_max, pond_min
+      integer(ik) :: step, nfail
+      theta = 0.16_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.9_wp, 0.85_wp, 0.0_wp)
+      net%bleaf(3) = 1.3e-22_wp
+      leaf_w = net%w_group(WATER_LEAF, :) / net%nplant ; wood_w = net%w_group(WATER_WOOD, :) / net%nplant
+      leaf_w(3) = 2.0_wp * net%bleaf(3) * 0.9_wp
+      call water_network_start(net, soil, hyd, theta, 3.0e-8_wp, 0.0_wp, leaf_w, wood_w)
+      w0 = total_water(net) ; flows = 0.0_wp ; nfail = 0_ik ; rwc_max = 0.0_wp ; pond_min = 0.0_wp
+      do step = 1_ik, 96_ik
+         net%rain = merge(1.0e-6_wp, 1.2e-3_wp, step < 40)
+         net%e_demand(1:2) = 2.0e-5_wp ; net%e_demand(3) = 1.0e-32_wp
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         flows = flows + net%rain * 900.0_wp - net%drain - net%evap - net%spill - sum(net%transp)
+         nfail = nfail + net%nfail
+         rwc_max  = max(rwc_max, net%tau_group(WATER_LEAF, 3))
+         pond_min = min(pond_min, net%w_core(WATER_NODE_POND))
+      end do
+      call check_int('vanishing stores: no sub-step forced through', nfail, 0_ik)
+      call check_true('vanishing stores: the near-leafless leaf stays at or below saturation', rwc_max <= 1.0_wp, rwc_max)
+      call check_true('vanishing stores: the pond never holds less than nothing', pond_min >= 0.0_wp, pond_min)
+      call check_close('vanishing stores: water conserved', total_water(net) - w0, flows, 1.0e-10_wp * w0)
+   end subroutine test_vanishing_stores
 
    !=======================================================================================!
    !     Small helpers.                                                                     !

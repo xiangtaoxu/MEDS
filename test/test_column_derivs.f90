@@ -387,14 +387,21 @@ contains
       type(energy_forcing_t)     :: eforc_chk
       type(soil_energy_column_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
-      real(wp)    :: uptake_chk(n_soil_layer_max), dtheta_chk(n_soil_layer_max)
-      real(wp)    :: qface_chk(n_soil_layer_max)
-      real(wp)    :: drain_chk, uptk_chk
       integer(ik) :: k, i, n, nsl
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_column_assembler:'
       call make_column(y, frozen, n, nsl)
+      !----- The water network's flows, nonzero, so the wiring check below is live for every term: a  !
+      !      downward drift through every face, drainage, infiltration, the uptake's enthalpy leaving   !
+      !      each layer, and water pushed up into the pond from the top layer. -----------------------!
+      frozen%hydrology%w_flux_frozen(1:nsl) = 2.0e-8_wp ; frozen%hydrology%w_flux_frozen(nsl) = 0.0_wp
+      frozen%hydrology%drainage     = 2.0e-8_wp * rho_h2o
+      frozen%hydrology%infiltration = frozen%hydrology%q_top * rho_h2o
+      frozen%hydrology%exfil_enth   = 1.0e-7_wp * internal_energy_liquid(296.0_wp)
+      do k = 1_ik, nsl
+         frozen%roots%root_heat(k) = frozen%roots%uptake * frozen%roots%root_share(k) * internal_energy_liquid(295.0_wp)
+      end do
       call column_derivs(y, frozen, col_config, n, nsl, f)
 
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
@@ -429,28 +436,24 @@ contains
       end block
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
-      !      built from the SAME surface coupling (g_top, qloss * root_share) PLUS the bottom-face   !
-      !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
-      !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
-      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (frozen%hydrology%drainage,     !
-      !      then frozen%hydrology%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
-      !      and #78 item 3 made the interior faces ride this stage's own theta trajectory, so both are !
-      !      now nonzero and the reproduction has to carry them. A check that omits a term is only      !
-      !      green while that term is zero, and this one has now taught that lesson twice. ------------!
+      !      built from the SAME surface coupling (g_top) and the water network's flows: the per-layer  !
+      !      enthalpy leaving with uptake, the time-mean faces, the infiltration at the pond's          !
+      !      temperature and the drainage enthalpy at the bottom. Every term is nonzero in this         !
+      !      fixture: a check that omits a term is only green while that term is zero, and this one has !
+      !      taught that lesson twice. --------------------------------------------------------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
       do k = 1_ik, nsl
-         uptake_chk(k) = frozen%roots%uptake * frozen%roots%root_share(k)
-      end do
-      call soil_water_time_deriv(y%theta, col_config%soil, col_config%soil_water_opts, nsl, frozen%hydrology%q_top,        &
-                                 uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
-      do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
-         eforc_chk%root_heat_sink(k) = sum(frozen%roots%qloss_frozen(1:n)) * frozen%roots%root_share(k)
-         eforc_chk%w_flux(k)         = -qface_chk(k)
+         eforc_chk%root_heat_sink(k) = frozen%roots%root_heat(k)
+         eforc_chk%w_flux(k)         = -frozen%hydrology%w_flux_frozen(k)
       end do
+      eforc_chk%root_heat_sink(1)   = eforc_chk%root_heat_sink(1) + frozen%hydrology%exfil_enth
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
-                                    + f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
+                                    + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
+      eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
+      eforc_chk%t_water_top = frozen%hydrology%t_infil
+      eforc_chk%w_flux_bot  = 0.0_wp
       call soil_energy_time_deriv(se_chk, eforc_chk, col_config%soil_thermal, col_config%soil, col_config%energy, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
@@ -909,7 +912,7 @@ contains
    subroutine test_rk45_order()
       type(column_state_t)  :: y, yref, y1, y2, y4, y8
       type(column_frozen_t) :: frozen
-      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref
+      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref, noise
       integer(ik) :: n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk45_order:'
@@ -959,8 +962,13 @@ contains
       p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
       print '(a,4(es10.3,a),3(f5.2,a))', '   soil-top T errors: ', e1, ' / ', e2, ' / ', e4, ' / ',  &
             e8, ' ; observed order p = ', p_lo, ' , ', p_hi, ' , ', p_fine, ''
-      call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5, no split)', &
-                      p_hi >= 4.5_wp .and. p_fine >= 4.5_wp, p_fine)
+      !----- Soil water now moves at the water network's steady rate within a step, so the soil-top    !
+      !      temperature is smoother than when RK45 integrated Richards in its stages, and its error      !
+      !      reaches the 1024-step reference's own round-off (~1e3 eps T) by 75 s. The order is asserted  !
+      !      wherever the error is above that floor. -------------------------------------------------!
+      noise = 1.0e3_wp * epsilon(1.0_wp) * tref
+      call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5 above round-off)', &
+                      (p_hi >= 4.5_wp .or. e4 < noise) .and. (p_fine >= 4.5_wp .or. e8 < noise), p_fine)
    end subroutine test_rk45_order
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
@@ -1141,6 +1149,13 @@ contains
       frozen%plant%uptake_frozen = 1.0e-4_wp
       frozen%roots%uptake = frozen%plant%uptake_frozen(1)*sum(frozen%plant%nplant(1:n))
       frozen%roots%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
+      !----- The water network's step, as build_column_frozen hands it on. Held still here -- no face  !
+      !      flow, drainage, uptake heat or theta change -- because these marches run for hours on one   !
+      !      frozen record, which the model never does: the network sets the rates afresh every step.   !
+      !      test_column_assembler sets them nonzero for its wiring check. ---------------------------!
+      allocate(frozen%roots%root_heat(nsl))
+      frozen%roots%root_heat(1:nsl) = 0.0_wp
+      frozen%hydrology%t_infil = 296.0_wp ; frozen%hydrology%t_bot = 292.0_wp
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))

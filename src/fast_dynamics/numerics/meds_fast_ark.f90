@@ -118,14 +118,14 @@ contains
 
          !----- Stage 2: gamma*dt BE stage from y_n (CAS+soil only; mass frozen -- it is split out). -----!
          call column_be_stage(y, frozen, col_config, n, nsl, GAMMA*dt, Y2, sf2, niter=np, bf=bf2)
-         !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot BOTH the vG theta   !
-         !      range AND the CAS enthalpy into a wild temperature where qsat(T) overflows to NaN; clamp     !
-         !      both to physical ranges so the stage stays FINITE. This only bites on a genuinely oversized  !
-         !      step (which the adaptive controller then rejects and shrinks normally) -- in range it is an  !
-         !      identity, so no accuracy cost. Without the CAS clamp a big transient poisons the whole march !
-         !      with NaN. --------------------------------------------------------------------------------!
+         !----- Stage 3: extrapolated base. The BETA=2.414 extrapolation can overshoot the CAS enthalpy   !
+         !      into a wild temperature where qsat(T) overflows to NaN; clamp it to a physical range so the  !
+         !      stage stays FINITE. This only bites on a genuinely oversized step (which the adaptive        !
+         !      controller then rejects and shrinks normally) -- in range it is an identity, so no accuracy  !
+         !      cost. Without the CAS clamp a big transient poisons the whole march with NaN. Soil water      !
+         !      needs no clamp: it moves at the water network's steady rate, so the extrapolation lands      !
+         !      between its start and end values. ---------------------------------------------------!
          call state_extrap(y, BETA, Y2, n, nsl, base3)
-         call clamp_theta(base3, col_config, nsl, nfire=clamp_n)
          call clamp_cas(base3, nfire=clamp_n)
          call column_be_stage(base3, frozen, col_config, n, nsl, GAMMA*dt, Y3, sf3, niter=np, bf=bf3)
          call state_init(Y3, n, nsl, y_out)
@@ -150,7 +150,6 @@ contains
          !----- embedded 1st-order error estimate (mass is split out -> zeroed). -------------------------!
          call state_err_diff(Y3, base3, Y2, y, n, nsl, y_err)
          !----- b-weighted boundary-flux amounts: b^I = (0, 1-gamma, gamma) -> exact telescoping.         !
-         !      (Water closure is exact only when clamp_theta is inactive; it barely moves over gamma*dt.) !
          if (present(bf)) then
             call bflux_bweight(bf, bf2, bf3, dt, GAMMA)
             !----- b-weighted TIME INTEGRAL of the tissue temperatures, same b^I = (0, 1-gamma, gamma)   !

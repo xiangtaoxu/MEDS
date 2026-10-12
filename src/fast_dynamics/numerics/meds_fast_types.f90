@@ -457,6 +457,14 @@ module meds_fast_types
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
       real(wp) :: water_store_enth = 0.0_wp   !< [W/m2 ground] summed over cohorts
+      !----- Each cohort's transpiration over the step [kg/m2 ground/s], set by the soil-plant water   !
+      !      network once it has solved (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.2 C1). While transp_held  !
+      !      is true the leaf energy balance holds the leaf's transpiration at it, as the stages hold   !
+      !      ground evaporation at the network's value: the canopy air then receives exactly the water   !
+      !      the leaves lose. False (the pre-pass's own evaluation, a hand-built record) computes the    !
+      !      demand from the stomatal conductance and the canopy air's humidity. ---------------------!
+      logical :: transp_held = .false.
+      real(wp), allocatable :: transp_net(:)
       !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
       !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
       !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
@@ -588,6 +596,10 @@ module meds_fast_types
       real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff, #78 item 4
       real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
+      !----- Water a supersaturated top layer pushed up into the pond, and the enthalpy it took, valued at !
+      !      the layer's start-of-step temperature (the pond received the same number). ----------------!
+      real(wp) :: exfiltration  = 0.0_wp          !< [kg/m2/s] top layer -> pond
+      real(wp) :: exfil_enth    = 0.0_wp          !< [W/m2]    enthalpy leaving the top layer with it
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
@@ -620,6 +632,9 @@ module meds_fast_types
       real(wp), allocatable :: psi_soil_pre(:)    !< [MPa] per-layer soil water potential @ state^n (nsl)
       real(wp), allocatable :: rhizo_cond(:,:)    !< [kg/plant/s/MPa] rhizosphere conductance (nsl, ncoh)
       real(wp), allocatable :: qloss_frozen(:)    !< [W/m2 ground] (ncoh) advected enthalpy leaving the soil with uptake
+      !----- The same enthalpy by layer [W/m2]: each layer's uptake at that layer's start-of-step         !
+      !      temperature, so the soil loses heat where it loses water (plan §12.2 M4). -----------------!
+      real(wp), allocatable :: root_heat(:)       !< (nsl)
    end type root_zone_t
 
    !----- PLANT WATER: the pre-pass's time-averaged solve_plant_water output (per plant), held      !

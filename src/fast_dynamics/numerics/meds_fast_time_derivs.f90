@@ -31,7 +31,6 @@ module meds_fast_time_derivs
    use meds_column_params, only : n_soil_layer_max
    use meds_column_state_types, only : soil_energy_column_t
    use meds_soil_energy, only : soil_energy_time_deriv
-   use meds_soil_water, only : soil_water_time_deriv
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_time_deriv
    use meds_ground_biophysics, only : ground_surface_fluxes
    use meds_canopy_aerodynamics, only : mo_surface_layer, cas_atm_conductances
@@ -169,8 +168,16 @@ contains
          !      slack term (item 1A #2). ------------------------------------------------------------------!
          h_evap_l = enthalpy_vapor(tcas)
          h_film_l = h_evap_l - film%film_liquid_enthalpy
-         le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
-         le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
+         if (tissue%transp_held) then
+            !----- The water network has fixed this cohort's transpiration for the step: the leaf    !
+            !      balance carries it as a fixed latent term on the dry share of the leaf, so the     !
+            !      transpiration it reports is exactly the water the leaves lost. -------------------!
+            le_slope = 0.0_wp
+            le_ref   = h_evap_l * tissue%transp_net(i) / max(1.0_wp - film%f_wet_c(i), tiny_num)
+         else
+            le_slope = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * dqdt
+            le_ref   = h_evap_l * cas%rho * tissue%g_transp_leaf(i) * (qsat_c - qcas)
+         end if
          le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
          le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
          !----- ARK-diagnostic leaf: emission base = t_cas, no storage (t_emit = tcas, store_hcap_per_dt = 0).   !
@@ -303,18 +310,13 @@ contains
    ! column_derivs -- the WHOLE-column RHS. Diagnoses the soil-top temperature from the state (so    !
    ! the ground skin couples to the current soil-top energy), runs the surface block, then assembles !
    ! the soil-heat, soil-water, and per-cohort plant-water-MASS tendencies from the frozen forcing +   !
-   ! the surface couplings (qloss -> root heat sink, the FROZEN aggregate uptake -> root water     !
-   ! sink, transp_c -> the per-cohort transpiration demand). Commits nothing. This mirrors             !
-   ! column_fast_step's operator sequence WITHOUT the backward-Euler denominators -- it is the         !
-   ! tendency an IMEX-ARK/RK45 stage evaluates.                                                        !
+   ! the surface couplings. Commits nothing. It is the tendency an RK45 (or RK4 oracle) stage         !
+   ! evaluates.                                                                                        !
    !                                                                                          !
-   ! PLANT WATER MASS (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): unlike the retired plant_water_tendency  !
-   ! (which re-evaluated the full nonlinear PV-curve/conductance system -- psi's own stiff ODE -- at    !
-   ! every stage), the mass ODE is a TRIVIAL affine expression: frozen%plant%sapflow_frozen/uptake_frozen are     !
-   ! ONE frozen pair of numbers (the Act-1 pre-pass's time-averaged solve_plant_water output, held       !
-   ! constant across the whole macro-step); only the per-plant transpiration demand is REFRESHED each    !
-   ! stage, from the CURRENT surface_derivs evaluation -- exactly the sec 6 stability argument (mass     !
-   ! adds no stiff mode because its inflow is frozen and its outflow moves at the CAS timescale). ------!
+   ! WATER is the soil-plant water network's (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4): soil water,       !
+   ! sapflow and root uptake move at the network's time-mean rates, and the leaves transpire what the  !
+   ! network gave them (surface_derivs holds it), so every stage sees the same water and the step    !
+   ! ends at the network's state. Only the energy and the canopy air are integrated here. ----------!
    pure subroutine column_derivs(y, frozen, col_config, n, nsl, f, sf_out)
       type(column_state_t),  intent(in)  :: y
       type(column_frozen_t), intent(in)  :: frozen
@@ -331,10 +333,8 @@ contains
       type(surface_tend_t)       :: surf_tend
       type(soil_energy_column_t) :: soil_e
       type(energy_forcing_t)     :: eforc
-      real(wp)                   :: t_ground, fliq1, wmass1, root_uptake(n_soil_layer_max)
-      real(wp)                   :: transp_i, qloss_total, e_drain
-      real(wp)                   :: qface_own(n_soil_layer_max)
-      integer(ik)                :: k, i
+      real(wp)                   :: t_ground, fliq1, wmass1, transp_i, e_drain, water_heat(nsl)
+      integer(ik)                :: i
 
       allocate(f%d_leaf_water_mass(n), f%d_wood_water_mass(n), f%leaf_temp(n))
       allocate(f%d_leaf_surf_water(n), f%d_wood_surf_water(n))
@@ -351,41 +351,30 @@ contains
       f%d_cas_enthalpy = surf_tend%d_cas_enthalpy ; f%d_cas_shv = surf_tend%d_cas_shv ; f%d_cas_co2 = surf_tend%d_cas_co2
       f%g_top = surf_tend%g_top ; f%leaf_temp(1:n) = surf_tend%leaf_temp(1:n)
 
-      !----- 3. Soil-water (Richards) column: frozen top flux + the FROZEN aggregate root-uptake     !
-      !      sink (frozen%roots%uptake, sec 3 -- the Act-1 pre-pass's plant-side request, already rescaled by    !
-      !      the soil's own realized supply), NOT the stage-refreshed surf_tend%coh_transp -- the soil forcing  !
-      !      must be the SAME frozen number the mass ODE below debits from wood_water_mass, or the two    !
-      !      sides of the wood<->soil interface no longer cancel to machine precision. -----------------!
-      do k = 1_ik, nsl
-         root_uptake(k) = frozen%roots%uptake * frozen%roots%root_share(k)
-      end do
-      call soil_water_time_deriv(y%theta, col_config%soil, col_config%soil_water_opts, nsl,                 &
-                                 frozen%hydrology%q_top,                                                    &
-                               root_uptake, f%dtheta_dt, f%drainage_rate, f%uptake_rate, qface_own)
+      !----- 3. Soil water moves at the soil-plant water network's steady rate over the step: the     !
+      !      network is the one authority for soil water on every scheme, as it is on ARK, so RK45's    !
+      !      theta ends the step exactly where the network's did (a steady rate integrates exactly     !
+      !      under any consistent tableau). Its drainage and root uptake are the network's too. ------!
+      f%dtheta_dt(1:nsl) = frozen%hydrology%theta_rate(1:nsl)
+      f%drainage_rate    = frozen%hydrology%drainage
+      f%uptake_rate      = frozen%roots%uptake
 
-      !----- 2. Soil-heat column: g_top from the surface, root heat sink = qloss (the advected enthalpy  !
-      !      of the water the roots extract, at the root-weighted soil temperature, sec 2/6 P2),          !
-      !      distributed by the static root_share profile. The transpired water's liquid enthalpy is      !
-      !      NOT charged to the soil any more (the old coh_qsoil proxy): the leaf pays the full vapour    !
-      !      enthalpy itself in surface_derivs, as ED2 does. qloss_frozen sums to 0 when the P2 wiring    !
-      !      is unset (every caller besides build_column_frozen), so this is a no-op there. --------------!
+      !----- 2. Soil-heat column: g_top from the surface; the water's enthalpy moves with the          !
+      !      network's flows -- its time-mean faces, infiltration at the pond's temperature, root       !
+      !      uptake and the top layer's exfiltration at each layer's start-of-step temperature, and     !
+      !      drainage at the bottom layer's -- the same numbers the ARK stage uses, and the ones the     !
+      !      committed theta actually moved (#78 item 3). The leaf pays the full vapour enthalpy of what !
+      !      it transpires in surface_derivs, as ED2 does. -----------------------------------------!
       soil_e%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      !----- Faces, drainage and the bottom-face enthalpy all ride THIS stage's OWN water tendency     !
-      !      (issue #78 item 3, C2): RK45 integrates its own theta, so the scratch solve's time-mean     !
-      !      faces (w_flux_frozen) and its clip/floor corrections are the WRONG numbers here -- on a      !
-      !      saturated column the two trajectories' interior faces differed by ~2.8 kg/m2 per step and   !
-      !      the borrowed clip cooling happened to cancel it, which is how the two defects hid each other !
-      !      while the soil surface sat at 345 K. The whole-column ledger cannot see a purely VERTICAL    !
-      !      misplacement; only the faces' provenance protects against it. --------------------------!
-      qloss_total = sum(frozen%roots%qloss_frozen(1:n))
+      water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
+      water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_drain = f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
-                                        frozen%roots%root_share, qloss_total, qface_own,                        &
+                                        water_heat, frozen%hydrology%w_flux_frozen,                                &
                                         frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
       !----- Record the faces the ENERGY equation was just given, so the stepper can check them        !
       !      against the theta it actually commits (#189). Taken from eforc -- the assembled forcing   !
-      !      -- rather than from qface_own, so that swapping the argument above to some other array    !
-      !      changes this too and the check keeps its meaning instead of becoming a tautology. --------!
+      !      -- so the check keeps its meaning if the argument above changes. -------------------------!
       f%soil_face(1:nsl) = -eforc%w_flux(1:nsl)      ! eforc negates; store DOWNWARD
       call soil_energy_time_deriv(soil_e, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
                                   f%dedt, bottom_face=f%g_bottom)

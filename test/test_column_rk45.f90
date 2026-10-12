@@ -665,11 +665,13 @@ contains
       !      ponding/drainage/runoff from the frozen scratch solve while integrating its own theta, so !
       !      the water that should have left as runoff has nowhere to go. Bound it so a REGRESSION     !
       !      still trips, and tighten this once C2 lands. ------------------------------------------!
-      !----- C2 removed the overshoot entirely: the residual saturation clip now routes RK45's own     !
-      !      excess to the ponding store with paired enthalpy, so theta commits AT theta_sat rather     !
-      !      than above it (0.4382 -> 0.43000). Assert equality-to-tolerance, not just a bound. -------!
-      call check_true('RK45 saturated: theta commits AT theta_sat, no overshoot (C2)',                                &
-              theta_peak <= 0.43_wp + 1.0e-9_wp, theta_peak)
+      !----- Soil water is the water network's: a saturated layer holds a little more only through its  !
+      !      specific storage, at a positive pressure head that pushes the excess up to the pond and     !
+      !      down to the next layer within the step (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.2 M2). So      !
+      !      theta may commit a hair above theta_sat -- the specific storage times a head of           !
+      !      centimetres -- and never by the 0.0236 the unbooked overshoot once reached. -------------!
+      call check_true('RK45 saturated: theta above theta_sat only through specific storage (< 1e-4)',                &
+              theta_peak <= 0.43_wp + 1.0e-4_wp, theta_peak)
       !----- ISSUE #78 ITEM 2, bounded rather than merely inspected. RK45's stage-1 RHS reads the      !
       !      previous SUB-step's committed theta, which C1 deliberately stopped clamping, so this is    !
       !      the one place a constitutive kernel sees theta outside [theta_res, theta_sat]. It is       !

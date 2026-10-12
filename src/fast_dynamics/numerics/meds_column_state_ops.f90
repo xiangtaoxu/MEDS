@@ -556,49 +556,39 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! assemble_soil_energy_forcing -- the soil-heat column's boundary and volumetric forcing from  !
-   ! the surface ground heat flux and the water fluxes that advect enthalpy through it. The ONE    !
-   ! assembler for the ARK stage (meds_fast_ark%column_be_stage, faces and drainage from the frozen !
-   ! scratch hydrology, plus the scratch solve's clip/floor corrections) and the whole-column RHS   !
-   ! (meds_fast_time_derivs%column_derivs, faces and drainage from the stage's OWN water tendency).  !
-   ! Which water trajectory the faces come from is the caller's decision -- borrowing another        !
-   ! solve's faces while committing your own theta is the defect class the 2026-07 RK45 soil-surface !
-   ! blow-up belonged to -- so this routine only lays the numbers out with one sign convention:      !
+   ! the surface ground heat flux and the water that moves through it. The ONE assembler for the  !
+   ! ARK stage (meds_fast_be_stage%column_be_stage) and the whole-column RHS                       !
+   ! (meds_fast_time_derivs%column_derivs); both take every water flow from the soil-plant water  !
+   ! network's step (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.4), so the energy advects the water the   !
+   ! committed theta actually moved. One sign convention:                                          !
    !                                                                                                  !
-   !   * face_flux(k) [m/s] is the hydrology's DOWN-positive water flux at layer k's face; the energy !
-   !     kernel wants UP-positive, hence the sign flip;                                               !
-   !   * root_heat_sink(k) [W/m2] is the enthalpy the roots extract (qloss_total by root_share), plus  !
-   !     the optional per-layer corrections `sink_add - sink_sub` (ARK: the scratch clip valued at    !
-   !     each layer's state^n temperature ADDS, the theta_res floor SUBTRACTS), plus the drainage      !
-   !     enthalpy e_drain leaving through the bottom layer;                                           !
+   !   * face_flux(k) [m/s] is the network's DOWN-positive time-mean flow at layer k's lower face;   !
+   !     the energy kernel wants UP-positive, hence the sign flip;                                    !
+   !   * water_heat_out(k) [W/m2] is the enthalpy leaving layer k with water that leaves it other     !
+   !     than across a face -- root uptake at the layer's temperature, and in the top layer the       !
+   !     water it pushes up into the pond -- plus, in the bottom layer, the drainage enthalpy e_drain; !
    !   * the TOP face carries infiltration at the pond temperature t_infil as a kernel term with the   !
    !     same upwind rule as the interior faces; the BOTTOM face is 0 here because the drainage        !
-   !     enthalpy is charged through root_heat_sink(nsl) instead (the ledger's convention). There is   !
-   !     deliberately NO runoff term: runoff leaves the POND, not soil layer 1.                        !
+   !     enthalpy is charged through the bottom layer's sink instead (the ledger's convention). There  !
+   !     is deliberately NO runoff term: runoff leaves the POND, not soil layer 1.                     !
    !---------------------------------------------------------------------------------------!
-   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, geothermal, theta, root_share,       &
-                                                qloss_total, face_flux, infiltration, t_infil, e_drain, &
-                                                sink_add, sink_sub)
+   pure subroutine assemble_soil_energy_forcing(eforc, nsl, g_top, geothermal, theta, water_heat_out,      &
+                                                face_flux, infiltration, t_infil, e_drain)
       type(energy_forcing_t), intent(out) :: eforc
       integer(ik),            intent(in)  :: nsl
       real(wp),               intent(in)  :: g_top          !< [W/m2]  net ground heat flux into the soil top
       real(wp),               intent(in)  :: geothermal     !< [W/m2]  bottom boundary flux
       real(wp),               intent(in)  :: theta(:)       !< [m3/m3] soil moisture (thermal properties)
-      real(wp),               intent(in)  :: root_share(:)  !< [-]     static root-uptake share per layer
-      real(wp),               intent(in)  :: qloss_total    !< [W/m2]  enthalpy advected out with root uptake
+      real(wp),               intent(in)  :: water_heat_out(:) !< [W/m2] enthalpy leaving each layer with water
       real(wp),               intent(in)  :: face_flux(:)   !< [m/s]   DOWN-positive water flux at layer faces
       real(wp),               intent(in)  :: infiltration   !< [kg/m2/s] top-face infiltration (pond -> soil)
       real(wp),               intent(in)  :: t_infil        !< [K]     temperature of the infiltrating water
       real(wp),               intent(in)  :: e_drain        !< [W/m2]  enthalpy leaving with bottom drainage
-      real(wp), optional,     intent(in)  :: sink_add(:), sink_sub(:)   !< [W/m2] per-layer sink corrections
       integer(ik) :: k
       eforc%g_top = g_top ; eforc%geothermal = geothermal
       do k = 1_ik, nsl
          eforc%soil_water(k)     = theta(k)
-         if (present(sink_add)) then
-            eforc%root_heat_sink(k) = qloss_total * root_share(k) + sink_add(k) - sink_sub(k)
-         else
-            eforc%root_heat_sink(k) = qloss_total * root_share(k)
-         end if
+         eforc%root_heat_sink(k) = water_heat_out(k)
          eforc%w_flux(k)         = -face_flux(k)
       end do
       eforc%w_flux_top  = -infiltration / rho_h2o

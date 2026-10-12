@@ -78,7 +78,7 @@ contains
       type(energy_forcing_t)     :: eforc
       type(energy_flux_t)        :: eflux
       real(wp)    :: t_ground, fliq1, wmass1, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, g_atm_co2
-      real(wp)    :: enth1, shv1, e_infil, e_drain, e_clip, e_floor, t_cas1, qloss_total
+      real(wp)    :: enth1, shv1, e_infil, e_drain, t_cas1, water_heat(nsl)
       real(wp)    :: co21, enth_unused, shv_unused
       integer(ik) :: k, np, nfeval
       logical     :: ok
@@ -133,43 +133,32 @@ contains
 
       !----- soil-heat column: implicit BE-Thomas (soil_energy_step_implicit). ---------------------------!
       se%soil_energy(1:nsl) = y%soil_energy(1:nsl)
-      !----- Root heat sink = qloss_total (uptake's advected enthalpy, sec 2/6, P2), the SAME sink     !
-      !      column_derivs uses (meds_fast_time_derivs.f90), distributed by the static root_share       !
-      !      profile: the soil pays once for the water the roots extract, the leaf/wood side gains it   !
-      !      via qwflux_wl/q_wood_net, and the leaf pays the full vapour enthalpy of what it transpires. !
-      !      (The old coh_qsoil proxy charged the soil a second time for that vapour's liquid part;      !
-      !      2026-09 review, item 1A #10.) qloss_total sums to 0 when the P2 wiring is unset.            !
-      !                                                                                                 !
-      !      The ARK commits the SCRATCH hydrology's theta verbatim, so its faces (w_flux_frozen), its   !
-      !      drainage and its two UNFACED post-solve mass corrections are the right numbers here: the    !
-      !      clip (water leaving layer k for the pond, valued at the layer's state^n temperature) ADDS   !
-      !      to the sink and the theta_res floor (water created in layer k) SUBTRACTS. Both are 0 unless !
-      !      the hydrology actually corrected that layer. --------------------------------------------!
-      qloss_total = sum(frozen%roots%qloss_frozen(1:n))
+      !----- The water the soil-plant network moved over the step carries its enthalpy: across the      !
+      !      faces at the network's time-mean flows, in from the pond at the pond's temperature, out with !
+      !      root uptake and the top layer's exfiltration at each layer's start-of-step temperature (the  !
+      !      numbers the wood and the pond were credited), and out of the bottom with drainage. The       !
+      !      leaf pays the full vapour enthalpy of what it transpires (surface_derivs). The stages move    !
+      !      theta at the network's steady rate (below), so the water the faces carry and the water the   !
+      !      layers hold stay in step. --------------------------------------------------------------!
+      water_heat(1:nsl) = frozen%roots%root_heat(1:nsl)
+      water_heat(1)     = water_heat(1) + frozen%hydrology%exfil_enth
       e_infil = frozen%hydrology%infiltration * internal_energy_liquid(frozen%hydrology%t_infil)
       e_drain = frozen%hydrology%drainage     * internal_energy_liquid(frozen%hydrology%t_bot)
-      e_clip  = sum(frozen%hydrology%clip_enth(1:nsl))
-      e_floor = sum(frozen%hydrology%floor_enth(1:nsl))
       call assemble_soil_energy_forcing(eforc, nsl, surf_tend%g_top, frozen%hydrology%geothermal, y%theta,          &
-                                        frozen%roots%root_share, qloss_total, frozen%hydrology%w_flux_frozen,             &
-                                        frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain,                     &
-                                        sink_add=frozen%hydrology%clip_enth, sink_sub=frozen%hydrology%floor_enth)
+                                        water_heat, frozen%hydrology%w_flux_frozen,                                &
+                                        frozen%hydrology%infiltration, frozen%hydrology%t_infil, e_drain)
       call soil_energy_step_implicit(se, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, dt, eflux)
       y_out%soil_energy(1:nsl) = se%soil_energy(1:nsl)
 
-      !----- soil water is OPERATOR-SPLIT OUT of the ESDIRK stages: the AUTHORITATIVE end-of-step theta is !
-      !      committed once, from the scratch advance_soil_water_column (frozen%hydrology%theta1), in        !
-      !      column_fast_step_ark. Re-solving it here with a relief-free single-BE Richards drifted to        !
-      !      saturation over long wet runs (no ponding/runoff), then hung the next scratch solve; the robust  !
-      !      ponding/runoff/free-drain solve is the SOLE soil-water authority (the ED2 "single soil-water     !
-      !      authority" principle).                                                                          !
+      !----- Soil water is the water network's: the end-of-step theta is committed once, from the        !
+      !      network (frozen%hydrology%theta1), in column_fast_step_ark -- one authority for soil water.   !
       !                                                                                                      !
-      !      The stages move theta at that solve's steady rate rather than holding it at theta^n. The energy  !
-      !      step above carries the enthalpy of the water the faces move, at the same steady rates; with the !
-      !      water held back, the next stage read that enthalpy as heat in a dry layer: during heavy rain the !
-      !      top layer read tens of kelvin too warm late in a step (up to ~50 K at BCI, 2017), and the next   !
-      !      stage's ground skin saw it. A steady rate is integrated exactly by both the step and its error  !
-      !      estimate, so theta adds nothing to the error, and the step ends at theta1.                       !
+      !      The stages move theta at the network's steady rate rather than holding it at theta^n. The       !
+      !      energy step above carries the enthalpy of the water the faces move, at the same steady rates;   !
+      !      with the water held back, the next stage read that enthalpy as heat in a dry layer: during heavy !
+      !      rain the top layer read tens of kelvin too warm late in a step (up to ~50 K at BCI, 2017), and  !
+      !      the next stage's ground skin saw it. A steady rate is integrated exactly by both the step and   !
+      !      its error estimate, so theta adds nothing to the error, and the step ends at theta1.                       !
       y_out%theta(1:nsl) = y%theta(1:nsl) + dt * frozen%hydrology%theta_rate(1:nsl)
 
       !----- pond PASSED THROUGH. y_out is intent(out), so without this it would default-initialise !
@@ -193,8 +182,8 @@ contains
             !----- The bottom face is the flux the soil solve committed (#290): zero on the adiabatic    !
             !      base, the conduction to deep_temp under the Dirichlet anchor. It crosses the boundary  !
             !      of both books, the soil's and the whole column's. -------------------------------------!
-            bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil + e_floor
-            bf%soil_enth_out= qloss_total + e_drain + e_clip
+            bf%soil_enth_in = surf_tend%g_top - eflux%bottom_heat + e_infil
+            bf%soil_enth_out= sum(water_heat(1:nsl)) + e_drain
             !----- soil water is out of the ARK: its storage delta + q_top/drainage/uptake fluxes are     !
             !      re-sourced once/step from the frozen hflux in column_fast_step_ark, so the per-stage    !
             !      bf carries ONLY the CAS-vapour exchange (drainage/runoff/rainfall are frozen fast-step).  !
@@ -203,10 +192,11 @@ contains
             !      enthalpy OUTPUT (the CAS-side loss is already in src_vap/src_enth, so cas_water/energy   !
             !      close automatically). -----------------------------------------------------------------!
             !----- ground_rad is the snowfac-BLENDED radiative input (= abs_sw+abs_lw when bare). ---!
-            !----- #78 item 4: e_infil (pond -> soil) and e_clip (soil -> pond) are now transfers    !
-            !      between two TRACKED stores, so they telescope and must NOT be boundary terms.     !
-            !      The boundary rainfall input and the runoff output are added once at the outer level. !
-            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat + e_floor
+            !----- #78 item 4: e_infil (pond -> soil) and the exfiltration (soil -> pond) are transfers   !
+            !      between two TRACKED stores, so they telescope and must NOT be boundary terms. The root  !
+            !      uptake's enthalpy moves soil -> tissue, also tracked. The boundary rainfall input and   !
+            !      the runoff output are added once at the outer level. -------------------------------!
+            bf%whole_enth_in= surf_tend%coh_rnet + frozen%snow%ground_rad - eflux%bottom_heat
             !----- row 1b: surf_tend%cond's enthalpy is NO LONGER a boundary loss -- the condensate is        !
             !      deposited into soil layer 1 by the caller, carrying this same u_liq(t_cas1). ------!
             bf%whole_enth_out= g_atm_heat*(enth1 - frozen%cas%enthalpy_atm) + e_drain

@@ -181,17 +181,16 @@ contains
          net%tau_core(1_ik + k) = soil_unknown_from_theta(net%soil(k), theta(k))
          net%w_core(1_ik + k)   = rho_h2o * params%dz(k) * theta(k)
       end do
-      !----- The pond: its head if it holds water, else the head at which it would neither give   !
-      !      nor take water from the top layer. -------------------------------------------------!
+      !----- The pond starts at its water's head, but no higher than the head at which it would     !
+      !      neither give nor take water from the top layer. Over dry soil the pond face drains tens of !
+      !      millimetres an hour, so a pond holding a trace of water empties within the step: starting !
+      !      it at that trace's head would put the step's first Newton iterate at a flow thousands of   !
+      !      times what the pond holds, far outside the linear model's reach. ----------------------!
       net%w_core(WATER_NODE_POND) = w_pond
       net%e_pond = e_pond
-      if (w_pond > 0.0_wp) then
-         net%tau_core(WATER_NODE_POND) = pond_unknown_from_water(w_pond)
-      else
-         call soil_store(net%soil(1), net%tau_core(2), psi, dpsi, w, dw, kk, dk)
-         head1 = psi / grav_head
-         net%tau_core(WATER_NODE_POND) = min(0.0_wp, head1 + net%z_node(1))
-      end if
+      call soil_store(net%soil(1), net%tau_core(2), psi, dpsi, w, dw, kk, dk)
+      head1 = psi / grav_head
+      net%tau_core(WATER_NODE_POND) = min(pond_unknown_from_water(w_pond), head1 + net%z_node(1))
       do i = 1_ik, net%n
          associate (hp => hyd%pft(net%pft(i)))
             net%tau_group(WATER_WOOD, i) = tissue_unknown_from_rwc(                                          &
@@ -261,7 +260,8 @@ contains
          call commit_substep(net, h, tau_c, tau_g, ev1)
          t = t + h
          net%nsub = net%nsub + 1_ik
-         if (err <= 1.0_wp) h = h * min(GROW_MAX, max(SHRINK_MIN, SAFETY * max(err, 1.0e-10_wp) ** (-0.5_wp)))
+         if (err <= 1.0_wp)                                                                                   &
+            h = h * min(GROW_MAX, max(SHRINK_MIN, SAFETY * max(err, 1.0e-10_wp) ** (-0.5_wp))) ! clamp-ok: controller floor
       end do
       net%psi_core  = ev1%psi_c
       net%psi_group = ev1%psi_g
@@ -286,7 +286,7 @@ contains
       integer(ik) :: c, i, j, l
       call eval_allocate(ev, net)
       do c = 1_ik, net%nc
-         v_c(c) = 1.0e-2_wp * (1.0_wp + 0.1_wp * real(c, wp)) * max(abs(net%tau_core(c)), 1.0e-3_wp)
+         v_c(c) = 1.0e-2_wp * (1.0_wp + 0.1_wp * real(c, wp)) * max(abs(net%tau_core(c)), 1.0e-3_wp) ! clamp-ok: test step scale
       end do
       do i = 1_ik, net%n
          do j = 1_ik, GROUP_SIZE
@@ -334,7 +334,7 @@ contains
       integer(ik),                intent(out)   :: iters
       real(wp) :: r_c(net%nc), r_g(GROUP_SIZE, net%n), d_c(net%nc), d_g(GROUP_SIZE, net%n)
       real(wp) :: try_c(net%nc), try_g(GROUP_SIZE, net%n), r2_c(net%nc), r2_g(GROUP_SIZE, net%n)
-      real(wp) :: merit, merit_try, lam, lam_max
+      real(wp) :: merit, merit_try, worst, lam, lam_max
       integer(ik) :: it, ib
       logical  :: ok
 
@@ -343,9 +343,10 @@ contains
       call residual(net, h, ev0, r_c, r_g)
       ev1 = ev0
       merit = residual_merit(net, h, r_c, r_g, scale_c, scale_g)
+      worst = residual_worst(net, h, r_c, r_g, scale_c, scale_g)
       if (merit /= merit) return
       do it = 1_ik, NEWTON_MAX
-         if (merit <= 1.0_wp) exit
+         if (worst <= 1.0_wp) exit
          iters = it
          call add_storage_to_jacobian(net, h, ev1)
          call grouped_factor(net%sys, ok)
@@ -363,11 +364,12 @@ contains
          end do
          if (merit_try /= merit_try) return
          tau_c = try_c ; tau_g = try_g ; r_c = r2_c ; r_g = r2_g ; merit = merit_try
+         worst = residual_worst(net, h, r_c, r_g, scale_c, scale_g)
       end do
       !----- Factor the Newton matrix at the solution: the error estimate solves with it. -------!
       call add_storage_to_jacobian(net, h, ev1)
       call grouped_factor(net%sys, ok)
-      converged = ok .and. merit <= 1.0_wp
+      converged = ok .and. worst <= 1.0_wp
    end subroutine newton_substep
 
    !----- The water-balance residual of every store [kg/m2/s]: (W(tau) - W_start)/h - inflow.  !
@@ -382,16 +384,26 @@ contains
       where (net%core_fixed) r_c = 0.0_wp
    end subroutine residual
 
-   !----- Sum of squares of each store's imbalance over the sub-step against NEWTON_TOL of its      !
-   !      absolute water tolerance: below one, the balance is solved. ----------------------------!
-   pure real(wp) function residual_merit(net, h, r_c, r_g, scale_c, scale_g) result(m)
+   !----- Each store's imbalance over the sub-step against NEWTON_TOL of its absolute water        !
+   !      tolerance. residual_worst, below one, means the balance is solved; residual_merit, the sum of !
+   !      squares, is what the line search asks to fall -- a Newton step always points down it,      !
+   !      which is not true of the worst store alone. ---------------------------------------------!
+   pure real(wp) function residual_worst(net, h, r_c, r_g, scale_c, scale_g) result(m)
       type(water_network_t), intent(in) :: net
       real(wp),              intent(in) :: h, r_c(:), r_g(:,:), scale_c(:), scale_g(:,:)
       real(wp) :: tol
       tol = NEWTON_TOL * net%atol
       m = max(maxval(abs(r_c) * h / (tol * scale_c)), 0.0_wp)
       if (net%n > 0_ik) m = max(m, maxval(abs(r_g) * h / (tol * scale_g)))
-      m = m * m
+   end function residual_worst
+
+   pure real(wp) function residual_merit(net, h, r_c, r_g, scale_c, scale_g) result(m)
+      type(water_network_t), intent(in) :: net
+      real(wp),              intent(in) :: h, r_c(:), r_g(:,:), scale_c(:), scale_g(:,:)
+      real(wp) :: tol
+      tol = NEWTON_TOL * net%atol
+      m = sum((r_c * h / (tol * scale_c)) ** 2)
+      if (net%n > 0_ik) m = m + sum((r_g * h / (tol * scale_g)) ** 2)
    end function residual_merit
 
    !----- The largest share of a Newton step every store can take: none is driven more than        !
@@ -412,11 +424,13 @@ contains
          end do
       end do
    contains
+      !----- The cap on the change applies below full saturation (an RWC or Se of one), where the     !
+      !      potential steepens towards empty; above it the curve is gentle and Newton moves freely. ---!
       pure subroutine bound(tau, d, lam)
          real(wp), intent(in)    :: tau, d
          real(wp), intent(inout) :: lam
          if (d < 0.0_wp) lam = min(lam, STEP_MAX_SHARE * tau / (-d))
-         if (abs(d) > STEP_MAX_DRY) lam = min(lam, STEP_MAX_DRY / abs(d))
+         if (tau < 1.0_wp .and. abs(d) > STEP_MAX_DRY) lam = min(lam, STEP_MAX_DRY / abs(d))
       end subroutine bound
    end function step_limit
 
@@ -609,13 +623,28 @@ contains
 
    !----- Accept a sub-step: advance each store's water by the flows themselves, so water is        !
    !      conserved to round-off; spill the pond above its capacity; carry the pond's enthalpy; and  !
-   !      add what each path moved to the step's amounts. ----------------------------------------!
+   !      add what each path moved to the step's amounts.                                             !
+   !                                                                                                   !
+   !      Newton balances every store only to a tolerance, and the flows carry that slack into the     !
+   !      water they move. For a store hanging off the network by one path -- a cohort's leaves on     !
+   !      its xylem, the pond on its face to the top layer -- the slack can be many times what the     !
+   !      store holds (a near-leafless cohort's leaves hold 1e-26 kg/m2, its plant's tolerance is     !
+   !      1e-9). So such a store takes its water from its own curve, and its one path carries the     !
+   !      flow that closes its balance exactly; the store across that path (the wood, the top layer)   !
+   !      absorbs the slack, which is small against what it holds. Every kilogram is still counted     !
+   !      once. -----------------------------------------------------------------------------------!
    subroutine commit_substep(net, h, tau_c, tau_g, ev)
       type(water_network_t), intent(inout) :: net
       real(wp),              intent(in)    :: h, tau_c(:), tau_g(:,:)
       type(net_eval_t),      intent(in)    :: ev
-      real(wp) :: w_mix, e_mix, t_mix, u_mix, amount, spill, t_pond
-      integer(ik) :: c
+      real(wp) :: w_mix, e_mix, t_mix, u_mix, amount, spill, t_pond, q_pond, sap(net%n)
+      integer(ik) :: c, i
+
+      !----- The flows that close the pond's and each leaf's balance at their curves' water. -------!
+      q_pond = (net%w_core(WATER_NODE_POND) + h * net%rain - ev%w_c(WATER_NODE_POND)) / h
+      do i = 1_ik, net%n
+         sap(i) = (ev%w_g(WATER_LEAF, i) - net%w_group(WATER_LEAF, i)) / h + ev%e_leaf(i)
+      end do
 
       !----- The pond's enthalpy, in the order its water moves: the rain joins it first, so what    !
       !      infiltrates leaves at the mixture's temperature; water the top layer pushes up arrives   !
@@ -626,20 +655,27 @@ contains
       t_mix = net%t_rain
       if (w_mix > POND_TINY) t_mix = temp_of_liquid_enthalpy(e_mix / w_mix)
       u_mix = internal_energy_liquid(t_mix)
-      if (ev%q_pond >= 0.0_wp) then
-         amount = h * ev%q_pond
+      if (q_pond >= 0.0_wp) then
+         amount = h * q_pond
          net%infil = net%infil + amount ; net%infil_enth = net%infil_enth + amount * u_mix
          net%e_pond = e_mix - amount * u_mix
       else
-         amount = -h * ev%q_pond
+         amount = -h * q_pond
          net%exfil = net%exfil + amount
          net%exfil_enth = net%exfil_enth + amount * internal_energy_liquid(net%t_soil(1))
          net%e_pond = e_mix + amount * internal_energy_liquid(net%t_soil(1))
       end if
 
-      !----- Water, by the flows. --------------------------------------------------------!
+      !----- Water, by the flows; the pond and the leaves at their curves, the top layer and the woods !
+      !      across the paths that closed them. -----------------------------------------------!
       net%w_core  = net%w_core  + h * ev%f_c
       net%w_group = net%w_group + h * ev%f_g
+      net%w_core(WATER_NODE_POND) = ev%w_c(WATER_NODE_POND)
+      net%w_core(2) = net%w_core(2) + h * (q_pond - ev%q_pond)
+      do i = 1_ik, net%n
+         net%w_group(WATER_LEAF, i) = ev%w_g(WATER_LEAF, i)
+         net%w_group(WATER_WOOD, i) = net%w_group(WATER_WOOD, i) - h * (sap(i) - ev%s_xyl(i))
+      end do
       net%tau_core = tau_c ; net%tau_group = tau_g
       do c = 1_ik, net%nc
          if (net%core_fixed(c)) net%w_core(c) = ev%w_c(c)
@@ -664,7 +700,7 @@ contains
       net%drain = net%drain + h * ev%q_drain
       net%evap  = net%evap  + h * ev%e_soil
       net%uptake  = net%uptake  + h * ev%u_root
-      net%sapflow = net%sapflow + h * ev%s_xyl
+      net%sapflow = net%sapflow + h * sap
       net%transp  = net%transp  + h * ev%e_leaf
    end subroutine commit_substep
 
