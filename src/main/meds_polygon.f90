@@ -18,7 +18,7 @@ module meds_polygon
    use meds_therm_lib,              only : temp_to_internal_energy, internal_energy_to_temp
    use meds_config,                 only : meds_config_t
    use meds_time,                   only : meds_time_t, time_to_string
-   use meds_site_state_types,       only : site_t, reset_step_diagnostics
+   use meds_site_state_types,       only : site_t, reset_step_diagnostics, cohort_bad_field, cohort_field_name
    use meds_stepper,                only : advance_one_step, advance_boundary
    use meds_slow_dynamics,          only : refresh_canopy_depth
    use meds_fast_dynamics,          only : fast_context_t, build_fast_context, init_fast_reservoirs
@@ -50,7 +50,7 @@ module meds_polygon
 
    public :: meds_polygon_t, polygon_prepare, polygon_step, polygon_report
    public :: open_output_files, attach_output, ensure_output_dir
-   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
+   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
    public :: N_PATCH_INIT
 
    !----- Step and run status codes. OK/DONE are normal; the ERR codes are failures, returned as a  !
@@ -59,7 +59,7 @@ module meds_polygon
    integer(ik), parameter :: DRIVER_FINISHED= 1_ik   !< the calendar already reached end_time; nothing done
    integer(ik), parameter :: DRIVER_ERR_NAN = 2_ik   !< NaN in the state at a year roll-over
    integer(ik), parameter :: DRIVER_ERR_AREA= 3_ik   !< patch areas no longer sum to 1 (finalize only)
-   integer(ik), parameter :: DRIVER_ERR_SOILC = 4_ik !< a CENTURY pool is physically impossible
+   integer(ik), parameter :: DRIVER_ERR_BOUNDS = 4_ik !< a cohort or soil-carbon state is outside its bounds
 
    integer(ik), parameter :: N_PATCH_INIT = 6_ik     !< bare-ground patches when no census/restart
 
@@ -256,34 +256,52 @@ contains
          status = DRIVER_ERR_NAN ; poly%status = status ; return
       end if
 
-      !----- SOIL-CARBON PLAUSIBILITY, checked every step and NOT gated on the ledger. -----------!
+      !----- BOUNDS GUARD, checked every step and NOT gated on the ledger: each cohort's state     !
+      !      (cohort_bad_field: density, carbon pools, SLA, water) and each CENTURY soil-carbon     !
+      !      pool. An operator keeps these in bounds by construction, so a violation is a bug;     !
+      !      stopping on the step it happens, naming the field, is what makes it findable (#389). !
       !                                                                                          !
-      !      The ledger checks the same predicate at every phase boundary and can say WHICH        !
+      !      The ledger checks the soil-carbon predicate at every phase boundary and can say WHICH  !
       !      operator broke it, which is far more useful -- but the ledger is a diagnostic with an  !
       !      off switch ([run].slow_ledger_on), and a safety assertion that a diagnostic flag can  !
       !      disable is a trap. So the guard itself lives here, unconditional, and the ledger's     !
       !      copy is the attribution.                                                              !
-      !      Once per slow step over ~12 patches x 7 pools; the cost does not register.            !
-      if (cfg%soil_carbon_on) then
-         block
-            integer(ik) :: ipp, kk
-            do ipp = 1_ik, poly%site%patch%n
-               kk = soil_carbon_bad_pool(poly%site%patch%soil_carbon(ipp))
+      !      Once per slow step over a few hundred cohorts x 10 fields; the cost does not register. !
+      block
+         integer(ik) :: ii, kk
+         do ii = 1_ik, poly%site%cohort%n
+            kk = cohort_bad_field(poly%site%cohort, ii)
+            if (kk /= 0_ik) then
+               write(*,'(a)') ' ERROR: a cohort''s state is outside its physical bounds.'
+               if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
+               write(*,'(3a,i0,a,i0,a,i0)') '        field ', trim(cohort_field_name(kk)),          &
+                     ', cohort id ', poly%site%cohort%global_id(ii), ' (pft ',                    &
+                     poly%site%cohort%pft(ii), ') in patch ', poly%site%cohort%owner_patch(ii)
+               write(*,'(2a)')  '        date ', time_to_string(now)
+               write(*,'(a)') '        Density, carbon and water are amounts: never negative, never'
+               write(*,'(a)') '        infinite. Every operator keeps them so by construction.'
+               status = DRIVER_ERR_BOUNDS ; poly%status = status
+               return
+            end if
+         end do
+         if (cfg%soil_carbon_on) then
+            do ii = 1_ik, poly%site%patch%n
+               kk = soil_carbon_bad_pool(poly%site%patch%soil_carbon(ii))
                if (kk /= 0_ik) then
                   write(*,'(a)') ' ERROR: a CENTURY soil-carbon pool is physically impossible.'
                   if (len_trim(poly%label) > 0) write(*,'(2a)') '        ', trim(poly%label)
                   write(*,'(3a,i0,a,i0)') '        pool ', trim(soil_carbon_pool_name(kk)),        &
-                        ', patch ', ipp, ' of ', poly%site%patch%n
+                        ', patch ', ii, ' of ', poly%site%patch%n
                   write(*,'(2a)')  '        date ', time_to_string(now)
                   write(*,'(a)') '        A carbon pool is a mass: it cannot be negative, and the'
                   write(*,'(a)') '        ceiling is ~500x the richest real soil. Conservation can'
                   write(*,'(a)') '        hold perfectly while this is true -- see the slow ledger.'
-                  status = DRIVER_ERR_SOILC ; poly%status = status
+                  status = DRIVER_ERR_BOUNDS ; poly%status = status
                   return
                end if
             end do
-         end block
-      end if
+         end if
+      end block
       poly%status = status
 
    contains

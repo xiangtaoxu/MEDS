@@ -20,6 +20,7 @@
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num
+   use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
@@ -174,6 +175,7 @@ contains
       real(wp),        intent(in)    :: conservation_tol
       real(wp) :: nr, nd, ntot, agb_tot, agb_new, wr, wd, wtot
       real(wp) :: lc_tot, fc_tot, wc_tot, nc_tot                !< pre-merge pool totals [kgC/m2]
+      real(wp) :: cr, cd                                        !< the two cohorts' leaf carbon [kgC/m2]
 
       associate (cohort => site%cohort)
          nr      = cohort%nplant(recc)
@@ -186,11 +188,16 @@ contains
          !      referenced film. Enumerating it here is how the film-water convention got it wrong    !
          !      once already (PR #119). The dynamic leaf traits stay here: they are slow-loop state,   !
          !      not fast, and they must be set BEFORE the survivor's geometry is re-derived because    !
-         !      sla maps its leaf_carbon <-> leaf_area. --------------------------------------------!
+         !      sla maps its leaf_carbon <-> leaf_area. Each trait blends on the quantity it is per: !
+         !      vcmax25, rd25 and llspan are per leaf area, so leaf area weights them; sla is leaf    !
+         !      area per leaf CARBON, so leaf carbon weights it and the fused cohort shows the leaf    !
+         !      area its two parents showed (#389). --------------------------------------------------!
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
+         cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
+         if (cr + cd > tiny_num) &
+            cohort%sla(recc)     = (cr * cohort%sla(recc)     + cd * cohort%sla(donc))     / (cr + cd)
          if (wtot > tiny_num) then
-            cohort%sla(recc)     = (wr * cohort%sla(recc)     + wd * cohort%sla(donc))     / wtot
             cohort%vcmax25(recc) = (wr * cohort%vcmax25(recc) + wd * cohort%vcmax25(donc)) / wtot
             cohort%rd25(recc)    = (wr * cohort%rd25(recc)    + wd * cohort%rd25(donc))    / wtot
             cohort%llspan(recc)  = (wr * cohort%llspan(recc)  + wd * cohort%llspan(donc))  / wtot
@@ -222,16 +229,19 @@ contains
          cohort%nonstructural_carbon(recc) = nc_tot / ntot
          call set_cohort_size_from_carbon(site%cohort, recc)   ! dbh=wood_to_dbh(wood_carbon); pools kept
          !----- Carbon-pool conservation guard (per pool, density). ------------------------!
-         if (abs(ntot*cohort%leaf_carbon(recc)          - lc_tot) > conservation_tol*max(lc_tot,tiny_num) .or. &
-             abs(ntot*cohort%fineroot_carbon(recc)      - fc_tot) > conservation_tol*max(fc_tot,tiny_num) .or. &
-             abs(ntot*cohort%wood_carbon(recc)          - wc_tot) > conservation_tol*max(wc_tot,tiny_num) .or. &
-             abs(ntot*cohort%nonstructural_carbon(recc) - nc_tot) > conservation_tol*max(nc_tot,tiny_num))     &
+         !      The pools are non-negative, so each density total is also its magnitude.        !
+         if (.not. (conserved(lc_tot, ntot*cohort%leaf_carbon(recc),          lc_tot, conservation_tol) .and. &
+                    conserved(fc_tot, ntot*cohort%fineroot_carbon(recc),      fc_tot, conservation_tol) .and. &
+                    conserved(wc_tot, ntot*cohort%wood_carbon(recc),          wc_tot, conservation_tol) .and. &
+                    conserved(nc_tot, ntot*cohort%nonstructural_carbon(recc), nc_tot, conservation_tol)))    &
             error stop 'fuse_2_cohorts: carbon-pool conservation violated'
-         !----- AGB-density conservation guard (agb = p_aboveground_frac*wood_carbon, and          !
-         !      nplant*wood_carbon was conserved). ------------------------------------------------!
+         !----- AGB- and leaf-area-density conservation guards (agb = p_aboveground_frac*wood_carbon  !
+         !      and leaf_area = sla*leaf_carbon, with nplant*wood_carbon, nplant*leaf_carbon and the  !
+         !      leaf-carbon-weighted sla conserved above). -------------------------------------------!
          agb_new = cohort%nplant(recc) * cohort%agb(recc)
-         if (abs(agb_new - agb_tot) > conservation_tol * max(agb_tot, tiny_num))             &
-            error stop 'fuse_2_cohorts: AGB conservation violated'
+         if (.not. (conserved(agb_tot, agb_new, agb_tot, conservation_tol) .and.               &
+                    conserved(wtot, ntot*cohort%leaf_area(recc), wtot, conservation_tol)))      &
+            error stop 'fuse_2_cohorts: AGB or leaf-area conservation violated'
       end associate
    end subroutine fuse_2_cohorts
 
@@ -242,7 +252,7 @@ contains
       type(site_t),     intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       integer(ik) :: iter, i, n0, m, nsplit
-      real(wp)    :: eps, agb_before, agb_after, wc0, film_before, film_after
+      real(wp)    :: eps, agb_before, agb_after, wc0, film_before, film_after, film_magnitude
 
       if (.not. cfg%enable_cohort_fission) return
       eps = cfg%split_eps
@@ -256,6 +266,7 @@ contains
          if (nsplit == 0_ik) exit
          agb_before = sum(site%cohort%nplant(1:n0) * site%cohort%agb(1:n0))
          film_before = sum(site%cohort%leaf_surf_water(1:n0) + site%cohort%wood_surf_water(1:n0))
+         film_magnitude = sum(abs(site%cohort%leaf_surf_water(1:n0)) + abs(site%cohort%wood_surf_water(1:n0)))
          call cohort_ensure_capacity(site%cohort, n0 + nsplit)
          m = n0
          associate (cohort => site%cohort)
@@ -287,9 +298,9 @@ contains
          do i = n0 + 1_ik, m
             call assign_cohort_id(site, i)
          end do
-         if (abs(agb_after - agb_before) > cfg%conservation_tol * max(agb_before, tiny_num))       &
+         if (.not. conserved(agb_before, agb_after, agb_before, cfg%conservation_tol))             &
             error stop 'split_cohorts: AGB conservation violated'
-         if (abs(film_after - film_before) > 1.0e-12_wp * max(film_before, tiny_num))              &
+         if (.not. conserved(film_before, film_after, film_magnitude, ROUNDOFF_RTOL))               &
             error stop 'split_cohorts: canopy film water not conserved'
          call rebuild_csr(site)
          call sort_cohorts(site)

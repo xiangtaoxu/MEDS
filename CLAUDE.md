@@ -98,6 +98,20 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 - **Tendencies arrive as plain data.** The engine applies; the driver computes. The bundle is
   transient and deliberately not lockstep-reordered — **never read it from the output layer.**
 - **A field's fusion kind is declared once**, not at the call site. Getting it wrong is invisible.
+- **Only prognostic state has tendencies.** A cohort's state is `nplant` and its four carbon pools.
+  Its geometry (dbh, height, basal area, AGB, leaf area, wood caches) has one writer,
+  `set_cohort_size_from_carbon`, called after every operator that moves carbon or SLA; it is never
+  integrated, blended or read back from a file on its own. Integrating leaf area beside leaf carbon
+  drifted it to -1e-20 on a leafless cohort and crashed a run 50 years later (#389).
+- **Bounds hold by construction and are checked every step.** An operator that moves an amount
+  limits the outflow to what is there; a clamp's bound comes from a quantity that cannot go
+  negative. `cohort_bad_field` and `soil_carbon_bad_pool` stop the run on the step a bound breaks,
+  naming the field: a new bounded field goes there.
+- **An intensive quantity blends on the weight that conserves its extensive product**: SLA on leaf
+  carbon, vcmax25 on leaf area, tissue temperature on heat capacity.
+- **A conservation tolerance scales with the terms, not the net.** `conserved(before, after,
+  magnitude, rtol)` with magnitude = sum of |terms|: a net near zero turned a 1e-12 relative
+  tolerance into 1e-42 absolute (#389).
 - **Conservation is asserted, not assumed** — but **a closed budget proves bookkeeping, not
   plausibility.** Several real leaks sat behind ledgers that balanced, because the ledger declared
   the same quantity it consumed. Watch consecutive-step traces.

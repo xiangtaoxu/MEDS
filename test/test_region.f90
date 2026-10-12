@@ -28,7 +28,7 @@ program test_region
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
                                           MISSING_INT
    use meds_driver,                only : meds_run_t, driver_open, driver_step, driver_finalize,  &
-                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_SOILC
+                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_BOUNDS
    use meds_region,                only : meds_region_t, region_open, region_step_month,          &
                                           region_done, region_finalize, region_free
    implicit none
@@ -190,7 +190,7 @@ program test_region
    call check_true('the month before the failure steps', st == DRIVER_OK)
    reg%poly(2)%site%patch%soil_carbon(1)%slow_carbon = -1.0_wp
    call region_step_month(reg, st)
-   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_SOILC)
+   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_BOUNDS)
    call check_true('the failed month is consumed: the region moves on', region_done(reg))
    call region_finalize(reg, st)
    call region_free(reg)

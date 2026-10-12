@@ -34,7 +34,7 @@ module meds_driver
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            polygon_report, open_output_files, attach_output,      &
                                            ensure_output_dir, DRIVER_OK, DRIVER_FINISHED,         &
-                                           DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC,      &
+                                           DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS,      &
                                            N_PATCH_INIT
    use meds_io,                     only : state_write_state, io_read_state
    use meds_output_types,           only : output_files_t, output_buffers_t
@@ -45,7 +45,7 @@ module meds_driver
 
    public :: meds_run_t, driver_open, driver_step, driver_finalize, driver_free, driver_done
    !----- The status codes live with the step (meds_polygon); re-exported for the driver's callers. !
-   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_SOILC
+   public :: DRIVER_OK, DRIVER_FINISHED, DRIVER_ERR_NAN, DRIVER_ERR_AREA, DRIVER_ERR_BOUNDS
 
 
    !----- Everything the calendar loop needs between steps. No state hides in module scope, so two  !

@@ -14,10 +14,12 @@
 program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
-   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order
+   use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order, &
+                                 conserved, ROUNDOFF_RTOL
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  budget_rtol_flux, last_check_closed
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    implicit none
 
    call test_thomas()
@@ -25,6 +27,7 @@ program test_numerics
    call test_step_update()
    call test_budget()
    call test_ascending_order()
+   call test_conserved()
 
    call test_report('test_numerics')
 
@@ -148,5 +151,23 @@ contains
       call ascending_order(shuffled, 1_ik, ord1)
       call check_true('ascending_order: one cohort', ord1(1) == 1_ik, real(ord1(1), wp))
    end subroutine test_ascending_order
+
+   !----- conserved: the tolerance scales with the terms' absolute sum, not the net total (#389). --!
+   subroutine test_conserved()
+      real(wp) :: nan_v
+      !----- The #389 failure: a dry canopy whose film total is a tiny NEGATIVE number, reordered.  !
+      !      Relative to the net total floored at 1e-30 this round-off (3.7e-40) failed.         !
+      call check_true('conserved: round-off of a near-zero mixed-sign total passes',                 &
+                      conserved(-2.8665915636071925e-24_wp, -2.8665915636071928e-24_wp,             &
+                                2.927102e-24_wp, ROUNDOFF_RTOL), 0.0_wp)
+      call check_true('conserved: a real change of 1e-6 of the magnitude fails',                     &
+                      .not. conserved(1.0_wp, 1.0_wp + 1.0e-6_wp, 1.0_wp, ROUNDOFF_RTOL), 0.0_wp)
+      call check_true('conserved: nothing to conserve and nothing changed passes',                   &
+                      conserved(0.0_wp, 0.0_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
+      call check_true('conserved: something from nothing fails',                                     &
+                      .not. conserved(0.0_wp, 1.0e-30_wp, 0.0_wp, ROUNDOFF_RTOL), 0.0_wp)
+      nan_v = ieee_value(nan_v, ieee_quiet_nan)
+      call check_true('conserved: a NaN fails', .not. conserved(1.0_wp, nan_v, 1.0_wp, ROUNDOFF_RTOL), 0.0_wp)
+   end subroutine test_conserved
 
 end program test_numerics

@@ -18,6 +18,7 @@
 module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one, yr_sec
+   use meds_numerics,   only : conserved, ROUNDOFF_RTOL
    use meds_allometry,  only : light_ext
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
@@ -214,16 +215,19 @@ contains
    subroutine fuse_2_patches(site, recp, donp)
       type(site_t), intent(inout) :: site
       integer(ik),     intent(in)    :: recp, donp
-      real(wp)    :: ar, ad, anew, rawgt, dawgt, film_before, film_after
+      real(wp)    :: ar, ad, anew, rawgt, dawgt, film_before, film_after, film_magnitude
       integer(ik) :: i, i0, i1
 
       associate (patch => site%patch, cohort => site%cohort)
          ar = patch%area(recp) ; ad = patch%area(donp) ; anew = ar + ad
          !----- site-total canopy film water [kg per m2 of SITE], for the conservation assert below. -!
          i0 = patch%cohort_offset(recp) ; i1 = i0 + patch%cohort_count(recp) - 1_ik
-         film_before = ar * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
+         film_before    = ar * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
+         film_magnitude = ar * sum(abs(cohort%leaf_surf_water(i0:i1)) + abs(cohort%wood_surf_water(i0:i1)))
          i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
-         film_before = film_before + ad * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
+         film_before    = film_before + ad * sum(cohort%leaf_surf_water(i0:i1) + cohort%wood_surf_water(i0:i1))
+         film_magnitude = film_magnitude                                                         &
+                        + ad * sum(abs(cohort%leaf_surf_water(i0:i1)) + abs(cohort%wood_surf_water(i0:i1)))
          if (anew <= tiny_num) then                     ! degenerate: still hand donor cohorts to recp
             i0 = patch%cohort_offset(donp) ; i1 = i0 + patch%cohort_count(donp) - 1_ik
             do i = i0, i1
@@ -276,7 +280,7 @@ contains
             film_after = film_after + cohort%leaf_surf_water(i) + cohort%wood_surf_water(i)
          end do
          film_after = anew * film_after
-         if (abs(film_after - film_before) > 1.0e-12_wp * max(film_before, tiny_num))               &
+         if (.not. conserved(film_before, film_after, film_magnitude, ROUNDOFF_RTOL))              &
             error stop 'fuse_2_patches: canopy film water not conserved'
          patch%area(recp) = anew
          patch%area(donp) = 0.0_wp

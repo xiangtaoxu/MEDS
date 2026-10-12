@@ -19,10 +19,11 @@ module meds_site_state_types
                                       patch_diag_copy_slot, patch_diag_clear_slot,               &
                                       patch_diag_grow, patch_diag_alloc, patch_diag_free,        &
                                       cohort_diag_reset, patch_diag_reset, polygon_diag_reset
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4, tiny_num, cp_liq
+   use meds_constants,  only : tiny_num, cp_liq
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
+   use meds_allometry,  only : dbh_to_height, size2leaf_carbon, size2wood_carbon, carbon_to_structure, &
                                dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
@@ -35,10 +36,11 @@ module meds_site_state_types
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
-   public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
+   public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
    public :: cohort_tissue_heat_capacity, cohort_tissue_water
+   public :: cohort_bad_field, cohort_field_name
 
    !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity), plus  !
    !      the tissue specific heats. The fast loop reads the latter from `veg_thermal_params_t`,   !
@@ -73,23 +75,24 @@ module meds_site_state_types
    real(wp), parameter :: PHENO_SHED_INIT  = 0.0_wp
 
    !---------------------------------------------------------------------------------------!
-   ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
-   ! `basal_area`, `agb` and `leaf_area` are derived but stored so the hot kernels stay         !
-   ! arithmetic-only. `agb` (per-plant carbon) is the quantity conserved across fusion/        !
-   ! fission; `leaf_area` (per-plant) gives the cohort's LAI contribution (nplant*leaf_area).   !
+   ! All cohorts of the site_t (contiguous SoA). The demographic state is nplant and the four   !
+   ! carbon pools; every slow operator moves only those. The geometry (dbh, height, basal_area, !
+   ! agb, leaf_area and the wood caches) is a function of the pools, stored so the hot kernels  !
+   ! stay arithmetic-only, and written only by set_cohort_size_from_carbon -- after every       !
+   ! operator that moves carbon, never integrated or read back on its own (#389).               !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
       integer(ik) :: n   = 0_ik       !< cohorts in use
       integer(ik) :: cap = 0_ik       !< allocated capacity
-      !----- Prognostic / primary state. --------------------------------------------------!
+      !----- Identity, plant density, and the geometry derived from the carbon pools. --------!
       integer(ik), allocatable :: pft(:)            !< PFT index
       real(wp),    allocatable :: nplant(:)         !< [plant/m2] PRIMARY demographic state
-      real(wp),    allocatable :: dbh(:)            !< [cm]       prognostic size
-      real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), cached
-      real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
-      real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
-      real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
-      !----- The wood twins of leaf_area, cached the same way and for the same reason: the fast    !
+      real(wp),    allocatable :: dbh(:)            !< [cm]       = wood_to_dbh(wood_carbon), derived
+      real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), derived
+      real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, derived
+      real(wp),    allocatable :: agb(:)             !< [kgC/plant] = aboveground_frac*wood_carbon, derived
+      real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  = sla*leaf_carbon, derived (LAI=nplant*leaf_area)
+      !----- The wood twins of leaf_area, derived the same way and for the same reason: the fast   !
       !      loop needs them every dt_fast and they are pure functions of dbh + gathered PFT       !
       !      traits. Kept PER PLANT, exactly like leaf_area, so nothing here goes stale when        !
       !      mortality changes nplant -- the per-ground index is nplant*area at the point of use     !
@@ -100,13 +103,12 @@ module meds_site_state_types
       real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
                                                          !<         (Beer competition context); a RECOMPUTED diagnostic
                                                          !<         filled by meds_competition%update_overtopping_lai
-      !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
-      !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
-      !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
-      real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] = leaf_area / sla
-      real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] = root_to_leaf_ratio*leaf_carbon
-      real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] = agb / aboveground_frac
-      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] starts at storage_cushion*(leaf + fine root)
+      !----- Carbon pools [kgC/plant]: the prognostic state. wood_carbon is the size anchor; a     !
+      !      cohort placed on the allometry (set_cohort_size) starts with the pools of its dbh.     !
+      real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] prognostic; on allometry = leaf_area(dbh)/sla
+      real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] prognostic; on allometry = root_to_leaf_ratio*leaf_carbon
+      real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] prognostic size anchor
+      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] prognostic; starts at storage_cushion*(leaf + fine root)
       !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
       !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
       !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
@@ -328,11 +330,10 @@ module meds_site_state_types
    !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
    !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
    !      filled the same step it is consumed (before any sort/fuse) and NOT lockstep-reordered.    !
-   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); every other field  !
-   !      is an additive rate (state += rate*dt).                                                   !
+   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); the carbon pools'  !
+   !      are additive rates (state += rate*dt). Only PROGNOSTIC state has a tendency: the geometry  !
+   !      is derived from the carbon after the update (update_cohort_states), never integrated.     !
    type :: cohort_deriv_block
-      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
-      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
       real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
       real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
       real(wp), allocatable :: dln_nplant_dt(:)
@@ -411,6 +412,12 @@ module meds_site_state_types
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
 
+   !----- The bounded cohort fields cohort_bad_field checks, in its order. ------------------!
+   integer(ik), parameter :: N_COHORT_BOUNDED = 10_ik
+   character(len=20), parameter :: COHORT_BOUNDED_NAME(N_COHORT_BOUNDED) = [character(len=20) ::   &
+      'nplant', 'leaf_carbon', 'fineroot_carbon', 'wood_carbon', 'nonstructural_carbon', 'sla',     &
+      'leaf_water_mass', 'wood_water_mass', 'leaf_surf_water', 'wood_surf_water']
+
 contains
 
    !----- Allocate (or resize-on-grow) the tendency bundle to hold n cohorts. Resize-on-grow so   !
@@ -423,31 +430,22 @@ contains
       integer(ik) :: m
       logical     :: ok
       m  = max(n, 1_ik)
-      ok = allocated(deriv%d_dbh_dt)             .and. allocated(deriv%d_height_dt)            .and. &
-           allocated(deriv%d_basal_area_dt)      .and. allocated(deriv%d_agb_dt)               .and. &
-           allocated(deriv%d_leaf_area_dt)       .and. allocated(deriv%d_leaf_carbon_dt)       .and. &
-           allocated(deriv%d_fineroot_carbon_dt) .and. allocated(deriv%d_wood_carbon_dt)       .and. &
-           allocated(deriv%d_nonstructural_carbon_dt) .and. allocated(deriv%dln_nplant_dt)
+      ok = allocated(deriv%d_leaf_carbon_dt)       .and. allocated(deriv%d_fineroot_carbon_dt) .and. &
+           allocated(deriv%d_wood_carbon_dt)       .and. allocated(deriv%d_nonstructural_carbon_dt) .and. &
+           allocated(deriv%dln_nplant_dt)
       if (ok) then
-         if (size(deriv%d_dbh_dt) >= m) return   ! big enough (all co-sized) -> reuse
-         deallocate(deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt, deriv%d_agb_dt,        &
-                    deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,        &
-                    deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
+         if (size(deriv%d_leaf_carbon_dt) >= m) return   ! big enough (all co-sized) -> reuse
+         deallocate(deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt, deriv%d_wood_carbon_dt,      &
+                    deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
       else                                       ! none or partial -> drop whatever is there
-         if (allocated(deriv%d_dbh_dt))                  deallocate(deriv%d_dbh_dt)
-         if (allocated(deriv%d_height_dt))               deallocate(deriv%d_height_dt)
-         if (allocated(deriv%d_basal_area_dt))           deallocate(deriv%d_basal_area_dt)
-         if (allocated(deriv%d_agb_dt))                  deallocate(deriv%d_agb_dt)
-         if (allocated(deriv%d_leaf_area_dt))            deallocate(deriv%d_leaf_area_dt)
          if (allocated(deriv%d_leaf_carbon_dt))          deallocate(deriv%d_leaf_carbon_dt)
          if (allocated(deriv%d_fineroot_carbon_dt))      deallocate(deriv%d_fineroot_carbon_dt)
          if (allocated(deriv%d_wood_carbon_dt))          deallocate(deriv%d_wood_carbon_dt)
          if (allocated(deriv%d_nonstructural_carbon_dt)) deallocate(deriv%d_nonstructural_carbon_dt)
          if (allocated(deriv%dln_nplant_dt))             deallocate(deriv%dln_nplant_dt)
       end if
-      allocate(deriv%d_dbh_dt(m), deriv%d_height_dt(m), deriv%d_basal_area_dt(m), deriv%d_agb_dt(m), &
-               deriv%d_leaf_area_dt(m), deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m),    &
-               deriv%d_wood_carbon_dt(m), deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
+      allocate(deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m), deriv%d_wood_carbon_dt(m),  &
+               deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
    end subroutine cohort_deriv_alloc
 
    !=======================================================================================!
@@ -1081,14 +1079,8 @@ contains
    end subroutine gather_pft_params
 
    !---------------------------------------------------------------------------------------!
-   ! Re-derive the cached geometry (height, basal area, AGB, leaf area) of ONE cohort slot   !
-   ! from its prognostic diameter and gathered wood density. Single-slot host analogue of    !
-   ! the array math in growth_step; used by recruitment, setup, fusion and fission so the     !
-   ! allometry lives in exactly one (shared) place.                                          !
-   !---------------------------------------------------------------------------------------!
-   !---------------------------------------------------------------------------------------!
    ! The cached WOOD geometry of one slot, from the just-set dbh / basal_area / wood_carbon.  !
-   ! Called by BOTH geometry routines so the leaf and wood caches can never disagree about    !
+   ! Part of set_cohort_size_from_carbon, so the leaf and wood caches can never disagree about !
    ! which dbh they were derived from. Everything here is PER PLANT (see the declarations):   !
    ! `wood_area` is the per-plant twin of `leaf_area`, so WAI = nplant*wood_area at the point  !
    ! of use and no cached field carries a stale plant density.                                 !
@@ -1106,21 +1098,25 @@ contains
       cohort%sapwood_area(i)   = f_sap * cohort%basal_area(i)
    end subroutine set_cohort_wood_geometry
 
+   !---------------------------------------------------------------------------------------!
+   ! Place ONE cohort slot on the allometry from its dbh (setup, census, recruitment, a state  !
+   ! file without pools): the four carbon pools a plant of that dbh holds, then the geometry   !
+   ! derived from those pools by set_cohort_size_from_carbon, exactly as after every other     !
+   ! carbon change. Geometry has that one writer, so a cohort's geometry is always the same    !
+   ! function of its carbon and a restart that re-derives it gets the same bits (#389).        !
+   !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      cohort%height(i)      = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
-      cohort%basal_area(i)  = pio4 * cohort%dbh(i) * cohort%dbh(i)
-      cohort%agb(i)         = dbh_to_agb(cohort%dbh(i), cohort%height(i), cohort%p_wood_density(i))
-      cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))
-      !----- On-allometry carbon pools (PR3 cached diagnostics; reuse the just-computed agb &      !
-      !      leaf_area, so leaf_carbon*sla = leaf_area and wood_carbon*aboveground_frac = agb). -----!
-      cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%sla(i), tiny_num)
-      cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
+      real(wp) :: height
+      height = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
+      cohort%leaf_carbon(i)          = size2leaf_carbon(cohort%dbh(i), height, cohort%sla(i))
+      cohort%wood_carbon(i)          = size2wood_carbon(cohort%dbh(i), height, cohort%p_wood_density(i), &
+                                                        cohort%p_aboveground_frac(i))
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = storage_carbon_target(cohort%p_storage_cushion(i), cohort%leaf_carbon(i),  &
                                                              cohort%fineroot_carbon(i))
-      call set_cohort_wood_geometry(cohort, i)
+      call set_cohort_size_from_carbon(cohort, i)
    end subroutine set_cohort_size
 
    !=========================================================================================!
@@ -1161,6 +1157,52 @@ contains
       w = cohort%nplant(i) * (max(cohort%leaf_water_mass(i), 0.0_wp)                               &
                             + max(cohort%wood_water_mass(i), 0.0_wp))
    end function cohort_tissue_water
+
+   !---------------------------------------------------------------------------------------!
+   ! The bounds of a cohort's state: its plant density, carbon pools, SLA, and the water it    !
+   ! holds (internal stores and the films on its leaves and wood) are amounts, never below     !
+   ! zero and never infinite. Every operator keeps them in bounds by construction -- the        !
+   ! applier floors the pools, mortality never takes nplant below `negligible`, the fast loop    !
+   ! clamps the films into [0, capacity] -- so a violation is an operator bug. The driver checks !
+   ! this every step and names the field, so the bug is caught the step it happens instead of   !
+   ! through a quantity derived from it, somewhere else, years later (#389). The geometry is not !
+   ! checked: it is a function of these. Returns the first bad field's index, 0 if none.        !
+   !---------------------------------------------------------------------------------------!
+   pure function cohort_bad_field(cohort, i) result(k)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      integer(ik)                    :: k
+      real(wp)    :: x(N_COHORT_BOUNDED)
+      integer(ik) :: j
+      x = [cohort%nplant(i), cohort%leaf_carbon(i), cohort%fineroot_carbon(i),                      &
+           cohort%wood_carbon(i), cohort%nonstructural_carbon(i), cohort%sla(i),                    &
+           cohort%leaf_water_mass(i), cohort%wood_water_mass(i),                                    &
+           cohort%leaf_surf_water(i), cohort%wood_surf_water(i)]
+      k = 0_ik
+      do j = 1_ik, N_COHORT_BOUNDED
+         !----- NaN first, by classification, as soil_carbon_bad_pool does: a comparison with a NaN !
+         !      raises IEEE invalid, which a trapping build stops on. ---------------------------!
+         if (ieee_is_nan(x(j))) then
+            k = j
+            return
+         end if
+         if (x(j) < 0.0_wp .or. x(j) > huge(x(j))) then
+            k = j
+            return
+         end if
+      end do
+   end function cohort_bad_field
+
+   !----- Name for the index cohort_bad_field returns, so a failure message is readable. -------!
+   pure function cohort_field_name(k) result(nm)
+      integer(ik), intent(in) :: k
+      character(len=20)       :: nm
+      if (k >= 1_ik .and. k <= N_COHORT_BOUNDED) then
+         nm = COHORT_BOUNDED_NAME(k)
+      else
+         nm = '(none)'
+      end if
+   end function cohort_field_name
 
    !---------------------------------------------------------------------------------------!
    ! Initialize ONE freshly-created cohort slot at BIRTH from (pft, patch, dbh): set the      !
@@ -1236,14 +1278,15 @@ contains
       cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
       cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)
       cohort%wood_surf_water(m)  = 0.0_wp
-      call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
+      call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
    end subroutine init_cohort
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
-   ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
-   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_growth. The carbon     !
-   ! pools are the INPUTS here, so they are NOT re-derived (unlike set_cohort_size).             !
+   ! The ONE writer of a cohort's geometry: with wood_carbon the size anchor, derive dbh from   !
+   ! it (wood_to_dbh) and the rest of the geometry, and take leaf_area straight from leaf_carbon. !
+   ! Called after every operator that moves carbon or SLA (birth, the daily update, trait       !
+   ! acclimation, fusion, fission, a restart read). The pools are the inputs and are not        !
+   ! changed.                                                                                     !
    !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size_from_carbon(cohort, i)
       type(cohort_block), intent(inout) :: cohort
