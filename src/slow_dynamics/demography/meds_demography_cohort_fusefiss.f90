@@ -20,7 +20,7 @@
 module meds_demography_cohort_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num
-   use meds_numerics,   only : conserved, ROUNDOFF_RTOL
+   use meds_numerics,   only : conserved, ROUNDOFF_RTOL, pair_mean
    use meds_allometry,  only : height_to_dbh, min_cohort_carbon
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_config,     only : meds_config_t
@@ -195,13 +195,10 @@ contains
          wr = nr * cohort%leaf_area(recc) ; wd = nd * cohort%leaf_area(donc) ; wtot = wr + wd
          cr = nr * cohort%leaf_carbon(recc) ; cd = nd * cohort%leaf_carbon(donc)
          call fuse_cohort_fast_state(cohort, recc, donc, nr, nd)
-         if (cr + cd > tiny_num) &
-            cohort%sla(recc)     = (cr * cohort%sla(recc)     + cd * cohort%sla(donc))     / (cr + cd)
-         if (wtot > tiny_num) then
-            cohort%vcmax25(recc) = (wr * cohort%vcmax25(recc) + wd * cohort%vcmax25(donc)) / wtot
-            cohort%rd25(recc)    = (wr * cohort%rd25(recc)    + wd * cohort%rd25(donc))    / wtot
-            cohort%llspan(recc)  = (wr * cohort%llspan(recc)  + wd * cohort%llspan(donc))  / wtot
-         end if
+         cohort%sla(recc)     = pair_mean(cohort%sla(recc),     cr, cohort%sla(donc),     cd)
+         cohort%vcmax25(recc) = pair_mean(cohort%vcmax25(recc), wr, cohort%vcmax25(donc), wd)
+         cohort%rd25(recc)    = pair_mean(cohort%rd25(recc),    wr, cohort%rd25(donc),    wd)
+         cohort%llspan(recc)  = pair_mean(cohort%llspan(recc),  wr, cohort%llspan(donc),  wd)
          !----- Fast-loop DIAGNOSTIC accumulators. Handed the SAME two weight pairs used above --   !
          !      leaf area for the intensive quantities, nplant for the extensive ones -- so a        !
          !      diagnostic and its prognostic twin can never be fused on different weights. Which     !
@@ -239,9 +236,15 @@ contains
          !      and leaf_area = sla*leaf_carbon, with nplant*wood_carbon, nplant*leaf_carbon and the  !
          !      leaf-carbon-weighted sla conserved above). -------------------------------------------!
          agb_new = cohort%nplant(recc) * cohort%agb(recc)
-         if (.not. (conserved(agb_tot, agb_new, agb_tot, conservation_tol) .and.               &
-                    conserved(wtot, ntot*cohort%leaf_area(recc), wtot, conservation_tol)))      &
-            error stop 'fuse_2_cohorts: AGB or leaf-area conservation violated'
+         if (.not. conserved(agb_tot, agb_new, agb_tot, conservation_tol)) then
+            write(*,'(a,2es24.16)') ' fuse_2_cohorts: AGB before, after ', agb_tot, agb_new
+            error stop 'fuse_2_cohorts: AGB conservation violated'
+         end if
+         if (.not. conserved(wtot, ntot*cohort%leaf_area(recc), wtot, conservation_tol)) then
+            write(*,'(a,2es24.16)') ' fuse_2_cohorts: leaf area before, after ', wtot,          &
+                                    ntot*cohort%leaf_area(recc)
+            error stop 'fuse_2_cohorts: leaf-area conservation violated'
+         end if
       end associate
    end subroutine fuse_2_cohorts
 

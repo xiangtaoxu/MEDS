@@ -108,7 +108,9 @@ Four rules, applied in order. The long form, with the library graph and a lookup
   negative. `cohort_bad_field` and `soil_carbon_bad_pool` stop the run on the step a bound breaks,
   naming the field: a new bounded field goes there.
 - **An intensive quantity blends on the weight that conserves its extensive product**: SLA on leaf
-  carbon, vcmax25 on leaf area, tissue temperature on heat capacity.
+  carbon, vcmax25 on leaf area, tissue temperature on heat capacity. Blend with `pair_mean`, which
+  has no size threshold: a leafless cohort's leaf carbon of 1e-193 is still a weight, and a 1e-30
+  cutoff there broke the leaf area fusion conserves (#389).
 - **A conservation tolerance scales with the terms, not the net.** `conserved(before, after,
   magnitude, rtol)` with magnitude = sum of |terms|: a net near zero turned a 1e-12 relative
   tolerance into 1e-42 absolute (#389).

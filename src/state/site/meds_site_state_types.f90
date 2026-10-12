@@ -21,7 +21,8 @@ module meds_site_state_types
                                       cohort_diag_reset, patch_diag_reset, polygon_diag_reset
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : tiny_num, cp_liq
+   use meds_constants,  only : cp_liq
+   use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : dbh_to_height, size2leaf_carbon, size2wood_carbon, carbon_to_structure, &
                                dbh_to_wai, sapwood_fraction, storage_carbon_target
@@ -1003,8 +1004,7 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
       real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
-      real(wp) :: we, clr, cwr, cld, cwd
-      we = np_r + np_d
+      real(wp) :: clr, cwr, cld, cwd
       !----- INTENSIVE: tissue temperatures, weighted by the HEAT CAPACITY that carries them.    !
       !                                                                                          !
       !      These were LEAF-AREA weighted. For leaves that is roughly right, since leaf heat    !
@@ -1021,15 +1021,15 @@ contains
       !      the same way by the caller.  --------------------------------------------------!
       call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clr, cwr)
       call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cld, cwd)
-      call blend(cohort%leaf_temp,        clr, cld, clr + cld)
-      call blend(cohort%wood_temp,        cwr, cwd, cwr + cwd)
+      call blend(cohort%leaf_temp,        clr, cld)
+      call blend(cohort%wood_temp,        cwr, cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
-      call blend(cohort%leaf_water_mass,  np_r, np_d, we)
-      call blend(cohort%wood_water_mass,  np_r, np_d, we)
-      call blend(cohort%gpp_accum,        np_r, np_d, we)
-      call blend(cohort%leaf_resp_accum,  np_r, np_d, we)
-      call blend(cohort%stem_resp_accum,  np_r, np_d, we)
-      call blend(cohort%root_resp_accum,  np_r, np_d, we)
+      call blend(cohort%leaf_water_mass,  np_r, np_d)
+      call blend(cohort%wood_water_mass,  np_r, np_d)
+      call blend(cohort%gpp_accum,        np_r, np_d)
+      call blend(cohort%leaf_resp_accum,  np_r, np_d)
+      call blend(cohort%stem_resp_accum,  np_r, np_d)
+      call blend(cohort%root_resp_accum,  np_r, np_d)
       !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
       cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
       cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
@@ -1044,10 +1044,10 @@ contains
       !      history neither cohort had. If a future cue is driven by something genuinely           !
       !      per-cohort and slow, revisit this -- and add it here rather than leaving it implicit.   !
    contains
-      pure subroutine blend(a, wr, wd, wtot)
+      pure subroutine blend(a, wr, wd)
          real(wp), intent(inout) :: a(:)
-         real(wp), intent(in)    :: wr, wd, wtot
-         if (wtot > tiny_num) a(recc) = (wr * a(recc) + wd * a(donc)) / wtot
+         real(wp), intent(in)    :: wr, wd
+         a(recc) = pair_mean(a(recc), wr, a(donc), wd)
       end subroutine blend
    end subroutine fuse_cohort_fast_state
 

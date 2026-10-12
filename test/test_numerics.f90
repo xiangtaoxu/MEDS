@@ -15,7 +15,7 @@ program test_numerics
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,        only : wp, ik
    use meds_numerics,     only : thomas_solve, quadratic_smaller_root, adaptive_step_update, ascending_order, &
-                                 conserved, ROUNDOFF_RTOL
+                                 conserved, ROUNDOFF_RTOL, pair_mean
    use meds_budget_check, only : budget_t, closure_ok, budget_imbalance, budget_accumulate,    &
                                  budget_check_stop, budget_check, budget_merge, budget_report, &
                                  budget_rtol_flux, last_check_closed
@@ -28,6 +28,7 @@ program test_numerics
    call test_budget()
    call test_ascending_order()
    call test_conserved()
+   call test_pair_mean()
 
    call test_report('test_numerics')
 
@@ -153,6 +154,19 @@ contains
    end subroutine test_ascending_order
 
    !----- conserved: the tolerance scales with the terms' absolute sum, not the net total (#389). --!
+   !----- The two-member weighted mean fusion blends with: weights of any size count. -------!
+   subroutine test_pair_mean()
+      call check('pair_mean: equal weights', pair_mean(12.0_wp, 1.0_wp, 24.0_wp, 1.0_wp), 18.0_wp, 1.0e-15_wp)
+      !----- The #389 BCI failure: two leafless cohorts' leaf carbon, ~1e-193. A threshold at 1e-30  !
+      !      kept the first SLA; the mean must blend as it does at any other size. -----------------!
+      call check('pair_mean: weights of 1e-193 still blend',                                         &
+                 pair_mean(12.0_wp, 1.0e-193_wp, 24.0_wp, 3.0e-193_wp), 21.0_wp, 1.0e-14_wp)
+      call check('pair_mean: no weight at all keeps the first value',                                &
+                 pair_mean(12.0_wp, 0.0_wp, 24.0_wp, 0.0_wp), 12.0_wp, 0.0_wp)
+      call check('pair_mean: all the weight on the second gives the second exactly',                 &
+                 pair_mean(12.0_wp, 0.0_wp, 24.0_wp, 5.0_wp), 24.0_wp, 0.0_wp)
+   end subroutine test_pair_mean
+
    subroutine test_conserved()
       real(wp) :: nan_v
       !----- The #389 failure: a dry canopy whose film total is a tiny NEGATIVE number, reordered.  !

@@ -202,6 +202,20 @@ program test_fusion_cohort
       call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
       call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
                        'fusion of cohorts with different SLA must conserve leaf area')
+      !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
+      !      (the BCI case). A blend that skipped weights below 1e-30 kept one SLA here. ----------!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp
+      site%cohort%leaf_carbon(1) = 1.0e-193_wp ; site%cohort%leaf_carbon(2) = 3.0e-193_wp
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call set_cohort_size_from_carbon(site%cohort, 2_ik)
+      lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
+      call check(abs(site%cohort%nplant(1)*site%cohort%leaf_area(1) - lai0) <= 1.0e-12_wp * lai0,      &
+                 'fusion of leafless cohorts with different SLA must conserve their leaf area too')
    end block
 
    !=== 7. Geometry has ONE writer (#389): a cohort placed on the allometry from its dbh carries  !

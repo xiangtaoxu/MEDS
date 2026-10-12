@@ -47,6 +47,7 @@
 module meds_site_diag_types
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
+   use meds_numerics,  only : pair_mean
    implicit none
    private
 
@@ -398,16 +399,14 @@ contains
       real(wp),                intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
       real(wp),                intent(in)    :: np_r, np_d   !< nplant weights
       integer(ik),             intent(in)    :: kinds(:)     !< CDIAG_FUSE or CSDIAG_FUSE
-      real(wp)    :: wi, we
       integer(ik) :: f
       if (.not. d%active) return
-      wi = li_r + li_d ; we = np_r + np_d
       do f = 1_ik, min(int(size(kinds), ik), int(size(d%v, 1), ik))
          select case (kinds(f))
          case (FK_INTENSIVE)
-            if (wi > tiny_num) d%v(f, recc) = (li_r * d%v(f, recc) + li_d * d%v(f, donc)) / wi
+            d%v(f, recc) = pair_mean(d%v(f, recc), li_r, d%v(f, donc), li_d)
          case (FK_EXTENSIVE)
-            if (we > tiny_num) d%v(f, recc) = (np_r * d%v(f, recc) + np_d * d%v(f, donc)) / we
+            d%v(f, recc) = pair_mean(d%v(f, recc), np_r, d%v(f, donc), np_d)
          case default   ! FK_GROUND -- already per m2 of the SAME patch ground, so they add
             d%v(f, recc) = d%v(f, recc) + d%v(f, donc)
          end select
