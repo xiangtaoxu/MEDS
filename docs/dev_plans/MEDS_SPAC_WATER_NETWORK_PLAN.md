@@ -1,10 +1,12 @@
 # Soil and plant water as one network: process functions and one implicit solver
 
-Written 2026-10-11 on branch `feat/spac-water-solver` (from beta 0cbbb31). Design only: nothing here is
-implemented. **Parked (owner, 2026-10-11) until example 06 is finished.** An independent review
-(§11) found the direction sound but the design incomplete; §11 lists the changes to make before P2. The owner chose (2026-10-11) to solve soil and plant water together, and asked that the
-work consolidate the code rather than add fixes for special cases, with functions designed around
-processes and generic numerical schemes. Decisions D1–D8 are in §9.
+Written 2026-10-11 on branch `feat/spac-water-solver` (from beta 0cbbb31). Parked (owner, 2026-10-11)
+until example 06 is finished; later that day the owner asked for the plan to be implemented on this
+branch, kept up with beta. An independent review (§11) found the direction sound but the design
+incomplete; §12 records how each of its items is resolved and the working choices for D1–D8. The
+owner chose (2026-10-11) to solve soil and plant water together, and asked that the work consolidate
+the code rather than add fixes for special cases, with functions designed around processes and
+generic numerical schemes. Decisions D1–D8 are in §9.
 
 ## 0. Summary
 
@@ -373,3 +375,138 @@ real: a prescribed-potential node type; boundary terms that are either fixed flu
 node's ψ; and network assembly driven by the active processes, exposed through the C-API so the Python
 front end can run a single plant or a single soil column. P2's single-plant and soil-column tests become
 those configurations.
+
+## 12. Implementation decisions (2026-10-11), answering §11
+
+The owner asked for the plan to be implemented; these are the working choices, each one reversible
+and the measured ones marked. They follow the reviewer's recommendations except where a reason is
+given.
+
+### 12.1 D1–D8
+
+- **D1 The unknown.** Each kind of store picks a well-scaled unknown and the solver sees only that
+  (Brenner and Cancès 2017):
+  - a **soil layer** uses its effective saturation Se on the dry side and its potential on the wet
+    side, joined smoothly (C¹) at the point of the curve's largest capacity: Se = (1 + m)^−m for van
+    Genuchten, the air-entry point for Campbell. Dry, Se is the variable that moves smoothly; wet, ψ is;
+  - a **plant tissue** uses its symplastic relative water content R everywhere: the
+    pressure–volume curve has a finite dψ/dR on every branch, above saturation included, and R stays
+    defined for a leafless leaf, whose storage is simply zero;
+  - the **pond** uses its head.
+
+  Mass comes from the storage curve (the mixed form), so conservation is exact at convergence.
+- **D2 No hydraulic redistribution.** The soil-to-root flow is g·r(Δψ), with r a C¹ quadratic ramp
+  of width 1e-3 MPa: zero below zero, linear above the width.
+- **D3 RK45** uses the network as ARK does (P3b); the RK4 oracle moves with it.
+- **D4 Transpiration:** see C1 below.
+- **D5 No air-dry bound.** Van Genuchten and Campbell keep their θr asymptote: ψ → −∞ as θ → θr, with
+  a capacity above zero at every finite ψ.
+  - D1's unknown keeps Se > 0: a Newton step may remove at most 90 % of the saturation a dry layer
+    has left.
+  - The network's curves carry no conductivity or capacity floor; the floors stay in the diagnostic
+    read-offs.
+  - Ground evaporation stops by itself, since Philip's α → 0 as ψ → −∞. That is the case the
+    reviewer's oven-dry extension was for: it arose only because of the hard bound.
+  - The Darcy flow out of a drying layer, √(K_k K_k+1)·Δψ, vanishes as Se → 0 for every van
+    Genuchten n > 1 (as Se^1.25), so no flow can empty a layer.
+  - The conductivity floor that let a −6e8 m potential drive 1e-3 m s⁻¹ through a face in the
+    1994-04-20 crash is gone.
+- **D6 The pond is a node**, specified under M3.
+- **D7 #356** stays out of P3.
+- **D8 One tolerance set**, `[soil]` `rtol`/`atol`, measured in θ for soil layers and the pond (pond
+  water over ρ·dz₁) and in R for plant tissues.
+
+### 12.2 The review items
+
+- **C1 Transpiration.** Each cohort's transpiration is E = E_demand·s(R_leaf), solved inside the
+  network.
+  - E_demand is today's demand: the pre-pass surface solve at the start of the step, with both stomatal
+    water-stress controls.
+  - s = 1 while the leaf holds more water than R_close, the symplastic water content at the PFT's
+    fast-limb closing potential (`pft_wstress_psi_close`, twice the turgor-loss point by default). Below
+    R_close, s = R/R_close, with a C¹ corner.
+  - Above full stomatal closure the existing controls act unchanged. Below it, a leaf with its stomata
+    shut loses its residual water in proportion to the symplast water it has left. So E → 0 as the leaf
+    empties while the sapflow stays positive, and every step has a solution.
+
+  The energy stages then hold each cohort's transpiration at the network's time mean, exactly as they
+  already hold ground evaporation (`frozen%ground%soil_evap`): the leaf energy balance takes
+  `le_slope = 0`, `le_ref = h_evap·E`. The canopy air's vapour credit is the leaf's debit by
+  construction, and the ARK re-solve has nothing left to correct.
+
+  What this gives up: within one step, transpiration no longer responds to the canopy air's changing
+  humidity; the next step's pre-pass restores that response. To measure in P3a against
+  `numerical_scheme.md` §5a. The fallback, if §5a degrades, is a second warm-started network pass.
+- **M1 Error estimate:** ½·J⁻²·(W_{n+1} − W_n − h·F(W_n)).
+  - J = I − h·∂F/∂W is the implicit-Euler matrix, applied through the last Newton factorisation, so
+    the estimate costs two back-substitutions.
+  - On a slow mode this is the implicit-Euler local error, h²W''/2. On a stiff mode just after a jump
+    it is y₀/(λh), the same as step doubling gives, at one solve per sub-step instead of three.
+  - The norm is mass-weighted (D8).
+  - P2 tests the estimate against step doubling on a stiff chain.
+- **M2 Curves for Newton.** D1 and D5 above, and every `max`/`min` in the network has a smooth form
+  (the root ramp, the transpiration corner, the pond curve).
+  - Newton steps are bounded per node (fraction-to-boundary on Se and R; |Δτ| ≤ 0.2 per iteration on
+    the dry branch) with an Armijo line search on the mass-scaled residual.
+  - The Kirchhoff conductance uses its midpoint expansion as Δψ → 0, for the value and both
+    derivatives.
+  - Above saturation a soil layer stores water through a specific storage, S_s = 1e-4 m⁻¹. A layer
+    pushed past saturation therefore raises its potential and sends water up to the pond and down to
+    the next layer, which is what replaces the saturation clip.
+  - **Measured, P2:** whether Ippisch's air-entry modification is needed. For n < 2, dK/dψ → ∞ at
+    saturation; it goes in only if the saturated-column test shows Newton needs it, since it moves
+    wet-soil drainage.
+  - The P1a/P1b split: P1 moves the processes value-identical (P1a). The curve changes exist only
+    inside the network, so they are measured with it in P2–P3 rather than in a separate P1b.
+- **M3 The pond.**
+  - **Storage:** W = ρ·S(h), with S = 0 for h ≤ 0, h²/(2δ) for 0 < h < δ, and h − δ/2 above, where
+    δ = 1 mm. An empty pond holds no water and has no capacity; its head follows the soil below
+    through the edge.
+  - **Edge to layer 1:** Darcy, with face conductivity √(K_s1·K₁) over the distance to node 1. That
+    is today's infiltration-capacity formula, now implicit and two-way: a supersaturated top layer
+    exfiltrates.
+  - **Rain** enters the pond.
+  - **Spill:** after each accepted sub-step, water above `w_pond_max` leaves as runoff at the pond's
+    temperature. This is a store at its capacity, as today, not a correction for a solver.
+- **M4 Enthalpy, by store.**
+  - **Soil layers and pond** hold total internal energy. Water crossing a soil face, the pond face or
+    the bottom carries the liquid enthalpy of the node it leaves; the soil-energy solve does this,
+    given the network's time-mean flows.
+  - **Root uptake** leaves each layer at that layer's own temperature, layer by layer from the edge
+    flows. This replaces the root share times one root-weighted temperature.
+  - **Tissues** keep #355's rule: heat is cap·T with the step's frozen capacity; the change in water
+    mass is booked at the start-of-step tissue temperature (`water_store_enth`); arriving water heats
+    the tissue only by its temperature difference.
+  - **Condensate** stays in soil layer 1, unchanged; a top layer pushed past saturation exfiltrates to
+    the pond the next step.
+  - A #355 refill test joins the suite.
+- **M5 Cost.**
+  - Parameters are stored as arrays per edge kind, with no polymorphic edges.
+  - A cohort's Schur update covers only the layers it roots in.
+  - Merge gate: no more than +15 % on the BCI profile.
+- **M6 Size.**
+  - **P3a** puts ARK on the network, with the old solvers still compiled but no longer called from
+    it. **P3b** moves RK45 and the oracle, deletes the old code and retires the keys.
+  - **No warm start.** Every fast step begins with one sub-step of `dt_fast`, so there is no new
+    persisted patch state and restart, fusion and the lockstep reorder are untouched. Revisit only if
+    the profile shows repeated rejections.
+- **Minor.**
+  - A leafless cohort's group stays invertible: the xylem edge keeps a positive conductance floor (a
+    domain guard, like today's `k_floor`) and the leaf storage term is never negative.
+  - Masses are committed through the flux form.
+  - "Seven places to one" becomes "seven to three": the film, snow and condensate keep their own
+    bookkeeping, as does the slow-loop reconcile.
+- **Tests.** The §11 list, except the gfortran and nvfortran builds where this cluster lacks a
+  compiler: nvfortran is not installed here (`CLAUDE.local.md`).
+- **Modularity.** The solver takes prescribed-potential nodes and fixed-flux boundary terms; P2's
+  plant-only and soil-only tests are those configurations. The C-API exposure goes to `ROADMAP.md`.
+
+### 12.3 Where the code goes
+
+| Module | Holds |
+|---|---|
+| `src/shared/util/meds_grouped_solve.f90` | the generic linear solve: a dense LU for the shared core and the Schur update from groups attached to it |
+| `src/shared/functions/meds_water_storage.f90` | storage curves in each store's unknown (D1), with derivatives |
+| `src/shared/functions/meds_water_paths.f90` | flow along a path (Darcy, rhizosphere, xylem) and the smooth ramp, with derivatives |
+| `src/fast_dynamics/soil/meds_soil_water.f90` | the soil's boundary processes (evaporation with its ψ derivative, bottom drainage), which need the forcing types |
+| `src/fast_dynamics/water/meds_water_network.f90` | one patch's network (nodes, edges by kind, boundary terms), its assembly, Newton and sub-steps; a new folder in `meds_fast_kernels` |
