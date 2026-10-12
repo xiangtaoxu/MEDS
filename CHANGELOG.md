@@ -520,7 +520,7 @@ before and after.
 
 ### Fixed
 
-- **The debug build traps no floating invalid in the test suite** (#NNN; four tests aborted after #392
+- **The debug build traps no floating invalid in the test suite** (#398; four tests aborted after #392
   and #397). `conserved` tested a NaN by comparing it, which raises IEEE invalid; it now asks
   `ieee_is_nan` first. A Newton step of the soil-plant water network was bounded away from empty only
   for layers on the dry side of their curve, so a wet layer's step could carry its saturation below
