@@ -157,6 +157,7 @@ contains
       type(grouped_system_t) :: s
       integer(ik), parameter :: nc = 7, ng = 5, mg = 2, nt = nc + ng*mg
       real(wp) :: full(nt, nt), rhs(nt), x_ref(nt), r_c(nc), r_g(mg, ng), x_c(nc), x_g(mg, ng), v
+      real(wp) :: add_c(nc), add_g(mg, ng), a_kept(nc, nc)
       integer(ik) :: i, j, g, l, seed
       logical :: ok
       call grouped_allocate(s, nc, ng, mg)
@@ -179,13 +180,24 @@ contains
             end do
          end do
       end do
+      !----- Additions to the blocks' diagonals, as a Newton matrix's storage terms are added. --------!
+      do i = 1_ik, nc
+         add_c(i) = 1.5_wp + 0.1_wp * real(i, wp) ; full(i, i) = full(i, i) + add_c(i)
+      end do
+      do g = 1_ik, ng
+         do l = 1_ik, mg
+            add_g(l, g) = 0.7_wp ; full(nc + (g-1)*mg + l, nc + (g-1)*mg + l) = full(nc + (g-1)*mg + l, nc + (g-1)*mg + l) + 0.7_wp
+         end do
+      end do
       do i = 1_ik, nt
          rhs(i) = pseudo(seed)
       end do
       r_c = rhs(1:nc) ; r_g = reshape(rhs(nc+1:nt), [mg, ng])
       call dense_solve(full, rhs, x_ref, nt)
-      call grouped_factor(s, ok)
+      a_kept = s%a
+      call grouped_factor(s, add_c, add_g, ok)
       call check_true('grouped solve: factorisation succeeds', ok)
+      call check_true('grouped solve: factoring leaves the blocks as they were', all(s%a == a_kept))
       call grouped_solve(s, r_c, r_g, x_c, x_g)
       call check_true('grouped solve: equals dense elimination',                                             &
                       maxval(abs([x_c, reshape(x_g, [ng*mg])] - x_ref)) < 1.0e-12_wp * maxval(abs(x_ref)))

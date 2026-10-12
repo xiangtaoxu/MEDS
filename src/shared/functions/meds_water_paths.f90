@@ -12,14 +12,14 @@
 ! ramp (smooth_max0), so Newton never meets a corner it cannot see.                               !
 !==========================================================================================!
 module meds_water_paths
-   use meds_kinds,     only : wp
+   use meds_kinds,     only : wp, ik
    use meds_constants, only : grav_head, rho_h2o, pi, tiny_num
    use meds_hydr_lib,  only : plc_retained, flux_potential, flux_potential_lin, hydro_table_t
    implicit none
    private
 
    public :: ROOT_FLOW_WIDTH, TRANSP_CLOSE_WIDTH
-   public :: smooth_max0, darcy_flow, root_conductance_geometry, root_uptake_flow
+   public :: smooth_max0, darcy_flow, root_conductance_geometry, root_uptake_flow, root_uptake_profile
    public :: xylem_max_conductance, xylem_flow, supply_limited_transpiration
 
    !----- [MPa] Width of the ramp that keeps water from flowing back out of the roots: below a     !
@@ -113,6 +113,26 @@ contains
       du_dpsi_wood = -du_dpsi_soil
       du_dk        = g_geom * drive
    end subroutine root_uptake_flow
+
+   !----- A cohort's uptake from every layer of its root profile in one call: root_uptake_flow for   !
+   !      each layer it roots in, and nothing from a layer without roots (g_geom <= 0). The wood's   !
+   !      derivative is minus the soil's, so it is not returned. ----------------------------------!
+   pure subroutine root_uptake_profile(nsl, g_geom, k_soil, psi_soil, z_soil, psi_wood, u,           &
+                                       du_dpsi_soil, du_dk)
+      integer(ik), intent(in)  :: nsl
+      real(wp),    intent(in)  :: g_geom(nsl), k_soil(nsl), psi_soil(nsl), z_soil(nsl), psi_wood
+      real(wp),    intent(out) :: u(nsl), du_dpsi_soil(nsl), du_dk(nsl)
+      real(wp)    :: du_dpsi_wood
+      integer(ik) :: k
+      do k = 1_ik, nsl
+         if (g_geom(k) <= 0.0_wp) then
+            u(k) = 0.0_wp ; du_dpsi_soil(k) = 0.0_wp ; du_dk(k) = 0.0_wp
+            cycle
+         end if
+         call root_uptake_flow(g_geom(k), k_soil(k), psi_soil(k), z_soil(k), psi_wood, u(k),               &
+                               du_dpsi_soil(k), du_dpsi_wood, du_dk(k))
+      end do
+   end subroutine root_uptake_profile
 
    !----- One plant's intact-xylem conductance [kg/s/MPa]: the sapwood's specific conductivity over  !
    !      its cross-section and its path, height x vessel_curl. A plant with no sapwood yet keeps the  !

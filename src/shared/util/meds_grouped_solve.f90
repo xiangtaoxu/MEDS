@@ -12,7 +12,9 @@
 ! and e_1 picks the group's first unknown. Each group's block is eliminated onto the core: the   !
 ! Schur update is the rank-1 product (D_g^-1)_11 b_g c_g', so the cost grows as groups x core^2  !
 ! + core^3, not as (core + groups)^3. The core system that remains is solved by LU with partial  !
-! pivoting, and the groups are recovered from it.                                                 !
+! pivoting, and the groups are recovered from it. The factorisation is kept apart from the blocks, !
+! which it leaves as they were, and takes additions to the blocks' diagonals (a Newton matrix's    !
+! storage terms), so the same blocks can be factored again with other additions.                  !
 !                                                                                          !
 ! The soil-plant water network is one such system -- soil layers and the pond are the core, each !
 ! cohort a group whose wood meets the soil and whose leaves meet only the wood (a root node, when  !
@@ -25,18 +27,20 @@ module meds_grouped_solve
    implicit none
    private
 
-   public :: grouped_system_t, grouped_allocate, grouped_copy, grouped_factor, grouped_solve
+   public :: grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
 
-   !----- One system: the blocks, filled by the caller, and the factorisation that replaces them. -!
+   !----- One system: the blocks, filled by the caller, and their factorisation. ---------------!
    type :: grouped_system_t
       integer(ik) :: nc = 0_ik            !< core unknowns
       integer(ik) :: ng = 0_ik            !< groups
       integer(ik) :: mg = 0_ik            !< unknowns per group
-      real(wp),    allocatable :: a(:,:)    !< (nc, nc)     core block; on factor, the LU of the Schur complement
-      real(wp),    allocatable :: b(:,:)    !< (nc, ng)     core rows, each group's first column
-      real(wp),    allocatable :: c(:,:)    !< (nc, ng)     each group's first row, over the core columns
-      real(wp),    allocatable :: d(:,:,:)  !< (mg, mg, ng) group blocks; on factor, their inverses
-      integer(ik), allocatable :: piv(:)    !< (nc) the core LU's row interchanges
+      real(wp),    allocatable :: a(:,:)      !< (nc, nc)     core block
+      real(wp),    allocatable :: b(:,:)      !< (nc, ng)     core rows, each group's first column
+      real(wp),    allocatable :: c(:,:)      !< (nc, ng)     each group's first row, over the core columns
+      real(wp),    allocatable :: d(:,:,:)    !< (mg, mg, ng) group blocks
+      real(wp),    allocatable :: lu(:,:)     !< (nc, nc)     the LU of the Schur complement
+      real(wp),    allocatable :: dinv(:,:,:) !< (mg, mg, ng) the group blocks' inverses
+      integer(ik), allocatable :: piv(:)      !< (nc) the core LU's row interchanges
    end type grouped_system_t
 
 contains
@@ -47,45 +51,46 @@ contains
       type(grouped_system_t), intent(inout) :: s
       integer(ik),            intent(in)    :: nc, ng, mg
       if (s%nc /= nc .or. s%ng /= ng .or. s%mg /= mg .or. .not. allocated(s%a)) then
-         if (allocated(s%a))   deallocate(s%a)
-         if (allocated(s%b))   deallocate(s%b)
-         if (allocated(s%c))   deallocate(s%c)
-         if (allocated(s%d))   deallocate(s%d)
-         if (allocated(s%piv)) deallocate(s%piv)
-         allocate(s%a(nc, nc), s%b(nc, ng), s%c(nc, ng), s%d(mg, mg, ng), s%piv(nc))
+         if (allocated(s%a))   deallocate(s%a, s%b, s%c, s%d, s%lu, s%dinv, s%piv)
+         allocate(s%a(nc, nc), s%b(nc, ng), s%c(nc, ng), s%d(mg, mg, ng), s%lu(nc, nc), s%dinv(mg, mg, ng),  &
+                  s%piv(nc))
          s%nc = nc ; s%ng = ng ; s%mg = mg
       end if
       s%a = 0.0_wp ; s%b = 0.0_wp ; s%c = 0.0_wp ; s%d = 0.0_wp
    end subroutine grouped_allocate
 
-   !----- Copy one system's blocks into another of the same shape, in place. --------------------!
-   pure subroutine grouped_copy(dst, src)
-      type(grouped_system_t), intent(inout) :: dst
-      type(grouped_system_t), intent(in)    :: src
-      dst%a = src%a ; dst%b = src%b ; dst%c = src%c ; dst%d = src%d
-   end subroutine grouped_copy
-
-   !----- Factor in place: invert each group block, fold the groups into the core by their rank-1  !
-   !      updates, and LU-factor the core. ok is false if a group block or the core is singular. ---!
-   pure subroutine grouped_factor(s, ok)
+   !----- Factor the system whose blocks' diagonals carry the additions add_core and add_group:     !
+   !      invert each group block, fold the groups into the core by their rank-1 updates, and       !
+   !      LU-factor the core. The blocks are left as they were. ok is false if a group block or the  !
+   !      core is singular. ----------------------------------------------------------------------!
+   pure subroutine grouped_factor(s, add_core, add_group, ok)
       type(grouped_system_t), intent(inout) :: s
+      real(wp),               intent(in)    :: add_core(:), add_group(:, :)   !< (nc), (mg, ng)
       logical,                intent(out)   :: ok
       integer(ik) :: g, i, j
       real(wp)    :: e11, cj
       ok = .true.
+      s%lu = s%a
+      do i = 1_ik, s%nc
+         s%lu(i, i) = s%lu(i, i) + add_core(i)
+      end do
       do g = 1_ik, s%ng
-         call invert_small(s%d(:, :, g), s%mg, ok)
+         s%dinv(:, :, g) = s%d(:, :, g)
+         do i = 1_ik, s%mg
+            s%dinv(i, i, g) = s%dinv(i, i, g) + add_group(i, g)
+         end do
+         call invert_small(s%dinv(:, :, g), s%mg, ok)
          if (.not. ok) return
-         e11 = s%d(1, 1, g)
+         e11 = s%dinv(1, 1, g)
          do j = 1_ik, s%nc
             cj = e11 * s%c(j, g)
             if (cj == 0.0_wp) cycle
             do i = 1_ik, s%nc
-               s%a(i, j) = s%a(i, j) - s%b(i, g) * cj
+               s%lu(i, j) = s%lu(i, j) - s%b(i, g) * cj
             end do
          end do
       end do
-      call lu_factor(s%a, s%piv, s%nc, ok)
+      call lu_factor(s%lu, s%piv, s%nc, ok)
    end subroutine grouped_factor
 
    !----- Solve the factored system for one right-hand side (r_core, r_group) -> (x_core, x_group). !
@@ -101,17 +106,17 @@ contains
          do i = 1_ik, s%mg
             x_group(i, g) = 0.0_wp
             do l = 1_ik, s%mg
-               x_group(i, g) = x_group(i, g) + s%d(i, l, g) * r_group(l, g)
+               x_group(i, g) = x_group(i, g) + s%dinv(i, l, g) * r_group(l, g)
             end do
          end do
          if (x_group(1, g) /= 0.0_wp) rc = rc - s%b(:, g) * x_group(1, g)
       end do
-      call lu_solve(s%a, s%piv, s%nc, rc)
+      call lu_solve(s%lu, s%piv, s%nc, rc)
       x_core(1:s%nc) = rc
       !----- Back to the groups: x_g = D_g^-1 r_g - D_g^-1 e_1 (c_g' x_0). --------------------------!
       do g = 1_ik, s%ng
          cx = sum(s%c(:, g) * rc)
-         x_group(1:s%mg, g) = x_group(1:s%mg, g) - s%d(1:s%mg, 1, g) * cx
+         x_group(1:s%mg, g) = x_group(1:s%mg, g) - s%dinv(1:s%mg, 1, g) * cx
       end do
    end subroutine grouped_solve
 
