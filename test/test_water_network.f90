@@ -7,9 +7,9 @@
 !                        ponded, leafless).                                                       !
 !   3. CONSERVATION    : two days of rain, transpiration, evaporation and drainage close to       !
 !                        round-off, step by step.                                                 !
-!   4. PLANT ONLY      : soil held at its potential (prescribed core nodes) -- matches the        !
-!                        matrix-exponential plant solver.                                          !
-!   5. SOIL ONLY       : no cohorts -- matches the Richards solver in wet soil.                    !
+!   4. PLANT ONLY      : soil held at its potential (prescribed core nodes): the steady state     !
+!                        carries the transpiration through every path.                              !
+!   5. SOIL ONLY       : no cohorts, a sealed bottom: the column relaxes to hydrostatic equilibrium. !
 !   6. STIFF EXCHANGE  : a wet, densely rooted stand whose wood-soil exchange takes a fraction of   !
 !                        a second costs a handful of sub-steps, not thousands.                     !
 !   7. INFEASIBLE DEMAND: a leaf asked for many times the water it and its xylem can supply stays  !
@@ -22,6 +22,7 @@
 !==========================================================================================!
 program test_water_network
    use meds_test_assert, only : check_true, check_close, check_int, test_report
+   use, intrinsic :: iso_fortran_env, only : int64
    use meds_kinds,       only : wp, ik
    use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num
    use meds_grouped_solve, only : grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
@@ -33,14 +34,11 @@ program test_water_network
    use meds_water_retention, only : SOIL_RETENTION_VG, water_curve_t, rwc_from_psi, pv_psi_tlp,             &
                                     soil_psi_from_theta, soil_hydr_cond_from_theta
    use meds_hydr_lib,      only : build_hydro_table
-   use meds_plant_types,   only : hydro_params_table_t, hydro_env_t, hydro_opts_t, hydro_flux_t, N_HYDRO,  &
-                                  NODE_LEAF, NODE_WOOD
-   use meds_plant_hydraulics, only : solve_plant_water, cohort_root_profile, rhizosphere_cond
+   use meds_plant_types,   only : hydro_params_table_t
+   use meds_plant_hydraulics, only : cohort_root_profile
    use meds_column_params, only : soil_params_t, build_soil_hydr_params
-   use meds_column_state_types, only : soil_column_t
-   use meds_soil_water,    only : advance_soil_water_column
-   use meds_soil_types,    only : chydro_forcing_t, chydro_flux_t
-   use meds_biophysics_opts, only : soil_opts_t
+   use meds_soil_types,    only : chydro_forcing_t
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK
    implicit none
 
    type(hydro_params_table_t) :: hyd
@@ -170,11 +168,11 @@ contains
          s%a(j, j) = s%a(j, j) + 8.0_wp ; full(j, j) = full(j, j) + 8.0_wp
       end do
       do g = 1_ik, ng
+         do i = 1_ik, nc            ! each group meets the core through its first unknown
+            v = pseudo(seed) ; s%b(i, g) = v ; full(i, nc + (g-1)*mg + 1) = v
+            v = pseudo(seed) ; s%c(i, g) = v ; full(nc + (g-1)*mg + 1, i) = v
+         end do
          do l = 1_ik, mg
-            do i = 1_ik, nc
-               v = pseudo(seed) ; s%b(i, l, g) = v ; full(i, nc + (g-1)*mg + l) = v
-               v = pseudo(seed) ; s%c(l, i, g) = v ; full(nc + (g-1)*mg + l, i) = v
-            end do
             do j = 1_ik, mg
                v = pseudo(seed) + merge(5.0_wp, 0.0_wp, j == l)
                s%d(l, j, g) = v ; full(nc + (g-1)*mg + l, nc + (g-1)*mg + j) = v
@@ -243,87 +241,53 @@ contains
    end subroutine test_conservation
 
    !=======================================================================================!
-   !----- The soil held at its potential: the plant's two stores against the matrix-exponential  !
-   !      solver over an hour of steady transpiration, both at tight tolerances. The soil is dry    !
-   !      enough that every layer feeds the roots: where a layer is wetter than the wood by less    !
-   !      than its depth's head, the old solver lets the roots lose water to it inside its          !
-   !      aggregate, which the network does not (plan D2). ------------------------------------!
+   !----- The soil held at its potential (prescribed core nodes: a plant-only network). Under a      !
+   !      steady demand the plant reaches its steady state, where every path carries the            !
+   !      transpiration: root uptake = sapflow = transpiration, and the stores stop changing. --------!
    subroutine test_plant_only()
       type(water_network_t) :: net
-      type(hydro_env_t)  :: env
-      type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: theta(soil%n_active), psi(N_HYDRO), psi_k(soil%n_active), kk(soil%n_active)
-      real(wp) :: frac(soil%n_active), root_len(soil%n_active), half(soil%n_active), dum, dp, w, dw, kd
-      real(wp) :: bsap, broot, sap_area
-      integer(ik) :: k, step, nsl
-      nsl = soil%n_active
+      real(wp) :: theta(soil%n_active), w_plant0, w_plant1, e, u, sap
+      integer(ik) :: step
       theta = 0.28_wp
       call make_stand(net, 1_ik, theta, 0.0_wp, 0.95_wp, 0.92_wp, 3.0e-5_wp)
-      net%g_root(4:nsl, 1) = 0.0_wp                    ! roots in the top three layers only
       net%core_fixed = .true.
       net%rtol = 1.0e-8_wp ; net%atol = 1.0e-9_wp
-      !----- The same plant for the old solver, per plant. -------------------------------------!
-      bsap = 30.0_wp ; broot = 2.0_wp ; sap_area = 0.05_wp
-      env%transp = net%e_demand(1) / net%nplant(1)
-      env%bleaf = net%bleaf(1) ; env%bsap = bsap ; env%broot = broot ; env%sap_area = sap_area
-      env%height = 28.0_wp ; env%n_root_layer = nsl
-      call cohort_root_profile(28.0_wp, hyd%pft(1), -soil%soil_layer_z(1:nsl), -soil%soil_layer_z(2:nsl+1), frac)
-      root_len = broot * frac * hyd%pft(1)%specific_root_length
-      do k = 1_ik, nsl
-         half(k) = 1.0_wp / sqrt(pi * max(net%nplant(1) * root_len(k) / soil%dz(k), tiny_num))
-         call soil_store(net%soil(k), net%tau_core(1+k), psi_k(k), dp, w, dw, kk(k), kd)
-         env%soil_psi_layer(k)   = psi_k(k)
-         env%root_z_layer(k)     = soil%z_node(k)
-         env%rhizo_cond_layer(k) = rhizosphere_cond(rho_h2o * kk(k) / grav_head, root_len(k), half(k),          &
-                                                    hyd%pft(1)%fine_root_radius)
-         if (k > 3_ik) env%rhizo_cond_layer(k) = 0.0_wp
-      end do
-      o%rtol = 1.0e-9_wp ; o%atol = 1.0e-9_wp ; o%max_substep = 100000_ik
-      call tissue_store(hyd%pft(1)%leaf_curve, net%bleaf(1), 1.0_wp, net%tau_group(WATER_LEAF, 1), psi(NODE_LEAF), &
-                        dum, w, dw)
-      call tissue_store(hyd%pft(1)%wood_curve, net%bwood(1), 1.0_wp, net%tau_group(WATER_WOOD, 1), psi(NODE_WOOD), &
-                        dum, w, dw)
-      do step = 1_ik, 4_ik
-         call solve_plant_water(env, hyd%pft(1), o, 900.0_wp, psi, flux)
+      do step = 1_ik, 96_ik
+         w_plant0 = sum(net%w_group)
          call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         w_plant1 = sum(net%w_group)
       end do
-      call check_close('plant only: leaf potential matches the plant solver', net%psi_group(WATER_LEAF, 1),       &
-                       psi(NODE_LEAF), 2.0e-3_wp)
-      call check_close('plant only: wood potential matches the plant solver', net%psi_group(WATER_WOOD, 1),       &
-                       psi(NODE_WOOD), 2.0e-3_wp)
-      call check_true('plant only: every rooted layer feeds the roots',                                     &
-                      minval(net%psi_core(2:4) + grav_head * soil%z_node(1:3) - net%psi_group(WATER_WOOD, 1)) > 0.0_wp, &
-                      minval(net%psi_core(2:4) + grav_head * soil%z_node(1:3) - net%psi_group(WATER_WOOD, 1)))
-      call check_close('plant only: uptake over the last step matches', sum(net%uptake) / net%nplant(1),          &
-                       flux%root_uptake * 900.0_wp, 1.0e-2_wp * flux%root_uptake * 900.0_wp)
+      e = net%transp(1) ; u = sum(net%uptake(:, 1)) ; sap = net%sapflow(1)
+      call check_close('plant only: at steady state root uptake = transpiration', u, e, 1.0e-6_wp * e)
+      call check_close('plant only: at steady state sapflow = transpiration', sap, e, 1.0e-6_wp * e)
+      call check_close('plant only: the plant water stops changing', w_plant1 - w_plant0, 0.0_wp, 1.0e-8_wp * w_plant1)
+      call check_true('plant only: the leaf sits below the wood by more than the crown head',                   &
+                      net%psi_group(WATER_LEAF, 1) < net%psi_group(WATER_WOOD, 1) - net%grav(1),                &
+                      net%psi_group(WATER_LEAF, 1))
    end subroutine test_plant_only
 
    !=======================================================================================!
-   !----- No cohorts: two hours of 4 mm/h rain then four of drying, against the Richards solver. -!
+   !----- No cohorts, a sealed bottom, no rain and no evaporation: the column relaxes to hydrostatic !
+   !      equilibrium, the total head (matric head plus elevation) the same in every layer. ---------!
    subroutine test_soil_only()
-      type(water_network_t) :: net
-      type(soil_column_t)   :: col
-      type(chydro_forcing_t) :: f
-      type(chydro_flux_t)    :: fl
-      real(wp) :: theta(soil%n_active), worst, total_net, total_old
+      type(water_network_t)  :: net
+      type(soil_opts_t)      :: sealed
+      type(chydro_forcing_t) :: still
+      real(wp) :: theta(soil%n_active), head(soil%n_active), w0
       integer(ik) :: step, nsl
       nsl = soil%n_active
-      theta = 0.34_wp
+      theta = 0.40_wp ; theta(1:3) = 0.425_wp          ! wet: BCI's clay settles in days, not years
+      sealed = sopts ; sealed%bottom_bc = SOIL_BC_BEDROCK
+      still = forc ; still%q_air = 0.05_wp                 ! air wetter than any surface: no evaporation
       call make_stand(net, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
-      col%theta(1:nsl) = theta ; col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
-      f = forc
-      do step = 1_ik, 24_ik
-         f%precip_ground = merge(4.0_wp / 3600.0_wp, 0.0_wp, step <= 8)
-         net%rain = f%precip_ground
-         call advance_soil_water_column(col, f, soil, sopts, 900.0_wp, fl)
-         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+      w0 = total_water(net)
+      do step = 1_ik, 96_ik * 30_ik
+         call water_network_advance(net, soil, sealed, still, hyd, 900.0_wp)
       end do
-      worst = maxval(abs(net%w_core(2:nsl+1) / (rho_h2o * soil%dz(1:nsl)) - col%theta(1:nsl)))
-      call check_true('soil only: the profile matches the Richards solver to 3e-3', worst < 3.0e-3_wp, worst)
-      total_net = sum(net%w_core)
-      total_old = sum(col%theta(1:nsl) * soil%dz(1:nsl)) * rho_h2o + col%w_surface
-      call check_close('soil only: column water matches to 0.1 %', total_net, total_old, 1.0e-3_wp * total_old)
+      head = net%psi_core(2:nsl+1) / grav_head + soil%z_node(1:nsl)
+      call check_true('soil only: hydrostatic equilibrium (total head uniform to 1 cm)',                        &
+                      maxval(head) - minval(head) < 1.0e-2_wp, maxval(head) - minval(head))
+      call check_close('soil only: sealed column keeps its water', total_water(net), w0, 1.0e-11_wp * w0)
    end subroutine test_soil_only
 
    !=======================================================================================!
@@ -496,10 +460,13 @@ contains
    !=======================================================================================!
    !     Small helpers.                                                                     !
    !=======================================================================================!
+   !----- A linear congruential generator, in 64-bit arithmetic so the product cannot overflow. ---!
    real(wp) function pseudo(seed)
       integer(ik), intent(inout) :: seed
-      seed = mod(1103515245_ik * seed + 12345_ik, 2147483648_ik)
-      pseudo = real(seed, wp) / 2147483648.0_wp - 0.5_wp
+      integer(int64) :: s
+      s = mod(1103515245_int64 * int(seed, int64) + 12345_int64, 2147483648_int64)
+      seed = int(s, ik)
+      pseudo = real(s, wp) / 2147483648.0_wp - 0.5_wp
    end function pseudo
 
    subroutine dense_solve(a_in, b, x, n)

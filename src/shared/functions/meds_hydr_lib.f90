@@ -6,9 +6,9 @@
 ! profile. How much water a tissue or soil layer holds is in meds_water_retention. All are         !
 ! stateless, elemental/pure, scalar-in kernels                                                     !
 ! -- the hydraulics analogue of meds_allometry -- so they live in src/shared/functions and can be  !
-! evaluated at config-load (table build) and on the GPU hot path alike. The stateful NETWORK        !
-! SOLVER (solve_plant_water / plant_water_tendency) that assembles these into an ODE stays in        !
-! src/fast_dynamics/plant/meds_plant_hydraulics; it `use`s this module.                              !
+! evaluated at config-load (table build) and on the GPU hot path alike. The flow laws that use     !
+! them are in meds_water_paths, and the solver that assembles those into the soil-plant water      !
+! network is src/fast_dynamics/water/meds_water_network.                                           !
 !==========================================================================================!
 module meds_hydr_lib
    use meds_kinds,     only : wp, ik

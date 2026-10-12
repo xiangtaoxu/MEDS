@@ -45,10 +45,9 @@ module meds_output_registry
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
         FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
         SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT,                            &
-        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB, SRC_S_WORK_HYDRO_NSUB,           &
-        SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH, SRC_S_WORK_RK45_RESCUE,                     &
-        SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS,                  &
-        SRC_S_WORK_CLAMP_ENERGY,                                                                 &
+        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB, SRC_S_WORK_WATER_NEWTON,           &
+        SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT, SRC_S_WORK_RK45_RESCUE,                     &
+        SRC_S_WORK_CLAMP_STAGE,                                                                  &
         SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PD0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0, FLD_C_DIAG0, FLD_P_DIAG0, &
         FLD_PY_DIAG0
@@ -480,25 +479,20 @@ contains
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_STEPS)
       call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_REJ)
-      call add_variable(reg, 'work_soil_nsub_site', 'soil-water solver sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_SOIL_NSUB)
-      call add_variable(reg, 'work_hydro_nsub_site', 'plant-hydraulics sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_NSUB)
-      call add_variable(reg, 'work_nonconv_site', 'solver non-convergence events (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_NONCONV)
-      call add_variable(reg, 'work_hydro_thrash_site',                                          &
-                        'dt_fast steps with pathological hydraulics sub-stepping (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_THRASH)
+      call add_variable(reg, 'work_water_nsub_site', 'soil-plant water network sub-steps (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NSUB)
+      call add_variable(reg, 'work_water_newton_site', 'soil-plant water network Newton iterations (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NEWTON)
+      call add_variable(reg, 'work_water_reject_site',                                          &
+                        'soil-plant water network sub-steps rejected and retried shorter (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_REJECT)
+      call add_variable(reg, 'work_water_nfail_site',                                           &
+                        'soil-plant water network sub-steps taken although unconverged (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NFAIL)
       call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the implicit path (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_RK45_RESCUE)
       call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_STAGE)
-      call add_variable(reg, 'work_clamp_commit_site', 'committed-state clamp activations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_COMMIT)
-      call add_variable(reg, 'work_clamp_mass_site', 'water moved by committed-state clamps (period total)', &
-                        'kg/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_MASS)
-      call add_variable(reg, 'work_clamp_energy_site', 'energy moved by committed-state clamps (period total)', &
-                        'J/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_ENERGY)
    end subroutine register_numerics
 
 
@@ -1215,7 +1209,7 @@ contains
          files%diag%theta_sat(k) = params%theta_sat(k)
          files%diag%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
-         !      Campbell. Resolved through the SAME accessors the Richards solver uses, so the    !
+         !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
          files%diag%par_a(k)     = curve_a(params, k)
          files%diag%par_n(k)     = curve_n(params, k)

@@ -297,10 +297,11 @@ contains
       call add_storage_to_jacobian(net, h, ev)
       jv_c = matmul(net%sys%a, v_c) ; jv_g = 0.0_wp
       do i = 1_ik, net%n
+         jv_c = jv_c + net%sys%b(:, i) * v_g(WATER_WOOD, i)
          do l = 1_ik, GROUP_SIZE
-            jv_c = jv_c + net%sys%b(:, l, i) * v_g(l, i)
-            jv_g(l, i) = sum(net%sys%c(l, :, i) * v_c) + sum(net%sys%d(l, :, i) * v_g(:, i))
+            jv_g(l, i) = sum(net%sys%d(l, :, i) * v_g(:, i))
          end do
+         jv_g(WATER_WOOD, i) = jv_g(WATER_WOOD, i) + sum(net%sys%c(:, i) * v_c)
       end do
       eps = 1.0e-5_wp
       call evaluate(net, params, opts, forcing, hyd, net%tau_core + eps * v_c, net%tau_group + eps * v_g, ev, .false.)
@@ -523,8 +524,8 @@ contains
                dqa = du_ps * ev%dpsi_c(c) + du_k * ev%dk_c(c)
                dqb = du_pw * ev%dpsi_g(WATER_WOOD, i)
                net%sys%a(c, c)                    = net%sys%a(c, c) + dqa
-               net%sys%b(c, WATER_WOOD, i)        = net%sys%b(c, WATER_WOOD, i) + dqb
-               net%sys%c(WATER_WOOD, c, i)        = net%sys%c(WATER_WOOD, c, i) - dqa
+               net%sys%b(c, i)                    = net%sys%b(c, i) + dqb
+               net%sys%c(c, i)                    = net%sys%c(c, i) - dqa
                net%sys%d(WATER_WOOD, WATER_WOOD, i) = net%sys%d(WATER_WOOD, WATER_WOOD, i) - dqb
             end if
          end do
@@ -578,7 +579,7 @@ contains
          net%sys%a(c, c) = net%sys%a(c, c) + ev%dw_c(c) / h
          if (net%core_fixed(c)) then
             net%sys%a(c, :) = 0.0_wp ; net%sys%a(c, c) = 1.0_wp
-            net%sys%b(c, :, :) = 0.0_wp
+            net%sys%b(c, :) = 0.0_wp
          end if
       end do
       do i = 1_ik, net%n

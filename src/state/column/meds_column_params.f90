@@ -7,7 +7,7 @@
 ! These describe the same stores meds_column_state_types holds, but they are fixed or derived    !
 ! once per column and never integrated, which is the line the plan's placement rule 3 draws.     !
 ! Three kinds sit here, and they are worth telling apart:                                        !
-!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE) -- compile-time ceilings,    !
+!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max) -- compile-time ceilings,                  !
 !     not settings. They are what keep the columns allocatable-free and GPU-eligible.            !
 !   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.           !
 !   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at run time  !
@@ -25,7 +25,7 @@ module meds_column_params
    implicit none
    private
 
-   public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
+   public :: n_soil_layer_max, n_snow_layer_max, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: curve_a, curve_n
@@ -33,10 +33,9 @@ module meds_column_params
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
    integer(ik), parameter :: n_snow_layer_max = 1_ik        !< MVP single bulk layer; P1 raises to ED2 nzs~8
 
-   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
-   !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
-   !      mild tension + a neutral leaf temperature (both relax within one fast step).            !
-   integer(ik), parameter :: N_HYDRO_NODE   = 3_ik          !< == N_HYDRO (leaf/wood/root psi nodes)
+   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep): a fresh      !
+   !      cohort starts at a mild tension + a neutral leaf temperature (both relax within one fast !
+   !      step).                                                                                   !
    real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
    real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
 
@@ -158,7 +157,7 @@ contains
    !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for       !
    !  Campbell. They live HERE, beside soil_params_t, because they are a property of that type   !
    !  -- which family its two generic curve parameters mean. They were previously private        !
-   !  duplicates inside meds_soil_water; every consumer (the Richards solver, the diagnostic      !
+   !  duplicates inside meds_soil_water; every consumer (the water network, the diagnostic        !
    !  psi read-off) now shares this ONE mapping, so a family added later cannot be taught to       !
    !  one caller and not the other.                                                                !
    !=======================================================================================!

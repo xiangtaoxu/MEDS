@@ -7,7 +7,7 @@
 ! library compiles as a whole, so there is no reason to keep them apart). The types are pure  !
 ! DATA -- no methods, no hidden state -- organized in clearly delimited sections:             !
 !   * LEAF        -- leaf_env_t / leaf_flux_t / leaf_photo_params_t + limitation & pathway flags. !
-!   * HYDRAULICS  -- hydro_env_t / hydro_params_t / hydro_opts_t / hydro_flux_t + topology flags.  !
+!   * HYDRAULICS  -- hydro_params_t / hydro_params_table_t (per-PFT traits), hydro_opts_t.          !
 ! (PHENOLOGY moved to meds_phenology_types when the plant library split by timescale.)              !
 ! (Respiration types wood_*/root_* will be added here when meds_plant_respiration lands.)      !
 !==========================================================================================!
@@ -24,12 +24,7 @@ module meds_plant_types
    public :: PATH_C3, PATH_C4                       ! re-export (pathway lives with the PFT traits)
    public :: LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_PRODUCT, LIM_C4_PEP
    !----- HYDRAULICS -----------------------------------------------------------------------!
-   public :: hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t
-   public :: hydro_params_table_t
-   public :: N_HYDRO, NODE_LEAF, NODE_STEM, NODE_ROOT, NODE_WOOD, NROOT_MAX
-   public :: HYDRO_NODES_2, HYDRO_NODES_3
-   public :: HYDRO_SOLVER_EXPM, HYDRO_SOLVER_BE
-   public :: HYDRO_SUBSTEP_ADAPTIVE, HYDRO_SUBSTEP_FIXED
+   public :: hydro_params_t, hydro_opts_t, hydro_params_table_t
    !----- PHENOLOGY ------------------------------------------------------------------------!
    !----- RESPIRATION (env/flux types removed: the kernels are now `elemental pure` over bare      !
    !      scalars, MEDS_NUMERICS_SCOPING.md §11; only the run-uniform trait PODs remain). ----------!
@@ -164,52 +159,10 @@ module meds_plant_types
    !=======================================================================================!
    !     HYDRAULICS -- stateless per-individual water-transport interface seam.             !
    !=======================================================================================!
-   !----- Fixed compile-time node dimension (max over supported topologies). The active count  !
-   !      is a run option; the state array shape never changes, so it is GPU/SoA-friendly.      !
-   integer(ik), parameter :: N_HYDRO   = 3_ik
-   integer(ik), parameter :: NODE_LEAF = 1_ik   !< leaf water pool
-   integer(ik), parameter :: NODE_STEM = 2_ik   !< stem (3-node) / lumped wood (2-node)
-   integer(ik), parameter :: NODE_WOOD = 2_ik   !< alias of NODE_STEM in the 2-node run
-   integer(ik), parameter :: NODE_ROOT = 3_ik   !< root (3-node only)
-
-   !----- Fixed compile-time max soil/root layers for the multi-layer root boundary (§ MEDS_       !
-   !      MULTILAYER_ROOTS_DESIGN). Value-type arrays of this length keep hydro_env_t/hydro_flux_t   !
-   !      fixed-shape (GPU/SoA-safe). MUST be >= the soil column's n_soil_layer_max when coupled.    !
-   integer(ik), parameter :: NROOT_MAX = 20_ik
-
-   !----- Topology (number of active nodes). -----------------------------------------------!
-   integer(ik), parameter :: HYDRO_NODES_2 = 2_ik   !< leaf + lumped wood (default)
-   integer(ik), parameter :: HYDRO_NODES_3 = 3_ik   !< leaf + stem + root (opt-in)
-
-   !----- Sub-step integrator. -------------------------------------------------------------!
-   integer(ik), parameter :: HYDRO_SOLVER_EXPM = 1_ik  !< frozen-coefficient matrix exponential (default)
-   integer(ik), parameter :: HYDRO_SOLVER_BE   = 2_ik  !< linearly-implicit backward Euler (3-node / stiff)
-
-   !----- Sub-step control. ----------------------------------------------------------------!
-   integer(ik), parameter :: HYDRO_SUBSTEP_ADAPTIVE = 1_ik !< step-doubling error control (default)
-   integer(ik), parameter :: HYDRO_SUBSTEP_FIXED    = 2_ik !< fixed n_sub equal steps (GPU lockstep)
-
-   !----- Boundary conditions + per-plant geometry (all read-only; per plant). --------------!
-   type :: hydro_env_t
-      real(wp) :: transp     = 0.0_wp   !< [kg/s]  transpiration demand E (per plant)
-      real(wp) :: soil_psi   = 0.0_wp   !< [MPa]   aggregated soil (rhizosphere) water potential
-      real(wp) :: rhizo_cond = 0.0_wp   !< [kg/s/MPa] soil->root conductance (per plant, given BC)
-      real(wp) :: bleaf      = 0.0_wp   !< [kgC]   leaf biomass  (sets leaf capacitance)
-      real(wp) :: bsap       = 0.0_wp   !< [kgC]   sapwood biomass
-      real(wp) :: broot      = 0.0_wp   !< [kgC]   fine-root biomass (bsap+broot set wood capacitance)
-      real(wp) :: sap_area   = 0.0_wp   !< [m2]    sapwood cross-sectional area (conductance)
-      real(wp) :: height     = 0.0_wp   !< [m]     plant height (gravity head + path length)
-      !----- Multi-layer root boundary (ED2-style; MEDS_MULTILAYER_ROOTS_DESIGN). When              !
-      !       n_root_layer > 1 the solver aggregates these per-layer soil potentials + rhizosphere    !
-      !       conductances into an effective (G_root, psi_soil_eff) at the wood node and distributes   !
-      !       uptake back per layer; n_root_layer <= 1 uses the scalar soil_psi/rhizo_cond above       !
-      !       (bit-identical single-BC path).                                                          !
-      integer(ik) :: n_root_layer             = 0_ik    !< active root layers (<= 1 => scalar BC)
-      real(wp) :: soil_psi_layer(NROOT_MAX)   = 0.0_wp  !< [MPa]       per-layer soil water potential
-      real(wp) :: rhizo_cond_layer(NROOT_MAX) = 0.0_wp  !< [kg/s/MPa]  per-layer soil->root conductance
-      real(wp) :: root_z_layer(NROOT_MAX)     = 0.0_wp  !< [m, <=0]    layer depth for gravity head
-   end type hydro_env_t
-
+   !=======================================================================================!
+   !     HYDRAULICS -- the per-PFT plant-water traits and the one run switch. How water moves  !
+   !     is the soil-plant water network's (meds_water_network).                              !
+   !=======================================================================================!
    !----- Flat per-PFT hydraulic trait set (self-contained, filled by the seam from cfg%pft). !
    type :: hydro_params_t
       !----- Pressure-volume (Bartlett/Tyree-Hammel), one curve per tissue. ------------------!
@@ -242,29 +195,10 @@ module meds_plant_types
       type(hydro_params_t), allocatable :: pft(:)
    end type hydro_params_table_t
 
-   !----- Run selectors + numerical controls. ----------------------------------------------!
+   !----- Run switch: whether the leaves sit a hydrostatic head above the wood. --------------!
    type :: hydro_opts_t
-      integer(ik) :: topology     = HYDRO_NODES_2
-      integer(ik) :: solver       = HYDRO_SOLVER_EXPM
-      integer(ik) :: substep_mode = HYDRO_SUBSTEP_ADAPTIVE
-      logical     :: gravity_on   = .true.
-      real(wp)    :: rtol         = 1.0e-3_wp   !< [-]  relative sub-step tolerance
-      real(wp)    :: atol         = 1.0e-3_wp   !< [MPa] absolute sub-step tolerance
-      real(wp)    :: h_init       = 0.0_wp      !< [s]  initial sub-step (0 => start at dt)
-      integer(ik) :: max_substep  = 200_ik      !< sub-step cap / fixed count
+      logical :: gravity_on = .true.
    end type hydro_opts_t
-
-   !----- Outputs (per plant). -------------------------------------------------------------!
-   type :: hydro_flux_t
-      real(wp)    :: sapflow     = 0.0_wp   !< [kg/s]  wood->leaf sapflow (time-mean over dt)
-      real(wp)    :: root_uptake = 0.0_wp   !< [kg/s]  soil->root uptake (time-mean; the budget term)
-      real(wp)    :: root_uptake_layer(NROOT_MAX) = 0.0_wp !< [kg/s] per-layer uptake; sum = root_uptake
-      real(wp)    :: psi_leaf    = 0.0_wp   !< [MPa]   leaf water potential at end of step
-      real(wp)    :: psi_wood    = 0.0_wp   !< [MPa]   wood water potential at end of step
-      real(wp)    :: plc         = 0.0_wp   !< [-]     plant loss of conductance (1 - retained)
-      integer(ik) :: nsub        = 0_ik     !< sub-steps taken
-      logical     :: converged   = .false.  !< .true. if fully integrated AND every sub-step met tolerance
-   end type hydro_flux_t
 
 
    !=======================================================================================!

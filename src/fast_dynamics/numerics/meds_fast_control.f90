@@ -80,10 +80,10 @@ contains
    ! coefficient freeze, not by the stepper (MEDS_INTEGRATOR_PARITY.md [RETIRED] sec 3d/3e). A dilution the       !
    ! measurement cannot find is not worth a configuration axis.                                         !
    !                                                                                          !
-   ! Note that soil moisture is error-CONTROLLED on every path regardless of this norm: split and the   !
-   ! ARK take theta wholly from advance_soil_water_column, whose own adaptive step-doubling is driven by    !
-   ! the SAME GRP_THETA tolerances build_tol_set seeds here. What this norm adds is control for the one !
-   ! scheme (RK45) that took theta out of that solver and into its own stages.                          !
+   ! Soil moisture is error-CONTROLLED on every path regardless of this norm: both schemes take theta  !
+   ! from the soil-plant water network, whose own sub-step control is driven by the SAME GRP_THETA      !
+   ! tolerances build_tol_set seeds here; within a step theta moves at the network's steady rate, which !
+   ! every tableau integrates exactly.                                                                  !
    !---------------------------------------------------------------------------------------!
    pure function state_wrms_grouped(a, b, y_ref, n, nsl, tols) result(err)
       type(column_state_t), intent(in) :: a, b, y_ref

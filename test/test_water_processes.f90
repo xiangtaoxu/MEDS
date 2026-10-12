@@ -11,10 +11,10 @@
 !   2. TISSUE STORE : the pressure-volume curve matches psi_from_rwc / water_content.           !
 !   3. POND STORE   : smooth at empty and at the depression depth; water -> head round-trips.  !
 !   4. DARCY        : the pond face at zero head is today's infiltration capacity.              !
-!   5. ROOT UPTAKE  : equals rhizosphere_cond x driving force; nothing flows backwards.         !
+!   5. ROOT UPTAKE  : equals Gardner's conductance x driving force; nothing flows backwards.    !
 !   6. XYLEM        : equals the Kirchhoff edge x driving force, exponent 2 and a tabled 3.      !
 !   7. TRANSPIRATION: zero at an empty leaf, the demand above the closing water content.        !
-!   8. EVAPORATION  : matches ground_evap_from_state away from its corners.                     !
+!   8. EVAPORATION  : the closed form where no dry surface layer forms.                          !
 !==========================================================================================!
 program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
@@ -28,8 +28,9 @@ program test_water_processes
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_from_psi,       &
                                     soil_hydr_cond_from_theta, water_curve_t, psi_from_rwc, water_content
    use meds_hydr_lib, only : hydro_table_t, build_hydro_table, kirchhoff_edge, kirchhoff_edge_tab
-   use meds_plant_hydraulics, only : rhizosphere_cond
-   use meds_soil_water, only : ground_evaporation_rate, ground_evap_from_state
+   use meds_soil_water, only : ground_evaporation_rate
+   use meds_constants,  only : pi, grav, r_wv, p_std
+   use meds_therm_lib,  only : sat_specific_humidity
    use meds_soil_types, only : chydro_forcing_t
    use meds_column_params, only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t
@@ -216,9 +217,9 @@ contains
       g = root_conductance_geometry(0.02_wp, 35.0_wp, 0.01_wp, 2.5e-4_wp)
       k = 1.0e-8_wp ; ps = -0.3_wp ; pw = -0.9_wp ; z = -0.4_wp
       call root_uptake_flow(g, k, ps, z, pw, u, dus, duw, duk)
-      ref = 0.02_wp * rhizosphere_cond(rho_h2o * k / grav_head, 35.0_wp, 0.01_wp, 2.5e-4_wp)          &
+      ref = 0.02_wp * 2.0_wp * pi * (rho_h2o * k / grav_head) * 35.0_wp / log(0.01_wp / 2.5e-4_wp)      &
             * (ps + grav_head * z - pw)
-      call check_close('root: uptake = cohort x rhizosphere_cond x driving force', u, ref, 1.0e-10_wp * ref)
+      call check_close('root: uptake = cohort x Gardner conductance x driving force', u, ref, 1.0e-10_wp * ref)
       ok = .true.
       h = 1.0e-7_wp
       call root_uptake_flow(g, k, ps + h, z, pw, up, dum, dum, dum)
@@ -335,14 +336,16 @@ contains
          call ground_evaporation_rate(theta, head + h, sp, f, o, ep, dum, dum)
          call ground_evaporation_rate(theta, head - h, sp, f, o, em, dum, dum)
          if (.not. fd_agrees(dep, (ep - em) / (2*h), 1.0e-4_wp, 1.0e-14_wp)) ok_d = .false.
-         !----- Away from the corners and the old cap, the same number as the old routine. -----!
-         ref = ground_evap_from_state(theta, sp, f, o, 1.0_wp)
-         if (abs(theta - o%dsl_theta_init * 0.4314_wp) > 0.01_wp .and. ref > 1.0e-6_wp) then
-            if (abs(e - ref) > 1.0e-6_wp * ref) ok_v = .false.
+         !----- Moist enough that no dry surface layer forms: the closed form rho (alpha q_sat - q_air) !
+         !      / r_aero, with Philip's alpha = exp(psi g / (R_v T)). --------------------------------!
+         if (theta > o%dsl_theta_init * 0.4314_wp + 0.01_wp) then
+            ref = f%rho_air * (exp(head * grav / (r_wv * f%t_ground)) * sat_specific_humidity(f%t_ground, p_std, 1.0_wp) &
+                               - f%q_air) / f%r_aero
+            if (abs(e - ref) > 1.0e-10_wp * abs(ref)) ok_v = .false.
          end if
       end do
       call check_true('evaporation: derivatives match finite differences', ok_d)
-      call check_true('evaporation: matches ground_evap_from_state away from its corners', ok_v)
+      call check_true('evaporation: the closed form where no dry surface layer forms', ok_v)
    end subroutine test_evaporation
 
 end program test_water_processes

@@ -10,16 +10,14 @@
 ! TWO ENTRY POINTS:                                                                               !
 !   * surface_derivs -- the CAS surface block (leaf-energy diagnostic + ground skin + the three    !
 !     CAS twins). Depends only on meds_therm_lib; validated bit-for-bit against the split.            !
-!   * column_derivs  -- the WHOLE column: surface_derivs + the soil-heat column, the soil-water    !
-!     (Richards) column, and the per-cohort plant-hydraulics 2x2, assembled from the tendency-      !
-!     exposing kernels soil_energy_time_deriv / soil_water_time_deriv / plant_water_tendency (each a    !
-!     side-effect-free sibling of its BE kernel, reusing the SAME flux helpers -- no re-derivation).!
+!   * column_derivs  -- the WHOLE column: surface_derivs + the soil-heat column (the tendency-       !
+!     exposing soil_energy_time_deriv, a side-effect-free sibling of its BE kernel) + soil and plant  !
+!     water, which move at the soil-plant water network's steady rates over the step.                 !
 !                                                                                          !
-! Faithfulness: each reservoir's tendency is the EXPLICIT RHS whose backward-Euler advance over    !
-! dt reproduces the corresponding split kernel as dt -> 0 (soil heat/water) or exactly (the CAS     !
-! implicit-in-atm twins; the 2x2 matrix-exponential). Verified per-reservoir in test_column_derivs.!
-! The surface hydrology BCs (q_top, root uptake) and the leaf gas-exchange pre-pass are            !
-! the frozen, explicit part of the additive split (held constant across the ARK macro-step).       !
+! Faithfulness: the soil-heat tendency is the EXPLICIT RHS whose backward-Euler advance reproduces    !
+! its BE kernel as dt -> 0, and the CAS twins' exactly (implicit in the atmosphere). Verified per-    !
+! reservoir in test_column_derivs. The water network's flows and the leaf gas-exchange pre-pass are  !
+! the frozen, explicit part of the additive split (held constant across the macro-step).            !
 !==========================================================================================!
 module meds_fast_time_derivs
    use meds_kinds, only : wp, ik
@@ -379,12 +377,10 @@ contains
       call soil_energy_time_deriv(soil_e, eforc, col_config%soil_thermal, col_config%soil, col_config%energy, &
                                   f%dedt, bottom_face=f%g_bottom)
 
-      !----- 4. Per-cohort plant WATER MASS: frozen sapflow/uptake (Act 1) in, REFRESHED per-plant   !
-      !      transpiration demand out -- see the header. transp_i mirrors exactly the conversion the    !
-      !      retired plant_water_tendency call used (surf_tend%transp_c is per-m2-ground; per-plant divides     !
-      !      by nplant). the aggregate uptake is the soil's realized supply (the instantaneous supply           !
-      !      throttle is retired, matching the split path's own P0 design -- the plant's mass STORAGE     !
-      !      absorbs any soil-supply/demand mismatch instead of throttling transp itself). --------------!
+      !----- 4. Per-cohort plant WATER MASS: the network's sapflow and uptake in, and out the         !
+      !      transpiration this stage charged the canopy air (surf_tend%transp_c, per m2 of ground;     !
+      !      per plant divides by nplant) -- the network's own when the stages hold it, so the step     !
+      !      ends at the network's water. ---------------------------------------------------------!
       do i = 1_ik, n
          transp_i = surf_tend%transp_c(i) / max(frozen%plant%nplant(i), tiny_num)
          f%d_leaf_water_mass(i) = frozen%plant%sapflow_frozen(i) - transp_i

@@ -10,21 +10,19 @@
 ! and the RK4 oracle reaches the same stage solver directly instead of importing it from ARK.  !
 !                                                                                          !
 ! Contents: `column_be_stage` (the stage), `newton_surface_solve` + `jac_surface` +            !
-! `cas_box_commit` (its inner solve), and `advance_water_mass_full` / `advance_surf_water_full` !
+! `cas_box_commit` (its inner solve), and `advance_plant_water` / `advance_surf_water_full` !
 ! (the mass-form water advance a stage commits alongside the energy solve).                     !
 !==========================================================================================!
 module meds_fast_be_stage
    use meds_kinds, only : wp, ik
    use meds_constants, only : tiny_num, cp_air, rho_h2o
-   use meds_plant_hydraulics, only : solve_plant_water_batch, leaf_node_psi
-   use meds_water_retention, only : psi_from_water_content, water_content
    use meds_config, only : INTEG_ARK, CTRL_L2_STRICT
    use meds_fast_control, only : step_control_factor
    use meds_soil_types, only : energy_forcing_t, energy_flux_t, snow_melt_t
    use meds_column_state_types, only : soil_energy_column_t
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
-   use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, clamp_theta, &
+   use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, &
                                      clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
                                      canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
                                      diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
@@ -35,27 +33,23 @@ module meds_fast_be_stage
    use meds_soil_energy, only : soil_energy_step_implicit
    use meds_cas_biophysics, only : cas_column_t, cas_source_t, cas_column_step_implicit
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
-   use meds_plant_types, only : N_HYDRO, NODE_LEAF, NODE_WOOD
    use meds_therm_lib, only : cas_temp_of_enthalpy, internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, &
                               temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
    implicit none
    private
 
-   public :: column_be_stage, advance_water_mass_full, advance_surf_water_full
+   public :: column_be_stage, advance_plant_water, advance_surf_water_full
 
 contains
 
    !---------------------------------------------------------------------------------------!
-   ! column_be_stage -- ONE backward-Euler stage of the STIFF, backward-Euler-integrable block only:  !
-   ! the CAS twins (BE-in-atm; np>1 -> the coupled 2x2 Newton arrowhead) + soil heat + soil water     !
-   ! (BE-Thomas), driven by the frozen surface sources. Plant hydraulics is DELIBERATELY EXCLUDED --  !
-   ! solve_plant_water is an EXACT matrix exponential, not a backward-Euler stage, so it cannot ride   !
-   ! an ESDIRK accumulation (it would drop the order + overshoot psi); psi is PASSED THROUGH here and  !
-   ! advanced separately by advance_hydraulics_full over the full step. This is the reusable ESDIRK    !
-   ! stage primitive: for the CAS+soil block it solves Y = base + dt*f_I(Y), so both imex_euler_column_!
-   ! step (gamma=1) and each ark2 stage (gamma*dt) are just a column_be_stage call. Reuses the         !
-   ! validated production kernels -- no new numerics.                                                 !
+   ! column_be_stage -- ONE backward-Euler stage of the STIFF block: the CAS twins (BE-in-atm; np>1 ->  !
+   ! the coupled 2x2 Newton arrowhead) and soil heat (BE-Thomas), driven by the frozen surface sources.!
+   ! Water is the soil-plant water network's: soil water moves at its steady rate and plant water is   !
+   ! passed through, then advanced once over the step (advance_plant_water). This is the reusable       !
+   ! ESDIRK stage primitive: it solves Y = base + dt*f_I(Y), so each ark2 stage (gamma*dt) is a         !
+   ! column_be_stage call. Reuses the validated production kernels -- no new numerics.                 !
    !---------------------------------------------------------------------------------------!
    subroutine column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter, bf)
       type(column_state_t),  intent(in)  :: y
@@ -167,7 +161,7 @@ contains
       y_out%w_surface      = y%w_surface
       y_out%w_surface_enth = y%w_surface_enth
 
-      !----- plant water MASS PASSED THROUGH (advanced by advance_water_mass_full, not here). ----!
+      !----- plant water MASS PASSED THROUGH (advanced by advance_plant_water, not here). ----!
       y_out%leaf_water_mass(1:n) = y%leaf_water_mass(1:n)
       y_out%wood_water_mass(1:n) = y%wood_water_mass(1:n)
 
@@ -344,161 +338,32 @@ contains
    end subroutine jac_surface
 
    !---------------------------------------------------------------------------------------!
-   ! advance_water_mass_full -- operator-split plant water MASS over the FULL dt from y%*_water_mass,   !
-   ! driven by the CALLER-SUPPLIED transp_c_bw -- the SAME per-cohort transpiration (already b-weighted  !
-   ! across the stage(s) that make up this step, sec below) the CAS's own vapour balance used, so the     !
-   ! mass debit and the CAS credit are consistent to within the tableau's own stage algebra (not a         !
-   ! separate, later evaluation at a possibly-different point).                                             !
-   !                                                                                          !
-   ! THE UPDATE IS A CORRECTOR, not the bare Euler step it used to be. The reason is exact algebra, not     !
-   ! a tolerance judgement. solve_plant_water defines its own reported flux FROM its own storage change,    !
-   !     flux%sapflow = dw_l/dt + transp,   flux%root_uptake = (dw_l + dw_w)/dt + transp,                   !
-   ! so `W + dt*(sapflow - transp)` reproduces the kernel's matrix-exponential endpoint EXACTLY -- to        !
-   ! machine precision, at any dt -- PROVIDED the transp used to price the sapflow is the transp actually    !
-   ! debited. The pre-pass priced sapflow_frozen at transp_pp (the state^n FULL demand); this routine        !
-   ! debits transp_c_bw (the b-weighted REALISED demand). The gap between the two is therefore not a          !
-   ! discretisation error of the mass ODE at all -- it is exactly dt*(transp_pp - transp_bw), a pure FLUX     !
-   ! INCONSISTENCY that grows linearly in dt and never converges away within a step. Measured on the 3 h      !
-   ! midday fixture it was the WHOLE of the psi_leaf dt-divergence: 1.45 MPa of error at dt_fast = 900 s.     !
-   !                                                                                          !
-   ! Re-solving the kernel here on the REALISED transpiration -- same Category-0 frozen conductances and      !
-   ! soil potentials as the pre-pass, so this is one semi-discretisation and not a second linearisation      !
-   ! point -- makes the credit and the debit the same number again. Measured effect at dt_fast = 900 s:       !
-   ! psi_leaf error 1.454 -> 0.0046 MPa (314x), against a common dt = 5 s reference that BOTH versions        !
-   ! agree on to 8e-4 MPa (i.e. this changes the discretisation, NOT the dt->0 limit). T_cas differs by        !
-   ! 6e-5 K at dt = 25 s and 0.007 K at 900 s -- also vanishing with dt, as a consistent scheme must.          !
-   ! (MEDS_ED2_RK45_DESIGN.md sec 1/4/5 described the pre-corrector Euler form.) --------------------------!
-   subroutine advance_water_mass_full(y, frozen, col_config, n, nsl, dt, transp_c_bw, y_out,                   &
-                                      floor_mass, floor_n, hydro_nsub, hydro_nonconv)
+   ! advance_plant_water -- each cohort's leaf and wood water over an ARK step of length dt, at the   !
+   ! soil-plant water network's time-mean rates: sapflow and root uptake in, sapflow and the          !
+   ! transpiration the stages charged the canopy air (transp_c_bw, b-weighted over the step) out. The !
+   ! stages hold each cohort's transpiration at the network's (surface_derivs), so a step of dt_fast  !
+   ! ends exactly where the network did, and the canopy air received exactly the water the leaves     !
+   ! lost. Nothing is floored: the network keeps every store inside its curve.                       !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine advance_plant_water(y, frozen, n, dt, transp_c_bw, y_out)
       type(column_state_t),  intent(in)    :: y
       type(column_frozen_t), intent(in)    :: frozen
-      type(column_config_t), intent(in)  :: col_config   !< the column's parameters (soil, thermal, hydraulics)
-      integer(ik),           intent(in)    :: n, nsl
+      integer(ik),           intent(in)    :: n
       real(wp),              intent(in)    :: dt
-      real(wp),              intent(in)    :: transp_c_bw(n)  !< [kg/m2 ground/s] per-cohort, b-weighted over the step
+      real(wp),              intent(in)    :: transp_c_bw(n)  !< [kg/m2 ground/s] per cohort, b-weighted over the step
       type(column_state_t),  intent(inout) :: y_out
-      !----- The tissue-water floor is a COMMIT CLAMP that creates water, so it is reported through   !
-      !      the channel the other commit clamps already use (#148). Export, do not accumulate: the   !
-      !      caller owns budget%clamp_mass and may call this more than once per step.                 !
-      real(wp),    optional, intent(out)   :: floor_mass  !< [kg/m2 ground] water CREATED by the floor
-      integer(ik), optional, intent(out)   :: floor_n     !< tissue-cohort activations of the floor
-      !----- The corrector's own hydraulics work, exported the same way: sub-steps summed over the  !
-      !      cohorts, and cohorts whose solve did not converge (0 when the corrector does not run). -!
-      integer(ik), optional, intent(out)   :: hydro_nsub
-      integer(ik), optional, intent(out)   :: hydro_nonconv
-      real(wp)    :: transp_i, raw, created, fmass
-      integer(ik) :: i, fcount
-      !----- CORRECTOR locals (only touched on the re-solve path). --------------------------------!
-      real(wp)    :: transp_pp(n), psi_c(N_HYDRO, n)
-      real(wp)    :: sapflow_c(n), uptake_c(n), uptake_layer_c(nsl, n)
-      real(wp)    :: psi_leaf_c(n), psi_wood_c(n), plc_c(n)
-      integer(ik) :: nsub_c(n)
-      logical     :: conv_c(n)
-      real(wp)    :: sap_use(n), upt_use(n)
-
-      !----- THE CORRECTOR (see the header). The pre-pass solved the kernel on transp_pp = the       !
-      !      state^n FULL demand; the step actually debits transp_c_bw, the b-weighted REALISED       !
-      !      demand. Since the kernel defines sapflow = dw_l/dt + transp, an Euler step on the mass   !
-      !      reproduces the kernel's own dw EXACTLY when the two transpirations agree -- and differs   !
-      !      by exactly dt*(transp_pp - transp_bw) when they do not. That residual is a pure FLUX      !
-      !      INCONSISTENCY (credit priced at one transpiration, debit taken at another), it grows      !
-      !      linearly in dt, and it is the whole of the psi_leaf dt-divergence. Re-solving here on     !
-      !      the realised transpiration -- same FROZEN conductances and soil potentials, so this is    !
-      !      still one Category-0 semi-discretisation, not a second linearisation point -- makes the   !
-      !      credit and the debit the same number again.                                              !
-      !                                                                                               !
-      !      Guarded on allocation: the RK4/IMEX-Euler oracle hand-builds its own `frozen` and never      !
-      !      populates the hydraulics boundary inputs, so it keeps the frozen fluxes (same rule as     !
-      !      surface_frozen_t%mo_live). --------------------------------------------------------------!
-      sap_use(1:n) = frozen%plant%sapflow_frozen(1:n)
-      upt_use(1:n) = frozen%plant%uptake_frozen(1:n)
-      if (present(hydro_nsub))    hydro_nsub    = 0_ik
-      if (present(hydro_nonconv)) hydro_nonconv = 0_ik
-      if (allocated(frozen%roots%rhizo_cond) .and. allocated(frozen%roots%psi_soil_pre) .and. dt > tiny_num) then
-         do i = 1_ik, n
-            transp_pp(i) = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
-         end do
-         !----- PER-PFT PV curves (#179): loops, not elemental array calls, because the parameters !
-         !      are now selected by the cohort's PFT.  --------------------------------------------!
-         do i = 1_ik, n
-            associate (hp => col_config%hydraulics_table%pft(frozen%plant%pft(i)))
-               psi_c(NODE_LEAF, i) = leaf_node_psi(y%leaf_water_mass(i), frozen%plant%bleaf(i),           &
-                     y%wood_water_mass(i), frozen%plant%bsap(i) + frozen%plant%broot(i),                     &
-                     frozen%plant%height(i), hp, col_config%hydraulics_opts)
-               psi_c(NODE_WOOD, i) = psi_from_water_content(y%wood_water_mass(i), hp%wood_curve, &
-                     frozen%plant%bsap(i) + frozen%plant%broot(i))
-            end associate
-         end do
-         call solve_plant_water_batch(n, nsl, transp_pp(1:n), frozen%plant%bleaf(1:n), frozen%plant%bsap(1:n),         &
-              frozen%plant%broot(1:n), frozen%plant%sap_area(1:n), frozen%plant%height(1:n),                  &
-              frozen%roots%psi_soil_pre(1:nsl), col_config%soil%z_node(1:nsl), frozen%roots%rhizo_cond(1:nsl, 1:n),           &
-              frozen%plant%pft(1:n), col_config%hydraulics_table, col_config%hydraulics_opts, dt, psi_c(:, 1:n), &
-              sapflow_c(1:n), uptake_c(1:n), uptake_layer_c(1:nsl, 1:n), psi_leaf_c(1:n), psi_wood_c(1:n), plc_c(1:n), &
-              nsub_c(1:n), conv_c(1:n))
-         if (present(hydro_nsub))    hydro_nsub    = sum(nsub_c(1:n))
-         if (present(hydro_nonconv)) hydro_nonconv = count(.not. conv_c(1:n))
-         !----- TAKE THE CORRECTOR'S SAPFLOW ONLY; the wood<->soil interface KEEPS uptake_frozen, which  !
-         !      is the SAME number the soil column already committed as its root sink (frozen%roots%uptake,        !
-         !      rescaled by the soil's own realized supply). That keeps "one flux, both sides"            !
-         !      across an interface spanning two OPERATOR-SPLIT solves, so the whole-column water         !
-         !      ledger closes exactly.                                                                    !
-         !                                                                                          !
-         !      MEASURED CONSEQUENCE, and why this is the right asymmetry rather than a shortcut.         !
-         !      uptake_frozen is priced at the pre-pass transpiration, so at long dt_fast the plant       !
-         !      receives ~1.3% less water than it should: plant total 1.9139 vs 1.9392 kg/m2 at 900 s     !
-         !      against a 5 s reference. That TOTAL error is fixed by the committed uptake and is         !
-         !      INDEPENDENT of the root boundary condition -- a specified-flux (Neumann) root BC was      !
-         !      built and measured, and it produced the IDENTICAL total (1.9139). All the BC chooses is   !
-         !      WHERE the deficit is parked:                                                              !
-         !        potential BC (this code): all of it into the wood -- psi_leaf 4.6e-3, psi_wood 1.74e-1  !
-         !        specified-flux BC:        split by capacitance -- psi_leaf 1.61e-1, psi_wood 1.60e-1    !
-         !      The leaf is the consequential node (it drives the stomatal water-stress feedback, hence   !
-         !      transpiration and GPP), while psi_wood at these potentials is far from wood_psi50 and     !
-         !      drives almost no PLC. Parking the error in the wood is therefore the better trade, and    !
-         !      the Neumann variant was NOT landed. Closing the deficit itself requires re-pricing the    !
-         !      SOIL side (the pre-pass would have to see the realised transpiration); no plant-side      !
-         !      boundary condition can do it. See <scratchpad>/neumann_root_bc.patch.                     !
-         sap_use(1:n) = sapflow_c(1:n)
-      end if
-
-      fmass = 0.0_wp ; fcount = 0_ik
+      integer(ik) :: i
       do i = 1_ik, n
-         transp_i = transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num)
-         !----- THE TISSUE-WATER FLOOR. Unlike psi -- whose PV-curve capacitance self-limits as the    !
-         !      tissue dries, dw/dpsi -> 0 in the flaccid tail -- the mass ODE is a plain linear Euler  !
-         !      step with no restoring force, so a large intra-step CAS swing can debit more water     !
-         !      than is in storage. Flooring at a tiny POSITIVE value (not 0, so a later               !
-         !      psi_from_water_content never divides by an exact-zero rwc) stops it going negative,    !
-         !      and CREATES WATER doing so.                                                            !
-         !                                                                                          !
-         !      That creation is now COUNTED (#148). It is exactly a commit clamp, so it reports       !
-         !      through budget%clamp_mass like the others, converted per-plant -> per-m2 by nplant.    !
-         !      Before this, the comment called the case "unobserved", which was a belief and not a    !
-         !      measurement: the floor fires PER COHORT PER TISSUE, and the whole-column water ledger  !
-         !      sums leaf + wood over all cohorts, so water created in one cohort's wood is            !
-         !      indistinguishable from a redistribution between cohorts. The budget closed to ~4e-12   !
-         !      kg/m2 with the floor entirely unmonitored.                                             !
-         raw     = y%leaf_water_mass(i) + dt*(sap_use(i) - transp_i)
-         created = max(0.0_wp, tiny_num - raw)
-         if (created > 0.0_wp) then
-            fmass = fmass + created * frozen%plant%nplant(i) ; fcount = fcount + 1_ik
-         end if
-         y_out%leaf_water_mass(i) = max(raw, tiny_num)
-
-         raw     = y%wood_water_mass(i) + dt*(upt_use(i) - sap_use(i))
-         created = max(0.0_wp, tiny_num - raw)
-         if (created > 0.0_wp) then
-            fmass = fmass + created * frozen%plant%nplant(i) ; fcount = fcount + 1_ik
-         end if
-         y_out%wood_water_mass(i) = max(raw, tiny_num)
+         y_out%leaf_water_mass(i) = y%leaf_water_mass(i)                                                  &
+              + dt * (frozen%plant%sapflow_frozen(i) - transp_c_bw(i) / max(frozen%plant%nplant(i), tiny_num))
+         y_out%wood_water_mass(i) = y%wood_water_mass(i)                                                  &
+              + dt * (frozen%plant%uptake_frozen(i) - frozen%plant%sapflow_frozen(i))
       end do
-      if (present(floor_mass)) floor_mass = fmass
-      if (present(floor_n))    floor_n    = fcount
-   end subroutine advance_water_mass_full
+   end subroutine advance_plant_water
 
    !---------------------------------------------------------------------------------------!
    ! advance_surf_water_full -- operator-split canopy-SURFACE water (sec 3.4, P2c) over the FULL dt   !
-   ! from y%*_surf_water, mirroring advance_water_mass_full exactly: frozen%film%intercept_leaf/wood is the     !
+   ! from y%*_surf_water, mirroring advance_plant_water exactly: frozen%film%intercept_leaf/wood is the     !
    ! FROZEN Act-1 inflow, film_evap_*_bw is the b-weighted per-stage outflow (the SAME number the        !
    ! caller's sf2/sf3 credited to the CAS, sec 1/3/4/5's "one flux, both sides" discipline). Floors at    !
    ! exactly 0.0 (not tiny_num like the mass version -- surf_water feeds no psi/rwc division downstream).  !

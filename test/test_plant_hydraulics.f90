@@ -1,19 +1,16 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_plant_hydraulics -- unit tests for the stateless plant-hydraulics library.            !
+! test_plant_hydraulics -- unit tests for the stateless plant-hydraulics library: the curves and  !
+! laws the soil-plant water network is built from (its solve is test_water_network).             !
 !                                                                                          !
-!   1. PV CURVE      : turgor-loss point matches Bartlett eqn 1; psi<->RWC round-trips;        !
-!                      capacitance C matches a finite-difference dW/dpsi.                        !
+!   1. PV CURVE       : turgor-loss point matches Bartlett eqn 1; psi<->RWC round-trips;        !
+!                       capacitance C matches a finite-difference dW/dpsi.                        !
 !   2. KIRCHHOFF EDGE : the integrated conductance uses <plc> in (plc(leaf), plc(wood)); the      !
-!                       |dpsi|->0 limit reduces to the pointwise value.                            !
-!   3. NO-FLOW EQUIL. : E=0 at the hydrostatic equilibrium (psi_L = psi_W - G, psi_W = psi_soil)    !
-!                       gives dpsi ~ 0 and zero boundary fluxes (conservation).                      !
-!   4. STEADY / OHM   : under constant E the wood node converges to psi_soil - E/rhizo_cond and      !
-!                       root_uptake -> E (mass balance); leaf is more tensioned than wood.             !
-!   5. vs REFERENCE   : the adaptive matrix-exponential matches a fine forward-Euler integration       !
-!                       of the same ODE over one step.                                                  !
-!   6. DIURNAL        : a sinusoidal E gives a midday psi_leaf minimum and nocturnal recovery, bounded.  !
-!   7. DEGENERATE     : a near-leafless cohort returns finite values (no NaN/Inf).                        !
+!                       |dpsi|->0 limit reduces to the pointwise value; table and quadrature.      !
+!   3. SAPWOOD        : the intact xylem conductance is the sapwood's; wood_kmax from density.   !
+!   4. ROOTS          : ED2's root profile and rooting depth; Gardner's root conductance.        !
+!   5. SEAM           : growth at conserved water lowers psi; the capacity clamp on a shrink.    !
+!   6. LEAFLESS       : a leafless cohort's leaf node sits at the wood less the crown head.      !
 !==========================================================================================!
 program test_plant_hydraulics
    use meds_test_assert, only : check, check_true, test_report
@@ -23,27 +20,20 @@ program test_plant_hydraulics
                                   flux_potential_lin, kirchhoff_edge_tab, wood_kmax_from_density
    use meds_water_retention, only : pv_psi_tlp, rwc_from_psi, psi_from_rwc, water_content, capacitance, &
                                     psi_from_water_content, clamp_water_to_capacity, water_curve_t
-   use meds_plant_types, only : hydro_env_t, hydro_params_t, hydro_opts_t, hydro_flux_t, N_HYDRO, NODE_LEAF, NODE_WOOD, &
-                                HYDRO_SUBSTEP_FIXED
-   use meds_plant_hydraulics, only : solve_plant_water, leaf_node_psi
-   use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile, rhizosphere_cond
+   use meds_plant_types, only : hydro_params_t, hydro_opts_t
+   use meds_plant_hydraulics, only : leaf_node_psi
+   use meds_plant_hydraulics, only : root_fraction_profile, cohort_root_depth, cohort_root_profile
+   use meds_water_paths, only : xylem_max_conductance, root_conductance_geometry
    implicit none
-
 
    call test_pv_curve()
    call test_kirchhoff_edge()
    call test_kirchhoff_quadrature()
    call test_hydro_table()
-   call test_no_flow_equilibrium()
-   call test_steady_ohm()
    call test_sapwood_conductance()
-   call test_vs_reference()
-   call test_general_kexp_solver()
-   call test_diurnal()
-   call test_degenerate()
-   call test_multilayer_roots()
+   call test_root_profile()
+   call test_growth_seam()
    call test_cohort_roots()
-   call test_biomass_seam()
    call test_seam_capacity_clamp()
    call test_leafless_leaf_psi()
    call test_kirchhoff_far_tail()
@@ -52,23 +42,17 @@ program test_plant_hydraulics
 
 contains
 
-
    !----- Assertion. -----------------------------------------------------------------------!
 
-
    !----- A pioneer-like default trait set + cohort environment. ---------------------------!
-   subroutine defaults(p, env, o)
+   subroutine defaults(p, o)
       type(hydro_params_t), intent(out) :: p
-      type(hydro_env_t),    intent(out) :: env
       type(hydro_opts_t),   intent(out) :: o
       p%leaf_curve = water_curve_t(pi0 = -1.5_wp, elastic_mod = 12.0_wp, apoplast_frac = 0.30_wp, water_sat = 2.0_wp)
       p%wood_curve = water_curve_t(pi0 = -1.0_wp, elastic_mod =  8.0_wp, apoplast_frac = 0.20_wp, water_sat = 1.0_wp)
       p%wood_psi50 = -2.0_wp ; p%wood_kexp = 2.0_wp
       p%wood_kmax = 9.0_wp ; p%vessel_curl = 1.5_wp      ! 3.0e-3 kg/s/MPa over the 20 m path
-      env%transp = 1.5e-4_wp ; env%soil_psi = -0.3_wp ; env%rhizo_cond = 5.0e-4_wp
-      env%bleaf = 0.5_wp ; env%bsap = 5.0_wp ; env%broot = 2.0_wp
-      env%sap_area = 0.01_wp ; env%height = 20.0_wp
-      o = hydro_opts_t()   ! defaults: 2-node, EXPM, adaptive, gravity on
+      o = hydro_opts_t()   ! gravity on
    end subroutine defaults
 
    !=======================================================================================!
@@ -188,45 +172,21 @@ contains
    end subroutine test_hydro_table
 
    !=======================================================================================!
-   subroutine test_no_flow_equilibrium()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO), g, psi_l0, psi_w0
-      print '(a)', '-- No-flow equilibrium (conservation) --'
-      call defaults(p, env, o)
-      env%transp = 0.0_wp
-      g = grav_head*env%height
-      psi_w0 = env%soil_psi ; psi_l0 = env%soil_psi - g       ! hydrostatic equilibrium
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = psi_l0 ; psi(NODE_WOOD) = psi_w0
-      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      call check('psi_leaf unchanged at equilibrium', psi(NODE_LEAF), psi_l0, 1.0e-6_wp)
-      call check('psi_wood unchanged at equilibrium', psi(NODE_WOOD), psi_w0, 1.0e-6_wp)
-      call check('root_uptake ~ 0 at equilibrium',    flux%root_uptake, 0.0_wp, 1.0e-9_wp)
-      call check('sapflow ~ 0 at equilibrium',        flux%sapflow,     0.0_wp, 1.0e-9_wp)
-   end subroutine test_no_flow_equilibrium
-
-   !=======================================================================================!
    !----- The maximum conductance is the sapwood's, wood_kmax * sap_area / (height * vessel_curl):  !
    !      doubling the conductivity, doubling the sapwood area and halving the path factor give the !
    !      same step, and a faster one than the base. wood_kmax follows wood density (Xu et al.    !
    !      2016): 3.27 at 0.6 g/cm3, falling with density, and held at the fit's 0.35-0.95. -------!
    subroutine test_sapwood_conductance()
-      type(hydro_params_t) :: p, p2 ; type(hydro_env_t) :: env, env2 ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: f0, fk, fa, fc
-      real(wp) :: psi0(N_HYDRO), psi(N_HYDRO)
+      real(wp) :: k0
       print '(a)', '-- Sapwood conductance --'
-      call defaults(p, env, o)
-      psi0(:) = 0.0_wp ; psi0(NODE_LEAF) = env%soil_psi - 0.5_wp ; psi0(NODE_WOOD) = env%soil_psi
-      psi = psi0 ; call solve_plant_water(env, p, o, 900.0_wp, psi, f0)
-      p2 = p ; p2%wood_kmax = 2.0_wp*p%wood_kmax
-      psi = psi0 ; call solve_plant_water(env, p2, o, 900.0_wp, psi, fk)
-      env2 = env ; env2%sap_area = 2.0_wp*env%sap_area
-      psi = psi0 ; call solve_plant_water(env2, p, o, 900.0_wp, psi, fa)
-      p2 = p ; p2%vessel_curl = 0.5_wp*p%vessel_curl
-      psi = psi0 ; call solve_plant_water(env, p2, o, 900.0_wp, psi, fc)
-      call check('2 x sapwood area = 2 x wood_kmax: sapflow', fa%sapflow, fk%sapflow, 1.0e-14_wp)
-      call check('vessel_curl / 2 = 2 x wood_kmax: sapflow',  fc%sapflow, fk%sapflow, 1.0e-14_wp)
-      call check_true('a larger wood_kmax raises the sapflow', fk%sapflow > f0%sapflow)
+      k0 = xylem_max_conductance(9.0_wp, 0.01_wp, 20.0_wp, 1.5_wp)
+      call check('wood_kmax * sapwood area / (height * vessel_curl)', k0, 9.0_wp * 0.01_wp / 30.0_wp, 1.0e-15_wp)
+      call check('2 x sapwood area = 2 x wood_kmax', xylem_max_conductance(9.0_wp, 0.02_wp, 20.0_wp, 1.5_wp), &
+                 xylem_max_conductance(18.0_wp, 0.01_wp, 20.0_wp, 1.5_wp), 1.0e-15_wp)
+      call check('vessel_curl / 2 = 2 x wood_kmax', xylem_max_conductance(9.0_wp, 0.01_wp, 20.0_wp, 0.75_wp), &
+                 2.0_wp * k0, 1.0e-15_wp)
+      call check_true('a plant with no sapwood keeps a positive conductance',                         &
+                      xylem_max_conductance(9.0_wp, 0.0_wp, 20.0_wp, 1.5_wp) > 0.0_wp)
       call check('wood_kmax at 0.6 g/cm3 (Xu et al. 2016)', wood_kmax_from_density(0.6_wp),       &
                  exp(2.348_wp - 2.455_wp*0.6_wp + 0.5_wp*0.6186_wp), 1.0e-12_wp)
       call check_true('denser wood conducts less',                                               &
@@ -238,143 +198,13 @@ contains
    end subroutine test_sapwood_conductance
 
    !=======================================================================================!
-   subroutine test_steady_ohm()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO)
-      integer(ik) :: it
-      print '(a)', '-- Steady state / Ohm law --'
-      call defaults(p, env, o)
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
-      do it = 1_ik, 400_ik                                     ! march to steady state
-         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      end do
-      !----- Wood balance is exact at steady state (rhizo_cond constant): psi_W = psi_soil - E/K_S.
-      call check('psi_wood = psi_soil - E/rhizo_cond', psi(NODE_WOOD),                          &
-                 env%soil_psi - env%transp/env%rhizo_cond, 1.0e-4_wp)
-      call check('root_uptake -> E at steady state', flux%root_uptake, env%transp, 1.0e-8_wp)
-      call check_true('leaf more tensioned than wood', psi(NODE_LEAF) < psi(NODE_WOOD))
-      call check_true('wood more tensioned than soil', psi(NODE_WOOD) < env%soil_psi)
-   end subroutine test_steady_ohm
-
+   ! ED2's root-fraction profile, and how a drying layer stops feeding the roots: its Gardner        !
+   ! conductance falls with its own K(theta) (test_water_network: no backflow, the network's       !
+   ! uptake by layer).                                                                              !
    !=======================================================================================!
-   subroutine test_vs_reference()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO), refL, refW
-      print '(a)', '-- vs fine explicit reference --'
-      call defaults(p, env, o)
-      o%rtol = 1.0e-5_wp ; o%atol = 1.0e-5_wp
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
-      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      call reference_2node(p, env, env%soil_psi, env%soil_psi, 900.0_wp, 200000_ik, refL, refW)
-      call check('psi_leaf vs reference', psi(NODE_LEAF), refL, 2.0e-3_wp)
-      call check('psi_wood vs reference', psi(NODE_WOOD), refW, 2.0e-3_wp)
-   end subroutine test_vs_reference
-
-   !----- Fine forward-Euler reference for the 2-node ODE (coefficients updated each step). ---!
-   subroutine reference_2node(p, env, psiL0, psiW0, dt, nstep, psiL, psiW)
-      type(hydro_params_t), intent(in)  :: p
-      type(hydro_env_t),    intent(in)  :: env
-      real(wp),             intent(in)  :: psiL0, psiW0, dt
-      integer(ik),          intent(in)  :: nstep
-      real(wp),             intent(out) :: psiL, psiW
-      real(wp) :: dtr, g, kc, bwood, cL, cW, keff, dL, dW
-      integer(ik) :: i
-      dtr   = dt/real(nstep, wp)
-      g     = grav_head*env%height
-      kc    = p%wood_kmax*env%sap_area/(env%height*p%vessel_curl)
-      bwood = env%bsap + env%broot
-      psiL  = psiL0 ; psiW = psiW0
-      do i = 1_ik, nstep
-         cL = capacitance(psiL, p%leaf_curve, env%bleaf)
-         cW = capacitance(psiW, p%wood_curve, bwood)
-         keff = kirchhoff_edge(psiW, psiL, kc, p%wood_psi50, p%wood_kexp)
-         dL   = (keff*(psiW - psiL - g) - env%transp)/cL
-         dW   = (keff*(psiL - psiW + g) + env%rhizo_cond*(env%soil_psi - psiW))/cW
-         psiL = psiL + dtr*dL
-         psiW = psiW + dtr*dW
-      end do
-   end subroutine reference_2node
-
-   !=======================================================================================!
-   ! End-to-end: with a general exponent (kexp=3, out of {1,2}) the solver drives the edge      !
-   ! through the LOOKUP TABLE (build_hydro_table -> kirchhoff_edge_tab). It must match a fine      !
-   ! forward-Euler reference that uses the EXACT quadrature edge (reference_2node) -- i.e. the      !
-   ! table path reproduces the quadrature path through a full sub-stepped solve. Also exercises      !
-   ! the solve_plant_water stale-table guard on the happy path (table built for this kexp).          !
-   !=======================================================================================!
-   subroutine test_general_kexp_solver()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO), refL, refW
-      print '(a)', '-- General-kexp solver (table path, kexp=3) --'
-      call defaults(p, env, o)
-      p%wood_kexp = 3.0_wp
-      call build_hydro_table(p%vuln_table, p%wood_kexp)      ! solver consults this for kexp not in {1,2}
-      o%rtol = 1.0e-5_wp ; o%atol = 1.0e-5_wp
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi ; psi(NODE_WOOD) = env%soil_psi
-      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)                                        ! table-backed edge
-      call reference_2node(p, env, env%soil_psi, env%soil_psi, 900.0_wp, 200000_ik, refL, refW)    ! exact-quadrature edge
-      call check('kexp=3 psi_leaf: table solve vs exact-quadrature ref', psi(NODE_LEAF), refL, 2.0e-3_wp)
-      call check('kexp=3 psi_wood: table solve vs exact-quadrature ref', psi(NODE_WOOD), refW, 2.0e-3_wp)
-      call check_true('kexp=3 solve converged', flux%converged)
-   end subroutine test_general_kexp_solver
-
-   !=======================================================================================!
-   subroutine test_diurnal()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO), tsec, emax, psi_midday, psi_predawn, g
-      real(wp), parameter :: pi = 3.14159265358979_wp, day = 86400.0_wp
-      integer(ik) :: it
-      print '(a)', '-- Diurnal cycle --'
-      call defaults(p, env, o)
-      emax = 2.0e-4_wp
-      g    = grav_head*env%height
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = env%soil_psi - g ; psi(NODE_WOOD) = env%soil_psi
-      psi_midday = 0.0_wp ; psi_predawn = -1.0e30_wp
-      do it = 1_ik, 96_ik                                     ! 2 days at 30-min steps
-         tsec = real(mod(it-1_ik, 48_ik), wp)*1800.0_wp        ! seconds into the day
-         env%transp = emax*max(0.0_wp, -cos(2.0_wp*pi*tsec/day))   ! 0 at night, peak midday
-         call solve_plant_water(env, p, o, 1800.0_wp, psi, flux)
-         if (mod(it-1_ik, 48_ik) == 24_ik) psi_midday  = psi(NODE_LEAF)   ! noon of each day
-         if (mod(it-1_ik, 48_ik) == 0_ik)  psi_predawn = psi(NODE_LEAF)   ! predawn
-      end do
-      call check_true('midday psi_leaf below predawn', psi_midday < psi_predawn)
-      call check_true('psi_leaf stays bounded (<= 0)', psi(NODE_LEAF) <= 0.0_wp)
-      call check_true('psi_leaf finite', abs(psi(NODE_LEAF)) < 1.0e3_wp)
-   end subroutine test_diurnal
-
-   !=======================================================================================!
-   subroutine test_degenerate()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux
-      real(wp) :: psi(N_HYDRO)
-      print '(a)', '-- Degenerate (near-leafless) --'
-      call defaults(p, env, o)
-      env%bleaf = 1.0e-8_wp ; env%transp = 0.0_wp
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.4_wp
-      call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      call check_true('leafless psi_leaf finite', abs(psi(NODE_LEAF)) < 1.0e3_wp)
-      call check_true('leafless psi_wood finite', abs(psi(NODE_WOOD)) < 1.0e3_wp)
-      call check_true('leafless fluxes finite',                                                 &
-           abs(flux%root_uptake) < 1.0e3_wp .and. abs(flux%sapflow) < 1.0e3_wp)
-   end subroutine test_degenerate
-
-   !=======================================================================================!
-   ! Multi-layer root boundary: the ED2 root-fraction profile; the parallel-conductance         !
-   ! aggregation reproduces the single-BC solve and conserves per-layer uptake; and a wet/dry     !
-   ! profile drives emergent hydraulic redistribution (the dry layer effluxes).                   !
-   !=======================================================================================!
-   subroutine test_multilayer_roots()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env, env1 ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux, flux1
-      real(wp) :: psi(N_HYDRO), psi1(N_HYDRO), gtot, f1, f2, f3
-      integer(ik) :: it
-      print '(a)', '-- Multi-layer roots --'
-
-      !----- (a) ED2 root-fraction profile: telescopes to 1-beta over [0,D]; shallower dominates. ----!
+   subroutine test_root_profile()
+      real(wp) :: f1, f2, f3
+      print '(a)', '-- Root profile --'
       f1 = root_fraction_profile(0.96_wp, 2.0_wp, 0.0_wp, 0.5_wp)   ! equal-thickness (0.5 m) layers
       f2 = root_fraction_profile(0.96_wp, 2.0_wp, 0.5_wp, 1.0_wp)
       f3 = root_fraction_profile(0.96_wp, 2.0_wp, 1.0_wp, 1.5_wp)
@@ -384,73 +214,25 @@ contains
            root_fraction_profile(0.96_wp,2.0_wp,1.0_wp,2.0_wp), 1.0_wp-0.96_wp, 1.0e-12_wp)
       call check_true('below rooting depth => 0 roots',                                          &
            root_fraction_profile(0.96_wp,2.0_wp,2.5_wp,3.0_wp) == 0.0_wp)
+   end subroutine test_root_profile
 
-      !----- (b) aggregation reproduces the single-BC solve: two half-conductance layers at the same  !
-      !          soil psi (z=0) match rhizo_cond=G, soil_psi=psi0; per-layer uptake conserves. -------!
-      call defaults(p, env, o)
-      gtot = env%rhizo_cond
-      env1 = env                                              ! single-BC reference (n_root_layer=0)
-      env%n_root_layer        = 2_ik
-      env%rhizo_cond_layer(1) = 0.5_wp*gtot ; env%rhizo_cond_layer(2) = 0.5_wp*gtot
-      env%soil_psi_layer(1)   = env%soil_psi ; env%soil_psi_layer(2) = env%soil_psi
-      psi(:)  = 0.0_wp ; psi(NODE_LEAF)  = env%soil_psi ; psi(NODE_WOOD)  = env%soil_psi
-      psi1(:) = 0.0_wp ; psi1(NODE_LEAF) = env%soil_psi ; psi1(NODE_WOOD) = env%soil_psi
-      call solve_plant_water(env,  p, o, 900.0_wp, psi,  flux)
-      call solve_plant_water(env1, p, o, 900.0_wp, psi1, flux1)
-      call check('multilayer psi_leaf = single-BC', psi(NODE_LEAF), psi1(NODE_LEAF), 1.0e-9_wp)
-      call check('multilayer psi_wood = single-BC', psi(NODE_WOOD), psi1(NODE_WOOD), 1.0e-9_wp)
-      call check('per-layer uptake conserves (sum = total)',                                     &
-           flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
-
-      !----- (c) NO hydraulic redistribution (HR deferred): wet shallow + dry deep, wood settles         !
-      !          between => the wet layer supplies all uptake and the dry layer that WOULD efflux is       !
-      !          floored to 0 (no root->soil flux). ---------------------------------------------------!
-      call defaults(p, env, o)
-      env%transp              = 0.3_wp*gtot                   ! small net demand => wood between layers
-      env%n_root_layer        = 2_ik
-      env%rhizo_cond_layer(1) = gtot ; env%rhizo_cond_layer(2) = gtot
-      env%soil_psi_layer(1)   = -0.2_wp ; env%root_z_layer(1) = -0.1_wp   ! wet shallow
-      env%soil_psi_layer(2)   = -2.0_wp ; env%root_z_layer(2) = -1.5_wp   ! dry deep
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -1.0_wp ; psi(NODE_WOOD) = -1.0_wp
-      do it = 1_ik, 200_ik                                    ! march to near steady state
-         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      end do
-      call check_true('wet layer supplies uptake (> 0)', flux%root_uptake_layer(1) > 0.0_wp)
-      call check_true('dry layer does NOT efflux (HR disabled; uptake >= 0)', flux%root_uptake_layer(2) >= 0.0_wp)
-      call check('per-layer uptake conserves (sum = total)',                                     &
-           flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
-
-      !----- (d) DRY-DOWN share shift (Phase 1, MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md). This is the    !
-      !          behaviour that became the DEFAULT when [hydraulics].multilayer_roots was retired, and   !
-      !          the one no test covered: when the SURFACE layer dries, its K(theta) -- and hence its     !
-      !          rhizosphere conductance -- collapses, so uptake shifts DOWNWARD to the wet deep layer.   !
-      !          The static root_frac profile the single-BC path used cannot represent this at all: it    !
-      !          would keep drawing from the dry surface in proportion to root abundance.                  !
-      !          Control = both layers wet with equal conductance; treatment = surface conductance cut     !
-      !          100x (a realistic K(theta) collapse) and its psi driven to wilting. -------------------!
-      call defaults(p, env, o)
-      env%n_root_layer        = 2_ik
-      env%rhizo_cond_layer(1) = gtot ; env%rhizo_cond_layer(2) = gtot
-      env%soil_psi_layer(1)   = -0.2_wp ; env%root_z_layer(1) = -0.1_wp
-      env%soil_psi_layer(2)   = -0.2_wp ; env%root_z_layer(2) = -1.5_wp
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.5_wp
-      do it = 1_ik, 200_ik
-         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      end do
-      f1 = flux%root_uptake_layer(2) / max(flux%root_uptake, 1.0e-30_wp)   ! deep share, uniform column
-
-      env%rhizo_cond_layer(1) = 0.01_wp*gtot                            ! surface K(theta) collapsed
-      env%soil_psi_layer(1)   = -2.0_wp                                 ! ...and at wilting
-      psi(:) = 0.0_wp ; psi(NODE_LEAF) = -0.5_wp ; psi(NODE_WOOD) = -0.5_wp
-      do it = 1_ik, 200_ik
-         call solve_plant_water(env, p, o, 900.0_wp, psi, flux)
-      end do
-      f2 = flux%root_uptake_layer(2) / max(flux%root_uptake, 1.0e-30_wp)   ! deep share, dry surface
-      call check_true('DRY-DOWN: uptake shifts to the wet deep layer when the surface dries', f2 > f1)
-      call check_true('DRY-DOWN: deep layer takes nearly all of it', f2 > 0.9_wp)
-      call check('DRY-DOWN: per-layer uptake still conserves',                                   &
-           flux%root_uptake_layer(1)+flux%root_uptake_layer(2), flux%root_uptake, 1.0e-12_wp)
-   end subroutine test_multilayer_roots
+   !=======================================================================================!
+   ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3): mass, not psi, is conserved across a     !
+   ! slow-loop biomass update, so a day of wood growth at FIXED water mass reads as a drier wood,  !
+   ! which then draws more water from the soil (the network's uptake follows its potential). ----!
+   !=======================================================================================!
+   subroutine test_growth_seam()
+      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
+      real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
+      print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
+      call defaults(p, o)
+      bwood0    = 7.0_wp
+      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
+      w0 = water_content(psi_wood0, p%wood_curve, bwood0)
+      bwood1    = bwood0 * 1.05_wp
+      psi_wood1 = psi_from_water_content(w0, p%wood_curve, bwood1)
+      call check_true('growth at conserved mass lowers psi_wood (drier)', psi_wood1 < psi_wood0)
+   end subroutine test_growth_seam
 
    !=======================================================================================!
    ! Cohort roots: the rooting depth follows ED2's height allometry (5 m for a 35 m tree) and   !
@@ -477,53 +259,17 @@ contains
       !      halves gives each plant 500 m per half, and the same half-spacing. ------------------------!
       lv   = 0.01_wp * 1000.0_wp / 0.4_wp
       half = 1.0_wp / sqrt(pi * lv)
-      g      = rhizosphere_cond(1.0e-6_wp, 1000.0_wp, half, 1.5e-4_wp)
-      g_half = rhizosphere_cond(1.0e-6_wp,  500.0_wp, half, 1.5e-4_wp)
-      call check('Gardner: 2 pi K L / ln(r_half / r_root)', g,                                     &
-                 2.0_wp * pi * 1.0e-6_wp * 1000.0_wp / log(half / 1.5e-4_wp), 1.0e-15_wp)
+      !----- root_conductance_geometry is per m2 of ground and per m/s of soil conductivity: for one  !
+      !      plant on a m2 with soil conductivity K [m/s] it is Gardner's 2 pi (rho K / grav_head) L /  !
+      !      ln(r_half / r_root). --------------------------------------------------------------!
+      g      = root_conductance_geometry(1.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
+      g_half = root_conductance_geometry(1.0_wp,  500.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp
+      call check('Gardner: 2 pi (rho K / grav_head) L / ln(r_half / r_root)', g,                    &
+                 2.0_wp * pi * (1000.0_wp * 1.0e-9_wp / grav_head) * 1000.0_wp / log(half / 1.5e-4_wp), 1.0e-15_wp)
       call check('a layer split in two keeps its conductance', 2.0_wp * g_half, g, 1.0e-15_wp)
-      call check('twice the root length at the same spacing, twice the conductance',               &
-                 rhizosphere_cond(1.0e-6_wp, 2000.0_wp, half, 1.5e-4_wp), 2.0_wp * g, 1.0e-15_wp)
+      call check('twice the plants at the same spacing, twice the conductance',                    &
+                 root_conductance_geometry(2.0_wp, 1000.0_wp, half, 1.5e-4_wp) * 1.0e-9_wp, 2.0_wp * g, 1.0e-15_wp)
    end subroutine test_cohort_roots
-
-   !=======================================================================================!
-   ! Biomass fast/slow SEAM (MEDS_ED2_RK45_DESIGN.md P3, user-directed revision of the design !
-   ! doc's original §9 pitfall): mass, not psi, is conserved across a slow-loop biomass update.   !
-   ! A "day" of small wood growth at FIXED water mass must diagnose a lower (drier) psi_wood,     !
-   ! and that drier start must draw MORE root uptake from the soil over an otherwise-identical    !
-   ! fast step -- the physical mechanism the user described ("redistribute the water mass to the  !
-   ! new tissue biomass ... plants will absorb water from soil in next timestep to make it up").  !
-   !=======================================================================================!
-   subroutine test_biomass_seam()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env0, env1 ; type(hydro_opts_t) :: o
-      type(hydro_flux_t) :: flux0, flux1
-      real(wp) :: psi0(N_HYDRO), psi1(N_HYDRO)
-      real(wp) :: bwood0, bwood1, psi_wood0, psi_wood1, w0
-      print '(a)', '-- Biomass fast/slow seam (P3): mass-conserving growth --'
-      call defaults(p, env0, o)
-      bwood0    = env0%bsap + env0%broot
-      psi_wood0 = psi_from_rwc(0.90_wp, p%wood_curve%pi0, p%wood_curve%elastic_mod)
-      w0 = water_content(psi_wood0, p%wood_curve, bwood0)
-
-      !----- "Small daily growth": wood biomass grows 5%, water mass carried forward UNCHANGED     !
-      !      (no seam code touches it -- this is the mass-conservation premise itself). -----------!
-      env1       = env0
-      env1%bsap  = env0%bsap  * 1.05_wp
-      env1%broot = env0%broot * 1.05_wp
-      bwood1     = env1%bsap + env1%broot
-      psi_wood1 = psi_from_water_content(w0, p%wood_curve, bwood1)
-      call check_true('growth at conserved mass lowers psi_wood (drier)', psi_wood1 < psi_wood0)
-
-      !----- Feed each psi_wood as the initial condition for an otherwise-identical fast step      !
-      !      (same dt, same transp demand, same soil BC): the drier post-growth start must draw     !
-      !      MORE water from the soil this step. --------------------------------------------------!
-      psi0(:) = 0.0_wp ; psi0(NODE_LEAF) = psi_wood0 ; psi0(NODE_WOOD) = psi_wood0
-      psi1(:) = 0.0_wp ; psi1(NODE_LEAF) = psi_wood1 ; psi1(NODE_WOOD) = psi_wood1
-      call solve_plant_water(env0, p, o, 900.0_wp, psi0, flux0)
-      call solve_plant_water(env1, p, o, 900.0_wp, psi1, flux1)
-      call check_true('drier post-growth start draws more root uptake next step',                  &
-                       flux1%root_uptake > flux0%root_uptake)
-   end subroutine test_biomass_seam
 
    !=======================================================================================!
    ! Saturation-CEILING clamp (P3, the guard mass-conservation needs): a persisted mass can only   !
@@ -570,22 +316,23 @@ contains
    ! (about pi0 * 1e4 MPa). A cohort with leaves still reads its own leaf water.                    !
    !=======================================================================================!
    subroutine test_leafless_leaf_psi()
-      type(hydro_params_t) :: p ; type(hydro_env_t) :: env ; type(hydro_opts_t) :: o
+      type(hydro_params_t) :: p ; type(hydro_opts_t) :: o
       real(wp) :: bwood, w_wood, w_leaf, psi_w, psi_l
+      real(wp), parameter :: bleaf = 0.5_wp, height = 20.0_wp
       print '(a)', '-- Leafless cohort: leaf node at the wood potential less gravity --'
-      call defaults(p, env, o)
-      bwood  = env%bsap + env%broot
+      call defaults(p, o)
+      bwood  = 7.0_wp
       w_wood = water_content(-1.2_wp, p%wood_curve, bwood)
       psi_w  = psi_from_water_content(w_wood, p%wood_curve, bwood)
-      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, env%height, p, o)
-      call check('leafless: wood psi less gravity', psi_l, psi_w - grav_head*env%height, 1.0e-12_wp)
+      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, height, p, o)
+      call check('leafless: wood psi less gravity', psi_l, psi_w - grav_head*height, 1.0e-12_wp)
       o%gravity_on = .false.
-      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, env%height, p, o)
+      psi_l  = leaf_node_psi(0.0_wp, 0.0_wp, w_wood, bwood, height, p, o)
       call check('leafless, gravity off: wood psi', psi_l, psi_w, 1.0e-12_wp)
       o%gravity_on = .true.
-      w_leaf = water_content(-0.8_wp, p%leaf_curve, env%bleaf)
-      psi_l  = leaf_node_psi(w_leaf, env%bleaf, w_wood, bwood, env%height, p, o)
-      call check('with leaves: the leaf curve', psi_l, psi_from_water_content(w_leaf, p%leaf_curve, env%bleaf), 0.0_wp)
+      w_leaf = water_content(-0.8_wp, p%leaf_curve, bleaf)
+      psi_l  = leaf_node_psi(w_leaf, bleaf, w_wood, bwood, height, p, o)
+      call check('with leaves: the leaf curve', psi_l, psi_from_water_content(w_leaf, p%leaf_curve, bleaf), 0.0_wp)
       call check('with leaves: -0.8 MPa recovered', psi_l, -0.8_wp, 1.0e-9_wp)
    end subroutine test_leafless_leaf_psi
 

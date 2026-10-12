@@ -1,21 +1,24 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_grouped_solve -- a linear solve for systems whose unknowns split into a shared core and  !
-! groups that each touch only the core and themselves:                                      !
+! groups that each touch only themselves and the core, the core through their FIRST unknown:  !
 !                                                                                          !
-!      [ A    B_1  ...  B_G ] [x_0]   [r_0]                                                 !
-!      [ C_1  D_1           ] [x_1] = [r_1]                                                 !
-!      [ ...       ...      ] [...]   [...]                                                 !
-!      [ C_G            D_G ] [x_G]   [r_G]                                                 !
+!      [ A        b_1 e_1'  ...  b_G e_1' ] [x_0]   [r_0]                                  !
+!      [ e_1 c_1'   D_1                   ] [x_1] = [r_1]                                  !
+!      [ ...               ...            ] [...]   [...]                                  !
+!      [ e_1 c_G'                    D_G  ] [x_G]   [r_G]                                  !
 !                                                                                          !
-! Each group's small block is eliminated onto the core (a Schur complement); the core system  !
-! that remains is solved by LU with partial pivoting; the groups are recovered from the core.  !
-! The cost grows as groups x core^2 + core^3, not as (core + groups)^3. The soil-plant water     !
-! network is one such system -- soil layers and the pond are the core, each cohort a group --    !
-! but nothing here knows that (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.3).                              !
+! b_g is the core's column for group g's first unknown, c_g that unknown's row over the core,    !
+! and e_1 picks the group's first unknown. Each group's block is eliminated onto the core: the   !
+! Schur update is the rank-1 product (D_g^-1)_11 b_g c_g', so the cost grows as groups x core^2  !
+! + core^3, not as (core + groups)^3. The core system that remains is solved by LU with partial  !
+! pivoting, and the groups are recovered from it.                                                 !
 !                                                                                          !
-! Factor once, then solve for as many right-hand sides as needed: the network's error estimate  !
-! reuses the last Newton factorisation.                                                          !
+! The soil-plant water network is one such system -- soil layers and the pond are the core, each !
+! cohort a group whose wood meets the soil and whose leaves meet only the wood (a root node, when  !
+! it comes, will be a group's first unknown in the wood's place) -- but nothing here knows that    !
+! (MEDS_SPAC_WATER_NETWORK_PLAN.md §4.3). Factor once, then solve for as many right-hand sides as  !
+! needed: the network's error estimate reuses the last Newton factorisation.                       !
 !==========================================================================================!
 module meds_grouped_solve
    use meds_kinds, only : wp, ik
@@ -30,8 +33,8 @@ module meds_grouped_solve
       integer(ik) :: ng = 0_ik            !< groups
       integer(ik) :: mg = 0_ik            !< unknowns per group
       real(wp),    allocatable :: a(:,:)    !< (nc, nc)     core block; on factor, the LU of the Schur complement
-      real(wp),    allocatable :: b(:,:,:)  !< (nc, mg, ng) core rows, group columns
-      real(wp),    allocatable :: c(:,:,:)  !< (mg, nc, ng) group rows, core columns; on factor, D^-1 C
+      real(wp),    allocatable :: b(:,:)    !< (nc, ng)     core rows, each group's first column
+      real(wp),    allocatable :: c(:,:)    !< (nc, ng)     each group's first row, over the core columns
       real(wp),    allocatable :: d(:,:,:)  !< (mg, mg, ng) group blocks; on factor, their inverses
       integer(ik), allocatable :: piv(:)    !< (nc) the core LU's row interchanges
    end type grouped_system_t
@@ -49,39 +52,29 @@ contains
          if (allocated(s%c))   deallocate(s%c)
          if (allocated(s%d))   deallocate(s%d)
          if (allocated(s%piv)) deallocate(s%piv)
-         allocate(s%a(nc, nc), s%b(nc, mg, ng), s%c(mg, nc, ng), s%d(mg, mg, ng), s%piv(nc))
+         allocate(s%a(nc, nc), s%b(nc, ng), s%c(nc, ng), s%d(mg, mg, ng), s%piv(nc))
          s%nc = nc ; s%ng = ng ; s%mg = mg
       end if
       s%a = 0.0_wp ; s%b = 0.0_wp ; s%c = 0.0_wp ; s%d = 0.0_wp
    end subroutine grouped_allocate
 
-   !----- Factor in place: invert each group block, fold the groups into the core, and LU-factor   !
-   !      the core. ok is false if a group block or the core is singular. -----------------------!
+   !----- Factor in place: invert each group block, fold the groups into the core by their rank-1  !
+   !      updates, and LU-factor the core. ok is false if a group block or the core is singular. ---!
    pure subroutine grouped_factor(s, ok)
       type(grouped_system_t), intent(inout) :: s
       logical,                intent(out)   :: ok
-      integer(ik) :: g, i, j, l
-      real(wp)    :: dc(s%mg, s%nc)
+      integer(ik) :: g, i, j
+      real(wp)    :: e11, cj
       ok = .true.
       do g = 1_ik, s%ng
          call invert_small(s%d(:, :, g), s%mg, ok)
          if (.not. ok) return
-         !----- D^-1 C, kept for the back-substitution, and the Schur update A -= B D^-1 C. -------!
+         e11 = s%d(1, 1, g)
          do j = 1_ik, s%nc
-            do i = 1_ik, s%mg
-               dc(i, j) = 0.0_wp
-               do l = 1_ik, s%mg
-                  dc(i, j) = dc(i, j) + s%d(i, l, g) * s%c(l, j, g)
-               end do
-            end do
-         end do
-         s%c(:, :, g) = dc
-         do j = 1_ik, s%nc
-            do l = 1_ik, s%mg
-               if (dc(l, j) == 0.0_wp) cycle
-               do i = 1_ik, s%nc
-                  s%a(i, j) = s%a(i, j) - s%b(i, l, g) * dc(l, j)
-               end do
+            cj = e11 * s%c(j, g)
+            if (cj == 0.0_wp) cycle
+            do i = 1_ik, s%nc
+               s%a(i, j) = s%a(i, j) - s%b(i, g) * cj
             end do
          end do
       end do
@@ -93,39 +86,55 @@ contains
       type(grouped_system_t), intent(in)  :: s
       real(wp),               intent(in)  :: r_core(:), r_group(:, :)   !< (nc), (mg, ng)
       real(wp),               intent(out) :: x_core(:), x_group(:, :)
-      real(wp)    :: y(s%mg), rc(s%nc)
+      real(wp)    :: rc(s%nc), cx
       integer(ik) :: g, i, l
       rc = r_core(1:s%nc)
-      !----- Fold each group's right-hand side onto the core: r_0 - B_g D_g^-1 r_g. -------------!
+      !----- Each group's own solution, D_g^-1 r_g, folded onto the core through its first unknown. -!
       do g = 1_ik, s%ng
          do i = 1_ik, s%mg
-            y(i) = 0.0_wp
+            x_group(i, g) = 0.0_wp
             do l = 1_ik, s%mg
-               y(i) = y(i) + s%d(i, l, g) * r_group(l, g)
+               x_group(i, g) = x_group(i, g) + s%d(i, l, g) * r_group(l, g)
             end do
          end do
-         x_group(1:s%mg, g) = y
-         do l = 1_ik, s%mg
-            if (y(l) == 0.0_wp) cycle
-            do i = 1_ik, s%nc
-               rc(i) = rc(i) - s%b(i, l, g) * y(l)
-            end do
-         end do
+         if (x_group(1, g) /= 0.0_wp) rc = rc - s%b(:, g) * x_group(1, g)
       end do
       call lu_solve(s%a, s%piv, s%nc, rc)
       x_core(1:s%nc) = rc
-      !----- Back to the groups: x_g = D_g^-1 r_g - D_g^-1 C_g x_0. -----------------------------!
+      !----- Back to the groups: x_g = D_g^-1 r_g - D_g^-1 e_1 (c_g' x_0). --------------------------!
       do g = 1_ik, s%ng
-         do i = 1_ik, s%mg
-            do l = 1_ik, s%nc
-               x_group(i, g) = x_group(i, g) - s%c(i, l, g) * rc(l)
-            end do
-         end do
+         cx = sum(s%c(:, g) * rc)
+         x_group(1:s%mg, g) = x_group(1:s%mg, g) - s%d(1:s%mg, 1, g) * cx
       end do
    end subroutine grouped_solve
 
-   !----- Invert a small dense block in place by Gauss-Jordan with partial pivoting. ------------!
+   !----- Invert a small dense block in place: closed form for 1x1 and 2x2, Gauss-Jordan with      !
+   !      partial pivoting otherwise. ok is false if it is singular. -------------------------------!
    pure subroutine invert_small(m, n, ok)
+      integer(ik), intent(in)    :: n
+      real(wp),    intent(inout) :: m(n, n)
+      logical,     intent(out)   :: ok
+      real(wp)    :: det, m11
+      ok = .true.
+      if (n == 1_ik) then
+         if (m(1, 1) == 0.0_wp .or. m(1, 1) /= m(1, 1)) then
+            ok = .false. ; return
+         end if
+         m(1, 1) = 1.0_wp / m(1, 1)
+      else if (n == 2_ik) then
+         det = m(1, 1) * m(2, 2) - m(1, 2) * m(2, 1)
+         if (det == 0.0_wp .or. det /= det) then
+            ok = .false. ; return
+         end if
+         m11 = m(1, 1)
+         m(1, 1) =  m(2, 2) / det ; m(2, 2) = m11 / det
+         m(1, 2) = -m(1, 2) / det ; m(2, 1) = -m(2, 1) / det
+      else
+         call invert_gauss_jordan(m, n, ok)
+      end if
+   end subroutine invert_small
+
+   pure subroutine invert_gauss_jordan(m, n, ok)
       integer(ik), intent(in)    :: n
       real(wp),    intent(inout) :: m(n, n)
       logical,     intent(out)   :: ok
@@ -157,7 +166,7 @@ contains
          end do
       end do
       m = aug(:, n+1:2*n)
-   end subroutine invert_small
+   end subroutine invert_gauss_jordan
 
    !----- Dense LU with partial pivoting, in place (Doolittle; L unit-lower, U upper). ----------!
    pure subroutine lu_factor(a, piv, n, ok)

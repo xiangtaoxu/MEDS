@@ -34,8 +34,8 @@ contains
    ! misconfigured caller divides by tiny_num instead of exactly 0 -- a NaN/Inf firewall, not a   !
    ! numerical solve (a genuinely singular system still returns garbage, just finite garbage).    !
    ! `pure` throughout (no error stop: this solver is called from the fast-loop RHS, which must   !
-   ! stay side-effect-free/GPU-eligible -- same discipline as meds_plant_hydraulics's             !
-   ! plant_water_tendency). The guard is a NO-OP for every diagonally-dominant matrix this solves  !
+   ! stay side-effect-free/GPU-eligible -- same discipline as the other fast-loop kernels).        !
+   ! The guard is a NO-OP for every diagonally-dominant matrix this solves                         !
    ! today (|b(1)|, |denom| >> tiny_num always), so existing callers are bit-identical.            !
    ! Explicit-shape dummies: the actual arrays may be LONGER than n (the first n elements          !
    ! associate), so the callers keep their fixed-size (n_soil_layer_max) storage and pass the       !

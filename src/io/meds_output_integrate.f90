@@ -60,10 +60,9 @@ module meds_output_integrate
    public :: FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ
    !----- Site-only scalars (4000-4999). -----------------------------------------------------!
    public :: SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT
-   public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB,                              &
-             SRC_S_WORK_HYDRO_NSUB, SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH
-   public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT,             &
-             SRC_S_WORK_CLAMP_MASS, SRC_S_WORK_CLAMP_ENERGY
+   public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB,                              &
+             SRC_S_WORK_WATER_NEWTON, SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT
+   public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE
    !----- FAST-tier instantaneous sources (5000-5999): resolved against the fast loop's staging.  !
    public :: SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER
    public :: SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0
@@ -177,15 +176,12 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_CANOPY_HEIGHT    = 4004_ik !< [m] tallest live cohort
    integer(ik), parameter :: SRC_S_WORK_STEPS       = 4030_ik
    integer(ik), parameter :: SRC_S_WORK_REJ         = 4031_ik
-   integer(ik), parameter :: SRC_S_WORK_SOIL_NSUB   = 4032_ik
-   integer(ik), parameter :: SRC_S_WORK_HYDRO_NSUB  = 4033_ik
-   integer(ik), parameter :: SRC_S_WORK_NONCONV     = 4034_ik
+   integer(ik), parameter :: SRC_S_WORK_WATER_NSUB   = 4032_ik
+   integer(ik), parameter :: SRC_S_WORK_WATER_NEWTON = 4033_ik
+   integer(ik), parameter :: SRC_S_WORK_WATER_NFAIL  = 4034_ik
    integer(ik), parameter :: SRC_S_WORK_RK45_RESCUE = 4035_ik
    integer(ik), parameter :: SRC_S_WORK_CLAMP_STAGE = 4036_ik
-   integer(ik), parameter :: SRC_S_WORK_CLAMP_COMMIT= 4037_ik
-   integer(ik), parameter :: SRC_S_WORK_CLAMP_MASS  = 4038_ik
-   integer(ik), parameter :: SRC_S_WORK_CLAMP_ENERGY= 4039_ik
-   integer(ik), parameter :: SRC_S_WORK_HYDRO_THRASH= 4040_ik
+   integer(ik), parameter :: SRC_S_WORK_WATER_REJECT = 4040_ik
 
    !----- FAST-tier staged sources (SRCK_FAST): read from the fast loop's staging, never from      !
    !      site state (which at replay time is the end-of-slow-step snapshot). Two are rows of the   !
@@ -709,15 +705,12 @@ contains
          end if
       case (SRC_S_WORK_STEPS)        ; val = site%work_integ_steps
       case (SRC_S_WORK_REJ)          ; val = site%work_integ_rej
-      case (SRC_S_WORK_SOIL_NSUB)    ; val = site%work_soil_nsub
-      case (SRC_S_WORK_HYDRO_NSUB)   ; val = site%work_hydro_nsub
-      case (SRC_S_WORK_NONCONV)      ; val = site%work_nonconv
-      case (SRC_S_WORK_HYDRO_THRASH) ; val = site%work_hydro_thrash
+      case (SRC_S_WORK_WATER_NSUB)   ; val = site%work_water_nsub
+      case (SRC_S_WORK_WATER_NEWTON) ; val = site%work_water_newton
+      case (SRC_S_WORK_WATER_NFAIL)  ; val = site%work_water_nfail
+      case (SRC_S_WORK_WATER_REJECT) ; val = site%work_water_reject
       case (SRC_S_WORK_RK45_RESCUE)  ; val = site%work_rk45_rescue
       case (SRC_S_WORK_CLAMP_STAGE)  ; val = site%work_clamp_stage
-      case (SRC_S_WORK_CLAMP_COMMIT) ; val = site%work_clamp_commit
-      case (SRC_S_WORK_CLAMP_MASS)   ; val = site%work_clamp_mass
-      case (SRC_S_WORK_CLAMP_ENERGY) ; val = site%work_clamp_energy
       case default
          if (source_id > FLD_PY_DIAG0 .and. source_id <= FLD_PY_DIAG0 + N_PYDIAG) then
             val = MISSING_VALUE

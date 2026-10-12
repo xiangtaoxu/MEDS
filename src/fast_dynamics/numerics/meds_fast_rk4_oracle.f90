@@ -21,7 +21,7 @@
 !==========================================================================================!
 module meds_fast_rk4_oracle
    !----- The import list IS the independence claim. Nothing here reaches the implicit machinery:  !
-   !      no column_be_stage, no newton_surface_solve, no advance_water_mass_full. The oracle sees   !
+   !      no column_be_stage, no newton_surface_solve, no advance_plant_water. The oracle sees       !
    !      the pure right-hand side and the state algebra, and nothing else, which is what makes       !
    !      agreement between it and an implicit scheme rule out a shared-bug false pass. Retiring the   !
    !      IMEX-Euler tier (#198) is what let meds_fast_be_stage leave this list.                        !

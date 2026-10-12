@@ -196,7 +196,7 @@ contains
    ! pre-unification behaviour:                                                                        !
    !   * ARK/RK45-integrated groups (enthalpy/shv/CO2/soil-energy/leaf_w/wood_w) <- [fast].ark_rtol +   !
    !     historical atols;                                                                              !
-   !   * GRP_THETA   <- the [soil]   sub-solver's own (rtol, atol)  -- soil-water Richards step-doubling; !
+   !   * GRP_THETA   <- the [soil]   (rtol, atol) -- the soil-plant water network's sub-step control;   !
    !   * GRP_LEAF_W/GRP_WOOD_W (MEDS_ED2_RK45_DESIGN.md sec 6, P2, replaces the retired GRP_PSI): only     !
    !     RK45 actually folds these into its embedded-error WRMS (mass is operator-split out of ARK's      !
    !     ESDIRK tableau, like psi was, via with_mass=.false.) -- seeded here regardless so the group        !

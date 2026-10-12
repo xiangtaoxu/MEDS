@@ -10,7 +10,7 @@
 !   * state combinators  -- state_init / state_axpy / state_accum / state_extrap / state_sub /       !
 !                           state_err_diff / zero_like, as operations on the flat array              !
 !   * boundary-flux ledger accumulators -- bflux_zero / bflux_add / bflux_bweight                   !
-!   * stage-domain clamps -- clamp_cas / clamp_theta / clamp_soil_energy                             !
+!   * stage-domain clamps -- clamp_cas / clamp_soil_energy                                           !
 !   * whole-column store totals for the ledgers -- soil_water_store / soil_energy_store /            !
 !                           plant_water_store / canopy_film_store  (one loop order, so the two       !
 !                           schemes' ledgers are the same arithmetic)                                !
@@ -37,7 +37,7 @@ module meds_column_state_ops
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
    public :: assemble_soil_energy_forcing, apply_process_mask
-   public :: clamp_cas, clamp_theta, clamp_soil_energy
+   public :: clamp_cas, clamp_soil_energy
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
 
@@ -108,7 +108,7 @@ contains
    end subroutine array_to_state
 
    !----- A tendency in the same layout. The pond has no tendency (it is passed through the stages  !
-   !      and committed from the scratch hydrology solve), so its entries are 0, and y + a*k then    !
+   !      and committed from the water network), so its entries are 0, and y + a*k then             !
    !      leaves it exactly as it was, with no special case. -------------------------------------!
    pure subroutine tend_to_array(k, n, nsl, v)
       type(column_tend_t), intent(in)  :: k
@@ -338,26 +338,6 @@ contains
       end if
    end subroutine clamp_cas
 
-   !----- clamp the extrapolated theta into [theta_res, theta_sat] (van Genuchten domain).       !
-   !      dmass (optional) accumulates |water| moved, in kg/m2 of GROUND -- the mass this clamp   !
-   !      creates or destroys with no ledger entry. -----------------------------------------!
-   pure subroutine clamp_theta(s, col_config, nsl, nfire, dmass)
-      type(column_state_t),  intent(inout) :: s
-      type(column_config_t), intent(in)    :: col_config
-      integer(ik),           intent(in)    :: nsl
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp),    optional, intent(inout) :: dmass
-      integer(ik) :: k
-      real(wp)    :: th_in
-      do k = 1_ik, nsl
-         th_in      = s%theta(k)
-         s%theta(k) = min(max(s%theta(k), col_config%soil%theta_res(k)), col_config%soil%theta_sat(k))
-         if (s%theta(k) /= th_in) then
-            if (present(nfire)) nfire = nfire + 1_ik
-            if (present(dmass)) dmass = dmass + abs(s%theta(k) - th_in) * col_config%soil%dz(k) * rho_h2o
-         end if
-      end do
-   end subroutine clamp_theta
 
    !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
    !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
@@ -365,8 +345,8 @@ contains
    !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
    !      overflow) or qsat. Reconstructs soil_energy (temp_to_internal_energy) at the CLAMPED temperature and the    !
    !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
-   !      the step is rejected normally by the adaptive controller when this bites. Call AFTER clamp_theta  !
-   !      (uses the already-clamped theta for the water-mass term of the phase-change inverter). ----------!
+   !      the step is rejected normally by the adaptive controller when this bites. Uses the stage's     !
+   !      theta for the water-mass term of the phase-change inverter. ----------------------------------!
    !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
    !      creates or destroys with no ledger entry. -------------------------------------------------!
    pure subroutine clamp_soil_energy(s, col_config, nsl, nfire, denergy)
@@ -535,8 +515,8 @@ contains
       biophys%leaf_surf_water(1:n) = y_out%leaf_surf_water(1:n)
       biophys%wood_surf_water(1:n) = y_out%wood_surf_water(1:n)
       !----- w_surface / w_surface_enth are EXCLUDED, not forgotten. The pond is committed from the  !
-      !      scratch hydrology solve (column_fast_step_ark), exactly as theta's clip/floor           !
-      !      corrections are, so writing it here would commit it twice. THIS IS THE COMMIT PATH: a   !
+      !      water network by each scheme's commit (column_fast_step_ark/_rk45), so writing it here  !
+      !      would commit it twice. THIS IS THE COMMIT PATH: a                                        !
       !      field genuinely omitted here is computed, balanced by every ledger, and then dropped on !
       !      the floor -- which is why the exclusion is stated rather than left to be inferred, and  !
       !      asserted in test_state_combinators.  ----------------------------------------------------!

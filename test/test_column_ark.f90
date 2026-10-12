@@ -211,8 +211,8 @@ contains
    !       no psi-limit, rainfall==0) and assert the 7 conservation budgets close. -------------------!
    !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
-   !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
-   !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
+   !      and the ARK commits the water network's theta, so it inherits it unchanged. A column started  !
+   !      DRY must wet from below with both ledgers closed. -------------------------------------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_balance store term (store_hcap_per_dt > 0), available on ARK and     !
    !      RK45. Two assertions:                                                                       !
@@ -487,18 +487,14 @@ contains
    !=======================================================================================!
    ! N2b -- psi_leaf must be CONVERGED IN dt_fast, and the plant total must still conserve.
    !
-   ! WHAT THIS CATCHES. build_column_frozen runs solve_plant_water_batch, an exact matrix
-   ! exponential over the whole dt_fast, whose OWN end-of-step leaf potential is dt-converged
-   ! (measured flat at -0.331 MPa from dt_fast 25 s to 900 s). The persisted state, however, is
-   ! a separate explicit Euler step, and it used to be charged the ENDPOINT-refreshed
-   ! transpiration while being credited the STATE-n-consistent sapflow. Because the kernel defines
-   ! sapflow = dw_l/dt + transp, that mismatch is not a discretisation error at all: it is exactly
-   ! dt*(transp_prepass - transp_realised), a flux inconsistency growing LINEARLY in dt. The leaf --
-   ! the smallest store in the column -- absorbed all of it, and psi_leaf ran away with dt_fast:
-   ! -0.334 MPa at 5 s vs -1.788 MPa at 900 s on the 3 h midday probe, while every OTHER state and
-   ! every flux converged. With the corrector in advance_water_mass_full the same probe gives
-   ! -0.333 vs -0.328 MPa (error 1.454 -> 0.0046 MPa), and BOTH versions agree at dt = 5 s to
-   ! 8e-4 MPa -- the fix changes the discretisation, not the dt->0 limit.
+   ! WHAT THIS CATCHES. The leaf is the smallest store in the column, so any mismatch between the
+   ! transpiration charged to it and the sapflow credited to it lands there, and psi_leaf runs away
+   ! with dt_fast. It has happened: the old explicit plant-water step was charged the
+   ! ENDPOINT-refreshed transpiration while being credited the STATE-n sapflow, a flux
+   ! inconsistency growing LINEARLY in dt, and psi_leaf went from -0.334 MPa at 5 s to -1.788 MPa
+   ! at 900 s on the 3 h midday probe while every OTHER state and every flux converged. Now the
+   ! water network solves the leaf implicitly with the soil, and the energy stages hold
+   ! transpiration at the network's value, so the leaf is charged and credited the same step.
    !
    ! No conservation ledger sees this. The whole-column water budget closes either way, because
    ! the plant store absorbing a flux mismatch IS a closed budget -- which is exactly why this

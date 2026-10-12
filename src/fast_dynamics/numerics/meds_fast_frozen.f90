@@ -116,10 +116,7 @@ contains
       frozen%tissue%qwflux_wl(1:n)  = 0.0_wp
       frozen%tissue%q_wood_net(1:n) = 0.0_wp
       allocate(frozen%film%f_wet_c(n), frozen%film%g_film_leaf(n), frozen%film%g_film_w(n))
-      allocate(frozen%plant%pft(n))
-      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n),                   &
-         frozen%plant%bsap(n), frozen%plant%broot(n),            &
-               frozen%plant%sap_area(n), frozen%plant%height(n), frozen%plant%leaf_area(n))
+      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%roots%root_heat(nsl), frozen%tissue%transp_net(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
@@ -278,14 +275,9 @@ contains
                                               / dt_fast
          frozen%tissue%t_leaf0(i) = biophys%leaf_temp(i)
          frozen%tissue%t_wood0(i) = biophys%wood_temp(i)
-         frozen%plant%pft(i)      = col_cohort%pft(i)          ! #179: per-PFT hydraulics selector
          frozen%tissue%leaf_emiss(i) = cfg%pft%leaf_emissivity(col_cohort%pft(i))
          frozen%tissue%wood_emiss(i) = cfg%pft%wood_emissivity(col_cohort%pft(i))
          frozen%plant%nplant(i)   = col_cohort%nplant(i)
-         frozen%plant%bleaf(i)    = col_cohort%bleaf(i)
-         frozen%plant%bsap(i) = col_cohort%bsap(i)
-         frozen%plant%broot(i)    = col_cohort%broot(i)   ; frozen%plant%sap_area(i) = col_cohort%sap_area(i)
-         frozen%plant%height(i)   = col_cohort%height(i)  ; frozen%plant%leaf_area(i) = col_cohort%leaf_area(i)
          !----- Canopy-SURFACE water film-evap conductances (sec 3.4, P2c): need aero%leaf_gbw/wood_gbw,   !
          !      so these run HERE (after column_prepass's aero solve above), not in the interception        !
          !      block before it. Gated behind canopy_water_on (not just "harmless via f_wet_c=0") per the    !
@@ -369,7 +361,6 @@ contains
       hforc%t_ground           = t_ground ; hforc%q_air = qcas ; hforc%rho_air = rho
       !----- Phase of the evaporating surface, for the ice saturation branch (#89). ------------------!
       hforc%ground_fliq        = biophys%soil_e%soil_fliq(1)
-      hforc%soil_temp(1:nsl)   = biophys%soil_e%soil_temp(1:nsl)
       !----- Temperature that VALUES the ground inflow. Under a pack it is the meltwater's. On bare      !
       !      ground it is the EFFECTIVE liquid temperature of the rain + sub-threshold-snowfall mixture:  !
       !      precip_enthalpy values both at the air temperature above the canopy (forc%air_temp, the      !
@@ -402,10 +393,10 @@ contains
       !----- Work and convergence (section 5.3 work counters): the network's accepted sub-steps, its    !
       !      Newton iterations, and the sub-steps it had to take although they did not converge or meet  !
       !      the tolerance. -------------------------------------------------------------------------!
-      budget%soil_nsub     = net%nsub
-      budget%hydro_nsub    = net%nnewton
-      budget%hydro_nonconv = net%nfail
-      budget%hydro_thrash  = 0_ik
+      budget%water_nsub     = net%nsub
+      budget%water_newton    = net%nnewton
+      budget%water_nfail = net%nfail
+      budget%water_reject  = net%nreject
 
       !----- Ground evaporation, the soil's boundary flows and the pond, as the network moved them. ----!
       frozen%ground%soil_evap         = net%evap / dt_fast
@@ -531,9 +522,6 @@ contains
                                         + (uptake_gnd - sapflow_gnd) * u_liq_wood                             &
                                         + (sapflow_gnd - transp_gnd) * u_liq_leaf
       end do
-      !----- No scratch post-solve corrections exist any more: the network never clips or floors. ------!
-      frozen%hydrology%clip_enth(1:nsl) = 0.0_wp ; frozen%hydrology%floor_enth(1:nsl) = 0.0_wp
-      frozen%hydrology%clip_mass = 0.0_wp ; frozen%hydrology%floor_mass = 0.0_wp
 
       !----- pack the prognostic state: plant water MASS is now NATIVE (MEDS_ED2_RK45_DESIGN.md sec 4, !
       !      P2) -- a direct copy from the persisted state, no psi round-trip needed any more. ----------!

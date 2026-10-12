@@ -1,87 +1,84 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
-! test_column_hydrology -- unit tests for the soil-water column (src/biophysics).           !
+! test_column_hydrology -- the soil column's water: the retention curves, canopy interception,   !
+! the soil's boundary processes, and the column itself, solved as the soil-plant water network  !
+! with no cohorts (its soil-only configuration, MEDS_SPAC_WATER_NETWORK_PLAN.md §11).           !
 !                                                                                          !
-! Physical invariants the MVP must satisfy:                                                  !
-!   1. CONSTITUTIVE ROUND-TRIP : theta_of_psi(psi_of_theta(theta)) == theta (vG + Campbell);   !
-!                                C(psi) matches the finite-difference dtheta/dpsi.              !
-!   2. MASS CONSERVATION        : total-store balance closes to ~round-off every step.          !
-!   3. NO-FLUX (bedrock)         : a sealed column with no sources conserves total water.         !
-!   4. FREE DRAINAGE             : a wet column drains (drainage > 0, water decreases), closes.    !
-!   5. INTERCEPTION              : per-cohort bucket conserves; capacity respected, drip on top.    !
-!   6. INFILTRATION CAP          : heavy rain on a low-K soil is conductivity-limited; excess ponds. !
+!   1. CONSTITUTIVE  : van Genuchten and Campbell round trips and moisture capacity.           !
+!   2. INTERCEPTION  : the canopy film's capture, capacity and drip.                            !
+!   3. BEDROCK       : a sealed column keeps its water and drains nothing.                       !
+!   4. FREE DRAIN    : a wet column drains, and its water closes against the drainage.          !
+!   5. DOWNPOUR      : rain beyond a wet clay's infiltration ponds, and runs off past the pond.  !
+!   6. REWETTING     : a dried top layer re-wets within 12 h of rain, with little runoff.        !
+!   7. SUB-FREEZING  : rain below the triple point: the pond's enthalpy closes, and what         !
+!                      infiltrates carries its own enthalpy.                                     !
+!   8. AQUIFER       : the head-driven bottom is two-way and settles to hydrostatic equilibrium. !
+!   9. EVAPORATION   : area-weighted by the snow-free share; rises monotonically with moisture.   !
 !==========================================================================================!
 program test_column_hydrology
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : rho_h2o
-   use meds_soil_types, only : chydro_forcing_t, chydro_flux_t
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
-   use meds_column_state_types, only : soil_column_t
+   use meds_constants,        only : rho_h2o, grav_head
+   use meds_soil_types, only : chydro_forcing_t
+   use meds_column_params, only : soil_params_t, build_soil_hydr_params
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER, SOIL_LIN_PICARD, &
-                                    SOIL_SUBSTEP_FIXED, SOIL_SUBSTEP_ADAPTIVE
-   use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi, &
-                                    soil_hydr_cond_from_theta
-   use meds_soil_water,       only : advance_soil_water_column, ground_evap_from_state, soil_water_time_deriv
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
+   use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
+   use meds_soil_water,       only : ground_evaporation_rate
+   use meds_water_network,    only : water_network_t, water_network_allocate, water_network_start,     &
+                                     water_network_advance, WATER_NODE_POND
+   use meds_plant_types,      only : hydro_params_table_t
    use meds_therm_lib,        only : internal_energy_liquid
    use meds_plant_biophysics, only : intercept_canopy_layer
    implicit none
 
+   type(hydro_params_table_t) :: no_plants
 
+   allocate(no_plants%pft(1))
    call test_constitutive()
-   call test_mass_conservation()
+   call test_interception()
    call test_bedrock_conserve()
    call test_free_drain()
-   call test_interception()
-   call test_infiltration_cap()
-   call test_face_conductivity_log_linear()
+   call test_downpour()
    call test_dried_surface_rewets()
    call test_pond_subfreezing_inflow()
-   call test_picard()
-   call test_adaptive_substep()
    call test_aquifer_head_bc()
    call test_snow_free_evap()
    call test_evap_moisture_response()
-   call test_clip_layer_decomposition()
-   call test_face_check_root_sink()
-   call test_storm_on_dry_column()
-
    call test_report('test_column_hydrology')
 
 contains
 
-   !----- A fixed root profile for the soil-only tests, e^(-2 d) over each layer, normalized: the  !
-   !      roots belong to the cohorts in the model (cohort_root_profile); a soil test needs only a  !
-   !      sink that sums to one. --------------------------------------------------------------------!
-   pure function exp_root_profile(soil, nsl) result(frac)
-      type(soil_params_t), intent(in) :: soil
-      integer(ik),         intent(in) :: nsl
-      real(wp) :: frac(nsl)
-      integer(ik) :: k
-      do k = 1_ik, nsl
-         frac(k) = exp(2.0_wp * soil%soil_layer_z(k)) - exp(2.0_wp * soil%soil_layer_z(k+1_ik))
-      end do
-      frac = frac / sum(frac)
-   end function exp_root_profile
-
-
-
-   !----- A 10-layer loam column (2 m) with a chosen retention curve. -------------------------!
-   subroutine loam_column(retention, params, col)
-      integer(ik),         intent(in)  :: retention
+   !----- A 10-layer loam column (2 m). --------------------------------------------------------!
+   subroutine loam_params(params)
       type(soil_params_t), intent(out) :: params
-      type(soil_column_t), intent(out) :: col
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.44_wp, 0.0_wp,            &
-              4.53e-6_wp, -0.26_wp, 5.65_wp, -3.37_wp, params)
-      else
-         call build_soil_hydr_params(10_ik, retention, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
-              2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
-      end if
-      col%theta(1:10) = 0.30_wp
-      col%w_surface = 0.0_wp
-   end subroutine loam_column
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
+           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
+   end subroutine loam_params
+
+   !----- The soil-only network for a column at theta with a pond of w_pond, and air that keeps    !
+   !      the ground from evaporating unless the caller says otherwise. ---------------------------!
+   subroutine soil_network(net, params, opts, theta, w_pond, e_pond)
+      type(water_network_t), intent(inout) :: net
+      type(soil_params_t),   intent(in)    :: params
+      type(soil_opts_t),     intent(in)    :: opts
+      real(wp),              intent(in)    :: theta(:), w_pond, e_pond
+      real(wp) :: dum(0)
+      call water_network_allocate(net, params%n_active, 0_ik)
+      net%rtol = opts%rtol ; net%atol = opts%atol ; net%w_pond_max = opts%w_pond_max
+      net%t_soil = 290.0_wp ; net%t_rain = 290.0_wp
+      call water_network_start(net, params, no_plants, theta, w_pond, e_pond, dum, dum)
+   end subroutine soil_network
+
+   real(wp) function column_water(net)
+      type(water_network_t), intent(in) :: net
+      column_water = sum(net%w_core)
+   end function column_water
+
+   function humid_air() result(f)
+      type(chydro_forcing_t) :: f
+      f%t_ground = 290.0_wp ; f%q_air = 0.05_wp ; f%rho_air = 1.2_wp ; f%r_aero = 100.0_wp   ! no evaporation
+   end function humid_air
 
    !=======================================================================================!
    subroutine test_constitutive()
@@ -109,199 +106,6 @@ contains
              / (2.0_wp * dps)
       call check('Campbell C = dtheta/dpsi (FD)', c_ana, c_fd, 1.0e-2_wp * abs(c_fd) + 1.0e-9_wp)
    end subroutine test_constitutive
-
-   !=======================================================================================!
-   !----- The root sink is the plant's request as given, and the per-face check subtracts the sink   !
-   !      the solver REMOVED (#331). On a moderately dry top layer the two are the same number. A     !
-   !      nearly empty column asked for 20 times layer 1's water (capillary rise refills a layer      !
-   !      asked for only twice it) gives at most what the layer holds: theta stays at or above        !
-   !      theta_res, the shortfall is booked as uptake_deficit, the per-face check still reads        !
-   !      machine zero, and the column closes. Without the availability cap this request drove the    !
-   !      solve out of the retention curve's domain (a 1e8 kg/m2 mass residual). --------------------!
-   subroutine test_face_check_root_sink()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp), parameter    :: dt = 900.0_wp, demand = 1.0e-4_wp    ! [s], [kg/m2/s] from layer 1
-      real(wp) :: avail
-      print '(a)', 'test_face_check_root_sink:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%precip_ground = 0.0_wp
-      forcing%root_uptake   = 0.0_wp
-      forcing%t_ground = 298.15_wp ; forcing%q_air = 0.010_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-
-      col%theta(1) = 0.10_wp                                 ! psi ~ -39 m: moderately dry
-      forcing%root_uptake(1) = demand
-      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-      call check('moderately dry: the sink is the request as given', flux%uptake_total, demand,    &
-                 1.0e-12_wp * demand)
-      call check_true('moderately dry: the per-face check reads machine zero',                     &
-                      flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
-      call check_true('moderately dry: the column closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
-
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:params%n_active) = params%theta_res(1:params%n_active) + 0.002_wp   ! nearly empty,
-                                                             ! so nothing below can refill layer 1
-      avail = (col%theta(1) - params%theta_res(1)) * params%dz(1) * rho_h2o
-      forcing%root_uptake(1) = 20.0_wp * avail / dt           ! far more than layer 1 holds or gets
-      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-      call check_true('nearly empty: theta stays at or above theta_res',                           &
-                      col%theta(1) >= params%theta_res(1), col%theta(1) - params%theta_res(1))
-      call check_true('nearly empty: the layer gives no more than it holds (uptake_deficit > 0)',  &
-                      flux%uptake_deficit > 0.0_wp, flux%uptake_deficit)
-      call check('nearly empty: realized uptake + returned water == the request',                 &
-                 flux%uptake_total + flux%uptake_deficit, forcing%root_uptake(1),                 &
-                 1.0e-12_wp * forcing%root_uptake(1))
-      call check_true('nearly empty: the per-face check reads machine zero',                       &
-                      flux%face_mass_resid < 1.0e-10_wp, flux%face_mass_resid)
-      call check_true('nearly empty: the column closes', abs(flux%mass_resid) < 1.0e-9_wp, flux%mass_resid)
-   end subroutine test_face_check_root_sink
-
-   !=======================================================================================!
-   !----- #352: a storm front on a dry column. The BCI blow-up of 2017-04-17 began in this solve; the  !
-   !      inputs below are the failing patch's, as the model passed them (29 mm/h of rain onto soil    !
-   !      dried near residual). The solve lifts the top layer's head by hundreds of metres to         !
-   !      saturation, and flows recomputed with the saturated conductivity drained that layer below   !
-   !      residual while it rained; the solve then degenerated (flows of 5.8 m/s, 2.5e7 kg/m2 created  !
-   !      by the floor). Smaller details decide whether a trial lands there, so these inputs are kept !
-   !      exactly. The flows must stay of the order of the rain, every solve must converge, and the   !
-   !      residual floor must create nothing.                                                        !
-   subroutine test_storm_on_dry_column()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp), parameter    :: dt = 900.0_wp                ! [s]
-      real(wp)    :: worst_face, worst_resid, created
-      integer(ik) :: step
-      logical     :: all_converged
-      print '(a)', 'test_storm_on_dry_column:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:10) = [9.017520795042515e-2_wp, 0.103196883042764_wp, 0.107787579185886_wp, 0.110078507137199_wp, &
-                         0.112671145368482_wp, 0.116493938712866_wp, 0.121348889181499_wp, 0.127507998331339_wp, &
-                         0.135569397983017_wp, 0.146274259403085_wp]
-      forcing%precip_ground = 8.081108944879390e-3_wp
-      forcing%root_uptake   = 0.0_wp
-      forcing%root_uptake(1:10) = [2.078297836390911e-7_wp, 3.859314039081995e-7_wp, 3.304553805533053e-7_wp, &
-           4.153045473049217e-7_wp, 5.239953579953231e-7_wp, 7.518089022134535e-7_wp, 1.117384211929535e-6_wp, &
-           1.689737918658047e-6_wp, 2.604320743707848e-6_wp, 4.012800333863115e-6_wp]
-      forcing%t_ground = 300.355443509471_wp ; forcing%q_air = 1.948634043335493e-2_wp
-      forcing%rho_air = 1.14861995931181_wp ; forcing%r_aero = 356.932008612889_wp
-      forcing%soil_temp(1:10) = [300.355443509471_wp, 300.444067766771_wp, 300.503640426817_wp, 300.598025142391_wp, &
-           300.568270431751_wp, 300.355563614938_wp, 300.093159697853_wp, 299.810222055966_wp, 299.530624111926_wp, &
-           299.275379633752_wp]
-      forcing%t_pond_inflow = 299.307126030235_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN ; opts%dsl_dmax = 4.561387026804054e-2_wp
-      worst_face = 0.0_wp ; worst_resid = 0.0_wp ; created = 0.0_wp ; all_converged = .true.
-      do step = 1_ik, 4_ik                                   ! the first hour of the storm
-         call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-         worst_face    = max(worst_face, maxval(abs(flux%w_flux(1:9))))
-         worst_resid   = max(worst_resid, abs(flux%mass_resid))
-         created       = created + sum(flux%floor_layer(1:10)) * dt
-         all_converged = all_converged .and. flux%converged
-      end do
-      call check_true('every solve converges', all_converged)
-      call check_true('flows between layers stay of the order of the rain',                        &
-                      worst_face < 10.0_wp * forcing%precip_ground / 1000.0_wp, worst_face)
-      call check_true('the residual floor creates no water', created < 1.0e-12_wp, created)
-      call check_true('and the column closes', worst_resid < 1.0e-9_wp, worst_resid)
-   end subroutine test_storm_on_dry_column
-
-   subroutine test_mass_conservation()
-      type(soil_params_t)  :: params
-      type(soil_column_t)  :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)    :: opts
-      type(chydro_flux_t)  :: flux
-      integer(ik) :: step, k
-      real(wp)    :: root_profile(10)
-      real(wp)    :: worst
-      print '(a)', 'test_mass_conservation:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%precip_ground = 5.0e-5_wp
-      root_profile = exp_root_profile(params, 10_ik)
-      do k = 1_ik, 10_ik
-         forcing%root_uptake(k) = 2.0e-5_wp * root_profile(k)
-      end do
-      forcing%t_ground = 298.15_wp ; forcing%q_air = 0.010_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      worst = 0.0_wp
-      do step = 1_ik, 40_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-         worst = max(worst, abs(flux%mass_resid))
-      end do
-      call check_true('mass residual ~ 0 over 40 steps', worst < 1.0e-9_wp, worst)
-   end subroutine test_mass_conservation
-
-   !=======================================================================================!
-   subroutine test_bedrock_conserve()
-      type(soil_params_t)  :: params
-      type(soil_column_t)  :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)    :: opts
-      type(chydro_flux_t)  :: flux
-      real(wp) :: w_before, w_after
-      integer(ik) :: step, k
-      print '(a)', 'test_bedrock_conserve:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp        ! high humidity -> no evap
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_BEDROCK
-      w_before = 0.0_wp
-      do k = 1_ik, 10_ik
-         w_before = w_before + col%theta(k) * params%dz(k)
-      end do
-      do step = 1_ik, 10_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-      end do
-      w_after = 0.0_wp
-      do k = 1_ik, 10_ik
-         w_after = w_after + col%theta(k) * params%dz(k)
-      end do
-      call check('sealed column conserves water', w_after, w_before, 1.0e-10_wp)
-      call check_true('bedrock drainage = 0', abs(flux%drainage) < 1.0e-30_wp, flux%drainage)
-   end subroutine test_bedrock_conserve
-
-   !=======================================================================================!
-   subroutine test_free_drain()
-      type(soil_params_t)  :: params
-      type(soil_column_t)  :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)    :: opts
-      type(chydro_flux_t)  :: flux
-      real(wp) :: w_before, w_after, worst
-      integer(ik) :: step, k
-      print '(a)', 'test_free_drain:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:10) = 0.40_wp                          ! wet, near saturation
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      w_before = 0.0_wp
-      do k = 1_ik, 10_ik
-         w_before = w_before + col%theta(k) * params%dz(k)
-      end do
-      worst = 0.0_wp
-      do step = 1_ik, 20_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-         worst = max(worst, abs(flux%mass_resid))
-      end do
-      w_after = 0.0_wp
-      do k = 1_ik, 10_ik
-         w_after = w_after + col%theta(k) * params%dz(k)
-      end do
-      call check_true('free drainage removes water', w_after < w_before, w_before - w_after)
-      call check_true('drainage flux > 0', flux%drainage > 0.0_wp, flux%drainage)
-      call check_true('mass residual ~ 0 (drain)', worst < 1.0e-9_wp, worst)
-   end subroutine test_free_drain
 
    !=======================================================================================!
    subroutine test_interception()
@@ -334,410 +138,255 @@ contains
    end subroutine test_interception
 
    !=======================================================================================!
-   !----- REVIEW 2026-09: sub-freezing inflow (rain, or sub-threshold snowfall routed to the ground as !
-   !      liquid at a canopy-air temperature below 273 K) enters an EMPTY pond and infiltrates within  !
-   !      the step. The enthalpy handed to the soil, infl*dt*u_liq(flux%t_infil), plus whatever stays  !
-   !      in the pond, must equal what the pond received. It used to exceed it by cp_liq*(t_3ple -    !
-   !      t_pond_inflow) per kg -- the inverter pinned the pond at t_3ple with an ice fraction and the      !
-   !      infiltration was valued as liquid at t_3ple; the empty-pond reset then discarded the deficit. !
-   !----- The interior face conductivity is ED2's log-linear interpolation of K between the two   !
-   !      nodes: K_face = K_k^(1-w) K_(k+1)^w with w = dz(k)/(dz(k)+dz(k+1)), the thickness-      !
-   !      weighted geometric mean. A wet layer over a dry one is where the rules part: the upstream !
-   !      pick would return the wet layer's K, the arithmetic mean nearly half of it. ------------!
-   subroutine test_face_conductivity_log_linear()
-      type(soil_params_t) :: params
-      type(soil_column_t) :: col
-      type(soil_opts_t)   :: opts
-      real(wp) :: theta(n_soil_layer_max), dtheta(n_soil_layer_max), qface(n_soil_layer_max), uptake(n_soil_layer_max)
-      real(wp) :: drain, upt, k1, k2, w, psi1, psi2, q_expected, q_upstream
-      print '(a)', 'test_face_conductivity_log_linear:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      theta = 0.25_wp ; theta(1) = 0.30_wp ; theta(2) = 0.12_wp
-      uptake = 0.0_wp
-      call soil_water_time_deriv(theta, params, opts, 10_ik, 0.0_wp, uptake, dtheta, drain, upt, qface)
-      k1   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(1), params%theta_sat(1), params%theta_res(1), &
-                                       params%vg_alpha(1), params%vg_n(1), params%ksat(1))
-      k2   = soil_hydr_cond_from_theta(SOIL_RETENTION_VG, theta(2), params%theta_sat(2), params%theta_res(2), &
-                                       params%vg_alpha(2), params%vg_n(2), params%ksat(2))
-      psi1 = soil_psi_from_theta(SOIL_RETENTION_VG, theta(1), params%theta_sat(1), params%theta_res(1),   &
-                                 params%vg_alpha(1), params%vg_n(1))
-      psi2 = soil_psi_from_theta(SOIL_RETENTION_VG, theta(2), params%theta_sat(2), params%theta_res(2),   &
-                                 params%vg_alpha(2), params%vg_n(2))
-      w          = params%dz(1) / (params%dz(1) + params%dz(2))
-      q_expected = k1 ** (1.0_wp - w) * k2 ** w * ((psi1 - psi2) / params%dz_node(1) + 1.0_wp)
-      q_upstream = k1 * ((psi1 - psi2) / params%dz_node(1) + 1.0_wp)
-      call check('face 1 flux is the log-linear (thickness-weighted geometric) K times the gradient',   &
-                 qface(1), q_expected, 1.0e-12_wp * abs(q_expected))
-      call check_true('the layers are unequal, so the weighting matters', abs(w - 0.5_wp) > 0.01_wp, w)
-      call check_true('and it is far below the upstream pick (wet over dry)', qface(1) < 0.1_wp * q_upstream, &
-                      qface(1) / q_upstream)
-   end subroutine test_face_conductivity_log_linear
+   subroutine test_bedrock_conserve()
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(water_network_t) :: net
+      real(wp) :: w_before, theta(10)
+      integer(ik) :: step
+      print '(a)', 'test_bedrock_conserve:'
+      call loam_params(params) ; theta = 0.30_wp ; theta(1:3) = 0.40_wp
+      opts%bottom_bc = SOIL_BC_BEDROCK
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      w_before = column_water(net)
+      do step = 1_ik, 10_ik
+         call water_network_advance(net, params, opts, humid_air(), no_plants, 600.0_wp)
+      end do
+      call check('sealed column conserves water', column_water(net), w_before, 1.0e-10_wp * w_before)
+      call check_true('bedrock drainage = 0', abs(net%drain) < 1.0e-30_wp, net%drain)
+   end subroutine test_bedrock_conserve
 
-   !----- A top layer dried to near residual must take the next rain. The surface face is the      !
-   !      geometric mean of K_sat and the top layer's K; with the top layer's K alone (~1e-15 of    !
-   !      K_sat here) the pond overflowed and the soil never re-wet (MEDS_FLUX_TOWER_FORCING_PLAN.md !
-   !      §13). 12 h of 2 mm/h rain onto theta_1 = 0.08 over a moist column: the top layer re-wets    !
-   !      and almost none of it runs off. ---------------------------------------------------------!
-   subroutine test_dried_surface_rewets()
+   !=======================================================================================!
+   subroutine test_free_drain()
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(water_network_t) :: net
+      real(wp) :: w0, w1, drained, theta(10)
+      integer(ik) :: step
+      print '(a)', 'test_free_drain:'
+      call loam_params(params) ; theta = 0.40_wp
+      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      drained = 0.0_wp ; w0 = column_water(net)
+      do step = 1_ik, 20_ik
+         call water_network_advance(net, params, opts, humid_air(), no_plants, 600.0_wp)
+         drained = drained + net%drain
+      end do
+      w1 = column_water(net)
+      call check_true('a wet column drains', drained > 0.0_wp, drained)
+      call check('its water closes against the drainage', w0 - w1, drained, 1.0e-10_wp * w0)
+   end subroutine test_free_drain
+
+   !=======================================================================================!
+   !----- WET clay (low Ksat, small suction) under a downpour: infiltration is limited by the     !
+   !      clay's conductivity, so the excess ponds and, past the pond's capacity, runs off       !
+   !      (Hortonian). A bone-dry clay would instead take it up by suction (Green-Ampt). --------!
+   subroutine test_downpour()
       type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp)    :: rain, runoff
+      type(water_network_t)  :: net
+      real(wp) :: theta(10), w0, rain, infil, runoff, drained
+      integer(ik) :: step
+      print '(a)', 'test_downpour:'
+      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
+           5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
+      theta = 0.36_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(net) ; rain = 0.0_wp ; infil = 0.0_wp ; runoff = 0.0_wp ; drained = 0.0_wp
+      do step = 1_ik, 4_ik
+         net%rain = 1.0e-2_wp                                     ! 36 mm/hr
+         call water_network_advance(net, params, opts, humid_air(), no_plants, 900.0_wp)
+         rain    = rain + net%rain * 900.0_wp
+         infil   = infil + net%infil - net%exfil
+         runoff  = runoff + net%spill
+         drained = drained + net%drain
+      end do
+      call check_true('infiltration < rain (conductivity-limited)', infil < rain, infil / rain)
+      call check_true('the pond filled to its capacity',                                            &
+                      net%w_core(WATER_NODE_POND) >= opts%w_pond_max - 1.0e-9_wp, net%w_core(WATER_NODE_POND))
+      call check_true('and the rest ran off', runoff > 0.0_wp, runoff)
+      call check('water closes: rain = change in store + runoff + drainage', column_water(net) - w0,        &
+                 rain - runoff - drained, 1.0e-10_wp * rain)
+   end subroutine test_downpour
+
+   !=======================================================================================!
+   !----- A top layer dried to residual takes up 2 mm/h of rain: within 12 h it has re-wetted     !
+   !      and almost none of the rain has run off. The pond face's conductivity is the geometric  !
+   !      mean of the saturated pond's and the top layer's, and the dry layer's suction drives it;  !
+   !      the top layer's conductivity alone would seal a dried surface against rain. -----------!
+   subroutine test_dried_surface_rewets()
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(water_network_t) :: net
+      type(chydro_forcing_t) :: f
+      real(wp) :: theta(10), rain, runoff
       integer(ik) :: step
       print '(a)', 'test_dried_surface_rewets:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:10) = 0.25_wp ; col%theta(1) = 0.08_wp
-      forcing%precip_ground = 2.0_wp / 3600.0_wp            ! 2 mm/h [kg/m2/s]
-      forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 298.0_wp ; forcing%q_air = 0.02_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      call loam_params(params)
+      theta = 0.25_wp ; theta(1) = 0.08_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      f = humid_air() ; f%t_ground = 298.0_wp ; f%q_air = 0.02_wp
       rain = 0.0_wp ; runoff = 0.0_wp
       do step = 1_ik, 48_ik
-         call advance_soil_water_column(col, forcing, params, opts, 900.0_wp, flux)
-         rain   = rain   + forcing%precip_ground * 900.0_wp
-         runoff = runoff + flux%runoff_surf * 900.0_wp
+         net%rain = 2.0_wp / 3600.0_wp                            ! 2 mm/h
+         call water_network_advance(net, params, opts, f, no_plants, 900.0_wp)
+         rain = rain + net%rain * 900.0_wp ; runoff = runoff + net%spill
       end do
-      call check_true('the dried top layer re-wets within 12 h of rain', col%theta(1) > 0.20_wp, col%theta(1))
+      call check_true('the dried top layer re-wets within 12 h of rain',                              &
+                      net%w_core(2) / (rho_h2o * params%dz(1)) > 0.20_wp, net%w_core(2) / (rho_h2o * params%dz(1)))
       call check_true('and under 5 % of the rain runs off', runoff < 0.05_wp * rain, runoff / rain)
    end subroutine test_dried_surface_rewets
 
+   !=======================================================================================!
+   !----- Rain (or sub-threshold snow routed to the ground) below the triple point joins the pond:  !
+   !      what the pond received in enthalpy is what it gave the soil, kept, and lost as runoff,    !
+   !      and the water that infiltrated carried its own enthalpy -- an effective temperature below  !
+   !      the melt plateau, not u_liq at the plateau, which once created energy all winter. -------!
    subroutine test_pond_subfreezing_inflow()
-      type(soil_params_t)  :: params
-      type(soil_column_t)  :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)    :: opts
-      type(chydro_flux_t)  :: flux
-      real(wp) :: dt, e_in, e_to_soil, e_left, e_runoff
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(water_network_t) :: net
+      type(chydro_forcing_t) :: f
+      real(wp) :: theta(10), dt, e_in, t_infil
       print '(a)', 'test_pond_subfreezing_inflow:'
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, params)
-      col%theta(1:10) = 0.25_wp
-      col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
-      forcing%precip_ground = 5.0e-6_wp                 ! 18 mm/day, well inside the infiltration capacity
-      forcing%t_pond_inflow      = 270.0_wp                  ! 3.16 K below the triple point
-      forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 271.0_wp ; forcing%q_air = 0.003_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      call loam_params(params) ; theta = 0.25_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      net%rain = 5.0e-6_wp ; net%t_rain = 270.0_wp                ! 18 mm/day at 3.16 K below the triple point
+      f = humid_air() ; f%t_ground = 271.0_wp ; f%q_air = 0.003_wp
       dt = 150.0_wp
-      call advance_soil_water_column(col, forcing, params, opts, dt, flux)
-      e_in      = forcing%precip_ground * dt * internal_energy_liquid(forcing%t_pond_inflow)
-      e_to_soil = flux%infiltration * dt * internal_energy_liquid(flux%t_infil)
-      e_runoff  = flux%runoff_enth * dt
-      e_left    = col%w_surface_enth
-      call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',        &
-                      col%w_surface <= 1.0e-9_wp .and. flux%infiltration > 0.0_wp, col%w_surface)
-      call check('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received',  &
-                 e_to_soil + e_left + e_runoff, e_in, 1.0e-9_wp * abs(e_in))
-      call check_true('sub-freezing inflow: infiltrating water carries its own (sub-plateau) enthalpy',  &
-                      flux%t_infil < 273.0_wp, flux%t_infil)
+      call water_network_advance(net, params, opts, f, no_plants, dt)
+      e_in = net%rain * dt * internal_energy_liquid(270.0_wp)
+      call check_true('sub-freezing inflow: all of it infiltrated (pond empty after the step)',          &
+                      net%w_core(WATER_NODE_POND) <= 1.0e-9_wp .and. net%infil > 0.0_wp, net%w_core(WATER_NODE_POND))
+      call check('sub-freezing inflow: enthalpy to soil + left in pond + runoff == enthalpy received',    &
+                 net%infil_enth - net%exfil_enth + net%e_pond + net%spill_enth, e_in, 1.0e-9_wp * abs(e_in))
+      call check('sub-freezing inflow: the rain brought exactly that enthalpy', net%rain_enth, e_in, 0.0_wp)
+      t_infil = temp_of_liquid(net%infil_enth / net%infil)
+      call check_true('sub-freezing inflow: infiltrating water carries its own (sub-plateau) enthalpy',    &
+                      t_infil < 273.0_wp, t_infil)
    end subroutine test_pond_subfreezing_inflow
 
-   subroutine test_infiltration_cap()
-      type(soil_params_t)  :: params
-      type(soil_column_t)  :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)    :: opts
-      type(chydro_flux_t)  :: flux
-      print '(a)', 'test_infiltration_cap:'
-      !----- WET clay (low Ksat, small suction) under a downpour: conductivity-limited so     !
-      !      infiltration is capped and the excess ponds/runs off (Hortonian). A bone-dry clay !
-      !      would instead have huge suction-driven capacity (Green-Ampt) -- not the cap case.  !
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.38_wp, 0.068_wp,     &
-           5.6e-7_wp, 0.8_wp, 1.09_wp, -3.37_wp, params)
-      col%theta(1:10) = 0.36_wp
-      col%w_surface = 0.0_wp
-      forcing%precip_ground = 1.0e-2_wp                  ! 36 mm/hr downpour
-      forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
-      call check_true('infiltration < precip (capped)', flux%infiltration < forcing%precip_ground, &
-                      flux%infiltration)
-      call check_true('excess ponds or runs off',                                             &
-                      (col%w_surface + flux%runoff_surf * 60.0_wp) > 0.0_wp,                   &
-                      col%w_surface + flux%runoff_surf * 60.0_wp)
-      call check_true('mass residual ~ 0 (downpour)', abs(flux%mass_resid) < 1.0e-9_wp,        &
-                      abs(flux%mass_resid))
-   end subroutine test_infiltration_cap
+   real(wp) function temp_of_liquid(u)
+      use meds_therm_lib, only : temp_of_liquid_enthalpy
+      real(wp), intent(in) :: u
+      temp_of_liquid = temp_of_liquid_enthalpy(u)
+   end function temp_of_liquid
 
    !=======================================================================================!
-   !  P2 numerics + boundary physics                                                        !
-   !=======================================================================================!
-
-   !----- Retention-integral Zeng-Decker holds a hydrostatic-equilibrium column at q->0;      !
-
-   !----- Celia modified-Picard: mass closes and every step converges. --------------------!
-   subroutine test_picard()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      integer(ik) :: step, k
-      real(wp)    :: root_profile(10)
-      real(wp) :: worst
-      logical  :: allconv
-      print '(a)', 'test_picard:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%precip_ground = 5.0e-5_wp
-      root_profile = exp_root_profile(params, 10_ik)
-      do k = 1_ik, 10_ik
-         forcing%root_uptake(k) = 2.0e-5_wp * root_profile(k)
-      end do
-      forcing%t_ground = 298.15_wp ; forcing%q_air = 0.010_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      opts%linearize = SOIL_LIN_PICARD
-      worst = 0.0_wp ; allconv = .true.
-      do step = 1_ik, 40_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-         worst = max(worst, abs(flux%mass_resid))
-         allconv = allconv .and. flux%converged
-      end do
-      call check_true('Picard mass residual ~ 0', worst < 1.0e-9_wp, worst)
-      call check_true('Picard converged every step', allconv, 1.0_wp)
-   end subroutine test_picard
-
-   !----- Adaptive step-doubling matches a fixed fine-substep reference. -------------------!
-   subroutine test_adaptive_substep()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col_a, col_f
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      integer(ik) :: k
-      real(wp) :: diff
-      print '(a)', 'test_adaptive_substep:'
-      call loam_column(SOIL_RETENTION_VG, params, col_a)
-      col_a%theta(1:10) = 0.20_wp                          ! dry-ish -> an infiltration front
-      col_f = col_a
-      forcing%precip_ground = 2.0e-4_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-      opts%substep = SOIL_SUBSTEP_ADAPTIVE ; opts%h_init = 1800.0_wp
-      call advance_soil_water_column(col_a, forcing, params, opts, 1800.0_wp, flux)
-      opts%substep = SOIL_SUBSTEP_FIXED ; opts%h_init = 10.0_wp       ! ~180 fixed substeps
-      call advance_soil_water_column(col_f, forcing, params, opts, 1800.0_wp, flux)
-      diff = 0.0_wp
-      do k = 1_ik, 10_ik
-         diff = max(diff, abs(col_a%theta(k) - col_f%theta(k)))
-      end do
-      call check_true('adaptive matches fixed-fine reference', diff < 1.0e-3_wp, diff)
-   end subroutine test_adaptive_substep
-
-   !=======================================================================================!
-   ! PHASE 0 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the AQUIFER bottom boundary is now a  !
-   ! head-driven, TWO-WAY Darcy flux against a saturated zone at the column base (psi_wt = 0, !
-   ! z_wt == z_bottom by definition), with no storage bucket, no baseflow and no Dunne runoff.!
-   ! Replaces test_aquifer/test_dunne, which exercised exactly the machinery that is gone.     !
-   !=======================================================================================!
+   !----- The aquifer bottom is head-driven against a saturated zone at the column base: a dry     !
+   !      column draws water UP (free drainage never can), a wet one still drains down, the water   !
+   !      closes with the flux running upward, and the column relaxes to hydrostatic equilibrium    !
+   !      with the base (the bottom node's head -> minus half its thickness). -------------------!
    subroutine test_aquifer_head_bc()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(soil_opts_t)      :: opts
-      type(chydro_forcing_t) :: forcing
-      type(chydro_flux_t)    :: flux
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(water_network_t) :: net
+      type(chydro_forcing_t) :: f
+      real(wp) :: theta(10), drain_dry, drain_wet, w0, drained, theta_bot0, head_n, delta
       integer(ik) :: step, n
-      real(wp)    :: worst, psi_n, delta, drain_dry, drain_wet, theta_bot0
       print '(a)', 'test_aquifer_head_bc:'
       n = 10_ik
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 290.0_wp ; forcing%q_air = 0.05_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 1.0e6_wp     ! suppress soil evaporation
-
-      !----- (a) A DRY column over the saturated base must draw water UPWARD. Free drainage cannot   !
-      !          produce this at all -- q = K(theta_n) >= 0 always -- so the SIGN is the test. ------!
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:n)  = 0.12_wp                            ! dry: |psi_n| >> Delta = dz(n)/2
-      opts%bottom_bc  = SOIL_BC_AQUIFER
-      call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-      drain_dry = flux%drainage
-      call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',  &
-           drain_dry < 0.0_wp, drain_dry)
-
-      !----- (b) A WET column still drains DOWNWARD (psi_n -> 0 recovers the free-drainage limit). --!
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:n) = 0.40_wp
+      call loam_params(params)
       opts%bottom_bc = SOIL_BC_AQUIFER
-      call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-      drain_wet = flux%drainage
+      f = humid_air() ; f%r_aero = 1.0e6_wp                       ! suppress soil evaporation
+      theta = 0.12_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      call water_network_advance(net, params, opts, f, no_plants, 600.0_wp)
+      drain_dry = net%drain
+      call check_true('AQUIFER: dry column draws water UP from the saturated base (drainage < 0)',        &
+                      drain_dry < 0.0_wp, drain_dry)
+      theta = 0.40_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      call water_network_advance(net, params, opts, f, no_plants, 600.0_wp)
+      drain_wet = net%drain
       call check_true('AQUIFER: wet column still drains DOWNWARD (drainage > 0)', drain_wet > 0.0_wp, drain_wet)
-      call check_true('AQUIFER: the boundary is genuinely two-way (opposite signs)',                &
-           drain_wet > 0.0_wp .and. drain_dry < 0.0_wp, drain_wet - drain_dry)
-
-      !----- (c) MASS closes with the flux running UPWARD -- the ledger must carry the sign. -------!
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:n) = 0.15_wp
-      opts%bottom_bc = SOIL_BC_AQUIFER
-      theta_bot0 = col%theta(n)
-      worst = 0.0_wp
+      theta = 0.15_wp
+      call soil_network(net, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(net) ; drained = 0.0_wp ; theta_bot0 = 0.15_wp
       do step = 1_ik, 40_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-         worst = max(worst, abs(flux%mass_resid))
+         call water_network_advance(net, params, opts, f, no_plants, 600.0_wp)
+         drained = drained + net%drain
       end do
-      call check_true('AQUIFER: mass closes while drawing upward', worst < 1.0e-9_wp, worst)
-      call check_true('AQUIFER: the dry column WETS from below', col%theta(n) > theta_bot0, col%theta(n))
-
-      !----- (d) It relaxes toward HYDROSTATIC equilibrium with the base (psi_n -> -Delta) -- the     !
-      !          physical steady state of a column standing on a water table, and precisely the       !
-      !          property Zeng-Decker used to reconstruct through the INTERIOR faces. The BOUNDARY     !
-      !          now supplies it, which is why ZD was retired with this phase. The interior faces'      !
-      !          log-linear (geometric) K is small between the wetting base and the drier layers above, !
-      !          so capillary rise relaxes slowly: the residual flux passes 1e-5 at about 1000 h        !
-      !          (about 450 h with upstream-weighted faces), so the window is 1200 h. ---------------!
+      call check('AQUIFER: water closes while drawing upward', column_water(net) - w0, -drained, 1.0e-10_wp * w0)
+      call check_true('AQUIFER: the dry column WETS from below',                                           &
+                      net%w_core(1+n) / (rho_h2o * params%dz(n)) > theta_bot0, net%w_core(1+n) / (rho_h2o * params%dz(n)))
       do step = 1_ik, 1200_ik
-         call advance_soil_water_column(col, forcing, params, opts, 3600.0_wp, flux)
+         call water_network_advance(net, params, opts, f, no_plants, 3600.0_wp)
       end do
-      psi_n = soil_psi_from_theta(SOIL_RETENTION_VG, col%theta(n), params%theta_sat(n),            &
-                params%theta_res(n), params%vg_alpha(n), params%vg_n(n))
-      delta = 0.5_wp * params%dz(n)
-      call check_true('AQUIFER: bottom layer reaches hydrostatic equilibrium (psi_n -> -Delta)',    &
-           abs(psi_n + delta) < 0.2_wp, psi_n + delta)
-      call check_true('AQUIFER: and the residual bottom flux has died', abs(flux%drainage) < 1.0e-5_wp, &
-           flux%drainage)
+      head_n = net%psi_core(1+n) / grav_head
+      delta  = 0.5_wp * params%dz(n)
+      call check_true('AQUIFER: bottom layer reaches hydrostatic equilibrium (head_n -> -Delta)',           &
+                      abs(head_n + delta) < 0.2_wp, head_n + delta)
+      call check_true('AQUIFER: and the residual bottom flux has died', abs(net%drain / 3600.0_wp) < 1.0e-5_wp, &
+                      net%drain / 3600.0_wp)
    end subroutine test_aquifer_head_bc
 
-
-
    !=======================================================================================!
-   !  Ground evaporation is an AREA-weighted TILE flux: E = snow_free_frac * rho*dq/(r_aero  !
-   !  + r_soil), so it is LINEAR in the snow-free fraction and exactly 0 under full cover.    !
-   !                                                                                          !
-   !  This is the invariant that distinguishes it from the form it replaced, which throttled   !
-   !  partial snow cover by dividing r_aero by (1-snowfac) instead. That scales only the        !
-   !  AERODYNAMIC leg of the series, so it is equivalent ONLY when r_soil = 0 -- and it is       !
-   !  deliberately NOT zero here: theta_1 = 0.30 sits below dsl_theta_init*theta_sat = 0.344,     !
-   !  so a dry surface layer exists and r_soil > 0. Under the old form E(0.5) would exceed         !
-   !  0.5*E(1) (a smaller total resistance than area-halving implies), so the linearity check      !
-   !  below fails it. g_top's energy budget depends on this: it area-weights radiation and          !
-   !  sensible heat by (1-snowfac) but subtracts le_soil whole, which is only self-consistent        !
-   !  once le_soil is itself area-integrated. ------------------------------------------------------!
+   !----- Ground evaporation is an AREA-weighted tile flux, E = snow_free_frac rho dq / (r_aero +    !
+   !      r_soil): linear in the snow-free share and exactly 0 under full cover, with a dry surface   !
+   !      layer present (theta_1 = 0.30 is below dsl_theta_init * theta_sat = 0.344), where dividing   !
+   !      r_aero by (1 - snowfac) instead would not be linear. --------------------------------------!
    subroutine test_snow_free_evap()
       type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp) :: e_full, e_half, e_none
+      type(chydro_forcing_t) :: f
+      real(wp) :: e_full, e_half, e_none, de1, de2, head
       print '(a)', 'test_snow_free_evap:'
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 305.0_wp ; forcing%q_air = 0.001_wp        ! warm ground, dry air -> strong evap
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 50.0_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
-
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%snow_free_frac = 1.0_wp
-      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
-      e_full = flux%soil_evap
-
-      call loam_column(SOIL_RETENTION_VG, params, col)              ! same initial state
-      forcing%snow_free_frac = 0.5_wp
-      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
-      e_half = flux%soil_evap
-
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%snow_free_frac = 0.0_wp
-      call advance_soil_water_column(col, forcing, params, opts, 60.0_wp, flux)
-      e_none = flux%soil_evap
-
+      call loam_params(params)
+      f%t_ground = 305.0_wp ; f%q_air = 0.001_wp ; f%rho_air = 1.2_wp ; f%r_aero = 50.0_wp
+      head = soil_psi_from_theta(SOIL_RETENTION_VG, 0.30_wp, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
+      f%snow_free_frac = 1.0_wp
+      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_full, de1, de2)
+      f%snow_free_frac = 0.5_wp
+      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_half, de1, de2)
+      f%snow_free_frac = 0.0_wp
+      call ground_evaporation_rate(0.30_wp, head, params, f, opts, e_none, de1, de2)
       call check_true('bare ground evaporates (non-trivial case)', e_full > 1.0e-8_wp, e_full)
-      call check('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,   &
+      call check('half snow cover halves E exactly (area weighting)', e_half, 0.5_wp * e_full,             &
                  1.0e-14_wp * max(e_full, 1.0e-12_wp))
       call check('full snow cover gives exactly zero soil evaporation', e_none, 0.0_wp, 1.0e-30_wp)
    end subroutine test_snow_free_evap
 
    !=======================================================================================!
-   !  A wetter soil must evaporate MORE.  The dry-surface-layer resistance is                !
-   !  r_soil = d_sl/(D_v*tau): d_sl shrinks linearly as theta rises, but if tau is built       !
-   !  from the BULK layer's air-filled porosity it shrinks as (phi-theta)^(10/3), which wins,    !
-   !  so r_soil RISES with wetness and evaporation runs backwards -- a minimum partway up the     !
-   !  moisture range and a near-cliff at theta_init.  The DSL is dry by construction, so its       !
-   !  tortuosity takes the dry layer's own air-filled porosity and the response is monotone.        !
-   !  Assert the physics (monotone, and continuous into the no-DSL limit), not the formula.          !
-   !---------------------------------------------------------------------------------------!
+   !----- A wetter soil evaporates MORE. The dry-surface-layer resistance d_sl/(D_v tau) is built on  !
+   !      the air-dry water content's tortuosity, so it falls as the layer wets and the response is   !
+   !      monotone, approaching the no-DSL limit continuously at theta_init. Built from the bulk       !
+   !      layer's air-filled porosity instead, the tortuosity would fall faster than the layer thins  !
+   !      and a wetter soil would evaporate less. ----------------------------------------------!
    subroutine test_evap_moisture_response()
       type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
       type(soil_opts_t)      :: opts
+      type(chydro_forcing_t) :: f
       real(wp) :: theta, e_prev, e_now, e_sat, e_below, theta_init
       integer  :: i
       logical  :: monotone
       print '(a)', 'test_evap_moisture_response:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      forcing%precip_ground = 0.0_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 300.0_wp ; forcing%q_air = 0.005_wp
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      forcing%ground_fliq = 1.0_wp ; forcing%snow_free_frac = 1.0_wp
-
+      call loam_params(params)
+      f%t_ground = 300.0_wp ; f%q_air = 0.005_wp ; f%rho_air = 1.2_wp ; f%r_aero = 100.0_wp
       theta_init = opts%dsl_theta_init * params%theta_sat(1)
-      monotone   = .true.
-      e_prev     = -1.0_wp
-      e_below = 0.0_wp
-      do i = 0, 40
+      monotone = .true. ; e_prev = -1.0_wp
+      do i = 1, 40
          theta = params%theta_res(1) + real(i, wp) / 40.0_wp * (theta_init - params%theta_res(1))
-         e_now = ground_evap_from_state(theta, params, forcing, opts, 900.0_wp)
+         e_now = loam_evap(theta, params, f, opts)
          if (e_now < e_prev - 1.0e-14_wp) monotone = .false.
          e_prev = e_now
       end do
       call check_true('ground evaporation increases monotonically with soil moisture', monotone, 0.0_wp)
-
-      !----- and it must APPROACH the no-DSL limit as the layer approaches theta_init: at 0.1 % of  !
-      !      the moisture range below it the dry layer is 0.01 mm and can carry almost no resistance.  !
-      !      With the bulk-theta tortuosity it still carries 300 s/m there, i.e. a cliff, not a limit. -!
-      e_sat   = ground_evap_from_state(theta_init, params, forcing, opts, 900.0_wp)
-      e_below = ground_evap_from_state(theta_init - 1.0e-3_wp*(theta_init - params%theta_res(1)), &
-                                       params, forcing, opts, 900.0_wp)
-      call check_true('approaches the DSL-free limit continuously at theta_init',                &
+      e_sat   = loam_evap(theta_init, params, f, opts)
+      e_below = loam_evap(theta_init - 1.0e-3_wp * (theta_init - params%theta_res(1)), params, f, opts)
+      call check_true('approaches the DSL-free limit continuously at theta_init',                       &
                       e_below > 0.8_wp * e_sat, e_below / max(e_sat, 1.0e-30_wp))
    end subroutine test_evap_moisture_response
 
-   !=======================================================================================!
-   !  The post-solve saturation clip moves water with NO face, so the soil ENERGY column      !
-   !  cannot see it -- it consumes the corrected theta but advects enthalpy only on the         !
-   !  faces. The caller compensates each layer's enthalpy at that layer's own temperature,       !
-   !  which requires the clip to be resolved PER LAYER. Assert the decomposition contract:        !
-   !  clip_layer sums to the scalar clip_excess, is non-negative, and actually fires here.         !
-   !  (A sealed bedrock column under steady rain must saturate: at saturation psi_1 -> 0 so         !
-   !  the infiltration cap tends to ksat = 2.89e-6 m/s, still above this rainfall, so water           !
-   !  keeps entering a column that cannot drain and the solver overshoots theta_sat.) --------------!
-   subroutine test_clip_layer_decomposition()
-      type(soil_params_t)    :: params
-      type(soil_column_t)    :: col
-      type(chydro_forcing_t) :: forcing
-      type(soil_opts_t)      :: opts
-      type(chydro_flux_t)    :: flux
-      real(wp)    :: worst_gap, worst_clip, most_negative, floor_seen
-      integer(ik) :: step, k
-      print '(a)', 'test_clip_layer_decomposition:'
-      call loam_column(SOIL_RETENTION_VG, params, col)
-      col%theta(1:10) = 0.42_wp                                     ! just below theta_sat = 0.43
-      forcing%precip_ground = 5.0e-4_wp ; forcing%root_uptake = 0.0_wp
-      forcing%t_ground = 285.0_wp ; forcing%q_air = 0.05_wp         ! humid -> negligible evaporation
-      forcing%rho_air = 1.2_wp ; forcing%r_aero = 100.0_wp
-      forcing%snow_free_frac = 1.0_wp
-      opts%bottom_bc = SOIL_BC_BEDROCK                              ! sealed: the water has nowhere to go
-      worst_gap = 0.0_wp ; worst_clip = 0.0_wp
-      most_negative = 0.0_wp ; floor_seen = 0.0_wp
-      do step = 1_ik, 200_ik
-         call advance_soil_water_column(col, forcing, params, opts, 600.0_wp, flux)
-         worst_gap  = max(worst_gap, abs(sum(flux%clip_layer(1:10)) - flux%clip_excess))
-         worst_clip = max(worst_clip, flux%clip_excess)
-         floor_seen = max(floor_seen, sum(flux%floor_layer(1:10)))
-         do k = 1_ik, 10_ik
-            most_negative = min(most_negative, flux%clip_layer(k), flux%floor_layer(k))
-         end do
-      end do
-      call check_true('saturation clip actually fires in this scenario', worst_clip > 0.0_wp, worst_clip)
-      call check('sum(clip_layer) == clip_excess every step', worst_gap, 0.0_wp, 1.0e-18_wp)
-      call check_true('clip_layer / floor_layer are non-negative', most_negative >= 0.0_wp, most_negative)
-      call check('theta_res hard floor never fires on a saturating column', floor_seen, 0.0_wp, 1.0e-30_wp)
-   end subroutine test_clip_layer_decomposition
+   !----- Ground evaporation of the loam's top layer at water content th. ----------------------!
+   real(wp) function loam_evap(th, params, f, opts) result(e)
+      real(wp),               intent(in) :: th
+      type(soil_params_t),    intent(in) :: params
+      type(chydro_forcing_t), intent(in) :: f
+      type(soil_opts_t),      intent(in) :: opts
+      real(wp) :: de1, de2
+      call ground_evaporation_rate(th, soil_psi_from_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp,     &
+                                   3.6_wp, 1.56_wp), params, f, opts, e, de1, de2)
+   end function loam_evap
 
 end program test_column_hydrology
