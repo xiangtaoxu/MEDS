@@ -40,7 +40,7 @@ module meds_fast_rk45
                                      step_control_factor
    use meds_config,           only : meds_config_t, CTRL_L2_STRICT
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t
-   use meds_fast_types, only : patch_biophys_t
+   use meds_fast_types, only : patch_biophys_t, fast_workspace_t
    use meds_biophysics_opts, only : SOIL_BC_AQUIFER
    use meds_budget_check,     only : budget_check, last_check_closed, budget_energy_rate_floor,      &
                                      budget_water_rate_floor
@@ -489,7 +489,7 @@ contains
    !  advances the macro-step. -----------------------------------------------------------------!
    !=======================================================================================!
    subroutine column_fast_step_rk45(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget,  &
-                                    gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
+                                    ws, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, converged, iters, &
                                     stiff_bail, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
@@ -501,6 +501,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
+      type(fast_workspace_t),  intent(inout) :: ws       !< this thread's reusable step storage (#195)
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       logical,     optional,   intent(out)   :: converged
       integer(ik), optional,   intent(out)   :: iters
@@ -540,8 +541,8 @@ contains
 
       cond_dep = 0.0_wp ; cond_dep_enth = 0.0_wp ; face_acc = 0.0_wp
       budget%atm_heat_export = 0.0_wp ; budget%atm_vap_export = 0.0_wp
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
-                               frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%water, &
+                               n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       dt0 = dt_fast
       if (biophys%adapt_dt_last > tiny_num) dt0 = min(biophys%adapt_dt_last, dt_fast)

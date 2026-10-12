@@ -29,7 +29,7 @@ program test_column_ark
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_fast_frozen,        only : build_column_frozen
-   use meds_fast_types,         only : column_frozen_t, column_state_t, ark_workspace_t
+   use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
    use meds_water_retention,     only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
    implicit none
@@ -47,7 +47,7 @@ program test_column_ark
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_rk45(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
    real(wp)    :: psi_leaf_diag
@@ -113,7 +113,7 @@ program test_column_ark
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
       call reset_state()
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%water, n, nsl, fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
@@ -259,7 +259,7 @@ contains
       forc%enthalpy_atm = cas_enthalpy_of_temp(t0, 0.008_wp)
       biophys%wood_water_mass(1:n) = 0.8_wp * biophys%wood_water_mass(1:n)        ! dried wood
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%water, n, nsl, fz, ys)
       refill = sum((fz%plant%uptake_frozen(1:n) - fz%plant%sapflow_frozen(1:n)) * col_cohort%nplant(1:n))
       call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
       call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &

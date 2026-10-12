@@ -38,7 +38,7 @@ module meds_water_network
                                     pond_store, pond_unknown_from_water
    use meds_water_paths,     only : darcy_flow, root_uptake_flow, xylem_flow, supply_limited_transpiration
    use meds_water_retention, only : water_curve_t, rwc_from_psi
-   use meds_grouped_solve,   only : grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
+   use meds_grouped_solve,   only : grouped_system_t, grouped_allocate, grouped_copy, grouped_factor, grouped_solve
    use meds_soil_water,      only : ground_evaporation_rate, bottom_flux
    use meds_soil_types,      only : chydro_forcing_t
    use meds_column_params,   only : soil_params_t, curve_a, curve_n
@@ -76,6 +76,15 @@ module meds_water_network
    integer(ik), parameter :: TRIALS_MAX = 2000_ik
    !----- [kg/m2] Below this a pond holds no water to carry a temperature (as meds_soil_water). ---!
    real(wp),    parameter :: POND_TINY = 1.0e-9_wp
+
+   !----- Everything one evaluation of the network gives: each store's potential and water and  !
+   !      their slopes, the net inflow into each store, and each path's flow. -------------------!
+   type :: net_eval_t
+      real(wp), allocatable :: psi_c(:), dpsi_c(:), w_c(:), dw_c(:), k_c(:), dk_c(:), f_c(:)
+      real(wp), allocatable :: psi_g(:,:), dpsi_g(:,:), w_g(:,:), dw_g(:,:), f_g(:,:)
+      real(wp), allocatable :: q_face(:), u_root(:,:), s_xyl(:), e_leaf(:)
+      real(wp) :: q_pond = 0.0_wp, q_drain = 0.0_wp, e_soil = 0.0_wp
+   end type net_eval_t
 
    !----- One patch's network: what it is built from, its state, and what it moved. ------------!
    type :: water_network_t
@@ -121,37 +130,38 @@ module meds_water_network
       !----- Work done: accepted sub-steps, Newton iterations, rejected sub-steps, and sub-steps  !
       !      taken although they did not converge or meet the tolerance (counted, not hidden). ---!
       integer(ik) :: nsub = 0_ik, nnewton = 0_ik, nreject = 0_ik, nfail = 0_ik
-      !----- Scratch, kept so a patch's arrays are allocated once per step. ------------------!
-      type(grouped_system_t) :: sys
+      !----- Scratch, kept from step to step so the arrays are allocated again only when the shape  !
+      !      changes. ev0 and ev1 are the network at a sub-step's start and at its Newton solution;   !
+      !      jac0 and jac1 the flows' part of the Jacobian there (sys is factored in place). A        !
+      !      sub-step starts where the last accepted one ended, or where a rejected one started, so   !
+      !      its start is not evaluated again while start_ready holds. ------------------------------!
+      type(grouped_system_t) :: sys, jac0, jac1
+      type(net_eval_t)       :: ev0, ev1
+      logical                :: start_ready = .false.
    end type water_network_t
-
-   !----- Everything one evaluation of the network gives: each store's potential and water and  !
-   !      their slopes, the net inflow into each store, and each path's flow. -------------------!
-   type :: net_eval_t
-      real(wp), allocatable :: psi_c(:), dpsi_c(:), w_c(:), dw_c(:), k_c(:), dk_c(:), f_c(:)
-      real(wp), allocatable :: psi_g(:,:), dpsi_g(:,:), w_g(:,:), dw_g(:,:), f_g(:,:)
-      real(wp), allocatable :: q_face(:), u_root(:,:), s_xyl(:), e_leaf(:)
-      real(wp) :: q_pond = 0.0_wp, q_drain = 0.0_wp, e_soil = 0.0_wp
-   end type net_eval_t
 
 contains
 
-   !----- Size a network for nsl soil layers and n cohorts, and clear what it moved. -----------!
+   !----- Size a network for nsl soil layers and n cohorts, keeping the storage when the shape is   !
+   !      unchanged, and reset what the caller fills. --------------------------------------------!
    subroutine water_network_allocate(net, nsl, n)
       type(water_network_t), intent(inout) :: net
       integer(ik),           intent(in)    :: nsl, n
-      net%nsl = nsl ; net%n = n ; net%nc = 1_ik + nsl
-      if (allocated(net%soil)) deallocate(net%soil, net%z_node, net%dz_node, net%face_weight, net%t_soil,  &
-           net%pft, net%nplant, net%bleaf, net%bwood, net%grav, net%k_xylem, net%e_demand, net%r_close,     &
-           net%g_root, net%core_fixed, net%tau_core, net%tau_group, net%w_core, net%w_group, net%face,       &
-           net%uptake, net%sapflow, net%transp, net%psi_core, net%psi_group)
-      allocate(net%soil(nsl), net%z_node(nsl), net%dz_node(nsl), net%face_weight(nsl), net%t_soil(nsl))
-      allocate(net%pft(n), net%nplant(n), net%bleaf(n), net%bwood(n), net%grav(n), net%k_xylem(n),           &
-               net%e_demand(n), net%r_close(n), net%g_root(nsl, n))
-      allocate(net%core_fixed(net%nc), net%tau_core(net%nc), net%tau_group(GROUP_SIZE, n),                  &
-               net%w_core(net%nc), net%w_group(GROUP_SIZE, n))
-      allocate(net%face(nsl), net%uptake(nsl, n), net%sapflow(n), net%transp(n),                            &
-               net%psi_core(net%nc), net%psi_group(GROUP_SIZE, n))
+      if (.not. allocated(net%soil) .or. net%nsl /= nsl .or. net%n /= n) then
+         net%nsl = nsl ; net%n = n ; net%nc = 1_ik + nsl
+         if (allocated(net%soil)) deallocate(net%soil, net%z_node, net%dz_node, net%face_weight, net%t_soil,  &
+              net%pft, net%nplant, net%bleaf, net%bwood, net%grav, net%k_xylem, net%e_demand, net%r_close,     &
+              net%g_root, net%core_fixed, net%tau_core, net%tau_group, net%w_core, net%w_group, net%face,       &
+              net%uptake, net%sapflow, net%transp, net%psi_core, net%psi_group)
+         allocate(net%soil(nsl), net%z_node(nsl), net%dz_node(nsl), net%face_weight(nsl), net%t_soil(nsl))
+         allocate(net%pft(n), net%nplant(n), net%bleaf(n), net%bwood(n), net%grav(n), net%k_xylem(n),        &
+                  net%e_demand(n), net%r_close(n), net%g_root(nsl, n))
+         allocate(net%core_fixed(net%nc), net%tau_core(net%nc), net%tau_group(GROUP_SIZE, n),               &
+                  net%w_core(net%nc), net%w_group(GROUP_SIZE, n))
+         allocate(net%face(nsl), net%uptake(nsl, n), net%sapflow(n), net%transp(n),                         &
+                  net%psi_core(net%nc), net%psi_group(GROUP_SIZE, n))
+         call eval_allocate(net%ev0, net) ; call eval_allocate(net%ev1, net)
+      end if
       net%t_soil = 298.15_wp ; net%core_fixed = .false. ; net%g_root = 0.0_wp
       net%e_demand = 0.0_wp ; net%r_close = 0.5_wp
    end subroutine water_network_allocate
@@ -221,16 +231,17 @@ contains
       type(hydro_params_table_t), intent(in)    :: hyd
       real(wp),                   intent(in)    :: dt
 
-      type(net_eval_t) :: ev0, ev1
       real(wp) :: t, h, h_min, err, scale_c(net%nc), scale_g(GROUP_SIZE, net%n)
       real(wp) :: tau_c(net%nc), tau_g(GROUP_SIZE, net%n)
       integer(ik) :: trials, iters
-      logical  :: converged, last
+      logical  :: converged, last, spilled
 
       call clear_amounts(net)
-      call eval_allocate(ev0, net) ; call eval_allocate(ev1, net)
       call grouped_allocate(net%sys, net%nc, net%n, GROUP_SIZE)
+      call grouped_allocate(net%jac0, net%nc, net%n, GROUP_SIZE)
+      call grouped_allocate(net%jac1, net%nc, net%n, GROUP_SIZE)
       call water_scales(net, hyd, scale_c, scale_g)
+      net%start_ready = .false.
 
       t = 0.0_wp ; h = dt ; h_min = H_MIN_SHARE * dt ; trials = 0_ik
       do while (t < dt * (1.0_wp - 1.0e-12_wp))
@@ -238,8 +249,7 @@ contains
          last = (h <= h_min) .or. (trials >= TRIALS_MAX)
          trials = trials + 1_ik
          tau_c = net%tau_core ; tau_g = net%tau_group
-         call newton_substep(net, params, opts, forcing, hyd, h, scale_c, scale_g, tau_c, tau_g, ev0, ev1,       &
-                             converged, iters)
+         call newton_substep(net, params, opts, forcing, hyd, h, scale_c, scale_g, tau_c, tau_g, converged, iters)
          net%nnewton = net%nnewton + iters
          if (.not. converged .and. .not. last) then
             net%nreject = net%nreject + 1_ik
@@ -247,7 +257,7 @@ contains
             cycle
          end if
          if (converged) then
-            err = substep_error(net, h, ev0, ev1, scale_c, scale_g)
+            err = substep_error(net, h, net%ev0, net%ev1, scale_c, scale_g)
          else
             err = huge(1.0_wp)
          end if
@@ -257,14 +267,20 @@ contains
             cycle
          end if
          if (err > 1.0_wp) net%nfail = net%nfail + 1_ik
-         call commit_substep(net, h, tau_c, tau_g, ev1)
+         call commit_substep(net, h, tau_c, tau_g, net%ev1, spilled)
+         !----- The next sub-step starts where this one ended, so its start is this one's solution --  !
+         !      unless the spill moved the pond. ------------------------------------------------------!
+         net%start_ready = .not. spilled
+         if (net%start_ready) then
+            call copy_eval(net%ev0, net%ev1) ; call grouped_copy(net%jac0, net%jac1)
+         end if
          t = t + h
          net%nsub = net%nsub + 1_ik
          if (err <= 1.0_wp)                                                                                   &
             h = h * min(GROW_MAX, max(SHRINK_MIN, SAFETY * max(err, 1.0e-10_wp) ** (-0.5_wp))) ! clamp-ok: controller floor
       end do
-      net%psi_core  = ev1%psi_c
-      net%psi_group = ev1%psi_g
+      net%psi_core  = net%ev1%psi_c
+      net%psi_group = net%ev1%psi_g
    end subroutine water_network_advance
 
    !----- How far the assembled Jacobian is from the residual's own derivative, at the network's   !
@@ -321,8 +337,7 @@ contains
    !=======================================================================================!
    !     One sub-step: Newton on the end-of-sub-step water balance.                          !
    !=======================================================================================!
-   subroutine newton_substep(net, params, opts, forcing, hyd, h, scale_c, scale_g, tau_c, tau_g, ev0, ev1, &
-                             converged, iters)
+   subroutine newton_substep(net, params, opts, forcing, hyd, h, scale_c, scale_g, tau_c, tau_g, converged, iters)
       type(water_network_t),      intent(inout) :: net
       type(soil_params_t),        intent(in)    :: params
       type(soil_opts_t),          intent(in)    :: opts
@@ -330,7 +345,6 @@ contains
       type(hydro_params_table_t), intent(in)    :: hyd
       real(wp),                   intent(in)    :: h, scale_c(:), scale_g(:,:)
       real(wp),                   intent(inout) :: tau_c(:), tau_g(:,:)   !< start of sub-step in, solution out
-      type(net_eval_t),           intent(inout) :: ev0, ev1   !< the flows at the start and at the solution
       logical,                    intent(out)   :: converged
       integer(ik),                intent(out)   :: iters
       real(wp) :: r_c(net%nc), r_g(GROUP_SIZE, net%n), d_c(net%nc), d_g(GROUP_SIZE, net%n)
@@ -340,16 +354,24 @@ contains
       logical  :: ok
 
       converged = .false. ; iters = 0_ik
-      call evaluate(net, params, opts, forcing, hyd, tau_c, tau_g, ev0, .true.)
-      call residual(net, h, ev0, r_c, r_g)
-      ev1 = ev0
+      !----- The network at the start: net%ev0 (and the flows' Jacobian, jac0), evaluated unless it    !
+      !      already is. The solution's evaluation, net%ev1, starts there. ----------------------------!
+      if (net%start_ready) then
+         call grouped_copy(net%sys, net%jac0)
+      else
+         call evaluate(net, params, opts, forcing, hyd, tau_c, tau_g, net%ev0, .true.)
+         call grouped_copy(net%jac0, net%sys)
+         net%start_ready = .true.
+      end if
+      call residual(net, h, net%ev0, r_c, r_g)
+      call copy_eval(net%ev1, net%ev0)
       merit = residual_merit(net, h, r_c, r_g, scale_c, scale_g)
       worst = residual_worst(net, h, r_c, r_g, scale_c, scale_g)
       if (merit /= merit) return
       do it = 1_ik, NEWTON_MAX
          if (worst <= 1.0_wp) exit
          iters = it
-         call add_storage_to_jacobian(net, h, ev1)
+         call add_storage_to_jacobian(net, h, net%ev1)
          call grouped_factor(net%sys, ok)
          if (.not. ok) return
          call grouped_solve(net%sys, -r_c, -r_g, d_c, d_g)
@@ -357,8 +379,8 @@ contains
          lam = lam_max
          do ib = 1_ik, BACKTRACK_MAX
             try_c = tau_c + lam * d_c ; try_g = tau_g + lam * d_g
-            call evaluate(net, params, opts, forcing, hyd, try_c, try_g, ev1, .true.)
-            call residual(net, h, ev1, r2_c, r2_g)
+            call evaluate(net, params, opts, forcing, hyd, try_c, try_g, net%ev1, .true.)
+            call residual(net, h, net%ev1, r2_c, r2_g)
             merit_try = residual_merit(net, h, r2_c, r2_g, scale_c, scale_g)
             if (merit_try == merit_try .and. merit_try <= (1.0_wp - 1.0e-4_wp * lam) * merit) exit
             lam = 0.5_wp * lam
@@ -367,8 +389,10 @@ contains
          tau_c = try_c ; tau_g = try_g ; r_c = r2_c ; r_g = r2_g ; merit = merit_try
          worst = residual_worst(net, h, r_c, r_g, scale_c, scale_g)
       end do
-      !----- Factor the Newton matrix at the solution: the error estimate solves with it. -------!
-      call add_storage_to_jacobian(net, h, ev1)
+      !----- Factor the Newton matrix at the solution: the error estimate solves with it. Its flows'   !
+      !      part is kept first, for the next sub-step's start. ---------------------------------------!
+      call grouped_copy(net%jac1, net%sys)
+      call add_storage_to_jacobian(net, h, net%ev1)
       call grouped_factor(net%sys, ok)
       converged = ok .and. worst <= 1.0_wp
    end subroutine newton_substep
@@ -450,6 +474,7 @@ contains
       integer(ik) :: k, i, ca, cb, c
       real(wp) :: q, dq_pa, dq_pb, dq_ka, dq_kb, dqa, dqb, u, du_ps, du_pw, du_k, s, ds_w, ds_l
       real(wp) :: e, de_dtheta, de_dpsi, de, qbot, dqbot_dpsi, dqbot_dk, theta1, head
+      real(wp) :: psi_w, dpsi_w, u_sum, dqb_sum
 
       if (with_jacobian) call grouped_allocate(net%sys, net%nc, net%n, GROUP_SIZE)
       ev%f_c = 0.0_wp ; ev%f_g = 0.0_wp
@@ -508,27 +533,32 @@ contains
       if (with_jacobian) net%sys%a(c, c) = net%sys%a(c, c)                                                   &
                          + rho_h2o * (dqbot_dpsi * ev%dpsi_c(c) / grav_head + dqbot_dk * ev%dk_c(c))
 
-      !----- Each cohort: uptake from its layers, sapflow to its leaves, and transpiration. ------!
+      !----- Each cohort: uptake from its layers, sapflow to its leaves, and transpiration. The      !
+      !      cohort's own sums are kept in scalars over its layers and written once. ----------------!
       do i = 1_ik, net%n
+         psi_w = ev%psi_g(WATER_WOOD, i) ; dpsi_w = ev%dpsi_g(WATER_WOOD, i)
+         u_sum = 0.0_wp ; dqb_sum = 0.0_wp
          do k = 1_ik, net%nsl
             if (net%g_root(k, i) <= 0.0_wp) then
                ev%u_root(k, i) = 0.0_wp ; cycle
             end if
             c = 1_ik + k
-            call root_uptake_flow(net%g_root(k, i), ev%k_c(c), ev%psi_c(c), net%z_node(k),                   &
-                                  ev%psi_g(WATER_WOOD, i), u, du_ps, du_pw, du_k)
+            call root_uptake_flow(net%g_root(k, i), ev%k_c(c), ev%psi_c(c), net%z_node(k), psi_w,             &
+                                  u, du_ps, du_pw, du_k)
             ev%u_root(k, i) = u
             ev%f_c(c) = ev%f_c(c) - u
-            ev%f_g(WATER_WOOD, i) = ev%f_g(WATER_WOOD, i) + u
+            u_sum = u_sum + u
             if (with_jacobian) then
                dqa = du_ps * ev%dpsi_c(c) + du_k * ev%dk_c(c)
-               dqb = du_pw * ev%dpsi_g(WATER_WOOD, i)
-               net%sys%a(c, c)                    = net%sys%a(c, c) + dqa
-               net%sys%b(c, i)                    = net%sys%b(c, i) + dqb
-               net%sys%c(c, i)                    = net%sys%c(c, i) - dqa
-               net%sys%d(WATER_WOOD, WATER_WOOD, i) = net%sys%d(WATER_WOOD, WATER_WOOD, i) - dqb
+               dqb = du_pw * dpsi_w
+               net%sys%a(c, c) = net%sys%a(c, c) + dqa
+               net%sys%b(c, i) = dqb
+               net%sys%c(c, i) = -dqa
+               dqb_sum = dqb_sum - dqb
             end if
          end do
+         ev%f_g(WATER_WOOD, i) = ev%f_g(WATER_WOOD, i) + u_sum
+         if (with_jacobian) net%sys%d(WATER_WOOD, WATER_WOOD, i) = net%sys%d(WATER_WOOD, WATER_WOOD, i) + dqb_sum
          associate (hp => hyd%pft(net%pft(i)))
             call xylem_flow(net%k_xylem(i), ev%psi_g(WATER_WOOD, i), ev%psi_g(WATER_LEAF, i), net%grav(i),        &
                             hp%wood_psi50, hp%wood_kexp, hp%vuln_table, s, ds_w, ds_l)
@@ -634,10 +664,11 @@ contains
    !      flow that closes its balance exactly; the store across that path (the wood, the top layer)   !
    !      absorbs the slack, which is small against what it holds. Every kilogram is still counted     !
    !      once. -----------------------------------------------------------------------------------!
-   subroutine commit_substep(net, h, tau_c, tau_g, ev)
+   subroutine commit_substep(net, h, tau_c, tau_g, ev, spilled)
       type(water_network_t), intent(inout) :: net
       real(wp),              intent(in)    :: h, tau_c(:), tau_g(:,:)
       type(net_eval_t),      intent(in)    :: ev
+      logical,               intent(out)   :: spilled   !< the pond spilled, so its unknown moved
       real(wp) :: w_mix, e_mix, t_mix, u_mix, amount, spill, t_pond, q_pond, sap(net%n)
       integer(ik) :: c, i
 
@@ -684,7 +715,8 @@ contains
 
       !----- Spill: water above the pond's capacity runs off at the pond's temperature. --------!
       spill = max(0.0_wp, net%w_core(WATER_NODE_POND) - net%w_pond_max)
-      if (spill > 0.0_wp) then
+      spilled = spill > 0.0_wp
+      if (spilled) then
          t_pond = temp_of_liquid_enthalpy(net%e_pond / net%w_core(WATER_NODE_POND))
          net%spill = net%spill + spill
          net%spill_enth = net%spill_enth + spill * internal_energy_liquid(t_pond)
@@ -737,9 +769,25 @@ contains
       net%nsub = 0_ik ; net%nnewton = 0_ik ; net%nreject = 0_ik ; net%nfail = 0_ik
    end subroutine clear_amounts
 
+   !----- Copy one evaluation into another of the same shape, in place (an assignment of the whole  !
+   !      record would free and allocate every array). ---------------------------------------------!
+   subroutine copy_eval(dst, src)
+      type(net_eval_t), intent(inout) :: dst
+      type(net_eval_t), intent(in)    :: src
+      dst%psi_c = src%psi_c ; dst%dpsi_c = src%dpsi_c ; dst%w_c = src%w_c ; dst%dw_c = src%dw_c
+      dst%k_c = src%k_c ; dst%dk_c = src%dk_c ; dst%f_c = src%f_c
+      dst%psi_g = src%psi_g ; dst%dpsi_g = src%dpsi_g ; dst%w_g = src%w_g ; dst%dw_g = src%dw_g
+      dst%f_g = src%f_g
+      dst%q_face = src%q_face ; dst%u_root = src%u_root ; dst%s_xyl = src%s_xyl ; dst%e_leaf = src%e_leaf
+      dst%q_pond = src%q_pond ; dst%q_drain = src%q_drain ; dst%e_soil = src%e_soil
+   end subroutine copy_eval
+
    subroutine eval_allocate(ev, net)
       type(net_eval_t),      intent(inout) :: ev
       type(water_network_t), intent(in)    :: net
+      if (allocated(ev%psi_c)) deallocate(ev%psi_c, ev%dpsi_c, ev%w_c, ev%dw_c, ev%k_c, ev%dk_c, ev%f_c,          &
+                                          ev%psi_g, ev%dpsi_g, ev%w_g, ev%dw_g, ev%f_g, ev%q_face, ev%u_root,     &
+                                          ev%s_xyl, ev%e_leaf)
       allocate(ev%psi_c(net%nc), ev%dpsi_c(net%nc), ev%w_c(net%nc), ev%dw_c(net%nc), ev%k_c(net%nc),       &
                ev%dk_c(net%nc), ev%f_c(net%nc))
       allocate(ev%psi_g(GROUP_SIZE, net%n), ev%dpsi_g(GROUP_SIZE, net%n), ev%w_g(GROUP_SIZE, net%n),        &

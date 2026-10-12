@@ -29,7 +29,7 @@ program test_column_rk45
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
-   use meds_fast_types,         only : ark_workspace_t
+   use meds_fast_types,         only : fast_workspace_t
    use meds_water_retention,     only : psi_from_water_content, water_content, soil_psi_from_theta
    use meds_test_support, only : build_test_config, check_true, test_report
    implicit none
@@ -47,7 +47,7 @@ program test_column_rk45
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_split(n), gpp_rk45(n), gpp_coh(n), tcas, qsat, worst_super
    real(wp)    :: psi_leaf_diag, psi_leaf_probe(n)

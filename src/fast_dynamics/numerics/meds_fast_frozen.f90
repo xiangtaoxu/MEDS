@@ -57,8 +57,8 @@ contains
    !      respiration / CAS caps / aero, bit-identical to the split) + this integrator's own per-cohort !
    !      geometry/radiation/wood packing + the frozen hydrology BCs, into a column_frozen_t; also      !
    !      packs the prognostic state into a column_state_t.                                             !
-   subroutine build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
-                                  frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
+   subroutine build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, net, &
+                                  n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
       real(wp),                intent(in)    :: dt_fast
       type(meds_config_t),     intent(in)    :: cfg
       type(column_config_t),   intent(in)    :: col_config
@@ -72,6 +72,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
+      type(water_network_t),   intent(inout) :: net      !< the thread's water network, reused step to step
       integer(ik),             intent(in)    :: n, nsl
       type(column_frozen_t),   intent(out)   :: frozen
       type(column_state_t),    intent(out)   :: y
@@ -80,7 +81,6 @@ contains
 
       type(snow_stage_t)     :: snow_st   !< shared pre-column snow stage (C4, issue #76)
       type(chydro_forcing_t) :: hforc
-      type(water_network_t)  :: net
       type(surface_state_t)  :: y_stage ; type(surface_tend_t) :: sf0
       real(wp) :: tcas, qcas, press, rho, t_ground, nee_biotic, cas_mass_capacity, cas_molar_capacity, g_atm_heat, g_atm_vapour, &
            g_atm_co2

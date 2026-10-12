@@ -40,13 +40,13 @@ program test_column_derivs
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
-   use meds_fast_types,       only : error_control_t, ark_workspace_t
+   use meds_fast_types,       only : error_control_t, fast_workspace_t
    use meds_config,           only : CTRL_PI
    implicit none
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !
    !      freezes each step; the parameters travel separately, as in the model). --------------------!
    type(column_config_t) :: col_config
-   type(ark_workspace_t) :: ws           !< the ARK march's storage, reused by every test as in the model
+   type(fast_workspace_t) :: ws           !< the fast step's storage, reused by every test as in the model
 
    call test_leaf_closure()
    call test_leaf_analytic()

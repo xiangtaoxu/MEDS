@@ -25,7 +25,7 @@ module meds_grouped_solve
    implicit none
    private
 
-   public :: grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
+   public :: grouped_system_t, grouped_allocate, grouped_copy, grouped_factor, grouped_solve
 
    !----- One system: the blocks, filled by the caller, and the factorisation that replaces them. -!
    type :: grouped_system_t
@@ -57,6 +57,13 @@ contains
       end if
       s%a = 0.0_wp ; s%b = 0.0_wp ; s%c = 0.0_wp ; s%d = 0.0_wp
    end subroutine grouped_allocate
+
+   !----- Copy one system's blocks into another of the same shape, in place. --------------------!
+   pure subroutine grouped_copy(dst, src)
+      type(grouped_system_t), intent(inout) :: dst
+      type(grouped_system_t), intent(in)    :: src
+      dst%a = src%a ; dst%b = src%b ; dst%c = src%c ; dst%d = src%d
+   end subroutine grouped_copy
 
    !----- Factor in place: invert each group block, fold the groups into the core by their rank-1  !
    !      updates, and LU-factor the core. ok is false if a group block or the core is singular. ---!

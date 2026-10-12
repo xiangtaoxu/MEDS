@@ -28,7 +28,7 @@ program test_column_dynamics
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config, &
-                                        ark_workspace_t
+                                        fast_workspace_t
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_tol_set
    use meds_fast_step,          only : column_fast_step
    use meds_fast_prepass,        only : aero_bottom_to_top, cohort_leaf_par
@@ -75,7 +75,7 @@ program test_column_dynamics
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp) :: ct_night, ct_noon, co2_night, co2_noon, tleaf_noon, tleaf_night
    real(wp) :: ustar_noon, dtheta_noon      ! #97: midday turbulence regime (see the check below)

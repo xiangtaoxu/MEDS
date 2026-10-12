@@ -43,7 +43,7 @@ module meds_fast_ark
    use meds_fast_types, only : column_config_t, column_cohort_t, column_forcing_t, column_budget_t, alloc_column_cohort, &
                                column_state_t, column_frozen_t, surface_state_t, cas_boundary_t, surface_tend_t, &
                                stage_bflux_t, column_bflux_t, error_control_t, column_tend_t, mask_is_full, &
-                               ark_stages_t, ark_workspace_t
+                               ark_stages_t, fast_workspace_t
    use meds_ground_biophysics, only : snow_accumulate, snow_drain_meltwater, snow_cover_fraction, ground_surface_fluxes
    use meds_therm_lib, only : internal_energy_liquid, internal_energy_to_temp, internal_energy_ice, temp_of_liquid_enthalpy
    use meds_budget_check, only : budget_check, budget_energy_rate_floor, budget_water_rate_floor, budget_co2_rate_floor
@@ -166,7 +166,7 @@ contains
       real(wp),              intent(in)  :: t_end, dt_init
       type(error_control_t), intent(in)  :: ec       !< tolerances + controller + strictness (meds_fast_control)
       type(column_state_t),  intent(inout) :: y_out  !< filled in place
-      type(ark_workspace_t), intent(inout) :: ws     !< this thread's march and stage storage
+      type(fast_workspace_t), intent(inout) :: ws    !< this thread's march and stage storage
       integer(ik),           intent(out) :: nsteps, nrej
       integer(ik), optional, intent(in)  :: niter    !< coupled leaf<->CAS Newton cap (default 8)
       !----- section 8e WARM START: the controller proposal to seed the NEXT call with. Only steps that  !
@@ -274,7 +274,7 @@ contains
       type(patch_biophys_t),   intent(inout) :: biophys
       type(aero_out_t),        intent(inout) :: aero
       type(column_budget_t),   intent(inout) :: budget
-      type(ark_workspace_t),   intent(inout) :: ws    !< this thread's reusable step storage (#195)
+      type(fast_workspace_t),  intent(inout) :: ws    !< this thread's reusable step storage (#195)
       real(wp), optional,      intent(out)   :: gpp_coh(:), leaf_resp_coh(:), stem_resp_coh(:), root_resp_coh(:)
       real(wp), optional,      intent(inout) :: cdiag(:,:)   !< (N_CDIAG, ncoh) per-cohort diagnostic capture
       logical,     optional,   intent(out)   :: converged
@@ -319,8 +319,8 @@ contains
       !      flow, and the ARK commits its theta. -----------------------------------------------------!
       w_surface0 = biophys%soil_w%w_surface
 
-      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, n, nsl, &
-                               frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws%water, &
+                               n, nsl, frozen, y, gpp_coh, leaf_resp_coh, stem_resp_coh, root_resp_coh, cdiag)
 
       !----- STATE^n pond enthalpy, snapshotted HERE (#78 item 4). It must be read before anything      !
       !      commits to biophys%soil_w: the pond commit below overwrites w_surface_enth with the network's  !
