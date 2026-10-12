@@ -16,7 +16,7 @@ before and after.
 
 ### Added
 
-- **A soil pedotransfer function** (`meds_pedotransfer`): `soil_hydraulics_from_texture` gives a soil
+- **A soil pedotransfer function** (`meds_pedotransfer`, #391): `soil_hydraulics_from_texture` gives a soil
   layer's van Genuchten θ_sat, θ_res, α and n (Hodnett & Tomasella 2002, Table 8; ED2's
   `soil_hydro_scheme` 2) and its saturated conductivity (Ottoni et al. 2019) from sand, silt, clay,
   organic carbon, CEC, pH and bulk density, and scales them for coarse fragments (Saxton & Rawls 2006).
@@ -105,7 +105,7 @@ before and after.
 
 ### Changed
 
-- **The van Genuchten conductivity uses Mualem's pore connectivity L = -1** (was 0.5), after Schaap &
+- **The van Genuchten conductivity uses Mualem's pore connectivity L = -1** (#391; was 0.5), after Schaap &
   Leij (2000), as ED2 pairs with this curve (`soil_hydro_scheme` 2): K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2,
   with L the named parameter `VG_PORE_CONNECTIVITY` in `meds_water_retention`. With 0.5, a soil of n
   near 1.4 (the median of Hodnett & Tomasella's curve over Xu et al. 2016's Central America box)
