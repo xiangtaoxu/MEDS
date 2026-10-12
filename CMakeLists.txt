@@ -647,6 +647,12 @@ if(MEDS_BUILD_TESTS)
    meds_fortran_flags(test_column_hydrology)
    add_test(NAME column_hydrology COMMAND test_column_hydrology)
 
+   #----- The soil-plant water network's process library: values and analytic derivatives. ---#
+   add_executable(test_water_processes test/test_water_processes.f90)
+   target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
+   meds_fortran_flags(test_water_processes)
+   add_test(NAME water_processes COMMAND test_water_processes)
+
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)
       add_executable(test_${t} test/test_${t}.f90)

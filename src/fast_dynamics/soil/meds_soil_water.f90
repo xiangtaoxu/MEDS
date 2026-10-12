@@ -24,6 +24,7 @@ module meds_soil_water
    use meds_water_retention,  only : soil_psi_from_theta, soil_theta_from_psi, soil_hydr_cond_from_theta, &
                                      soil_moist_cap_from_psi
    use meds_numerics,         only : thomas_solve
+   use meds_water_paths,      only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity, internal_energy_liquid, internal_energy_to_temp,   &
                                      temp_of_liquid_enthalpy
    implicit none
@@ -35,10 +36,20 @@ module meds_soil_water
    !      advance_soil_water_column would produce WITHOUT running the Richards solve. See the routine   !
    !      for why that is exact rather than an approximation. ---------------------------------!
    public :: ground_evap_from_state
+   !----- The soil's boundary processes in the form the soil-plant water network takes them: as   !
+   !      functions of the top and bottom layers' state, with their derivatives. ---------------!
+   public :: ground_evaporation_rate, bottom_flux
 
    !----- [kg/m2] below this the pond is treated as empty: it has no meaningful temperature, and any
    !      enthalpy residue left in a drained store would read as heat in an empty pond next step.
    real(wp), parameter :: POND_TINY = 1.0e-9_wp
+   !----- Widths of the two rounded corners in ground_evaporation_rate: [kg/kg] where the surface's  !
+   !      humidity meets the air's (evaporation stops; there is no dew), and [m3/m3] where the top   !
+   !      layer dries below the moisture at which the dry surface layer starts to form. -----------!
+   real(wp), parameter :: EVAP_HUMIDITY_WIDTH = 1.0e-6_wp
+   real(wp), parameter :: DSL_THETA_WIDTH     = 1.0e-3_wp
+   !----- CLM5 eq 5.78: the 'air dry' matric head [m], where the soil counts as dry (CLM5's 1e7 mm). !
+   real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp
 
 contains
 
@@ -60,7 +71,7 @@ contains
    ! zone.  Using K(theta_n) upward would silently under-predict capillary rise, which is    !
    ! the entire point of the boundary.                                                        !
    !---------------------------------------------------------------------------------------!
-   pure subroutine bottom_flux(params, opts, n, psi_n, k_n, qbot, dq_dpsi)
+   pure subroutine bottom_flux(params, opts, n, psi_n, k_n, qbot, dq_dpsi, dq_dk)
       type(soil_params_t), intent(in)  :: params
       type(soil_opts_t),   intent(in)  :: opts
       integer(ik),         intent(in)  :: n
@@ -68,9 +79,11 @@ contains
       real(wp),            intent(in)  :: k_n       !< [m/s] K(theta_n) of the deepest layer
       real(wp),            intent(out) :: qbot      !< [m/s] down-positive
       real(wp), optional,  intent(out) :: dq_dpsi   !< [1/s] d(qbot)/d(psi_n), for the implicit solve
+      real(wp), optional,  intent(out) :: dq_dk     !< [-]   d(qbot)/d(k_n), for the water network
       real(wp) :: delta, grad, k_bot
       qbot = 0.0_wp
       if (present(dq_dpsi)) dq_dpsi = 0.0_wp
+      if (present(dq_dk))   dq_dk   = 0.0_wp
       select case (opts%bottom_bc)
       case (SOIL_BC_BEDROCK)
          qbot = 0.0_wp
@@ -79,6 +92,7 @@ contains
          grad  = psi_n / delta + 1.0_wp
          if (grad >= 0.0_wp) then
             k_bot = k_n                                                 ! downward: upstream is layer n
+            if (present(dq_dk)) dq_dk = grad
          else
             k_bot = params%ksat(n)                                      ! upward: upstream is saturated
          end if
@@ -86,6 +100,7 @@ contains
          if (present(dq_dpsi)) dq_dpsi = k_bot / delta
       case default                                                      ! SOIL_BC_FREE_DRAIN
          qbot = k_n
+         if (present(dq_dk)) dq_dk = 1.0_wp
       end select
    end subroutine bottom_flux
 
@@ -691,8 +706,6 @@ contains
       type(soil_opts_t),      intent(in) :: opts
       real(wp) :: e_soil, alpha_soil, q_g, theta_init, dsl, dvap, phi, phi_air, tau, r_soil
       real(wp) :: theta_air
-      !----- CLM5 eq 5.78: the 'air dry' matric head, psi at which the soil is considered dry.  !
-      real(wp), parameter :: PSI_AIR_DRY = -1.0e4_wp        ! [m] = CLM5's 1e7 mm
       alpha_soil = safe_exp(psi1 * grav / (r_wv * forcing%t_ground))
       !----- Saturate over ICE when the top layer is frozen (#89): the liquid curve overstates    !
       !      e_sat by 10 % at -10 C and 34 % at -30 C, and a frozen surface sublimes. ------------!
@@ -731,6 +744,50 @@ contains
                 / (forcing%r_aero + r_soil)
       e_soil  = max(0.0_wp, e_soil)                        ! no dew in v1
    end function ground_evaporation
+
+   !---------------------------------------------------------------------------------------!
+   ! ground_evaporation_rate -- ground evaporation [kg/m2/s] from the top layer at water content   !
+   ! theta1 [m3/m3] and matric head psi1 [m], with its derivatives, for the soil-plant water         !
+   ! network. The physics is ground_evaporation's: Philip's pore-space humidity alpha = exp(psi g /  !
+   ! (R_v T)) over the surface and the Swenson-Lawrence dry-surface-layer resistance, on the snow-   !
+   ! free share of the ground. Two things differ, both because the network takes evaporation         !
+   ! implicitly, at the end-of-step state:                                                           !
+   !   * its two corners -- evaporation stops where the surface's humidity meets the air's (no dew), !
+   !     and the dry surface layer starts to form below theta_init -- are rounded over               !
+   !     EVAP_HUMIDITY_WIDTH and DSL_THETA_WIDTH, so Newton sees them;                                !
+   !   * there is no cap at the water above residual: as the layer dries its potential falls without   !
+   !     bound and alpha with it, so evaporation stops by itself before the layer empties.            !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine ground_evaporation_rate(theta1, psi1, params, forcing, opts, e_soil, de_dtheta, de_dpsi)
+      real(wp),               intent(in)  :: theta1      !< [m3/m3] top-layer water content
+      real(wp),               intent(in)  :: psi1        !< [m]     top-layer matric head
+      type(soil_params_t),    intent(in)  :: params
+      type(chydro_forcing_t), intent(in)  :: forcing
+      type(soil_opts_t),      intent(in)  :: opts
+      real(wp),               intent(out) :: e_soil      !< [kg/m2/s]
+      real(wp),               intent(out) :: de_dtheta   !< [kg/m2/s per m3/m3]
+      real(wp),               intent(out) :: de_dpsi     !< [kg/m2/s per m of head]
+      real(wp) :: alpha_soil, dalpha, q_sat, drive, ddrive, theta_air, theta_init, dry, ddry
+      real(wp) :: dvap, phi, phi_air, tau, r_soil, dr_dtheta, resist
+      alpha_soil = safe_exp(psi1 * grav / (r_wv * forcing%t_ground))
+      dalpha     = alpha_soil * grav / (r_wv * forcing%t_ground)
+      q_sat      = sat_specific_humidity(forcing%t_ground, p_std, forcing%ground_fliq)
+      call smooth_max0(alpha_soil * q_sat - forcing%q_air, EVAP_HUMIDITY_WIDTH, drive, ddrive)
+      !----- The dry surface layer: as ground_evaporation, referenced to the air-dry water content. !
+      theta_air  = soil_theta_from_psi_l(params%retention, params, 1_ik, PSI_AIR_DRY)
+      theta_init = opts%dsl_theta_init * params%theta_sat(1)
+      call smooth_max0(theta_init - theta1, DSL_THETA_WIDTH, dry, ddry)
+      dvap    = 2.12e-5_wp * (forcing%t_ground / 273.15_wp) ** 1.75_wp
+      phi     = params%theta_sat(1)
+      phi_air = max(phi - theta_air, tiny_num)
+      tau     = phi_air ** (10.0_wp / 3.0_wp) / max(phi * phi, tiny_num)
+      r_soil    = opts%dsl_dmax * dry / max(theta_init - theta_air, tiny_num) / max(dvap * tau, tiny_num)
+      dr_dtheta = -opts%dsl_dmax * ddry / max(theta_init - theta_air, tiny_num) / max(dvap * tau, tiny_num)
+      resist    = forcing%r_aero + r_soil
+      e_soil    = forcing%snow_free_frac * forcing%rho_air * drive / resist
+      de_dpsi   = forcing%snow_free_frac * forcing%rho_air * ddrive * q_sat * dalpha / resist
+      de_dtheta = -e_soil * dr_dtheta / resist
+   end subroutine ground_evaporation_rate
 
    !---------------------------------------------------------------------------------------!
    ! pond_overflow -- Horton overflow of the ponding store above its capacity, and the empty-pond   !
