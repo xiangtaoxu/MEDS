@@ -31,8 +31,7 @@ program test_spac_solver
                                 spac_jacobian_error, POND, WOOD, LEAF
    use meds_hydr_lib,      only : xylem_max_conductance, rhizosphere_conductance, build_hydro_table
    use meds_water_retention, only : tissue_water_relations, soil_water_relations, SOIL_RETENTION_VG,       &
-                                    water_curve_t, rwc_from_psi, pv_psi_tlp, soil_psi_from_theta,           &
-                                    soil_hydr_cond_from_theta
+                                    water_curve_t, rwc_from_psi, pv_psi_tlp, soil_psi_from_theta
    use meds_plant_types,   only : hydro_params_table_t
    use meds_plant_hydraulics, only : cohort_root_profile
    use meds_column_params, only : soil_params_t, build_soil_hydr_params

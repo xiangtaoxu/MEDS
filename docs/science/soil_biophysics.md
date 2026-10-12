@@ -17,7 +17,7 @@ thermodynamic inverter, and both sub-columns close a machine-precision budget ev
 ## The soil water column
 
 One patch's prognostic soil moisture $`\theta_k`$ (+ ponded surface water) is advanced over `dt_fast`
-by the soil-plant water network (`meds_water_network`): implicit Euler on adaptive sub-steps, with
+by the soil-plant water solver (`meds_spac_solver`): implicit Euler on adaptive sub-steps, with
 Newton on every store at once ([soil_plant_water](soil_plant_water.md)). For the soil layers this is the
 mixed-form Richards equation on the ED2 negative-$z$ grid. Per layer,
 
@@ -248,8 +248,8 @@ and passes the resulting flux into the CO₂ source.
 
 | Concept | Routine |
 |---|---|
-| soil water (the network) | `meds_water_network` ([soil_plant_water](soil_plant_water.md)); a layer's store: `meds_water_storage`: `soil_store` |
-| soil boundaries | `meds_soil_water`: `ground_evaporation_rate`, `bottom_flux` |
+| soil water (the network) | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)); a layer's water relations: `meds_water_retention`: `soil_water_relations` |
+| soil water flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |

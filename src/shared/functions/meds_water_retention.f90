@@ -29,9 +29,9 @@ module meds_water_retention
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
    public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity
    !----- Soil retention family: the soil-water analogue of the tissue curve -- theta(psi) and    !
-   !      psi(theta), K(theta) and the capacity C(psi).                                           !
-   public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   public :: soil_theta_from_psi, soil_psi_from_theta, soil_hydr_cond_from_theta, soil_moist_cap_from_psi
+   !      psi(theta) read-offs.                                                                    !
+   public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
+   public :: soil_theta_from_psi, soil_psi_from_theta
    !----- The water relations the soil-plant water solver uses, in the variable it solves for: a  !
    !      soil layer's saturation (dry) or potential (wet), a tissue's relative water content, the !
    !      pond's head. ----------------------------------------------------------------------!
@@ -52,9 +52,11 @@ module meds_water_retention
    integer(ik), parameter :: SOIL_RETENTION_VG       = 1_ik  !< van Genuchten-Mualem (default)
    integer(ik), parameter :: SOIL_RETENTION_CAMPBELL = 2_ik  !< Campbell / Clapp-Hornberger (option)
 
-   !----- Numerical floors (a property of the curve regularization, not of uptake). --------!
-   real(wp), parameter :: K_MIN  = 1.16e-13_wp    !< [m/s] ED2 hydcond_min (no zero-conductance lock)
-   real(wp), parameter :: C_MIN  = 1.0e-9_wp      !< [1/m] specific-capacity floor (vG C -> 0 at saturation)
+   !----- Mualem's pore-connectivity exponent L in the van Genuchten-Mualem conductivity,         !
+   !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2 (Mualem 1976's 0.5). The one place it is set. -----!
+   real(wp), parameter :: VG_PORE_CONNECTIVITY = 0.5_wp
+
+   !----- Read-off floors, which keep a diagnostic finite; the solver's curves have none. -----!
    real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)
    real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< keep R strictly positive in the flaccid tail
 
@@ -194,105 +196,46 @@ contains
    end function clamp_water_to_capacity
 
    !=======================================================================================!
-   !  SOIL retention curves (van Genuchten-Mualem default / Campbell-Clapp-Hornberger option). !
-   !  Closed-form theta(psi)/psi(theta) inverses + K(theta) + C(psi), all elemental, branch-    !
-   !  light and FPE-safe under -fpe0 / -Ktrap=fp (Se clamped, K floored, C guarded). Coupling to !
-   !  the plant hydraulics kernel is through the POTENTIAL psi (curve-independent), so the curve  !
-   !  is a free run-time choice. par_a/par_n carry {alpha,n} for vG or {psi_sat,b} for Campbell.  !
+   !  SOIL retention curves: van Genuchten-Mualem (default) or Campbell / Clapp-Hornberger.     !
+   !  par_a/par_n carry {alpha [1/m], n} for van Genuchten and {psi_sat [m, < 0], b} for         !
+   !  Campbell; heads are in metres of water, below zero when unsaturated. Four kernels at the   !
+   !  end of this section hold the curve, and every soil-water routine -- the read-offs here and !
+   !  the solver's water relations below -- evaluates it through them, so a diagnostic          !
+   !  potential is the solver's own. Coupling to the plants is through the potential, so the     !
+   !  curve is a free run-time choice.                                                          !
    !=======================================================================================!
 
-   !---------------------------------------------------------------------------------------!
-   ! theta(psi): volumetric water content from matric potential [m, <= 0].                  !
-   !---------------------------------------------------------------------------------------!
+   !----- theta(psi): volumetric water content [m3/m3] at matric head psi [m]: theta_sat at or     !
+   !      above zero, and the saturation floored at SE_MIN, which keeps a diagnostic finite. ------!
    elemental function soil_theta_from_psi(retention, psi, theta_sat, theta_res, par_a, par_n)  &
                       result(theta)
       integer(ik), intent(in) :: retention
       real(wp),    intent(in) :: psi, theta_sat, theta_res, par_a, par_n
-      real(wp)                :: theta, se, m, ah
+      real(wp)                :: theta, se, dse_dhead
       if (psi >= 0.0_wp) then
          theta = theta_sat
          return
       end if
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         !----- par_a = psi_sat (< 0), par_n = b. --------------------------------------!
-         se = min(1.0_wp, (psi / par_a) ** (-1.0_wp / par_n))
-      else
-         !----- van Genuchten: par_a = alpha [1/m], par_n = n. -------------------------!
-         m  = 1.0_wp - 1.0_wp / par_n
-         ah = par_a * abs(psi)
-         se = (1.0_wp + ah ** par_n) ** (-m)
-      end if
+      call saturation_of_head(retention, par_a, par_n, psi, se, dse_dhead)
       se    = min(max(se, SE_MIN), 1.0_wp)
       theta = theta_res + (theta_sat - theta_res) * se
    end function soil_theta_from_psi
 
-   !---------------------------------------------------------------------------------------!
-   ! psi(theta): matric potential [m, <= 0] from water content -- closed-form inverse.      !
-   !---------------------------------------------------------------------------------------!
+   !----- psi(theta): matric head [m, <= 0] of a layer holding theta [m3/m3], its saturation       !
+   !      floored at SE_MIN; zero at saturation. -------------------------------------------------!
    elemental function soil_psi_from_theta(retention, theta, theta_sat, theta_res, par_a, par_n) &
                       result(psi)
       integer(ik), intent(in) :: retention
       real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n
-      real(wp)                :: psi, se, m
+      real(wp)                :: psi, se, dse_dhead
       se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
       se = min(max(se, SE_MIN), 1.0_wp)
       if (se >= 1.0_wp) then
          psi = 0.0_wp
          return
       end if
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         psi = par_a * se ** (-par_n)                       ! par_a = psi_sat, par_n = b
-      else
-         m   = 1.0_wp - 1.0_wp / par_n
-         psi = -(1.0_wp / par_a) * (se ** (-1.0_wp / m) - 1.0_wp) ** (1.0_wp / par_n)
-      end if
+      call head_of_saturation(retention, par_a, par_n, se, psi, dse_dhead)
    end function soil_psi_from_theta
-
-   !---------------------------------------------------------------------------------------!
-   ! K(theta): unsaturated hydraulic conductivity [m/s], floored at K_MIN.                  !
-   !---------------------------------------------------------------------------------------!
-   elemental function soil_hydr_cond_from_theta(retention, theta, theta_sat, theta_res, par_a, par_n,    &
-                      ksat) result(kcond)
-      integer(ik), intent(in) :: retention
-      real(wp),    intent(in) :: theta, theta_sat, theta_res, par_a, par_n, ksat
-      real(wp)                :: kcond, se, m, tmp
-      se = (theta - theta_res) / max(theta_sat - theta_res, tiny_num)
-      se = min(max(se, SE_MIN), 1.0_wp)
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         kcond = ksat * se ** (2.0_wp * par_n + 3.0_wp)     ! par_n = b
-      else
-         m     = 1.0_wp - 1.0_wp / par_n
-         tmp   = 1.0_wp - (1.0_wp - se ** (1.0_wp / m)) ** m
-         kcond = ksat * sqrt(se) * tmp * tmp                ! l = 0.5 Mualem pore-connectivity
-      end if
-      kcond = max(kcond, K_MIN)
-   end function soil_hydr_cond_from_theta
-
-   !---------------------------------------------------------------------------------------!
-   ! C(psi) = dtheta/dpsi: specific moisture capacity [1/m], >= 0, floored at C_MIN.        !
-   !---------------------------------------------------------------------------------------!
-   elemental function soil_moist_cap_from_psi(retention, psi, theta_sat, theta_res, par_a, par_n)      &
-                      result(cap)
-      integer(ik), intent(in) :: retention
-      real(wp),    intent(in) :: psi, theta_sat, theta_res, par_a, par_n
-      real(wp)                :: cap, m, ah, dtr
-      dtr = theta_sat - theta_res
-      if (psi >= 0.0_wp) then
-         cap = C_MIN
-         return
-      end if
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         !----- C = -(theta_sat-theta_res)/(b*psi_sat) * (psi/psi_sat)^(-1/b - 1). ------!
-         cap = -dtr / (par_n * par_a) * (psi / par_a) ** (-1.0_wp / par_n - 1.0_wp)
-      else
-         m   = 1.0_wp - 1.0_wp / par_n
-         ah  = par_a * abs(psi)
-         cap = par_a * m * par_n * dtr * ah ** (par_n - 1.0_wp)                            &
-               * (1.0_wp + ah ** par_n) ** (-m - 1.0_wp)
-      end if
-      cap = max(cap, C_MIN)
-   end function soil_moist_cap_from_psi
-
 
    !=======================================================================================!
    !     Water relations for the soil-plant water solver: soil layers.                      !
@@ -340,8 +283,8 @@ contains
       if (tau <= c%se_switch) then
          !----- Dry branch: tau is the saturation itself. -----------------------------------!
          se = tau
-         call head_of_saturation(c, se, head, dse_dhead)
-         call conductivity_of_saturation(c, se, kcond, dk_dse)
+         call head_of_saturation(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
+         call conductivity_of_saturation(c%retention, c%par_n, c%ksat, se, kcond, dk_dse)
          psi    = grav_head * head
          dpsi   = grav_head / max(dse_dhead, tiny_num)   ! clamp-ok: a slope underflowed in extreme dry soil
          w      = rho_h2o * c%dz * (c%theta_res + dtheta * se)
@@ -354,7 +297,8 @@ contains
          psi   = grav_head * head
          dpsi  = grav_head * dhead
          if (head < 0.0_wp) then
-            call saturation_of_head(c, head, se, dse_dhead, kcond, dk_dhead)
+            call saturation_of_head(c%retention, c%par_a, c%par_n, head, se, dse_dhead)
+            call conductivity_of_head(c%retention, c%par_a, c%par_n, c%ksat, head, kcond, dk_dhead)
             w      = rho_h2o * c%dz * (c%theta_res + dtheta * se)
             dw     = rho_h2o * c%dz * dtheta * dse_dhead * dhead
             dkcond = dk_dhead * dhead
@@ -376,7 +320,7 @@ contains
       real(wp),                 intent(in) :: theta
       real(wp) :: tau
       real(wp), parameter :: SE_START = 1.0e-9_wp   ! the read-off's own lowest saturation (SE_MIN)
-      real(wp) :: se, head, x, m
+      real(wp) :: se, head, dse_dhead
       se = (theta - c%theta_res) / max(c%theta_sat - c%theta_res, tiny_num)
       if (se <= c%se_switch) then
          tau = max(se, SE_START)   ! clamp-ok: a state at residual starts just inside the curve
@@ -384,92 +328,114 @@ contains
       end if
       if (theta > c%theta_sat) then
          head = (theta - c%theta_sat) / SOIL_SPECIFIC_STORAGE
-      else if (c%retention == SOIL_RETENTION_CAMPBELL) then
-         head = c%par_a * se ** (-c%par_n)
-      else if (se >= 1.0_wp) then
+      else if (se >= 1.0_wp .and. c%retention /= SOIL_RETENTION_CAMPBELL) then
          head = 0.0_wp
       else
-         m = 1.0_wp - 1.0_wp / c%par_n
-         x = (se ** (-1.0_wp / m) - 1.0_wp) ** (1.0_wp / c%par_n)
-         head = -x / c%par_a
+         call head_of_saturation(c%retention, c%par_a, c%par_n, se, head, dse_dhead)
       end if
       tau = c%se_switch + c%slope_switch * (head - c%psi_switch)
    end function soil_unknown_from_theta
 
+   !----- The curve's kernels. ------------------------------------------------------------!
+
    !----- Matric head [m] at saturation se in (0, 1), and dSe/dhead [1/m]. For van Genuchten the   !
    !      head is evaluated through its logarithm, so a very dry layer gives a large but finite    !
    !      number; Se (1 - Se^(1/m)) / x is the derivative written without a cancellation. ------!
-   elemental subroutine head_of_saturation(c, se, head, dse_dhead)
-      type(soil_layer_curve_t), intent(in)  :: c
-      real(wp),                 intent(in)  :: se
-      real(wp),                 intent(out) :: head, dse_dhead
+   elemental subroutine head_of_saturation(retention, par_a, par_n, se, head, dse_dhead)
+      integer(ik), intent(in)  :: retention
+      real(wp),    intent(in)  :: par_a, par_n, se
+      real(wp),    intent(out) :: head, dse_dhead
       real(wp) :: m, u, logx, x
-      if (c%retention == SOIL_RETENTION_CAMPBELL) then
-         head      = c%par_a * se ** (-c%par_n)
-         dse_dhead = -se ** (1.0_wp + c%par_n) / (c%par_n * c%par_a)
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         head      = par_a * se ** (-par_n)
+         dse_dhead = -se ** (1.0_wp + par_n) / (par_n * par_a)
       else
-         m    = 1.0_wp - 1.0_wp / c%par_n
+         m    = 1.0_wp - 1.0_wp / par_n
          u    = 1.0_wp - se ** (1.0_wp / m)
-         logx = (-log(se) / m + log(u)) / c%par_n
+         logx = (-log(se) / m + log(u)) / par_n
          x    = exp(min(logx, LOG_HEAD_MAX))   ! clamp-ok: keeps an extreme dry head finite
-         head = -x / c%par_a
-         dse_dhead = c%par_a * m * c%par_n * se * u / x
+         head = -x / par_a
+         dse_dhead = par_a * m * par_n * se * u / x
       end if
    end subroutine head_of_saturation
 
-   !----- Saturation, dSe/dhead, conductivity and dK/dhead at a head below zero (wet branch).     !
-   !      Written in x = alpha |head| so that 1 - Se^(1/m) = x^n / (1 + x^n) is exact near        !
-   !      saturation, where the van Genuchten-Mualem conductivity's slope grows without bound for  !
-   !      n < 2. A Campbell layer between its air-entry point and zero is saturated. -------------!
-   elemental subroutine saturation_of_head(c, head, se, dse_dhead, kcond, dk_dhead)
-      type(soil_layer_curve_t), intent(in)  :: c
-      real(wp),                 intent(in)  :: head
-      real(wp),                 intent(out) :: se, dse_dhead, kcond, dk_dhead
-      real(wp) :: m, x, xn, u, t, dk_dse
-      if (c%retention == SOIL_RETENTION_CAMPBELL) then
-         if (head < c%par_a) then
-            se        = (head / c%par_a) ** (-1.0_wp / c%par_n)
-            dse_dhead = -se ** (1.0_wp + c%par_n) / (c%par_n * c%par_a)
-            call conductivity_of_saturation(c, se, kcond, dk_dse)
-            dk_dhead  = dk_dse * dse_dhead
+   !----- Saturation and dSe/dhead [1/m] at a head below zero. Written in x = alpha |head| so that  !
+   !      1 - Se^(1/m) = x^n / (1 + x^n) is exact near saturation. A Campbell layer between its     !
+   !      air-entry point and zero is saturated. -----------------------------------------------!
+   elemental subroutine saturation_of_head(retention, par_a, par_n, head, se, dse_dhead)
+      integer(ik), intent(in)  :: retention
+      real(wp),    intent(in)  :: par_a, par_n, head
+      real(wp),    intent(out) :: se, dse_dhead
+      real(wp) :: m, x, xn, u
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         if (head < par_a) then
+            se        = (head / par_a) ** (-1.0_wp / par_n)
+            dse_dhead = -se ** (1.0_wp + par_n) / (par_n * par_a)
          else
-            se = 1.0_wp ; dse_dhead = 0.0_wp ; kcond = c%ksat ; dk_dhead = 0.0_wp
+            se = 1.0_wp ; dse_dhead = 0.0_wp
          end if
          return
       end if
-      m  = 1.0_wp - 1.0_wp / c%par_n
-      x  = c%par_a * abs(head)
-      xn = x ** c%par_n
+      m  = 1.0_wp - 1.0_wp / par_n
+      x  = par_a * abs(head)
+      xn = x ** par_n
       se = (1.0_wp + xn) ** (-m)
       u  = xn / (1.0_wp + xn)                      ! 1 - Se^(1/m)
-      dse_dhead = c%par_a * m * c%par_n * se * u / max(x, tiny_num)
-      t     = 1.0_wp - u ** m
-      kcond = c%ksat * sqrt(se) * t * t
-      !----- dK/dhead = dK/dSe dSe/dhead, the Mualem term rewritten in u and x. -----------------!
-      dk_dhead = c%ksat * (0.5_wp * t * t / sqrt(se) * dse_dhead                                 &
-                 + 2.0_wp * c%par_a * m * c%par_n * t * se ** (0.5_wp + 1.0_wp / m) * u ** m      &
-                   / max(x, tiny_num))
+      dse_dhead = par_a * m * par_n * se * u / max(x, tiny_num)
    end subroutine saturation_of_head
 
-   !----- Conductivity [m/s] and dK/dSe at saturation se in (0, 1]: Mualem-van Genuchten (pore    !
-   !      connectivity 0.5) or Campbell's Se^(2b+3). No floor: it goes to zero with Se. ---------!
-   elemental subroutine conductivity_of_saturation(c, se, kcond, dk_dse)
-      type(soil_layer_curve_t), intent(in)  :: c
-      real(wp),                 intent(in)  :: se
-      real(wp),                 intent(out) :: kcond, dk_dse
+   !----- Conductivity [m/s] and dK/dSe at saturation se in (0, 1]: Mualem-van Genuchten,          !
+   !      K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2 with L = VG_PORE_CONNECTIVITY, or Campbell's          !
+   !      Ks Se^(2b+3). No floor: it goes to zero with Se. -----------------------------------------!
+   elemental subroutine conductivity_of_saturation(retention, par_n, ksat, se, kcond, dk_dse)
+      integer(ik), intent(in)  :: retention
+      real(wp),    intent(in)  :: par_n, ksat, se
+      real(wp),    intent(out) :: kcond, dk_dse
       real(wp) :: m, u, t
-      if (c%retention == SOIL_RETENTION_CAMPBELL) then
-         kcond  = c%ksat * se ** (2.0_wp * c%par_n + 3.0_wp)
-         dk_dse = (2.0_wp * c%par_n + 3.0_wp) * kcond / se
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         kcond  = ksat * se ** (2.0_wp * par_n + 3.0_wp)
+         dk_dse = (2.0_wp * par_n + 3.0_wp) * kcond / se
       else
-         m  = 1.0_wp - 1.0_wp / c%par_n
+         m  = 1.0_wp - 1.0_wp / par_n
          u  = 1.0_wp - se ** (1.0_wp / m)
          t  = 1.0_wp - u ** m
-         kcond  = c%ksat * sqrt(se) * t * t
-         dk_dse = c%ksat * (0.5_wp * t * t / sqrt(se)                                             &
-                  + 2.0_wp * sqrt(se) * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
+         kcond  = ksat * se ** VG_PORE_CONNECTIVITY * t * t
+         dk_dse = ksat * (VG_PORE_CONNECTIVITY * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * t * t                  &
+                  + 2.0_wp * se ** VG_PORE_CONNECTIVITY * t * u ** (m - 1.0_wp) * se ** (1.0_wp / m - 1.0_wp))
       end if
    end subroutine conductivity_of_saturation
+
+   !----- Conductivity [m/s] and dK/dhead [1/s] at a head below zero, written in x = alpha |head|   !
+   !      like saturation_of_head: near saturation the van Genuchten-Mualem slope in Se grows      !
+   !      without bound for n < 2, while its slope in the head stays finite. ------------------------!
+   elemental subroutine conductivity_of_head(retention, par_a, par_n, ksat, head, kcond, dk_dhead)
+      integer(ik), intent(in)  :: retention
+      real(wp),    intent(in)  :: par_a, par_n, ksat, head
+      real(wp),    intent(out) :: kcond, dk_dhead
+      real(wp) :: m, x, xn, u, t, se, dse_dhead, dk_dse
+      if (retention == SOIL_RETENTION_CAMPBELL) then
+         call saturation_of_head(retention, par_a, par_n, head, se, dse_dhead)
+         if (head < par_a) then
+            call conductivity_of_saturation(retention, par_n, ksat, se, kcond, dk_dse)
+            dk_dhead = dk_dse * dse_dhead
+         else
+            kcond = ksat ; dk_dhead = 0.0_wp
+         end if
+         return
+      end if
+      m  = 1.0_wp - 1.0_wp / par_n
+      x  = par_a * abs(head)
+      xn = x ** par_n
+      se = (1.0_wp + xn) ** (-m)
+      u  = xn / (1.0_wp + xn)                      ! 1 - Se^(1/m)
+      dse_dhead = par_a * m * par_n * se * u / max(x, tiny_num)
+      t     = 1.0_wp - u ** m
+      kcond = ksat * se ** VG_PORE_CONNECTIVITY * t * t
+      !----- dK/dhead = dK/dSe dSe/dhead, the Mualem term rewritten in u and x. -----------------!
+      dk_dhead = ksat * (VG_PORE_CONNECTIVITY * t * t * se ** (VG_PORE_CONNECTIVITY - 1.0_wp) * dse_dhead          &
+                 + 2.0_wp * par_a * m * par_n * t * se ** (VG_PORE_CONNECTIVITY + 1.0_wp / m) * u ** m             &
+                   / max(x, tiny_num))
+   end subroutine conductivity_of_head
 
    !=======================================================================================!
    !     Plant tissues.                                                                     !

@@ -8,9 +8,8 @@ calculators: device-eligible, netCDF-free (forcing arrives as passed-in value ty
 |---|---|
 | `canopy/` | the **medium** — radiative transfer, aerodynamics, the canopy air space |
 | `plant/` | the **organisms** — leaf gas exchange, hydraulics, maintenance respiration, tissue energy |
-| `soil/` | the **ground** — soil water's boundary flows, soil energy, the ground skin, the snow store |
-| `water/` | the **soil-plant water network** — one implicit solve for the soil, pond and plant water stores |
-| `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the pre-pass, error control |
+| `soil/` | the **ground** — soil water's flows (between layers, evaporation, drainage), soil energy, the ground skin, the snow store |
+| `numerics/` | the integrator machinery: the state vector, the frozen work record, ARK and RK45, the soil-plant water solver, the pre-pass, error control |
 | `driver/` | the loop that walks one slow step in `dt_fast` sub-steps over the patch axis |
 
 `numerics/` and `driver/` may see `site_t`; **the kernel folders may not**, and that is what
@@ -44,13 +43,15 @@ so every symbol has exactly one legal spelling.
   the explicit path and an implicit step — both implicit in the exchange with the atmosphere. The
   driver assembles the summed surface and biotic sources and the capacities, conductances and
   atmospheric boundary conditions.
-- **Soil and plant water** — **`meds_water_network`**: the pond, every soil layer and every
-  cohort's wood and leaf water are stores in one network, joined by flow paths (soil faces,
-  infiltration, root uptake, xylem, transpiration). Each `dt_fast` it is solved implicitly, with
-  Newton iterations on each store's own unknown and adaptive sub-steps. The flow laws are in
-  `meds_water_paths`, and the store curves in `meds_water_storage` (both in
-  `src/shared/functions/`). **`meds_soil_water`** keeps the bottom boundary (free drain, bedrock,
-  aquifer) and the dry-surface-layer ground evaporation. Closes a machine-precision water budget.
+- **Soil and plant water** — solved by **`meds_spac_solver`** (in `numerics/`): the pond, every
+  soil layer and every cohort's wood and leaf water are stores in one network, joined by flow
+  paths (soil faces, infiltration, root uptake, xylem, transpiration). Each `dt_fast` it is solved
+  implicitly, with Newton iterations on each store's own unknown and adaptive sub-steps. The
+  processes stay with their owners: **`meds_soil_water`** has the soil water flux between layers,
+  the dry-surface-layer ground evaporation and the bottom boundary (free drain, bedrock, aquifer);
+  `meds_hydr_lib` the rhizosphere, xylem and transpiration flows, and `meds_water_retention` the
+  stores' water relations (both in `src/shared/functions/`). Closes a machine-precision water
+  budget.
 - **Soil thermal** — **`meds_soil_energy`**: the soil-heat store as prognostic **internal energy**,
   not temperature, so freeze/thaw is a read-off of the shared inverter. An implicit
   backward-Euler Thomas heat-diffusion solve, with an explicit tendency sibling.
@@ -99,6 +100,6 @@ with per-store pages for the canopy air space, soil, vegetation energy and snow,
 integration itself in [`numerical_scheme.md`](../../docs/science/numerical_scheme.md).
 
 **Tests.** Individual kernels: `test_canopy_radiation`, `test_aerodynamics`, `test_water_processes`,
-`test_water_network`, `test_column_hydrology`, `test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
+`test_spac_solver`, `test_column_hydrology`, `test_column_energy`, `test_surface_energy`, `test_snow`, `test_column_co2`. The coupled loop:
 `test_column_dynamics`, `test_column_derivs`, `test_column_ark`, `test_column_rk45`,
 `test_fast_loop`.

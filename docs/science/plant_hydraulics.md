@@ -235,10 +235,10 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | Concept | Routine |
 |---|---|
 | PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
-| a tissue store in its unknown $R$ | `meds_water_storage`: `tissue_store`, `tissue_rwc_from_water` |
-| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential` (+ table: `build_hydro_table`, `flux_potential_lin`); `kirchhoff_edge`, `kirchhoff_edge_tab` are the tests' reference |
+| a tissue's water relations in $R$ | `meds_water_retention`: `tissue_water_relations`, `tissue_rwc_from_water` |
+| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential` (+ table: `build_hydro_table`, `flux_potential_lin`); the Kirchhoff mean conductance inside `xylem_sapflow` |
 | Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre panels, written out; `kirchhoff_tail` past the table) |
-| xylem and root flows | `meds_water_paths`: `xylem_max_conductance`, `xylem_flow`, `root_conductance_geometry`, `root_uptake_flow`, `root_uptake_profile`, `supply_limited_transpiration` |
+| xylem and root flows | `meds_hydr_lib`: `xylem_max_conductance`, `xylem_sapflow`, `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `supply_limited_transpiration` |
 | rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
-| the solve | `meds_water_network` ([soil_plant_water](soil_plant_water.md)) |
+| the solve | `meds_spac_solver` ([soil_plant_water](soil_plant_water.md)) |
 | config flatten | `meds_fast_types`: `apply_hydraulics_config` |

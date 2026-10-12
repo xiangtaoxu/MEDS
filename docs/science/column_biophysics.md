@@ -125,7 +125,7 @@ carved (temp/fliq are re-diagnosed, never blended).
 | Concept | Routine |
 |---|---|
 | CAS enthalpy + vapour + CO₂ twins | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
-| soil and plant water (one network) | `meds_water_network`: `water_network_advance`; called by `meds_fast_frozen`: `run_water_network` |
+| soil and plant water (one network) | `meds_spac_solver`: `spac_advance`; called by `meds_fast_frozen`: `run_spac_solver` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | leaf/wood energy | `meds_plant_biophysics`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |

@@ -16,7 +16,7 @@
 !   * the column_state_t algebra + ledgers   -> meds_column_state_ops                          !
 ! Nothing outside this module imports `meds_fast_ark` except the dispatcher and the RHS test.   !
 !                                                                                          !
-! Soil and plant water are the soil-plant water network's (meds_water_network, run in              !
+! Soil and plant water are the soil-plant water network's (meds_spac_solver, run in                !
 ! build_column_frozen): the stages move theta at its steady rate, plant water is advanced at its     !
 ! rates once per step, and the end-of-step theta and pond are committed from it once per dt_fast.    !
 ! Whole-column water and energy close to round-off on every bottom BC (free-drain, bedrock,        !

@@ -283,7 +283,7 @@ module meds_fast_types
       !      the fast driver accumulates them site-wide. -------------------------------------------!
       integer(ik)    :: integ_nsteps   = 0_ik   !< accepted integrator sub-steps this dt_fast
       integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast
-      !----- The soil-plant water network's work this dt_fast (meds_water_network). -----------------!
+      !----- The soil-plant water solver's work this dt_fast (meds_spac_solver). --------------------!
       integer(ik)    :: water_nsub   = 0_ik   !< accepted sub-steps
       integer(ik)    :: water_newton = 0_ik   !< Newton iterations
       integer(ik)    :: water_reject = 0_ik   !< rejected sub-steps (too large an error, or Newton failed)
@@ -533,7 +533,7 @@ module meds_fast_types
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t
 
-   !----- SOIL WATER over this dt_fast, from the soil-plant water network (meds_water_network,       !
+   !----- SOIL WATER over this dt_fast, from the soil-plant water solver (meds_spac_solver,         !
    !      run in build_column_frozen): its boundary flows, its end-of-step stores, the temperatures    !
    !      that value the water crossing each boundary, and its interior faces. Every scheme commits    !
    !      the network's theta and advects the soil's enthalpy on these same faces, so the energy moves !

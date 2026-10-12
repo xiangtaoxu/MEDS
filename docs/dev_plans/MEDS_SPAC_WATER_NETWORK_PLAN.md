@@ -220,7 +220,7 @@ Each phase is a pull request into beta that leaves the test suite green.
 ### P2: the generic network solver
 
 - A standalone module: network description, residual and Jacobian assembly from the process library,
-  the grouped Schur linear solve, damped Newton, adaptive implicit Euler.
+  the block-arrowhead (Schur) linear solve, damped Newton, adaptive implicit Euler.
 - Tests on synthetic networks:
   - a chain of linear reservoirs (analytic solution);
   - a single plant against today's matrix-exponential solver in its linear range;
@@ -504,13 +504,16 @@ given.
 
 ### 12.3 Where the code goes
 
+As built (reorganised 2026-10-12 at the owner's request, so each process lives with the module
+that already owned it; §12.4):
+
 | Module | Holds |
 |---|---|
-| `src/shared/util/meds_grouped_solve.f90` | the generic linear solve: a dense LU for the shared core and the Schur update from groups attached to it |
-| `src/shared/functions/meds_water_storage.f90` | storage curves in each store's unknown (D1), with derivatives |
-| `src/shared/functions/meds_water_paths.f90` | flow along a path (Darcy, rhizosphere, xylem) and the smooth ramp, with derivatives |
-| `src/fast_dynamics/soil/meds_soil_water.f90` | the soil's boundary processes (evaporation with its ψ derivative, bottom drainage), which need the forcing types |
-| `src/fast_dynamics/water/meds_water_network.f90` | one patch's network (nodes, edges by kind, boundary terms), its assembly, Newton and sub-steps; a new folder in `meds_fast_kernels` |
+| `src/shared/util/meds_arrowhead_solve.f90` | the generic linear solve of a block arrowhead system: a dense LU for the shared core and the Schur update from the blocks bordering it |
+| `src/shared/functions/meds_water_retention.f90` | how much water a store holds: the read-offs and, for the solver, each store's water relations in its unknown (D1) with derivatives (`soil_water_relations`, `tissue_water_relations`, `pond_water_relations`); one set of soil-curve kernels and the Mualem `VG_PORE_CONNECTIVITY` |
+| `src/shared/functions/meds_hydr_lib.f90` | how water moves into and through the plant: rhizosphere conductance and root uptake, xylem conductance and sapflow (Kirchhoff mean), the leaves' supply limit, the smooth ramp |
+| `src/fast_dynamics/soil/meds_soil_water.f90` | how water moves through and out of the soil: the flux between layers and from the pond, evaporation with its ψ derivative, bottom drainage |
+| `src/fast_dynamics/numerics/meds_spac_solver.f90` | one patch's network, its assembly, Newton and sub-steps |
 
 ### 12.4 What the implementation changed, and what it measured (2026-10-12)
 
@@ -534,6 +537,13 @@ given.
   enthalpy of its transpiration (~2.9e6 J kg⁻¹) with no credit for the liquid replacing it
   (~4.4e5 J kg⁻¹). The cooler leaf transpired ~4 % less at every `dt_fast`. The credit is now estimated
   from a first solve and the solve repeated. C1's fallback (a second network pass) was not needed.
+- **Where the code lives (owner's review, 2026-10-12).** The solver is numerics, so it is
+  `numerics/meds_spac_solver.f90` rather than a kernel folder of its own; the linear solve is named
+  for its matrix (`meds_arrowhead_solve`). The process library joined the modules that already
+  owned each process (§12.3), with ecophysiological names (`soil_water_flux`, `root_water_uptake`,
+  `xylem_sapflow`, `*_water_relations`). The soil read-offs and the solver evaluate one set of curve
+  kernels, so a diagnostic potential is the solver's own, and the Mualem pore connectivity is one
+  constant. `smooth_max0` stays with the flows that inline it: from `meds_numerics` it cost 2-3 %.
 - **Telemetry.** The commit-clamp outputs (`work_clamp_commit_site`, `work_clamp_mass_site`,
   `work_clamp_energy_site`) are removed: with the tissue-water floor gone nothing clamps a committed
   state. The water counters are `work_water_{nsub,newton,reject,nfail}_site`.

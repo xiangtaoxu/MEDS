@@ -83,7 +83,7 @@ balance of every store at its end,
 with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
 
 - The Newton matrix $`J = \partial W/\partial\tau\,/h - \partial F/\partial\tau`$ is solved by eliminating
-  each cohort onto the core (`meds_grouped_solve`): each cohort's 2×2 block is inverted in closed
+  each cohort onto the core (`meds_arrowhead_solve`, a block arrowhead system): each cohort's 2×2 block is inverted in closed
   form, its rank-one Schur update folded into the core, and the core (pond + layers) LU-factored. The
   cost grows as cohorts × layers, not as (cohorts + layers)³.
 - A Newton step takes no soil layer or tissue more than 90 % of the way to empty, and moves no dry
@@ -164,12 +164,12 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 
 | Concept | Routine |
 |---|---|
-| the network: assembly, Newton, sub-steps, commit | `meds_water_network`: `water_network_allocate`, `water_network_start`, `water_network_advance` |
-| grouped linear solve | `meds_grouped_solve`: `grouped_allocate`, `grouped_factor`, `grouped_solve` |
-| store curves in their unknowns | `meds_water_storage`: `soil_store`, `tissue_store`, `pond_store` and their inverses |
-| flow laws | `meds_water_paths`: `darcy_flow`, `root_uptake_flow`, `root_uptake_profile`, `xylem_flow`, `supply_limited_transpiration`, `smooth_max0` |
-| soil boundaries | `meds_soil_water`: `ground_evaporation_rate`, `bottom_flux` |
-| one patch's step | `meds_fast_frozen`: `run_water_network` (called from `build_column_frozen`) |
+| the solver: assembly, Newton, sub-steps, commit | `meds_spac_solver` (`numerics/`): `spac_allocate`, `spac_set_state`, `spac_advance` |
+| the linear solve (block arrowhead, Schur complement) | `meds_arrowhead_solve`: `arrowhead_allocate`, `arrowhead_factor`, `arrowhead_solve` |
+| the stores' water relations in their unknowns | `meds_water_retention`: `soil_water_relations`, `tissue_water_relations`, `pond_water_relations` and their inverses; `VG_PORE_CONNECTIVITY` |
+| plant flows | `meds_hydr_lib`: `rhizosphere_conductance`, `root_water_uptake`, `root_water_uptake_profile`, `xylem_max_conductance`, `xylem_sapflow`, `supply_limited_transpiration`, `smooth_max0` |
+| soil flows | `meds_soil_water`: `soil_water_flux`, `ground_evaporation_rate`, `bottom_flux` |
+| one patch's step | `meds_fast_frozen`: `run_spac_solver` (called from `build_column_frozen`) |
 | plant water over the step | `meds_fast_ark`: `advance_plant_water` (constant rates; RK45 integrates the same rates in its stages) |
 
 ## References

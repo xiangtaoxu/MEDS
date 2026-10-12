@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! test_plant_hydraulics -- unit tests for the stateless plant-hydraulics library: the curves and  !
-! laws the soil-plant water network is built from (its solve is test_water_network).             !
+! laws the soil-plant water network is built from (its solve is test_spac_solver).               !
 !                                                                                          !
 !   1. PV CURVE       : turgor-loss point matches Bartlett eqn 1; psi<->RWC round-trips;        !
 !                       capacitance C matches a finite-difference dW/dpsi.                        !
@@ -27,7 +27,7 @@ program test_plant_hydraulics
    implicit none
 
    call test_pv_curve()
-   call test_kirchhoff_edge()
+   call test_xylem_kirchhoff_mean()
    call test_kirchhoff_quadrature()
    call test_hydro_table()
    call test_sapwood_conductance()
@@ -85,7 +85,7 @@ contains
    end subroutine test_pv_curve
 
    !=======================================================================================!
-   subroutine test_kirchhoff_edge()
+   subroutine test_xylem_kirchhoff_mean()
       real(wp), parameter :: psi50 = -2.0_wp, kexp = 2.0_wp, kcond = 3.0e-3_wp
       type(hydro_table_t) :: tab
       real(wp) :: psi_l, psi_w, avg_plc, s, s0, dum1, dum2, pmid
@@ -106,7 +106,7 @@ contains
       pmid  = -0.9_wp
       call xylem_sapflow(kcond, pmid, pmid - 1.0e-9_wp, 0.0_wp, psi50, kexp, tab, s0, dum1, dum2)
       call check('Kirchhoff dpsi->0 limit', s0 / (1.0e-9_wp * kcond), plc_retained(pmid,psi50,kexp), 1.0e-6_wp)
-   end subroutine test_kirchhoff_edge
+   end subroutine test_xylem_kirchhoff_mean
 
    !=======================================================================================!
    ! flux_potential's general-exponent branch (kexp not 1 or 2, a 7-point quadrature) matches a   !
@@ -203,7 +203,7 @@ contains
 
    !=======================================================================================!
    ! ED2's root-fraction profile, and how a drying layer stops feeding the roots: its Gardner        !
-   ! conductance falls with its own K(theta) (test_water_network: no backflow, the network's       !
+   ! conductance falls with its own K(theta) (test_spac_solver: no backflow, the solver's          !
    ! uptake by layer).                                                                              !
    !=======================================================================================!
    subroutine test_root_profile()

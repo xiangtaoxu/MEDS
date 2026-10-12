@@ -228,16 +228,16 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   is (Xu et al. 2016); `wood_psi50` (denser wood ⇒ more negative) is next.
 - **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) Each soil layer is now its own path into a cohort's
   wood in the water network, with no root store between. A root node would be the first unknown of
-  each cohort's group in the grouped solve, which takes it as it stands. Sources:
+  each cohort's block in the arrowhead solve, which takes it as it stands. Sources:
   `MEDS_MULTILAYER_ROOTS_DESIGN.md` §5, `MEDS_HYDRAULICS_DESIGN.md` §16,
   `MEDS_SPAC_WATER_NETWORK_PLAN.md`.
 - **Hydraulic redistribution.** *Planned.* [#181](https://github.com/xiangtaoxu/MEDS/issues/181) Root uptake is zero from a layer drier than the
-  wood (a smoothed ramp in `root_uptake_flow`), so it is non-negative by construction. Turning
+  wood (a smoothed ramp in `root_water_uptake`), so it is non-negative by construction. Turning
   redistribution on is a change to that one flow law, plus deciding how the ledger treats water moving
   between layers through the plant. Same source.
 - **A root radial conductance in series.** *Planned.* [#356](https://github.com/xiangtaoxu/MEDS/issues/356) The soil-to-root path is the
   rhizosphere's Gardner conductance alone; a radial root conductance in series is a different flow
-  law for that path in `meds_water_paths`.
+  law for that path in `meds_hydr_lib`.
 
 ---
 

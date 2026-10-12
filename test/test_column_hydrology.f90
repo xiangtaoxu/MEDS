@@ -23,7 +23,7 @@ program test_column_hydrology
    use meds_column_params, only : soil_params_t, build_soil_hydr_params
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
-   use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta, soil_moist_cap_from_psi
+   use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta
    use meds_soil_water,       only : ground_evaporation_rate
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
@@ -82,29 +82,18 @@ contains
 
    !=======================================================================================!
    subroutine test_constitutive()
-      real(wp) :: th, ps, th_rt, c_ana, c_fd, dps
+      real(wp) :: th, ps, th_rt
       print '(a)', 'test_constitutive:'
-      !----- van Genuchten loam round-trip + capacity. -----!
+      !----- van Genuchten loam round-trip. -----!
       th    = 0.30_wp
       ps    = soil_psi_from_theta(SOIL_RETENTION_VG, th, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       th_rt = soil_theta_from_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
       call check('vG theta round-trip', th_rt, th, 1.0e-9_wp)
-      dps  = 1.0e-3_wp
-      c_ana = soil_moist_cap_from_psi(SOIL_RETENTION_VG, ps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp)
-      c_fd  = (soil_theta_from_psi(SOIL_RETENTION_VG, ps+dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp) &
-             - soil_theta_from_psi(SOIL_RETENTION_VG, ps-dps, 0.43_wp, 0.078_wp, 3.6_wp, 1.56_wp))&
-             / (2.0_wp * dps)
-      call check('vG C = dtheta/dpsi (FD)', c_ana, c_fd, 1.0e-3_wp * abs(c_fd) + 1.0e-9_wp)
       !----- Campbell loam round-trip. -----!
       th    = 0.30_wp
       ps    = soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, th, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
       th_rt = soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
       call check('Campbell theta round-trip', th_rt, th, 1.0e-9_wp)
-      c_ana = soil_moist_cap_from_psi(SOIL_RETENTION_CAMPBELL, ps, 0.44_wp, 0.0_wp, -0.26_wp, 5.65_wp)
-      c_fd  = (soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps+dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp)&
-             - soil_theta_from_psi(SOIL_RETENTION_CAMPBELL, ps-dps, 0.44_wp,0.0_wp,-0.26_wp,5.65_wp))&
-             / (2.0_wp * dps)
-      call check('Campbell C = dtheta/dpsi (FD)', c_ana, c_fd, 1.0e-2_wp * abs(c_fd) + 1.0e-9_wp)
    end subroutine test_constitutive
 
    !=======================================================================================!

@@ -100,8 +100,8 @@ before and after.
   every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
   uptake (Gardner, no hydraulic redistribution), the xylem (Kirchhoff mean) and the boundary flows,
   and solved by implicit Euler on adaptive sub-steps, with Newton in each store's own unknown (soil
-  effective saturation dry, potential wet; tissue relative water content; pond head) and a grouped
-  solve that eliminates each cohort onto the soil. Water is advanced by the flows, so the network
+  effective saturation dry, potential wet; tissue relative water content; pond head) and a
+  block-arrowhead solve that eliminates each cohort onto the soil. Water is advanced by the flows, so the network
   conserves it to round-off. It replaces the implicit Richards solver, the plant-hydraulics
   matrix-exponential solver, the uptake rescale, the residual floors and caps, the tissue-water floor,
   the ARK transpiration corrector and RK45's in-stage soil water and saturation clip; both schemes take
@@ -128,7 +128,15 @@ before and after.
     sub-steps) and `work_water_nfail_site` (sub-steps taken unconverged), replacing
     `work_soil_nsub_site`, `work_hydro_nsub_site`, `work_hydro_thrash_site` and `work_nonconv_site`.
   - The fast step's thread workspace (`fast_workspace_t`, was `ark_workspace_t`) now holds the
-    network too, for both schemes, so its arrays are allocated only when a patch's shape changes.
+    solver too, for both schemes, so its arrays are allocated only when a patch's shape changes.
+  - **Where the code lives**: the solver is `numerics/meds_spac_solver`, with its linear solve in
+    `meds_arrowhead_solve`; how much water a store holds is in `meds_water_retention`
+    (`soil_water_relations`, `tissue_water_relations`, `pond_water_relations`), how water moves into
+    and through the plant in `meds_hydr_lib` (`rhizosphere_conductance`, `root_water_uptake`,
+    `xylem_sapflow`, `supply_limited_transpiration`), and through the soil in `meds_soil_water`
+    (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
+    solver's own curve kernels, and the Mualem pore connectivity is one constant,
+    `VG_PORE_CONNECTIVITY` (0.5).
 - **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
@@ -435,6 +443,9 @@ before and after.
 - **The commit-clamp outputs** `work_clamp_commit_site`, `work_clamp_mass_site` and
   `work_clamp_energy_site` (#397): nothing clamps a committed state any more, so they were always
   zero. `work_clamp_stage_site` stays.
+- **Read-offs and wrappers without a caller** (#397): `soil_hydr_cond_from_theta`,
+  `soil_moist_cap_from_psi`, `kirchhoff_edge`, `kirchhoff_edge_tab` and `dplc_dpsi`; the solver's
+  curves and `xylem_sapflow` are what the model and the tests use.
 - **RK45's warning above `dt_fast` = 300 s** (#397): it warned that RK45 lacked the ARK's
   transpiration corrector; both schemes now solve leaf water implicitly in the network.
 

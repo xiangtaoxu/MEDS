@@ -161,7 +161,7 @@ module meds_plant_types
    !=======================================================================================!
    !=======================================================================================!
    !     HYDRAULICS -- the per-PFT plant-water traits and the one run switch. How water moves  !
-   !     is the soil-plant water network's (meds_water_network).                              !
+   !     is the soil-plant water solver's (meds_spac_solver).                                 !
    !=======================================================================================!
    !----- Flat per-PFT hydraulic trait set (self-contained, filled by the seam from cfg%pft). !
    type :: hydro_params_t

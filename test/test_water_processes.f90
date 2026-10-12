@@ -29,7 +29,7 @@ program test_water_processes
                                 supply_limited_transpiration, hydro_table_t, build_hydro_table, flux_potential,   &
                                 flux_potential_lin, plc_retained
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, soil_theta_from_psi,       &
-                                    soil_hydr_cond_from_theta, water_curve_t, psi_from_rwc, water_content
+                                    VG_PORE_CONNECTIVITY, water_curve_t, psi_from_rwc, water_content
    use meds_soil_water, only : ground_evaporation_rate, soil_water_flux
    use meds_constants,  only : pi, grav, r_wv, p_std
    use meds_therm_lib,  only : sat_specific_humidity
@@ -49,6 +49,20 @@ program test_water_processes
    call test_report('test_water_processes')
 
 contains
+
+   !----- The conductivity's closed form, written independently of meds_water_retention: Mualem-  !
+   !      van Genuchten Ks Se^L [1 - (1 - Se^(1/m))^m]^2, or Campbell's Ks Se^(2b+3). -------------!
+   pure real(wp) function conductivity_ref(c, se) result(k)
+      type(soil_layer_curve_t), intent(in) :: c
+      real(wp),                 intent(in) :: se
+      real(wp) :: m
+      if (c%retention == SOIL_RETENTION_CAMPBELL) then
+         k = c%ksat * se ** (2.0_wp * c%par_n + 3.0_wp)
+      else
+         m = 1.0_wp - 1.0_wp / c%par_n
+         k = c%ksat * se ** VG_PORE_CONNECTIVITY * (1.0_wp - (1.0_wp - se ** (1.0_wp / m)) ** m) ** 2
+      end if
+   end function conductivity_ref
 
    !----- Relative agreement of an analytic derivative with a central difference. -----------!
    logical function fd_agrees(analytic, numeric, rtol, atol)
@@ -106,8 +120,7 @@ contains
             head = -10.0_wp ** (-2.0_wp + 5.0_wp * real(i, wp) / 60.0_wp)          ! -1 cm .. -1 km
             theta_ref = soil_theta_from_psi(c(ic)%retention, head, c(ic)%theta_sat, c(ic)%theta_res,   &
                                             c(ic)%par_a, c(ic)%par_n)
-            k_ref = soil_hydr_cond_from_theta(c(ic)%retention, theta_ref, c(ic)%theta_sat,              &
-                                              c(ic)%theta_res, c(ic)%par_a, c(ic)%par_n, c(ic)%ksat)
+            k_ref = conductivity_ref(c(ic), (theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res))
             if ((theta_ref - c(ic)%theta_res) / (c(ic)%theta_sat - c(ic)%theta_res) < 1.0e-8_wp) cycle
             tau = soil_unknown_from_theta(c(ic), theta_ref)
             call soil_water_relations(c(ic), tau, psi, dpsi, w, dw, k, dk)
@@ -118,7 +131,7 @@ contains
                 theta_ref < c(ic)%theta_sat - 1.0e-9_wp) ok_round = .false.
          end do
          call check_true(trim(label(ic))//': theta(psi) matches meds_water_retention', ok_val)
-         call check_true(trim(label(ic))//': K(theta) matches meds_water_retention', ok_k_val)
+         call check_true(trim(label(ic))//': K(theta) matches the closed form', ok_k_val)
          call check_true(trim(label(ic))//': theta -> unknown -> potential round-trips', ok_round)
          !----- Above saturation the layer holds theta_sat + S_s * head. ---------------------!
          tau = soil_unknown_from_theta(c(ic), c(ic)%theta_sat + SOIL_SPECIFIC_STORAGE * 0.5_wp)
