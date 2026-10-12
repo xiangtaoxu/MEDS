@@ -95,7 +95,7 @@ before and after.
 
 ### Changed
 
-- **Soil and plant water are solved together, as one network** (#PRNUM;
+- **Soil and plant water are solved together, as one network** (#397;
   `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
   every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
   uptake (Gardner, no hydraulic redistribution), the xylem (Kirchhoff mean) and the boundary flows,
@@ -429,18 +429,18 @@ before and after.
 
 ### Removed
 
-- **`[soil]` keys `linearize`, `substep`, `h_init`, `max_substep` and `max_picard`** (#PRNUM):
+- **`[soil]` keys `linearize`, `substep`, `h_init`, `max_substep` and `max_picard`** (#397):
   the soil-water solver they configured is gone. A config that sets one stops with a message naming
   the water network; `rtol` and `atol` remain and set its error.
 - **The commit-clamp outputs** `work_clamp_commit_site`, `work_clamp_mass_site` and
-  `work_clamp_energy_site` (#PRNUM): nothing clamps a committed state any more, so they were always
+  `work_clamp_energy_site` (#397): nothing clamps a committed state any more, so they were always
   zero. `work_clamp_stage_site` stays.
-- **RK45's warning above `dt_fast` = 300 s** (#PRNUM): it warned that RK45 lacked the ARK's
+- **RK45's warning above `dt_fast` = 300 s** (#397): it warned that RK45 lacked the ARK's
   transpiration corrector; both schemes now solve leaf water implicitly in the network.
 
 ### Fixed
 
-- **The BCI 1994-04-20 NaN** (example 06 regrowth; #PRNUM): a trace of pond water over dry soil and a
+- **The BCI 1994-04-20 NaN** (example 06 regrowth; #397): a trace of pond water over dry soil and a
   conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
   1. The water network has no conductivity floor and starts the pond at the head at which it neither
   gives nor takes water; the day completes with both whole-column ledgers closed.
