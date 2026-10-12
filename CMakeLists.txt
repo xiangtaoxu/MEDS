@@ -228,7 +228,8 @@ file(GLOB FAST_KERNEL_SOURCES CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/canopy/*.f90
      ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/plant/*.f90
-     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90)
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/soil/*.f90
+     ${CMAKE_CURRENT_SOURCE_DIR}/src/fast_dynamics/water/*.f90)
 add_library(meds_fast_kernels STATIC ${FAST_KERNEL_SOURCES})
 target_link_libraries(meds_fast_kernels PUBLIC meds_state_column meds_config)
 meds_fortran_flags(meds_fast_kernels)
@@ -652,6 +653,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_water_processes PRIVATE meds_fast_kernels meds_testassert)
    meds_fortran_flags(test_water_processes)
    add_test(NAME water_processes COMMAND test_water_processes)
+
+   #----- The soil-plant water network solver on synthetic stands and soils. ------------------#
+   add_executable(test_water_network test/test_water_network.f90)
+   target_link_libraries(test_water_network PRIVATE meds_fast_kernels meds_testassert)
+   meds_fortran_flags(test_water_network)
+   add_test(NAME water_network COMMAND test_water_network)
 
    #----- Energy-balance + snow tests link the biophysics library (state-free). ------------#
    foreach(t column_energy surface_energy snow)

@@ -1,0 +1,495 @@
+! SPDX-License-Identifier: Apache-2.0
+!==========================================================================================!
+! test_water_network -- the soil-plant water network solver (MEDS_SPAC_WATER_NETWORK_PLAN.md P2). !
+!                                                                                          !
+!   1. GROUPED SOLVE   : the Schur solve equals dense elimination on a random grouped system.   !
+!   2. JACOBIAN        : the assembled Jacobian equals the residual's derivative (wet, dry,      !
+!                        ponded, leafless).                                                       !
+!   3. CONSERVATION    : two days of rain, transpiration, evaporation and drainage close to       !
+!                        round-off, step by step.                                                 !
+!   4. PLANT ONLY      : soil held at its potential (prescribed core nodes) -- matches the        !
+!                        matrix-exponential plant solver.                                          !
+!   5. SOIL ONLY       : no cohorts -- matches the Richards solver in wet soil.                    !
+!   6. STIFF EXCHANGE  : a wet, densely rooted stand whose wood-soil exchange takes a fraction of   !
+!                        a second costs a handful of sub-steps, not thousands.                     !
+!   7. INFEASIBLE DEMAND: a leaf asked for many times the water it and its xylem can supply stays  !
+!                        above empty and transpires less than asked.                               !
+!   8. LEAFLESS        : a cohort with no leaves: its leaf sits at the wood less the crown head.    !
+!   9. DRY-LAYER STORM : the 1994-04-20 pattern -- a thin top layer near residual, a stand         !
+!                        refilling its wood, then a storm: converges, no store leaves its range.   !
+!  10. SATURATED       : rain on a saturated column ponds, spills, and conserves.                   !
+!  11. ACCURACY        : the default tolerances track a tight-tolerance run.                       !
+!==========================================================================================!
+program test_water_network
+   use meds_test_assert, only : check_true, check_close, check_int, test_report
+   use meds_kinds,       only : wp, ik
+   use meds_constants,   only : grav_head, rho_h2o, pi, tiny_num
+   use meds_grouped_solve, only : grouped_system_t, grouped_allocate, grouped_factor, grouped_solve
+   use meds_water_network, only : water_network_t, water_network_allocate, water_network_start,            &
+                                  water_network_advance, water_network_jacobian_error,                     &
+                                  WATER_NODE_POND, WATER_WOOD, WATER_LEAF
+   use meds_water_paths,   only : xylem_max_conductance, root_conductance_geometry
+   use meds_water_storage, only : tissue_store, soil_store
+   use meds_water_retention, only : SOIL_RETENTION_VG, water_curve_t, rwc_from_psi, pv_psi_tlp,             &
+                                    soil_psi_from_theta, soil_hydr_cond_from_theta
+   use meds_hydr_lib,      only : build_hydro_table
+   use meds_plant_types,   only : hydro_params_table_t, hydro_env_t, hydro_opts_t, hydro_flux_t, N_HYDRO,  &
+                                  NODE_LEAF, NODE_WOOD
+   use meds_plant_hydraulics, only : solve_plant_water, cohort_root_profile, rhizosphere_cond
+   use meds_column_params, only : soil_params_t, build_soil_hydr_params
+   use meds_column_state_types, only : soil_column_t
+   use meds_soil_water,    only : advance_soil_water_column
+   use meds_soil_types,    only : chydro_forcing_t, chydro_flux_t
+   use meds_biophysics_opts, only : soil_opts_t
+   implicit none
+
+   type(hydro_params_table_t) :: hyd
+   type(soil_params_t)        :: soil
+   type(soil_opts_t)          :: sopts
+   type(chydro_forcing_t)     :: forc
+
+   call make_pft(hyd)
+   call make_soil(soil, 10_ik, 1.44_wp, 3.0_wp)
+   forc%t_ground = 299.0_wp ; forc%q_air = 0.016_wp ; forc%rho_air = 1.15_wp ; forc%r_aero = 80.0_wp
+
+   call test_grouped_solve()
+   call test_jacobian()
+   call test_conservation()
+   call test_plant_only()
+   call test_soil_only()
+   call test_stiff_exchange()
+   call test_infeasible_demand()
+   call test_leafless()
+   call test_dry_layer_storm()
+   call test_saturated()
+   call test_accuracy()
+   call test_report('test_water_network')
+
+contains
+
+   !=======================================================================================!
+   !     Fixtures.                                                                          !
+   !=======================================================================================!
+
+   !----- One PFT with the shipped [hydraulics] defaults and a tropical wood conductivity. ----!
+   subroutine make_pft(h)
+      type(hydro_params_table_t), intent(out) :: h
+      h%n_pft = 1_ik
+      allocate(h%pft(1))
+      h%pft(1)%leaf_curve = water_curve_t(pi0=-1.5_wp, elastic_mod=12.0_wp, apoplast_frac=0.30_wp, water_sat=2.0_wp)
+      h%pft(1)%wood_curve = water_curve_t(pi0=-1.0_wp, elastic_mod=8.0_wp,  apoplast_frac=0.20_wp, water_sat=1.0_wp)
+      h%pft(1)%wood_psi50  = -2.0_wp ; h%pft(1)%wood_kexp = 2.0_wp
+      h%pft(1)%wood_kmax   = 3.3_wp  ; h%pft(1)%vessel_curl = 1.5_wp
+      call build_hydro_table(h%pft(1)%vuln_table, h%pft(1)%wood_kexp)
+   end subroutine make_pft
+
+   !----- BCI's clay (example 04), on a grid whose top layer is 2.6 cm. ----------------------!
+   subroutine make_soil(s, nsl, depth, growth)
+      type(soil_params_t), intent(out) :: s
+      integer(ik),         intent(in)  :: nsl
+      real(wp),            intent(in)  :: depth, growth
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, depth, growth, 0.4314_wp, 0.0981_wp, 4.54e-6_wp,    &
+                                  0.7607_wp, 1.3554_wp, -3.37_wp, s)
+   end subroutine make_soil
+
+   !----- A stand of n cohorts, a canopy tree first and smaller ones after, built as             !
+   !      build_column_frozen builds them: rooting depth and profile from height, root length    !
+   !      from fine-root carbon, root spacing from the patch's root-length density. --------------!
+   subroutine make_stand(net, n, theta, w_pond, leaf_rwc, wood_rwc, e_total, leafless)
+      type(water_network_t), intent(inout) :: net
+      integer(ik),           intent(in)    :: n
+      real(wp),              intent(in)    :: theta(:), w_pond, leaf_rwc, wood_rwc, e_total
+      logical, optional,     intent(in)    :: leafless
+      real(wp) :: height(n), nplant(n), bleaf(n), bsap(n), broot(n), sap_area(n)
+      real(wp) :: frac(soil%n_active), root_len(soil%n_active, n), half(soil%n_active)
+      real(wp) :: leaf_w(n), wood_w(n), lai_share(n)
+      integer(ik) :: i, k, nsl
+      nsl = soil%n_active
+      call water_network_allocate(net, nsl, n)
+      do i = 1_ik, n
+         height(i)   = 28.0_wp / real(i, wp)
+         nplant(i)   = 0.02_wp * real(i, wp) ** 1.5_wp
+         bleaf(i)    = 4.0_wp / real(i, wp) ** 2
+         bsap(i)     = 30.0_wp / real(i, wp) ** 2.5_wp
+         broot(i)    = 2.0_wp / real(i, wp) ** 2
+         sap_area(i) = 0.05_wp / real(i, wp) ** 2
+      end do
+      if (present(leafless)) then
+         if (leafless) bleaf(n) = 0.0_wp
+      end if
+      lai_share = nplant * bleaf / max(sum(nplant * bleaf), tiny_num)
+      do i = 1_ik, n
+         net%pft(i) = 1_ik ; net%nplant(i) = nplant(i) ; net%bleaf(i) = bleaf(i)
+         net%bwood(i) = bsap(i) + broot(i)
+         net%grav(i)  = grav_head * height(i)
+         net%k_xylem(i) = nplant(i) * xylem_max_conductance(hyd%pft(1)%wood_kmax, sap_area(i), height(i),     &
+                                                            hyd%pft(1)%vessel_curl)
+         net%e_demand(i) = e_total * lai_share(i)
+         net%r_close(i)  = rwc_from_psi(2.0_wp * pv_psi_tlp(hyd%pft(1)%leaf_curve%pi0,                        &
+                                        hyd%pft(1)%leaf_curve%elastic_mod), hyd%pft(1)%leaf_curve%pi0,         &
+                                        hyd%pft(1)%leaf_curve%elastic_mod)
+         call cohort_root_profile(height(i), hyd%pft(1), -soil%soil_layer_z(1:nsl), -soil%soil_layer_z(2:nsl+1), frac)
+         root_len(:, i) = broot(i) * frac * hyd%pft(1)%specific_root_length
+         leaf_w(i) = bleaf(i) * hyd%pft(1)%leaf_curve%water_sat                                              &
+                     * ((1.0_wp - hyd%pft(1)%leaf_curve%apoplast_frac) * leaf_rwc + hyd%pft(1)%leaf_curve%apoplast_frac)
+         wood_w(i) = net%bwood(i) * hyd%pft(1)%wood_curve%water_sat                                          &
+                     * ((1.0_wp - hyd%pft(1)%wood_curve%apoplast_frac) * wood_rwc + hyd%pft(1)%wood_curve%apoplast_frac)
+      end do
+      do k = 1_ik, nsl
+         half(k) = 1.0_wp / sqrt(pi * max(sum(nplant * root_len(k, :)) / soil%dz(k), tiny_num))
+         do i = 1_ik, n
+            net%g_root(k, i) = root_conductance_geometry(nplant(i), root_len(k, i), half(k),                  &
+                                                         hyd%pft(1)%fine_root_radius)
+         end do
+      end do
+      net%rtol = sopts%rtol ; net%atol = sopts%atol ; net%w_pond_max = sopts%w_pond_max
+      net%t_soil = 299.0_wp ; net%t_rain = 297.0_wp
+      call water_network_start(net, soil, hyd, theta, w_pond, 0.0_wp, leaf_w, wood_w)
+   end subroutine make_stand
+
+   !----- All the water the network holds [kg/m2]. ---------------------------------------!
+   real(wp) function total_water(net)
+      type(water_network_t), intent(in) :: net
+      total_water = sum(net%w_core) + sum(net%w_group)
+   end function total_water
+
+   !=======================================================================================!
+   subroutine test_grouped_solve()
+      type(grouped_system_t) :: s
+      integer(ik), parameter :: nc = 7, ng = 5, mg = 2, nt = nc + ng*mg
+      real(wp) :: full(nt, nt), rhs(nt), x_ref(nt), r_c(nc), r_g(mg, ng), x_c(nc), x_g(mg, ng), v
+      integer(ik) :: i, j, g, l, seed
+      logical :: ok
+      call grouped_allocate(s, nc, ng, mg)
+      seed = 12345_ik ; full = 0.0_wp
+      do j = 1_ik, nc
+         do i = 1_ik, nc
+            v = pseudo(seed) ; s%a(i, j) = v ; full(i, j) = v
+         end do
+         s%a(j, j) = s%a(j, j) + 8.0_wp ; full(j, j) = full(j, j) + 8.0_wp
+      end do
+      do g = 1_ik, ng
+         do l = 1_ik, mg
+            do i = 1_ik, nc
+               v = pseudo(seed) ; s%b(i, l, g) = v ; full(i, nc + (g-1)*mg + l) = v
+               v = pseudo(seed) ; s%c(l, i, g) = v ; full(nc + (g-1)*mg + l, i) = v
+            end do
+            do j = 1_ik, mg
+               v = pseudo(seed) + merge(5.0_wp, 0.0_wp, j == l)
+               s%d(l, j, g) = v ; full(nc + (g-1)*mg + l, nc + (g-1)*mg + j) = v
+            end do
+         end do
+      end do
+      do i = 1_ik, nt
+         rhs(i) = pseudo(seed)
+      end do
+      r_c = rhs(1:nc) ; r_g = reshape(rhs(nc+1:nt), [mg, ng])
+      call dense_solve(full, rhs, x_ref, nt)
+      call grouped_factor(s, ok)
+      call check_true('grouped solve: factorisation succeeds', ok)
+      call grouped_solve(s, r_c, r_g, x_c, x_g)
+      call check_true('grouped solve: equals dense elimination',                                             &
+                      maxval(abs([x_c, reshape(x_g, [ng*mg])] - x_ref)) < 1.0e-12_wp * maxval(abs(x_ref)))
+   end subroutine test_grouped_solve
+
+   !=======================================================================================!
+   subroutine test_jacobian()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), err
+      theta = 0.36_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 4.0e-5_wp)
+      err = water_network_jacobian_error(net, soil, sopts, forc, hyd, 300.0_wp)
+      call check_true('jacobian: wet soil, transpiring stand', err < 1.0e-5_wp, err)
+      theta = 0.12_wp ; theta(1) = 0.1 + 0.003_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.4_wp, 0.35_wp, 2.0e-5_wp)
+      err = water_network_jacobian_error(net, soil, sopts, forc, hyd, 300.0_wp)
+      call check_true('jacobian: dry soil, stressed stand', err < 1.0e-5_wp, err)
+      theta = 0.4314_wp - 1.0e-3_wp ; theta(1) = 0.4314_wp + 1.0e-5_wp
+      call make_stand(net, 2_ik, theta, 12.0_wp, 0.98_wp, 0.97_wp, 0.0_wp)
+      err = water_network_jacobian_error(net, soil, sopts, forc, hyd, 300.0_wp)
+      call check_true('jacobian: ponded, supersaturated top layer', err < 1.0e-5_wp, err)
+      theta = 0.3_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.9_wp, 0.85_wp, 1.0e-5_wp, leafless=.true.)
+      err = water_network_jacobian_error(net, soil, sopts, forc, hyd, 300.0_wp)
+      call check_true('jacobian: a leafless cohort', err < 1.0e-5_wp, err)
+   end subroutine test_jacobian
+
+   !=======================================================================================!
+   subroutine test_conservation()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), w0, w1, dt, hour, resid, worst, flows
+      integer(ik) :: step, nfail
+      theta = 0.33_wp
+      call make_stand(net, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
+      dt = 900.0_wp ; worst = 0.0_wp ; nfail = 0_ik
+      do step = 1_ik, 192
+         hour = mod(real(step, wp) * dt / 3600.0_wp, 24.0_wp)
+         net%e_demand = 5.0e-5_wp * max(0.0_wp, sin(pi * (hour - 6.0_wp) / 12.0_wp))                        &
+                        * net%nplant * net%bleaf / sum(net%nplant * net%bleaf)
+         net%rain = 0.0_wp
+         if (step >= 60 .and. step < 68) net%rain = 2.0e-2_wp      ! 72 mm/h for two hours
+         if (step >= 150 .and. step < 160) net%rain = 1.0e-3_wp    ! a long drizzle
+         w0 = total_water(net)
+         call water_network_advance(net, soil, sopts, forc, hyd, dt)
+         w1 = total_water(net)
+         flows = net%rain * dt - net%drain - net%evap - net%spill - sum(net%transp)
+         resid = abs((w1 - w0) - flows)
+         worst = max(worst, resid / max(w0, 1.0_wp))
+         nfail = nfail + net%nfail
+      end do
+      call check_true('conservation: every step closes to round-off', worst < 1.0e-13_wp, worst)
+      call check_int('conservation: no sub-step forced through', nfail, 0_ik)
+   end subroutine test_conservation
+
+   !=======================================================================================!
+   !----- The soil held at its potential: the plant's two stores against the matrix-exponential  !
+   !      solver over an hour of steady transpiration, both at tight tolerances. The soil is dry    !
+   !      enough that every layer feeds the roots: where a layer is wetter than the wood by less    !
+   !      than its depth's head, the old solver lets the roots lose water to it inside its          !
+   !      aggregate, which the network does not (plan D2). ------------------------------------!
+   subroutine test_plant_only()
+      type(water_network_t) :: net
+      type(hydro_env_t)  :: env
+      type(hydro_opts_t) :: o
+      type(hydro_flux_t) :: flux
+      real(wp) :: theta(soil%n_active), psi(N_HYDRO), psi_k(soil%n_active), kk(soil%n_active)
+      real(wp) :: frac(soil%n_active), root_len(soil%n_active), half(soil%n_active), dum, dp, w, dw, kd
+      real(wp) :: bsap, broot, sap_area
+      integer(ik) :: k, step, nsl
+      nsl = soil%n_active
+      theta = 0.28_wp
+      call make_stand(net, 1_ik, theta, 0.0_wp, 0.95_wp, 0.92_wp, 3.0e-5_wp)
+      net%g_root(4:nsl, 1) = 0.0_wp                    ! roots in the top three layers only
+      net%core_fixed = .true.
+      net%rtol = 1.0e-8_wp ; net%atol = 1.0e-9_wp
+      !----- The same plant for the old solver, per plant. -------------------------------------!
+      bsap = 30.0_wp ; broot = 2.0_wp ; sap_area = 0.05_wp
+      env%transp = net%e_demand(1) / net%nplant(1)
+      env%bleaf = net%bleaf(1) ; env%bsap = bsap ; env%broot = broot ; env%sap_area = sap_area
+      env%height = 28.0_wp ; env%n_root_layer = nsl
+      call cohort_root_profile(28.0_wp, hyd%pft(1), -soil%soil_layer_z(1:nsl), -soil%soil_layer_z(2:nsl+1), frac)
+      root_len = broot * frac * hyd%pft(1)%specific_root_length
+      do k = 1_ik, nsl
+         half(k) = 1.0_wp / sqrt(pi * max(net%nplant(1) * root_len(k) / soil%dz(k), tiny_num))
+         call soil_store(net%soil(k), net%tau_core(1+k), psi_k(k), dp, w, dw, kk(k), kd)
+         env%soil_psi_layer(k)   = psi_k(k)
+         env%root_z_layer(k)     = soil%z_node(k)
+         env%rhizo_cond_layer(k) = rhizosphere_cond(rho_h2o * kk(k) / grav_head, root_len(k), half(k),          &
+                                                    hyd%pft(1)%fine_root_radius)
+         if (k > 3_ik) env%rhizo_cond_layer(k) = 0.0_wp
+      end do
+      o%rtol = 1.0e-9_wp ; o%atol = 1.0e-9_wp ; o%max_substep = 100000_ik
+      call tissue_store(hyd%pft(1)%leaf_curve, net%bleaf(1), 1.0_wp, net%tau_group(WATER_LEAF, 1), psi(NODE_LEAF), &
+                        dum, w, dw)
+      call tissue_store(hyd%pft(1)%wood_curve, net%bwood(1), 1.0_wp, net%tau_group(WATER_WOOD, 1), psi(NODE_WOOD), &
+                        dum, w, dw)
+      do step = 1_ik, 4_ik
+         call solve_plant_water(env, hyd%pft(1), o, 900.0_wp, psi, flux)
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+      end do
+      call check_close('plant only: leaf potential matches the plant solver', net%psi_group(WATER_LEAF, 1),       &
+                       psi(NODE_LEAF), 2.0e-3_wp)
+      call check_close('plant only: wood potential matches the plant solver', net%psi_group(WATER_WOOD, 1),       &
+                       psi(NODE_WOOD), 2.0e-3_wp)
+      call check_true('plant only: every rooted layer feeds the roots',                                     &
+                      minval(net%psi_core(2:4) + grav_head * soil%z_node(1:3) - net%psi_group(WATER_WOOD, 1)) > 0.0_wp, &
+                      minval(net%psi_core(2:4) + grav_head * soil%z_node(1:3) - net%psi_group(WATER_WOOD, 1)))
+      call check_close('plant only: uptake over the last step matches', sum(net%uptake) / net%nplant(1),          &
+                       flux%root_uptake * 900.0_wp, 1.0e-2_wp * flux%root_uptake * 900.0_wp)
+   end subroutine test_plant_only
+
+   !=======================================================================================!
+   !----- No cohorts: two hours of 4 mm/h rain then four of drying, against the Richards solver. -!
+   subroutine test_soil_only()
+      type(water_network_t) :: net
+      type(soil_column_t)   :: col
+      type(chydro_forcing_t) :: f
+      type(chydro_flux_t)    :: fl
+      real(wp) :: theta(soil%n_active), worst, total_net, total_old
+      integer(ik) :: step, nsl
+      nsl = soil%n_active
+      theta = 0.34_wp
+      call make_stand(net, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
+      col%theta(1:nsl) = theta ; col%w_surface = 0.0_wp ; col%w_surface_enth = 0.0_wp
+      f = forc
+      do step = 1_ik, 24_ik
+         f%precip_ground = merge(4.0_wp / 3600.0_wp, 0.0_wp, step <= 8)
+         net%rain = f%precip_ground
+         call advance_soil_water_column(col, f, soil, sopts, 900.0_wp, fl)
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+      end do
+      worst = maxval(abs(net%w_core(2:nsl+1) / (rho_h2o * soil%dz(1:nsl)) - col%theta(1:nsl)))
+      call check_true('soil only: the profile matches the Richards solver to 3e-3', worst < 3.0e-3_wp, worst)
+      total_net = sum(net%w_core)
+      total_old = sum(col%theta(1:nsl) * soil%dz(1:nsl)) * rho_h2o + col%w_surface
+      call check_close('soil only: column water matches to 0.1 %', total_net, total_old, 1.0e-3_wp * total_old)
+   end subroutine test_soil_only
+
+   !=======================================================================================!
+   subroutine test_stiff_exchange()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active)
+      integer(ik) :: step, nsub
+      theta = 0.42_wp
+      call make_stand(net, 4_ik, theta, 0.0_wp, 0.97_wp, 0.95_wp, 0.0_wp)
+      net%g_root = 50.0_wp * net%g_root                ! a fifty-fold root density: a sub-second exchange
+      nsub = 0_ik
+      do step = 1_ik, 8_ik
+         net%e_demand = merge(6.0e-5_wp, 0.0_wp, mod(step, 2_ik) == 0_ik) * net%nplant / sum(net%nplant)
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         nsub = nsub + net%nsub + net%nreject
+      end do
+      call check_true('stiff exchange: demand jumps cost at most 6 sub-steps a step', nsub <= 48_ik, real(nsub, wp))
+   end subroutine test_stiff_exchange
+
+   !=======================================================================================!
+   subroutine test_infeasible_demand()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), demand
+      theta = 0.15_wp
+      call make_stand(net, 1_ik, theta, 0.0_wp, 0.6_wp, 0.5_wp, 0.0_wp)
+      net%bleaf(1) = 1.0e-3_wp                          ! a few grams of leaf
+      net%k_xylem(1) = 1.0e-3_wp * net%k_xylem(1)        ! and a xylem that can hardly feed it
+      call water_network_start(net, soil, hyd, theta, 0.0_wp, 0.0_wp,                                      &
+                               [1.0e-3_wp * 2.0_wp * 0.75_wp], [net%w_group(WATER_WOOD, 1) / net%nplant(1)])
+      demand = 1.0e-4_wp
+      net%e_demand(1) = demand
+      call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+      call check_int('infeasible demand: no sub-step forced through', net%nfail, 0_ik)
+      call check_true('infeasible demand: the leaf stays above empty', net%tau_group(WATER_LEAF, 1) > 0.0_wp,     &
+                      net%tau_group(WATER_LEAF, 1))
+      call check_true('infeasible demand: transpiration falls short of the demand',                          &
+                      net%transp(1) < 0.5_wp * demand * 900.0_wp, net%transp(1) / (demand * 900.0_wp))
+      call check_true('infeasible demand: leaf potential is finite', abs(net%psi_group(WATER_LEAF, 1)) < 1.0e6_wp,  &
+                      net%psi_group(WATER_LEAF, 1))
+   end subroutine test_infeasible_demand
+
+   !=======================================================================================!
+   subroutine test_leafless()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active)
+      theta = 0.30_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.9_wp, 0.8_wp, 2.0e-5_wp, leafless=.true.)
+      net%e_demand(3) = 0.0_wp
+      call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+      call check_close('leafless: leaf at the wood less the crown head', net%psi_group(WATER_LEAF, 3),            &
+                       net%psi_group(WATER_WOOD, 3) - net%grav(3), 1.0e-6_wp)
+      call check_close('leafless: its empty leaf store stays empty', net%w_group(WATER_LEAF, 3), 0.0_wp, 1.0e-12_wp)
+   end subroutine test_leafless
+
+   !=======================================================================================!
+   !----- The BCI regrowth crash (1994-04-20): the top 2.6 cm a hair above residual, a stand    !
+   !      whose wood is half empty and refilling, then 30 mm/h of rain for two steps. ----------!
+   subroutine test_dry_layer_storm()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), w0, flows, theta_min
+      integer(ik) :: step, nsl
+      logical :: finite
+      nsl = soil%n_active
+      theta = 0.16_wp ; theta(1) = 0.0981_wp + 2.0e-3_wp
+      call make_stand(net, 6_ik, theta, 0.0_wp, 0.45_wp, 0.40_wp, 0.0_wp)
+      w0 = total_water(net) ; flows = 0.0_wp
+      finite = .true. ; theta_min = 1.0_wp
+      do step = 1_ik, 6_ik
+         net%rain = merge(30.0_wp / 3600.0_wp, 0.0_wp, step == 3 .or. step == 4)
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         flows = flows + net%rain * 900.0_wp - net%drain - net%evap - net%spill - sum(net%transp)
+         finite = finite .and. all(net%w_core == net%w_core) .and. all(net%psi_group == net%psi_group)
+         theta_min = min(theta_min, minval(net%w_core(2:nsl+1) / (rho_h2o * soil%dz(1:nsl)) - soil%theta_res(1:nsl)))
+         call check_int('dry-layer storm: no sub-step forced through', net%nfail, 0_ik)
+      end do
+      call check_true('dry-layer storm: every state finite', finite)
+      call check_true('dry-layer storm: no layer below residual', theta_min > 0.0_wp, theta_min)
+      call check_close('dry-layer storm: water conserved', total_water(net) - w0, flows, 1.0e-10_wp * w0)
+      call check_true('dry-layer storm: the wood refilled', net%tau_group(WATER_WOOD, 1) > 0.40_wp,                &
+                      net%tau_group(WATER_WOOD, 1))
+   end subroutine test_dry_layer_storm
+
+   !=======================================================================================!
+   subroutine test_saturated()
+      type(water_network_t) :: net
+      real(wp) :: theta(soil%n_active), w0, flows, spill, over
+      integer(ik) :: step, nsl
+      nsl = soil%n_active
+      theta = 0.4314_wp - 1.0e-3_wp
+      call make_stand(net, 2_ik, theta, 0.0_wp, 0.97_wp, 0.95_wp, 1.0e-5_wp)
+      w0 = total_water(net) ; flows = 0.0_wp ; spill = 0.0_wp ; over = 0.0_wp
+      do step = 1_ik, 8_ik
+         net%rain = merge(50.0_wp / 3600.0_wp, 0.0_wp, step <= 4)
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         flows = flows + net%rain * 900.0_wp - net%drain - net%evap - net%spill - sum(net%transp)
+         spill = spill + net%spill
+         over = max(over, maxval(net%w_core(2:nsl+1) / (rho_h2o * soil%dz(1:nsl)) - soil%theta_sat(1:nsl)))
+         call check_int('saturated: no sub-step forced through', net%nfail, 0_ik)
+      end do
+      call check_true('saturated: the pond spilled', spill > 0.0_wp, spill)
+      call check_true('saturated: no layer more than 1e-3 above saturation', over < 1.0e-3_wp, over)
+      call check_true('saturated: pond at or below its capacity', net%w_core(WATER_NODE_POND) <= sopts%w_pond_max,  &
+                      net%w_core(WATER_NODE_POND))
+      call check_close('saturated: water conserved', total_water(net) - w0, flows, 1.0e-10_wp * w0)
+   end subroutine test_saturated
+
+   !=======================================================================================!
+   !----- A transpiring day with a midday storm at the default tolerances, against the same day at  !
+   !      tolerances a thousand times tighter. ------------------------------------------------!
+   subroutine test_accuracy()
+      type(water_network_t) :: net, ref
+      real(wp) :: theta(soil%n_active), hour, worst_theta, worst_rwc
+      integer(ik) :: step, nsl, isub
+      nsl = soil%n_active
+      theta = 0.30_wp
+      call make_stand(net, 3_ik, theta, 0.0_wp, 0.9_wp, 0.85_wp, 0.0_wp)
+      call make_stand(ref, 3_ik, theta, 0.0_wp, 0.9_wp, 0.85_wp, 0.0_wp)
+      ref%rtol = 1.0e-3_wp * net%rtol ; ref%atol = 1.0e-3_wp * net%atol
+      isub = 0_ik
+      do step = 1_ik, 96_ik
+         hour = real(step, wp) * 0.25_wp
+         net%e_demand = 5.0e-5_wp * max(0.0_wp, sin(pi * (hour - 6.0_wp) / 12.0_wp))                        &
+                        * net%nplant * net%bleaf / sum(net%nplant * net%bleaf)
+         ref%e_demand = net%e_demand
+         net%rain = merge(1.0e-2_wp, 0.0_wp, step >= 50 .and. step < 54) ; ref%rain = net%rain
+         call water_network_advance(net, soil, sopts, forc, hyd, 900.0_wp)
+         call water_network_advance(ref, soil, sopts, forc, hyd, 900.0_wp)
+         isub = isub + net%nsub
+      end do
+      worst_theta = maxval(abs(net%w_core(2:nsl+1) - ref%w_core(2:nsl+1)) / (rho_h2o * soil%dz(1:nsl)))
+      worst_rwc   = maxval(abs(net%tau_group - ref%tau_group))
+      call check_true('accuracy: soil water within 10 atol of the tight run', worst_theta < 10.0_wp * sopts%atol,  &
+                      worst_theta)
+      call check_true('accuracy: tissue water within 1e-2 RWC of the tight run', worst_rwc < 1.0e-2_wp, worst_rwc)
+      print '(a,i6)', '  info : sub-steps over the day at the default tolerances: ', isub
+   end subroutine test_accuracy
+
+   !=======================================================================================!
+   !     Small helpers.                                                                     !
+   !=======================================================================================!
+   real(wp) function pseudo(seed)
+      integer(ik), intent(inout) :: seed
+      seed = mod(1103515245_ik * seed + 12345_ik, 2147483648_ik)
+      pseudo = real(seed, wp) / 2147483648.0_wp - 0.5_wp
+   end function pseudo
+
+   subroutine dense_solve(a_in, b, x, n)
+      integer(ik), intent(in)  :: n
+      real(wp),    intent(in)  :: a_in(n, n), b(n)
+      real(wp),    intent(out) :: x(n)
+      real(wp) :: a(n, n+1), row(n+1), f
+      integer(ik) :: i, j, p
+      a(:, 1:n) = a_in ; a(:, n+1) = b
+      do j = 1_ik, n
+         p = j
+         do i = j + 1_ik, n
+            if (abs(a(i, j)) > abs(a(p, j))) p = i
+         end do
+         row = a(j, :) ; a(j, :) = a(p, :) ; a(p, :) = row
+         do i = j + 1_ik, n
+            f = a(i, j) / a(j, j)
+            a(i, :) = a(i, :) - f * a(j, :)
+         end do
+      end do
+      do i = n, 1_ik, -1_ik
+         x(i) = (a(i, n+1) - sum(a(i, i+1:n) * x(i+1:n))) / a(i, i)
+      end do
+   end subroutine dense_solve
+
+end program test_water_network
