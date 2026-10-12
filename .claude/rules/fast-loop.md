@@ -37,12 +37,14 @@ warns above 225 s only when the non-stomatal limb is on.
 `meds_fast_step` dispatches and owns the **RK45-to-ARK stiff rescue**. There is no operator-split
 scheme; it was retired for converging to a different limit that refinement never removed.
 
-**The transpiration corrector is ARK-only.** RK45 at production cadence therefore carries a leaf
-water-potential error the default path does not.
+**Soil and plant water are one network, on both schemes.** `run_water_network` (in
+`build_column_frozen`) solves the pond, soil layers and every cohort's wood and leaves together; the
+stages only move water at its time-mean rates, and hold each cohort's transpiration at the network's.
+A new water flow belongs in the network (`meds_water_paths` for its law), not in a scheme.
 
 ## Rules that break things quietly
 
-- **Kernels never see `site_t`.** `canopy/`, `plant/` and `soil/` link `state_column` and `config`
+- **Kernels never see `site_t`.** `canopy/`, `plant/`, `soil/` and `water/` link `state_column` and `config`
   only. That is what keeps them device-eligible and standalone-buildable. A routine that needs
   `site_t` is driver code.
 - **Build a column cohort view through `meds_column_view`.** `copy_column_cohort` for production,

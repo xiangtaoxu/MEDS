@@ -87,7 +87,7 @@ contains
    !      m/s of soil conductivity]: steady radial flow to a single root (Gardner 1960),            !
    !      2 pi L / ln(r_half / r_root) for each of nplant plants with root length L in the layer.   !
    !      Times the soil's conductivity in m/s (made a potential gradient by rho/grav_head), it is  !
-   !      meds_plant_hydraulics' rhizosphere_cond for the whole cohort. -------------------------!
+   !      the layer's soil-to-root conductance for the whole cohort. ----------------------------!
    elemental function root_conductance_geometry(nplant, root_length, half_spacing, root_radius)       &
                       result(g_geom)
       real(wp), intent(in) :: nplant        !< [plants/m2]

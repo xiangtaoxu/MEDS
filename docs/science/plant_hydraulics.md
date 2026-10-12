@@ -1,26 +1,30 @@
 # Plant hydraulics
 
-MEDS resolves per-individual water transport as a small network of water pools (nodes) linked by
-xylem/rhizosphere conductances, driven by transpiration at the top and soil water at the bottom. The
-prognostic state is the node water potentials $\psi$ (leaf, wood), carried in the cohort state and
-advanced each fast sub-step. Everything is in **MPa** (never metres of head), matching
-`leaf_env_t%psi_leaf` and the `[pft].wstress_psi_*` traits. The physical reference is Xu et al. 2016
-(X16), revised for coupled nodes, nonlinear pressure–volume, and Kirchhoff-integrated conductance.
+MEDS resolves per-individual water transport as two water stores per cohort, the leaves and the wood
+(sapwood and fine roots), joined by the xylem and connected to the soil layers by the roots, driven by
+transpiration at the top and soil water at the bottom. The prognostic state is each tissue's water
+mass, carried in the cohort state; its potential is read off the tissue's pressure–volume curve.
+Everything is in **MPa** (never metres of head), matching `leaf_env_t%psi_leaf` and the
+`[pft].wstress_psi_*` traits. The physical reference is Xu et al. 2016 (X16), revised for coupled
+stores, nonlinear pressure–volume, and Kirchhoff-integrated conductance.
+
+This page is the plant's processes: the curves and flow laws. They are solved each fast step together
+with the soil's, as one network: [soil_plant_water](soil_plant_water.md).
 
 Total head is $`\Psi_i = \psi_i + \rho g\,z_i`$ with $`\rho g = 9.804\times10^{-3}\ \mathrm{MPa\,m^{-1}}`$
 (`grav_head`). Signs: $\psi \le 0$ (tension), $z$ measured upward.
 
-## 1. The node network
+## 1. The water balance
 
-Per-node water mass balance (kg H₂O per plant):
+Per-store water mass balance (kg H₂O per plant):
 
 ```math
 C_i(\psi_i)\,\frac{d\psi_i}{dt} \;=\; \sum_{j\sim i} K_{ij}(\psi)\,\big(\psi_j - \psi_i + g_{ij}\big) \;-\; S_i \qquad(1)
 ```
 
 with $C_i$ the **capacitance** [kg MPa⁻¹] (§2), $K_{ij}$ the **edge conductance** [kg s⁻¹ MPa⁻¹] (§3),
-$`g_{ij}=\rho g\,(z_j-z_i)`$ the gravity offset, and $S_i$ a sink. The default topology is **2-node**
-(leaf L + lumped wood W):
+$`g_{ij}=\rho g\,(z_j-z_i)`$ the gravity offset, and $S_i$ a sink. Each cohort has two stores, its
+leaves L and its lumped wood W:
 
 ```math
 C_L\,\dot\psi_L = K_{LW}\big(\psi_W-\psi_L+g_{WL}\big) - E, \qquad
@@ -28,9 +32,8 @@ C_W\,\dot\psi_W = K_{LW}\big(\psi_L-\psi_W-g_{WL}\big) + Q_{\text{root}} \qquad(
 ```
 
 where $`g_{WL}=-\rho g\,H`$ (leaf sits a height $H$ above the wood datum), $E$ is transpiration
-[kg s⁻¹], and $Q_{\text{root}}$ is root water uptake (§4). The matrix $A$ of the linear system
-$C\dot\psi = A\psi + b$ is a grounded, symmetric negative-definite Laplacian ⇒ all eigenvalues of
-$M=C^{-1}A$ are **real $\le 0$** — the closed-form solver (§5) is always valid.
+[kg s⁻¹], and $Q_{\text{root}}$ is root water uptake (§4), the sum of the uptake from every layer the
+cohort roots in.
 
 ## 2. Pressure–volume curves and capacitance
 
@@ -125,14 +128,9 @@ for a leaf dried far beyond the vulnerability curve.
 
 ## 4. Root water uptake
 
-$Q_{\text{root}}$ enters the wood node from the soil, through a **per-layer** root boundary. The
-single root-fraction-weighted rhizosphere boundary that used to be the default is **gone**, along with
-its `[hydraulics].multilayer_roots` switch — the per-layer path is the only one.
-
-The **multi-layer** formulation (unconditional since the switch was deleted; ED2-faithful; see
-`MEDS_MULTILAYER_ROOTS_DESIGN.md`) couples to the prognostic soil column — per-layer soil ψ and the
-**unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$ (`soil_hydr_cond_from_theta`) — and sums the soil layers the
-roots reach, in parallel to the common wood node.
+$Q_{\text{root}}$ enters the wood from the soil, along one path per soil layer the cohort roots in
+(ED2-faithful; see `MEDS_MULTILAYER_ROOTS_DESIGN.md`). Each path sees its layer's soil ψ and
+**unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$, from the layer's retention curve.
 
 **Each cohort has its own roots.** It roots to a depth set by its height (ED2's IALLOM 1 allometry,
 Christoffersen 2013), capped at the soil column's bottom $z_{\text{bot}}$:
@@ -172,32 +170,27 @@ root length and falls only by the logarithm as roots crowd, so it does not depen
 layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
 \Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
 orders of magnitude more weakly (#375). Whether the absorbing length really grows in proportion to fine-root carbon is open
-(#377). The parallel network collapses to an effective boundary,
+(#377).
+
+Each layer is its own path from the soil to the wood, so the uptake from layer $k$ is
 
 ```math
-G_{\text{root}}=\sum_k g_k, \qquad
-\psi_{\text{soil,eff}}=\frac{\sum_k g_k\,(\psi_{soil,k}+\rho g\,z_k)}{\sum_k g_k},\qquad
-Q_{\text{root}}=G_{\text{root}}\,(\psi_{\text{soil,eff}}-\psi_W)
+U_k = g_k\,r\!\left(\psi_{soil,k}+\rho g\,z_k-\psi_W\right),\qquad Q_{\text{root}}=\sum_k U_k
 ```
 
-so the 2-node solver is unchanged; the converged total is distributed back per layer for the soil sink,
-$`U_k = \text{supply}_k^{+}/\sum_j \text{supply}_j^{+}\cdot Q_{\text{root}}`$ with
-$`\text{supply}_k^{+}=\max\!\big(g_k(\psi_{soil,k}-\psi_W+\rho g z_k),\,0\big)`$. **Hydraulic
-redistribution is not enabled:** a dry layer that would give a negative supply (root→soil efflux) is
-floored to 0, so every $U_k\ge 0$ and $`\sum_k U_k = Q_{\text{root}}`$. HR — the per-layer efflux and the
-soil re-wetting it implies — is deferred to a future version (see
+with $r$ zero below zero and the identity above a width of 10⁻³ MPa, joined smoothly
+([soil_plant_water](soil_plant_water.md) eq. 1). **Hydraulic redistribution is not enabled:** a layer
+drier than the wood gives nothing and takes nothing, so every $U_k\ge 0$. HR — the per-layer efflux
+and the soil re-wetting it implies — is deferred (see
 `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`).
 
 ## 5. The solver
 
-Each fast step is integrated by freezing the linear system at the current state
-($\dot\psi=M\psi+c$, coefficients from capacitance, the Kirchhoff edge conductance, and the soil
-boundary) and advancing it **exactly** over a sub-step with the underflow-safe 2×2 matrix exponential
-(sinh-c form; eigenvalues real $\le0$): $`\psi(h)=\psi^* + e^{Mh}(\psi_0-\psi^*)`$, where $`\psi^*`$ is
-the Ohm's-law steady state $-M^{-1}c$. Adaptive **step-doubling** controls the sub-step via the shared
-embedded-error controller (`meds_numerics%adaptive_step_update`); the explicit RHS
-(`advance_water_mass_full`, with the transpiration corrector) feeds the ESDIRK2 (`ark`) integrator. Boundary fluxes (sapflow, root uptake) close a
-machine-precision water budget from the converged storage change $\Delta W$.
+The leaves and wood of every cohort are solved with the soil layers and the pond as one network, by
+implicit Euler with Newton and adaptive sub-steps, in each tissue's symplastic relative water content
+$R$: [soil_plant_water](soil_plant_water.md). Each cohort's transpiration is its stomata's demand,
+limited by the water its leaves hold below the closing potential (§4 there). Water is advanced by the
+flows themselves, so the plant and soil water budgets close to round-off.
 
 ## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
 
@@ -223,7 +216,6 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | $a$ | `wood_kexp` | vulnerability-curve shape [–] |
 | $K_s$ | `pft.wood_kmax` | sapwood specific conductivity [kg m⁻¹ s⁻¹ MPa⁻¹]; default from wood density (Xu et al. 2016) |
 | — | `vessel_curl` | tortuosity / path-length factor [–] |
-| — | `rhizo_cond` | rhizosphere conductance (single-BC) [kg s⁻¹ MPa⁻¹] |
 | $\beta$ | `root_beta` | the root profile within the rooting depth [–], $0<\beta<1$ (ED2: 0.1) |
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
 | SRL | `specific_root_length` | fine-root length per unit fine-root carbon [m kgC⁻¹] |
@@ -243,8 +235,10 @@ machine-precision water budget from the converged storage change $\Delta W$.
 | Concept | Routine |
 |---|---|
 | PV curves / capacitance | `meds_water_retention`: one `water_curve_t` record per tissue; `water_content`, `capacitance`, `psi_from_water_content`, `pv_psi_tlp`, `pv_rwc_tlp`, `psi_from_rwc`, `rwc_from_psi` |
-| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential`, `kirchhoff_edge` (+ table: `build_hydro_table`, `flux_potential_lin`, `kirchhoff_edge_tab`) |
+| a tissue store in its unknown $R$ | `meds_water_storage`: `tissue_store`, `tissue_rwc_from_water` |
+| vulnerability + Kirchhoff | `meds_hydr_lib`: `plc_retained`, `flux_potential` (+ table: `build_hydro_table`, `flux_potential_lin`); `kirchhoff_edge`, `kirchhoff_edge_tab` are the tests' reference |
 | Kirchhoff quadrature | `meds_hydr_lib`: `kirchhoff_integral` (7-point Gauss–Legendre panels, written out; `kirchhoff_tail` past the table) |
-| multi-layer root boundary | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`, `rhizosphere_cond`, `effective_root_boundary` |
-| network solver | `meds_plant_hydraulics`: `solve_plant_water` (`freeze_coeffs` + `advance_exact_linear` + `exact_substep`) |
-| config flatten / soil coupling | `meds_fast_types`: `apply_hydraulics_config`; opt-in per-layer soil↔plant in `column_fast_step` (`soil_hydr_cond_from_theta` → K(θ)) |
+| xylem and root flows | `meds_water_paths`: `xylem_max_conductance`, `xylem_flow`, `root_conductance_geometry`, `root_uptake_flow`, `root_uptake_profile`, `supply_limited_transpiration` |
+| rooting depth and profile | `meds_plant_hydraulics`: `cohort_root_depth`, `cohort_root_profile`; `crown_gravity_head`, `leaf_node_psi` |
+| the solve | `meds_water_network` ([soil_plant_water](soil_plant_water.md)) |
+| config flatten | `meds_fast_types`: `apply_hydraulics_config` |

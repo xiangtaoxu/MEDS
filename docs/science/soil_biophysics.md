@@ -1,9 +1,10 @@
 # Soil biophysics
 
 The soil column is two coupled prognostic sub-columns on one ED2 negative-$z$ grid: a **water** column
-(mixed-form Richards) and a **thermal** column (internal-energy heat diffusion). They share the Thomas
-sweep and the grid geometry, and are coupled by construction — the thermal step reads the just-updated
-moisture, and the moving water carries liquid enthalpy across the soil boundaries.
+(mixed-form Richards) and a **thermal** column (internal-energy heat diffusion). They are coupled by
+construction — the thermal step reads the just-updated moisture, and the moving water carries liquid
+enthalpy across the soil boundaries. The water column is solved together with the pond and the
+plants' water as one network ([soil_plant_water](soil_plant_water.md)); this page is the soil's part.
 
 This page is one of the per-store pages under [column_biophysics](column_biophysics.md), which describes
 the two cross-cutting principles (**prognostic internal energy**, not temperature; **closed-budget
@@ -15,10 +16,10 @@ thermodynamic inverter, and both sub-columns close a machine-precision budget ev
 
 ## The soil water column
 
-`advance_soil_water_column` (`meds_soil_water`) advances one patch's prognostic soil moisture
-$`\theta_k`$ (+ ponded surface water) over `dt_fast` with an **implicit
-backward-Euler Thomas** solve of the mixed-form Richards equation on the ED2 negative-$z$ grid. Per
-layer,
+One patch's prognostic soil moisture $`\theta_k`$ (+ ponded surface water) is advanced over `dt_fast`
+by the soil-plant water network (`meds_water_network`): implicit Euler on adaptive sub-steps, with
+Newton on every store at once ([soil_plant_water](soil_plant_water.md)). For the soil layers this is the
+mixed-form Richards equation on the ED2 negative-$z$ grid. Per layer,
 
 ```math
 C(\psi_k)\,\frac{\partial\psi_k}{\partial t}
@@ -38,35 +39,38 @@ K_{k+1/2} = K_k^{\,1-w}\,K_{k+1}^{\,w}, \qquad w = \frac{\Delta z_k}{\Delta z_k+
 since the face lies $`\Delta z_k/2`$ below node $k$ and $`\Delta z_{k+1}/2`$ above node $k+1$; equal layers
 give the plain geometric mean. Across a wet layer over a dry one the face conductivity is small, so a
 wetting front, or capillary rise into a dry profile, advances more slowly than it would under an
-upstream pick. The linearization is either a single **frozen-coefficient** solve or a **Celia (1990)
-modified-Picard** iterate (`opts%linearize`), and the step is sub-cycled by adaptive step-doubling
-(`soil_water_advance`) — BE is L-stable, so sub-stepping only buys accuracy.
+upstream pick.
 
-The **root sink** is the uptake the plant-hydraulics solve asks of each layer, taken as given (the
-`multilayer_roots` switch is deleted; there is no root-fraction-weighted fallback). There is no
-soil-side wilting point: the plant hydraulics already limits uptake, because the soil→root
-conductance falls with $`K(\theta)`$ and a layer drier than the wood gives nothing, so a wilting
-threshold here would cut the same water twice. The sink is fixed over the step, so a layer gives at
-most what it holds above $`\theta_{res}`$ in one step (in layer 1, less what the step evaporates) —
-the availability rule the ground evaporation follows — and the shortfall is booked as
-`uptake_deficit`; the residual floor stays as the last resort. **Ground
-evaporation** combines a Philip pore-space relative humidity with a Swenson-Lawrence
-dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$ from the aerodynamics kernel
-— and it is the **single authority** for the ground latent flux (it drives both the CAS vapour twin and
-the ground energy balance's LE, so no double-count).
+Each layer is solved in its effective saturation on the dry side and its potential on the wet side.
+Above saturation it stores water through a specific storage of 10⁻⁴ m⁻¹, so a layer pushed past
+saturation raises its potential and drives the excess up to the pond and down to the next layer: there
+is no saturation clip and no residual floor. As a layer dries its potential falls without bound
+towards $`\theta_{res}`$ and the conductivity of its faces with it, so no flow can empty it.
+
+The **root sink** is the network's own: each cohort's uptake from each layer it roots in, solved with
+the layer's water. There is no soil-side wilting point: the soil→root conductance falls with
+$`K(\theta)`$ and a layer drier than the wood gives nothing, so a wilting threshold here would cut the
+same water twice. **Ground evaporation** combines a Philip pore-space relative humidity with a
+Swenson-Lawrence dry-surface-layer (DSL) resistance in series with $`r_{aero}=1/g_{g,net}`$ from the
+aerodynamics kernel, at the end-of-sub-step state (`ground_evaporation_rate`); as the top layer dries,
+Philip's humidity goes to zero and evaporation stops by itself. It is the **single authority** for the
+ground latent flux (it drives both the CAS vapour twin and the ground energy balance's LE, so no
+double-count).
 
 ### Boundary conditions, and what the aquifer option actually means
 
-The **top boundary** is a conductivity-limited infiltration flux with ponding overflow. Rain and the
-pond's water enter the top layer at up to
+The **top boundary** is the pond, a store of its own: rain enters it, and it exchanges water with the
+top layer by the Darcy flux
 
 ```math
-q_{inf,max} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{-\psi_1}{-z_1}\Big) \qquad(1b)
+q_{pond} = \sqrt{K(\theta_1)\,K_{sat}}\;\Big(1 + \frac{h-\psi_1}{-z_1}\Big) \qquad(1b)
 ```
 
-the Darcy flux from the pond, treated as a saturated layer as thick as the top one, to the top node
-at depth $`z_1`$: (1a) with $w = 1/2$. What the top layer cannot take ponds, up to `w_pond_max`, and
-the rest runs off. The top layer's own $`K(\theta_1)`$ alone would seal a dried surface: near
+from the pond, treated as a saturated layer as thick as the top one, to the top node at depth $`z_1`$:
+(1a) with $w = 1/2$, $h$ the pond's head and $`\psi_1`$ here in metres. It is solved implicitly and is
+two-way: a top layer pushed past saturation exfiltrates to the pond. The pond holds up to
+`w_pond_max` (its first millimetre is a depression store that fills before any head builds); above
+that, water runs off at the pond's temperature. The top layer's own $`K(\theta_1)`$ alone would seal a dried surface: near
 residual water content it is about $10^{-15}$ of $`K_{sat}`$ for a van Genuchten loam, so after a dry
 season the pond overflows and the soil never re-wets. With the geometric mean the capacity at that
 state is about 0.1 mm/h, and it rises by an order of magnitude with the first millimetre taken up,
@@ -106,9 +110,8 @@ Every step closes a machine-precision water budget:
  - \Delta t\,(P - E_{soil} - \text{drainage} - \text{uptake} - \text{runoff}) \approx 0 \qquad(2)
 ```
 
-and exports the per-layer matric potential `psi_soil` [MPa] that closes the **plant-hydraulics** soil
-boundary condition (see [plant_hydraulics](plant_hydraulics.md)), plus the time-mean per-face Darcy
-flux for optional advective soil heat.
+and exports the time-mean per-face Darcy flux and each layer's uptake for the soil-energy solve's
+water enthalpy (§ Water–thermal coupling).
 
 ---
 
@@ -211,8 +214,9 @@ remove.
 ## Water–thermal coupling
 
 The water and thermal columns are coupled by construction: the thermal step reads the just-updated soil
-moisture (for $`\kappa,C_{eff}`$), and the transpiration/infiltration/drainage water carries liquid
-enthalpy across the soil boundaries via `root_heat_sink` and the boundary-face advection.
+moisture (for $`\kappa,C_{eff}`$), and the water the network moves carries liquid enthalpy: across each
+face at the temperature of the node it leaves, out of each layer by root uptake at that layer's own
+temperature (`root_heat`, per layer), and between the pond and the top layer (`water_heat_out`).
 
 ## Canopy interception
 
@@ -244,8 +248,8 @@ and passes the resulting flux into the CO₂ source.
 
 | Concept | Routine |
 |---|---|
-| soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
-| explicit water tendency (ARK) | `meds_soil_water`: `soil_water_time_deriv` |
+| soil water (the network) | `meds_water_network` ([soil_plant_water](soil_plant_water.md)); a layer's store: `meds_water_storage`: `soil_store` |
+| soil boundaries | `meds_soil_water`: `ground_evaporation_rate`, `bottom_flux` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
@@ -255,7 +259,8 @@ and passes the resulting flux into the CO₂ source.
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/`: `lsm_hyd.f90`, `soil_respiration.f90` — the soil stores in the reference model.
-- Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — mixed-form Richards / modified-Picard.
+- Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — mixed-form Richards.
+- Brenner & Cancès (2017), *Adv. Water Resour.* — variable switching for Richards' equation.
 - van Genuchten (1980); Clapp & Hornberger (1978) — soil retention curves.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
 - Design docs: `MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `MEDS_ENERGY_BALANCE_DESIGN.md`.

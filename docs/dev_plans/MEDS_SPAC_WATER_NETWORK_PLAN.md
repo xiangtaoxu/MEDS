@@ -3,7 +3,8 @@
 Written 2026-10-11 on branch `feat/spac-water-solver` (from beta 0cbbb31). Parked (owner, 2026-10-11)
 until example 06 is finished; later that day the owner asked for the plan to be implemented on this
 branch, kept up with beta. An independent review (§11) found the direction sound but the design
-incomplete; §12 records how each of its items is resolved and the working choices for D1–D8. The
+incomplete; §12 records how each of its items is resolved and the working choices for D1–D8.
+**Implemented 2026-10-12 (P1–P4)**; §12.4 records what the implementation changed and measured. The
 owner chose (2026-10-11) to solve soil and plant water together, and asked that the work consolidate
 the code rather than add fixes for special cases, with functions designed around processes and
 generic numerical schemes. Decisions D1–D8 are in §9.
@@ -510,3 +511,52 @@ given.
 | `src/shared/functions/meds_water_paths.f90` | flow along a path (Darcy, rhizosphere, xylem) and the smooth ramp, with derivatives |
 | `src/fast_dynamics/soil/meds_soil_water.f90` | the soil's boundary processes (evaporation with its ψ derivative, bottom drainage), which need the forcing types |
 | `src/fast_dynamics/water/meds_water_network.f90` | one patch's network (nodes, edges by kind, boundary terms), its assembly, Newton and sub-steps; a new folder in `meds_fast_kernels` |
+
+### 12.4 What the implementation changed, and what it measured (2026-10-12)
+
+**Changed from §12.1–12.3.**
+
+- **Single-path stores take their water from their curves.** The pond and each cohort's leaves hang
+  off the network by one path and can hold less than Newton's slack (a near-leafless cohort's leaves
+  hold 1e-26 kg m⁻² against a 1e-9 tolerance). They are committed at their curve's water, and their
+  path carries the flow that closes their balance exactly; the store across it (top layer, wood)
+  absorbs the slack. Every other store is still committed by the flows.
+- **The pond starts at min(head of its water, the head at which it neither gives nor takes water).**
+  A trace of water over dry soil otherwise puts the first Newton iterate thousands of times past what
+  the pond holds. A step bound on the pond was tried and removed.
+- **The grouped solve is specialised** to groups that meet the core through their first unknown, so
+  each cohort's Schur update is rank one and its 2×2 block is inverted in closed form (§12.2 M5's "only
+  the layers it roots in" falls out: a column the cohort does not root in is skipped). The
+  factorisation is kept apart from the blocks and takes the storage terms as diagonal additions, so a
+  sub-step's start reuses the previous solution's evaluation and flow Jacobian with no copy.
+- **The demand solve credits the sapflow's liquid enthalpy.** C1's E_demand came from the pre-pass
+  surface solve, which ran before `qwflux_wl` was known and so charged the leaf the full vapour
+  enthalpy of its transpiration (~2.9e6 J kg⁻¹) with no credit for the liquid replacing it
+  (~4.4e5 J kg⁻¹). The cooler leaf transpired ~4 % less at every `dt_fast`. The credit is now estimated
+  from a first solve and the solve repeated. C1's fallback (a second network pass) was not needed.
+- **Telemetry.** The commit-clamp outputs (`work_clamp_commit_site`, `work_clamp_mass_site`,
+  `work_clamp_energy_site`) are removed: with the tissue-water floor gone nothing clamps a committed
+  state. The water counters are `work_water_{nsub,newton,reject,nfail}_site`.
+- As designed: D1's unknowns, D2's 1e-3 MPa ramp, M1's twice-filtered error estimate, M2's step bounds
+  (90 % to the boundary, 0.2 on the dry branch) with the Armijo search, Newton converged at 1 % of
+  `atol`, no warm start (M6).
+
+**Measured.**
+
+- **1994-04-20 reproducer** (example 06 regrowth, beta stops on day 1 with a NaN): completes; whole-
+  column ledgers 0 fails in 4,800 checks, worst 5.7e-7 J m⁻² and 1.3e-13 kg m⁻².
+- **dt-convergence (C1, `numerical_scheme.md` §5a)**, BCI dry season 2013-01-15 to 04-15, example 04's
+  calibrated stand, 900 against 150 s: window-mean LE −0.2 W m⁻² (old scheme +0.3), largest hourly
+  difference in the mean diurnal cycle 1.9 W m⁻² (old 2.9). Against the old scheme at 150 s: LE
+  71.31 against 71.42 W m⁻², transpiration within 0.2 %, H +0.8 W m⁻² (not yet attributed).
+- **Newton work** on the BCI profile (6 months, 33 patches): 1.07 sub-steps per step, 3.5 Newton
+  iterations per sub-step, 7 % of sub-steps rejected, 0.002 % taken unconverged. The iterations
+  come from the small cohorts' wood and leaves at each change in demand, and partly from uptake
+  switching between layers: widening D2's ramp to 1e-2 / 5e-2 MPa cuts them by 9 % / 14 %, a physics
+  change not taken. Loosening Newton to 10 % of `atol` *added* 6 % iterations (the slack left in the
+  stiff small stores raises the next step's starting imbalance), so 1 % stays.
+- **M5 cost**, BCI profile, against beta 0cbbb31 on the same nodes: 12 threads 10.53 s against 9.28 s
+  (three runs each, +13.5 %, inside the +15 % gate); one thread 72.8 s against 61.3 s (+19 %). Of the
+  network's cost, the cohort × layer root-uptake evaluation and Newton's iteration count are the two
+  levers left (`ROADMAP.md` §4).
+

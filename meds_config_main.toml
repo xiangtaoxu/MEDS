@@ -143,7 +143,7 @@ ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
 
 # ------------------------------------------------------------------------------------------
 # [soil_column] -- the PHYSICAL soil column the soil water above is solved OVER.
-# [soil] is the solver (tolerances, bottom BC, substepping); this is the ground itself:
+# [soil] holds the water network's tolerances and the bottom BC; this is the ground itself:
 # the vertical grid, the hydraulic texture and the thermal texture.
 #
 # Every key is OPTIONAL and defaults to the value shown, which is the literal that used to be

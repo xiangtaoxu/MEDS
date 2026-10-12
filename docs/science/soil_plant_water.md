@@ -1,0 +1,181 @@
+# Soil and plant water: one network
+
+Each `dt_fast`, one patch's water is solved as a single network: the ponded surface water, every soil
+layer, and each cohort's wood and leaves are **stores**, joined by **paths** along which water flows
+down its potential gradient. The stores' curves (how much water a store holds at a given potential)
+and the paths' flow laws are the process library: [soil_biophysics](soil_biophysics.md) for the soil
+retention curves and the soil's boundary processes, [plant_hydraulics](plant_hydraulics.md) for the
+tissue pressure–volume curves, xylem vulnerability and root geometry. This page is how they are
+joined and solved. The design and its measurements are in
+`docs/dev_plans/MEDS_SPAC_WATER_NETWORK_PLAN.md`.
+
+Potentials are in **MPa** and water in **kg m⁻² of ground**. A soil layer's potential is its matric
+potential; its total head adds $`\rho g z`$ ($`\rho g`$ = `grav_head`, $z<0$ below the surface).
+
+## 1. The network
+
+| Store | Holds | Joined to |
+|---|---|---|
+| pond (core node 1) | ponded water, $`W = \rho\,S(h)`$ | rain; soil layer 1 |
+| soil layer $k$ (core node $k+1$) | $`\rho\,\Delta z_k\,\theta_k`$ | layers $k\pm1$; every cohort rooting in it; evaporation (layer 1); drainage (bottom layer) |
+| a cohort's wood | sapwood + fine-root water of all its plants | its rooted layers; its leaves |
+| a cohort's leaves | leaf water of all its plants | its wood; transpiration |
+
+The soil layers and the pond are the **core**. Each cohort is a **group** of two stores that touch
+only each other and the core, and the core only through the wood. That structure is what the linear
+solve exploits (§3).
+
+The paths:
+
+- **Soil faces** — Darcy flow between adjacent layers, $`q = \rho\,K_{face}\,[(\psi_k-\psi_{k+1})/(\rho g)
+  + \Delta z_{node}]/\Delta z_{node}`$, with ED2's thickness-weighted geometric-mean face conductivity
+  $`K_k^{1-w}K_{k+1}^{w}`$.
+- **Pond to top layer** — the same law, the pond counting as a saturated layer as thick as the top
+  one ($w=1/2$). It is two-way: a top layer pushed past saturation exfiltrates to the pond.
+- **Root uptake** — from layer $k$ into a cohort's wood, $`u_k = g_k\,K_k\,r\!\left(\psi_k + \rho g z_k -
+  \psi_W\right)`$, with $`g_k`$ the cohort's Gardner single-root geometry in the layer
+  ([plant_hydraulics](plant_hydraulics.md) §4) and $r$ the ramp below. **No hydraulic
+  redistribution:** a layer drier than the wood gives nothing and takes nothing.
+- **Xylem** — sapflow from wood to leaves, $`s = K_{eff}\,(\psi_W - \psi_L - \rho g H)`$, with the
+  Kirchhoff mean conductance $`K_{eff} = k_{cond}\,[\Phi(\psi_W)-\Phi(\psi_L)]/(\psi_W-\psi_L)`$ (its
+  midpoint expansion as the two potentials meet), plus a $10^{-12}$ share of $`k_{cond}`$ so a fully
+  embolised cohort's leaves stay joined to its wood.
+- **Boundaries** — rain into the pond; ground evaporation from layer 1 (Philip's pore humidity with
+  the Swenson–Lawrence dry-surface-layer resistance); drainage out of the bottom layer
+  (`[soil].bottom_bc`: free drain, bedrock or a head-driven two-way aquifer); and each cohort's
+  transpiration out of its leaves.
+
+Every flow is written with its derivatives in each store's unknown, so Newton's Jacobian is exact.
+Every switch in a flow is smoothed (C¹), so Newton never meets a corner:
+
+```math
+r(x) = \begin{cases} 0 & x \le 0\\ x\,t\,(2-t),\ t = x/w & 0 < x < w\\ x & x \ge w \end{cases}
+\qquad w = 10^{-3}\ \text{MPa (uptake)} \qquad(1)
+```
+
+## 2. The stores and their unknowns
+
+Each store is solved in the unknown in which its curve is best behaved:
+
+- A **soil layer** uses its effective saturation $S_e$ on the dry side and its potential on the wet
+  side, joined (C¹) at the curve's point of largest capacity: $`S_e = (1+m)^{-m}`$ for van Genuchten, the
+  air-entry point for Campbell. Above saturation the layer stores water through a specific storage
+  $`S_s = 10^{-4}`$ m⁻¹, so a layer pushed past saturation raises its potential and sends the excess up to
+  the pond and down to the next layer: there is no saturation clip. Dry, $S_e > 0$ always, and the
+  potential falls without bound towards $`\theta_{res}`$, so no flow can empty a layer and ground
+  evaporation stops by itself.
+- A **tissue** uses its symplastic relative water content $R$, on which the pressure–volume curve is
+  linear in water and has a finite slope $d\psi/dR$ everywhere. A leafless cohort's leaves hold no
+  water; their $R$ stays defined.
+- The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
+  for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
+  below.
+
+## 3. The solve
+
+Over one `dt_fast`, **implicit Euler on sub-steps**. A sub-step of length $h$ solves the water
+balance of every store at its end,
+
+```math
+\frac{W_i(\tau) - W_i^{start}}{h} - F_i(\tau) = 0 \qquad(2)
+```
+
+with $F_i$ the net inflow, by **Newton** in the unknowns $\tau$:
+
+- The Newton matrix $`J = \partial W/\partial\tau\,/h - \partial F/\partial\tau`$ is solved by eliminating
+  each cohort onto the core (`meds_grouped_solve`): each cohort's 2×2 block is inverted in closed
+  form, its rank-one Schur update folded into the core, and the core (pond + layers) LU-factored. The
+  cost grows as cohorts × layers, not as (cohorts + layers)³.
+- A Newton step takes no soil layer or tissue more than 90 % of the way to empty, and moves no dry
+  layer's $S_e$ or tissue's $R$ by more than 0.2; an Armijo line search on the sum of squared, scaled
+  imbalances then backtracks it if needed.
+- Newton has converged when every store's imbalance over the sub-step is below 1 % of the step's
+  absolute water tolerance.
+
+**Error and sub-steps.** A sub-step's error is implicit Euler's local error, half the change in the
+inflows across it, filtered twice through $J^{-1}$ (two back-substitutions with the last
+factorisation). The filter leaves slow modes alone and divides a stiff, already-settled exchange's
+error by its stiffness squared — what step doubling would measure, at a third of the cost. Each
+store's error is weighed against $`\text{atol}\cdot\text{scale} + \text{rtol}\cdot|W|`$: `[soil]`
+`atol` and `rtol`, read as water content for soil layers and the pond and as relative water content
+for tissues. A sub-step that fails Newton is cut to a quarter; one over tolerance is cut by the usual
+order-one controller, which also grows the next one. Every step starts with one sub-step of
+`dt_fast`; most need no more (BCI: 1.07 sub-steps and 3.5 Newton iterations per step on average).
+
+**Conservation.** Each store's water is advanced by the flows themselves, $`W \mathrel{+}= h\,F`$, so
+every kilogram that leaves one store arrives in another or crosses a boundary, whatever Newton's
+residual. Two stores hang off the network by one path and can hold far less than Newton's slack —
+the pond, and a near-leafless cohort's leaves. They take their water from their own curve instead,
+and their single path carries exactly the flow that closes their balance; the store across that path
+(the top layer, the wood) absorbs the slack, which is small against what it holds. After each sub-step
+water above `[soil].w_pond_max` spills as runoff at the pond's temperature.
+
+## 4. Transpiration and the energy step
+
+Each cohort's transpiration is its stomata's demand, limited by what its leaves hold:
+
+```math
+E = E_{demand}\,\frac{\min(R_L,\ R_{close})}{R_{close}} \qquad(3)
+```
+
+with the corner rounded over 0.02 in $R$. $`R_{close}`$ is the leaf's symplastic water content at the
+PFT's fast-limb closing potential (`pft_wstress_psi_close`, twice the turgor-loss point by default).
+Above it the stomatal controls act as before; below it a leaf with its stomata shut loses its last
+water in proportion to what it has left, so every step has a solution.
+
+$`E_{demand}`$ comes from the start-of-step surface solve, the one that also sets the leaf energy
+balance's coefficients. The leaf there pays the full vapour enthalpy of what it transpires and is
+credited the liquid enthalpy of the sapflow that replaces it; the credit is estimated from a first
+solve, as if the sapflow matched the transpiration, and the solve is repeated. (Without the credit,
+the leaf in that solve is charged ~4.4×10⁵ J kg⁻¹ too much, runs cooler and transpires about 4 % less.)
+
+The energy stages then **hold each cohort's transpiration at the network's** for the whole step, as
+they hold ground evaporation: the leaf energy balance takes `le_slope = 0` and
+$`\text{le\_ref} = h_{evap}E/(1-f_{wet})`$. The canopy air's vapour credit is then the leaf's water
+debit by construction. Within a step transpiration no longer follows the canopy air's changing
+humidity; the next step's surface solve restores the response. Measured on the BCI dry season
+(2013-01-15 to 04-15): the hourly latent heat at `dt_fast` = 900 s is within 1.9 W m⁻² of 150 s,
+against 2.9 W m⁻² for the per-stage refresh it replaces, and at 150 s it is within 0.6 W m⁻² of it.
+
+## 5. Enthalpy
+
+The network moves water; the soil-energy solve and the tissue stores carry its enthalpy:
+
+- Water crossing a soil face, the pond face or the base carries the liquid enthalpy of the node it
+  leaves.
+- Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
+- A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
+  its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
+  temperature difference (#355).
+- The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
+  leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
+  temperature, and the spill leaves at the pond's.
+
+## 6. Work counters
+
+| Output | Counts |
+|---|---|
+| `work_water_nsub_site` | accepted sub-steps |
+| `work_water_newton_site` | Newton iterations |
+| `work_water_reject_site` | sub-steps rejected and retried shorter |
+| `work_water_nfail_site` | sub-steps taken at the shortest length although unconverged or over tolerance |
+
+## Code map
+
+| Concept | Routine |
+|---|---|
+| the network: assembly, Newton, sub-steps, commit | `meds_water_network`: `water_network_allocate`, `water_network_start`, `water_network_advance` |
+| grouped linear solve | `meds_grouped_solve`: `grouped_allocate`, `grouped_factor`, `grouped_solve` |
+| store curves in their unknowns | `meds_water_storage`: `soil_store`, `tissue_store`, `pond_store` and their inverses |
+| flow laws | `meds_water_paths`: `darcy_flow`, `root_uptake_flow`, `root_uptake_profile`, `xylem_flow`, `supply_limited_transpiration`, `smooth_max0` |
+| soil boundaries | `meds_soil_water`: `ground_evaporation_rate`, `bottom_flux` |
+| one patch's step | `meds_fast_frozen`: `run_water_network` (called from `build_column_frozen`) |
+| plant water over the step | `meds_fast_ark`: `advance_plant_water` (constant rates; RK45 integrates the same rates in its stages) |
+
+## References
+
+- Brenner & Cancès (2017), *Adv. Water Resour.* — variable switching for Richards' equation.
+- Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — the mixed form.
+- Gardner (1960), *Soil Sci.* 89:63 — single-root rhizosphere conductance.
+- Hairer & Wanner (1996), *Solving ODEs II* — implicit Euler, Newton and error estimates for stiff systems.
+- Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytol.* 212:80 — plant hydraulics in ED2.
