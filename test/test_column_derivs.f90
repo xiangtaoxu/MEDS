@@ -29,7 +29,6 @@ program test_column_derivs
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : energy_opts_t, soil_opts_t
    use meds_soil_energy,      only : soil_energy_step_implicit, soil_energy_time_deriv
-   use meds_soil_water,       only : soil_water_time_deriv
    use meds_plant_types, only : hydro_params_t, hydro_opts_t
    use meds_water_retention,  only : water_content, water_curve_t
    use meds_fast_time_derivs, only : surface_derivs, column_derivs
@@ -37,30 +36,28 @@ program test_column_derivs
    use meds_fast_types,       only : surface_state_t, surface_tend_t,           &
                                    column_state_t, column_frozen_t, column_tend_t, column_config_t
    use meds_fast_rk4_oracle,  only : rk4_column_step
-   use meds_fast_be_stage,    only : column_be_stage, advance_water_mass_full
+   use meds_fast_be_stage,    only : column_be_stage, advance_plant_water
    use meds_fast_ark,         only : ark2_column_step, adaptive_ark_march
    use meds_column_state_ops, only : state_init
    use meds_fast_rk45,        only : rk45_column_step
    use meds_fast_control,     only : default_error_control
-   use meds_fast_types,       only : error_control_t, ark_workspace_t
+   use meds_fast_types,       only : error_control_t, fast_workspace_t
    use meds_config,           only : CTRL_PI
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
    !----- The column's parameters for every make_column fixture (the frozen record holds only what  !
    !      freezes each step; the parameters travel separately, as in the model). --------------------!
    type(column_config_t) :: col_config
-   type(ark_workspace_t) :: ws           !< the ARK march's storage, reused by every test as in the model
+   type(fast_workspace_t) :: ws           !< the fast step's storage, reused by every test as in the model
 
    call test_leaf_closure()
    call test_leaf_analytic()
    call test_cas_be_consistency()
    call test_conservation_march()
    call test_soil_energy_tendency()
-   call test_soil_water_tendency()
    call test_column_assembler()
    call test_rk4_march()
    call test_be_euler()
-   call test_tissue_water_floor()
    call test_be_coupled()
    call test_arrowhead()
    call test_adaptive_march()
@@ -315,70 +312,6 @@ contains
       call check_true('soil-energy tendency = BE-limit of soil_energy_step_implicit (O(dt))', worst < 1.0e-2_wp, worst)
    end subroutine test_soil_energy_tendency
 
-   !----- 7. soil_water_time_deriv closes the column water balance (telescoping faces). ------------!
-   subroutine test_soil_water_tendency()
-      type(soil_params_t) :: soil
-      type(soil_opts_t)   :: hopts
-      real(wp)    :: theta(n_soil_layer_max), psi_e(n_soil_layer_max), root_uptake(n_soil_layer_max)
-      real(wp)    :: dtheta(n_soil_layer_max), drain, uptk, q_top, net, colsum
-      real(wp)    :: qface(n_soil_layer_max), face_sum
-      integer(ik) :: k, nsl
-      nsl = 10_ik
-      print '(a)', 'test_soil_water_tendency:'
-      call geometric_layer_bottoms(2.0_wp, 10_ik, 3.0_wp, test_bottoms)
-      call build_soil_hydr_params(10_ik, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,        &
-           2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soil)
-      hopts = soil_opts_t()
-      do k = 1_ik, 10_ik ; theta(k) = 0.26_wp + 0.015_wp * real(k-1_ik, wp) ; end do   ! moist gradient
-      psi_e = 0.0_wp ; root_uptake = 0.0_wp
-      root_uptake(1:5) = 1.0e-5_wp                     ! [kg/m2/s] root sink in the top half
-      q_top = 1.0e-6_wp                                ! [m/s] gentle infiltration
-      call soil_water_time_deriv(theta, soil, hopts, nsl, q_top, root_uptake, dtheta, drain,   &
-                                 uptk, qface)
-      colsum = 0.0_wp
-      do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
-      net = q_top - drain / rho_h2o - uptk / rho_h2o   ! d(storage)/dt = in - drainage - uptake
-      call check('soil-water column balance closes (telescoping)', colsum, net, 1.0e-12_wp)
-      call check_true('root sink active and column free-drains', uptk > 0.0_wp .and. drain > 0.0_wp, drain)
-      !----- The EXPORTED interior faces (#78 item 3) must be the SAME faces this dtheta_dt was built   !
-      !      from, since an explicit integrator advects soil enthalpy on them: a face flux measured on     !
-      !      one trajectory and a mass change on another is exactly the defect that issue is about.        !
-      !      Verify per layer rather than in aggregate -- a column SUM telescopes and would stay green     !
-      !      with the whole profile shifted by a constant, which is the vertical-only error mode that      !
-      !      whole-column ledgers cannot see. -----------------------------------------------------------!
-      !      Layer k's storage change is (face in - face out) minus its own root sink, and the sink is    !
-      !      not exported per layer -- so check the layers where it is zero (root_uptake is set on 1..5    !
-      !      in this fixture), which still covers both an interior pair and the bottom face. -------------!
-      face_sum = 0.0_wp
-      do k = 6_ik, nsl
-         net = qface(k-1_ik)
-         if (k <= nsl-1_ik) then
-            net = net - qface(k)
-         else
-            net = net - drain / rho_h2o                     ! bottom face = the reported drainage
-         end if
-         face_sum = max(face_sum, abs(dtheta(k) * soil%dz(k) - net))
-      end do
-      call check_true('exported interior faces reproduce dtheta_dt layer by layer',                     &
-                      face_sum < 1.0e-16_wp, face_sum)
-
-      !----- The root sink is the plant's request as given, on dry soil too: the plant hydraulics     !
-      !      already prices it at each layer's water potential and conductance, and the plant water ODE  !
-      !      debits exactly this number from the wood, so the soil must not cut it a second time. ------!
-      block
-         real(wp) :: theta_dry(n_soil_layer_max), uptk_asis, requested
-         theta_dry = 0.10_wp                                  ! psi ~ -39 m (about -0.4 MPa)
-         requested = sum(root_uptake(1:nsl))
-         call soil_water_time_deriv(theta_dry, soil, hopts, nsl, q_top, root_uptake, dtheta, drain, &
-                                    uptk_asis, qface)
-         call check('dry soil: the sink is the request as given (uptake == requested)',            &
-                    uptk_asis, requested, 1.0e-12_wp * requested)
-         colsum = 0.0_wp
-         do k = 1_ik, nsl ; colsum = colsum + dtheta(k) * soil%dz(k) ; end do
-         net = q_top - drain / rho_h2o - uptk_asis / rho_h2o
-         call check('dry soil: as-is sink still telescopes into the column balance', colsum, net, 1.0e-12_wp)
-      end block
-   end subroutine test_soil_water_tendency
 
    !----- 9. column_derivs assembles a finite, physically-signed whole-column RHS + its CAS part   !
    !         matches a standalone surface_derivs call (correct wiring). -------------------------!
@@ -391,14 +324,21 @@ contains
       type(energy_forcing_t)     :: eforc_chk
       type(soil_energy_column_t) :: se_chk
       real(wp)    :: dedt_chk(n_soil_layer_max), worst
-      real(wp)    :: uptake_chk(n_soil_layer_max), dtheta_chk(n_soil_layer_max)
-      real(wp)    :: qface_chk(n_soil_layer_max)
-      real(wp)    :: drain_chk, uptk_chk
       integer(ik) :: k, i, n, nsl
       logical     :: all_finite
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_column_assembler:'
       call make_column(y, frozen, n, nsl)
+      !----- The water network's flows, nonzero, so the wiring check below is live for every term: a  !
+      !      downward drift through every face, drainage, infiltration, the uptake's enthalpy leaving   !
+      !      each layer, and water pushed up into the pond from the top layer. -----------------------!
+      frozen%hydrology%w_flux_frozen(1:nsl) = 2.0e-8_wp ; frozen%hydrology%w_flux_frozen(nsl) = 0.0_wp
+      frozen%hydrology%drainage     = 2.0e-8_wp * rho_h2o
+      frozen%hydrology%infiltration = frozen%hydrology%q_top * rho_h2o
+      frozen%hydrology%exfil_enth   = 1.0e-7_wp * internal_energy_liquid(296.0_wp)
+      do k = 1_ik, nsl
+         frozen%roots%root_heat(k) = frozen%roots%uptake * frozen%roots%root_share(k) * internal_energy_liquid(295.0_wp)
+      end do
       call column_derivs(y, frozen, col_config, n, nsl, f)
 
       all_finite = ieee_ok(f%d_cas_enthalpy) .and. ieee_ok(f%d_cas_shv) .and. ieee_ok(f%d_cas_co2)
@@ -433,28 +373,24 @@ contains
       end block
 
       !----- wiring check: the assembled soil-heat tendency == a standalone soil_energy_time_deriv    !
-      !      built from the SAME surface coupling (g_top, qloss * root_share) PLUS the bottom-face   !
-      !      drainage enthalpy AND the interior advective faces. Both of those extra terms were once    !
-      !      omitted here and the check still passed, each time for the same reason -- column_derivs    !
-      !      advected them on a FROZEN quantity that happens to be 0 in this fixture (frozen%hydrology%drainage,     !
-      !      then frozen%hydrology%w_flux_frozen). C2 made the bottom face ride the state-dependent f%drainage_rate  !
-      !      and #78 item 3 made the interior faces ride this stage's own theta trajectory, so both are !
-      !      now nonzero and the reproduction has to carry them. A check that omits a term is only      !
-      !      green while that term is zero, and this one has now taught that lesson twice. ------------!
+      !      built from the SAME surface coupling (g_top) and the water network's flows: the per-layer  !
+      !      enthalpy leaving with uptake, the time-mean faces, the infiltration at the pond's          !
+      !      temperature and the drainage enthalpy at the bottom. Every term is nonzero in this         !
+      !      fixture: a check that omits a term is only green while that term is zero, and this one has !
+      !      taught that lesson twice. --------------------------------------------------------------!
       se_chk%soil_energy(1:nsl) = y%soil_energy(1:nsl)
       eforc_chk%g_top = surf_tend%g_top ; eforc_chk%geothermal = frozen%hydrology%geothermal
       do k = 1_ik, nsl
-         uptake_chk(k) = frozen%roots%uptake * frozen%roots%root_share(k)
-      end do
-      call soil_water_time_deriv(y%theta, col_config%soil, col_config%soil_water_opts, nsl, frozen%hydrology%q_top,        &
-                                 uptake_chk, dtheta_chk, drain_chk, uptk_chk, qface_chk)
-      do k = 1_ik, nsl
          eforc_chk%soil_water(k)     = y%theta(k)
-         eforc_chk%root_heat_sink(k) = sum(frozen%roots%qloss_frozen(1:n)) * frozen%roots%root_share(k)
-         eforc_chk%w_flux(k)         = -qface_chk(k)
+         eforc_chk%root_heat_sink(k) = frozen%roots%root_heat(k)
+         eforc_chk%w_flux(k)         = -frozen%hydrology%w_flux_frozen(k)
       end do
+      eforc_chk%root_heat_sink(1)   = eforc_chk%root_heat_sink(1) + frozen%hydrology%exfil_enth
       eforc_chk%root_heat_sink(nsl) = eforc_chk%root_heat_sink(nsl)                                  &
-                                    + f%drainage_rate * internal_energy_liquid(frozen%hydrology%t_bot)
+                                    + frozen%hydrology%drainage * internal_energy_liquid(frozen%hydrology%t_bot)
+      eforc_chk%w_flux_top  = -frozen%hydrology%infiltration / rho_h2o
+      eforc_chk%t_water_top = frozen%hydrology%t_infil
+      eforc_chk%w_flux_bot  = 0.0_wp
       call soil_energy_time_deriv(se_chk, eforc_chk, col_config%soil_thermal, col_config%soil, col_config%energy, dedt_chk)
       worst = maxval(abs(f%dedt(1:nsl) - dedt_chk(1:nsl)))
       call check_true('column_derivs wires the soil-heat tendency correctly', worst < 1.0e-9_wp, worst)
@@ -543,12 +479,10 @@ contains
 
       !----- (b) cross-validation: the BE step vs the explicit RK4 oracle at dt = 4 s over 4 min agree to !
       !          first order (both solve the same RHS; O(dt) split-vs-coupled difference). Soil water is   !
-      !          OPERATOR-SPLIT out of the ARK stepper (theta frozen across the stages -- the scratch      !
-      !          advance_soil_water_column is the sole authority at the column_fast_step level), so the oracle !
-      !          is run with freeze_theta=.true.: same reduced system -> theta is trivially equal and the  !
-      !          CAS/soil-energy core agrees tightly. Mass stays operator-split in BOTH (in-vector oracle   !
-      !          vs advance_water_mass_full) -> a small O(dt) difference (both are exact closed-form Euler  !
-      !          now, so this should be tighter than psi's old O(dt) split-vs-exact-exp gap). --------------!
+      !          not integrated in the BE stage (the water network sets it at column_fast_step level), so   !
+      !          the oracle is run with freeze_theta=.true.: same reduced system -> theta is trivially     !
+      !          equal and the CAS/soil-energy core agrees tightly. Plant water moves at constant rates in !
+      !          BOTH (in-vector oracle vs advance_plant_water) -> a small O(dt) difference. ---------------!
       call copy_state(y, yi, n) ; call copy_state(y, yr, n)
       do step = 1_ik, 60_ik                    ! 60 * 4 s = 4 min
          call be_euler_step(yi, frozen, n, nsl, 4.0_wp, ytmp)              ; call copy_state(ytmp, yi, n)
@@ -575,6 +509,11 @@ contains
       print '(a)', 'test_be_coupled:'
       !----- HARSH forcing: constant noon, modest venting (the case that over-humidifies at 900 s). -!
       call make_column(y, frozen, n, nsl)      ! no ventilation boost -> baseline over-humidifies
+      !----- The leaves transpire at the canopy air's humidity here, as the stages do whenever the    !
+      !      transpiration is not held at the water network's: that leaf-vapour feedback is what makes !
+      !      the uncoupled iteration collapse at 900 s. With it held (the model's ARK stages), only the !
+      !      sensible and film couplings remain and the baseline stays in band. ---------------------!
+      frozen%tissue%transp_held = .false.
 
       !----- STOP the baseline the moment it has demonstrably collapsed.  It is DELIBERATELY unstable,  !
       !      and once it has left the physical band there is nothing further to learn from it -- but      !
@@ -724,54 +663,6 @@ contains
       call copy_state(y, y_out, n)
    end subroutine march_ark2
 
-   !----- 11b. THE TISSUE-WATER FLOOR REPORTS THE WATER IT CREATES (#148). The floor stops the      !
-   !      linear mass Euler step going negative, and does so by CREATING water. The whole-column      !
-   !      ledger could not see it -- it sums leaf + wood over all cohorts, so water created in one     !
-   !      cohort's wood is indistinguishable from a redistribution -- which is why the case sat        !
-   !      documented as "unobserved" on no measurement at all. The ARK ledger now declares the        !
-   !      reported mass as created water (#333; test_column_ark's test_ark_tissue_floor_ledger).      !
-   subroutine test_tissue_water_floor()
-      type(column_state_t)  :: y, y_out
-      type(column_frozen_t) :: frozen
-      type(surface_tend_t)  :: sf
-      real(wp)    :: fmass, w_before, w_in, w_out, w_flux
-      integer(ik) :: fcount, n, nsl
-      n = 2_ik ; nsl = 10_ik
-      print '(a)', 'test_tissue_water_floor:'
-      call make_column(y, frozen, n, nsl)
-
-      !----- (a) An ordinary step must NOT fire the floor. A reporter that fires on healthy state  !
-      !          is worse than none. ------------------------------------------------------------!
-      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, sf, 8_ik)
-      call advance_water_mass_full(y, frozen, col_config, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
-                                   floor_mass=fmass, floor_n=fcount)
-      call check_true('ordinary step: the tissue-water floor does not fire', fcount == 0_ik, real(fcount, wp))
-      call check_true('ordinary step: no water created', fmass == 0.0_wp, fmass)
-
-      !----- (b) FORCE it: start the stores nearly empty and debit a full step's transpiration.     !
-      !          The floor must fire AND report the mass it invented, per m2 of ground.  ----------!
-      call make_column(y, frozen, n, nsl)
-      w_before = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
-      y%leaf_water_mass(1:n) = 1.0e-12_wp
-      y%wood_water_mass(1:n) = 1.0e-12_wp
-      call column_be_stage(y, frozen, col_config, n, nsl, 900.0_wp, y_out, sf, 8_ik)
-      call advance_water_mass_full(y, frozen, col_config, n, nsl, 900.0_wp, sf%transp_c(1:n), y_out,           &
-                                   floor_mass=fmass, floor_n=fcount)
-      call check_true('emptied stores: the floor fires', fcount > 0_ik, real(fcount, wp))
-      call check_true('emptied stores: the created water is reported, not silent', fmass > 0.0_wp, fmass)
-      call check_true('every floored store lands exactly on the floor',                            &
-                      all(y_out%leaf_water_mass(1:n) >= 0.0_wp), minval(y_out%leaf_water_mass(1:n)))
-      call check_true('the reported mass is the sanity scale of the store it replaced',            &
-                      fmass < max(w_before, 1.0_wp), fmass)
-      !----- (c) The reported mass is EXACTLY the water the floor made: the plant's water changed by   !
-      !          its fluxes plus fmass, and nothing else. This is what the ARK whole-column ledger now  !
-      !          relies on when it declares the mass as created water (#333). ----------------------!
-      w_in   = sum((y%leaf_water_mass(1:n) + y%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
-      w_out  = sum((y_out%leaf_water_mass(1:n) + y_out%wood_water_mass(1:n)) * frozen%plant%nplant(1:n))
-      w_flux = 900.0_wp * (sum(frozen%plant%uptake_frozen(1:n) * frozen%plant%nplant(1:n)) - sum(sf%transp_c(1:n)))
-      call check_close('floored stores: plant water change = fluxes + the reported floor mass',     &
-                       w_out - w_in, w_flux + fmass, 1.0e-10_wp * max(1.0_wp, abs(w_flux)))
-   end subroutine test_tissue_water_floor
 
    !----- ONE first-order backward-Euler column step: the gamma = 1 DEGRADED CONFIGURATION of the    !
    !      production ESDIRK2, built from the same two kernels ark2_column_step composes -- one         !
@@ -794,7 +685,7 @@ contains
       integer(ik), optional, intent(in)  :: niter    !< 1 = uncoupled BE baseline; >1 = coupled Newton
       type(surface_tend_t) :: surf_tend
       call column_be_stage(y, frozen, col_config, n, nsl, dt, y_out, surf_tend, niter)
-      call advance_water_mass_full(y, frozen, col_config, n, nsl, dt, surf_tend%transp_c(1:n), y_out)
+      call advance_plant_water(y, frozen, n, dt, surf_tend%transp_c(1:n), y_out)
    end subroutine be_euler_step
 
    !----- march the first-order BE step fixed-step (for the ARK2-vs-1st-order comparison). -----------!
@@ -913,7 +804,7 @@ contains
    subroutine test_rk45_order()
       type(column_state_t)  :: y, yref, y1, y2, y4, y8
       type(column_frozen_t) :: frozen
-      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref
+      real(wp)    :: e1, e2, e4, e8, p_lo, p_hi, p_fine, tref, noise
       integer(ik) :: n, nsl
       n = 2_ik ; nsl = 10_ik
       print '(a)', 'test_rk45_order:'
@@ -963,8 +854,13 @@ contains
       p_fine = log(e4/max(e8, tiny_num)) / log(2.0_wp)
       print '(a,4(es10.3,a),3(f5.2,a))', '   soil-top T errors: ', e1, ' / ', e2, ' / ', e4, ' / ',  &
             e8, ' ; observed order p = ', p_lo, ' , ', p_hi, ' , ', p_fine, ''
-      call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5, no split)', &
-                      p_hi >= 4.5_wp .and. p_fine >= 4.5_wp, p_fine)
+      !----- Soil water now moves at the water network's steady rate within a step, so the soil-top    !
+      !      temperature is smoother than when RK45 integrated Richards in its stages, and its error      !
+      !      reaches the 1024-step reference's own round-off (~1e3 eps T) by 75 s. The order is asserted  !
+      !      wherever the error is above that floor. -------------------------------------------------!
+      noise = 1.0e3_wp * epsilon(1.0_wp) * tref
+      call check_true('RK45 stays 5th order on the COUPLED soil-top temperature (p >= 4.5 above round-off)', &
+                      (p_hi >= 4.5_wp .or. e4 < noise) .and. (p_fine >= 4.5_wp .or. e8 < noise), p_fine)
    end subroutine test_rk45_order
 
    !----- WRMS of the embedded error estimate (mirrors adaptive_ark_march's accept test). ----------!
@@ -987,28 +883,13 @@ contains
    !----- shared full-column setup (2 cohorts, 10 soil layers, a representative daytime state). ----!
    !----- 15. The explicit RHS is DOMAIN-SAFE for any theta, in or out of [theta_res, theta_sat]      !
    !         (issue #78 item 2). ---------------------------------------------------------------------!
-   !                                                                                                 !
-   ! Item 2 as filed said RK45's stage states can sit above theta_sat, so soil_psi_from_theta and     !
-   ! soil_hydr_cond_from_theta "are then evaluated at effective saturation Se > 1 -- outside the van   !
-   ! Genuchten domain", and that the resulting K and psi influence the trajectory. The first half is   !
-   ! true and measurable (the k1 stage reads the previous SUB-step's unclamped commit -- clamp_theta    !
-   ! runs before stages 2-6 only, and C1 deliberately stopped clamping the committed state). The       !
-   ! SECOND half is not: every constitutive kernel on this path clamps its own argument.               !
-   !                                                                                                  !
-   !   soil_psi_from_theta        se = min(max(se, SE_MIN), 1); Se >= 1 returns psi = 0 outright       !
-   !   soil_hydr_cond_from_theta  se = min(max(se, SE_MIN), 1), then max(kcond, K_MIN)                 !
-   !   soil_moist_cap_from_psi    psi >= 0 returns C_MIN; max(cap, C_MIN)                              !
-   !   soil_thermal_cond          s_r = min(max(theta/theta_sat, SR_FLOOR), 1); Kersten clamped [0,1]  !
-   !   internal_energy_to_temp               algebraic in water mass -- no domain to leave                        !
-   !                                                                                                  !
-   ! face_and_sink adds nothing unguarded: kface is a log-linear blend of those K, gface is constant,  !
-   ! the root sink does not depend on the state, and cc is unused by the                              !
-   ! explicit RHS. So dtheta_dt depends on theta ONLY through those two clamped curves, which makes    !
-   ! this a BIT-IDENTITY rather than a tolerance: the water tendency at theta_sat + eps must equal     !
-   ! the water tendency at theta_sat exactly. That is the assertion below, at eps = 0.05 -- about six   !
-   ! times the worst excursion measured anywhere in the suite (7.9e-3 in theta, Se = 1.022, on the      !
-   ! 29 mm/h saturated fixture; a month-long forced Ithaca cell never leaves the domain at all, and     !
-   ! budget%theta_ood_max now reports it per sub-step so it cannot drift unnoticed).                      !
+   ! Item 2 as filed said RK45's stage states can sit above theta_sat, and that soil psi and K       !
+   ! evaluated there would steer the trajectory. Theta is never clamped, so the first half can still  !
+   ! happen (budget%theta_ood_max reports it per sub-step). The second cannot: a stage's water        !
+   ! tendency is the soil-plant water network's steady rate over the step, which does not depend on   !
+   ! the stage's theta at all. So the water tendency at theta_sat + eps must equal the one at         !
+   ! theta_sat EXACTLY -- the bit-identity asserted below, at eps = 0.05, about six times the worst    !
+   ! excursion measured anywhere in the suite.                                                        !
    !                                                                                                  !
    ! The soil-ENERGY tendency is checked separately (part c) and for a different reason: it is a pure   !
    ! flux divergence over prognostic internal energy, so theta reaches it only through the temperature  !
@@ -1053,9 +934,7 @@ contains
       end do
       call check_true('RHS stays finite for theta far outside [theta_res, theta_sat]', finite_all, 0.0_wp)
 
-      !----- (b) BIT-IDENTICAL water tendency: the Se clamping inside the curves is COMPLETE, so an   !
-      !      oversaturated cell behaves as exactly saturated (psi = 0, K = K_sat) -- which is the     !
-      !      physically right answer for one, not merely a safe one. -------------------------------!
+      !----- (b) BIT-IDENTICAL water tendency: the network's rate does not read the stage theta. ---!
       dwater = 0.0_wp
       do k = 1_ik, nsl
          dwater = max(dwater, abs(f_hi%dtheta_dt(k) - f_sat%dtheta_dt(k)))
@@ -1129,23 +1008,32 @@ contains
       hp%wood_kexp = 2.0_wp ; hp%wood_kmax = 8.0_wp ; hp%vessel_curl = 1.5_wp
       frozen%hydrology%geothermal = 0.0_wp ; frozen%hydrology%q_top = 1.0e-6_wp
       col_config%energy = energy_opts_t()
-      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n), frozen%plant%bleaf(n), frozen%plant%bsap(n), &
-               frozen%plant%broot(n),                                                                            &
-               frozen%plant%sap_area(n))
+      allocate(frozen%roots%root_share(nsl), frozen%plant%nplant(n))
       allocate(frozen%plant%sapflow_frozen(n), frozen%plant%uptake_frozen(n), frozen%roots%qloss_frozen(n))
       allocate(frozen%film%intercept_leaf(n), frozen%film%intercept_wood(n))
       frozen%roots%root_share(1:nsl) = exp_root_profile(col_config%soil, nsl)   ! Phase 1: per-layer sink placement
-      frozen%plant%nplant = 0.3_wp ; frozen%plant%bleaf = 0.5_wp ; frozen%plant%bsap = 5.0_wp ; frozen%plant%broot = 2.0_wp
-      frozen%plant%sap_area = 0.01_wp
+      frozen%plant%nplant = 0.3_wp
       !----- FROZEN sapflow/uptake (MEDS_ED2_RK45_DESIGN.md sec 1/4/5, P2): a representative,            !
-      !      state-independent pair for these RHS/oracle-march tests -- not re-derived from a            !
-      !      solve_plant_water_batch pre-pass here (these tests exercise column_derivs/the tableau         !
-      !      machinery directly, not build_column_frozen's own pre-pass, which has its own coverage        !
-      !      via test_column_ark.f90/test_picard_coupling.f90). -----------------------------------------!
+      !      state-independent pair for these RHS/oracle-march tests -- not taken from the water        !
+      !      network here (these tests exercise column_derivs/the tableau machinery directly, not       !
+      !      build_column_frozen, which has its own coverage via test_column_ark.f90). -----------------!
       frozen%plant%sapflow_frozen = 1.0e-4_wp
       frozen%plant%uptake_frozen = 1.0e-4_wp
+      !----- The stages hold each cohort's transpiration at the water network's, as in the model      !
+      !      (build_column_frozen): here the sapflow, so the leaves neither fill nor empty over the     !
+      !      hours these marches run on one frozen record. -----------------------------------------!
+      allocate(frozen%tissue%transp_net(n))
+      frozen%tissue%transp_net(1:n) = frozen%plant%sapflow_frozen(1:n) * frozen%plant%nplant(1:n)
+      frozen%tissue%transp_held = .true.
       frozen%roots%uptake = frozen%plant%uptake_frozen(1)*sum(frozen%plant%nplant(1:n))
       frozen%roots%qloss_frozen = 0.0_wp   ! P2 advective enthalpy: no-op unless populated (see build_column_frozen)
+      !----- The water network's step, as build_column_frozen hands it on. Held still here -- no face  !
+      !      flow, drainage, uptake heat or theta change -- because these marches run for hours on one   !
+      !      frozen record, which the model never does: the network sets the rates afresh every step.   !
+      !      test_column_assembler sets them nonzero for its wiring check. ---------------------------!
+      allocate(frozen%roots%root_heat(nsl))
+      frozen%roots%root_heat(1:nsl) = 0.0_wp
+      frozen%hydrology%t_infil = 296.0_wp ; frozen%hydrology%t_bot = 292.0_wp
       frozen%film%intercept_leaf = 0.0_wp ; frozen%film%intercept_wood = 0.0_wp   ! P2c canopy water: no-op unless populated
       allocate(frozen%tissue%h_coeff_leaf(n), frozen%tissue%g_transp_leaf(n), frozen%tissue%abs_sw(n), frozen%tissue%abs_lw(n), &
                frozen%tissue%lai(n))
@@ -1190,8 +1078,8 @@ contains
       !----- seed mass at the SAME representative (leaf psi=-1.0, wood psi=-0.5 MPa) point the old   !
       !      psi-based fixture used, via the forward water_content map (hp above). -------------------!
       do i = 1_ik, n
-         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_curve, frozen%plant%bleaf(i))
-         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_curve, frozen%plant%bsap(i) + frozen%plant%broot(i))
+         y%leaf_water_mass(i) = water_content(-1.0_wp, hp%leaf_curve, 0.5_wp)          ! 0.5 kgC of leaf
+         y%wood_water_mass(i) = water_content(-0.5_wp, hp%wood_curve, 7.0_wp)          ! 5 sapwood + 2 fine root
       end do
    end subroutine make_column
 

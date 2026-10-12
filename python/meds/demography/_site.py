@@ -69,12 +69,20 @@ class Site:
         growth, mortality: per-cohort arrays (length n_cohort). recruitment: a
         (n_pft, n_patch) array. All are passed to the engine's law-free apply-
         primitives; the SoA is reordered by fuse/fission, bumping ``generation``.
+        Mortality and recruitment are rates of loss and gain, so they must be finite and
+        non-negative: the engine keeps density in bounds by construction and does not
+        re-check what a caller hands it.
         """
         n = self.n_cohort
         g = np.ascontiguousarray(growth, dtype=np.float64)
         m = np.ascontiguousarray(mortality, dtype=np.float64)
         # flat column-major (PFT fastest), matching the Fortran (npft, npatch) layout
         r = np.ascontiguousarray(np.asarray(recruitment, dtype=np.float64).reshape(-1, order="F"))
+        if not np.all(np.isfinite(g[:n])):
+            raise ValueError("apply_rates: growth must be finite")
+        for name, x in (("mortality", m[:n]), ("recruitment", r)):
+            if not np.all(np.isfinite(x) & (x >= 0.0)):
+                raise ValueError(f"apply_rates: {name} must be finite and non-negative")
         gp = g.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
         mp = m.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
         rp = r.ctypes.data_as(ctypes.POINTER(ctypes.c_double))

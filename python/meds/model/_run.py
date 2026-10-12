@@ -42,7 +42,7 @@ _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
 _PATCH_REAL = {"area": 0, "age": 1}
 
 #----- driver_step status codes (meds_driver's DRIVER_* parameters). --------------------------#
-OK, FINISHED, ERR_NAN, ERR_AREA, ERR_SOILC = 0, 1, 2, 3, 4
+OK, FINISHED, ERR_NAN, ERR_AREA, ERR_BOUNDS = 0, 1, 2, 3, 4
 
 
 class StepInfo:
@@ -91,13 +91,14 @@ class Run:
             #      the only reason a bad state is an exception here instead of a dead
             #      interpreter. See the meds_driver module header.
             raise RuntimeError(f"MEDS: NaN in the state or the energy/water ledger at {self.date}")
-        if status == ERR_SOILC:
-            #----- A CENTURY pool went negative or past the divergence ceiling. The Fortran
-            #      side has already printed which pool and patch; the slow ledger's report
-            #      names the PHASE that did it.
+        if status == ERR_BOUNDS:
+            #----- A cohort's density, carbon or water went negative or infinite, or a CENTURY
+            #      pool went negative or past the divergence ceiling. The Fortran side has
+            #      already printed which field and cohort (or pool and patch); for soil carbon
+            #      the slow ledger's report names the PHASE that did it.
             raise RuntimeError(
-                f"MEDS: physically impossible soil-carbon pool at {self.date} "
-                "(see the printed pool/patch and the slow-ledger IMPOSSIBLE STORE line)")
+                f"MEDS: a cohort or soil-carbon state out of its physical bounds at {self.date} "
+                "(see the printed field and cohort, or pool and patch)")
         if status == FINISHED:
             return None
         if status < 0:
@@ -274,8 +275,8 @@ COMPLETED = " OK: simulation completed, area conserved, no NaNs."
 def run(config, verbose=True):
     """Run a config from its start to its ``end_time``, as the ``meds_main`` executable does: the
     same steps, the same output files and the same closing line on stdout. Returns the number of
-    slow steps. A NaN in the state, an impossible soil-carbon pool or a site whose area is not
-    conserved raises RuntimeError, where the executable would stop."""
+    slow steps. A NaN in the state, a cohort or soil-carbon state out of bounds, or a site whose
+    area is not conserved raises RuntimeError, where the executable would stop."""
     with Run(config, verbose=verbose) as r:
         n = r.run_to_end()
         r.finalize()

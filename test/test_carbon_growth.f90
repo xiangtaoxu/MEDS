@@ -3,9 +3,10 @@
 !----- step that grows wood_carbon -> dbh. (Leaf loss: leaf_turnover_step, test_plant_phenology.) --!
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
-   use meds_allometry, only : dbh_to_wai, sapwood_fraction
+   use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t
-   use meds_site_state_types, only : site_t, carbon_flux_block
+   use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc
+   use meds_demography_update, only : update_cohort_states
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
@@ -165,6 +166,33 @@ program test_carbon_growth
       call shed_turnover_water(site, cfg, npp)
       call check_close(site%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
                        'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
+   end block
+
+   !=== The applier advances only the carbon and derives the geometry from it (#389): a cohort   !
+   !    that sheds every leaf ends with leaf area exactly 0, never a round-off negative, and its     !
+   !    dbh and AGB are the allometry of its committed wood carbon.  ===============================!
+   block
+      real(wp) :: dt, dbh_c, h_c, ba_c, agb_c, la_c
+      dt = 1.0_wp / 365.0_wp
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      !----- Shed a hair more leaf carbon than there is, as a rounded loss rate can. ------------!
+      site%deriv%d_leaf_carbon_dt(1)          = -site%cohort%leaf_carbon(1) / dt * (1.0_wp + 1.0e-15_wp)
+      site%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+      site%deriv%d_wood_carbon_dt(1)          = 0.01_wp
+      site%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
+      site%deriv%dln_nplant_dt(1)             = 0.0_wp
+      call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+      call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
+      call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area (#389)')
+      call carbon_to_structure(site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
+                               site%cohort%p_wood_density(1), site%cohort%p_hgt_max(1),             &
+                               site%cohort%p_aboveground_frac(1), site%cohort%sla(1),               &
+                               dbh_c, h_c, ba_c, agb_c, la_c)
+      call check(site%cohort%dbh(1) == dbh_c .and. site%cohort%height(1) == h_c                     &
+                 .and. site%cohort%agb(1) == agb_c, 'applier: geometry is the allometry of the carbon')
    end block
 
    write(*,'(a)') '   PASS'

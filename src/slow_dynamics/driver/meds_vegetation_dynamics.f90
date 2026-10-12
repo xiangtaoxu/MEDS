@@ -20,7 +20,8 @@ module meds_vegetation_dynamics
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
-   use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET
+   use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
+                                         set_cohort_size_from_carbon
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
                                      TISSUE_HCAP_MIN
@@ -418,9 +419,10 @@ contains
    !---------------------------------------------------------------------------------------!
    ! CARBON-mode TENDENCY computer (the carbon analogue of the former apply_growth, split so    !
    ! the ENGINE only applies). Per cohort it adds this step's NPP to the four pools (tentatively, !
-   ! in locals -- state is NOT committed here), runs the allometric FLIP wood_carbon->dbh via     !
-   ! carbon_to_structure to get the new geometry, and backs out every field's time-derivative     !
-   ! d_X_dt = (X_new - X_old)/dt for the core applier. It ALSO advances the moving-average ring    !
+   ! in locals -- state is NOT committed here), backs out each pool's time-derivative              !
+   ! d_X_dt = (X_new - X_old)/dt for the core applier, and runs the allometric FLIP wood_carbon->   !
+   ! dbh (carbon_to_structure) only for the reported rates: the applier derives the committed       !
+   ! geometry from the committed carbon itself. It ALSO advances the moving-average ring            !
    ! buffer with the realized dbh-increment RATE (persistent state, identical eviction logic to    !
    ! the former apply_growth) so Camac mortality sees carbon growth, and records the log-space     !
    ! mortality rate dln_nplant_dt = -mortality. Host-only (the flip calls the branchy wood_to_dbh).!
@@ -443,15 +445,15 @@ contains
             wc_new = max(cohort%wood_carbon(i)          + npp%wood(i),          0.0_wp)
             nc_new = max(cohort%nonstructural_carbon(i) + npp%nonstructural(i), 0.0_wp)
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
-            !      from leaf_carbon) into locals -- state is committed by update_cohort_states. --!
+            !      from leaf_carbon) into locals, for the growth rate the ring buffer and the     !
+            !      diagnostics report; update_cohort_states commits the same flip. ---------------!
             call carbon_to_structure(wc_new, lc_new, cohort%p_wood_density(i), cohort%p_hgt_max(i), &
                                      cohort%p_aboveground_frac(i), cohort%sla(i),                 &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
-            !----- Back out the tendencies + advance the ring buffer with the REALIZED dbh rate  !
-            !      (the shared core builder; same fill/evict logic the empirical path uses). ----!
+            !----- Back out the pools' tendencies + advance the ring buffer with the REALIZED dbh !
+            !      rate (the shared core builder; same fill/evict logic the empirical path uses). -!
             dbh_rate = (dbh_new - cohort%dbh(i)) / dt_yr
             call fill_cohort_deriv(cohort, i, site%deriv, dt_yr, mortality(i), dbh_rate,            &
-                                   dbh_new, height_new, ba_new, agb_new, la_new,                    &
                                    lc_new, fc_new, wc_new, nc_new, n_window, hist_pos)
             !----- Mirror the two REPORTED tendencies into the lockstep-riding slow diagnostic       !
             !      block. site%deriv itself is transient and deliberately NOT reordered, so reading   !
@@ -1146,8 +1148,8 @@ contains
                excess = cohort%leaf_carbon(j) - leaf_target
                cohort%leaf_carbon(j)          = leaf_target
                cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + excess
-               cohort%leaf_area(j)            = cohort%leaf_carbon(j) * cohort%sla(j)
             end if
+            call set_cohort_size_from_carbon(cohort, j)   ! leaf_area = sla*leaf_carbon, either way
          end do
       end associate
    end subroutine advance_plant_traits
@@ -1158,10 +1160,10 @@ contains
    ! gave, so without this a restart with a changed vcmax25 would run on the old one. With      !
    ! plasticity on, each cohort takes the census start's instant acclimation to the LAI above   !
    ! it as the file holds it; with plasticity off, the PFT's top-of-canopy values, as a census   !
-   ! start gives. The stand's STRUCTURE is kept: leaf area stays as read, and leaf carbon scales   !
-   ! by the SLA's change (old / new), storage taking or giving the difference (never below       !
-   ! zero), so a trial that changes a trait changes the leaf physiology and not the LAI -- and    !
-   ! a restart whose PFT file gives the traits it already has changes nothing.                   !
+   ! start gives. The stand's STRUCTURE is kept: leaf carbon scales by the SLA's change (old /   !
+   ! new), storage taking or giving the difference (never below zero), so leaf area stays as     !
+   ! read to round-off and a trial that changes a trait changes the leaf physiology and not the  !
+   ! LAI -- and a restart whose PFT file gives the traits it already has changes nothing.        !
    !---------------------------------------------------------------------------------------!
    subroutine reacclimate_plant_traits(site, cfg)
       type(site_t),        intent(inout) :: site
@@ -1190,6 +1192,7 @@ contains
             cohort%nonstructural_carbon(j) = max(0.0_wp, cohort%nonstructural_carbon(j)              &
                                                          + cohort%leaf_carbon(j) - leaf_carbon_new)
             cohort%leaf_carbon(j) = leaf_carbon_new
+            call set_cohort_size_from_carbon(cohort, j)
          end do
       end associate
    end subroutine reacclimate_plant_traits

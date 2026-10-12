@@ -85,9 +85,6 @@ module meds_config
    !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
-   !----- Above this dt_fast, an rk45 run is warned that it lacks the ARK-only transpiration       !
-   !      corrector (#160). Not a hard limit -- rk45 at a fine step is the intended use.            !
-   real(wp),    parameter :: RK45_UNCORRECTED_DT_WARN = 300.0_wp   !< [s]
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -126,9 +123,9 @@ module meds_config
    !       damping depth, so the fix for that was unreachable from a config file.                     !
    !                                                                                          !
    !       Every key is OPTIONAL and defaults to the literal it replaced, so a config without the     !
-   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which is    !
-   !       the Richards SOLVER's options (tolerances, bottom BC, substepping): this block is the       !
-   !       PHYSICAL column those options are solved over.                                              !
+   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which holds  !
+   !       the soil water's options (bottom BC, the water network's tolerances, the pond): this block   !
+   !       is the PHYSICAL column they apply to.                                                         !
    type :: soil_column_config_t
       !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
       !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
@@ -403,7 +400,7 @@ module meds_config
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
       !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%soil_water_opts)
+      type(soil_opts_t)   :: soil        !< [soil]         soil water and water-network opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
@@ -763,7 +760,8 @@ contains
          !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
          !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
          !      and expensive in carbon. The transpiration corrector (#91) removed most of that psi    !
-         !      error; the table predates it (numerical_scheme.md 5a). ------------------------------!
+         !      error; the soil-plant water network now solves leaf water implicitly with the soil's   !
+         !      on both schemes. The table predates both (numerical_scheme.md 5a). -------------------!
          if (cfg%dt_fast > 900.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
             print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
@@ -788,25 +786,6 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
-         !----- RK45 AT PRODUCTION CADENCE CARRIES AN ERROR THE DEFAULT PATH DOES NOT, and nothing  !
-         !      used to say so (#160). The transpiration corrector that fixed a ~1 MPa psi_leaf      !
-         !      error -- a 314x improvement, PR #91 -- lives in advance_water_mass_full, which the   !
-         !      ARK path calls and the RK45 path does not. A run that selects rk45 at a coarse       !
-         !      dt_fast therefore gets a psi_leaf the default scheme would not produce, silently.    !
-         !      WARN rather than stop: rk45 is the deliberate accuracy baseline and is exactly what  !
-         !      you want at a fine dt_fast, where the uncorrected error is small. The threshold is   !
-         !      the cadence at which psi_leaf WITHOUT the corrector is known not to converge          !
-         !      (docs/science/numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s  !
-         !      against -1.19 MPa at 900 s, measured before #91).                                                                 !
-         if (cfg%time_integrator == INTEG_RK45 .and. cfg%dt_fast > RK45_UNCORRECTED_DT_WARN) then
-            write(*,'(a)')    ' meds_config: WARNING -- time_integrator = "rk45" at dt_fast > 300 s.'
-            write(*,'(a,f8.1,a)') '   dt_fast = ', cfg%dt_fast, ' s.'
-            write(*,'(a)')    '   The transpiration corrector (PR #91) is ARK-only, so this run carries a'
-            write(*,'(a)')    '   psi_leaf error the default scheme does not -- up to ~1 MPa at 900 s. RK45'
-            write(*,'(a)')    '   is the ACCURACY BASELINE and is meant for a fine dt_fast; anything keyed'
-            write(*,'(a)')    '   to psi_leaf (hydraulic stress, phenology cues) inherits the error here.'
-            write(*,'(a)')    '   Use time_integrator = "ark" for production, or reduce dt_fast.'
-         end if
          !----- §7 C3: the sub-daily probe is the ONE fast-loop writer that is not thread-safe --      !
          !      it holds a `save`d unit and appends to a shared file, so under threads its rows would   !
          !      interleave in thread-arrival order and stop being a reproducible diagnostic. Serializing !

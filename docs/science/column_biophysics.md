@@ -9,6 +9,8 @@ together the per-store kernels — each documented on its own page — and descr
   three prognostic twins (enthalpy, humidity, CO₂).
 - [soil_biophysics](soil_biophysics.md) — the coupled soil water (Richards) and soil thermal
   (internal-energy heat) columns, canopy interception, ground evaporation, heterotrophic respiration.
+- [soil_plant_water](soil_plant_water.md) — the pond, soil layers and every cohort's wood and leaves,
+  solved as one water network each fast step.
 - [vegetation_energy_dynamics](vegetation_energy_dynamics.md) — the leaf/wood tissue energy balance
   (diagnostic and prognostic modes).
 - [snow_biophysics](snow_biophysics.md) — the opt-in snow / temporary-surface-water store.
@@ -53,8 +55,8 @@ integrators (`cfg%time_integrator`). A third, the operator-split + Picard steppe
 `integration_scheme` selector went with it.
 
 Whichever runs, the driver first executes a **pre-pass** (leaf gas exchange → GPP/$g_s$/$R_d$;
-stem+root respiration; CAS capacities; aerodynamics; canopy RT; the plant-hydraulics matrix-exponential
-solve, whose time-averaged sapflow and root uptake are handed on as constants). Those quantities are
+stem+root respiration; CAS capacities; aerodynamics; canopy RT; the soil-plant water network, whose
+time-mean flows are handed on as constants and whose θ is committed). Those quantities are
 **frozen for the whole `dt_fast`** — the Category-0 semi-discretisation MEDS inherits from ED2.
 
 **One coefficient is deliberately excluded from the freeze.** The CAS↔atmosphere conductances are
@@ -75,11 +77,10 @@ output you care about. See numerical_scheme §5a.
 `column_fast_step_ark` (`meds_fast_ark`) drives the coupled column with a two-stage L-stable implicit
 stepper (γ = 1 − 1/√2), which needs a side-effect-free $`f(y)=dy/dt`$ for the whole column — supplied by
 `meds_fast_time_derivs` (`column_derivs`). Each reservoir's tendency is the explicit RHS whose BE
-advance reproduces its kernel as $`\Delta t\to0`$ (soil heat/water) or exactly (the CAS
-implicit-in-atm twins; the plant-hydraulics $2\times2$ matrix-exponential). Within every stage the
-leaf↔CAS block is solved implicitly by a direct 2×2 Newton (`newton_surface_solve`). Soil water, plant
-water mass and canopy surface water are operator-split out of the tableau and advanced once over the
-full step. An ARK **conservation ledger** accumulates the $b$-weighted boundary-flux amounts.
+advance reproduces its kernel as $`\Delta t\to0`$ (soil heat) or exactly (the CAS implicit-in-atm
+twins). Within every stage the leaf↔CAS block is solved implicitly by a direct 2×2 Newton
+(`newton_surface_solve`). Soil water and plant water move at the water network's rates, and canopy
+surface water is operator-split out of the tableau; each is advanced once over the full step. An ARK **conservation ledger** accumulates the $b$-weighted boundary-flux amounts.
 
 Despite the historical name this is **not IMEX**: the biotic CO₂ source is folded implicit, so the
 explicit tableau is empty (`f_E == 0`).
@@ -124,7 +125,7 @@ carved (temp/fliq are re-diagnosed, never blended).
 | Concept | Routine |
 |---|---|
 | CAS enthalpy + vapour + CO₂ twins | `meds_cas_biophysics`: `cas_column_step_implicit`, `cas_column_time_deriv` |
-| soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
+| soil and plant water (one network) | `meds_spac_solver`: `spac_advance`; called by `meds_fast_frozen`: `run_spac_solver` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | leaf/wood energy | `meds_plant_biophysics`: `veg_energy_balance` — one kernel for leaf and wood, diagnostic (`store_hcap_per_dt = 0`) or prognostic (`> 0`) |

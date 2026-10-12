@@ -44,8 +44,9 @@ census and is calibrated against the tower's fluxes:
 | Aerodynamics | CLM5 Monin-Obukhov, ED2 Nusselt leaf and wood boundary layers | [canopy_aerodynamics](docs/science/canopy_aerodynamics.md) |
 | Canopy air space | three prognostic twins: enthalpy, humidity, CO₂ | [canopy_air_space](docs/science/canopy_air_space_biophysics.md) |
 | Photosynthesis | FvCB C3 and Collatz C4, three stomatal models, two-limb water stress | [leaf_gas_exchange](docs/science/leaf_gas_exchange.md) |
-| Plant hydraulics | matrix-exponential network solve, multi-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
-| Soil water | implicit Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
+| Plant hydraulics | pressure-volume tissues, Kirchhoff xylem, per-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
+| Soil water | mixed-form Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
+| Soil and plant water solve | one implicit network per patch: pond, soil layers, each cohort's wood and leaves | [soil_plant_water](docs/science/soil_plant_water.md) |
 | Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
 | Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
 | Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |

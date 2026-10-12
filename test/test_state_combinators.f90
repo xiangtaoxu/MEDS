@@ -156,7 +156,7 @@ program test_state_combinators
    !       the only one with no test.                                                              !
    !                                                                                          !
    !       It writes 9 of the 11 fields. The pond is EXCLUDED ON PURPOSE -- it is passed through   !
-   !       the stages and committed from the scratch hydrology solve (see column_state_t's own     !
+   !       the stages and committed from the water network (see column_state_t's own               !
    !       comment) -- so the exclusion is asserted here too, and the routine now says so in a     !
    !       comment. Exclusion and omission must never again be the same observable.  --------------!
    block

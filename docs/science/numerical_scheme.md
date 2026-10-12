@@ -54,9 +54,11 @@ MEDS sorts the column into three categories.
 - canopy radiative transfer (absorbed shortwave and net longwave per cohort)
 - stem and fine-root maintenance respiration
 - aerodynamic conductances
-- plant hydraulics — solved *exactly* (a matrix exponential over the step) and its **time-averaged**
-  sapflow and root uptake handed to the rest of the column as constants
-- infiltration, and (for the ARK) the whole soil-water solve
+- soil and plant water — the pond, the soil layers and every cohort's wood and leaves, solved
+  together as one network by implicit Euler with its own sub-steps
+  ([soil_plant_water](soil_plant_water.md)); its **time-mean** flows (face fluxes, infiltration,
+  drainage, ground evaporation, root uptake, sapflow, transpiration) handed to the rest of the column
+  as constants, on both schemes
 
 This is ED2-faithful. ED2 calls `canopy_photosynthesis` once before its RK integrator and the RK
 stages only *read* the frozen conductances; `plant_hydro.f90` freezes hydraulic fluxes per `DTLSM`
@@ -305,6 +307,16 @@ established Ithaca stand over July (`dt_fast` 12.5, 75 and 900 s):
 What is left is that transient and `psi_wood`, which carries 0.17 MPa at 900 s on the 3-hour midday
 probe through the frozen uptake seam.
 
+**The soil-plant water network (2026-10) replaced the corrector.** Leaf and wood water are now solved
+implicitly with the soil's, and the energy stages hold each cohort's transpiration at the network's
+for the step instead of refreshing it per stage, so within a step it no longer follows the canopy
+air's humidity. Measured on BCI's dry season (example 04, 2013-01-15 to 04-15, `dt_fast` 900 against
+150 s): the window-mean latent heat differs by −0.2 W m⁻² (+0.3 for the per-stage refresh it
+replaces) and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (2.9 before); at 150 s the two
+agree to 0.1 W m⁻² in the mean and 0.6 in any hour. The ψ error the capacity limb amplified is gone
+with the explicit plant-water step: the 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between
+75 and 900 s (`test_column_ark`, N2b).
+
 ### 5a′. The stability multiplier, and how to measure it
 
 The quantity that decides stability is the one-step amplification factor of the canopy air,
@@ -470,11 +482,9 @@ than a convergence proof.
    the first day; the first day after a restart still differs (−1.83 against −0.28 MPa). `psi_wood`
    keeps 0.17 MPa at 900 s on the midday probe, through the frozen uptake seam.
 
-   **`rk45` carries more of this error than `ark` does, and now says so.** The transpiration
-   corrector that cut a ~1 MPa `psi_leaf` error by 314× lives in `advance_water_mass_full`, which
-   the ARK path calls and the RK45 path does not. `validate_config` warns when `rk45` is selected
-   above `dt_fast` = 300 s. It is a warning rather than an error because `rk45` is the accuracy
-   baseline and is meant for a fine step, where the uncorrected error is small.
+   Both schemes now take plant water from the soil-plant water network, which solves leaf water
+   implicitly (§5a), so the corrector, the explicit plant-water step it corrected, and the warning
+   `rk45` used to give above `dt_fast` = 300 s are gone.
 
 2. **The stability threshold has only been mapped on one forcing.** §5a′ sweeps stand height, but on
    a single synthetic diurnal cycle at one wind speed. The feedback that drove the oscillation is a
@@ -501,18 +511,13 @@ than a convergence proof.
    in that configuration by tightening the tolerance and confirming it halts. (It went unnoticed
    originally because `[energy].debug_error` had no TOML reader, so the hard-stop was never armed in a
    configured run.)
-5. **RK45's post-commit saturation clip** is a symptom repair. The physically correct treatment is
-   the deferred Neumann→Dirichlet ponded-surface switch: once the surface saturates the top boundary
-   should become a prescribed head rather than a prescribed flux, so the solve never oversaturates
-   and nothing needs clipping. Assumptions on the record in issue #78. The *worst* consequence of the
-   clip is now gone (issue #78 item 3, below), but the clip itself remains the mechanism, because an
-   explicit method has no post-solve hook the way the implicit sibling does. A related worry — that the
-   soil retention curves get *evaluated outside their domain* while a stage sits above saturation —
-   turned out not to be real: every constitutive kernel clamps its own effective saturation, so an
-   oversaturated cell is treated as exactly saturated (ψ = 0, K = K_sat), which is the physically right
-   answer for one. The excursion itself is real but small (worst measured 0.008 in θ, i.e. Se = 1.022,
-   on a 29 mm h⁻¹ fixture; identically zero in every forced Ithaca cell) and is now reported per
-   sub-step as `theta_ood_max` so it cannot grow unnoticed.
+5. **Saturation is the water network's, and nothing is clipped** (resolved). RK45 used to clip its
+   committed θ to saturation after each step, a symptom repair (issue #78). The network now treats the
+   pond as a store with a head and each layer above saturation as storing water through a specific
+   storage of 10⁻⁴ m⁻¹, so a saturated column raises its potential and drives the excess to the pond
+   and the next layer within the step, on both schemes. θ exceeds θ_sat only by that storage: on the
+   29 mm h⁻¹ fixture the worst excursion `theta_ood_max` reports is 5.5×10⁻⁶ (it was 0.008, Se =
+   1.022, under the clip).
 6. **Borrowing one solve's numbers while committing another's trajectory** is the single most
    productive defect class this review found, and worth stating as a rule rather than as three
    separate bugs. Each fast-loop scheme freezes an "Act-1" scratch hydrology solve and then advances
@@ -526,13 +531,15 @@ than a convergence proof.
    285 K to 345 K, and only removing both together gave a physical 295 K. The general lesson is that a
    **whole-column** conservation ledger cannot detect this class at all, because the error is purely
    *vertical* — enthalpy placed in the wrong layer still sums correctly against the boundary. Only a
-   per-layer face check, or a temperature that stops being plausible, exposes it.
+   per-layer face check, or a temperature that stops being plausible, exposes it. Both schemes now
+   take every soil water flow from one network solve, whose θ they commit, so for water this class
+   cannot recur.
 7. **The ponding store now holds heat** (issue #78 item 4, resolved). It used to be a mass buffer with
    no thermal state, so water crossing into it shed its enthalpy and that energy left the column ledger
    while the water sat on the surface still holding it. The store now carries a prognostic enthalpy and
    every seam moves mass and enthalpy as a pair: rain in at its own temperature, infiltration out at the
-   *mixed* pond temperature, the saturation clip in at each layer's temperature, and runoff out at the
-   final pond temperature. Snowmelt was rerouted here too, which deleted a correction the ARK and RK45
+   *mixed* pond temperature, exfiltration from the top layer in at that layer's temperature, and runoff
+   out at the pond's temperature. Snowmelt was rerouted here too, which deleted a correction the ARK and RK45
    paths both used to need — a net simplification, not just an addition.
 8. **Condensate is deposited into soil layer 1**, not onto foliage, because the canopy film store is
    optional and carries its enthalpy at a fixed reference temperature. Routing dew onto leaves is the

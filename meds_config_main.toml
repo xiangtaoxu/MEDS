@@ -124,17 +124,14 @@ specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root 
 fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 [soil]
-# Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults
-# to the value shown, so the whole block may be omitted (byte-identical to the meds_biophysics_opts
-# defaults). This is the solver/BC config, NOT the soil geometry/texture (those are built separately).
+# Soil-water options, consumed by the fast loop. Every key is OPTIONAL: it defaults to the value
+# shown, so the whole block may be omitted (byte-identical to the meds_biophysics_opts defaults).
+# Soil and plant water are solved together as one network (implicit Euler with Newton and its own
+# sub-steps); rtol/atol set its error. This is NOT the soil geometry/texture (see [soil_column]).
 bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
-linearize      = "frozen"     # frozen | picard                  (Richards linearization)
-substep        = "adaptive"   # adaptive | fixed                 (substep controller)
-rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
-atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
-h_init         = 900.0        # [s]      initial substep
-max_substep    = 2000         # [-]      substep cap: a ponded storm on dry soil needs hundreds (BCI, April 2016)
-max_picard     = 5            # [-]      modified-Picard iteration cap
+rtol           = 1.0e-3       # [-]      water-network sub-step relative tolerance
+atol           = 1.0e-4       # [-]      water-network sub-step absolute tolerance: water content for soil
+                              #          layers and the pond, relative water content for plant tissues
 w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
 intercept_alpha = 1.0         # [-]      Beer interception efficiency
 intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
@@ -145,8 +142,8 @@ ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
 ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
 
 # ------------------------------------------------------------------------------------------
-# [soil_column] -- the PHYSICAL soil column the Richards solver above is solved OVER.
-# [soil] is the solver (tolerances, bottom BC, substepping); this is the ground itself:
+# [soil_column] -- the PHYSICAL soil column the soil water above is solved OVER.
+# [soil] holds the water network's tolerances and the bottom BC; this is the ground itself:
 # the vertical grid, the hydraulic texture and the thermal texture.
 #
 # Every key is OPTIONAL and defaults to the value shown. The values below are a loam-ish

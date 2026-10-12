@@ -19,52 +19,34 @@ module meds_biophysics_opts
    implicit none
    private
 
-   !----- Soil-water solver selectors. -----------------------------------------------------!
-   public :: SOIL_SOLVER_BE
+   !----- Soil-water bottom boundary selectors. -------------------------------------------!
    public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
-   public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
-   public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
-   integer(ik), parameter :: SOIL_SOLVER_BE = 1_ik         !< linearly-implicit backward-Euler (only solver)
-
    integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (MVP default)
    integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< SIMTOP aquifer / water table (P2)
    integer(ik), parameter :: SOIL_BC_BEDROCK    = 3_ik     !< no-flow  q = 0
 
-   integer(ik), parameter :: SOIL_LIN_FROZEN = 1_ik        !< frozen-coefficient single solve (MVP)
-   integer(ik), parameter :: SOIL_LIN_PICARD = 2_ik        !< Celia modified-Picard (P2)
-
-   integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
-   integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
-
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
    integer(ik), parameter :: ENERGY_BC_DIRICHLET     = 2_ik   !< bottom: conduction to a fixed deep temperature
 
-   !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
+   !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
+   !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!
    type :: soil_opts_t
-      integer(ik) :: solver    = SOIL_SOLVER_BE
       !----- free_drain (default) | bedrock | aquifer.  NOTE: `aquifer` is the WET-SITE boundary --   !
       !      the water table is DEFINED as the column base, so the bottom face is head-driven against  !
       !      a saturated zone and supplies water upward without limit.  Right for riparian, floodplain !
       !      and wetland stands; WRONG for a typical upland one, where free_drain is the correct        !
       !      choice.  It is not a drop-in "more realistic drainage" option.  ------------------------!
       integer(ik) :: bottom_bc = SOIL_BC_FREE_DRAIN
-      integer(ik) :: linearize = SOIL_LIN_FROZEN
-      integer(ik) :: substep   = SOIL_SUBSTEP_ADAPTIVE
+      !----- The water network's sub-step tolerances (MEDS_SPAC_WATER_NETWORK_PLAN.md D8): a store's  !
+      !      error is weighed against atol of its scale -- water content for soil layers and the      !
+      !      pond, relative water content for plant tissues -- plus rtol of its water. ----------------!
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
-      real(wp)    :: h_init = 900.0_wp                   !< [s] initial substep
-      !----- The substep cap. A saturated top layer over soil near its residual water content (a
-      !      ponded storm on a dry-season soil) makes the Richards solve stiff: at Barro Colorado
-      !      Island in April 2016 it took up to ~500 sub-steps of a 15-min step, and at 200 the solve
-      !      stopped short, flagged unconverged, with a 6 g m-2 water error each time. The extra
-      !      sub-steps cost time only at such steps. --------------------------------------------!
-      integer(ik) :: max_substep = 2000_ik
-      integer(ik) :: max_picard  = 5_ik
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
       real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction

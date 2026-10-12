@@ -23,7 +23,7 @@ program meds_main
    use meds_output_registry,  only : build_output_registry, dump_io_config
    use meds_driver,           only : meds_run_t, driver_open, driver_step, driver_finalize,    &
                                      driver_free, driver_done, DRIVER_ERR_NAN, DRIVER_ERR_AREA,   &
-                                     DRIVER_ERR_SOILC
+                                     DRIVER_ERR_BOUNDS
    use meds_region,           only : meds_region_t, region_open, region_step_month, region_done,  &
                                      region_finalize, region_free
    use meds_toml,             only : toml_table_t, toml_parse_file, toml_string
@@ -65,7 +65,7 @@ program meds_main
          do while (.not. region_done(reg))
             call region_step_month(reg, status)
             if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN in a polygon''s state or energy/water ledger'
-            if (status == DRIVER_ERR_SOILC) error stop 'meds_main: impossible soil-carbon pool in a polygon'
+            if (status == DRIVER_ERR_BOUNDS) error stop 'meds_main: a cohort or soil-carbon state out of bounds in a polygon'
          end do
          call region_finalize(reg, status)
          if (status == DRIVER_ERR_AREA) error stop 'meds_main: a polygon''s area was not conserved'
@@ -83,7 +83,7 @@ program meds_main
       !----- The driver RETURNS what this program used to `error stop` on, so that a library      !
       !      caller (Python) survives it. In the executable it is still fatal.  -------------------!
       if (status == DRIVER_ERR_NAN)   error stop 'meds_main: NaN in the state or the energy/water ledger'
-      if (status == DRIVER_ERR_SOILC) error stop 'meds_main: impossible soil-carbon pool'
+      if (status == DRIVER_ERR_BOUNDS) error stop 'meds_main: a cohort or soil-carbon state out of bounds'
    end do
 
    call driver_finalize(run, status)

@@ -344,7 +344,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   must start at 00:00 or 01:00 on the 1st of a month.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
-  (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
+  (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
+  finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its

@@ -105,6 +105,62 @@ before and after.
 
 ### Changed
 
+- **Soil and plant water are solved together, as one network** (#397;
+  `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
+  every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
+  uptake (Gardner, no hydraulic redistribution), the xylem (Kirchhoff mean) and the boundary flows,
+  and solved by implicit Euler on adaptive sub-steps, with Newton in each store's own unknown (soil
+  effective saturation dry, potential wet; tissue relative water content; pond head) and a
+  block-arrowhead solve that eliminates each cohort onto the soil. Water is advanced by the flows, so the network
+  conserves it to round-off. It replaces the implicit Richards solver, the plant-hydraulics
+  matrix-exponential solver, the uptake rescale, the residual floors and caps, the tissue-water floor,
+  the ARK transpiration corrector and RK45's in-stage soil water and saturation clip; both schemes take
+  water from it.
+  - **Transpiration** is the stomata's demand limited by the water the leaves hold below the closing
+    potential, solved in the network; the energy stages hold it at the network's for the step, as
+    they hold ground evaporation. The demand solve credits the liquid enthalpy of the sapflow that
+    replaces what the leaf transpires (without it the leaf transpired ~4 % less).
+  - **The pond is a store**: rain enters it, it exchanges water both ways with the top layer by
+    Darcy's law, and spills above `w_pond_max`. A layer past saturation stores water through a
+    specific storage of 1e-4 m⁻¹ and drives the excess to the pond and the next layer.
+  - **Root uptake** leaves each layer at that layer's own temperature (`root_heat` per layer).
+  - Example 04, five BCI years: LE 68.76 → 67.99 W m⁻², H 65.64 → 66.99 W m⁻², GPP 8.261 → 8.249
+    µmol m⁻² s⁻¹, Rn 121.00 → 120.90 W m⁻² (tower: 70.38, 30.75, 7.18, 136.42); daily LE RMSE against
+    the tower 18.78 → 18.94 W m⁻², r 0.54 both; whole-column ledgers 0 fails in 1.5e7 checks; run time
+    5:08 → 6:11 (8 threads).
+  - dt-convergence (BCI dry season, 900 against 150 s): window-mean LE −0.2 W m⁻² (was +0.3), largest
+    hourly difference in the mean diurnal cycle 1.9 W m⁻² (was 2.9); the midday `psi_leaf` probe
+    agrees to 0.005 MPa between 75 and 900 s.
+  - Cost on the BCI profile run (6 months, 33 patches): 12 threads 9.28 → 10.53 s (+13.5 %), one
+    thread 61.3 → 72.8 s (+19 %).
+  - 150-year regrowth from 1871 at Palo Verde and BCI (ERA5-Land recycled, soil map v2, with #389's
+    fix): both complete, whole-column ledgers 0 fails in 5e7-1e8 checks; beta stops at BCI on the
+    recycled April storm (1994, and 2014 with #389's fix). At Palo Verde beta's monthly-mean leaf
+    potential falls to -570 MPa in the dry season and the evergreen PFT sheds ~60 % of its leaves; the
+    network's lowest is -5.6 MPa and the evergreen keeps them (year-150 AGB 9.3 against 6.1 kgC m⁻²,
+    GPP equal). Example 06's PFT parameters were fitted under the old behaviour. Wall time to 2011
+    against beta: +2 % at Palo Verde, +24 % at BCI (about +20 % per cohort).
+  - The water work counters are renamed for the network: `work_water_nsub_site` (accepted
+    sub-steps), `work_water_newton_site` (Newton iterations), `work_water_reject_site` (rejected
+    sub-steps) and `work_water_nfail_site` (sub-steps taken unconverged), replacing
+    `work_soil_nsub_site`, `work_hydro_nsub_site`, `work_hydro_thrash_site` and `work_nonconv_site`.
+  - The fast step's thread workspace (`fast_workspace_t`, was `ark_workspace_t`) now holds the
+    solver too, for both schemes, so its arrays are allocated only when a patch's shape changes.
+  - **Where the code lives**: the solver is `numerics/meds_spac_solver`, with its linear solve in
+    `meds_arrowhead_solve`; how much water a store holds is in `meds_water_retention`
+    (`soil_water_relations`, `tissue_water_relations`, `pond_water_relations`), how water moves into
+    and through the plant in `meds_hydr_lib` (`rhizosphere_conductance`, `root_water_uptake`,
+    `xylem_sapflow`, `supply_limited_transpiration`), and through the soil in `meds_soil_water`
+    (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
+    solver's own curve kernels, and the Mualem pore connectivity is one constant,
+    `VG_PORE_CONNECTIVITY`.
+- **A run stops on the step a cohort's state leaves its bounds** (#389). Each step, the driver checks
+  every cohort's density, carbon pools, SLA, internal water and leaf and wood films: each must be
+  finite and not negative. A violation stops the run and names the field, the cohort and its patch,
+  where before it surfaced only through something derived from it, often years later. The check
+  shares status 4 with the soil-carbon plausibility check, renamed `DRIVER_ERR_SOILC` ->
+  `DRIVER_ERR_BOUNDS` (Python `ERR_SOILC` -> `ERR_BOUNDS`). `meds.demography.Site.apply_rates`
+  rejects rates that are not finite, and negative mortality or recruitment.
 - **Soil layers: SoilGrids' depths cut at the column depth** (#391; config breaking: `[soil_column].n_layer`
   and `grid_growth` are refused, naming the replacement).
   - **The rule.** Every column cuts one list of layer bottoms at `[soil_column].depth`: 0.05, 0.15, 0.30,
@@ -136,7 +192,7 @@ before and after.
   Leij (2000), as ED2 pairs with this curve (`soil_hydro_scheme` 2): K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2,
   with L the named parameter `VG_PORE_CONNECTIVITY` in `meds_water_retention`. With 0.5, a soil of n
   near 1.4 (the median of Hodnett & Tomasella's curve over Xu et al. 2016's Central America box)
-  conducts less than `K_MIN` from about -0.7 MPa; with -1 it stays above to about -2.2 MPa. Against
+  conducts less than ED2's floor (1.16e-13 m/s) from about -0.7 MPa; with -1 it stays above to about -2.2 MPa. Against
   UNSODA's measured unsaturated conductivity (89 soils, that curve with Ottoni Ks) the bias of log10 K
   between -0.1 and -1.5 MPa goes from -2.28 to -0.85, and from +0.48 to +1.02 between -10 and -100 kPa.
   A per-soil L estimated from texture did no better than a fixed one; a film-flow term for drier soil
@@ -146,6 +202,10 @@ before and after.
   `test_column_ark` and `test_column_rk45` now compare the column with the same day without the input:
   with the faster drainage a free-draining column can end a day of light rain below where it began, and
   the rain shows as the water it holds beyond the dry day (+0.109 summed theta).
+  `test_water_processes` checks dK/dSe by finite differences only where Se^(1/m) >= 1e-4: below it
+  Mualem's factor 1 - (1 - Se^(1/m))^m loses digits to cancellation, and with L = -1 K is large enough
+  there for that noise to fail the check (the analytic derivative agrees with a 60-digit difference to
+  4e-6).
 - **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
   Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
   while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
@@ -444,8 +504,53 @@ before and after.
   - **Unchanged:** the default `clearidx`, which stays 3–11% high. #369 lists that and the other open
     uncertainties of the shortwave-to-PAR partition.
 
+### Removed
+
+- **`[soil]` keys `linearize`, `substep`, `h_init`, `max_substep` and `max_picard`** (#397):
+  the soil-water solver they configured is gone. A config that sets one stops with a message naming
+  the water network; `rtol` and `atol` remain and set its error.
+- **The commit-clamp outputs** `work_clamp_commit_site`, `work_clamp_mass_site` and
+  `work_clamp_energy_site` (#397): nothing clamps a committed state any more, so they were always
+  zero. `work_clamp_stage_site` stays.
+- **Read-offs and wrappers without a caller** (#397): `soil_hydr_cond_from_theta`,
+  `soil_moist_cap_from_psi`, `kirchhoff_edge`, `kirchhoff_edge_tab` and `dplc_dpsi`; the solver's
+  curves and `xylem_sapflow` are what the model and the tests use.
+- **RK45's warning above `dt_fast` = 300 s** (#397): it warned that RK45 lacked the ARK's
+  transpiration corrector; both schemes now solve leaf water implicitly in the network.
+
 ### Fixed
 
+- **The BCI 1994-04-20 NaN** (example 06 regrowth; #397): a trace of pond water over dry soil and a
+  conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
+  1. The water network has no conductivity floor and starts the pond at the head at which it neither
+  gives nor takes water; the day completes with both whole-column ledgers closed.
+- **A cohort's geometry is derived from its carbon, never integrated** (#389).
+  - **The bug:** the slow update advanced dbh, height, basal area, AGB and leaf area by their own
+    rates beside the carbon pools. On a leafless cohort the leaf carbon floored at 0 while the
+    integrated leaf area drifted to -1e-20 m². The negative leaf area gave a negative film capacity,
+    the film clamp wrote a negative film, and the split's film-conservation test, relative to a net
+    of 3e-30, stopped the Palo Verde regrowth with doubled `gmax` in 1951 ("canopy film water not
+    conserved").
+  - **The fix:** only `nplant` and the four carbon pools have tendencies. The geometry has one
+    writer, `set_cohort_size_from_carbon`, called after every operator that moves carbon or SLA:
+    birth (`set_cohort_size` sets the pools from dbh, then derives the geometry from them), the
+    daily update, trait acclimation, re-acclimation, fusion, fission and the restart read. A state
+    file still carries height, AGB and leaf area for its readers, but the model no longer reads
+    them back. Conservation tests scale with the sum of |terms|, not the net (`conserved` in
+    `meds_numerics`).
+  - **Also:** `advance_plant_traits` left the leaf area stale when SLA fell. Cohort fusion blended
+    SLA on leaf area, so two cohorts with different SLA fused into one with a different leaf area;
+    SLA now blends on leaf carbon, and fusion asserts the leaf area. Fusion's weighted means (traits,
+    tissue temperatures and water, the cohort diagnostics) share one function, `pair_mean`, with no
+    size threshold: the old 1e-30 cutoff left a leafless cohort's SLA unblended (leaf carbon 1e-193 at
+    BCI), and the new assertion caught it. `conserved` allows the double format's floor, tiny/epsilon
+    (~1e-292): below it an optimized build flushes to zero (a leafless pair's leaf area of 1.4e-307
+    fused to 0).
+  - **Effect:** the Palo Verde regrowth with doubled `gmax` runs its 150 years (AGB 6.21 kgC/m² in
+    1951, 11.00 in 2021), and the slow ledger closes on every phase. BCI 1991-2021 from a restart:
+    AGB 16.97 kgC/m² and LAI 6.05 in 2021 (16.84 and 6.20 before), from fusion's SLA blend and the
+    leaf area no longer left stale. Example 04's year moves by at most 0.1 % in any output
+    (heterotrophic respiration; GPP 0.02 %). A restart is still exact.
 - **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered** (#384), the water
   the wood is credited, not the plant's request before the soil limits it. They were the same number
   except where the soil cut the request.
