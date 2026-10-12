@@ -130,8 +130,9 @@ function(meds_fortran_flags tgt)
 endfunction()
 
 #----- FOUNDATION (src/shared/): kinds and constants (base/), the stateless constitutive laws      #
-#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, canopy        #
-#      optics, temperature response) and the calendar, numerics and budget checks (util/).         #
+#      (functions/: allometry, thermodynamics, retention and pressure-volume curves, the soil      #
+#      pedotransfer function, canopy optics, temperature response) and the calendar, numerics      #
+#      and budget checks (util/).                                                                  #
 #                                                                                                  #
 #      One folder, one library, and it links NOTHING. A module belongs in src/shared/ only if it   #
 #      `use`s nothing outside src/shared/ -- no model state, no configuration, no external         #
@@ -483,6 +484,13 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_numerics PRIVATE meds_shared meds_testassert)
    meds_fortran_flags(test_numerics)
    add_test(NAME numerics COMMAND test_numerics)
+
+   #----- Soil pedotransfer function: Hodnett & Tomasella (2002)'s worked example, Ks, coarse  #
+   #      fragments (links meds_shared only). --------------------------------------------------#
+   add_executable(test_pedotransfer test/test_pedotransfer.f90)
+   target_link_libraries(test_pedotransfer PRIVATE meds_shared meds_testassert)
+   meds_fortran_flags(test_pedotransfer)
+   add_test(NAME pedotransfer COMMAND test_pedotransfer)
 
    #----- No procedure is passed as an argument anywhere in src/ (#325): the ifx cost of doing  #
    #      so serialises threads. The script explains the rule it checks.                       #

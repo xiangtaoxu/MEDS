@@ -19,8 +19,8 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 ├── shared/        uses nothing outside itself; every layer may use it
 │   ├── base/      kinds, physical and calendar constants                      107
 │   ├── functions/ stateless constitutive laws: allometry, thermodynamics,
-│   │              retention and pressure-volume curves, canopy optics,
-│   │              temperature response                                      1 207
+│   │              retention and pressure-volume curves, soil pedotransfer,
+│   │              canopy optics, temperature response                       1 207
 │   └── util/      calendar time, numerics (matrix exponential, Thomas sweep,
 │                  root finders), budget checks                                904
 │

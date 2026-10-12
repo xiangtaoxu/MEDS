@@ -110,6 +110,55 @@ and exports the per-layer matric potential `psi_soil` [MPa] that closes the **pl
 boundary condition (see [plant_hydraulics](plant_hydraulics.md)), plus the time-mean per-face Darcy
 flux for optional advective soil heat.
 
+### Hydraulic parameters from soil texture
+
+`soil_hydraulics_from_texture` (`meds_pedotransfer`) gives a layer's van Genuchten curve and saturated
+conductivity from what soil maps report: sand $Sa$, silt $Si$ and clay $Cl$ (% of the fine earth,
+< 2 mm), organic carbon $OC$ (%), cation exchange capacity CEC (cmol(c) kg⁻¹), pH in water, the fine
+earth's bulk density $\rho_b$ (g cm⁻³) and the volume share of coarse fragments $f_v$ — the
+quantities SoilGrids 2.0 maps per layer. The curve is Hodnett & Tomasella's (2002, Table 8), fitted to
+tropical soils and kept by ED2 as `soil_hydro_scheme` 2; each polynomial is in percent:
+
+```math
+\begin{aligned}
+\ln\alpha &= \big(-2.294 - 3.526\,Si + 2.440\,OC - 0.076\,\mathrm{CEC} - 11.331\,\mathrm{pH} + 0.019\,Si^2\big)/100\\
+\ln n &= \big(62.986 - 0.833\,Cl - 0.529\,OC + 0.593\,\mathrm{pH} + 0.007\,Cl^2 - 0.014\,Sa\,Si\big)/100\\
+\theta_{sat} &= \big(81.799 + 0.099\,Cl - 31.42\,\rho_b + 0.018\,\mathrm{CEC} + 0.451\,\mathrm{pH} - 0.0005\,Sa\,Cl\big)/100\\
+\theta_{res} &= \max\Big[0,\ \big(22.733 - 0.164\,Sa + 0.235\,\mathrm{CEC} - 0.831\,\mathrm{pH} + 0.0018\,Cl^2 + 0.0026\,Sa\,Cl\big)/100\Big]
+\end{aligned}
+\qquad(2a)
+```
+
+with $\alpha$ per kPa, turned into per metre of water head. The saturated conductivity of the fine
+earth follows Ottoni et al. (2019) from the water that drains between saturation and −33 kPa:
+
+```math
+K_{sat} = 19.31\ \mathrm{m\,d^{-1}}\,\big(\theta_{sat} - \theta(-33\ \mathrm{kPa})\big)^{1.948} \qquad(2b)
+```
+
+Coarse fragments hold no water, so the layer's curve is the fine earth's scaled by $1-f_v$; they slow
+the flow by Saxton & Rawls (2006, eqs. 19 and 22), written for their share of the mass $f_m$, with
+$\rho_p = 2.65$ g cm⁻³ the density of the grains and of the fragments:
+
+```math
+\theta_{sat,res} \leftarrow (1-f_v)\,\theta_{sat,res}, \qquad
+K_{sat} \leftarrow K_{sat}\,\frac{1-f_m}{1-f_m\,(1-\tfrac{3}{2}\rho_b/\rho_p)}, \qquad
+f_m = \frac{f_v}{(\rho_b/\rho_p)(1-f_v)+f_v} \qquad(2c)
+```
+
+**Why this function.** Against 12,297 measured retention curves (GSHP; Gupta et al. 2022) it gives the
+smallest error in plant-available water ($\theta$ from −33 to −1500 kPa) of the functions tried —
+Cosby (1984), Saxton & Rawls (2006), Tomasella & Hodnett (1998) and Rosetta3: a median of 0.026
+m³ m⁻³ from measured texture and 0.035 from SoilGrids at 0.1°, and 0.023 in tropical clays, where
+Rosetta3 overstates it by 0.07–0.09 and Cosby by 0.04. Its $K_{sat}$ is among the least biased against
+SoilKsatDB (Gupta et al. 2021) in the tropics, and at BCI its curve follows the flat measured dry
+branch (Kupers et al. 2019). It is closed-form, so it costs nothing at run time.
+
+**Where it is weak.** In boreal, organic-rich and acid soils CEC and low pH raise $`\theta_{res}`$, so
+the available water comes out about 0.04 m³ m⁻³ low (Hyytiälä's topsoil: $\theta$ at −1500 kPa 0.39
+against 0.07 measured). Like every texture-based function, $K_{sat}$ scatters by about a factor of ten
+and runs low where soil structure adds large pores.
+
 ---
 
 ## The soil thermal column
@@ -247,6 +296,7 @@ and passes the resulting flux into the CO₂ source.
 | soil water (implicit Richards) | `meds_soil_water`: `advance_soil_water_column`, `soil_water_step_implicit`, `soil_water_advance` |
 | explicit water tendency (ARK) | `meds_soil_water`: `soil_water_time_deriv` |
 | retention curves (vG / Campbell) | `meds_water_retention` |
+| hydraulic parameters from texture | `meds_pedotransfer`: `soil_hydraulics_from_texture` |
 | soil thermal (implicit BE heat) | `meds_soil_energy`: `soil_energy_step_implicit`, `soil_heat_be_solve` |
 | explicit thermal tendency (ARK) | `meds_soil_energy`: `soil_energy_time_deriv` |
 | canopy interception | `meds_plant_biophysics`: `intercept_canopy_layer` |
@@ -257,5 +307,9 @@ and passes the resulting flux into the CO₂ source.
 - ED2 `../ED2/ED/src/dynamics/`: `lsm_hyd.f90`, `soil_respiration.f90` — the soil stores in the reference model.
 - Celia, Bouloutas & Zarba (1990), *Water Resour. Res.* 26:1483 — mixed-form Richards / modified-Picard.
 - van Genuchten (1980); Clapp & Hornberger (1978) — soil retention curves.
+- Hodnett & Tomasella (2002), *Geoderma* 108:155 — van Genuchten parameters from texture for tropical soils.
+- Ottoni et al. (2019), *J. Hydrol.* 575:1345 — saturated conductivity from the drainable porosity.
+- Saxton & Rawls (2006), *Soil Sci. Soc. Am. J.* 70:1569 — coarse fragments.
+- Gupta et al. (2021), *Earth Syst. Sci. Data* 13:1593 (SoilKsatDB) and (2022), *Sci. Data* 9:444 (GSHP) — the measurements the function was chosen on.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
 - Design docs: `MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `MEDS_ENERGY_BALANCE_DESIGN.md`.

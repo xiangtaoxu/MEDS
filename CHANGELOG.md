@@ -16,6 +16,16 @@ before and after.
 
 ### Added
 
+- **A soil pedotransfer function** (`meds_pedotransfer`): `soil_hydraulics_from_texture` gives a soil
+  layer's van Genuchten θ_sat, θ_res, α and n (Hodnett & Tomasella 2002, Table 8; ED2's
+  `soil_hydro_scheme` 2) and its saturated conductivity (Ottoni et al. 2019) from sand, silt, clay,
+  organic carbon, CEC, pH and bulk density, and scales them for coarse fragments (Saxton & Rawls 2006).
+  It is elemental, so one call covers a profile. Against 12,297 measured retention curves (GSHP) it
+  gave the smallest error in plant-available water of the five functions tried (median 0.035 m³ m⁻³
+  from SoilGrids at 0.1°; Rosetta3 0.047, Cosby 0.067); the science page has the numbers and its weak
+  spot (boreal, organic-rich acid soils). `test_pedotransfer` checks the authors' worked example (α
+  0.2452 kPa⁻¹, n 1.3674, θ_sat 0.4993, θ_res 0.2134), its Ks and the coarse-fragment scaling. No
+  configuration calls it yet: `[soil_column]` still takes the curve's parameters directly.
 - **Chave et al. (2014)'s height curve** (#386): `[allometry].height_allometry = "chave2014"` sets height
   from diameter by Chave's pantropical eq. 6a, ln H = 0.893 - E + 0.760 ln D - 0.0340 (ln D)^2, at its
   mean (+ 0.243^2/2, as BIOMASS's retrieveH), with the site's stress index E as `[allometry].chave_e`.
