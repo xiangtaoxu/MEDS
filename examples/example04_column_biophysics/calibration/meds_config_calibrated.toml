@@ -54,7 +54,7 @@ min_patch_area            = 1.0e-4
 patch_min_area_remain     = 0.99
 enable_patch_fission      = false
 conservation_tol          = 0.001
-growth_memory_days        = 90.0
+growth_memory_days        = 365.0
 
 [disturbance]
 patch_disturbance_rate     = 0.014

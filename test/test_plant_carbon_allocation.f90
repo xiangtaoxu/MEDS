@@ -120,8 +120,8 @@ contains
    end subroutine test_starving
 
    !----- 7. The sink limits: relative = rate x wood x dt; absolute = the wood that grows the  !
-   !          diameter by rate x dt, exactly, on either side of the height cap; the tighter    !
-   !          applies; 0 = off. ---------------------------------------------------------------!
+   !          diameter by rate x the window, less what the window has grown, exactly, on either  !
+   !          side of the height cap; the tighter applies; 0 = off. --------------------------!
    subroutine test_sink_limitation()
       real(wp) :: d, w, cap
       integer  :: k
@@ -145,19 +145,33 @@ contains
       call check_close('sink limit: both => the tighter (relative)', limit(w, d, 0.05_wp, 0.4_wp, 1.0_wp), 0.05_wp * w)
       call check_close('sink limit: both => the tighter (absolute)', limit(w, d, 5.0_wp, 0.4_wp, 1.0_wp),  &
                        limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp))
+      !----- The absolute cap is a budget over the growth window. A daily step of a stem that grew  !
+      !      nothing in its one-year window may grow the whole year's 0.4 cm; one that has grown    !
+      !      0.1 cm may grow 0.3; one that has grown the 0.4 may grow nothing. ---------------------!
+      cap = limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.0_wp)
+      call check_close('sink limit: window, nothing grown => the window''s growth in one step',       &
+                       wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.4_wp, 1.0e-9_wp)
+      cap = limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.1_wp)
+      call check_close('sink limit: window, 0.1 cm grown => 0.3 cm left',                             &
+                       wood_to_dbh(w + cap, RHO, HMAX, AGF) - d, 0.3_wp, 1.0e-9_wp)
+      call check_close('sink limit: window used up => no wood',                                       &
+                       limit(w, d, 0.0_wp, 0.4_wp, 1.0_wp / 365.0_wp, window=1.0_wp, grown=0.5_wp), 0.0_wp)
    end subroutine test_sink_limitation
 
-   !----- growth_sink_limitation on the test stem; the absolute cap's dbh exponent defaults to 0. --!
-   real(wp) function limit(wood, dbh, rgr, agr, dt, expo)
+   !----- growth_sink_limitation on the test stem; the absolute cap's dbh exponent defaults to 0, and   !
+   !      its window to this one step with nothing grown in it (a per-step cap). ---------------------!
+   real(wp) function limit(wood, dbh, rgr, agr, dt, expo, window, grown)
       real(wp), intent(in) :: wood, dbh, rgr, agr, dt
-      real(wp), intent(in), optional :: expo
-      real(wp) :: e
-      e = 0.0_wp
-      if (present(expo)) e = expo
+      real(wp), intent(in), optional :: expo, window, grown
+      real(wp) :: e, win, gro
+      e = 0.0_wp ; win = dt ; gro = 0.0_wp
+      if (present(expo))   e   = expo
+      if (present(window)) win = window
+      if (present(grown))  gro = grown
       limit = growth_sink_limitation(wood_carbon=wood, dbh=dbh, wood_density=RHO, hgt_max=HMAX,           &
                                      aboveground_frac=AGF, max_relative_growth_rate=rgr,                  &
                                      max_absolute_growth_rate=agr, max_absolute_growth_exponent=e,        &
-                                     dt_yr=dt)
+                                     dt_yr=dt, window_yr=win, grown_in_window=gro)
    end function limit
 
    !----- 8. Wood stops at the sink limit; the rest is exuded, construction-charged. -------!

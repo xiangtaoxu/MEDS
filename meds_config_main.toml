@@ -282,7 +282,10 @@ min_patch_area            = 1.0e-4   # cull patches below this area fraction
 patch_min_area_remain     = 0.99     # stop fusing once this area fraction is kept
 enable_patch_fission      = false
 conservation_tol          = 0.001    # 0.1% AGB/area conservation tolerance
-growth_memory_days        = 90.0     # [day] window of the moving-average growth that drives mortality
+growth_memory_days        = 365.0    # [day] window of the moving-average growth that drives mortality: a
+                                     #       full year, so a seasonal pause in growth is not read as decline
+                                     #       (census growth, which the mortality laws are fitted on, is annual).
+                                     #       The diameter sink limit is a budget over the same window.
 
 [disturbance]
 patch_disturbance_rate     = 0.014   # [1/yr] fraction of area disturbed into a new age-0 gap

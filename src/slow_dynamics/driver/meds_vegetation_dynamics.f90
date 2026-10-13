@@ -587,15 +587,21 @@ contains
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
       real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
-      real(wp)    :: seed_lost, exudate
+      real(wp)    :: seed_lost, exudate, window_yr, grown_in_window
       real(wp), allocatable :: co2_owed(:), efficiency(:)
       logical     :: starving
+      integer(ik) :: n_window, next_pos
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
       allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
       efficiency = cohort_recruit_efficiency(site, cfg)
+      !----- The growth ring-buffer slot this step's realized growth will be written to (step 3 of  !
+      !      vegetation_dynamics advances growth_hist_pos the same way): the sink limit's window is  !
+      !      the buffer without that slot's old sample, plus this step. ----------------------------!
+      n_window = growth_window_steps(cfg)
+      next_pos = mod(site%growth_hist_pos, n_window) + 1_ik
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
             pf  = cohort%pft(j)
@@ -665,6 +671,9 @@ contains
                      gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
                      fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c,           &
                      fineroot_retained_c)
+            call growth_window_so_far(cohort%growth_count(j), cohort%growth_accum(j),              &
+                                      cohort%growth_hist(next_pos, j), n_window, dt_yr,             &
+                                      window_yr, grown_in_window)
             !----- Allocate the daily carbon to GROWTH (growth respiration charged on realized     !
             !      growth INSIDE the kernel; storage funds leaf/root growth even when net < 0). ---!
             call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
@@ -681,7 +690,7 @@ contains
                         max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
                         max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
                         max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
-                        dt_yr=dt_yr),                                                               &
+                        dt_yr=dt_yr, window_yr=window_yr, grown_in_window=grown_in_window),         &
                      exudate=exudate)
             !----- NET per-pool change = growth - shed (leaf/root); litter = shed. ---------------!
             npp%leaf(j)          = g_leaf     - leaf_shed_c
@@ -756,6 +765,30 @@ contains
          site%patch%slow_co2_rate(ip) = co2_owed(ip) / max(cfg%dt_slow, tiny_num) / KGC_PER_UMOL_C
       end do
    end subroutine compute_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's growth window as the sink limit sees it this step: the diameter it has already  !
+   ! grown in the window [cm] and the window's length [yr] with this step in it. The ring buffer  !
+   ! holds one realized dbh rate [cm/yr] per step (count of them, summing to accum); once it is   !
+   ! full, this step's sample replaces the oldest, which therefore leaves the window now. A new   !
+   ! cohort's window is as long as its life, so it cannot draw on growth it never had time for.   !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine growth_window_so_far(count, accum, oldest, n_window, dt_yr, window_yr, grown)
+      integer(ik), intent(in)  :: count       !< samples in the ring buffer
+      real(wp),    intent(in)  :: accum       !< [cm/yr] their sum
+      real(wp),    intent(in)  :: oldest      !< [cm/yr] the sample in the slot this step overwrites
+      integer(ik), intent(in)  :: n_window    !< the buffer's length [steps]
+      real(wp),    intent(in)  :: dt_yr       !< [yr] step length
+      real(wp),    intent(out) :: window_yr   !< [yr] the window this step closes
+      real(wp),    intent(out) :: grown       !< [cm] diameter grown in it before this step
+      if (count < n_window) then
+         window_yr = real(count + 1_ik, wp) * dt_yr
+         grown     = accum * dt_yr
+      else
+         window_yr = real(n_window, wp) * dt_yr
+         grown     = (accum - oldest) * dt_yr
+      end if
+   end subroutine growth_window_so_far
 
    !---------------------------------------------------------------------------------------!
    ! Leaf/fine-root turnover WATER shedding (P4, MEDS_ED2_RK45_DESIGN.md, user-directed follow-on !

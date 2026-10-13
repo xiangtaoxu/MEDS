@@ -108,15 +108,21 @@ It has two forms, each a per-PFT trait that is off at zero; with both set the ti
 
 ```math
 a_{\mathrm{wood}}^{\max} = \min\!\Big(r_{\max}\,C_{\mathrm{wood}}\,\Delta t,\;\;
-W\big(D + g_{\max}D^{c}\Delta t\big) - W(D)\Big) \qquad(1b)
+W\big(D + \max(g_{\max}D^{c}\,T - \Delta D_T,\,0)\big) - W(D)\Big) \qquad(1b)
 ```
 
 The first is **relative**: $`r_{\max}`$ is the PFT's `max_relative_growth_rate` [yr⁻¹] and
 $`C_{\mathrm{wood}}`$ the cohort's wood carbon at the step's start. The second is **absolute**:
 $`g_{\max}`$ is the PFT's `max_absolute_growth_rate` [cm yr⁻¹], the most a 1 cm stem's diameter can grow,
 $c$ its `max_absolute_growth_exponent` (default 0) with $D$ in cm, and $`W(D)`$ the wood carbon of a stem of
-diameter $D$ on the model's allometry (`size2wood_carbon`), so a step the limit binds grows the diameter
-by exactly $`g_{\max}D^{c}\Delta t`$. The cambium lays down a bounded width of wood, so the absolute form
+diameter $D$ on the model's allometry (`size2wood_carbon`). The absolute cap is a **rate over the growth
+window** $T$ (`growth_memory_days`, a year by default, the window mortality averages growth over), not
+over each step: $`\Delta D_T`$ is the diameter the stem has already grown in the window, read from the
+cohort's ring buffer of realized growth, and $T$ includes this step (for a cohort younger than the window,
+its age). A step the limit binds therefore brings the window's growth to exactly $`g_{\max}D^{c}T`$, and a
+stem that grew nothing through a dry season may make up the year's diameter in the wet season. A per-step
+cap, $`g_{\max}D^{c}\Delta t`$, would instead throw away every day without spare carbon: at Palo Verde it
+held saplings that had carbon to spare all wet season to about half of the cap's annual rate. The cambium lays down a bounded width of wood, so the absolute form
 scales with the stem's surface rather than its mass: per unit wood it is far more generous to a sapling
 than to a large tree. At BCI the upper quantiles of census diameter growth at a given light rise about
 as $`D^{0.5}`$ (example 05), between a size-independent width ($`c=0`$) and the relative form ($`c\approx1`$). When the residual would build more than that, the kernel builds
@@ -194,7 +200,8 @@ bit-identical** to the pre-refactor engine.
 | $q$ | `root_to_leaf_ratio` | fine-root : leaf target ratio |
 | $`f_r`$ | `reproduction_investment_fraction` | fraction of the residual → reproduction (above maturity) |
 | $`r_{\max}`$ | `max_relative_growth_rate` (optional, default 0 = off) | sink limit on wood growth per unit wood carbon [yr⁻¹]; the residual above it is exuded |
-| $`g_{\max}`$ | `max_absolute_growth_rate` (optional, default 0 = off) | sink limit on the diameter growth of a 1 cm stem [cm yr⁻¹]; the residual above it is exuded |
+| $`g_{\max}`$ | `max_absolute_growth_rate` (optional, default 0 = off) | sink limit on the diameter growth of a 1 cm stem [cm yr⁻¹], a budget over the growth window; the residual above it is exuded |
+| $T$ | `growth_memory_days` (`[demography]`) | the window the absolute limit (and mortality's growth average) runs over |
 | $c$ | `max_absolute_growth_exponent` (optional, default 0) | how that limit scales with diameter, $`g_{\max}D^{c}`$ |
 | $`L^{*}`$ inputs | `sla`, `hgt_max`, … | full-canopy leaf carbon via `size2leaf_carbon` |
 

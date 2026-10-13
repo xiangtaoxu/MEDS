@@ -105,6 +105,25 @@ before and after.
 
 ### Changed
 
+- **The growth window is a year in every example** (`[demography].growth_memory_days` 90 -> 365 in
+  `meds_config_main.toml` and examples 03-05; example06 already used 365; `test/region` keeps 90). The
+  mortality hazard reads a cohort's mean diameter growth over this window, and over 90 days a dry
+  season's pause read as a growth collapse: at Palo Verde the Camac hazard of the dense-wood PFTs rose
+  from about 0.6 to about 10 % yr^-1 each May-June, and the evergreen PFT's mortality in the 2009 stand
+  falls from 2.8 to 0.6 % yr^-1 with a year. Example 04 barely moves (one year: GPP +0.05 %, LE +0.04 %,
+  H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). Example 05 was not rerun.
+- **The diameter sink limit is a budget over the growth window, not a cap on each step**
+  (`meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
+  takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
+  buffer, and the step may grow the diameter by `max_absolute_growth_rate x dbh^c x window` less that.
+  A per-step cap threw away every day without spare carbon, so where growth is seasonal a stem could not
+  reach its annual rate: at Palo Verde the leading saplings grew at the cap from August to January and
+  not at all for four to five months, 0.15 cm yr^-1 against a cap of 0.27. In the 2009 Palo Verde stand
+  (Camac mortality, the example's traits) AGB growth of trees >= 10 cm rises 0.53 -> 0.66 kg m^-2 yr^-1,
+  relative growth Ds/D/BD/E 6.2/4.8/3.3/1.0 -> 9.7/6.8/3.9/1.1 % yr^-1 and root exudate falls
+  0.177 -> 0.065 kgC m^-2 yr^-1, so the example's caps need refitting; a 50-yr regrowth there holds
+  28 -> 53 dry Mg ha^-1 of AGB at 50 yr from 3 seedlings m^-2 per PFT, 54 -> 81 from 0.1. Example 05 sets
+  the cap and was not rerun; examples 03-04 do not set it and are unchanged.
 - **Soil and plant water are solved together, as one network** (#397;
   `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
   every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
