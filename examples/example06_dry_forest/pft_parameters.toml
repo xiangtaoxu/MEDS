@@ -36,7 +36,7 @@ include_pft        = [1, 1, 1, 1]
 #      carbon-based: 2000 / LMA. Fine-root carbon equals leaf carbon (ED2's q = 1), and fine roots turn
 #      over at 1.5 / the leaf lifespan on the leaves' turnover gate, slower in the shade as the leaves are
 #      ([trait_dynamics].fineroot_lifespan_plastic); 30 % of all leaf and fine-root loss is resorbed.
-leaf_lifespan_toc  = [1.0, 1.0, 1.0, 1.0]         # [yr]
+leaf_lifespan_toc  = [0.5, 0.5, 0.8, 1.5]         # [yr] owner 2026-10-12: deciduous leaves live half a year (PV litter 0.5 kg/m2/yr)
 sla                = [20.8, 20.6, 18.6, 15.8]   # [m2/kgC] 2 x Xu's SLA (m2/kg dry): 10.4, 10.3, 9.3, 7.9
 vcmax25            = [65.64, 50.85, 36.62, 30.18]   # [umol/m2/s] from Xu (2016) A_area-WD (Table 1), inverted with MEDS's leaf (vcmax_from_aarea.py); Jmax, TPU, Rd follow the ratios
 root_to_leaf_ratio = [1.0, 1.0, 1.0, 1.0]
@@ -61,8 +61,9 @@ reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth frac
 #      percentile of diameter growth rises as dbh^0.5 at a given light (a quantile regression ln g = a +
 #      0.5 ln dbh + beta x overtopping LAI on each PFT's 1990-2010 growth of trees 1-30 cm; fitted per PFT
 #      0.45, 0.65, 0.47). Its level is twice that quantile extrapolated to LAI 0 (0.211, 0.153, 0.059 cm/yr
-#      at 1 cm), which lets saplings on open ground grow as fast as the census's best-lit ones.
-max_absolute_growth_rate     = [0.422, 0.306, 0.118, 0.118]   # [cm/yr] at dbh 1 cm
+#      at 1 cm), which lets saplings on open ground grow as fast as the census's best-lit ones. Palo Verde
+#      takes a provisional gradient by wood density instead (owner, 2026-10-12).
+max_absolute_growth_rate     = [0.25, 0.20, 0.15, 0.10]   # [cm/yr] at dbh 1 cm
 max_absolute_growth_exponent = [0.5, 0.5, 0.5, 0.5]
 
 #----- Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf). ---------------------
@@ -141,7 +142,7 @@ wood_psi50             = [-1.649, -2.159, -2.819, -3.209]   # [MPa] X16: -3.0 WD
 wood_kexp              = [4, 4, 4, 4]   # [-] X16
 root_depth_b1          = [0.6499, 0.9655, 1.374, 1.6154]   # [m] 1.114 * WD/0.6 (plan rev. 3)
 root_depth_b2          = [0.422301, 0.422301, 0.422301, 0.422301]   # [-] MEDS default (ED2 IALLOM 1)
-root_beta              = [0.001, 0.001, 0.001, 0.001]   # [-] owner 2026-10-10: shallower profile (0.1 put half the roots below 51 cm)
+root_beta              = [0.001, 0.002, 0.005, 0.01]   # [-] owner 2026-10-12: deeper profiles with wood density (0.1 put half the roots below 51 cm)
 
 [camac]
 mort_rho_ref   = 0.6
@@ -153,14 +154,17 @@ mort_beta_0    = 18.72
 mort_beta_exp  = 0.2792
 
 # Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over
-# the last 90 days: example 03's fit to the BCI censuses (vital_rates.json), the same law on the same
-# growth. Treefall (main config, 0.014/yr) kills the canopy trees in each new gap on top of this, and
-# the census's gamma already counts those deaths, so 0.014 is taken off gamma.
+# the last year (growth_memory_days): example 03's fits to the BCI censuses (vital_rates.json), made a
+# function of wood density (owner, 2026-10-12). Each parameter p is Camac et al. (2018)'s form,
+# p = p0 (WD/0.6)^b, fitted to BCI's three wood-density classes (0.36, 0.50, 0.68; ln p on ln WD) and
+# read at these PFTs' WD: census gamma 0.020271 (WD/0.6)^-0.3724, alpha 0.12756 (WD/0.6)^-0.7932, beta
+# 38.583 (WD/0.6)^2.1229. Treefall (main config, 0.014/yr) kills the canopy trees in each new gap on
+# top of this, and the census's gamma already counts those deaths, so 0.014 is taken off gamma.
 # Read because the main config sets [options].override_derived = true.
 [derived]
-mort_gamma = [0.011182, 0.006528, 0.005908, 0.005908]   # [1/yr] census gamma 0.025182, 0.020528, 0.019908 - 0.014
-mort_alpha = [0.247431, 0.086574, 0.152056, 0.152056]   # [1/yr]
-mort_beta  = [15.0890, 19.3890, 58.7932, 58.7932]      # [yr/cm]
+mort_gamma = [0.010776, 0.007380, 0.004748, 0.003651]   # [1/yr] census gamma 0.024776, 0.021380, 0.018748, 0.017651 - 0.014
+mort_alpha = [0.195616, 0.142897, 0.108014, 0.095001]   # [1/yr]
+mort_beta  = [12.2878, 28.4752, 60.2210, 84.9098]      # [yr/cm]
 
 # Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI): Ma et al. (2025, JGR
 # Biogeosciences) from BCI's crane, saplings against canopy leaves -- k_Vcmax = -(0.00242 Vcmax25 +
@@ -195,7 +199,7 @@ shed_cue_mask          = [4, 4, 4, 4]
 flush_cue_timescale    = [2, 2, 2, 2]   # [day]
 shed_cue_timescale     = [2, 2, 2, 2]   # [day]
 flush_rate_max         = [0.05, 0.05, 0.05, 0.05]   # [1/day]
-shed_rate_max          = [0.15, 0.15, 0.05, 0.02]   # [1/day] owner 2026-10-10: set c2 (Ds/D fully deciduous, BD -50-75 %, E -0-50 %)
+shed_rate_max          = [0.15, 0.15, 0.025, 0.01]   # [1/day] Ds/D fully deciduous, BD -50-75 %, E -0-50 % (owner 2026-10-10); BD, E halved 2026-10-12
 min_leaf_cover         = [0, 0, 0, 0]   # the depth of shedding emerges
 bare_leaf_cover        = [0.02, 0.02, 0.02, 0.02]
 flush_water_sum        = [5, 5, 5, 5]   # [MPa day] wet credit above TLP that permits flushing

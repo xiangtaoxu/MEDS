@@ -57,6 +57,24 @@ The trait tables are in §6.2; the questions they raise are D12–D15.
   (their water stores hit the floor while the soil throttles uptake but not sapflow, #104). This goes to
   the coupled soil–plant water solve (branch `feat/spac-water-solver`), not to a fix here.
 
+**Revision 7 (owner, 2026-10-12): calibrated on the contemporary stand, and the soil map.**
+- **Soil:** the ED soil map v2 at the forcing cell: a 1.57 m Cambisol, ~40 % clay, with MEDS's
+  pedotransfer function (HT02 + Ottoni) per SoilGrids layer fitted to one column curve (122 mm of
+  plant-available water, against 239 mm for the 2 m clay loam); the layers are MEDS's SoilGrids default.
+- **Targets** for the 2009 census stand (2009-2010, dry mass): leaf litter ~0.5 kg m⁻² yr⁻¹ (PV traps
+  0.54), AGB growth of trees ≥ 10 cm 0.3-0.5 kg m⁻² yr⁻¹, relative AGB growth Ds ~5, D and BD 2-3, E
+  1-2 % yr⁻¹; Ds and D fully deciduous, BD dropping 50-75 %, E 0-50 %. The December-January drop is not
+  a target.
+- **Traits (§6.2):** leaf lifespan 0.5, 0.5, 0.8, 1.5 yr; growth cap 0.25, 0.20, 0.15, 0.10 cm yr⁻¹ at
+  1 cm (falling with WD); shed rate 0.15, 0.15, 0.025, 0.01 day⁻¹; `root_beta` 0.001, 0.002, 0.005,
+  0.01 (deeper with WD); mortality γ, α, β along WD (Camac's power-law form fitted to example03's
+  three BCI classes, so BD and E differ); E keeps Vcmax25 30.2.
+- **Mortality window:** `growth_memory_days` 365 (was 90) in every example: with 90 days the growth
+  average fell to ~0 after each dry season and the Camac hazard rose from 0.6 to ~10 % yr⁻¹ for E and BD
+  in May-June.
+- **Litter outputs:** `litter_leaf_site` is leaf litterfall after the #399 fix (it was the labile
+  above-ground stream, 0.49 of it).
+
 ## 1. What example06 has to show
 
 One set of PFTs and one phenology parameter set, run unchanged in every grid cell, should give:
@@ -370,14 +388,23 @@ E → late.
 
 | Inherited by nearest WD class | Ds (early) | D (mid) | BD (late) | E (late) |
 |---|---|---|---|---|
-| `leaf_lifespan_toc` [yr] (2026-10-11: 1.0 for all; was 0.5, 0.7, 0.9, 0.9) | 1.0 | 1.0 | 1.0 | 1.0 |
-| `fineroot_turnover_rate` [yr⁻¹] (1.5 / lifespan) | 1.5 | 1.5 | 1.5 | 1.5 |
-| `max_absolute_growth_rate` [cm yr⁻¹ at 1 cm] | 0.422 | 0.306 | 0.118 | 0.118 |
-| mortality pins `mort_gamma`, `mort_alpha`, `mort_beta` | early | mid | late | late |
+| `leaf_lifespan_toc` [yr] (rev. 7; 1.0 for all on 2026-10-11) | 0.5 | 0.5 | 0.8 | 1.5 |
+| `fineroot_turnover_rate` [yr⁻¹] | 1.5 | 1.5 | 1.5 | 1.5 |
+| `max_absolute_growth_rate` [cm yr⁻¹ at 1 cm] (rev. 7; was 0.422, 0.306, 0.118, 0.118) | 0.25 | 0.20 | 0.15 | 0.10 |
+| `shed_rate_max` [day⁻¹] (rev. 7; was 0.15, 0.15, 0.05, 0.02) | 0.15 | 0.15 | 0.025 | 0.01 |
+| `root_beta` (rev. 7; 0.001 for all on 2026-10-10) | 0.001 | 0.002 | 0.005 | 0.01 |
+| `mort_gamma` [yr⁻¹] (census γ − 0.014 treefall) | 0.0108 | 0.0074 | 0.0047 | 0.0037 |
+| `mort_alpha` [yr⁻¹] | 0.196 | 0.143 | 0.108 | 0.095 |
+| `mort_beta` [yr cm⁻¹] | 12.3 | 28.5 | 60.2 | 84.9 |
+
+The mortality rows are rev. 7: each is Camac et al. (2018)'s form p₀ (WD/0.6)^b fitted (ln p on ln WD)
+to example03's BCI fits for its three classes (WD 0.36, 0.50, 0.68) and read at these WDs: census γ
+0.02027 (WD/0.6)^−0.372, α 0.1276 (WD/0.6)^−0.793, β 38.58 (WD/0.6)^2.123. They replace the nearest-class
+pins (early, mid, late, late), which gave BD and E the same mortality.
 
 The same for all four, as in example05:
 - Medlyn g1 2.82 with its g0, and the Jmax, TPU and Rd ratios to Vcmax;
-- root:leaf ratio 1.0 and the root-profile shape (`root_beta` 0.1);
+- root:leaf ratio 1.0;
 - sapwood stem respiration 31.25, root respiration 2.7, reproduction 0.10;
 - the growth-cap exponent 0.5, the SLA and leaf-lifespan shade slopes, optics, allocation, and Chave's biomass
   equation (eq. 4).
