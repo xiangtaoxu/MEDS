@@ -33,7 +33,7 @@ program test_soil_biogeochem
                                      build_litter_input, heterotrophic_respiration_matrix,          &
                                      soil_carbon_step, solve_soil_carbon_steady_state,              &
                                      soil_carbon_diagnostics, pack_pool_vector
-   use meds_litter_partition, only : necromass_to_litter
+   use meds_litter_partition, only : necromass_to_litter, add_necromass
    implicit none
 
    call test_mass_closure()
@@ -383,18 +383,16 @@ contains
       real(wp) :: exp_lab_grnd, exp_lab_soil, exp_str_grnd, exp_str_soil
       print '(a)', '-- test 7: litter mapping + lignin tracer --'
 
-      ! per-cohort split: leaf splits labile/structural by f_labile_leaf and above/below by agf;
+      ! per-cohort split: leaf splits labile/structural by f_labile_leaf and lies above ground (#399);
       ! fineroot is below-ground; wood (CWD) is mostly structural via f_labile_stem, split by agf.
-      exp_lab_grnd = leaf1*flab_leaf1*agf1 + wood1*flab_stem1*agf1                       &
-                   + leaf2*flab_leaf2*agf2 + wood2*flab_stem2*agf2
-      exp_lab_soil = leaf1*flab_leaf1*(1.0_wp-agf1) + root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)  &
-                   + leaf2*flab_leaf2*(1.0_wp-agf2) + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
-      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1)*agf1 + wood1*(1.0_wp-flab_stem1)*agf1     &
-                   + leaf2*(1.0_wp-flab_leaf2)*agf2 + wood2*(1.0_wp-flab_stem2)*agf2
-      exp_str_soil = leaf1*(1.0_wp-flab_leaf1)*(1.0_wp-agf1) + root1*(1.0_wp-flab_leaf1)                 &
-                   + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)                                             &
-                   + leaf2*(1.0_wp-flab_leaf2)*(1.0_wp-agf2) + root2*(1.0_wp-flab_leaf2)                 &
-                   + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
+      exp_lab_grnd = leaf1*flab_leaf1 + wood1*flab_stem1*agf1                            &
+                   + leaf2*flab_leaf2 + wood2*flab_stem2*agf2
+      exp_lab_soil = root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)                    &
+                   + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
+      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*agf1          &
+                   + leaf2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*agf2
+      exp_str_soil = root1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)  &
+                   + root2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
       lit%labile_grnd = exp_lab_grnd ; lit%labile_soil = exp_lab_soil
       lit%struct_grnd = exp_str_grnd ; lit%struct_soil = exp_str_soil
       lit%lignin_grnd = 0.3_wp*exp_str_grnd ; lit%lignin_soil = 0.3_wp*exp_str_soil
@@ -458,8 +456,10 @@ contains
    !     called per-cohort with storage_c=0 (no wood/storage in a turnover-shed call), catching any !
    !     drift between the kernel and this helper. (b) EXHAUSTIVE MASS CONSERVATION: the six        !
    !     outputs must sum to the total necromass in for an arbitrary (leaf,root,wood,storage) input  !
-   !     -- the split has nowhere else for carbon to go. (c) storage is folded into the SAME canopy   !
-   !     (leaf) channel as leaf necromass (f_labile_leaf + aboveground_frac), not treated separately.  !
+   !     -- the split has nowhere else for carbon to go. (c) each tissue lies where it grew (#399):  !
+   !     leaves all above ground; storage split by aboveground_frac like wood. (d) add_necromass    !
+   !     records the carbon by origin, fruit and seed falling with the canopy, and the origins sum to !
+   !     the pool streams.                                                                          !
    !=======================================================================================!
    subroutine test_necromass_to_litter()
       real(wp), parameter :: leaf1=0.10_wp, root1=0.06_wp, wood1=0.20_wp
@@ -479,16 +479,14 @@ contains
                                lg1, ls1, sg1, ss1, lig_g1, lig_s1)
       call necromass_to_litter(leaf2, root2, wood2, 0.0_wp, flab_leaf2, flab_stem2, agf2, 0.3_wp,   &
                                lg2, ls2, sg2, ss2, lig_g2, lig_s2)
-      exp_lab_grnd = leaf1*flab_leaf1*agf1 + wood1*flab_stem1*agf1                       &
-                   + leaf2*flab_leaf2*agf2 + wood2*flab_stem2*agf2
-      exp_lab_soil = leaf1*flab_leaf1*(1.0_wp-agf1) + root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)  &
-                   + leaf2*flab_leaf2*(1.0_wp-agf2) + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
-      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1)*agf1 + wood1*(1.0_wp-flab_stem1)*agf1     &
-                   + leaf2*(1.0_wp-flab_leaf2)*agf2 + wood2*(1.0_wp-flab_stem2)*agf2
-      exp_str_soil = leaf1*(1.0_wp-flab_leaf1)*(1.0_wp-agf1) + root1*(1.0_wp-flab_leaf1)                 &
-                   + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)                                             &
-                   + leaf2*(1.0_wp-flab_leaf2)*(1.0_wp-agf2) + root2*(1.0_wp-flab_leaf2)                 &
-                   + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
+      exp_lab_grnd = leaf1*flab_leaf1 + wood1*flab_stem1*agf1                            &
+                   + leaf2*flab_leaf2 + wood2*flab_stem2*agf2
+      exp_lab_soil = root1*flab_leaf1 + wood1*flab_stem1*(1.0_wp-agf1)                    &
+                   + root2*flab_leaf2 + wood2*flab_stem2*(1.0_wp-agf2)
+      exp_str_grnd = leaf1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*agf1          &
+                   + leaf2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*agf2
+      exp_str_soil = root1*(1.0_wp-flab_leaf1) + wood1*(1.0_wp-flab_stem1)*(1.0_wp-agf1)  &
+                   + root2*(1.0_wp-flab_leaf2) + wood2*(1.0_wp-flab_stem2)*(1.0_wp-agf2)
       call check('necromass_to_litter matches hand formula: labile_grnd', lg1+lg2, exp_lab_grnd, 1.0e-14_wp)
       call check('necromass_to_litter matches hand formula: labile_soil', ls1+ls2, exp_lab_soil, 1.0e-14_wp)
       call check('necromass_to_litter matches hand formula: struct_grnd', sg1+sg2, exp_str_grnd, 1.0e-14_wp)
@@ -508,16 +506,33 @@ contains
       call check_true('lignin_grnd <= struct_grnd', lig_g <= sg, sg - lig_g)
       call check_true('lignin_soil <= struct_soil', lig_s <= ss, ss - lig_s)
 
-      ! (c) storage folds into the SAME canopy channel as leaf: (leaf_c=a, storage_c=b) must give the
-      !     IDENTICAL split as (leaf_c=a+b, storage_c=0) -- a is verified against b's contribution.
-      call necromass_to_litter(0.40_wp, 0.0_wp, 0.0_wp, 0.15_wp, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
+      ! (c) a leaf lies above ground whatever aboveground_frac is; storage splits by it, like wood.
+      call necromass_to_litter(0.40_wp, 0.0_wp, 0.0_wp, 0.0_wp, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
                                lg1, ls1, sg1, ss1, lig_g1, lig_s1)
-      call necromass_to_litter(0.55_wp, 0.0_wp, 0.0_wp, 0.0_wp,  0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
+      call check('leaf litter is all above ground: labile_grnd', lg1, 0.40_wp*0.65_wp, 1.0e-14_wp)
+      call check('leaf litter is all above ground: struct_grnd', sg1, 0.40_wp*0.35_wp, 1.0e-14_wp)
+      call check('leaf litter is all above ground: nothing below', ls1 + ss1, 0.0_wp, 0.0_wp)
+      call necromass_to_litter(0.0_wp, 0.0_wp, 0.0_wp, 0.15_wp, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp, &
                                lg2, ls2, sg2, ss2, lig_g2, lig_s2)
-      call check('storage folds into the leaf channel: labile_grnd', lg1, lg2, 1.0e-14_wp)
-      call check('storage folds into the leaf channel: labile_soil', ls1, ls2, 1.0e-14_wp)
-      call check('storage folds into the leaf channel: struct_grnd', sg1, sg2, 1.0e-14_wp)
-      call check('storage folds into the leaf channel: struct_soil', ss1, ss2, 1.0e-14_wp)
+      call check('storage splits by aboveground_frac: labile_grnd', lg2, 0.15_wp*0.65_wp*0.55_wp, 1.0e-14_wp)
+      call check('storage splits by aboveground_frac: labile_soil', ls2, 0.15_wp*0.65_wp*0.45_wp, 1.0e-14_wp)
+
+      ! (d) add_necromass: the pool streams of necromass_to_litter (fruit/seed in the canopy channel)
+      !     plus the carbon by origin, and the origins sum to the pool streams.
+      block
+         type(litter_input_t) :: lit
+         lit = litter_input_t()
+         call add_necromass(lit, leaf_c, root_c, wood_c, storage_c, 0.04_wp, 0.65_wp, 0.08_wp, 0.55_wp, 0.28_wp)
+         call necromass_to_litter(leaf_c + 0.04_wp, root_c, wood_c, storage_c, 0.65_wp, 0.08_wp, 0.55_wp, &
+                                  0.28_wp, lg, ls, sg, ss, lig_g, lig_s)
+         call check('add_necromass adds the split: labile_grnd', lit%labile_grnd, lg, 0.0_wp)
+         call check('add_necromass adds the split: struct_soil', lit%struct_soil, ss, 0.0_wp)
+         call check('add_necromass records the leaf by origin', lit%leaf_c, leaf_c, 0.0_wp)
+         call check('add_necromass records fruit and seed by origin', lit%repro_c, 0.04_wp, 0.0_wp)
+         call check('the origins sum to the pool streams',                                           &
+                    lit%leaf_c + lit%fineroot_c + lit%wood_c + lit%storage_c + lit%repro_c,         &
+                    lit%labile_grnd + lit%labile_soil + lit%struct_grnd + lit%struct_soil, 1.0e-14_wp)
+      end block
    end subroutine test_necromass_to_litter
 
    !=======================================================================================!

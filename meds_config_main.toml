@@ -264,8 +264,8 @@ do_patch_disturbance      = true     # annual treefall-gap creation
 do_patch_fissfuse         = true     # annual patch fusion/termination
 max_cohort                = 60       # per-patch cohort-count target (fusion relaxes to hit it)
 n_cohort_fusion_iter      = 6        # tolerance-relaxation iterations
-cohort_size_tol_min       = 0.02     # relative height tolerance, min
-cohort_size_tol_max       = 0.10     # relative height tolerance, max
+cohort_size_tol_min       = 0.02     # height tolerance as a share of the patch's top height, first pass
+cohort_size_tol_max       = 0.10     # its ceiling
 cohort_lai_cap            = 1.0      # [m2/m2] single-cohort LAI cap (split above; fusion blocked above)
 min_cohort_agb            = 1.0e-6   # [kgC/m2] cull cohorts below nplant*agb
 negligible_nplant         = 1.0e-8   # [plant/m2] absolute density floor
@@ -282,7 +282,10 @@ min_patch_area            = 1.0e-4   # cull patches below this area fraction
 patch_min_area_remain     = 0.99     # stop fusing once this area fraction is kept
 enable_patch_fission      = false
 conservation_tol          = 0.001    # 0.1% AGB/area conservation tolerance
-growth_memory_days        = 90.0     # [day] window of the moving-average growth that drives mortality
+growth_memory_days        = 365.0    # [day] window of the moving-average growth that drives mortality: a
+                                     #       full year, so a seasonal pause in growth is not read as decline
+                                     #       (census growth, which the mortality laws are fitted on, is annual).
+                                     #       The diameter sink limit is a budget over the same window.
 
 [disturbance]
 patch_disturbance_rate     = 0.014   # [1/yr] fraction of area disturbed into a new age-0 gap

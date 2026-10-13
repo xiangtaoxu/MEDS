@@ -118,11 +118,20 @@ formula. The tests assert it: the correct form's total loss equals $`R_h`$ of eq
 
 Dead plant carbon becomes litter in one place — `necromass_to_litter` (`meds_litter_partition`), whose
 arguments are plain carbon amounts and plain PFT traits, which is what lets both the slow driver and the
-demographic operators call it. Leaf necromass is pooled with **storage** necromass (both canopy-
-associated and labile-eligible; dead seed and seedling arrive here) and split by `f_labile_leaf`;
-fine-root necromass reuses `f_labile_leaf` but lands **entirely below-ground**; wood/CWD splits by
-`f_labile_stem`. Each stream then splits above/below by `aboveground_frac`, and only the structural ones
-carry lignin — `struct_lignin_frac` of each.
+demographic operators call it. Each tissue goes where it is (#399):
+
+| Tissue | Labile share | Above / below ground |
+|---|---|---|
+| leaves; flowers, fruit and seed of reproduction | `f_labile_leaf` | all above |
+| fine roots | `f_labile_leaf` | all below |
+| wood (stem + coarse roots) | `f_labile_stem` | `aboveground_frac` / the rest |
+| storage (non-structural carbon, in sapwood and coarse roots) | `f_labile_leaf` | `aboveground_frac` / the rest |
+
+`aboveground_frac` is the woody split (ED2 `agf_bs`), so it applies to wood and storage only. Only the
+structural streams carry lignin — `struct_lignin_frac` of each. The slow driver calls it through
+`add_necromass`, which also records the carbon by the tissue it came from; those are the litter outputs
+(`litter_leaf_site`, `litter_fineroot_site`, `litter_wood_site`, `litter_repro_site`, each after
+resorption), and with `root_exudate_site` they sum to the carbon entering pools 1–4.
 
 `build_litter_input` maps those six numbers onto the matrix source term — four carbon streams into $u$,
 two lignin fluxes alongside — and does **no** chemistry of its own, since the splits are per-cohort

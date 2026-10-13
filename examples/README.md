@@ -29,3 +29,8 @@ README that shows how to reproduce it (run from the repository root):
   PFTs (early, mid and late successional) with Panama's sun leaves and a sink limit on diameter
   growth, checked against the census's growth and the forest's carbon budget, on ERA5-Land weather
   repeated and the CO₂ of its history.
+- **[`example06_regional_run/`](example06_regional_run/)** — the whole model over a region:
+  forests regrow from bare ground for 150 years in 983 cells of Central America, each a single-site run
+  on its own ERA5-Land weather, soil and height allometry, with the four dry-forest leaf habits of
+  Xu et al. (2016) set at Palo Verde. Their seasonal leaf area is set against MODIS, and their biomass
+  after 20 years against Neotropical chronosequences (Poorter et al. 2016).

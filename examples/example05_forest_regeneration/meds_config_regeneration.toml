@@ -53,7 +53,7 @@ min_patch_area            = 1.0e-4
 patch_min_area_remain     = 0.99
 enable_patch_fission      = false
 conservation_tol          = 0.001
-growth_memory_days        = 90.0
+growth_memory_days        = 365.0
 
 # Treefall opens 1.4 % of the forest each year; trees above 10 m die on that ground.
 [disturbance]

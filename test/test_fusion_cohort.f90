@@ -120,6 +120,23 @@ program test_fusion_cohort
    call check_close(total_nplant(site), n0,   1.0e-10_wp, 'fusion broke nplant conservation')
    call check_close(total_agb(site),    agb0, cfg%conservation_tol, 'fusion broke AGB conservation')
 
+   !=== 2b. The fusion tolerance is a share of the patch's top height. Two saplings 1.0 and 1.1 cm  !
+   !        wide (about 0.15 m apart) stay apart in a stand of saplings, where 0.02 of the top is   !
+   !        about 5 cm, and merge once the patch holds a 60 cm tree, where it is about 0.6 m. -----!
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
+   call finalize_init(site)
+   call new_fuse_cohorts(site, cfg)
+   call check(site%cohort%n == 2_ik, 'saplings 0.15 m apart merged in a sapling stand')
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 1.0e-3_wp, 60.0_wp)
+   call finalize_init(site)
+   call new_fuse_cohorts(site, cfg)
+   call check(site%cohort%n == 2_ik, 'saplings 0.15 m apart not merged under a 60 cm tree')
+
    !=== 3. split_cohorts conserves N and AGB and increases the count. =====================!
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 2.0_wp, 50.0_wp)   ! nplant*leaf_area >> cohort_lai_cap

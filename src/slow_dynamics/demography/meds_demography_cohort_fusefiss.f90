@@ -129,7 +129,7 @@ contains
       logical,             intent(in)    :: force
       logical, allocatable :: alive(:)
       integer(ik) :: ip, i0, i1, recc, donc
-      real(wp)    :: diff_height, lai_comb
+      real(wp)    :: diff_height, lai_comb, h_top
       logical     :: did_fuse
 
       did_fuse = .false.
@@ -139,6 +139,15 @@ contains
          do ip = 1_ik, patch%n
             i0 = patch%cohort_offset(ip)
             i1 = i0 + patch%cohort_count(ip) - 1_ik
+            if (i1 < i0) cycle
+            !----- The tolerance is a share of the patch's TOP height (cohorts are sorted tallest  !
+            !      first), so it scales with the stand: in a 3 m regrowth stand two cohorts merge   !
+            !      only within about 6 cm, and one that has pulled ahead keeps its place in the     !
+            !      light, while a 30 m forest merges within about 0.6 m. Tied to the PFT's maximum  !
+            !      height instead, it would fold each month's recruits into a young stand's        !
+            !      leaders and re-merge the halves of every split, and a dense stand could never    !
+            !      form the size hierarchy it thins by. ------------------------------------------!
+            h_top = cohort%height(i0)
             do recc = i0, i1 - 1_ik
                if (.not. alive(recc)) cycle
                do donc = recc + 1_ik, i1
@@ -147,8 +156,7 @@ contains
                   lai_comb = cohort%nplant(recc) * cohort%leaf_area(recc) + cohort%nplant(donc) * cohort%leaf_area(donc)
                   if (.not. force .and. lai_comb >= cfg%cohort_lai_cap) cycle
                   diff_height = abs(cohort%height(donc) - cohort%height(recc))
-                  !----- Same-PFT fusion (checked above), so recc and donc share hgt_max. -------!
-                  if (force .or. diff_height < cohort%p_hgt_max(recc) * tol) then
+                  if (force .or. diff_height < h_top * tol) then
                      call fuse_2_cohorts(site, recc, donc, cfg%conservation_tol)
                      alive(donc) = .false.
                      did_fuse    = .true.

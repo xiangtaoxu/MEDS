@@ -182,8 +182,8 @@ module meds_site_diag_types
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
    !      above because the reader normalizes by w either way, and the slow driver writes them as   !
    !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
-   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall
-   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter
+   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall (after resorption)
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter (after resorption)
    integer(ik), parameter, public :: PD_LITTER_STRUCT   = 23_ik !< [kgC/m2/yr] structural litter + CWD
    integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 24_ik !< [plant/m2/yr] recruitment density flux
    integer(ik), parameter, public :: PD_DISTURB_AREA    = 25_ik !< [1/yr] area fraction disturbed
@@ -229,7 +229,11 @@ module meds_site_diag_types
    !      the ground surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is   !
    !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. -------!
    integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
-   integer(ik), parameter, public :: N_PDIAG            = 40_ik
+   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT (#399): !
+   !      with root_exudate_site they sum to the carbon entering the soil pools. ---------------!
+   integer(ik), parameter, public :: PD_LITTER_WOOD   = 41_ik  !< [kgC/m2/yr] wood + storage of dead plants
+   integer(ik), parameter, public :: PD_LITTER_REPRO  = 42_ik  !< [kgC/m2/yr] fruit and seed that made no recruit
+   integer(ik), parameter, public :: N_PDIAG            = 42_ik
 
    !==========================================================================================!
    !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !
@@ -564,8 +568,8 @@ contains
    pure logical function patch_diag_slow_row(field) result(slow)
       integer(ik), intent(in) :: field
       select case (field)
-      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA, &
-            PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
+      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO,  &
+            PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
          slow = .true.
       case default
          slow = .false.

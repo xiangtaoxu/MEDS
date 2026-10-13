@@ -129,11 +129,15 @@ once the count is within its **target**.
 
 | | Cohorts | Patches |
 |---|---|---|
-| similar when | their heights differ by less than `tol · hgt_max`, and their combined LAI is below `cohort_lai_cap` | their light profiles differ by at most `tol` on average, and by at most `tol · patch_light_maxdev_factor` in any layer |
+| similar when | their heights differ by less than `tol · h_top`, with `h_top` the height of the patch's tallest cohort, and their combined LAI is below `cohort_lai_cap` | their light profiles differ by at most `tol` on average, and by at most `tol · patch_light_maxdev_factor` in any layer |
 | tolerance, first pass | `cohort_size_tol_min` | `patch_light_tol` |
 | tolerance ceiling | `cohort_size_tol_max` | `patch_light_tol_max` (default 0.15) |
 | passes, at most | `n_cohort_fusion_iter` | `n_patch_fusion_iter` |
 | target | `max_cohort`, in the most crowded patch | `max_patch` |
+
+The cohort tolerance scales with the stand: in a 3 m regrowth patch the first pass merges cohorts
+within about 6 cm, so a cohort that has pulled ahead keeps its light and its suppressed neighbours can
+thin, while in a 30 m forest it merges within about 0.6 m.
 
 A patch's light profile is the fraction of full sunlight left under each of `n_height_layers` equal
 layers up to the tallest `hgt_max`, `exp(−light_ext × LAI at and above the layer)`. Layers fully lit

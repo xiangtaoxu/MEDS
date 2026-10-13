@@ -39,13 +39,14 @@ module meds_vegetation_dynamics
    use meds_phenology, only : phenology_kernel, leaf_turnover_step, turnover_gate
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_sink_limitation,      only : growth_sink_limitation
-   use meds_litter_partition, only : necromass_to_litter
+   use meds_litter_partition, only : add_necromass
    use meds_biogeochem_types, only : litter_input_t
    use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
                                         CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
                                         cohort_diag_grow,                                      &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
+                                        PD_LITTER_WOOD, PD_LITTER_REPRO,                       &
                                         PD_MORT_C_BACKGROUND,                                &
                                         PD_RECRUIT_NPLANT,                                     &
                                         cohort_diag_reset
@@ -278,11 +279,20 @@ contains
          !      otherwise sets, so a reader sees these rows. -------------------------------------------!
          if (.not. cfg%fast_biophysics_on) site%patch%diag%n = site%patch%n
          do ip = 1_ik, site%patch%n
+            !----- Leaf and fine-root litter by the tissue they came from (#399): what falls, not the  !
+            !      share of it that reaches one destination pool. ----------------------------------!
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
-                                                      + (site%patch%litter_in(ip)%labile_grnd           &
+                                                      + (site%patch%litter_in(ip)%leaf_c                &
                                                          / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
-                                                      + (site%patch%litter_in(ip)%labile_soil           &
+                                                      + (site%patch%litter_in(ip)%fineroot_c            &
+                                                         / cfg%dt_years) * cfg%dt_slow
+            site%patch%diag%v(PD_LITTER_WOOD,     ip) = site%patch%diag%v(PD_LITTER_WOOD,     ip) &
+                                                      + ((site%patch%litter_in(ip)%wood_c               &
+                                                        + site%patch%litter_in(ip)%storage_c)           &
+                                                         / cfg%dt_years) * cfg%dt_slow
+            site%patch%diag%v(PD_LITTER_REPRO,    ip) = site%patch%diag%v(PD_LITTER_REPRO,    ip) &
+                                                      + (site%patch%litter_in(ip)%repro_c               &
                                                          / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
                                                       + ((site%patch%litter_in(ip)%struct_grnd          &
@@ -577,15 +587,21 @@ contains
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
       real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
-      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost, exudate
+      real(wp)    :: seed_lost, exudate, window_yr, grown_in_window
       real(wp), allocatable :: co2_owed(:), efficiency(:)
       logical     :: starving
+      integer(ik) :: n_window, next_pos
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
       allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
       allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
       efficiency = cohort_recruit_efficiency(site, cfg)
+      !----- The growth ring-buffer slot this step's realized growth will be written to (step 3 of  !
+      !      vegetation_dynamics advances growth_hist_pos the same way): the sink limit's window is  !
+      !      the buffer without that slot's old sample, plus this step. ----------------------------!
+      n_window = growth_window_steps(cfg)
+      next_pos = mod(site%growth_hist_pos, n_window) + 1_ik
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, n
             pf  = cohort%pft(j)
@@ -655,6 +671,9 @@ contains
                      gross_gpp, resp_maint, leaf_shed_c, fineroot_shed_c, leaf_demand,             &
                      fineroot_demand, pft%retained_carbon_fraction(pf), leaf_retained_c,           &
                      fineroot_retained_c)
+            call growth_window_so_far(cohort%growth_count(j), cohort%growth_accum(j),              &
+                                      cohort%growth_hist(next_pos, j), n_window, dt_yr,             &
+                                      window_yr, grown_in_window)
             !----- Allocate the daily carbon to GROWTH (growth respiration charged on realized     !
             !      growth INSIDE the kernel; storage funds leaf/root growth even when net < 0). ---!
             call plant_carbon_allocation(gpp=gross_gpp, resp_maint=resp_maint,                     &
@@ -671,7 +690,7 @@ contains
                         max_relative_growth_rate=pft%max_relative_growth_rate(pf),                  &
                         max_absolute_growth_rate=pft%max_absolute_growth_rate(pf),                  &
                         max_absolute_growth_exponent=pft%max_absolute_growth_exponent(pf),          &
-                        dt_yr=dt_yr),                                                               &
+                        dt_yr=dt_yr, window_yr=window_yr, grown_in_window=grown_in_window),         &
                      exudate=exudate)
             !----- NET per-pool change = growth - shed (leaf/root); litter = shed. ---------------!
             npp%leaf(j)          = g_leaf     - leaf_shed_c
@@ -721,29 +740,21 @@ contains
             !      keeps this bit-identical). The SEED LOSS joins them: reproduction carbon is        !
             !      debited in full from the parent, and only the recruit carbon efficiency of it ever !
             !      establishes -- the remaining ~99.9% is dead seed and dead seedling, which is        !
-            !      NECROMASS, not nothing. It enters as `storage_c`, which necromass_to_litter pools   !
-            !      with the canopy and splits on f_labile_leaf: seed tissue is labile and canopy-      !
-            !      derived, which is what that argument means. -----------------------------------!
+            !      NECROMASS, not nothing. It falls with the canopy (above ground, f_labile_leaf).   !
             if (cfg%soil_carbon_on) then
                seed_lost = g_repro * cohort%nplant(j)                                              &
                          * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
                !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
                !      (#151); the rest went to storage above, so each pool's full removal is matched  !
                !      exactly by (storage credit + litter input).  -----------------------------------!
-               call necromass_to_litter((leaf_shed_c - leaf_retained_c) * cohort%nplant(j),          &
-                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j),                  &
-                        0.0_wp, seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                 &
-                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                            &
-                        lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-               lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
-               lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
-               lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
-               lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
-               lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
-               lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+               call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
+                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
+                        seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
+                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
                !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
                !      labile, below-ground carbon, where the microbes respire it. -------------------!
                lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
+               lit(ip)%exudate_c   = lit(ip)%exudate_c   + exudate * cohort%nplant(j)
             end if
          end do
       end associate
@@ -754,6 +765,30 @@ contains
          site%patch%slow_co2_rate(ip) = co2_owed(ip) / max(cfg%dt_slow, tiny_num) / KGC_PER_UMOL_C
       end do
    end subroutine compute_carbon_allocation
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's growth window as the sink limit sees it this step: the diameter it has already  !
+   ! grown in the window [cm] and the window's length [yr] with this step in it. The ring buffer  !
+   ! holds one realized dbh rate [cm/yr] per step (count of them, summing to accum); once it is   !
+   ! full, this step's sample replaces the oldest, which therefore leaves the window now. A new   !
+   ! cohort's window is as long as its life, so it cannot draw on growth it never had time for.   !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine growth_window_so_far(count, accum, oldest, n_window, dt_yr, window_yr, grown)
+      integer(ik), intent(in)  :: count       !< samples in the ring buffer
+      real(wp),    intent(in)  :: accum       !< [cm/yr] their sum
+      real(wp),    intent(in)  :: oldest      !< [cm/yr] the sample in the slot this step overwrites
+      integer(ik), intent(in)  :: n_window    !< the buffer's length [steps]
+      real(wp),    intent(in)  :: dt_yr       !< [yr] step length
+      real(wp),    intent(out) :: window_yr   !< [yr] the window this step closes
+      real(wp),    intent(out) :: grown       !< [cm] diameter grown in it before this step
+      if (count < n_window) then
+         window_yr = real(count + 1_ik, wp) * dt_yr
+         grown     = accum * dt_yr
+      else
+         window_yr = real(n_window, wp) * dt_yr
+         grown     = (accum - oldest) * dt_yr
+      end if
+   end subroutine growth_window_so_far
 
    !---------------------------------------------------------------------------------------!
    ! Leaf/fine-root turnover WATER shedding (P4, MEDS_ED2_RK45_DESIGN.md, user-directed follow-on !
@@ -942,7 +977,7 @@ contains
       real(wp),              intent(in)    :: nplant_before(:) !< [plant/m2] density BEFORE the commit
       type(litter_input_t),  intent(inout) :: lit(:)
       integer(ik) :: j, pf, ip
-      real(wp)    :: died_nplant, lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      real(wp)    :: died_nplant
 
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, cohort%n
@@ -962,18 +997,11 @@ contains
                                   + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
                      / cfg%dt_years) * cfg%dt_slow
             if (.not. cfg%soil_carbon_on) cycle
-            call necromass_to_litter(died_nplant * cohort%leaf_carbon(j),                         &
+            call add_necromass(lit(ip), died_nplant * cohort%leaf_carbon(j),                      &
                      died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
-                     died_nplant * cohort%nonstructural_carbon(j),                                 &
+                     died_nplant * cohort%nonstructural_carbon(j), 0.0_wp,                         &
                      pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                 &
-                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                         &
-                     lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-            lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
-            lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
-            lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
-            lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
-            lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
-            lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
          end do
       end associate
    end subroutine accumulate_mortality_litter
