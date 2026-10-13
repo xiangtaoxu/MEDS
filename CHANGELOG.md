@@ -86,6 +86,14 @@ before and after.
   with BCI's (`calibration.json`); `plot_regeneration.py` draws the regrowth against the plot's
   censuses and tower. By 2010 the stand holds 123 MgC ha⁻¹ aboveground (census 118) and 33 m² ha⁻¹ of
   basal area (30.5), with GPP 32 MgC ha⁻¹ yr⁻¹ (tower 31).
+- **Example 06, a regional run** (`examples/example06_regional_run/`, #402): Xu et al. (2016)'s four
+  dry-forest leaf habits (soft-wood deciduous, deciduous, brevi-deciduous, evergreen), set at Palo Verde
+  against its 2009 inventory (`meds_config_pv.toml`: leaf litter, AGB growth, leaf cover, mortality), then
+  a 150-year regrowth from bare ground in 983 cells of Central America (5-25° N, 100-80° W), one
+  single-site run per cell on the cell's ERA5-Land weather, ED soil map and Chave et al. (2014) stress
+  index. The README sets the last ten years' leaf area against MODIS (minimum leaf cover r = 0.71 across
+  cells; the peak LAI is too high, 6.6 against 5.2) and the AGB after 20 years against Poorter et al.
+  (2016)'s Neotropical chronosequences (about half the observed above 1,200 mm of rain).
 - **`meds.model.Run.patches()`** copies per-patch `area` (fraction of the site) and `age` out of a live
   run, through the new C-API entry `meds_run_get_patch_real`; a cohort's `owner_patch` indexes them, so
   stand totals can be built from cohorts. `test_model.py` checks that the area-weighted cohort biomass
@@ -105,14 +113,14 @@ before and after.
 
 ### Changed
 
-- **The growth window is a year in every example** (`[demography].growth_memory_days` 90 -> 365 in
+- **The growth window is a year in every example** (#402; `[demography].growth_memory_days` 90 -> 365 in
   `meds_config_main.toml` and examples 03-05; example06 already used 365; `test/region` keeps 90). The
   mortality hazard reads a cohort's mean diameter growth over this window, and over 90 days a dry
   season's pause read as a growth collapse: at Palo Verde the Camac hazard of the dense-wood PFTs rose
   from about 0.6 to about 10 % yr^-1 each May-June, and the evergreen PFT's mortality in the 2009 stand
   falls from 2.8 to 0.6 % yr^-1 with a year. Example 04 barely moves (one year: GPP +0.05 %, LE +0.04 %,
   H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). Example 05 was not rerun.
-- **Cohort fusion's height tolerance is a share of the patch's top height** (`fuse_pass`;
+- **Cohort fusion's height tolerance is a share of the patch's top height** (#402; `fuse_pass`;
   `docs/configuration.md`). `cohort_size_tol_min`/`_max` multiplied the PFT's `hgt_max`, a fixed 0.92 m
   at the first pass for a 46 m PFT whatever the stand. In a young stand that merged each month's
   recruits into the leading cohort and re-merged the two halves of every split each dry season, so all
@@ -123,7 +131,7 @@ before and after.
   the 89 a start from 0.1 seedlings m^-2 reaches. Where the canopy is near `hgt_max` fusion is as
   before; examples 03-05 were not rerun. `test_fusion_cohort` checks a sapling stand and a tall one.
 - **The diameter sink limit is a budget over the growth window, not a cap on each step**
-  (`meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
+  (#402; `meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
   takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
   buffer, and the step may grow the diameter by `max_absolute_growth_rate x dbh^c x window` less that.
   A per-step cap threw away every day without spare carbon, so where growth is seasonal a stem could not
