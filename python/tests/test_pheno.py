@@ -86,8 +86,11 @@ def test_leaf_step_matches_the_carbon_rule():
     p = pheno.Params(flush_rate_max=0.06, shed_rate_max=0.1, leaf_turnover_rate=0.5)
     cover, sen, bg = pheno.leaf_step(0.5, 0.5, 1.0, p)
     assert abs(sen - 0.05) < 1e-15                            # shed_rate_max * tendency * cover
-    assert abs(bg - 0.5 / 365.2425 * 0.5 * 0.5) < 1e-15       # turnover/yr * flush tendency * cover
-    assert abs(cover - (0.5 - sen - bg + 0.03)) < 1e-15       # + flush_rate_max * tendency
+    assert bg == 0.0                                          # no background turnover while leaves drop
+    assert abs(cover - (0.5 - sen + 0.03)) < 1e-15            # + flush_rate_max * tendency
+    # With no drop, the leaves age: turnover/yr * flush tendency * cover.
+    cover, sen, bg = pheno.leaf_step(0.5, 0.5, 0.0, p)
+    assert sen == 0.0 and abs(bg - 0.5 / 365.2425 * 0.5 * 0.5) < 1e-15
     # A bare canopy loses nothing however high the shed tendency.
     assert pheno.leaf_step(0.0, 0.0, 1.0, p) == (0.0, 0.0, 0.0)
 
