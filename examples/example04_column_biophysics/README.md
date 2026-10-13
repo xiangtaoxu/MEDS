@@ -24,8 +24,8 @@ python run_example.py --calibrate --workers 40  # ... and redo the calibration f
 ```
 
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main`, default
-`../../build-ifx/meds_main`). Every step together takes about 14 minutes on 8 threads. The
-calibration takes about 5 hours on one 40-core node, less across a cluster with
+`../../build-ifx/meds_main`). Every step together takes about 20 minutes on 8 threads. The
+calibration's 1,096 runs took 55 minutes on 100 cores of five nodes, with the queue workers of
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
 ## The data
@@ -59,15 +59,15 @@ corrected to the tower. On observations hidden from it, the longwave fill scores
 ## 2. The model
 
 [`meds_config_eval.toml`](meds_config_eval.toml) runs 2012-08-01 to 2017-08-01.
-- **The stand is the 2010 census:** 207,259 live trees of at least 1 cm, which MEDS groups into 130
-  patches and 1,924 cohorts. One evergreen PFT ([`pft_parameters.toml`](pft_parameters.toml)) with
+- **The stand is the 2010 census:** 207,259 live trees of at least 1 cm, which MEDS groups into 120
+  patches and 2,553 cohorts. One evergreen PFT ([`pft_parameters.toml`](pft_parameters.toml)) with
   MEDS's default allometry puts it at LAI 5.6 and 16.1 kgC m⁻² aboveground (the census's own
   estimate is 15.1).
 - **Leaf traits follow the light** down the canopy, and the canopy holds rain and dew.
-- **Each tree roots to a depth set by its height** (5 m for a 35 m tree), and water rises to its
-  leaves through its sapwood, whose conductivity is set by wood density.
-- **The soil is BCI's clay**, 6 m deep, its water retention and conductivity fitted to measurements
-  on the island (Kupers et al. 2019; Godsey et al. 2004).
+- **Each tree roots to a depth set by its height** (5 m for a 35 m tree), cut at the soil's base, and
+  water rises to its leaves through its sapwood, whose conductivity is set by wood density.
+- **The soil is BCI's clay**, 2 m deep, about the plot's soil above the saprolite; its water retention
+  and conductivity are fitted to measurements on the island (Kupers et al. 2019; Godsey et al. 2004).
 
 ## 3. The calibration
 
@@ -88,25 +88,26 @@ The calibrated configs, the fit and its report are in [`calibration/`](calibrati
 
 | key | calibrated (68 % range) | prior centre |
 |---|---|---|
-| `vcmax25` [µmol m⁻² s⁻¹] | 31.3 (30.4–32.2) | 41.0 (from the climate) |
-| `stomatal_g1` [kPa^0.5] | 2.82 (2.74–2.90) | 2.80 (from the climate) |
-| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0005 (0.0003–0.0011) | 0.01 |
-| `leaf_angle_mean` [°] | 55.1 (51.2–58.7) | 45 |
-| `z0m_ratio` | 0.054 (0.052–0.056) | 0.13 |
-| κ | 0.767 (0.728–0.804) | 0.65 |
+| `vcmax25` [µmol m⁻² s⁻¹] | 32.3 (31.4–33.3) | 41.0 (from the climate) |
+| `stomatal_g1` [kPa^0.5] | 2.82 (2.75–2.89) | 2.80 (from the climate) |
+| `stomatal_g0` [mol m⁻² s⁻¹] | 0.0003 (0.0002–0.0007) | 0.01 |
+| `leaf_angle_mean` [°] | 54.9 (51.0–58.6) | 45 |
+| `z0m_ratio` | 0.053 (0.051–0.055) | 0.13 |
+| `wstress_sref_stomata` | 2.0 (1.0–3.7): the data do not constrain it | 2 |
+| κ | 0.734 (0.698–0.768) | 0.65 |
 
 On the validation windows (RMSE in units of each target's error):
 
 | target | default | calibrated |
 |---|---|---|
-| u\* | 1.72 | 0.67 |
-| GPP | 2.50 | 1.58 |
-| upwelling longwave | 3.87 | 3.54 |
-| LE | 1.70 | 1.59 |
-| H | 4.34 | 4.35 |
+| u\* | 1.75 | 0.67 |
+| GPP | 2.34 | 1.59 |
+| upwelling longwave | 3.82 | 3.51 |
+| LE | 1.63 | 1.60 |
+| H | 4.18 | 4.32 |
 
 The energy-balance gap is the largest uncertainty: sharing it between H and LE instead moves
-`stomatal_g1` to 4.44 and `vcmax25` to 28.2.
+`stomatal_g1` to 4.76 and `vcmax25` to 29.0.
 
 ## 4. Against the tower
 
@@ -117,16 +118,16 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 
 | | tower | target | default | calibrated |
 |---|---|---|---|---|
-| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.04 | 10.54 | 8.54 |
-| LE [W m⁻²] | 75.5 | 75.5 | 79.8 | 63.9 |
-| H by day [W m⁻²] | 91.3 | 166.6 | 126.6 | 143.5 |
-| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.58 | −2.68 |
-| net radiation [W m⁻²] | 136.3 | | 122.0 | 122.6 |
+| GPP [µmol m⁻² s⁻¹] | 7.46 | 8.15 | 10.45 | 8.65 |
+| LE [W m⁻²] | 75.5 | 75.5 | 77.5 | 62.9 |
+| H by day [W m⁻²] | 91.3 | 166.6 | 132.7 | 146.3 |
+| NEE [µmol m⁻² s⁻¹] | −4.24 | | −3.69 | −2.85 |
+| net radiation [W m⁻²] | 136.3 | | 122.2 | 122.7 |
 
-- **Carbon:** the calibration brings GPP from 31 % above its target to 6 % above.
+- **Carbon:** the calibration brings GPP from 28 % above its target to 6 % above.
 - **Energy:** the model's canopy reflects too much (albedo 0.17–0.18 against the tower's 0.13), so
   its net radiation is 14 W m⁻² short and its daytime H stays below the target.
-- **Water:** the calibration lowers LE to 63.9 W m⁻², below the tower's 75.5, although it improves LE
+- **Water:** the calibration lowers LE to 62.9 W m⁻², below the tower's 75.5, although it improves LE
   on the validation windows.
 - Whole-site energy and water close in both runs.
 
@@ -137,21 +138,20 @@ Means over the tower's measured hours, 2012-08 to 2017-07:
 The example runs the calibrated model to 20 April 2016, then restarts it for ten days with every
 patch's and cohort's states written each half hour ([`output_window.toml`](output_window.toml)).
 These are the last days of the 2016 El Niño dry season: four bright dry days, small showers, then
-42 mm of rain on the 27th. The figure shows the patch that covers the most ground (8 % of the site,
+42 mm of rain on the 27th. The figure shows the patch that covers the most ground (7 % of the site,
 LAI 5.9) and its tallest tree.
 - **Temperatures.** Only the air at 41 m is forcing. The canopy air peaks 1–2 K above it, and the
-  top tree's leaves 3–6 K above it at midday. The soil at 5 cm swings 1–3 K a day, peaking hours
-  after the air.
-- **Canopy-air CO₂** falls 4–10 µmol mol⁻¹ by day as the canopy draws it down, and builds up again
-  at night, most on the calmest night.
-- **Leaf water potential** refills to −0.41 MPa every night and falls to about −1.1 MPa at midday on
-  the bright days: the tension that pulls the day's transpiration up through the sapwood. Panama's
-  canopy trees measure −0.6 to −1.0 MPa before dawn and −1.4 to −2.0 at midday in a dry season, so
-  the model's tree has more water than the measured ones: its roots reach soil that stays moist at
-  depth.
-- **Soil moisture.** The top 15 cm stays near 0.37 m³ m⁻³, wetter than the tower's sensor (0.28),
-  because the trees draw on the whole 6 m column rather than on its top. The storm wets the top
-  layers within hours.
+  top tree's leaves 3–6 K above it at midday. The soil at 2.5 cm swings 1–5 K a day.
+- **Canopy-air CO₂** falls to about 399 µmol mol⁻¹ by day as the canopy draws it down, and builds up
+  again to 404–407 at night.
+- **Leaf water potential** refills to about −0.55 MPa each night of the dry spell (−0.37 after the
+  storm) and falls to −1.3 MPa at midday on the bright days: the tension that pulls the day's
+  transpiration up through the sapwood. Panama's canopy trees measure −0.6 to −1.0 MPa before dawn
+  and −1.4 to −2.0 at midday in a dry season, so the model's tree is at the wet end of the measured
+  range.
+- **Soil moisture.** Before the storm the top 15 cm holds 0.32 m³ m⁻³, near the tower's sensor
+  (0.28). The storm wets the top layers within hours, and the model holds more of it than the sensor
+  in the days after (0.42 against 0.37).
 
 ## Files
 
