@@ -56,15 +56,13 @@ stem_resp_sapwood25 = [31.25, 31.25, 31.25, 31.25]   # [umol CO2/m3 sapwood/s @2
 # 11.7 m on Chave's curve here, about 12 cm dbh.
 reproduction_investment_fraction = [0.10, 0.10, 0.10, 0.10]   # [--] growth fraction to reproduction
 
-#----- Sink limit on wood growth: a cohort's diameter grows at most max_absolute_growth_rate x dbh[cm]^0.5
-#      a year, and the carbon it cannot use is exuded by the roots. The shape is BCI's census: the 75th
-#      percentile of diameter growth rises as dbh^0.5 at a given light (a quantile regression ln g = a +
-#      0.5 ln dbh + beta x overtopping LAI on each PFT's 1990-2010 growth of trees 1-30 cm; fitted per PFT
-#      0.45, 0.65, 0.47). Its level is twice that quantile extrapolated to LAI 0 (0.211, 0.153, 0.059 cm/yr
-#      at 1 cm), which lets saplings on open ground grow as fast as the census's best-lit ones. Palo Verde
-#      takes a provisional gradient by wood density instead (owner, 2026-10-12).
-max_absolute_growth_rate     = [0.25, 0.20, 0.15, 0.10]   # [cm/yr] at dbh 1 cm
-max_absolute_growth_exponent = [0.5, 0.5, 0.5, 0.5]
+#----- Sink limit on wood growth: a cohort's diameter grows at most max_absolute_growth_rate a year (a budget
+#      over the growth window, growth_memory_days), whatever its size, and the carbon it cannot use is exuded
+#      by the roots. A flat cap (exponent 0) holds the 2009 stand's trees >= 10 cm to their measured growth
+#      and still lets open-grown saplings make a stand: with BCI's dbh^0.5 shape, caps low enough for the
+#      large trees kept a regrowing stand without a 10 cm stem for 45 years (owner, 2026-10-13: provisional).
+max_absolute_growth_rate     = [0.8, 0.5, 0.4, 0.35]   # [cm/yr]
+max_absolute_growth_exponent = [0.0, 0.0, 0.0, 0.0]
 
 #----- Wood area and sapwood allometry (ED2 ed_params.f90, tropical broadleaf). ---------------------
 wai_b1             = [0.0096, 0.0096, 0.0096, 0.0096]
@@ -144,6 +142,11 @@ root_depth_b1          = [0.6499, 0.9655, 1.374, 1.6154]   # [m] 1.114 * WD/0.6 
 root_depth_b2          = [0.422301, 0.422301, 0.422301, 0.422301]   # [-] MEDS default (ED2 IALLOM 1)
 root_beta              = [0.001, 0.002, 0.005, 0.01]   # [-] owner 2026-10-12: deeper profiles with wood density (0.1 put half the roots below 51 cm)
 
+# Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over the
+# growth window (growth_memory_days, a year): Camac et al. (2018, PNAS)'s hazard across BCI's species, each
+# parameter p = p0 (WD/0.6)^b of wood density (owner, 2026-10-12). At these PFTs' WD: gamma 0.0253, 0.0122,
+# 0.0064, 0.0047 /yr; alpha 0.093, 0.059, 0.039, 0.033 /yr; beta 16.1, 18.0, 19.8, 20.8 yr/cm. The fit counts
+# every death, so treefall (main config, 0.014/yr on trees above 10 m in each new gap) comes on top of it.
 [camac]
 mort_rho_ref   = 0.6
 mort_gamma_0   = 0.0094
@@ -153,19 +156,8 @@ mort_alpha_exp = -1.1493
 mort_beta_0    = 18.72
 mort_beta_exp  = 0.2792
 
-# Mortality m = mort_gamma + mort_alpha * exp(-mort_beta * g), g a cohort's dbh growth [cm/yr] over
-# the last year (growth_memory_days): example 03's fits to the BCI censuses (vital_rates.json), made a
-# function of wood density (owner, 2026-10-12). Each parameter p is Camac et al. (2018)'s form,
-# p = p0 (WD/0.6)^b, fitted to BCI's three wood-density classes (0.36, 0.50, 0.68; ln p on ln WD) and
-# read at these PFTs' WD: census gamma 0.020271 (WD/0.6)^-0.3724, alpha 0.12756 (WD/0.6)^-0.7932, beta
-# 38.583 (WD/0.6)^2.1229. Treefall (main config, 0.014/yr) kills the canopy trees in each new gap on
-# top of this, and the census's gamma already counts those deaths, so 0.014 is taken off gamma.
 # Read because the main config sets [options].override_derived = true.
 [derived]
-mort_gamma = [0.010776, 0.007380, 0.004748, 0.003651]   # [1/yr] census gamma 0.024776, 0.021380, 0.018748, 0.017651 - 0.014
-mort_alpha = [0.195616, 0.142897, 0.108014, 0.095001]   # [1/yr]
-mort_beta  = [12.2878, 28.4752, 60.2210, 84.9098]      # [yr/cm]
-
 # Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI): Ma et al. (2025, JGR
 # Biogeosciences) from BCI's crane, saplings against canopy leaves -- k_Vcmax = -(0.00242 Vcmax25 +
 # 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25, k_SLA 0.199 -- and half of
