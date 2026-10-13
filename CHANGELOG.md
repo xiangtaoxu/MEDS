@@ -520,6 +520,25 @@ before and after.
 
 ### Fixed
 
+- **Litter goes where the tissue was, and the litter outputs report what their names say** (#399).
+  - **The bugs:** `necromass_to_litter` split leaf necromass above/below ground by `aboveground_frac`, a
+    wood trait, so 30 % of every fallen leaf, and of the fruit and seed that made no recruit (passed in the
+    storage channel), entered the below-ground soil pools. And `litter_leaf_site` / `litter_fineroot_site`
+    reported the labile above- and below-ground pool inputs, not leaf and fine-root litter:
+    `litter_leaf_site` was 0.49 of the leaf litter (`f_labile_leaf` x `aboveground_frac`) plus labile
+    fruit, dead wood and dead storage; `litter_fineroot_site` was mostly root exudate.
+  - **The fix:** leaves and fruit/seed lie entirely above ground; fine roots below; wood and storage keep
+    the `aboveground_frac` split. The driver adds necromass through one routine, `add_necromass`, which
+    also records the carbon by the tissue it came from in the patch litter accumulator. The litter outputs
+    read those: `litter_leaf_site` and `litter_fineroot_site` (after resorption) and two new ones,
+    `litter_wood_site` (wood and storage of dead plants) and `litter_repro_site` (fruit and seed). With
+    `root_exudate_site` they sum to the carbon entering the soil pools; `litter_struct_site` is unchanged.
+  - **Effect** (example 06 contemporary run, Palo Verde 2009 census, 2009-2010): `litter_leaf_site` 0.170
+    -> 0.243 kgC/m2/yr (0.49 kg dry, against 0.54 in the PV litter traps); `litter_fineroot_site` 0.477 ->
+    0.123. The soil input is unchanged in total (1.048 kgC/m2/yr), but more of it is above ground: at the
+    end of 2010 the fast above-ground pool holds 0.242 kgC/m2 (was 0.176) and the fast below-ground pool
+    0.462 (0.527). Plant carbon and heterotrophic respiration over the run are unchanged.
+
 - **The debug build traps no floating invalid in the test suite** (#398; four tests aborted after #392
   and #397). `conserved` tested a NaN by comparing it, which raises IEEE invalid; it now asks
   `ieee_is_nan` first. A Newton step of the soil-plant water network was bounded away from empty only

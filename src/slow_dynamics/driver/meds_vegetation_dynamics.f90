@@ -39,13 +39,14 @@ module meds_vegetation_dynamics
    use meds_phenology, only : phenology_kernel, leaf_turnover_step, turnover_gate
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_sink_limitation,      only : growth_sink_limitation
-   use meds_litter_partition, only : necromass_to_litter
+   use meds_litter_partition, only : add_necromass
    use meds_biogeochem_types, only : litter_input_t
    use meds_site_diag_types,      only : CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,      &
                                         CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE,           &
                                         CS_NPP_REPRO, CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, &
                                         cohort_diag_grow,                                      &
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,  &
+                                        PD_LITTER_WOOD, PD_LITTER_REPRO,                       &
                                         PD_MORT_C_BACKGROUND,                                &
                                         PD_RECRUIT_NPLANT,                                     &
                                         cohort_diag_reset
@@ -278,11 +279,20 @@ contains
          !      otherwise sets, so a reader sees these rows. -------------------------------------------!
          if (.not. cfg%fast_biophysics_on) site%patch%diag%n = site%patch%n
          do ip = 1_ik, site%patch%n
+            !----- Leaf and fine-root litter by the tissue they came from (#399): what falls, not the  !
+            !      share of it that reaches one destination pool. ----------------------------------!
             site%patch%diag%v(PD_LITTER_LEAF,     ip) = site%patch%diag%v(PD_LITTER_LEAF,     ip) &
-                                                      + (site%patch%litter_in(ip)%labile_grnd           &
+                                                      + (site%patch%litter_in(ip)%leaf_c                &
                                                          / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_FINEROOT, ip) = site%patch%diag%v(PD_LITTER_FINEROOT, ip) &
-                                                      + (site%patch%litter_in(ip)%labile_soil           &
+                                                      + (site%patch%litter_in(ip)%fineroot_c            &
+                                                         / cfg%dt_years) * cfg%dt_slow
+            site%patch%diag%v(PD_LITTER_WOOD,     ip) = site%patch%diag%v(PD_LITTER_WOOD,     ip) &
+                                                      + ((site%patch%litter_in(ip)%wood_c               &
+                                                        + site%patch%litter_in(ip)%storage_c)           &
+                                                         / cfg%dt_years) * cfg%dt_slow
+            site%patch%diag%v(PD_LITTER_REPRO,    ip) = site%patch%diag%v(PD_LITTER_REPRO,    ip) &
+                                                      + (site%patch%litter_in(ip)%repro_c               &
                                                          / cfg%dt_years) * cfg%dt_slow
             site%patch%diag%v(PD_LITTER_STRUCT,   ip) = site%patch%diag%v(PD_LITTER_STRUCT,   ip) &
                                                       + ((site%patch%litter_in(ip)%struct_grnd          &
@@ -577,7 +587,7 @@ contains
       real(wp)    :: leaf_shed_c, fineroot_shed_c
       real(wp)    :: g_leaf, g_fineroot, g_wood, npp_store, g_repro, growth_resp, deficit
       real(wp)    :: storage_maint, store_post, leaf_retained_c, fineroot_retained_c
-      real(wp)    :: lab_g, lab_s, str_g, str_s, lig_g, lig_s, seed_lost, exudate
+      real(wp)    :: seed_lost, exudate
       real(wp), allocatable :: co2_owed(:), efficiency(:)
       logical     :: starving
 
@@ -721,29 +731,21 @@ contains
             !      keeps this bit-identical). The SEED LOSS joins them: reproduction carbon is        !
             !      debited in full from the parent, and only the recruit carbon efficiency of it ever !
             !      establishes -- the remaining ~99.9% is dead seed and dead seedling, which is        !
-            !      NECROMASS, not nothing. It enters as `storage_c`, which necromass_to_litter pools   !
-            !      with the canopy and splits on f_labile_leaf: seed tissue is labile and canopy-      !
-            !      derived, which is what that argument means. -----------------------------------!
+            !      NECROMASS, not nothing. It falls with the canopy (above ground, f_labile_leaf).   !
             if (cfg%soil_carbon_on) then
                seed_lost = g_repro * cohort%nplant(j)                                              &
                          * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
                !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
                !      (#151); the rest went to storage above, so each pool's full removal is matched  !
                !      exactly by (storage credit + litter input).  -----------------------------------!
-               call necromass_to_litter((leaf_shed_c - leaf_retained_c) * cohort%nplant(j),          &
-                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j),                  &
-                        0.0_wp, seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                 &
-                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                            &
-                        lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-               lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
-               lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
-               lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
-               lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
-               lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
-               lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+               call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
+                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
+                        seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
+                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
                !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
                !      labile, below-ground carbon, where the microbes respire it. -------------------!
                lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
+               lit(ip)%exudate_c   = lit(ip)%exudate_c   + exudate * cohort%nplant(j)
             end if
          end do
       end associate
@@ -942,7 +944,7 @@ contains
       real(wp),              intent(in)    :: nplant_before(:) !< [plant/m2] density BEFORE the commit
       type(litter_input_t),  intent(inout) :: lit(:)
       integer(ik) :: j, pf, ip
-      real(wp)    :: died_nplant, lab_g, lab_s, str_g, str_s, lig_g, lig_s
+      real(wp)    :: died_nplant
 
       associate (cohort => site%cohort, pft => cfg%pft)
          do j = 1_ik, cohort%n
@@ -962,18 +964,11 @@ contains
                                   + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
                      / cfg%dt_years) * cfg%dt_slow
             if (.not. cfg%soil_carbon_on) cycle
-            call necromass_to_litter(died_nplant * cohort%leaf_carbon(j),                         &
+            call add_necromass(lit(ip), died_nplant * cohort%leaf_carbon(j),                      &
                      died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
-                     died_nplant * cohort%nonstructural_carbon(j),                                 &
+                     died_nplant * cohort%nonstructural_carbon(j), 0.0_wp,                         &
                      pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                                 &
-                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf),                         &
-                     lab_g, lab_s, str_g, str_s, lig_g, lig_s)
-            lit(ip)%labile_grnd = lit(ip)%labile_grnd + lab_g
-            lit(ip)%labile_soil = lit(ip)%labile_soil + lab_s
-            lit(ip)%struct_grnd = lit(ip)%struct_grnd + str_g
-            lit(ip)%struct_soil = lit(ip)%struct_soil + str_s
-            lit(ip)%lignin_grnd = lit(ip)%lignin_grnd + lig_g
-            lit(ip)%lignin_soil = lit(ip)%lignin_soil + lig_s
+                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
          end do
       end associate
    end subroutine accumulate_mortality_litter

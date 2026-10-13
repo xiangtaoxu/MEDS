@@ -73,7 +73,7 @@ module meds_output_registry
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
                                     CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
                                     PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
-                                    PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
+                                    PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
    private
 
@@ -612,11 +612,18 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE, &
                         w=W_NPLANT, mn=.true.)
       !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
-      !      biogeochemistry consumes. With rh_site these close the soil-carbon budget.  ---------!
-      call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon', 'kgC/m2/yr',          &
+      !      biogeochemistry consumes, by the tissue the carbon came from (#399). Leaf + fine root   !
+      !      + wood + fruit/seed + root_exudate_site is the carbon entering the soil pools, so with  !
+      !      rh_site they close the soil-carbon budget. litter_struct_site is a destination (the     !
+      !      structural pools), so it overlaps the others. --------------------------------------!
+      call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_LEAF)
-      call add_variable(reg, 'litter_fineroot_site', 'fine-root litter carbon', 'kgC/m2/yr',     &
+      call add_variable(reg, 'litter_fineroot_site', 'fine-root litter carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_FINEROOT)
+      call add_variable(reg, 'litter_wood_site', 'wood and storage litter carbon of dead plants', 'kgC/m2/yr', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_WOOD)
+      call add_variable(reg, 'litter_repro_site', 'fruit and seed litter carbon', 'kgC/m2/yr',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_REPRO)
       call add_variable(reg, 'litter_struct_site', 'structural litter + CWD carbon', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_STRUCT)
       call add_variable(reg, 'nplant_recruit_site', 'recruitment density flux', 'plant/m2/yr',   &

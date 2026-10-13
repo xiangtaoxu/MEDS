@@ -105,16 +105,16 @@ program test_slow_diag_units
    call advance_slow_dynamics(site, cfg)
    pool1 = sum(site%patch%recruit_pool(:, 1))
 
-   call check(site%patch%litter_in(1)%labile_grnd > 0.0_wp, 'the step actually shed leaf litter')
+   call check(site%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
 
    call patch_diag_value(site%patch%diag, PD_LITTER_LEAF, x, np)
    call check(np >= 1_ik, 'the patch diagnostic block reports at least one slot')
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%labile_grnd, 1.0e-10_wp,            &
+   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%leaf_c, 1.0e-10_wp,                 &
                     'PD_LITTER_LEAF rate x elapsed == the leaf litter amount')
    write(*,'(a,es12.5,a)') '   (leaf litterfall: ', x(1), ' kgC/m2/yr)'
 
    call patch_diag_value(site%patch%diag, PD_LITTER_FINEROOT, x, np)
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%labile_soil, 1.0e-10_wp,            &
+   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%fineroot_c, 1.0e-10_wp,             &
                     'PD_LITTER_FINEROOT rate x elapsed == the fine-root litter amount')
 
    call patch_diag_value(site%patch%diag, PD_LITTER_STRUCT, x, np)
