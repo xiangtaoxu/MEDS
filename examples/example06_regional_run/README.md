@@ -89,4 +89,4 @@ none recruit). The PFT traits were set against this stand:
 | Stand LAI, March–April / wet season | 2.1 / 5.0 | MODIS 1.5 / 5.3 |
 | Mortality of trees ≥ 10 cm, Ds / D / BD / E [% yr⁻¹] | 2.5 / 1.2 / 0.7 / 0.5 | 0.7–3.1 for the plots (Powers et al. 2020) |
 
-From this folder, with the ED_ERA5land archive in place: `../../build/meds_main meds_config_pv.toml`.
+From this folder, with the ED_ERA5land archive in place: `../../build-ifx/meds_main meds_config_pv.toml`.

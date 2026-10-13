@@ -104,21 +104,21 @@ censuses, the size distribution in 2010, and a run from near-bare ground.
 |---|---|---|---|---|
 | census 1985 | 4841 | 414 | 31.1 | 10.6 / 9.8 / 10.7 |
 | census 2010 | 4145 | 416 | 30.5 | 10.7 / 9.4 / 10.4 |
-| model 2010, from the 1985 census | 4136 | 379 | 29.6 | 9.1 / 10.1 / 10.5 |
-| model 2100, from the 1985 census | 3877 | 478 | 30.6 | 8.7 / 12.4 / 9.5 |
-| model, 100 years from bare ground | 4002 | 484 | 28.6 | 14.8 / 11.4 / 2.4 |
-| model, 300 years from bare ground | 3809 | 448 | 31.6 | 10.8 / 14.7 / 6.2 |
+| model 2010, from the 1985 census | 4095 | 394 | 29.6 | 9.1 / 10.1 / 10.5 |
+| model 2100, from the 1985 census | 3917 | 495 | 30.2 | 8.8 / 12.0 / 9.5 |
+| model, 100 years from bare ground | 4021 | 491 | 28.0 | 15.0 / 10.6 / 2.3 |
+| model, 300 years from bare ground | 3832 | 463 | 31.2 | 11.0 / 14.0 / 6.1 |
 
 - **From the census, the module tracks the plot's stems for 25 years**, the decline and the size
-  distribution class by class, but runs low on the larger trees: in 2010, 379 trees above 10 cm
+  distribution class by class, but runs low on the larger trees: in 2010, 394 trees above 10 cm
   against 416 and 29.6 m² ha⁻¹ of basal area against 30.5, most of the shortfall PFT 1's.
 - **Run on to 2100, the stand holds its basal area**: it dips to 29.1 m² ha⁻¹ in the 2030s and
-  recovers to 30.6, as PFT 2 gains and PFT 3 loses. These are BCI's present rates run forward, not a
+  recovers to 30.2, as PFT 2 gains and PFT 3 loses. These are BCI's present rates run forward, not a
   prediction.
 - **From bare ground the stand goes through a succession.** Under an open canopy the light-wooded
-  PFT 1 grows fastest and rises with PFT 2, reaching the census's basal area in about 135 years;
+  PFT 1 grows fastest and rises with PFT 2, within 2 % of the census's basal area by 135 years;
   as the canopy closes PFT 1 declines, PFT 2 holds the canopy, and the dense-wooded PFT 3 builds up
-  slowly beneath. Basal area ends 4 % above the census's; the canopy thins upward to 43 m, as the
+  slowly beneath. Basal area ends 2 % above the census's; the canopy thins upward to 43 m, as the
   census stand does on the same height curve.
 
 <p align="center">
