@@ -800,7 +800,7 @@ example02 found.
     rooting (`root_beta` 0.001, 1.5 m soil) were tuned while the cap held the root zone at −1.5 MPa,
     and need revisiting.
 
-**The adopted design-run set (2026-10-10; `examples/example06_dry_forest/`).**
+**The adopted design-run set (2026-10-10; `examples/example06_regional_run/`).**
 - **Carbon reserve:** `storage_cushion` counts leaf and fine root and is 3 (#385). At 1 x leaf, the large
   trees of every PFT could not pay for their next flush and stayed leafless through the wet season.
 - **Soil:** 2 m. The four habits separate only around 2-2.5 m.

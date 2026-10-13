@@ -90,7 +90,7 @@ examples/example02_canopy_phenology/data/
 # The regeneration example's forcing (cut from the ERA5-Land archive) and its run.
 examples/example05_forest_regeneration/data/
 examples/example05_forest_regeneration/output/
-examples/example06_dry_forest/output/
+examples/example06_regional_run/output/
 
 # User pre-existing WIP design (kept on disk, never committed)
 docs/dev_plans/MEDS_CAPI_REORG_DESIGN.md

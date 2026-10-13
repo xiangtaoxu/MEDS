@@ -277,7 +277,7 @@ Each phase is a pull request into beta that leaves the test suite green.
 |---|---|---|
 | BCI regrowth, 1994-04-20 | the crash: dry thin layer, refill, first storm | `meds_runs/ex06_regrow/meds_config_bci33d.toml` (restart, one day) |
 | BCI 2017-04-17 storm front | #352 | the one-day restart from trial 7fe525 (see #352) |
-| Example 06, April 2009–2010 | #104: leaf potential of nearly bare cohorts stays physical | `examples/example06_dry_forest` (draft branch) |
+| Example 06, April 2009–2010 | #104: leaf potential of nearly bare cohorts stays physical | `examples/example06_regional_run` (draft branch) |
 | Example 04, one year | fluxes against the BCI tower; ledgers | `examples/example04_column_biophysics` |
 | Palo Verde regrowth, 20 years | biomass trajectory; cost | `meds_runs/ex06_regrow/meds_config_lr33.toml` |
 | Six months of the BCI stand | profile against §7 | `meds_runs/ex06_regrow/meds_config_bci33prof.toml`, `run_prof.sbatch` |
