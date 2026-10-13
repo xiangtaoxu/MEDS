@@ -112,6 +112,16 @@ before and after.
   from about 0.6 to about 10 % yr^-1 each May-June, and the evergreen PFT's mortality in the 2009 stand
   falls from 2.8 to 0.6 % yr^-1 with a year. Example 04 barely moves (one year: GPP +0.05 %, LE +0.04 %,
   H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). Example 05 was not rerun.
+- **Cohort fusion's height tolerance is a share of the patch's top height** (`fuse_pass`;
+  `docs/configuration.md`). `cohort_size_tol_min`/`_max` multiplied the PFT's `hgt_max`, a fixed 0.92 m
+  at the first pass for a 46 m PFT whatever the stand. In a young stand that merged each month's
+  recruits into the leading cohort and re-merged the two halves of every split each dry season, so all
+  the stems of a PFT stayed one cohort, no size hierarchy formed and a dense stand could not thin. In a
+  50-yr Palo Verde regrowth from 3 seedlings m^-2 per PFT (Camac mortality, the window budget below)
+  the first stems >= 10 cm now appear at age 20 (none in 50 yr before), the pioneer saplings thin from
+  21,000 to 400 ha^-1, cohorts rise from 10 to 588, and AGB at 50 yr is 53 -> 87 dry Mg ha^-1, close to
+  the 89 a start from 0.1 seedlings m^-2 reaches. Where the canopy is near `hgt_max` fusion is as
+  before; examples 03-05 were not rerun. `test_fusion_cohort` checks a sapling stand and a tall one.
 - **The diameter sink limit is a budget over the growth window, not a cap on each step**
   (`meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
   takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
