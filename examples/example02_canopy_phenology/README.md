@@ -64,8 +64,8 @@ leaf fall, observed and modelled.
 
 | | Harvard Forest | Hyytiälä | Barro Colorado Island | Palo Verde |
 |---|---|---|---|---|
-| `par_min` [µmol m⁻² s⁻¹]: what it counts | 2: day length | 99: bright hours | 1081: strong sun | 5: day length |
-| `min_leaf_cover` | 0 | 0.89 | 0.95 | 0.27 |
+| `par_min` [µmol m⁻² s⁻¹]: what it counts | 2: day length | 100: bright hours | 1000: strong sun | 5: day length |
+| `min_leaf_cover` | 0 | 0.88 | 0.80 | 0.30 |
 | Leaves shed per year [canopies] | 1.0 | 0.30 | 1.0 | 1.0 |
 | Leaf lifespan [yr] | 0.4 | 3.1 | 1.0 | 0.8 |
 
@@ -73,7 +73,7 @@ leaf fall, observed and modelled.
   the leaves down, most of them in October. The day the canopy is half fallen is within 3 days of
   the tagged trees' on average, half green within 5 days of MODIS.
 - **Hyytiälä.** The needles fall in September–October as the bright hours dwindle, and the canopy
-  keeps 89 % of them through winter.
+  keeps 88 % of them through winter.
 - **Barro Colorado Island.** Senescence follows the bright dry season (January–April) while the
   flush keeps refilling the canopy: the leaves turn over, the canopy stays full. The traps catch
   all fine litter, so this one habit stands for the whole community.
