@@ -215,6 +215,16 @@ program test_region
    call refused('output.strict_caps is refused: the caps always stop the run',                     &
                 '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
                 'is retired: a run always stops at the step')
+   !----- An io_config override is held to the FAST guard as the defaults are (#374): a variable  !
+   !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
+   call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
+   call refused('an io_config override may not put a coarse variable on the F stream',            &
+                '[output]'//nl()//'io_config = "'//trim(work)//'/io_f_coarse.toml"'//nl()//          &
+                site_block(1_ik), .false., .false., 'is not a FAST-staged variable')
+   call write_text(trim(work)//'/io_fast_daily.toml', '[variables]'//nl()//'cas_temp_patch_fast = "D"')
+   call refused('an io_config override may not put a FAST-staged variable on a coarse tier',      &
+                '[output]'//nl()//'io_config = "'//trim(work)//'/io_fast_daily.toml"'//nl()//        &
+                site_block(1_ik), .false., .false., 'is FAST-staged and can only be on the F stream')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')
@@ -309,6 +319,15 @@ contains
       character(len=1) :: c
       c = new_line('a')
    end function nl
+
+   !----- A small text file in the work directory. --------------------------------------------------!
+   subroutine write_text(path, text)
+      character(len=*), intent(in) :: path, text
+      integer :: u
+      open(newunit=u, file=path, status='replace', action='write')
+      write(u, '(a)') text
+      close(u)
+   end subroutine write_text
 
    !----- meds_main must fail on this config and say why. --------------------------------------------!
    subroutine refused(what, overrides, region, keep_file_keys, message)
