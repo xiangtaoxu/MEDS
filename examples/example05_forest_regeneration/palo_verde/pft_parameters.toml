@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# MEDS example 06 (draft): Xu et al. (2016)'s four tropical dry-forest PFTs, Ds, D, BD and E, with wood
-# densities 0.35, 0.52, 0.74 and 0.87 g/cm3 (drought-deciduous to evergreen). The file began as example
-# 05's, with its per-class traits mapped Ds <- early, D <- mid, BD and E <- late, and was then set for
+# MEDS example 05 (Palo Verde; also example 06's regional run): Xu et al. (2016)'s four tropical
+# dry-forest PFTs, Ds, D, BD and E, with wood densities 0.35, 0.52, 0.74 and 0.87 g/cm3 (drought-deciduous
+# to evergreen). The file began as the BCI PFTs', with their per-class traits mapped Ds <- early,
+# D <- mid, BD and E <- late, and was then set for
 # the Palo Verde design runs (docs/dev_plans/MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md):
 #   - hydraulics, turgor-loss point, P50, Vcmax25 and rooting depth from Xu's wood-density relations;
 #   - storage_cushion 3, three full flushes of leaf and fine root;
@@ -21,7 +22,7 @@ dbh_critical       = [300.0, 300.0, 300.0, 300.0] # [cm] unused by the carbon pa
 hgt_max            = [46.0, 46.0, 46.0, 46.0]    # [m] Chave's curve at E = 0.134 reaches it near 185 cm
 min_cohort_height  = 1.5                   # [m] recruits are born here: dbh 0.61 cm on Chave's curve at E = 0.134
 recruit_carbon_efficiency = [1.0e-3, 1.0e-3, 1.0e-3, 1.0e-3]  # [--] reproduction carbon -> recruits
-seed_rain_recruits = [0.3333, 0.3333, 0.3333, 0.3333]   # [plant/m2/yr] from outside, every patch: one sapling per m2
+seed_rain_recruits = [0.1, 0.1, 0.1, 0.1]   # [plant/m2/yr] from outside, every patch; as in example 06's regional run
                                                # a year shared by the PFTs
 include_pft        = [1, 1, 1, 1]
 
