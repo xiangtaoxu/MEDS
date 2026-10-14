@@ -9,8 +9,6 @@ ground in 983 cells of their box. The last ten years of
 each run are set against MODIS leaf area, and the same runs give the region's productivity, biomass,
 canopy height and regrowth ([Additional results](#additional-results)).
 
-814 of the 983 cells have finished; the figures and numbers below cover those.
-
 ![Leaf area and its seasonality, MEDS against MODIS](lai_seasonality_vs_modis.png)
 
 Top: MEDS, the last ten simulated years (June 2011 – May 2021). Bottom: MODIS MCD15A2H at the same cell
@@ -20,10 +18,10 @@ way: monthly mean LAI, the maximum and minimum of the twelve months of each June
 of those over the ten years. A MODIS month is the mean of the cell's 8-day composites centred in it; each
 composite is the mean of the cell's 500 m pixels that pass the QC filter and a 3-point running median,
 and counts when at least a quarter of the pixels do. A year counts with at least six such months, a cell
-with at least three such years; 33 cells have fewer (most lie on a coast or in Costa Rica and Panama)
+with at least three such years; 40 cells have fewer (all lie on a coast or in Costa Rica and Panama)
 and are blank in the MODIS row. Each simulated cell is drawn as the 0.3° block (3 × 3 ERA5-Land cells) it stands for; grey is
-land with no simulated cell. The leaf cover follows the rainfall as MODIS's does (r = 0.71 across
-cells); the peak leaf area is too high and too even (median 6.6 against 5.2, r = 0.13).
+land with no simulated cell. The leaf cover follows the rainfall as MODIS's does (r = 0.69 across
+cells); the peak leaf area is too high and too even (median 6.8 against 5.4, r = 0.17).
 
 ## The regional run
 
@@ -48,10 +46,10 @@ vegetation (ESA CCI 2001–2020, via the ED soil maps' diagnostics) runs, if it 
 | Output | monthly: LAI and AGB and GPP by PFT, site LAI and GPP, canopy height (the tallest cohort), trees ≥ 10 cm | |
 
 **Speed.** One cell is one single-core task (peak memory under 70 MB). A run takes 0.2–14 hours (median
-3.7). The cost follows the stand: about 0.24 s of compute per cohort per simulated year, and a wetter
-cell grows more cohorts — about 40 below 1,000 mm of rain a year against 650 above 2,500 — so the driest
-cells take half an hour and the wettest 10–14 hours. The 983 cells take about 5,100 core-hours, a day on
-the 304 cores of the lab's cluster.
+4.6). The cost follows the stand: about 0.4 s of compute per cohort per simulated year on most of the
+lab's nodes (0.2 s on its fastest), and a wetter cell grows more cohorts — about 30 below 1,000 mm of
+rain a year against 670 above 2,500 — so the driest cells take half an hour and the wettest tenth 6–14
+hours. The 983 cells take about 5,100 core-hours, a day on the 304 cores of the lab's cluster.
 
 ## Additional results
 
@@ -59,8 +57,8 @@ the 304 cores of the lab's cluster.
 
 The last ten simulated years (June 2011 – May 2021): (a) GPP, (b) aboveground biomass (dry mass, all
 stems), (c) canopy height (the tallest cohort) and (d) wood density, the PFTs' weighted by their AGB.
-From the driest cells to the wettest, GPP doubles and the canopy grows from about 13 to 46 m, while AGB
-levels off at 210–220 Mg ha⁻¹ above about 1,500 mm of rain. Brevi-deciduous trees hold most of the
+From the driest cells to the wettest, GPP doubles and the canopy grows from about 14 to 46 m, while AGB
+levels off at 210–225 Mg ha⁻¹ above about 1,500 mm of rain. Brevi-deciduous trees hold most of the
 biomass in three cells of four, and wood density falls with rainfall (0.74 to 0.61 g cm⁻³) as the
 soft-wooded Ds gains a share.
 
