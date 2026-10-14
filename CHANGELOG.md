@@ -88,7 +88,7 @@ before and after.
   basal area (30.5), with GPP 32 MgC ha⁻¹ yr⁻¹ (tower 31).
 - **Example 06, a regional run** (`examples/example06_regional_run/`, #402): Xu et al. (2016)'s four
   dry-forest leaf habits (soft-wood deciduous, deciduous, brevi-deciduous, evergreen), set at Palo Verde
-  against its 2009 inventory (`meds_config_pv.toml`: leaf litter, AGB growth, leaf cover, mortality), then
+  against its 2009 inventory (now example 05's `palo_verde/`: leaf litter, AGB growth, leaf cover, mortality), then
   a 150-year regrowth from bare ground in 983 cells of Central America (5-25° N, 100-80° W), one
   single-site run per cell on the cell's ERA5-Land weather, ED soil map and Chave et al. (2014) stress
   index. The README sets the last ten years' leaf area against MODIS (minimum leaf cover r = 0.71 across
@@ -113,13 +113,34 @@ before and after.
 
 ### Changed
 
+- **The examples are rerun on the release's code** (#403).
+  - Example 01 reproduces byte-for-byte.
+  - Example 02's four sites are refitted under #387's leaf-drop gate. The old fits shed 0.60 canopies
+    a year at BCI (target 1.0) and 0.275 at Hyytiälä (0.30); now 1.01 / 0.30 / 1.00 / 1.00.
+    `meds.plant.pheno`'s presets take the new values.
+  - Example 03 runs with the top-height fusion, and its recruitment depends on the patch's leaf area
+    alone (skill 0.29 -> 0.30). From the 1985 census, 2010 basal area 29.6 m² ha⁻¹ (census 30.5);
+    300 years from bare ground 30.9.
+  - Example 04's soil column is 2 m (was 6 m: the plot's soil reaches saprolite at 1-2+ m). The
+    refit (1,096 runs; validation cost 63,657 -> 52,187) gives Vcmax25 32.3, g1 2.82 and κ 0.734.
+    Five-year GPP is 8.65 µmol m⁻² s⁻¹ against the target's 8.15. Before the April 2016 storm the top
+    15 cm holds 0.32 m³ m⁻³, against the tower's 0.28 (0.37 on 6 m).
+  - Example 05 has two forests.
+    - BCI 1600-2020 takes example 04's new fit and column: 2010 AGB 123 MgC ha⁻¹ (census 118);
+      3.3 h on 20 threads.
+    - Palo Verde regrows for 150 years with example 06's four PFTs, moved to `palo_verde/` with the
+      2009 inventory check. Seed rain is 0.1 per PFT, as in the regional run. AGB at 150 years is
+      84 MgC ha⁻¹ (inventory 88) but evergreen-heavy; at 20 years 28, against the chronosequence's
+      71 (Poorter et al. 2016).
+  - Example 06's Palo Verde check reruns bit-identically; its README takes the PFTs from example 05.
+
 - **The growth window is a year in every example** (#402; `[demography].growth_memory_days` 90 -> 365 in
   `meds_config_main.toml` and examples 03-05; example06 already used 365; `test/region` keeps 90). The
   mortality hazard reads a cohort's mean diameter growth over this window, and over 90 days a dry
   season's pause read as a growth collapse: at Palo Verde the Camac hazard of the dense-wood PFTs rose
   from about 0.6 to about 10 % yr^-1 each May-June, and the evergreen PFT's mortality in the 2009 stand
   falls from 2.8 to 0.6 % yr^-1 with a year. Example 04 barely moves (one year: GPP +0.05 %, LE +0.04 %,
-  H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). Example 05 was not rerun.
+  H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). The examples are rerun for the release (below).
 - **Cohort fusion's height tolerance is a share of the patch's top height** (#402; `fuse_pass`;
   `docs/configuration.md`). `cohort_size_tol_min`/`_max` multiplied the PFT's `hgt_max`, a fixed 0.92 m
   at the first pass for a 46 m PFT whatever the stand. In a young stand that merged each month's
@@ -129,7 +150,7 @@ before and after.
   the first stems >= 10 cm now appear at age 20 (none in 50 yr before), the pioneer saplings thin from
   21,000 to 400 ha^-1, cohorts rise from 10 to 588, and AGB at 50 yr is 53 -> 87 dry Mg ha^-1, close to
   the 89 a start from 0.1 seedlings m^-2 reaches. Where the canopy is near `hgt_max` fusion is as
-  before; examples 03-05 were not rerun. `test_fusion_cohort` checks a sapling stand and a tall one.
+  before; the examples are rerun for the release (below). `test_fusion_cohort` checks a sapling stand and a tall one.
 - **The diameter sink limit is a budget over the growth window, not a cap on each step**
   (#402; `meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
   takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
@@ -139,9 +160,9 @@ before and after.
   not at all for four to five months, 0.15 cm yr^-1 against a cap of 0.27. In the 2009 Palo Verde stand
   (Camac mortality, the example's traits) AGB growth of trees >= 10 cm rises 0.53 -> 0.66 kg m^-2 yr^-1,
   relative growth Ds/D/BD/E 6.2/4.8/3.3/1.0 -> 9.7/6.8/3.9/1.1 % yr^-1 and root exudate falls
-  0.177 -> 0.065 kgC m^-2 yr^-1, so the example's caps need refitting; a 50-yr regrowth there holds
+  0.177 -> 0.065 kgC m^-2 yr^-1, so the example's caps were refitted (#402); a 50-yr regrowth there holds
   28 -> 53 dry Mg ha^-1 of AGB at 50 yr from 3 seedlings m^-2 per PFT, 54 -> 81 from 0.1. Example 05 sets
-  the cap and was not rerun; examples 03-04 do not set it and are unchanged.
+  the cap (rerun for the release, below); examples 03-04 do not set it.
 - **Soil and plant water are solved together, as one network** (#397;
   `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
   every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
@@ -175,7 +196,7 @@ before and after.
     recycled April storm (1994, and 2014 with #389's fix). At Palo Verde beta's monthly-mean leaf
     potential falls to -570 MPa in the dry season and the evergreen PFT sheds ~60 % of its leaves; the
     network's lowest is -5.6 MPa and the evergreen keeps them (year-150 AGB 9.3 against 6.1 kgC m⁻²,
-    GPP equal). Example 06's PFT parameters were fitted under the old behaviour. Wall time to 2011
+    GPP equal). Example 06's PFT parameters were refitted on the network (#402). Wall time to 2011
     against beta: +2 % at Palo Verde, +24 % at BCI (about +20 % per cohort).
   - The water work counters are renamed for the network: `work_water_nsub_site` (accepted
     sub-steps), `work_water_newton_site` (Newton iterations), `work_water_reject_site` (rejected
@@ -342,8 +363,8 @@ before and after.
   flush tendency. Gone: the chilling requirement, the soil-temperature cold-drop trigger, the
   soil-water cue (`root_available_water` and the fast-loop soil reductions for phenology), the
   consecutive-day ψ counters, the 31 August warmth reset, the evergreen cold suppression of
-  turnover, and `pft.evergreen`. Resorption (`retained_carbon_fraction`) now applies to senescence
-  only. Design and evidence: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`; equations:
+  turnover, and `pft.evergreen`. Resorption (`retained_carbon_fraction`) applied to senescence only
+  here; #387 extends it to all leaf and fine-root loss. Design and evidence: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`; equations:
   `docs/science/plant_phenology.md`.
   - **One light cue for every PFT.** A low `par_min` counts the photoperiod, a high one the bright
     hours. Day length and running-mean PAR each fit some sites and fail others (Harvard Forest is
@@ -385,8 +406,7 @@ before and after.
     entries `meds_leaf_turnover_step` and `meds_daylength`. Presets: `temperate_deciduous`,
     `boreal_evergreen`, `drought_deciduous` and `light_exchanging`, the four habits of example02.
     `temperate_evergreen`, `integrate_lai` and the `Light` enum are gone.
-  - **What moves numbers.** Any PFT with a `[phenology]` section. The biophysics example's PFT file
-    takes the Harvard Forest values (its committed outputs predate the change). A PFT without the
+  - **What moves numbers.** Any PFT with a `[phenology]` section. A PFT without the
     section always flushes and loses leaves at its background turnover, as before; the only
     difference is the dropped cold suppression of an evergreen PFT's turnover, which the old driver
     evaluated at a fixed 25 °C stub temperature: a factor of 0.9997.
@@ -411,7 +431,8 @@ before and after.
     (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·L), Gamma quasi-likelihood, increments
     ≤ 0 set to a tenth of the smallest positive one); mortality is Camac et al. (2018)'s
     γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
-    Poisson GLM in the patch's leaf area index and the PFT's share of it. The three PFTs are
+    Poisson GLM in the patch's leaf area index (#403; the PFT's own share, which never raised its
+    recruitment in the census, is dropped). The three PFTs are
     wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
     height follows the Barro Colorado curve of Cano et al. (2019) (`height_allometry = "gmm"`:
     33 m at 1 m dbh, 43 m at 300 cm), so the canopy thins upward instead of piling up at a cap;
@@ -497,8 +518,8 @@ before and after.
   - **At BCI** (example 04 on its clay soil). The predawn leaf ψ of the largest patch's tallest tree /
     of the canopy, 15–26 April 2016, at the end of the El Niño dry season, was −1.15 / −0.98 MPa with
     the keys calibrated on the previous model. On the new model it is −0.52 / −0.49 MPa on the 2 m
-    column and −0.41 / −0.38 MPa on a 6 m column, which example 04 now uses (`n_layer` 16,
-    `grid_growth` 4, `deep_depth` 6.72). The wet-season level is −0.27 MPa, the gravity head. 16 or 20
+    column and −0.41 / −0.38 MPa on a 6 m column, which example 04 used until the release's rerun
+    (2 m since, below). The wet-season level is −0.27 MPa, the gravity head. 16 or 20
     layers give the same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm, and
     `root_beta` 0.01 or 0.001: the moist subsoil no longer limits the tree.
     - **Refit** (756 trials, 21 min on 5 nodes; validation cost 66,201 → 52,687). `wstress_sref_stomata`
@@ -556,6 +577,9 @@ before and after.
   transpiration corrector; both schemes now solve leaf water implicitly in the network.
 
 ### Fixed
+
+- **`test_pheno` follows #387's leaf-drop gate** (#403): it expected background turnover at a shed
+  tendency of 1.0, so the `python_api` ctest failed on beta; it now checks both sides of the gate.
 
 - **Litter goes where the tissue was, and the litter outputs report what their names say** (#399).
   - **The bugs:** `necromass_to_litter` split leaf necromass above/below ground by `aboveground_frac`, a
