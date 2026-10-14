@@ -7,11 +7,11 @@ vital_rates.json. Each step this module reads the stand from the engine and retu
 
   growth       [cm/yr]        [g_min + (g_max - g_min) / (1 + exp(-k (lnD - lnD0)))] exp(-b L)
   mortality    [1/yr]         gamma + alpha exp(-beta growth)          (Camac et al. 2018)
-  recruitment  [plants/m2/yr] exp(c0 + c1 LAI + c2 LAI_pft), per PFT and patch
+  recruitment  [plants/m2/yr] exp(c0 + c1 LAI), per PFT and patch
 
 D is the cohort's dbh and L its overtopping LAI, both the engine's own: the census described every tree
-by the same allometry and the same index (the leaf area of taller trees). LAI and LAI_pft are the
-patch's leaf area index, all of it and the PFT's own; beyond the census's range they take its edge.
+by the same allometry and the same index (the leaf area of taller trees). LAI is the patch's leaf
+area index, all PFTs' together; beyond the census's range it takes its edge.
 
 The census counts every death, including the canopy trees that fall and open a gap. The engine kills
 those through treefall disturbance (canopy cohorts on the disturbed area die), so that rate is taken
@@ -41,7 +41,7 @@ class CensusLaws:
             laws = json.load(fh)
         self.g = np.array([laws["growth"][k] for k in ("g_min", "g_max", "D0", "k", "b")]).T   # [pft, 5]
         self.camac = np.array([laws["mortality"][k] for k in ("gamma", "alpha", "beta")]).T
-        self.c = np.array(laws["recruitment"]["coefficients"])                 # [pft, 3]
+        self.c = np.array(laws["recruitment"]["coefficients"])                 # [pft, 2]
         self.lai_range = laws["range"]["lai"]
         self.n_pft = len(self.g)
 
@@ -56,11 +56,10 @@ class CensusLaws:
         t = self.camac[pft]
         return t[..., 0] + t[..., 1] * np.exp(-t[..., 2] * growth)
 
-    def recruitment(self, pft, lai, lai_pft):
-        """[plants/m2/yr] in a patch of leaf area index ``lai``, ``lai_pft`` of it the PFT's own."""
-        lai, lai_pft = np.clip(lai, *self.lai_range), np.clip(lai_pft, *self.lai_range)
+    def recruitment(self, pft, lai):
+        """[plants/m2/yr] in a patch of leaf area index ``lai``."""
         c = self.c[pft]
-        return np.exp(c[..., 0] + c[..., 1] * lai + c[..., 2] * lai_pft)
+        return np.exp(c[..., 0] + c[..., 1] * np.clip(lai, *self.lai_range))
 
     def rates(self, site):
         """(growth[n], mortality[n], recruitment[n_pft, n_patch]) for the stand in ``site``."""
@@ -68,9 +67,9 @@ class CensusLaws:
         pft = s["pft"].astype(int) - 1
         patch = s["owner_patch"].astype(int) - 1
 
-        lai_pft = np.zeros((self.n_pft, max(site.n_patch, 1)))
-        np.add.at(lai_pft, (pft, patch), s["nplant"] * s["leaf_area"])
-        recruitment = self.recruitment(np.arange(self.n_pft)[:, None], lai_pft.sum(0)[None, :], lai_pft)
+        lai = np.zeros(max(site.n_patch, 1))
+        np.add.at(lai, patch, s["nplant"] * s["leaf_area"])
+        recruitment = self.recruitment(np.arange(self.n_pft)[:, None], lai[None, :])
 
         growth = self.growth(pft, s["dbh"], s["overtopping_lai"])
         mortality = self.mortality(pft, growth)

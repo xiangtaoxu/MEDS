@@ -23,14 +23,15 @@ README that shows how to reproduce it (run from the repository root):
   plant hydraulics and soil water every 15 minutes. It starts from the plot's 2010 census, calibrates
   the fast parameters against the tower, compares five years with its fluxes, and shows ten days
   at half-hourly output.
-- **[`example05_forest_regeneration/`](example05_forest_regeneration/)** — the whole model at once,
-  driven from Python: a forest regrowing from bare ground at Barro Colorado Island from 1600 to 2020,
-  with the column of example 04 every 15 minutes and the demography of example 03 every day, three
-  PFTs (early, mid and late successional) with Panama's sun leaves and a sink limit on diameter
-  growth, checked against the census's growth and the forest's carbon budget, on ERA5-Land weather
-  repeated and the CO₂ of its history.
+- **[`example05_forest_regeneration/`](example05_forest_regeneration/)** — the whole model at once:
+  two tropical forests regrowing from bare ground, with the column of example 04 every 15 minutes and
+  the demography of example 03 every day, on ERA5-Land weather repeated and the CO₂ of its history.
+  Barro Colorado Island from 1600 to 2020, driven from Python: three PFTs (early, mid and late
+  successional) with Panama's sun leaves and a sink limit on diameter growth, checked against the
+  census's growth and the forest's carbon budget. Palo Verde's dry forest for 150 years: Xu et al.
+  (2016)'s four leaf habits, set against the plots' 2009 inventory.
 - **[`example06_regional_run/`](example06_regional_run/)** — the whole model over a region:
   forests regrow from bare ground for 150 years in 983 cells of Central America, each a single-site run
-  on its own ERA5-Land weather, soil and height allometry, with the four dry-forest leaf habits of
-  Xu et al. (2016) set at Palo Verde. Their seasonal leaf area is set against MODIS, and their biomass
+  on its own ERA5-Land weather, soil and height allometry, with example 05's four dry-forest leaf
+  habits (Xu et al. 2016) set at Palo Verde. Their seasonal leaf area is set against MODIS, and their biomass
   after 20 years against Neotropical chronosequences (Poorter et al. 2016).

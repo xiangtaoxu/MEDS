@@ -76,14 +76,14 @@ for p in (1, 2, 3):
 a.set(xlabel="predicted diameter growth [cm/yr]", ylabel="death rate [%/yr]",
       title="b  Mortality (Camac et al. 2018)", ylim=(0, None))
 
-# (c) recruitment against the patch's leaf area index, each PFT holding a third of it
+# (c) recruitment against the patch's leaf area index
 a = ax[0, 2]
 lai = np.linspace(0, 8, 161)
 for p in (1, 2, 3):
-    a.plot(lai, 1e4 * laws.recruitment(p - 1, lai, lai / 3), color=PFT_COLOR[p], lw=1.6)
-    a.annotate(f"PFT {p}", (lai[-1], 1e4 * laws.recruitment(p - 1, lai[-1:], lai[-1:] / 3)[0]),
+    a.plot(lai, 1e4 * laws.recruitment(p - 1, lai), color=PFT_COLOR[p], lw=1.6)
+    a.annotate(f"PFT {p}", (lai[-1], 1e4 * laws.recruitment(p - 1, lai[-1:])[0]),
                xytext=(-4, 6), textcoords="offset points", ha="right", color=INK, fontsize=8)
-a.set(xlabel="patch LAI [m²/m²], a third each PFT's", ylabel="recruits ≥ 1 cm [1/ha/yr]",
+a.set(xlabel="patch LAI [m²/m²]", ylabel="recruits ≥ 1 cm [1/ha/yr]",
       title="c  Recruitment", ylim=(0, None))
 
 

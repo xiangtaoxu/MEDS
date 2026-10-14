@@ -288,11 +288,11 @@ def temperate_deciduous(**overrides) -> Params:
     the hours of light are the day length), senesce on cold as the days shorten; no leaf-cover
     floor, so the canopy goes bare."""
     return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
-                        flush_rate_max=0.03333, shed_rate_max=0.3333,
-                        leaf_turnover_rate=1.72e-05, flush_degree_days=91.4,
-                        shed_base_temp=290.2, shed_degree_days=47.91,
-                        par_min=2.0, flush_light_hours=13.65, flush_light_sharpness=7.999,
-                        shed_light_hours=9.06, shed_light_sharpness=-1.0, light_window=1.0), overrides)
+                        flush_rate_max=0.03331, shed_rate_max=0.3333,
+                        leaf_turnover_rate=0.0001068, flush_degree_days=91.75,
+                        shed_base_temp=290.2, shed_degree_days=47.89,
+                        par_min=2.0, flush_light_hours=13.65, flush_light_sharpness=7.993,
+                        shed_light_hours=9.06, shed_light_sharpness=-1.0, light_window=1.001), overrides)
 
 
 def boreal_evergreen(**overrides) -> Params:
@@ -300,24 +300,24 @@ def boreal_evergreen(**overrides) -> Params:
     on cold as the bright hours dwindle in autumn; senescence stops at min_leaf_cover -- the
     needles kept -- so the canopy never goes bare."""
     return _preset(dict(flush_cue_mask=Cue.TEMP | Cue.LIGHT, shed_cue_mask=Cue.TEMP | Cue.LIGHT,
-                        flush_degree_days=88.0, shed_base_temp=288.3, shed_degree_days=8.39,
-                        flush_rate_max=0.2866, shed_rate_max=0.009217, leaf_turnover_rate=0.1886,
-                        min_leaf_cover=0.8942, par_min=99.38, flush_light_hours=13.78,
-                        flush_light_sharpness=1.414, shed_light_hours=11.0,
-                        shed_light_sharpness=-0.7859, light_window=7.494), overrides)
+                        flush_degree_days=88.0, shed_base_temp=287.9, shed_degree_days=5.0,
+                        flush_rate_max=0.2866, shed_rate_max=0.128, leaf_turnover_rate=0.1307,
+                        min_leaf_cover=0.8845, par_min=100.2, flush_light_hours=14.44,
+                        flush_light_sharpness=1.19, shed_light_hours=4.064,
+                        shed_light_sharpness=-0.4826, light_window=7.016), overrides)
 
 
 def drought_deciduous(**overrides) -> Params:
     """Drought-deciduous tropical forest (Palo Verde): flush once the predawn water potential has
     recovered while the days are long, senesce as the days shorten or after a long drought; the
-    canopy keeps about a quarter of its leaves through the dry season."""
+    canopy keeps about 30 % of its leaves through the dry season."""
     return _preset(dict(flush_cue_mask=Cue.WATER | Cue.LIGHT, shed_cue_mask=Cue.WATER | Cue.LIGHT,
-                        leaf_psi_tlp=-2.091, flush_water_sum=3.372, flush_water_sharpness=10.72,
-                        shed_water_sum=23.59, shed_water_sharpness=8.176,
-                        flush_rate_max=0.3137, shed_rate_max=0.01899, leaf_turnover_rate=0.702,
-                        min_leaf_cover=0.2731, par_min=5.004, flush_light_hours=12.38,
-                        flush_light_sharpness=7.999, shed_light_hours=11.44,
-                        shed_light_sharpness=-7.195, light_window=8.68), overrides)
+                        leaf_psi_tlp=-1.355, flush_water_sum=0.9694, flush_water_sharpness=20.0,
+                        shed_water_sum=34.55, shed_water_sharpness=8.139,
+                        flush_rate_max=0.2589, shed_rate_max=0.04334, leaf_turnover_rate=0.5269,
+                        min_leaf_cover=0.3045, par_min=5.155, flush_light_hours=12.37,
+                        flush_light_sharpness=7.481, shed_light_hours=11.16,
+                        shed_light_sharpness=-4.675, light_window=12.15), overrides)
 
 
 def light_exchanging(**overrides) -> Params:
@@ -326,10 +326,10 @@ def light_exchanging(**overrides) -> Params:
     canopy stays full."""
     return _preset(dict(flush_cue_mask=Cue.WATER, shed_cue_mask=Cue.LIGHT | Cue.WATER,
                         leaf_psi_tlp=-1.5, flush_water_sum=3.0, flush_water_sharpness=6.667,
-                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_rate_max=0.2352,
-                        shed_rate_max=0.004274, leaf_turnover_rate=0.3964,
-                        min_leaf_cover=0.9499, par_min=1081.0, shed_light_hours=5.204,
-                        shed_light_sharpness=1.845, light_window=2.837), overrides)
+                        shed_water_sum=1.0, shed_water_sharpness=20.0, flush_rate_max=0.02871,
+                        shed_rate_max=0.07069, leaf_turnover_rate=1.697,
+                        min_leaf_cover=0.8, par_min=1000.0, shed_light_hours=11.24,
+                        shed_light_sharpness=0.5734, light_window=2.232), overrides)
 
 
 def self_test() -> None:

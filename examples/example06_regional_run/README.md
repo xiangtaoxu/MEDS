@@ -4,7 +4,8 @@ Xu et al. (2016, *New Phytologist* 212: 80–95) explained the seasonality of le
 seasonally dry tropical forests of Central America with four plant functional types that differ in wood
 density and hydraulic traits: deciduous with soft wood (Ds), deciduous (D), brevi-deciduous (BD) and
 evergreen (E). This example tries the same with MEDS. One parameter set for the four PFTs, set at Palo
-Verde (Costa Rica), regrows a forest from bare ground in 983 cells of their box. The last ten years of
+Verde (Costa Rica) in [example 05](../example05_forest_regeneration/README.md), regrows a forest from bare
+ground in 983 cells of their box. The last ten years of
 each run are set against MODIS leaf area, and the same runs give the region's productivity, biomass,
 canopy height and regrowth ([Additional results](#additional-results)).
 
@@ -42,7 +43,7 @@ vegetation (ESA CCI 2001–2020, via the ED soil maps' diagnostics) runs, if it 
 | CO₂ | the historical record | CMIP7 |
 | Soil | the cell's depth and texture; one van Genuchten curve fitted to MEDS's pedotransfer function (Hodnett & Tomasella 2002, Ottoni et al. 2019) on the six SoilGrids layers; CLM5 thermal properties; deep soil at the cell's mean air temperature + 1 K | ED soil maps v2 |
 | Height | Chave et al. (2014) eq. 6a with the cell's stress index E; a cell the E map leaves empty takes the nearest value (four cells, 0.1° away) | Chave et al.'s E raster |
-| PFTs | [`pft_parameters.toml`](pft_parameters.toml): wood density 0.35 / 0.52 / 0.74 / 0.87 g cm⁻³; leaf shedding and flushing on the cohort's leaf water potential; mortality from wood density (Camac et al. 2018); diameter growth capped at 0.8 / 0.5 / 0.4 / 0.35 cm yr⁻¹ | set at Palo Verde (below) |
+| PFTs | example 05's [`palo_verde/pft_parameters.toml`](../example05_forest_regeneration/palo_verde/pft_parameters.toml): wood density 0.35 / 0.52 / 0.74 / 0.87 g cm⁻³; leaf shedding and flushing on the cohort's leaf water potential; mortality from wood density (Camac et al. 2018); diameter growth capped at 0.8 / 0.5 / 0.4 / 0.35 cm yr⁻¹ | set at Palo Verde ([example 05](../example05_forest_regeneration/README.md#2-palo-verde-a-tropical-dry-forest-150-years)) |
 | Disturbance | treefall opens 1.4 % of the ground a year; trees above 10 m die in the gap | |
 | Output | monthly: LAI and AGB and GPP by PFT, site LAI and GPP, canopy height (the tallest cohort), trees ≥ 10 cm | |
 
@@ -72,21 +73,3 @@ and nine in ten are still gaining after 150 years. MEDS is within the range of t
 but reaches about half the observed biomass above 1,200 mm; the diameter-growth caps, set for Palo
 Verde's old stand, probably hold the young trees back. The few lines that start high are cells where a
 1.5 m recruit is up to 3.5 cm in diameter.
-
-## Palo Verde: the site check
-
-[`meds_config_pv.toml`](meds_config_pv.toml) runs the 2009 inventory of the Palo Verde dry forest
-([`data/pv_2009_census.csv`](data/pv_2009_census.csv): 6 plots, 12 patches, 336 cohorts) from July 2008
-to December 2010 on the cell's ERA5-Land weather and soil, with the structure frozen (trees grow and die,
-none recruit). The PFT traits were set against this stand:
-
-| 2009–2010 | MEDS | Target |
-|---|---|---|
-| Leaf litter [kg dry m⁻² yr⁻¹] | 0.48 | 0.5 (litter traps 0.54) |
-| AGB growth of trees ≥ 10 cm [kg dry m⁻² yr⁻¹] | 0.47 | 0.3–0.5 |
-| Relative AGB growth, Ds / D / BD / E [% yr⁻¹] | 5.6 / 4.1 / 3.0 / 1.1 | 5 / 2–3 / 2–3 / 1–2 |
-| Lowest leaf cover, Ds / D / BD / E | 0.02 / 0.00 / 0.33 / 0.75 | bare / bare / 0.25–0.5 / ≥ 0.5 |
-| Stand LAI, March–April / wet season | 2.1 / 5.0 | MODIS 1.5 / 5.3 |
-| Mortality of trees ≥ 10 cm, Ds / D / BD / E [% yr⁻¹] | 2.5 / 1.2 / 0.7 / 0.5 | 0.7–3.1 for the plots (Powers et al. 2020) |
-
-From this folder, with the ED_ERA5land archive in place: `../../build/meds_main meds_config_pv.toml`.
