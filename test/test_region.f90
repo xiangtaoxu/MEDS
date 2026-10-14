@@ -8,7 +8,9 @@
 ! region's files must hold, in every variable's `polygon = p` slice, exactly the site run's        !
 ! series, bit for bit; the detail polygon's own files must equal its site run's files; and the     !
 ! polygon axis must carry the cells' ids and coordinates. The region is run again on four threads  !
-! and must give the same files. Every run takes its soil from the archive's [surface] maps (§14     !
+! and must give the same files. A region run in two halves, the second restarted from the first's   !
+! state file, must write the second half's files exactly as the whole run does (§14 RP4). Every run  !
+! takes its soil from the archive's [surface] maps (§14     !
 ! RP3), so the three polygons have their own soil depth, layers and bottom boundaries, and each site  !
 ! run must find the same soil at its cell. Last, meds_main (the second argument)                    !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
@@ -57,8 +59,8 @@ program test_region
    type(meds_region_t) :: reg
    type(meds_run_t)    :: run
    type(output_registry_t) :: reg_region, reg_site
-   character(len=64), allocatable :: files(:)
-   integer(ik) :: p, st, f, nf, nbad
+   character(len=64), allocatable :: files(:), files2(:)
+   integer(ik) :: p, st, f, nf, nbad, nf2, f2
    logical     :: ok
    character(len=24) :: idstr
    real(wp)          :: mask(NLON, NLAT, 1)
@@ -177,6 +179,32 @@ program test_region
    end do
    call check_true('on four threads every region and detail file still equals the site runs', nbad == 0_ik)
 
+   !----- A region in two halves (§14 RP4), on the archive's 2021 recycled: 2022-12-25 to 2023-01-01  !
+   !      writing its state file, then on from it to 2023-01-06. The seam crosses the recycle wrap and  !
+   !      the year boundary. The second half writes January's files exactly as the whole run does. ---!
+   call derive(trim(work)//'/whole.toml', recycled('whole', '"2023-01-06"', .false.), region=.true.)
+   call run_region(trim(work)//'/whole.toml')
+   call derive(trim(work)//'/half1.toml', '[state]'//nl()//'write_state = true'//nl()//'output_dir = "'// &
+               trim(work)//'/state"'//nl()//'output_prefix = "half"'//nl()//'interval_years = 1'//nl()//      &
+               recycled('half1', '"2023-01-01"', .false.), region=.true.)
+   call execute_command_line('mkdir -p "'//trim(work)//'/state"')
+   call run_region(trim(work)//'/half1.toml')
+   call check_state_file(trim(work)//'/state/half-S-20230101000000.nc')
+   call derive(trim(work)//'/half2.toml', recycled('half2', '"2023-01-06"', .true.), region=.true.)
+   call run_region(trim(work)//'/half2.toml')
+   call list_files(trim(work)//'/out', files2, nf2)
+   nbad = 0_ik ; f2 = 0_ik
+   do f = 1_ik, nf2
+      if (index(files2(f), 'whole-') /= 1 .or. index(files2(f), '202301') == 0) cycle
+      f2 = f2 + 1_ik
+      nbad = nbad + compare_whole_file(trim(work)//'/out/half2'//files2(f)(6:), trim(work)//'/out/'//trim(files2(f)))
+   end do
+   call check_true('a region restarted from its state file across the recycle wrap writes the whole run''s files', &
+                   nbad == 0_ik .and. f2 >= 2_ik)
+   call refused('a region restart needs a region state file', '[init]'//nl()//'init_mode = 2'//nl()//   &
+                'restart_file = "'//trim(work)//'/none.nc"'//nl()//region_block(), .true., .false.,       &
+                'is not a region state file')
+
    !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
    !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
    !      restructured at its first step. -------------------------------------------------------------!
@@ -239,10 +267,8 @@ program test_region
                 'do not apply to [run].mode = "region"')
    call refused('a region needs the archive', '[forcing]'//nl()//'format = "ED_default"'//nl()//region_block(), &
                 .true., .true., 'needs forcing.format = "ED_ERA5land"')
-   call refused('a region starts from bare ground', '[init]'//nl()//'init_mode = 2'//nl()//region_block(), &
-                .true., .false., 'starts from bare ground')
-   call refused('a region writes no checkpoints', '[state]'//nl()//'write_state = true'//nl()//region_block(), &
-                .true., .false., 'writes no checkpoints')
+   call refused('a region does not start from a census', '[init]'//nl()//'init_mode = 1'//nl()//region_block(), &
+                .true., .false., 'not a census')
    call refused('a fast-tier window may not straddle two slow steps',                               &
                 '[output]'//nl()//'fast_interval_steps = 5'//nl()//site_block(1_ik), .false., .false., &
                 'output.fast_interval_steps must divide')
@@ -640,6 +666,94 @@ contains
       call check_true('the fill value where polygon 2 had failed', nbad == 0_ik)
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_failed_month
+
+   !----- A region on the archive's 2021, recycled, from 2022-12-25 to `last`, its files named       !
+   !      `prefix`; `restart` starts it from the first half's state file at 2023-01-01. -----------------!
+   function recycled(prefix, last, restart) result(b)
+      character(len=*), intent(in) :: prefix, last
+      logical,          intent(in) :: restart
+      character(len=:), allocatable :: b
+      b = '[run]'//nl()//'start_time = "2022-12-25"'//nl()//'end_time = '//last//nl()//                   &
+          '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 01:00:00"'//nl()//       &
+          'recycle_end = "2022-01-01 01:00:00"'//nl()//'[output]'//nl()//'prefix = "'//prefix//'"'//nl()// &
+          '[region]'//nl()//'detail_polygons = []'//nl()
+      if (restart) b = b//'[init]'//nl()//'init_mode = 2'//nl()//'restart_file = "'//trim(work)//          &
+                       '/state/half-S-20230101000000.nc"'//nl()
+      b = b//region_block()
+   end function recycled
+
+   !----- Open, step and close a region from its config. ------------------------------------------!
+   subroutine run_region(path)
+      character(len=*), intent(in) :: path
+      type(meds_region_t) :: r
+      integer(ik) :: s
+      logical     :: opened
+      call region_open(path, r, opened, verbose=.false.)
+      if (.not. opened) error stop 'test_region: a region did not open'
+      do while (.not. region_done(r))
+         call region_step_month(r, s)
+         if (s /= DRIVER_OK) error stop 'test_region: a region month failed'
+      end do
+      call region_finalize(r, s)
+      call region_free(r)
+   end subroutine run_region
+
+   !----- Two region files of the same registry: every live variable of the tier, every polygon. ----!
+   integer(ik) function compare_whole_file(apath, bpath) result(nbad)
+      character(len=*), intent(in) :: apath, bpath
+      integer(c_int) :: an, bn
+      integer(ik)    :: t, j, k
+      integer(ik), allocatable :: as(:), bs(:)
+      real(c_double), allocatable :: xa(:), xb(:)
+      logical :: fa, fb, ex
+      nbad = 0_ik
+      inquire(file=apath, exist=ex)
+      if (.not. ex) then
+         write(*,'(2a)') '  missing restarted file ', apath ; nbad = 1_ik ; return
+      end if
+      t = tier_of(bpath)
+      an = open_nc(apath) ; bn = open_nc(bpath)
+      do j = 1_ik, reg_region%nidx(t)
+         k = reg_region%idx_freq(j, t)
+         as = var_shape(an, reg_region%var(k)%dim, .true.)
+         bs = var_shape(bn, reg_region%var(k)%dim, .true.)
+         call read_var(an, trim(reg_region%var(k)%name), as, xa, fa)
+         call read_var(bn, trim(reg_region%var(k)%name), bs, xb, fb)
+         if (.not. (fa .and. fb) .or. any(as /= bs)) then
+            write(*,'(4a)') '  missing or reshaped: ', trim(reg_region%var(k)%name), ' in ', apath
+            nbad = nbad + 1_ik ; cycle
+         end if
+         if (any(xa /= xb)) then
+            write(*,'(4a)') '  DIFFERS after the restart: ', trim(reg_region%var(k)%name), ' in ', apath
+            nbad = nbad + 1_ik
+         end if
+      end do
+      call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
+   end function compare_whole_file
+
+   !----- The region's state file: a polygon axis holding the three polygons, each with its own     !
+   !      counts in meta_int, on cohort and patch axes as long as the largest polygon's. -------------!
+   subroutine check_state_file(path)
+      character(len=*), intent(in) :: path
+      integer(c_int) :: ncid
+      real(c_double), allocatable :: pid(:), meta(:)
+      logical :: found
+      integer(ik) :: p, ncoh_max, npat_max
+      ncid = open_nc(path)
+      call check_true('the region state file has a polygon axis of 3', dim_len(ncid, 'polygon') == NP)
+      call read_var(ncid, 'polygon_id', [NP], pid, found)
+      call check_true('its polygon_id holds the polygons'' ids', found .and. all(nint(pid, ik) == IDS))
+      call read_var(ncid, 'meta_int', [NP, 11_ik], meta, found)
+      ncoh_max = 0_ik ; npat_max = 0_ik
+      do p = 1_ik, NP
+         ncoh_max = max(ncoh_max, nint(meta((p - 1_ik) * 11_ik + 1_ik), ik))
+         npat_max = max(npat_max, nint(meta((p - 1_ik) * 11_ik + 2_ik), ik))
+      end do
+      call check_true('each polygon''s counts are its row of meta_int; the axes are the largest polygon''s', &
+                      found .and. dim_len(ncid, 'cohort') == max(ncoh_max, 1_ik) .and.                      &
+                      dim_len(ncid, 'patch') == max(npat_max, 1_ik))
+      call nc_check(nc_close(ncid), 'close')
+   end subroutine check_state_file
 
    !----- The polygon axis: ids, centres and grid indices of the selected cells. -------------------!
    subroutine check_polygon_axis(path)

@@ -55,6 +55,20 @@ before and after.
   synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **Region state files and restarts** (§14, RP4, OR14). With `[state].write_state`, a region writes
+  one state file every `interval_years` and at the end, holding every polygon:
+  - a `polygon` axis leads each variable, and `polygon_id` names the rows;
+  - the cohort and patch axes are the largest polygon's, and `n_cohort`, `n_patch` and `n_window`
+    mark each polygon's live part; `lat` and `lon` give its cell;
+  - the variables are compressed, since most polygons fill only part of the padded axes.
+
+  `init_mode = 2` restarts a region from such a file, finding each polygon's row by its id; the file
+  must hold exactly the region's polygons. The
+  site's and the region's files are written by the same calls (`state_file_open`, `state_file_put`,
+  `state_file_close`) and read by `io_read_state`, which takes a polygon's row. Site state files are
+  unchanged. A region no longer refuses `init_mode = 2` or `write_state`; a census start is still
+  refused. `test_region` runs a region in two halves, across the recycle wrap and a year boundary,
+  and requires the second half's files to equal the whole run's.
 - **A seeded near-bare-ground start, `[pft].nbg_init_density`** (§14 OR18, ED2's `init_density`).
   Optional, 0 by default, which is today's empty start. A positive value gives each patch of a
   bare-ground start one cohort of that PFT with that many plants per m², at `min_cohort_height` on the

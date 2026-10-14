@@ -16,18 +16,23 @@
 ! [run].n_threads threads, each with a single-threaded patch loop (#183 R3).                       !
 !                                                                                          !
 ! Each polygon sits at its cell's centre, at the cell's orography, in UTC, and starts from bare    !
-! ground (OR8). Region files hold the fixed-shape variables; [region].detail_polygons also write   !
-! ordinary single-site files, named <prefix>-p<polygon id>, with every variable and tier.          !
+! ground (OR8) or from its row of a region state file. Region files hold the fixed-shape variables;!
+! [region].detail_polygons also write ordinary single-site files, named <prefix>-p<polygon id>,    !
+! with every variable and tier. With [state].write_state the region writes one state file, every   !
+! polygon in it (meds_io, OR14), every interval_years and at the end.                              !
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec
    use meds_numerics,               only : ascending_order
-   use meds_config,                 only : meds_config_t, validate_config
+   use meds_config,                 only : meds_config_t, validate_config, INIT_RESTART
    use meds_config_io,              only : load_meds_config
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
    use meds_site_state_types,       only : site_free
+   use meds_io,                     only : state_file_t, state_file_open, state_file_put, state_file_close, &
+                                           state_file_polygons, io_read_state
+   use meds_vegetation_dynamics,    only : reacclimate_plant_traits
    use meds_init,                   only : init_bare_ground, seed_bare_ground
    use meds_forcing_types,          only : met_source_t, met_cells_t
    use meds_forcing_config,         only : MET_PATH_LEN
@@ -57,6 +62,7 @@ module meds_region
       type(output_buffers_t), allocatable :: out_bufs(:)
       type(meds_time_t)     :: now
       integer(ik)           :: step_days = 1_ik
+      integer(ik)           :: iyear = 0_ik       !< years stepped, for [state].interval_years
       !----- Last month's wall time per polygon: the next month starts the costliest first, so a   !
       !      slow polygon does not leave the other threads idle at the end of the month. ------------!
       real(wp),    allocatable :: cost(:)
@@ -87,6 +93,9 @@ contains
       type(surface_inputs_t)     :: inputs
       type(meds_config_t)        :: pcfg
       character(len=:), allocatable :: msg
+      type(meds_time_t)          :: restart_time
+      integer(ik), allocatable   :: file_ids(:), slot(:)
+      logical                    :: found, fast_found
 
       ok = .false.
       if (present(verbose)) reg%verbose = verbose
@@ -143,15 +152,35 @@ contains
          return
       end if
 
+      !----- A restart (init_mode = 2): each polygon's row of the region state file, by its id. The  !
+      !      file must hold exactly this region's polygons. -----------------------------------------!
+      if (cfg%init_mode == INIT_RESTART) then
+         call state_file_polygons(trim(cfg%init_restart_file), file_ids, found)
+         if (.not. found) then
+            write(*,'(3a)') ' region: ', trim(cfg%init_restart_file), ' is not a region state file'
+            return
+         end if
+         allocate(slot(n))
+         do p = 1_ik, n
+            slot(p) = int(findloc(file_ids, ids(p), dim=1), ik)
+         end do
+         if (size(file_ids) /= n .or. any(slot == 0_ik)) then
+            write(*,'(3a)') ' region: the polygons of ', trim(cfg%init_restart_file), ' are not this region''s'
+            return
+         end if
+      end if
+
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &
                     run_end=cfg%end_time, cells=cells)
       if (st /= MET_OK) return
       if (reg%verbose) write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
 
-      !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground,  !
-      !      with its own configuration: the run's, with the cell's soil and site index. -------------!
+      !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground  !
+      !      or its row of the restart file, with its own configuration: the run's, with the cell's  !
+      !      soil and site index. ---------------------------------------------------------------------!
       allocate(reg%poly(n), reg%out_bufs(n))
       deepest = 1_ik
+      reg%now = cfg%start_time
       do p = 1_ik, n
          associate (poly => reg%poly(p))
             poly%cell = p
@@ -161,18 +190,28 @@ contains
             pcfg = cfg
             call apply_surface_inputs(inputs, p, pcfg)
             call validate_config(pcfg)
-            call init_bare_ground(poly%site, pcfg, N_PATCH_INIT)
-            call seed_bare_ground(poly%site, pcfg)
+            fast_found = .false.
+            if (cfg%init_mode == INIT_RESTART) then
+               call io_read_state(poly%site, pcfg, trim(cfg%init_restart_file), restart_time, found,   &
+                                  fast_found=fast_found, restructure_pending=poly%restructure_pending, &
+                                  restructure_new_year=poly%restructure_new_year, polygon=slot(p))
+               reg%now = restart_time
+               if (pcfg%init_reacclimate_traits) call reacclimate_plant_traits(poly%site, pcfg)
+            else
+               call init_bare_ground(poly%site, pcfg, N_PATCH_INIT)
+               call seed_bare_ground(poly%site, pcfg)
+            end if
             call polygon_prepare(pcfg, reg%met_src, poly, cells%lat(p), cells%lon(p),              &
-                                 cells%elevation(p), keep_fast_state=.false.,                     &
-                                 keep_soil_carbon=.false., patch_threads=1_ik, verbose=.false.)
+                                 cells%elevation(p), keep_fast_state=fast_found,                  &
+                                 keep_soil_carbon=cfg%init_mode == INIT_RESTART, patch_threads=1_ik, &
+                                 verbose=.false.)
             if (poly%fast_ctx%col_config%soil%n_active >                                            &
                 reg%poly(deepest)%fast_ctx%col_config%soil%n_active) deepest = p
          end associate
       end do
 
-      reg%now = cfg%start_time
       reg%step_days = max(1_ik, nint(cfg%dt_slow / day_sec, ik))
+      if (cfg%state_write_state) call ensure_output_dir(trim(cfg%state_output_dir))
       allocate(reg%cost(n)) ; reg%cost = 0.0_wp
 
       !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
@@ -288,10 +327,44 @@ contains
 
       if (new_year(nstep) .and. reg%verbose) call region_summary(reg, time_to_string(reg%now))
 
-      !----- The I/O phase. -----------------------------------------------------------------------!
+      !----- The I/O phase: the month's records, and at a year's end every interval_years the       !
+      !      region's state file. ------------------------------------------------------------------!
       call io_phase(reg)
+      if (new_year(nstep)) then
+         reg%iyear = reg%iyear + 1_ik
+         if (cfg%state_write_state .and. mod(reg%iyear, cfg%state_interval_years_cfg) == 0_ik)          &
+            call region_write_state(reg)
+      end if
       end associate
    end subroutine region_step_month
+
+   !----- The region's state file: every polygon's row, at the current date (meds_io, OR14). The    !
+   !      cohort and patch axes are the largest polygon's. The polygons share the calendar, so they   !
+   !      owe the same boundary restructuring. ---------------------------------------------------------!
+   subroutine region_write_state(reg)
+      type(meds_region_t), intent(in) :: reg
+      type(state_file_t)       :: sf
+      integer(ik), allocatable :: ids(:)
+      real(wp),    allocatable :: lat(:), lon(:)
+      integer(ik)              :: p, n_cohort, n_patch
+      n_cohort = 0_ik ; n_patch = 0_ik
+      allocate(ids(size(reg%poly)), lat(size(reg%poly)), lon(size(reg%poly)))
+      do p = 1_ik, size(reg%poly, kind=ik)
+         ids(p)   = reg%poly(p)%id
+         lat(p)   = reg%met_src%cells%lat(reg%poly(p)%cell)
+         lon(p)   = reg%met_src%cells%lon(reg%poly(p)%cell)
+         n_cohort = max(n_cohort, reg%poly(p)%site%cohort%n)
+         n_patch  = max(n_patch, reg%poly(p)%site%patch%n)
+      end do
+      call state_file_open(sf, trim(reg%cfg%state_output_dir), trim(reg%cfg%state_output_prefix), reg%now, &
+                           reg%cfg%pft%n, int(size(reg%poly(1)%site%cohort%growth_hist, 1), ik), n_cohort,  &
+                           n_patch, reg%poly(1)%restructure_pending, reg%poly(1)%restructure_new_year,     &
+                           polygon_id=ids, polygon_lat=lat, polygon_lon=lon)
+      do p = 1_ik, size(reg%poly, kind=ik)
+         call state_file_put(sf, reg%poly(p)%site, reg%now, p)
+      end do
+      call state_file_close(sf)
+   end subroutine region_write_state
 
    !----- Write every polygon's queued records: the region files, then each detail polygon's own. --!
    subroutine io_phase(reg)
@@ -320,8 +393,9 @@ contains
    end subroutine region_summary
 
    !---------------------------------------------------------------------------------------!
-   ! region_finalize -- the per-polygon status table (state, conservation), close every file and   !
-   ! the forcing source. DRIVER_ERR_AREA if any polygon's patch areas no longer sum to 1.          !
+   ! region_finalize -- the terminal state file, the per-polygon status table (state,             !
+   ! conservation), close every file and the forcing source. DRIVER_ERR_AREA if any polygon's      !
+   ! patch areas no longer sum to 1.                                                               !
    !---------------------------------------------------------------------------------------!
    subroutine region_finalize(reg, status)
       type(meds_region_t),   intent(inout) :: reg
@@ -330,6 +404,8 @@ contains
       real(wp)    :: a1
 
       st = DRIVER_OK ; n_bad = 0_ik
+      !----- Always the true terminal state, so a restart resumes exactly here. ---------------------!
+      if (reg%cfg%state_write_state) call region_write_state(reg)
       if (reg%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'
          write(*,'(a)') '  polygon      lat      lon  AGB kgC/m2    LAI  cohorts  area error  energy/water fails'

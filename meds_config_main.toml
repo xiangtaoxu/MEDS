@@ -606,7 +606,8 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 # [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
 # Every valid cell of the box with enough land becomes a polygon at its cell centre and orography, #
 # so [site].latitude/longitude/elevation and [forcing].max_distance_km are refused in region mode.  #
-# Needs format = "ED_ERA5land", init_mode = 0 and write_state = false.                              #
+# Needs format = "ED_ERA5land" and the [surface] soil maps. Starts from bare ground (init_mode = 0)  #
+# or a region state file (init_mode = 2); [state].write_state writes one, every polygon in it.      #
 #-------------------------------------------------------------------------------------------------#
 # [region]
 # box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180

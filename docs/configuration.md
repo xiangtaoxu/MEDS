@@ -368,10 +368,18 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
 - **Rules.** A region needs `[forcing].format = "ED_ERA5land"` with forcing and the fast loop on. It
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
-  rates, still applies. Until restarts of regions exist, a region starts from bare ground
-  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs without
-  the fast probe. A region loads each month's forcing once, before the month, so a recycle window
-  must start at 00:00 or 01:00 on the 1st of a month.
+  rates, still applies. A region starts from bare ground (`init_mode = 0`) or from a region state
+  file (`init_mode = 2`), never a census, and it runs without the fast probe. A region loads each
+  month's forcing once, before the month, so a recycle window must start at 00:00 or 01:00 on the
+  1st of a month.
+- **State files.** With `[state].write_state`, a region writes one state file every
+  `interval_years` and at the end, `<prefix>-S-<date>.nc` like a site's. It holds every polygon: a
+  `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as
+  long as the largest polygon's, and `n_cohort`, `n_patch` and `n_window` mark each polygon's live
+  part (the rest is the fill value); `lat` and `lon` are its cell's centre. A region restarted from
+  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, and the file must hold
+  exactly the region's polygons. A restart continues exactly: a region run in two halves, across a
+  recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
   (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
@@ -381,7 +389,7 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
   hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
   same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
-  for the roadmap to restarts and tiles.
+  §14 for the production plan.
 
 ## Surface maps
 

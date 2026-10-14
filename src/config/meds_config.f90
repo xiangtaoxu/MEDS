@@ -866,9 +866,9 @@ contains
                             '(dt_slow / dt_fast), so no fast-tier window straddles two slow steps'
       end if
       !----- REGION MODE (MEDS_POLYGON_RUNTIME_PLAN.md §9). Every polygon reads its own cell of the   !
-      !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. Until  !
-      !      the ragged restart exists (R4) a region starts from bare ground and writes no            !
-      !      checkpoints, and the one-file probe stays off (every polygon would write into it). ------!
+      !      ED_ERA5land archive, so a region needs the archive, live forcing and the fast loop. A     !
+      !      region starts from bare ground or from a region state file (one census does not describe !
+      !      many cells), and the one-file probe stays off (every polygon would write into it). ------!
       if (cfg%run_mode == RUN_MODE_REGION) then
          if (.not. (cfg%fast_biophysics_on .and. cfg%forcing%forcing_on))                         &
             error stop tag//'[run].mode = "region" needs fast.fast_biophysics_on and forcing.forcing_on'
@@ -876,10 +876,9 @@ contains
             error stop tag//'[run].mode = "region" needs forcing.format = "ED_ERA5land"'
          if (cfg%fast_probe)                                                                       &
             error stop tag//'[run].mode = "region" cannot write fast.fast_probe (one CSV per run)'
-         if (cfg%init_mode /= INIT_BARE)                                                           &
-            error stop tag//'[run].mode = "region" starts from bare ground (init.init_mode = 0) until R4'
-         if (cfg%state_write_state)                                                                &
-            error stop tag//'[run].mode = "region" writes no checkpoints (state.write_state = false) until R4'
+         if (cfg%init_mode == INIT_CENSUS)                                                         &
+            error stop tag//'[run].mode = "region" starts from bare ground or a region state file '// &
+                            '(init.init_mode = 0 or 2), not a census'
          associate (b => cfg%region%box_nwse)
             if (.not. (b(1) > b(3) .and. b(1) <= 90.0_wp .and. b(3) >= -90.0_wp))               &
                error stop tag//'region.box_nwse needs -90 <= S < N <= 90 ([N, W, S, E])'
