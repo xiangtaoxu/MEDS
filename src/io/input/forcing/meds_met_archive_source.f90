@@ -4,7 +4,9 @@
 ! 15): monthly files of hourly ERA5-Land fields over a grid of cells, laid end to end as one    !
 ! hourly axis over the months a run needs. It opens the archive (archive_source_open), loads   !
 ! a month before the step that reads it (archive_prefetch), and hands the shared ingest one    !
-! record's values as stored (archive_source_record). File I/O is meds_era5land_reader's.      !
+! record's values as stored (archive_source_record). File I/O is meds_era5land_reader's. A     !
+! recycled run whose window fits [forcing].cache_mb keeps each month after its first read and   !
+! copies it back instead of reading its files again.                                            !
 !==========================================================================================!
 module meds_met_archive_source
    use iso_c_binding, only : c_int
@@ -49,6 +51,7 @@ contains
       if (stat /= MET_OK) then
          why = 'met_open: the ED_ERA5land archive cannot drive this run (see the message above)' ; return
       end if
+      call plan_cache(src)
       call load_axis_month(src, 1_ik)
       call keep_window_head(src)
       src%rec_first = 1_ik
@@ -298,12 +301,40 @@ contains
       src%head = src%buffer%values(h1:h1 + src%n_head - 1_ik, :, :)
    end subroutine keep_window_head
 
-   !----- Read axis month k into the buffer: the ONLY place the archive is read after open. -----!
+   !----- Whether the recycle window stays in memory ([forcing].cache_mb): the whole window when it  !
+   !      fits the budget, as float32 values(hour, cell, variable), and nothing otherwise, with a     !
+   !      note. A run that does not recycle reads each month once anyway. ---------------------------!
+   subroutine plan_cache(src)
+      type(met_source_t), intent(inout) :: src
+      real(wp)    :: mb
+      integer(ik) :: k, hours
+      if (allocated(src%cache)) deallocate(src%cache)
+      if (src%n_cycle_years < 1_ik .or. src%fcfg%cache_mb <= 0.0_wp) return
+      hours = 0_ik
+      do k = 1_ik, size(src%month_year, kind=ik)
+         hours = hours + era5land_month_hours(src%month_year(k), src%month_month(k))
+      end do
+      mb = 4.0_wp * real(ERA_NVAR, wp) * real(src%cells%ncell, wp) * real(hours, wp) / 1.0e6_wp
+      if (mb > src%fcfg%cache_mb) then
+         write(*,'(a,f0.1,a,f0.1,a)') ' met_open: the recycle window needs ', mb, ' MB, more than ',     &
+               src%fcfg%cache_mb, ' ([forcing].cache_mb): its months are read again every cycle'
+         return
+      end if
+      allocate(src%cache(size(src%month_year)))
+   end subroutine plan_cache
+
+   !----- Read axis month k into the buffer: the ONLY place the archive is read after open. A    !
+   !      month the recycle cache keeps is copied back instead, after its first read. ------------!
    subroutine load_axis_month(src, k)
       type(met_source_t), intent(inout)  :: src
       integer(ik),        intent(in)    :: k
       character(len=MET_PATH_LEN + 128) :: message
       integer(ik) :: est
+      if (allocated(src%cache)) then
+         if (allocated(src%cache(k)%values)) then
+            src%buffer = src%cache(k) ; return
+         end if
+      end if
       call era5land_load_month(src%file_template, src%fcfg%data_path, src%cells, src%month_year(k), &
                                src%month_month(k), src%buffer, est, message)
       if (est /= ERA_OK) then
@@ -311,6 +342,7 @@ contains
          error stop 'met_driver: an ED_ERA5land month cannot be read (MEDS does not gap-fill)'
       end if
       src%n_loads = src%n_loads + 1_ik
+      if (allocated(src%cache)) src%cache(k) = src%buffer
    end subroutine load_axis_month
 
    !----- Where record irec's values are: its hour h > 0 in the loaded month, h = 0 for the carried !

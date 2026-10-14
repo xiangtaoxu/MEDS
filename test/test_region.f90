@@ -181,8 +181,11 @@ program test_region
 
    !----- A region in two halves (§14 RP4), on the archive's 2021 recycled: 2022-12-25 to 2023-01-01  !
    !      writing its state file, then on from it to 2023-01-06. The seam crosses the recycle wrap and  !
-   !      the year boundary. The second half writes January's files exactly as the whole run does. ---!
-   call derive(trim(work)//'/whole.toml', recycled('whole', '"2023-01-06"', .false.), region=.true.)
+   !      the year boundary. The second half writes January's files exactly as the whole run does --    !
+   !      which reads every month from its files, while the halves keep the window in memory (RP5),   !
+   !      the second refilling it after the restart. -------------------------------------------------!
+   call derive(trim(work)//'/whole.toml', '[forcing]'//nl()//'cache_mb = 0.0'//nl()//                  &
+               recycled('whole', '"2023-01-06"', .false.), region=.true.)
    call run_region(trim(work)//'/whole.toml')
    call derive(trim(work)//'/half1.toml', '[state]'//nl()//'write_state = true'//nl()//'output_dir = "'// &
                trim(work)//'/state"'//nl()//'output_prefix = "half"'//nl()//'interval_years = 1'//nl()//      &
@@ -199,7 +202,8 @@ program test_region
       f2 = f2 + 1_ik
       nbad = nbad + compare_whole_file(trim(work)//'/out/half2'//files2(f)(6:), trim(work)//'/out/'//trim(files2(f)))
    end do
-   call check_true('a region restarted from its state file across the recycle wrap writes the whole run''s files', &
+   call check_true('a region restarted from its state file across the recycle wrap, its forcing kept in '// &
+                   'memory, writes the whole uncached run''s files', &
                    nbad == 0_ik .and. f2 >= 2_ik)
    call refused('a region restart needs a region state file', '[init]'//nl()//'init_mode = 2'//nl()//   &
                 'restart_file = "'//trim(work)//'/none.nc"'//nl()//region_block(), .true., .false.,       &

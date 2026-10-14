@@ -184,6 +184,10 @@ module meds_forcing_types
       real(sp),    allocatable :: head(:,:,:)               !< (record, cell, variable) from irec_cycle_first on
       integer(ik) :: n_head    = 0_ik                       !< records in head (0 = none)
       integer(ik) :: n_loads   = 0_ik                       !< archive month loads so far (tests: none inside a step)
+      !----- [forcing].cache_mb: the recycle window's months, each kept after its first read when the   !
+      !      whole window fits the budget (allocated then, by axis month). A kept month is copied into  !
+      !      `buffer` instead of being read again. -----------------------------------------------------!
+      type(met_month_t), allocatable :: cache(:)            !< (axis month) a kept month, or values unallocated
       real(wp),    allocatable :: series(:,:)               !< (record, column) MEDS forcing file at grid_index
       integer(ik) :: series_col(N_MEDS_FIELD) = 0_ik        !< each MEDS_FIELD's column in series (0 = absent)
       !----- The prescribed CO2 (co2_source = "file"), read at open. One global series for every   !

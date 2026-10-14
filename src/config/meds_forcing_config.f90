@@ -139,6 +139,11 @@ module meds_forcing_config
       !      because a region loads a month's forcing once (validate_config).                             !
       type(meds_time_t)  :: recycle_start                        !< first instant of the cycle (inclusive)
       type(meds_time_t)  :: recycle_end                          !< first instant AFTER the cycle (exclusive)
+      !----- The ED_ERA5land archive's recycle window kept in memory, when it fits in this many MB   !
+      !      (meds_met_archive_source): each month is then read from its files once, not once per     !
+      !      cycle. A window that does not fit is read every cycle, with a note at open; 0 = never     !
+      !      keep it. The values are the same either way; only the reading changes. -----------------!
+      real(wp)           :: cache_mb     = 4096.0_wp             !< [MB]
       integer(ik)        :: start_clamp  = CLAMP_ERROR           !< model start < base_time: error | hold record #1
       integer(ik)        :: grid_match   = GRIDMATCH_EXPLICIT    !< explicit grid_index | nearest [site] lat/lon (§4.1)
       !----- site geolocation ([site]) -- solar geometry + lapse. Every forcing clock is UTC       !

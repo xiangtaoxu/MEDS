@@ -401,6 +401,7 @@ contains
       if (allocated(src%buffer%values)) deallocate(src%buffer%values)
       if (allocated(src%carry))  deallocate(src%carry)
       if (allocated(src%head))   deallocate(src%head)
+      if (allocated(src%cache))  deallocate(src%cache)
       if (allocated(src%series)) deallocate(src%series)
       src%series_col = 0_ik
       call co2_series_free(src%co2)

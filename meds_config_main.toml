@@ -600,6 +600,12 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #
 # recycle_start         = "2024-01-01 01:00:00"
 # recycle_end           = "2025-01-01 01:00:00"
+# cache_mb              = 4096.0         # [MB] format = "ED_ERA5land" with recycle = true: keep the whole
+#                                        # window in memory after each month's first read, when it fits in
+#                                        # this size, instead of reading it again every cycle; a larger
+#                                        # window is read every cycle (with a note). Same values; 0 = never.
+#                                        # A month is 744 h x cells x 8 variables x 4 B (24 KB per cell), so
+#                                        # a 20-year window of 1000 cells needs about 5.7 GB.
 # start_clamp           = "error"        # model start < first record: "error" | "hold"
 
 #-------------------------------------------------------------------------------------------------#

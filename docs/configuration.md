@@ -289,6 +289,12 @@ The file formats, the ERA5-Land and flux-tower preparation, and the recycling ru
   and the seam between its last record and its first may fall anywhere in a day. On an end-stamped
   file such as ERA5-Land, a calendar year's first record is at 01:00.
 - **MEDS never gap-fills.** A missing or NaN required value is a hard error, not an interpolation.
+- **A recycled archive stays in memory.** With `format = "ED_ERA5land"` and `recycle = true`, the
+  whole window is kept after each month's first read when it fits in `[forcing].cache_mb` (default
+  4096 MB), so later cycles copy it instead of reading its files again. A window that does not fit is
+  read every cycle, and the run says so at open; 0 never keeps it. The values are the same; only the
+  reading changes. A month holds 744 hours × cells × 8 variables × 4 bytes, 24 KB per cell, so a
+  20-year window of 1000 cells needs about 5.7 GB.
 
 **The forcing is moved to each patch's canopy-air top.** There is no fixed reference height:
 every sample is taken from the forcing's own heights to the top of each patch's canopy air space, which

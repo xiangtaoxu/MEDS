@@ -558,6 +558,7 @@ contains
          call req_date      (t, 'forcing.recycle_start',  cfg%forcing%recycle_start,         m)
          call req_date      (t, 'forcing.recycle_end',    cfg%forcing%recycle_end,           m)
       end if
+      cfg%forcing%cache_mb = toml_real(t, 'forcing.cache_mb', cfg%forcing%cache_mb)
       !----- CO2 (#184): one source for every backend, never the met file. A DEFAULTED read      !
       !      ("const"), so every existing config runs unchanged. The key of the other mode would  !
       !      parse and do nothing, so it is rejected. ---------------------------------------------!

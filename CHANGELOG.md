@@ -55,6 +55,13 @@ before and after.
   synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **The recycle-window forcing cache, `[forcing].cache_mb`** (§14, RP5). With `format =
+  "ED_ERA5land"` and `recycle = true`, the archive source keeps the whole window in memory after each
+  month's first read when it fits the budget (default 4096 MB), and copies a kept month back instead
+  of reading its files again every cycle. A window that does not fit is read every cycle, with a note
+  at open; 0 never keeps it. The values are the same either way: `test_met_era5land` runs two cycles
+  with and without the cache and requires every record to agree, each month's files to be read
+  once with the cache, and a window over the budget to be read every cycle.
 - **Region state files and restarts** (§14, RP4, OR14). With `[state].write_state`, a region writes
   one state file every `interval_years` and at the end, holding every polygon:
   - a `polygon` axis leads each variable, and `polygon_id` names the rows;

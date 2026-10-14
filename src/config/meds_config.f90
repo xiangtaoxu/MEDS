@@ -959,6 +959,7 @@ contains
          !      a config that says otherwise would mis-time or mis-partition every record. ---------!
          if (cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND) then
             if (len_trim(cfg%forcing%data_path) == 0) error stop tag//'forcing.data_path is empty'
+            if (cfg%forcing%cache_mb < 0.0_wp) error stop tag//'forcing.cache_mb must be >= 0'
             if (cfg%run_mode /= RUN_MODE_REGION .and. cfg%forcing%max_distance_km <= 0.0_wp)      &
                error stop tag//'forcing.max_distance_km must be > 0'
             if (abs(cfg%forcing%dt_forcing - ARCHIVE_DT_SEC) > 0.5_wp)                             &

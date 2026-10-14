@@ -10,7 +10,7 @@
 program test_met_era5land
    use meds_test_assert,     only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
-   use meds_time,            only : meds_time_t
+   use meds_time,            only : meds_time_t, time_advance_days
    use meds_forcing_config,  only : forcing_config_t, MET_BACKEND_ED_ERA5LAND, METAVG_END,          &
                                     SWPART_CLEARIDX, SWPART_PASSTHROUGH, CLAMP_ERROR
    use meds_forcing_types,   only : met_source_t, met_cursor_t, met_forcing_t, met_cells_t, met_month_t
@@ -39,6 +39,7 @@ program test_met_era5land
    call test_fill_rejected()
    call test_driver_months()
    call test_driver_recycle()
+   call test_driver_cache()
    call test_driver_rejections()
    call test_region_cursors()
    call test_driver_recycle_anchors()
@@ -202,6 +203,7 @@ contains
       fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
       fc%latitude_deg = 35.0_wp ; fc%longitude_deg = -120.0_wp
       fc%recycle = .false. ; fc%start_clamp = CLAMP_ERROR
+      fc%cache_mb = 0.0_wp                     ! the tests count file reads; test_driver_cache opts in
    end function archive_config
 
    !=======================================================================================!
@@ -337,6 +339,50 @@ contains
       end block
       call met_close(src)
    end subroutine test_driver_recycle
+
+   !=======================================================================================!
+   !  6b. The recycle-window cache ([forcing].cache_mb): two cycles read each month's files once, !
+   !      and every record equals the one a run without the cache reads.                          !
+   !=======================================================================================!
+   subroutine test_driver_cache()
+      type(met_source_t)     :: src, ref
+      type(met_cursor_t)     :: cur, cref
+      type(forcing_config_t) :: fc
+      type(met_forcing_t)    :: met, mref
+      type(meds_time_t)      :: t
+      integer(ik) :: st, d
+      logical     :: same
+      print '(a)', '-- era5land 6b: the recycle-window cache --'
+      fc = archive_config()
+      fc%recycle = .true.
+      fc%recycle_start = T0 ; fc%recycle_end = meds_time_t(2022_ik, 1_ik, 1_ik, 1_ik)
+      fc%cache_mb = 0.0_wp
+      call met_open(ref, fc, stat=st) ; call site_cursor(ref, cref, fc)
+      fc%cache_mb = 1.0_wp                                   ! the synthetic window is 0.29 MB
+      call met_open(src, fc, stat=st) ; call site_cursor(src, cur, fc)
+      same = .true.
+      t = meds_time_t(2030_ik, 1_ik, 1_ik, 12_ik)
+      do d = 1_ik, 2_ik * 365_ik + 5_ik
+         met = step_sample(src, cur, t) ; mref = step_sample(ref, cref, t)
+         same = same .and. met%tair_k == mref%tair_k .and. met%par_beam == mref%par_beam .and.       &
+                met%precip == mref%precip .and. met%wind == mref%wind .and. met%lwdown == mref%lwdown
+         t = time_advance_days(t, 1_ik)
+      end do
+      call check_true('with the cache every record equals the uncached run''s', same)
+      call check_true('two cycles read each of the twelve months once',                                &
+                      src%n_loads == 12_ik .and. ref%n_loads > 24_ik, real(src%n_loads, wp))
+      call met_close(src) ; call met_close(ref)
+      !----- A window over the budget is not kept: every cycle reads it again. ----------------------!
+      fc%cache_mb = 0.1_wp
+      call met_open(src, fc, stat=st) ; call site_cursor(src, cur, fc)
+      t = meds_time_t(2030_ik, 1_ik, 1_ik, 12_ik)
+      do d = 1_ik, 2_ik * 365_ik + 5_ik
+         met = step_sample(src, cur, t) ; t = time_advance_days(t, 1_ik)
+      end do
+      call check_true('a window over cache_mb is read every cycle', .not. allocated(src%cache) .and.     &
+                      src%n_loads > 24_ik, real(src%n_loads, wp))
+      call met_close(src)
+   end subroutine test_driver_cache
 
    !=======================================================================================!
    !  7. Rejected at open: a month the archive lacks, total shortwave read as components, and  !
