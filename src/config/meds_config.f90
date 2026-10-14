@@ -11,7 +11,7 @@ module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
-   use meds_allometry,  only : set_allometry, HEIGHT_POWER
+   use meds_allometry,  only : allometry_t
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -30,7 +30,7 @@ module meds_config
    implicit none
    private
 
-   public :: meds_config_t, allometry_config_t, hydraulics_config_t, soil_column_config_t
+   public :: meds_config_t, hydraulics_config_t, soil_column_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps, soil_column_layers
@@ -99,19 +99,6 @@ module meds_config
 
    !----- NO hard-coded defaults: every field is set by the config reader (presence-mapped) or  !
    !       derived (derive_config / derive_pft_rates). DERIVED fields are noted.  --------------!
-   !----- Global (PFT-independent, ED2 iallom==3) allometry coefficients. Held on cfg so the run  !
-   !       config is the complete record; installed into meds_allometry's protected module state    !
-   !       by derive_parameters (mirroring how every other derived quantity is computed at load).    !
-   type :: allometry_config_t
-      real(wp) :: b1Ht = 0.0_wp, b2Ht = 0.0_wp        !< height <-> diameter intercept / slope
-      real(wp) :: agb_c1 = 0.0_wp, agb_c2 = 0.0_wp    !< AGB scale / exponent (Chave-2014)
-      real(wp) :: ca_b1 = 0.0_wp, ca_b2 = 0.0_wp      !< crown-area scale / exponent
-      real(wp) :: lai_b1 = 0.0_wp, lai_b2 = 0.0_wp    !< per-stem leaf-area scale / exponent
-      real(wp) :: light_ext = 0.0_wp                  !< Beer-Lambert extinction through overtopping LAI
-      integer(ik) :: height_form = HEIGHT_POWER       !< the height curve: power law, gMM or Chave (2014)
-      real(wp) :: gmm_a = 0.0_wp, gmm_b = 0.0_wp, gmm_k = 0.0_wp   !< gMM height coefficients
-      real(wp) :: chave_e = 0.0_wp                    !< Chave (2014) stress index E
-   end type allometry_config_t
 
    !----- SOIL COLUMN: the site's geometry, texture and thermal properties. Consumed once per run  !
    !       by the fast-context builder, which turns them into soil_params_t + soil_thermal_params_t. !
@@ -391,7 +378,8 @@ module meds_config
       type(pft_table_t) :: pft
 
       !----- Global allometry coefficients (populated by the loader; installed by derive_parameters). !
-      type(allometry_config_t) :: allom
+      type(allometry_t) :: allom              !< the allometry coefficients ([allometry]); each site
+                                              !< carries a copy on its cohort block (cohort%allom)
 
       !----- Plant-hydraulics parameters ([hydraulics], opt-in; defaults = MVP placeholders). ------!
       type(soil_column_config_t) :: soil_column  !< [soil_column] the physical soil column
@@ -495,21 +483,16 @@ contains
    end subroutine derive_config
 
    !---------------------------------------------------------------------------------------!
-   ! Install + derive EVERY parameter that is a function of the primary (loaded) config: the   !
-   ! global allometry coefficients (into meds_allometry's protected state), the derived run      !
+   ! Derive EVERY parameter that is a function of the primary (loaded) config: the derived run   !
    ! scalars (derive_config), the wood-density mortality hazard (derive_pft_rates), and the       !
    ! leaf-capacity ratios (derive_leaf_params). The single consolidation point for both the        !
    ! production loader (load_meds_config) and the test builder (build_test_config), so the          !
-   ! derivation sequence lives in ONE place. The four calls are mutually order-independent (each     !
-   ! reads only primary loaded fields; set_allometry installs a global none of them consume).        !
+   ! derivation sequence lives in ONE place. The three calls are mutually order-independent (each    !
+   ! reads only primary loaded fields).                                                               !
    ! Callers apply any [derived] override and validate AFTER this returns.                            !
    !---------------------------------------------------------------------------------------!
    subroutine derive_parameters(cfg)
       type(meds_config_t), intent(inout) :: cfg
-      call set_allometry(cfg%allom%b1Ht, cfg%allom%b2Ht, cfg%allom%agb_c1, cfg%allom%agb_c2,       &
-                         cfg%allom%ca_b1, cfg%allom%ca_b2, cfg%allom%lai_b1, cfg%allom%lai_b2,      &
-                         cfg%allom%light_ext, cfg%allom%height_form, cfg%allom%gmm_a,               &
-                         cfg%allom%gmm_b, cfg%allom%gmm_k, cfg%allom%chave_e)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)

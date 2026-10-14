@@ -37,6 +37,7 @@ program test_output_roundtrip
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
@@ -66,7 +67,7 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik)
+   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t())
    site%cohort%n = 1_ik ; site%patch%n = 1_ik
    site%cohort%nplant(1) = 1.0_wp ; site%cohort%dbh(1) = 5.0_wp
    site%cohort%height(1) = 4.0_wp ; site%cohort%basal_area(1) = 19.6_wp

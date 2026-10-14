@@ -19,7 +19,6 @@ module meds_demography_patch_fusefiss
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : tiny_num, almost_one, yr_sec
    use meds_numerics,   only : conserved, ROUNDOFF_RTOL
-   use meds_allometry,  only : light_ext
    use meds_config,     only : meds_config_t, DIST_TREEFALL
    use meds_site_state_types, only : site_t, rebuild_csr, cohort_compact,                        &
                                       cohort_ensure_capacity, copy_cohort_slot,                    &
@@ -124,7 +123,7 @@ contains
          cum_lai(ihgt) = cum_lai(ihgt) + cum_lai(ihgt + 1_ik)
       end do
       do ihgt = 1_ik, nl
-         light(ihgt) = exp(-light_ext * cum_lai(ihgt))
+         light(ihgt) = exp(-site%cohort%allom%light_ext * cum_lai(ihgt))
       end do
    end subroutine patch_light_profile
 

@@ -39,7 +39,7 @@ contains
       integer(ik),         intent(in)  :: n_patch
       integer(ik) :: ip
       call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),          &
-                      n_growth_window = growth_window_steps(cfg))
+                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom)
       site%patch%n = n_patch
       do ip = 1_ik, n_patch
          site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)

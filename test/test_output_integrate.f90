@@ -29,6 +29,7 @@ program test_output_integrate
    use meds_kinds,            only : wp, ik
    use meds_config,           only : meds_config_t
    use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_allometry,        only : allometry_t
    use meds_output_types,     only : var_desc_t, integ_buffer_t, output_files_t, output_buffers_t,  &
                                      diag_params_t, slab_col,                                     &
                                      MISSING_VALUE,                                               &
@@ -135,7 +136,7 @@ contains
       type(diag_params_t)  :: dp
       integer(ik)          :: n_out, i
       !----- A fixed 3-cohort / 1-patch site (slot set constant across the window, §4.4). -----!
-      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik)
+      call site_alloc(site, 2_ik, 64_ik, 8_ik, 4_ik, allometry_t())
       site%cohort%n = 3_ik
       site%cohort%nplant(1:3)     = [1.0_wp, 1.0_wp, 1.0_wp]
       call set_cohort_agb(site, [1.0_wp, 2.0_wp, 3.0_wp], 3_ik)   ! opaque (see header note)
@@ -442,7 +443,7 @@ contains
       k_n = find_var_index(files%reg, 'n_cohort_site')
       call check(k_s > 0_ik .and. k_c > 0_ik .and. k_n > 0_ik, 'boundary fixture registers its variables')
 
-      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik)
+      call site_alloc(site, 2_ik, 8_ik, 8_ik, 4_ik, allometry_t())
       site%patch%n = 1_ik ; site%patch%area(1) = 1.0_wp ; site%patch%cohort_offset(1) = 1_ik
       jan30 = meds_time_t(year=2000_ik, month=1_ik, day=30_ik)
       jan31 = time_advance_days(jan30, 1_ik)

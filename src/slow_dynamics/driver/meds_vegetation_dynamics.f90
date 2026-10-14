@@ -457,8 +457,8 @@ contains
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
             !      from leaf_carbon) into locals, for the growth rate the ring buffer and the     !
             !      diagnostics report; update_cohort_states commits the same flip. ---------------!
-            call carbon_to_structure(wc_new, lc_new, cohort%p_wood_density(i), cohort%p_hgt_max(i), &
-                                     cohort%p_aboveground_frac(i), cohort%sla(i),                 &
+            call carbon_to_structure(cohort%allom, wc_new, lc_new, cohort%p_wood_density(i),        &
+                                     cohort%p_hgt_max(i), cohort%p_aboveground_frac(i), cohort%sla(i), &
                                      dbh_new, height_new, ba_new, agb_new, la_new)
             !----- Back out the pools' tendencies + advance the ring buffer with the REALIZED dbh !
             !      rate (the shared core builder; same fill/evict logic the empirical path uses). -!
@@ -506,7 +506,7 @@ contains
       associate (cohort => site%cohort, pft => cfg%pft)
          allocate(carbon_min(npft))
          do pf = 1_ik, npft
-            carbon_min(pf) = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+            carbon_min(pf) = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
          end do
          !----- Baseline external seed rain (independent of structure). --------------------!
          do ip = 1_ik, np
@@ -518,8 +518,8 @@ contains
             pf = cohort%pft(j)
             ip = cohort%owner_patch(j)
             !----- Prospective carbon dbh-increment rate (the mortality instantaneous term). --!
-            dbh_rate = npp_to_growth(cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j), dt_yr,      &
-                                     cohort%p_wood_density(j), cohort%p_hgt_max(j),                 &
+            dbh_rate = npp_to_growth(cohort%allom, cohort%wood_carbon(j), npp_wood(j), cohort%dbh(j),  &
+                                     dt_yr, cohort%p_wood_density(j), cohort%p_hgt_max(j),        &
                                      cohort%p_aboveground_frac(j))
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
                                            cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
@@ -608,7 +608,7 @@ contains
             r2l = pft%root_to_leaf_ratio(pf)
             !----- Leaf-AREA-conserving target: uses the cohort's (plastic) SLA, so a shaded canopy  !
             !      reaches the same allometric leaf area with less leaf carbon. --------------------!
-            leaf_target  = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            leaf_target  = size2leaf_carbon(cohort%allom, cohort%dbh(j), cohort%height(j), cohort%sla(j))
             leaf_turn    = 1.0_wp / max(cohort%llspan(j), tiny_llspan)   ! baseline leaf turnover [1/yr]
             !----- STORAGE MAINTENANCE (#177), charged BEFORE the demand and the allocation, which is  !
             !      ED2's ordering (apply_maintenance runs ahead of growth). Until now the                !
@@ -651,7 +651,7 @@ contains
             !      onset of maturity). --------------------------------------------------------------!
             repro_frac   = merge(pft%reproduction_investment_fraction(pf), 0.0_wp,                  &
                                  cohort%height(j) >= pft%reproduction_height_fraction                &
-                                                     * local_hmax(cohort%p_hgt_max(j)))
+                                                     * local_hmax(cohort%allom, cohort%p_hgt_max(j)))
             !----- Gather this step's GPP/respiration, apply turnover-first, and form the flush-    !
             !      capped growth demands (the single per-cohort "how much carbon, how much litter"  !
             !      computation, isolated from the surrounding orchestration). ----------------------!
@@ -684,6 +684,7 @@ contains
                      npp_store=npp_store, growth_repro=g_repro, growth_resp=growth_resp,          &
                      deficit=deficit, starving=starving,                                           &
                      wood_growth_max=growth_sink_limitation(                                       &
+                        allom=cohort%allom,                                                          &
                         wood_carbon=cohort%wood_carbon(j), dbh=cohort%dbh(j),                       &
                         wood_density=cohort%p_wood_density(j), hgt_max=cohort%p_hgt_max(j),         &
                         aboveground_frac=cohort%p_aboveground_frac(j),                              &
@@ -941,7 +942,7 @@ contains
             do pf = 1_ik, site%n_pft
                patch%recruit_pool(pf, ip) = patch%recruit_pool(pf, ip) + recruitment(pf, ip) * dt_yr
                if (pft%include_pft(pf) /= 1_ik) cycle
-               c_min = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+               c_min = min_cohort_carbon(site%cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
                seed_rain_carbon = seed_rain_carbon                                                 &
                                 + patch%area(ip) * pft%seed_rain_recruits(pf) * dt_yr * c_min
             end do
@@ -1169,7 +1170,7 @@ contains
             !----- SLA rose => leaf_carbon now exceeds the (lower) allometric leaf target: resorb   !
             !      the excess to storage so displayed leaf AREA stays at allometry (leaf-area-       !
             !      conserving). An UNshaded step lowers sla => a deficit, filled by normal growth.  !
-            leaf_target = size2leaf_carbon(cohort%dbh(j), cohort%height(j), cohort%sla(j))
+            leaf_target = size2leaf_carbon(cohort%allom, cohort%dbh(j), cohort%height(j), cohort%sla(j))
             if (cohort%leaf_carbon(j) > leaf_target) then
                excess = cohort%leaf_carbon(j) - leaf_target
                cohort%leaf_carbon(j)          = leaf_target

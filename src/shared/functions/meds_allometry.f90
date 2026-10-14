@@ -2,10 +2,12 @@
 !==========================================================================================!
 ! meds_allometry -- pan-tropical (ED2 iallom==3) size allometry, shared across the engine.  !
 !                                                                                          !
-! All coefficients are GLOBAL (the same for every tropical PFT, exactly as ED2's iallom==3  !
-! parameterization); the only per-stem inputs are diameter, the derived height, and -- for   !
-! biomass -- wood density (rho). The relationships used here (source:                        !
-! ED2/ED/src/init/ed_params.f90 and utils/allometry.f90):                                   !
+! The coefficients are one record, allometry_t, that every routine here takes as its first  !
+! argument. A run's record is cfg%allom; each site carries a copy on its cohort block        !
+! (cohort%allom), so the polygons of a region can each have their own (polygon runtime plan  !
+! §14, RP0). The coefficients are the same for every PFT, exactly as ED2's iallom==3; the    !
+! only per-stem inputs are diameter, the derived height, and -- for biomass -- wood density  !
+! (rho). The relationships (source: ED2/ED/src/init/ed_params.f90 and utils/allometry.f90):  !
 !                                                                                          !
 !   height(dbh)        = exp(b1Ht + b2Ht*ln(dbh)),  capped at hgt_max (per-PFT arg) [m]           !
 !   dbh(height)        = exp((ln(height) - b1Ht)/b2Ht)                          [cm]          !
@@ -42,14 +44,13 @@ module meds_allometry
    implicit none
    private
 
+   public :: allometry_t
    public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
              dbh_to_leaf_area, local_hmax
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
-   public :: b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2, light_ext
-   public :: height_form, gmm_a, gmm_b, gmm_k, chave_e, HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
-   public :: set_allometry
+   public :: HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
 
    !----- The height curve: the pan-tropical power law, a saturating gMM, or Chave (2014). ---!
    integer(ik), parameter :: HEIGHT_POWER = 1_ik, HEIGHT_GMM = 2_ik, HEIGHT_CHAVE = 3_ik
@@ -66,74 +67,45 @@ module meds_allometry
    integer,     parameter :: NEWTON_MAX_ITER = 50
    real(wp),    parameter :: NEWTON_TOL      = 1.0e-12_wp    !< [ln cm] change in ln(dbh)
 
-   !----- Allometry coefficients are RUNTIME CONFIGURATION: set_allometry installs them once at  !
-   !       config load (from the PFT config file) and they are read thereafter. `protected` =>    !
-   !       read-only outside this module. The host allometry functions read them directly; the    !
-   !       offloaded growth kernel takes them as scalar arguments instead (it cannot read host    !
-   !       module state on the device).                                                           !
-   !                                                                                          !
-   !       THE INITIALIZERS ARE THE SHIPPED PAN-TROPICAL DEFAULTS, and they are here for a         !
-   !       reason. Config is still the source of truth for a MODEL RUN -- set_allometry overrides   !
-   !       every one of them, and meds_config_pft.toml ships exactly these numbers. But this        !
-   !       module is reachable WITHOUT a config: it links into the Python shared library, where     !
-   !       `meds.allometry.dbh_to_height(...)` would otherwise read uninitialized module state --   !
-   !       zeros in practice on Linux (.bss), formally undefined, silently wrong either way.       !
-   !       Initialized, the unconfigured call is CORRECT rather than undefined. (Structure plan     !
-   !       decision #12. Eventually these should be an argument bundle, not module state; the       !
-   !       offloaded kernel already takes them that way.)                                          !
-   real(wp), protected :: b1Ht      = 1.139963_wp    !< [--]  height <-> diameter intercept
-   real(wp), protected :: b2Ht      = 0.564899_wp    !< [--]  height <-> diameter slope
-   real(wp), protected :: agb_c1    = 0.03365_wp     !< [kgC] AGB scale (Chave 2014 eq. 4 / C2B)
-   real(wp), protected :: agb_c2    = 0.976_wp       !< [--]  AGB exponent on rho and on dbh^2*h (Chave 2014)
-   real(wp), protected :: ca_b1     = 0.370_wp       !< [--]  crown-area scale
-   real(wp), protected :: ca_b2     = 0.464_wp       !< [--]  crown-area exponent
-   real(wp), protected :: lai_b1    = 0.23384770_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
-   real(wp), protected :: lai_b2    = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
-   real(wp), protected :: light_ext = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
-   integer(ik), protected :: height_form = HEIGHT_POWER
-   !----- gMM coefficients, read only when height_form = HEIGHT_GMM: Cano et al. (2019) eq. 7.  !
-   real(wp), protected :: gmm_a     = 58.0_wp        !< [m]   asymptotic height
-   real(wp), protected :: gmm_b     = 0.73_wp        !< [--]  exponent on dbh
-   real(wp), protected :: gmm_k     = 21.8_wp        !< [cm^gmm_b] half-saturation
-   !----- Chave's stress index E, read only when height_form = HEIGHT_CHAVE. ------------------!
-   real(wp), protected :: chave_e   = 0.0_wp         !< [--]  site stress index: the larger, the shorter the trees
+   !----- The allometry coefficients. A run's record is cfg%allom, filled from the PFT file's     !
+   !       [allometry] block; a site carries a copy (cohort%allom). The initializers are the shipped !
+   !       pan-tropical defaults, the numbers meds_config_pft.toml ships, so a record made without a  !
+   !       config (a unit test, a Python call) is correct rather than zero. -----------------------!
+   type :: allometry_t
+      real(wp)    :: b1Ht        = 1.139963_wp    !< [--]  height <-> diameter intercept
+      real(wp)    :: b2Ht        = 0.564899_wp    !< [--]  height <-> diameter slope
+      real(wp)    :: agb_c1      = 0.03365_wp     !< [kgC] AGB scale (Chave 2014 eq. 4 / C2B)
+      real(wp)    :: agb_c2      = 0.976_wp       !< [--]  AGB exponent on rho and on dbh^2*h (Chave 2014)
+      real(wp)    :: ca_b1       = 0.370_wp       !< [--]  crown-area scale
+      real(wp)    :: ca_b2       = 0.464_wp       !< [--]  crown-area exponent
+      real(wp)    :: lai_b1      = 0.23384770_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
+      real(wp)    :: lai_b2      = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
+      real(wp)    :: light_ext   = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
+      integer(ik) :: height_form = HEIGHT_POWER   !< the height curve: power law, gMM or Chave (2014)
+      !----- gMM coefficients, read only when height_form = HEIGHT_GMM: Cano et al. (2019) eq. 7. !
+      real(wp)    :: gmm_a       = 58.0_wp        !< [m]   asymptotic height
+      real(wp)    :: gmm_b       = 0.73_wp        !< [--]  exponent on dbh
+      real(wp)    :: gmm_k       = 21.8_wp        !< [cm^gmm_b] half-saturation
+      !----- Chave's stress index E, read only when height_form = HEIGHT_CHAVE. ----------------!
+      real(wp)    :: chave_e     = 0.0_wp         !< [--]  site stress index: the larger, the shorter the trees
+   end type allometry_t
 
 contains
 
-   !----- Install the allometry coefficients (called once at config load). Without the height  !
-   !       arguments the height curve is the power law. ---------------------------------------!
-   subroutine set_allometry(b1Ht_in, b2Ht_in, agb_c1_in, agb_c2_in,           &
-                            ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in, &
-                            height_form_in, gmm_a_in, gmm_b_in, gmm_k_in, chave_e_in)
-      real(wp), intent(in) :: b1Ht_in, b2Ht_in, agb_c1_in, agb_c2_in
-      real(wp), intent(in) :: ca_b1_in, ca_b2_in, lai_b1_in, lai_b2_in, light_ext_in
-      integer(ik), intent(in), optional :: height_form_in
-      real(wp),    intent(in), optional :: gmm_a_in, gmm_b_in, gmm_k_in, chave_e_in
-      b1Ht = b1Ht_in ; b2Ht = b2Ht_in
-      agb_c1 = agb_c1_in ; agb_c2 = agb_c2_in
-      ca_b1 = ca_b1_in ; ca_b2 = ca_b2_in
-      lai_b1 = lai_b1_in ; lai_b2 = lai_b2_in ; light_ext = light_ext_in
-      height_form = HEIGHT_POWER
-      if (present(height_form_in)) height_form = height_form_in
-      if (present(gmm_a_in)) gmm_a = gmm_a_in
-      if (present(gmm_b_in)) gmm_b = gmm_b_in
-      if (present(gmm_k_in)) gmm_k = gmm_k_in
-      if (present(chave_e_in)) chave_e = chave_e_in
-   end subroutine set_allometry
-
    !----- Diameter -> height [m], capped at the per-PFT asymptote hgt_max. -----------------!
-   elemental pure function dbh_to_height(dbh, hgt_max) result(h)
-      real(wp), intent(in) :: dbh, hgt_max
-      real(wp)             :: h, db, x
-      select case (height_form)
+   elemental pure function dbh_to_height(allom, dbh, hgt_max) result(h)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, hgt_max
+      real(wp)                      :: h, db, x
+      select case (allom%height_form)
       case (HEIGHT_GMM)
-         db = max(dbh, tiny_num) ** gmm_b
-         h  = gmm_a * db / (gmm_k + db)
+         db = max(dbh, tiny_num) ** allom%gmm_b
+         h  = allom%gmm_a * db / (allom%gmm_k + db)
       case (HEIGHT_CHAVE)
          x  = log(max(dbh, tiny_num))
-         h  = exp(chave_intercept() + CHAVE_B * x + CHAVE_C * x * x)
+         h  = exp(chave_intercept(allom) + CHAVE_B * x + CHAVE_C * x * x)
       case default
-         h  = exp(b1Ht + b2Ht * log(max(dbh, tiny_num)))
+         h  = exp(allom%b1Ht + allom%b2Ht * log(max(dbh, tiny_num)))
       end select
       h = min(h, hgt_max)
    end function dbh_to_height
@@ -141,29 +113,32 @@ contains
    !----- The local maximum height [m]: a HMAX_DBH-wide tree's height on the local curve, capped  !
    !       at hgt_max. Chave's E scales every height by the same factor, so a fixed share of it is    !
    !       reached at the same diameter at every site, at a height that follows the local stature. !
-   elemental pure function local_hmax(hgt_max) result(h)
-      real(wp), intent(in) :: hgt_max
-      real(wp)             :: h
-      h = dbh_to_height(HMAX_DBH, hgt_max)
+   elemental pure function local_hmax(allom, hgt_max) result(h)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: hgt_max
+      real(wp)                      :: h
+      h = dbh_to_height(allom, HMAX_DBH, hgt_max)
    end function local_hmax
 
    !----- Height -> diameter [cm] (inverse of the uncapped curve). -----------------------!
-   elemental pure function height_to_dbh(h) result(dbh)
-      real(wp), intent(in) :: h
-      real(wp)             :: dbh
-      select case (height_form)
+   elemental pure function height_to_dbh(allom, h) result(dbh)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: h
+      real(wp)                      :: dbh
+      select case (allom%height_form)
       case (HEIGHT_GMM)
-         dbh = (gmm_k * max(h, tiny_num) / max(gmm_a - h, tiny_num)) ** (1.0_wp / gmm_b)
+         dbh = (allom%gmm_k * max(h, tiny_num) / max(allom%gmm_a - h, tiny_num)) ** (1.0_wp / allom%gmm_b)
       case (HEIGHT_CHAVE)
-         dbh = exp(chave_small_root(CHAVE_B, chave_intercept() - log(max(h, tiny_num))))
+         dbh = exp(chave_small_root(CHAVE_B, chave_intercept(allom) - log(max(h, tiny_num))))
       case default
-         dbh = exp((log(max(h, tiny_num)) - b1Ht) / b2Ht)
+         dbh = exp((log(max(h, tiny_num)) - allom%b1Ht) / allom%b2Ht)
       end select
    end function height_to_dbh
 
-   !----- Chave's curve: ln H = chave_intercept() + CHAVE_B x + CHAVE_C x^2 with x = ln(dbh). -!
-   pure real(wp) function chave_intercept()
-      chave_intercept = CHAVE_A - chave_e + 0.5_wp * CHAVE_RSE * CHAVE_RSE
+   !----- Chave's curve: ln H = chave_intercept + CHAVE_B x + CHAVE_C x^2 with x = ln(dbh). ---!
+   pure real(wp) function chave_intercept(allom)
+      type(allometry_t), intent(in) :: allom
+      chave_intercept = CHAVE_A - allom%chave_e + 0.5_wp * CHAVE_RSE * CHAVE_RSE
    end function chave_intercept
 
    !----- The smaller root x of CHAVE_C x^2 + b x + c = 0: the curve's rising branch, which holds  !
@@ -175,32 +150,36 @@ contains
    end function chave_small_root
 
    !----- Crown area [m2]. ----------------------------------------------------------------!
-   elemental pure function dbh_to_crown_area(dbh, h) result(ca)
-      real(wp), intent(in) :: dbh, h
-      real(wp)             :: ca
-      ca = ca_b1 * (dbh * dbh * h) ** ca_b2
+   elemental pure function dbh_to_crown_area(allom, dbh, h) result(ca)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, h
+      real(wp)                      :: ca
+      ca = allom%ca_b1 * (dbh * dbh * h) ** allom%ca_b2
    end function dbh_to_crown_area
 
    !----- Aboveground biomass [kgC/plant]. ------------------------------------------------!
-   elemental pure function dbh_to_agb(dbh, h, rho) result(agb)
-      real(wp), intent(in) :: dbh, h, rho
-      real(wp)             :: agb
-      agb = agb_c1 * rho ** agb_c2 * (dbh * dbh * h) ** agb_c2
+   elemental pure function dbh_to_agb(allom, dbh, h, rho) result(agb)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, h, rho
+      real(wp)                      :: agb
+      agb = allom%agb_c1 * rho ** allom%agb_c2 * (dbh * dbh * h) ** allom%agb_c2
    end function dbh_to_agb
 
    !----- AGB carbon [kgC/plant] of a minimum-size (recruit) plant at min_cohort_height: the    !
    !       recruit "unit" carbon used to convert a reproduction-carbon flux into recruit numbers. !
-   elemental pure function min_cohort_carbon(min_cohort_height, rho) result(carbon_min)
-      real(wp), intent(in) :: min_cohort_height, rho
-      real(wp)             :: carbon_min
-      carbon_min = dbh_to_agb(height_to_dbh(min_cohort_height), min_cohort_height, rho)
+   elemental pure function min_cohort_carbon(allom, min_cohort_height, rho) result(carbon_min)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: min_cohort_height, rho
+      real(wp)                      :: carbon_min
+      carbon_min = dbh_to_agb(allom, height_to_dbh(allom, min_cohort_height), min_cohort_height, rho)
    end function min_cohort_carbon
 
    !----- Per-stem one-sided leaf area [m2]; cohort LAI = nplant*this. ---------------------!
-   elemental pure function dbh_to_leaf_area(dbh, h) result(leaf_area)
-      real(wp), intent(in) :: dbh, h
-      real(wp)             :: leaf_area
-      leaf_area = lai_b1 * (dbh * dbh * h) ** lai_b2
+   elemental pure function dbh_to_leaf_area(allom, dbh, h) result(leaf_area)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, h
+      real(wp)                      :: leaf_area
+      leaf_area = allom%lai_b1 * (dbh * dbh * h) ** allom%lai_b2
    end function dbh_to_leaf_area
 
    !---------------------------------------------------------------------------------------!
@@ -210,24 +189,25 @@ contains
    ! dbh^(2*agb_c2). We solve the uncapped form, then redo it in the capped form if the       !
    ! resulting stem would be taller than hgt_max. The two branches agree at the transition.      !
    !---------------------------------------------------------------------------------------!
-   elemental pure function agb_to_dbh(agb, rho, hgt_max) result(dbh)
-      real(wp), intent(in) :: agb, rho, hgt_max
-      real(wp)             :: dbh, k_un, p_un, k_cap, p_cap, h
-      if (height_form == HEIGHT_GMM) then
-         dbh = agb_to_dbh_gmm(agb, rho, hgt_max)
+   elemental pure function agb_to_dbh(allom, agb, rho, hgt_max) result(dbh)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: agb, rho, hgt_max
+      real(wp)                      :: dbh, k_un, p_un, k_cap, p_cap, h
+      if (allom%height_form == HEIGHT_GMM) then
+         dbh = agb_to_dbh_gmm(allom, agb, rho, hgt_max)
          return
       end if
-      if (height_form == HEIGHT_CHAVE) then
-         dbh = agb_to_dbh_chave(agb, rho, hgt_max)
+      if (allom%height_form == HEIGHT_CHAVE) then
+         dbh = agb_to_dbh_chave(allom, agb, rho, hgt_max)
          return
       end if
-      k_un = agb_c1 * rho ** agb_c2 * exp(agb_c2 * b1Ht)
-      p_un = agb_c2 * (2.0_wp + b2Ht)
+      k_un = allom%agb_c1 * rho ** allom%agb_c2 * exp(allom%agb_c2 * allom%b1Ht)
+      p_un = allom%agb_c2 * (2.0_wp + allom%b2Ht)
       dbh  = (max(agb, tiny_num) / k_un) ** (1.0_wp / p_un)
-      h    = exp(b1Ht + b2Ht * log(max(dbh, tiny_num)))
+      h    = exp(allom%b1Ht + allom%b2Ht * log(max(dbh, tiny_num)))
       if (h > hgt_max) then
-         k_cap = agb_c1 * rho ** agb_c2 * hgt_max ** agb_c2
-         p_cap = 2.0_wp * agb_c2
+         k_cap = allom%agb_c1 * rho ** allom%agb_c2 * hgt_max ** allom%agb_c2
+         p_cap = 2.0_wp * allom%agb_c2
          dbh   = (max(agb, tiny_num) / k_cap) ** (1.0_wp / p_cap)
       end if
    end function agb_to_dbh
@@ -239,18 +219,19 @@ contains
    ! flattens it), so Newton's method lands at or below the root after its first step and then  !
    ! climbs to it without overshooting.                                                      !
    !---------------------------------------------------------------------------------------!
-   elemental pure function agb_to_dbh_gmm(agb, rho, hgt_max) result(dbh)
-      real(wp), intent(in) :: agb, rho, hgt_max
-      real(wp)             :: dbh, target, x, db, h, f, slope, dx
-      integer              :: it
-      target = log(max(agb, tiny_num) / (agb_c1 * rho ** agb_c2)) / agb_c2
-      x = target / (2.0_wp + gmm_b)
+   elemental pure function agb_to_dbh_gmm(allom, agb, rho, hgt_max) result(dbh)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: agb, rho, hgt_max
+      real(wp)                      :: dbh, target, x, db, h, f, slope, dx
+      integer                       :: it
+      target = log(max(agb, tiny_num) / (allom%agb_c1 * rho ** allom%agb_c2)) / allom%agb_c2
+      x = target / (2.0_wp + allom%gmm_b)
       do it = 1, NEWTON_MAX_ITER
-         db = exp(gmm_b * x)
-         h  = gmm_a * db / (gmm_k + db)
+         db = exp(allom%gmm_b * x)
+         h  = allom%gmm_a * db / (allom%gmm_k + db)
          if (h < hgt_max) then
             f     = 2.0_wp * x + log(h) - target
-            slope = 2.0_wp + gmm_b * gmm_k / (gmm_k + db)
+            slope = 2.0_wp + allom%gmm_b * allom%gmm_k / (allom%gmm_k + db)
          else
             f     = 2.0_wp * x + log(hgt_max) - target
             slope = 2.0_wp
@@ -268,12 +249,13 @@ contains
    ! quadratic in x, so x is the smaller root of CHAVE_C x^2 + (2 + CHAVE_B) x + a - T = 0. A stem !
    ! that root would make taller than hgt_max has 2x + ln(hgt_max) = T instead.                 !
    !---------------------------------------------------------------------------------------!
-   elemental pure function agb_to_dbh_chave(agb, rho, hgt_max) result(dbh)
-      real(wp), intent(in) :: agb, rho, hgt_max
-      real(wp)             :: dbh, target, x
-      target = log(max(agb, tiny_num) / (agb_c1 * rho ** agb_c2)) / agb_c2
-      x = chave_small_root(2.0_wp + CHAVE_B, chave_intercept() - target)
-      if (chave_intercept() + CHAVE_B * x + CHAVE_C * x * x > log(hgt_max))                       &
+   elemental pure function agb_to_dbh_chave(allom, agb, rho, hgt_max) result(dbh)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: agb, rho, hgt_max
+      real(wp)                      :: dbh, target, x
+      target = log(max(agb, tiny_num) / (allom%agb_c1 * rho ** allom%agb_c2)) / allom%agb_c2
+      x = chave_small_root(2.0_wp + CHAVE_B, chave_intercept(allom) - target)
+      if (chave_intercept(allom) + CHAVE_B * x + CHAVE_C * x * x > log(hgt_max))                  &
          x = 0.5_wp * (target - log(hgt_max))
       dbh = exp(x)
    end function agb_to_dbh_chave
@@ -294,10 +276,11 @@ contains
    !     size2wood_carbon (reuses the capped-height inversion). wood_carbon is the carbon-        !
    !     prognostic SIZE ANCHOR: dbh is DERIVED from it (the mirror of dbh -> agb today).         !
    !---------------------------------------------------------------------------------------!
-   elemental pure function size2leaf_carbon(dbh, h, sla) result(leaf_carbon)
-      real(wp), intent(in) :: dbh, h, sla        !< [cm],[m],[m2/kgC]
-      real(wp)             :: leaf_carbon         !< [kgC/plant]
-      leaf_carbon = dbh_to_leaf_area(dbh, h) / max(sla, tiny_num)
+   elemental pure function size2leaf_carbon(allom, dbh, h, sla) result(leaf_carbon)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, h, sla        !< [cm],[m],[m2/kgC]
+      real(wp)                      :: leaf_carbon         !< [kgC/plant]
+      leaf_carbon = dbh_to_leaf_area(allom, dbh, h) / max(sla, tiny_num)
    end function size2leaf_carbon
 
    !----- A cohort's storage target: storage_cushion times the carbon one full flush rebuilds, its    !
@@ -309,16 +292,18 @@ contains
       storage = storage_cushion * (leaf_carbon + fineroot_carbon)
    end function storage_carbon_target
 
-   elemental pure function size2wood_carbon(dbh, h, rho, aboveground_frac) result(wood_carbon)
-      real(wp), intent(in) :: dbh, h, rho, aboveground_frac
-      real(wp)             :: wood_carbon         !< [kgC/plant] total woody (above + belowground)
-      wood_carbon = dbh_to_agb(dbh, h, rho) / max(aboveground_frac, tiny_num)
+   elemental pure function size2wood_carbon(allom, dbh, h, rho, aboveground_frac) result(wood_carbon)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: dbh, h, rho, aboveground_frac
+      real(wp)                      :: wood_carbon         !< [kgC/plant] total woody (above + belowground)
+      wood_carbon = dbh_to_agb(allom, dbh, h, rho) / max(aboveground_frac, tiny_num)
    end function size2wood_carbon
 
-   elemental pure function wood_to_dbh(wood_carbon, rho, hgt_max, aboveground_frac) result(dbh)
-      real(wp), intent(in) :: wood_carbon, rho, hgt_max, aboveground_frac
-      real(wp)             :: dbh                 !< [cm] derived from the total woody carbon
-      dbh = agb_to_dbh(wood_carbon * aboveground_frac, rho, hgt_max)
+   elemental pure function wood_to_dbh(allom, wood_carbon, rho, hgt_max, aboveground_frac) result(dbh)
+      type(allometry_t), intent(in) :: allom
+      real(wp),          intent(in) :: wood_carbon, rho, hgt_max, aboveground_frac
+      real(wp)                      :: dbh                 !< [cm] derived from the total woody carbon
+      dbh = agb_to_dbh(allom, wood_carbon * aboveground_frac, rho, hgt_max)
    end function wood_to_dbh
 
    !---------------------------------------------------------------------------------------!
@@ -328,13 +313,14 @@ contains
    ! allometry (wood_to_dbh + size2*carbon above) into one composite; it IS the body of the   !
    ! former set_cohort_size_from_carbon, lifted here so the engine + plant share one path.    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine carbon_to_structure(wood_carbon, leaf_carbon, rho, hgt_max, aboveground_frac, sla, &
-                                       dbh, height, basal_area, agb, leaf_area)
-      real(wp), intent(in)  :: wood_carbon, leaf_carbon    !< [kgC/plant] prognostic pools
-      real(wp), intent(in)  :: rho, hgt_max, aboveground_frac, sla    !< PFT traits
-      real(wp), intent(out) :: dbh, height, basal_area, agb, leaf_area
-      dbh        = wood_to_dbh(wood_carbon, rho, hgt_max, aboveground_frac)
-      height     = dbh_to_height(dbh, hgt_max)
+   pure subroutine carbon_to_structure(allom, wood_carbon, leaf_carbon, rho, hgt_max, aboveground_frac, &
+                                       sla, dbh, height, basal_area, agb, leaf_area)
+      type(allometry_t), intent(in)  :: allom
+      real(wp),          intent(in)  :: wood_carbon, leaf_carbon    !< [kgC/plant] prognostic pools
+      real(wp),          intent(in)  :: rho, hgt_max, aboveground_frac, sla    !< PFT traits
+      real(wp),          intent(out) :: dbh, height, basal_area, agb, leaf_area
+      dbh        = wood_to_dbh(allom, wood_carbon, rho, hgt_max, aboveground_frac)
+      height     = dbh_to_height(allom, dbh, hgt_max)
       basal_area = pio4 * dbh * dbh
       agb        = aboveground_frac * wood_carbon
       leaf_area  = leaf_carbon * sla

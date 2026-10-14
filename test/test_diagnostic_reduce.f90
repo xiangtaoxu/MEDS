@@ -14,6 +14,7 @@
 program test_diagnostic_reduce
    use meds_kinds,              only : wp, ik
    use meds_site_state_types,   only : site_t, site_alloc, site_free
+   use meds_allometry,         only : allometry_t
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_reduce,  only : reduce_cohort_to_site, reduce_cohort_to_patch,            &
                                        reduce_cohort_to_pft, reduce_cohort_to_size,             &
@@ -48,7 +49,7 @@ contains
    !      stem-weighted MEAN and a basal-area-weighted MEAN are three different numbers.  -------!
    subroutine build_fixture(site)
       type(site_t), intent(out) :: site
-      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik)
+      call site_alloc(site, 3_ik, 16_ik, 4_ik, 4_ik, allometry_t())
       site%n_pft = 3_ik
       !----- patch 1 (area 0.75): cohorts 1,2 ; patch 2 (area 0.25): cohort 3. -----!
       site%patch%n = 2_ik

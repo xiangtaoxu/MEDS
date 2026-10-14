@@ -22,6 +22,14 @@ before and after.
   `src/io/input/forcing/`, and the output and diagnostic modules to `src/io/output/`. Paths only: every
   library keeps its name and its links, and results are byte-identical. `.claude/rules/output.md` now
   applies to `src/io/output/` and the two root files.
+- **The allometry coefficients are an argument, not module state** (§14, RP0; the polygon plan's
+  blocker B2). `meds_allometry` defines one record, `allometry_t`, whose initializers are the shipped
+  pan-tropical defaults, and every routine that reads a coefficient takes it as its first argument.
+  `cfg%allom` is that record (the separate `allometry_config_t` is gone); each site carries a copy on
+  its cohort block (`cohort%allom`), set by `site_alloc`, which now requires it; and `set_allometry` and
+  the module's `protected` coefficients are removed. The two kernels that call the allometry,
+  `npp_to_growth` and `growth_sink_limitation`, take the record too. A region's polygons can therefore
+  each have their own allometry, such as their own Chave stress index. Results are byte-identical.
 
 ## [0.3.4] — 2026-10-13
 

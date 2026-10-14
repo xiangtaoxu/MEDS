@@ -489,7 +489,8 @@ contains
       ncoh = meta_i(1) ; npat = meta_i(2) ; npft = meta_i(3)
       if (npft /= cfg%pft%n) error stop 'io_read_state: PFT count in state file /= config PFT count'
 
-      call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg))
+      call site_alloc(site, cfg%pft%n, max(ncoh, 1_ik), max(npat, 1_ik), growth_window_steps(cfg), &
+                      cfg%allom)
       site%cohort%n = ncoh ; site%patch%n = npat
       !----- #176 growth temperature: OPTIONAL, so a pre-#176 state file keeps the unseeded        !
       !      sentinel site_alloc set and the first slow step adopts that day's mean.  ---------------!
