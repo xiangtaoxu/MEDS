@@ -64,7 +64,8 @@ contains
       type(wood_params_t) :: p
       real(wp) :: expect, stem_resp
       p%stem_resp_size_scaler = 0.0_wp
-      call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, 0.0_wp, 0.0_wp, p, stem_resp)
+      call stem_maintenance_respiration(t_ref_photo, 20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, AGF, WOODY, SRF, &
+                                        0.0_wp, 0.0_wp, p, stem_resp)
       expect = 0.06_wp * stem_area_ref(20.0_wp, 15.0_wp, 0.0_wp, 0.1_wp, 0.7_wp)
       call check_close('stem @25C = factor25 * stem_area', stem_resp, expect)
    end subroutine test_stem_identity_25c
