@@ -30,6 +30,12 @@ before and after.
   the module's `protected` coefficients are removed. The two kernels that call the allometry,
   `npp_to_growth` and `growth_sink_limitation`, take the record too. A region's polygons can therefore
   each have their own allometry, such as their own Chave stress index. Results are byte-identical.
+- **Each polygon owns its config, and its output its soil curve** (§14, RP1). `meds_polygon_t` holds
+  its own copy of the run's config (`poly%cfg`), which `polygon_prepare` takes and everything that
+  steps the polygon reads; `polygon_step` and `polygon_report` no longer take a config. Each polygon's
+  output buffers carry their own diagnostic parameters (`bufs%diag`), set from the polygon's own soil,
+  so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
+  used to take polygon 1's for every polygon. Results are byte-identical.
 
 ## [0.3.4] — 2026-10-13
 

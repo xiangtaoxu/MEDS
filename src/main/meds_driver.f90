@@ -229,7 +229,7 @@ contains
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
          call open_output_files(run%cfg, run%poly%fast_ctx%col_config%soil, run%out_files, run%verbose)
-         call attach_output(run%out_files, run%out_bufs(1), run%poly%site)
+         call attach_output(run%out_files, run%out_bufs(1), run%poly)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if
 
@@ -278,7 +278,7 @@ contains
       !      a file (MEDS_POLYGON_RUNTIME_PLAN.md §4, R1). A no-op unless a new archive month starts.  !
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_prefetch(run%met_src, run%prev)
 
-      call polygon_step(run%cfg, run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
+      call polygon_step(run%met_src, run%out_files, run%out_bufs(1), run%poly, run%prev,      &
                         run%now, run%step_days, is_new_month, is_new_year, status)
 
       if (is_new_year) then
@@ -340,7 +340,7 @@ contains
       end if
       if (abs(a1 - 1.0_wp) > 1.0e-5_wp) st = DRIVER_ERR_AREA
 
-      if (run%verbose) call polygon_report(run%cfg, run%poly)
+      if (run%verbose) call polygon_report(run%poly)
 
       if (run%cfg%output%enabled) call output_close(run%out_files, run%out_bufs)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)

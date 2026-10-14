@@ -96,7 +96,9 @@ program test_output_roundtrip
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
-   call manager_set_soil_params(files, soilp)
+   !----- The file set's copy gives the files their layer depths; the buffer's, the extraction. --!
+   call manager_set_soil_params(files%diag, soilp)
+   call manager_set_soil_params(bufs(1)%diag, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
    !----- Walk 3 daily steps of 2000-01, as polygon_step calls the tick: the step from `prev` to  !

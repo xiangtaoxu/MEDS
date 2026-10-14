@@ -759,7 +759,7 @@ contains
          if (.not. bufs%has_data(t)) bufs%t_open(t) = prev
          do j = 1_ik, files%reg%nidx(t)
             k = files%reg%idx_freq(j, t)
-            call extract_variable(site, files%diag, files%reg%var(k), scal, slab, vslab, n_out)
+            call extract_variable(site, bufs%diag, files%reg%var(k), scal, slab, vslab, n_out)
             if (files%reg%var(k)%dim == DIM_SCALAR) then
                call integrate_scalar(bufs%buf(k,t), scal, dt)
             else

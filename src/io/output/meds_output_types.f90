@@ -300,6 +300,10 @@ module meds_output_types
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
       logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
+      !----- The diagnostic parameters this polygon's extraction reads: its file set's, with the     !
+      !      polygon's own soil curve (attach_output), so a region's derived soil diagnostics follow   !
+      !      each polygon's soil. ----------------------------------------------------------------!
+      type(diag_params_t)  :: diag
    end type output_buffers_t
 
 contains

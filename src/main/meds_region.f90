@@ -150,13 +150,13 @@ contains
                                 cells=cells, polygon_id=ids)
          do p = 1_ik, n
             associate (poly => reg%poly(p))
-               call attach_output(reg%out_files, reg%out_bufs(p), poly%site)
+               call attach_output(reg%out_files, reg%out_bufs(p), poly)
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
                   allocate(poly%detail_files, poly%detail_bufs(1))
                   write(idstr,'(i0)') poly%id
                   call open_output_files(cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
                                          prefix=trim(cfg%output%prefix)//'-p'//trim(idstr))
-                  call attach_output(poly%detail_files, poly%detail_bufs(1), poly%site)
+                  call attach_output(poly%detail_files, poly%detail_bufs(1), poly)
                end if
             end associate
          end do
@@ -232,7 +232,7 @@ contains
          if (.not. was_running(p)) cycle
          call system_clock(tick0, tick_rate)
          do s = 1_ik, nstep
-            call polygon_step(cfg, reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),         &
+            call polygon_step(reg%met_src, reg%out_files, reg%out_bufs(p), reg%poly(p),              &
                               step_start(s), step_end(s), reg%step_days, new_month(s), new_year(s), st)
             if (st /= DRIVER_OK) then
                failed_step(p) = s ; exit

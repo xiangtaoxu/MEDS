@@ -24,6 +24,7 @@ module meds_output_registry
                                    GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
                                    GRP_FORCING
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
+                                   diag_params_t,                                                  &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
@@ -1216,25 +1217,26 @@ contains
       end select
    end function dim_capacity
 
-   !----- Install the soil retention parameters the psi/wetness diagnostics need. Called by     !
-   !      meds_main with the SAME soil_params_t the fast loop integrates on.                     !
-   subroutine manager_set_soil_params(files, params)
-      type(output_files_t),   intent(inout) :: files
+   !----- Install the soil retention parameters the psi/wetness diagnostics need, into a file set's    !
+   !      parameters (files%diag, whose layer depths the files carry) or a polygon's buffers' (bufs%diag, !
+   !      which its extraction reads), with the SAME soil_params_t the fast loop integrates on. --------!
+   subroutine manager_set_soil_params(dp, params)
+      type(diag_params_t),    intent(inout) :: dp
       type(soil_params_t),    intent(in)    :: params
       integer(ik) :: k
-      files%diag%retention = params%retention
+      dp%retention = params%retention
       do k = 1_ik, n_soil_layer_max
-         files%diag%theta_sat(k) = params%theta_sat(k)
-         files%diag%theta_res(k) = params%theta_res(k)
+         dp%theta_sat(k) = params%theta_sat(k)
+         dp%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
          !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         files%diag%par_a(k)     = curve_a(params, k)
-         files%diag%par_n(k)     = curve_n(params, k)
-         files%diag%soil_z(k)    = params%z_node(k)
+         dp%par_a(k)     = curve_a(params, k)
+         dp%par_n(k)     = curve_n(params, k)
+         dp%soil_z(k)    = params%z_node(k)
       end do
-      files%diag%n_soil     = params%n_active
-      files%diag%soil_ready = .true.
+      dp%n_soil     = params%n_active
+      dp%soil_ready = .true.
    end subroutine manager_set_soil_params
 
    !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
@@ -1309,6 +1311,7 @@ contains
          bufs%pending(t)%used = .false.
       end do
       bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
+      bufs%diag = files%diag
    end subroutine manager_alloc_buffers
 
    !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
