@@ -173,10 +173,9 @@ contains
                !      within-layer order. Exact-equality is the right test -- recruits are born from !
                !      one shared `recruit_dbh`, so they tie bit-exactly.                             !
                !                                                                                  !
-               !      THIS DOES NOT REACH THE LIGHT-CAPTURE PATH. canopy_radiation orders cohorts   !
-               !      BOTTOM(1)->TOP(n) and builds one discrete RT layer each, so tied cohorts      !
-               !      STACK there and the lower PFT index is systematically placed above (#207).    !
-               !      What is co-dominant here is the light-plastic TRAIT driver, not photosynthesis.!
+               !      The light capture agrees: canopy_radiation puts exactly tied cohorts in one   !
+               !      radiative-transfer layer (#207). What this sweep drives is the light-plastic  !
+               !      traits and the demography's competition index.                                !
                k = i
                do while (k < i1)
                   if (cohort%height(k + 1_ik) /= cohort%height(i)) exit

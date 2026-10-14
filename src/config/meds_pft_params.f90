@@ -163,13 +163,9 @@ module meds_pft_params
       !      tropical non-grass 1/6, tropical grass 1/3 -- so zero is a legitimate ED2 setting, not
       !      an absence of physics. Turning it on by default is a v0.3.0 question, because Phase 3
       !      was the release's rebaseline window and it is closed.
-      !----- LEAF RESORPTION (#151). Fraction of the ACTIVE (senescence) leaf shed returned to the
-      !      non-structural pool instead of entering litter. Applied to the active excess only, NOT
-      !      to the baseline turnover: `leaf_turnover_rate` is calibrated against observed
-      !      LITTERFALL, which already has resorption in it, so resorbing it a second time would
-      !      double-count. DEFAULT 0, reproducing the pre-#151 behaviour where every gram of shed
-      !      leaf carbon became litter. Observed leaf carbon resorption is small (most resorption is
-      !      of N and P, not C); 0.1-0.2 is a defensible range if a config wants it.
+      !----- RESORPTION (#151, #387). Fraction of all leaf and fine-root loss, senescence and
+      !      background turnover alike, returned to the non-structural pool instead of entering
+      !      litter. DEFAULT 0.3.
       !----- PER-PFT HYDRAULIC TRAITS (#179). Until now every PFT shared one [hydraulics] block, so
       !      wood density was the only axis on which PFTs could differ hydraulically -- in a model
       !      whose whole point is that plant strategies differ. All OPTIONAL: an absent key takes the

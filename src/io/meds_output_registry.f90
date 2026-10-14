@@ -613,8 +613,10 @@ contains
                         w=W_NPLANT, mn=.true.)
       !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
       !      biogeochemistry consumes, by the tissue the carbon came from (#399). Leaf + fine root   !
-      !      + wood + fruit/seed + root_exudate_site is the carbon entering the soil pools, so with  !
-      !      rh_site they close the soil-carbon budget. litter_struct_site is a destination (the     !
+      !      + wood + fruit/seed + root_exudate_site is the carbon turnover and background mortality !
+      !      send to the soil pools; cohorts culled or killed by disturbance add to the pools        !
+      !      directly (mort_carbon_cull_site, mort_carbon_disturb_site). With soil carbon off they   !
+      !      leave the model (#316). litter_struct_site is a destination (the                        !
       !      structural pools), so it overlaps the others. --------------------------------------!
       call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_LEAF)
