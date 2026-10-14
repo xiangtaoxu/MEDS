@@ -31,7 +31,7 @@ include_pft        = [1, 1, 1]
 #      ([trait_dynamics].fineroot_lifespan_plastic).
 leaf_lifespan_toc  = [0.5, 0.7, 0.9]         # [yr]
 sla                = [20.0, 18.18, 16.67]    # [m2/kgC] LMA 100, 110, 120 g/m2
-vcmax25            = [31.3275, 31.3275, 31.3275]   # [umol/m2/s] example 04's calibrated leaf
+vcmax25            = [32.3321, 32.3321, 32.3321]   # [umol/m2/s] example 04's calibrated leaf
 root_to_leaf_ratio = [1.0, 1.0, 1.0]
 
 #----- Stem maintenance respiration on sapwood volume alone (no surface term). The rate puts the 1985
@@ -72,8 +72,8 @@ jmax_vcmax_ratio   = [1.6983, 1.6983, 1.6983]
 tpu_vcmax_ratio    = [0.167, 0.167, 0.167]
 rd_vcmax_ratio     = [0.015, 0.015, 0.015]
 kp25               = [1.0e-9, 1.0e-9, 1.0e-9]
-stomatal_g0        = [0.000463421, 0.000463421, 0.000463421]
-stomatal_g1        = [2.82088, 2.82088, 2.82088]       # Medlyn [kPa^0.5]
+stomatal_g0        = [0.000334162, 0.000334162, 0.000334162]
+stomatal_g1        = [2.81978, 2.81978, 2.81978]       # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0, 1500.0, 1500.0]
 quantum_yield_c4   = [0.0, 0.0, 0.0]
 theta_j            = [0.70, 0.70, 0.70]
@@ -83,7 +83,7 @@ theta_cj_c4        = [0.80, 0.80, 0.80]
 theta_ic_c4        = [0.95, 0.95, 0.95]
 katul_lambda25     = [800.0, 800.0, 800.0]
 wstress_lambda_exp = [1.0, 1.0, 1.0]
-wstress_sref_stomata = [2.0, 2.0, 2.0]
+wstress_sref_stomata = [2.02774, 2.02774, 2.02774]
 
 #----- Other carbon traits (example 04). -----------------------------------------------------------
 huber_value            = [1.5e-4, 1.5e-4, 1.5e-4]
@@ -118,7 +118,7 @@ wood_transmit_nir  = [0.001, 0.001, 0.001]
 wood_emissivity    = [0.90, 0.90, 0.90]
 leaf_clumping      = [0.80, 0.80, 0.80]
 wood_clumping      = [0.50, 0.50, 0.50]
-leaf_angle_mean    = [55.1153, 55.1153, 55.1153]   # [deg]
+leaf_angle_mean    = [54.9255, 54.9255, 54.9255]   # [deg]
 leaf_angle_std     = [20.0, 20.0, 20.0]
 
 # Required by the loader; the [derived] table below sets the three PFTs' mortality instead.
@@ -146,8 +146,8 @@ mort_beta  = [15.0890, 19.3890, 58.7932]      # [yr/cm]
 # 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25, k_SLA 0.199 -- and half of
 # their k_LL 0.240: shade lengthens leaf life 1.5 times in Kitajima et al. (2013)'s seedling gardens and
 # 2 times from canopy to understory in Xu et al. (2017), against 3.3 times at LAI 5 with 0.240.
-kplastic_vcmax  = [-0.1379, -0.1379, -0.1379]
-kplastic_rd     = [-0.2066, -0.2066, -0.2066]
+kplastic_vcmax  = [-0.1404, -0.1404, -0.1404]
+kplastic_rd     = [-0.2095, -0.2095, -0.2095]
 kplastic_sla    = [0.199, 0.199, 0.199]
 kplastic_llspan = [0.120, 0.120, 0.120]
 

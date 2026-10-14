@@ -137,7 +137,7 @@ leaf_absorptance = 0.85
 phi_psii         = 0.74
 
 [aerodynamics]
-z0m_ratio = 0.0535721             # example 04's calibration
+z0m_ratio = 0.0528022             # example 04's calibration
 
 #----- The site and its weather. ----------------------------------------------------------------------
 [site]
@@ -174,12 +174,12 @@ recycle_start  = "2003-01-01 01:00:00"   # the file's first record (end-stamped 
 recycle_end    = "2023-01-01 01:00:00"   # twenty whole years later
 start_clamp    = "error"
 
-#----- BCI's soil (example 04): a clay Oxisol, 6 m deep. -----------------------------------------------
+#----- BCI's soil (example 04): a clay Oxisol, 2 m deep. -----------------------------------------------
 [soil_carbon]
 soil_carbon_on = true             # starts empty, filled by the regrowing forest's litter
 
 [soil_column]
-depth       = 6.0
+depth       = 2.0
 theta_sat   = 0.60
 theta_res   = 0.10
 curve_par_a = 2.0
@@ -189,4 +189,4 @@ ksat        = 1.0e-5
 [energy]
 bottom_bc  = "dirichlet"
 deep_temp  = 298.65
-deep_depth = 6.645
+deep_depth = 3.145
