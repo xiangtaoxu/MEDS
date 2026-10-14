@@ -113,9 +113,9 @@ module meds_site_state_types
       !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
       !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
       !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
-      !      its running sum and growth_count its fill level (<= window); growth_avg =            !
-      !      accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A PROGNOSTIC        !
-      !      history (not derivable from dbh).                                                    !
+      !      its sum, taken from the buffer each step, and growth_count its fill level (<= window); !
+      !      growth_avg = accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A      !
+      !      PROGNOSTIC history (not derivable from dbh).                                         !
       real(wp),    allocatable :: growth_avg(:)
       !----- PLANT WATER STATUS driving the stomatal stress limb (issue #95). dmax_psi_leaf is    !
       !      YESTERDAY's daily-MAXIMUM leaf water potential. The daily max occurs near dawn, after    !
@@ -155,7 +155,7 @@ module meds_site_state_types
       !< [MPa] YESTERDAY's completed daily-max psi_leaf (<= 0); the PUBLISHED value the leaf kernel reads
       real(wp),    allocatable :: dmax_psi_leaf(:)
       real(wp),    allocatable :: dmax_psi_leaf_accum(:) !< [MPa] running max over the CURRENT day; write-only until the rollover
-      real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] running sum of the samples in the window
+      real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] sum of the samples in the window
       integer(ik), allocatable :: growth_count(:)   !< samples currently in the window (<= growth_window)
       real(wp),    allocatable :: growth_hist(:,:)  !< (growth_window, cohort) ring buffer of growth samples
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
@@ -1230,6 +1230,7 @@ contains
       cohort%dmax_psi_leaf_accum(m) = DMAX_PSI_LEAF_ACCUM_RESET
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
+      cohort%growth_hist(:, m)   = 0.0_wp             ! a reused slot keeps a dead cohort's samples otherwise
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
       cohort%light_hours_accum(m)        = 0.0_wp             ! no light seen yet this step
       call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)

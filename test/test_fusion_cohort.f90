@@ -8,7 +8,9 @@ program test_fusion_cohort
    use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
                                                TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN,       &
                                                set_cohort_size_from_carbon, cohort_bad_field,       &
-                                               cohort_field_name
+                                               cohort_field_name, cohort_deriv_block,               &
+                                               cohort_deriv_alloc, init_cohort
+   use meds_demography_update, only : fill_cohort_deriv
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
@@ -257,6 +259,37 @@ program test_fusion_cohort
       site%cohort%nplant(1) = ieee_value(1.0_wp, ieee_quiet_nan)
       call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nplant',           &
                  'a NaN density is out of bounds, and checked first')
+   end block
+
+   !=== 9. The growth window's sum is the buffer's (#396): once a large sample has been evicted, a !
+   !     window of zeros averages exactly zero; and a recruit in a reused slot starts empty. ======!
+   block
+      type(cohort_deriv_block) :: deriv
+      integer(ik) :: k, pos, nwin
+      real(wp)    :: sample
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.4_wp, 17.3_wp)
+      call finalize_init(site)
+      nwin = int(size(site%cohort%growth_hist, 1), ik)
+      call cohort_deriv_alloc(deriv, site%cohort%n)
+      pos = 0_ik
+      do k = 1_ik, 3_ik * nwin
+         pos = mod(pos, nwin) + 1_ik
+         sample = 0.0_wp
+         if (k <= 2_ik * nwin) sample = 0.1_wp
+         if (k == 1_ik)        sample = 1.0e8_wp
+         call fill_cohort_deriv(site%cohort, 1_ik, deriv, cfg%dt_years, 0.0_wp, sample,             &
+                                site%cohort%leaf_carbon(1), site%cohort%fineroot_carbon(1),         &
+                                site%cohort%wood_carbon(1), site%cohort%nonstructural_carbon(1),    &
+                                nwin, pos)
+      end do
+      call check(site%cohort%growth_avg(1) == 0.0_wp,                                                &
+                 'a window of zero growth averages exactly zero after a large sample left it')
+      call check(site%cohort%growth_accum(1) == sum(site%cohort%growth_hist(1:nwin, 1)),             &
+                 'the window''s sum is the buffer''s')
+      call init_cohort(site%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp)
+      call check(all(site%cohort%growth_hist(1:nwin, 1) == 0.0_wp) .and.                             &
+                 site%cohort%growth_count(1) == 0_ik, 'a recruit in a reused slot starts with an empty window')
    end block
 
    write(*,'(a)') '   PASS'
