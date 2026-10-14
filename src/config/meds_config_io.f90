@@ -667,6 +667,9 @@ contains
          call note_missing(m, 'region.box_nwse')
       end if
       cfg%region%land_fraction_min = toml_real(t, 'region.land_fraction_min', 0.5_wp)
+      cfg%region%cell_mask         = toml_string(t, 'region.cell_mask', '')
+      cfg%region%cell_mask_var     = toml_string(t, 'region.cell_mask_var', 'mask')
+      cfg%region%cell_mask_min     = toml_real(t, 'region.cell_mask_min', 0.5_wp)
       if (toml_has(t, 'region.detail_polygons')) then
          call toml_real_array(t, 'region.detail_polygons', buf, nout)
          if (nout > MAX_DETAIL_POLYGONS)                                                           &

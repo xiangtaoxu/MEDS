@@ -61,7 +61,7 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │                  drivers, and the slow conservation ledger                 2 017
 │
 │  ── EDGES ────────────────────────────────────────────────────────────────────
-├── io/            every data file a run reads or writes                      8 464
+├── io/            every data file a run reads or writes                      8 632
 │   ├── (root)     the netCDF C bindings, and the state file: written at
 │   │              checkpoints, read at restart                               1 171
 │   ├── input/forcing/  prescribed drivers: the met reader (a MEDS
@@ -69,6 +69,8 @@ src/                                    35.5 k lines · 91 modules · 21 CMake l
 │   │              meds_era5land_reader), its disaggregation kernels,
 │   │              the terrain lapse (meds_lapse_rate) and the CO2
 │   │              series (meds_co2_series)                                   3 117
+│   ├── input/maps/  static per-cell maps on the forcing grid: the one place
+│   │              a map is read (meds_surface_maps); the region's cell mask    168
 │   └── output/    the diagnostic wall: derive → capture → reduce →
 │                  integrate → serialize                                      4 176
 ├── init/          the initial community: bare ground, or a cohort census       182
@@ -133,7 +135,8 @@ in [`CMakeLists.txt`](../CMakeLists.txt).
                                                           init
                                                             └──→ stepper ──→ model
                                                                              (INTERFACE)
-  io_stream ─────────────────────────────────────┐
+  forcing, config ──→ maps ──────────────────────┐
+  io_stream ─────────────────────────────────────┤
   model ─────────────────────────────────────────┴──→ driver ──→ meds_main
                                                                └→ meds_py (libmeds.so)
 ```
@@ -161,6 +164,7 @@ Two edges are worth knowing because they are easy to get wrong:
 | a numerical, calendar or checking helper every layer needs | `shared/util/`, if it uses nothing outside `shared/` |
 | a TOML block | `config/`, as an `*_opts` leaf so `meds_config` can carry it with no back-edge |
 | a prescribed time-varying input (weather, CO2) | `io/input/forcing/` |
+| a static per-cell input map (soil, a cell mask) | `io/input/maps/meds_surface_maps.f90` |
 | an output variable | one `add_variable` line in `io/output/meds_output_registry.f90` |
 | a Python entry point | `c_api/`, plus its mandatory ctest target |
 | a top-level orchestration step | `main/meds_stepper.f90` or a `driver/` folder |

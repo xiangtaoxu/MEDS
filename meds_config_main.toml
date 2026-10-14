@@ -611,5 +611,9 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 # [region]
 # box_nwse          = [42.95, -76.95, 41.95, -75.95]  # [N, W, S, E] in degrees; may cross 0 or 180
 # land_fraction_min = 0.5            # default 0.5: skip lakes and fractional coastal cells
+# cell_mask         = ""             # a map on the forcing grid: a cell runs where cell_mask_var >=
+#                                    # cell_mask_min, and is skipped where below or empty ("" = off)
+# cell_mask_var     = "mask"         # the mask's variable, (lat, lon)
+# cell_mask_min     = 0.5            # default 0.5: a 0/1 mask works as is; a fraction takes a threshold
 # detail_polygons   = []             # polygon ids (row * 3600 + col) that also write full single-site
 #                                    # files: cohort, patch and sub-daily output, <prefix>-p<id>-...

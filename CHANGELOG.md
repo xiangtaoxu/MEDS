@@ -14,6 +14,19 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **A cell mask for region runs, and one module for static maps** (`MEDS_POLYGON_RUNTIME_PLAN.md`
+  §14, RP2). `[region].cell_mask` names a map on the forcing grid; a cell of the box runs only where
+  its `cell_mask_var` (default `mask`) is at least `cell_mask_min` (default 0.5), and is skipped where
+  it is below or the map holds no value. A 0/1 mask works as it is; a fraction, such as a natural-
+  vegetation share, takes a threshold. Maps are read by one new module,
+  `src/io/input/maps/meds_surface_maps.f90` (library `meds_maps`), and nowhere else: it checks that a
+  map's `lat` and `lon` are the ED_ERA5land static file's (MEDS never regrids), reads a 2-D or layered
+  variable at a list of cells in one hyperslab, and reads a cell the map leaves empty as NaN. The forcing
+  reader gains `era5land_same_grid` and `era5land_keep_cells`. `test_surface_maps` covers the reads,
+  the refusals and the mask; `test_region` runs a masked region and refuses a mask off the grid.
+
 ### Changed
 
 - **One I/O tree, `src/io/`** (`MEDS_POLYGON_RUNTIME_PLAN.md` §14, RP2): every data file a run reads or

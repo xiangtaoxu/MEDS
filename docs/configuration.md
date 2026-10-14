@@ -328,12 +328,20 @@ mode = "region"
 box_nwse          = [42.95, -76.95, 41.95, -75.95]   # [N, W, S, E]; may cross 0 or 180 degrees
 land_fraction_min = 0.5                              # skip lakes and fractional coastal cells
 detail_polygons   = [1714634]                        # optional: these also write single-site files
+cell_mask         = "natural_mask.nc"                # optional: a map on the forcing grid ...
+cell_mask_var     = "mask"                           # ... its (lat, lon) variable ...
+cell_mask_min     = 0.5                              # ... and the value a cell needs to run
 ```
 
 - **Selection.** Every cell of the box that the archive has data for and whose static land fraction
   is at least `land_fraction_min` (default 0.5) becomes a polygon, in row-major order. A polygon's
   id is its cell's index on the global grid, `row * 3600 + col` at 0.1 degrees, so ids agree across
   regions.
+- **Cell mask.** With `cell_mask`, a cell of the box runs only where the mask's `cell_mask_var` is at
+  least `cell_mask_min` (default 0.5), and is skipped where it is below or the map holds no value. A
+  0/1 mask works as it is; a fraction, such as a natural-vegetation share, takes a threshold. The mask
+  must be on the forcing grid: the file's `lat` and `lon` must be the ED_ERA5land static file's, or the
+  run stops. MEDS never regrids a map; the run log says how many cells the mask kept.
 - **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
   the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold the variables that
   have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort

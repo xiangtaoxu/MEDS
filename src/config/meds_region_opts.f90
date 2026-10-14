@@ -29,6 +29,12 @@ module meds_region_opts
       !----- Cells whose static land fraction is below this are not simulated: the forcing's     !
       !      valid mask includes large lakes (the whole Caspian) and fractional coastal cells.  ----!
       real(wp)    :: land_fraction_min = 0.5_wp
+      !----- The cell mask (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP2): a map on the forcing grid; a cell of  !
+      !      the box runs where `cell_mask_var` is at least `cell_mask_min`, and is skipped where it is  !
+      !      below or the map holds no value. '' runs every selected cell of the box. --------------------!
+      character(len=512) :: cell_mask     = ''
+      character(len=64)  :: cell_mask_var = 'mask'
+      real(wp)           :: cell_mask_min = 0.5_wp
       !----- Polygon ids (the cell's row-major index on the forcing grid) that also write ordinary !
       !      single-site files, with cohort, patch and fast-tier output. ----------------------------!
       integer(ik) :: n_detail = 0_ik

@@ -32,6 +32,7 @@ module meds_region
    use meds_forcing_types,          only : met_source_t, met_cells_t
    use meds_forcing_config,         only : MET_PATH_LEN
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
+   use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK
    use meds_era5land_reader,        only : era5land_select_box, era5land_path, era5land_default_static, &
                                            ERA_OK, ERA_ERR_NO_CELL
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
@@ -103,6 +104,22 @@ contains
       else if (st /= ERA_OK) then
          write(*,'(2a)') ' region: cannot read valid, elevation and land_fraction from ', trim(static)
          return
+      end if
+      !----- The cell mask (§14 RP2): of those cells, the ones the mask keeps. --------------------!
+      if (len_trim(cfg%region%cell_mask) > 0) then
+         n = cells%ncell
+         call apply_cell_mask(cells, trim(cfg%region%cell_mask), trim(cfg%region%cell_mask_var),       &
+                              cfg%region%cell_mask_min, static, j, st)
+         if (st /= MAP_OK) then
+            write(*,'(4a)') ' region: the cell mask ', trim(cfg%region%cell_mask), ' ', map_status_message(st)
+            return
+         end if
+         if (reg%verbose) write(*,'(a,i0,a,i0,3a)') ' region: the cell mask keeps ', cells%ncell, ' of ', n, &
+               ' cells (', trim(cfg%region%cell_mask_var), ')'
+         if (cells%ncell == 0_ik) then
+            write(*,'(2a)') ' region: the cell mask keeps no cell of the box: ', trim(cfg%region%cell_mask)
+            return
+         end if
       end if
 
       !----- The polygon ids, each cell's row-major index on the global grid. Every detail polygon   !

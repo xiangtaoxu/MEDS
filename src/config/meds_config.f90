@@ -11,6 +11,7 @@ module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
    use meds_allometry,  only : allometry_t
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
@@ -812,6 +813,10 @@ contains
          end associate
          if (cfg%region%land_fraction_min < 0.0_wp .or. cfg%region%land_fraction_min > 1.0_wp)     &
             error stop tag//'region.land_fraction_min must lie in [0, 1]'
+         if (len_trim(cfg%region%cell_mask) > 0 .and. len_trim(cfg%region%cell_mask_var) == 0)       &
+            error stop tag//'region.cell_mask_var must name the mask''s variable'
+         if (.not. ieee_is_finite(cfg%region%cell_mask_min))                                       &
+            error stop tag//'region.cell_mask_min must be a finite number'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
          !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
          !      1st. A site run takes a window starting at any record stamp. ------------------------!

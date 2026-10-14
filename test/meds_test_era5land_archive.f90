@@ -20,6 +20,7 @@ module meds_test_era5land_archive
 
    public :: NLAT, NLON, LAT0, DLAT, LON0, DLON, T0
    public :: is_valid, field, air_temperature, hour_index, write_archive, write_static, write_month
+   public :: write_map
 
    integer(ik), parameter :: NLAT = 4_ik, NLON = 18_ik
    real(wp),    parameter :: LAT0 = 45.0_wp, DLAT = -10.0_wp, LON0 = -180.0_wp, DLON = 20.0_wp
@@ -139,6 +140,52 @@ contains
       st = nc_put_vara_double(ncid, vf, start2, count2, lfrac) ; call nc_check(st, 'put land_fraction')
       st = nc_close(ncid) ; call nc_check(st, 'close static')
    end subroutine write_static
+
+   !----- A static map on the archive's grid (meds_surface_maps): values(lon, lat, layer) as a 2-D    !
+   !      (lat, lon) variable, or, with layer_dim, a layered (layer, lat, lon) one, with a _FillValue.  !
+   !      lat_shift moves the file's lat axis, to make a map that is off the grid. -----------------------!
+   subroutine write_map(path, name, values, fill, layer_dim, lat_shift)
+      character(len=*),           intent(in) :: path, name
+      real(wp),                   intent(in) :: values(:,:,:)
+      real(wp),                   intent(in) :: fill
+      character(len=*), optional, intent(in) :: layer_dim
+      real(wp),         optional, intent(in) :: lat_shift
+      integer(c_int)    :: st, ncid, dla, dlo, dly, vid, vla, dims2(2), dims3(3)
+      integer(c_size_t) :: start3(3), count3(3), start2(2), count2(2), start1(1), count1(1)
+      real(c_double)    :: buf(NLON, NLAT, size(values, 3)), lat(NLAT)
+      integer(ik)       :: k
+      st = nc_create_f(path, NC_NETCDF4, ncid) ; call nc_check(st, 'create map')
+      call define_grid(ncid, dla, dlo)
+      if (present(layer_dim)) then
+         st = nc_def_dim_f(ncid, layer_dim, int(size(values, 3), c_size_t), dly) ; call nc_check(st, 'def layer')
+         dims3 = [dly, dla, dlo]
+         st = nc_def_var_f(ncid, name, NC_DOUBLE, 3, dims3, vid) ; call nc_check(st, 'def map')
+      else
+         dims2 = [dla, dlo]
+         st = nc_def_var_f(ncid, name, NC_DOUBLE, 2, dims2, vid) ; call nc_check(st, 'def map')
+      end if
+      st = nc_put_att_double_f(ncid, vid, '_FillValue', NC_DOUBLE, real(fill, c_double))
+      call nc_check(st, 'put _FillValue')
+      st = nc_enddef(ncid) ; call nc_check(st, 'enddef map')
+      call put_grid(ncid)
+      if (present(lat_shift)) then
+         lat = [(LAT0 + DLAT * real(k, wp) + lat_shift, k = 0_ik, NLAT - 1_ik)]
+         st = nc_inq_varid_f(ncid, 'lat', vla)
+         start1 = 0_c_size_t ; count1 = int(NLAT, c_size_t)
+         st = nc_put_vara_double(ncid, vla, start1, count1, lat) ; call nc_check(st, 'shift lat')
+      end if
+      buf = real(values, c_double)
+      if (present(layer_dim)) then
+         start3 = 0_c_size_t
+         count3 = [int(size(values, 3), c_size_t), int(NLAT, c_size_t), int(NLON, c_size_t)]
+         st = nc_put_vara_double(ncid, vid, start3, count3, buf)
+      else
+         start2 = 0_c_size_t ; count2 = [int(NLAT, c_size_t), int(NLON, c_size_t)]
+         st = nc_put_vara_double(ncid, vid, start2, count2, buf)
+      end if
+      call nc_check(st, 'put map')
+      st = nc_close(ncid) ; call nc_check(st, 'close map')
+   end subroutine write_map
 
    subroutine write_month(dir, v, y, m, fill)
       character(len=*), intent(in) :: dir

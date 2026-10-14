@@ -22,7 +22,7 @@ program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
-   use meds_test_era5land_archive, only : write_archive
+   use meds_test_era5land_archive, only : write_archive, write_map, NLAT, NLON
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
@@ -52,6 +52,7 @@ program test_region
    integer(ik) :: p, st, f, nf, nbad
    logical     :: ok
    character(len=24) :: idstr
+   real(wp)          :: mask(NLON, NLAT, 1)
 
    call get_command_argument(1, work)
    call get_command_argument(2, meds_main)
@@ -196,6 +197,20 @@ program test_region
    call region_free(reg)
    call check_failed_month(trim(work)//'/out/fail-D-202102.nc')
 
+   !----- The cell mask (§14 RP2): a 0/1 map that drops polygon 35 leaves 18 and 53, in their order. --!
+   mask = 1.0_wp
+   mask(18, 2, 1) = 0.0_wp                                   ! (row 1, col 17): polygon 35
+   call write_map(trim(work)//'/archive/keep.nc', 'keep', mask, -1.0_wp)
+   call derive(trim(work)//'/masked.toml', '[output]'//nl()//'prefix = "masked"'//nl()//'[region]'//nl()// &
+               'cell_mask = "'//trim(work)//'/archive/keep.nc"'//nl()//'cell_mask_var = "keep"'//nl()//     &
+               region_block(), region=.true.)
+   call region_open(trim(work)//'/masked.toml', reg, ok, verbose=.false.)
+   call check_true('a region with a cell mask opens', ok)
+   if (ok) call check_true('the mask drops polygon 35 and keeps 18 and 53, in order',                    &
+                           size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
+   if (ok) call region_free(reg)
+   call write_map(trim(work)//'/archive/offgrid.nc', 'keep', mask, -1.0_wp, lat_shift=0.05_wp)
+
    !----- Region-mode rules (MEDS_POLYGON_RUNTIME_PLAN.md §9): each bad config is refused with its  !
    !      own message. The bad keys come first, so they win over the good region block. -------------!
    call refused('the [site] location is refused in a region', region_block(), .false., .false.,     &
@@ -225,6 +240,9 @@ program test_region
    call refused('an io_config override may not put a FAST-staged variable on a coarse tier',      &
                 '[output]'//nl()//'io_config = "'//trim(work)//'/io_fast_daily.toml"'//nl()//        &
                 site_block(1_ik), .false., .false., 'is FAST-staged and can only be on the F stream')
+   call refused('a cell mask must be on the forcing grid', '[region]'//nl()//'cell_mask = "'//            &
+                trim(work)//'/archive/offgrid.nc"'//nl()//'cell_mask_var = "keep"'//nl()//region_block(),  &
+                .true., .false., 'is not on the forcing grid')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')

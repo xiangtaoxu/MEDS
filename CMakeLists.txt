@@ -304,6 +304,14 @@ file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/i
 add_library(meds_forcing STATIC ${FORCING_SOURCES})
 target_link_libraries(meds_forcing PUBLIC meds_config meds_netcdf_c)
 meds_fortran_flags(meds_forcing)
+#----- Static per-cell MAPS (src/io/input/maps): the one module that opens a map -- the cell mask  #
+#      now, each cell's soil and allometry inputs next (MEDS_POLYGON_RUNTIME_PLAN.md §14, RP2-RP3).  #
+#      Links meds_forcing for the archive grid it checks maps against and the cell list it reads   #
+#      them at; the driver links it.                                                                 #
+file(GLOB MAPS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/input/maps/*.f90)
+add_library(meds_maps STATIC ${MAPS_SOURCES})
+target_link_libraries(meds_maps PUBLIC meds_forcing meds_config meds_netcdf_c)
+meds_fortran_flags(meds_maps)
 
 
 #----- The FAST loop: the integrator machinery (numerics/ -- the state vector, the frozen work  #
@@ -392,7 +400,7 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
-target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
+target_link_libraries(meds_driver PUBLIC meds_model meds_maps ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
 
 #----- The main entry point: parse the command line, drive the model, exit. ----------------#
@@ -703,6 +711,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
    add_test(NAME met_era5land COMMAND test_met_era5land)
+   #----- The static-map reader and the cell mask (MEDS_POLYGON_RUNTIME_PLAN.md §14, RP2), on the  #
+   #      synthetic archive's grid. ---------------------------------------------------------------#
+   add_executable(test_surface_maps test/test_surface_maps.f90)
+   target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
+   meds_fortran_flags(test_surface_maps)
+   add_test(NAME surface_maps COMMAND test_surface_maps ${CMAKE_CURRENT_BINARY_DIR}/surface_maps_tmp)
    #      The flux-tower contract of an ED_default file (MEDS_FLUX_TOWER_FORCING_PLAN.md §9 V6).
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_forcing meds_testassert)

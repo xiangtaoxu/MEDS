@@ -25,6 +25,7 @@ module meds_era5land_reader
 
    public :: era5land_path, era5land_default_template, era5land_default_static
    public :: era5land_select_site, era5land_select_box, era5land_load_month, era5land_month_hours
+   public :: era5land_same_grid, era5land_keep_cells
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN
    public :: ERA_VAR_NAME, ERA_VAR_UNITS, ERA_EPOCH
    public :: ERA_OK, ERA_ERR_OPEN, ERA_ERR_GRID, ERA_ERR_TIME, ERA_ERR_UNITS, ERA_ERR_NAN, ERA_ERR_NO_CELL
@@ -229,6 +230,43 @@ contains
       end do
       call group_by_chunk(dom)
    end subroutine era5land_select_box
+
+   !=======================================================================================!
+   !  ON THE ARCHIVE GRID: ERA_OK when the file at `path` has the static file's lat and lon     !
+   !  axes (within GRID_TOL), so a cell's (row, col) indexes both. The static maps a run reads   !
+   !  (meds_surface_maps) must be on this grid: MEDS never regrids.                              !
+   !=======================================================================================!
+   subroutine era5land_same_grid(path, static_path, stat)
+      character(len=*), intent(in)  :: path, static_path
+      integer(ik),      intent(out) :: stat
+      integer(c_int) :: ncid, st
+      real(wp), allocatable :: lat_s(:), lon_s(:), lat_m(:), lon_m(:)
+      call open_static(static_path, ncid, lat_s, lon_s, stat)
+      if (stat /= ERA_OK) return
+      st = nc_close(ncid)
+      call open_static(path, ncid, lat_m, lon_m, stat)
+      if (stat /= ERA_OK) return
+      st = nc_close(ncid)
+      stat = ERA_ERR_GRID
+      if (size(lat_m) /= size(lat_s) .or. size(lon_m) /= size(lon_s)) return
+      if (any(abs(lat_m - lat_s) > GRID_TOL) .or. any(abs(lon_m - lon_s) > GRID_TOL)) return
+      stat = ERA_OK
+   end subroutine era5land_same_grid
+
+   !----- Keep the cells of a domain where `keep` is true, in their order, and regroup them by     !
+   !      chunk (a region's cell mask, meds_surface_maps). -------------------------------------------!
+   subroutine era5land_keep_cells(dom, keep)
+      type(met_cells_t), intent(inout) :: dom
+      logical,           intent(in)    :: keep(:)
+      dom%row = pack(dom%row, keep) ; dom%col = pack(dom%col, keep)
+      dom%lat = pack(dom%lat, keep) ; dom%lon = pack(dom%lon, keep)
+      dom%elevation = pack(dom%elevation, keep)
+      if (allocated(dom%land_fraction)) dom%land_fraction = pack(dom%land_fraction, keep)
+      dom%ncell = int(count(keep), ik)
+      deallocate(dom%chunk_row, dom%chunk_col, dom%chunk_first, dom%chunk_nrow, dom%chunk_ncol,     &
+                 dom%by_chunk)
+      call group_by_chunk(dom)
+   end subroutine era5land_keep_cells
 
    !----- A longitude moved into [lon0, lon0 + 360), the grid's own range. ------------------------!
    pure real(wp) function wrap_longitude(x, lon0) result(y)
