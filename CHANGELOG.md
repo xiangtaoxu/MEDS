@@ -133,8 +133,8 @@ America, and all are rerun on this release's code (#368, #373, #376, #378, #382,
   against its 2009 inventory (now example 05's `palo_verde/`: leaf litter, AGB growth, leaf cover, mortality), then
   a 150-year regrowth from bare ground in 983 cells of Central America (5-25° N, 100-80° W), one
   single-site run per cell on the cell's ERA5-Land weather, ED soil map and Chave et al. (2014) stress
-  index. The README sets the last ten years' leaf area against MODIS (minimum leaf cover r = 0.71 across
-  cells; the peak LAI is too high, 6.6 against 5.2) and the AGB after 20 years against Poorter et al.
+  index. The README sets the last ten years' leaf area against MODIS (minimum leaf cover r = 0.69 across
+  cells; the peak LAI is too high, 6.8 against 5.4) and the AGB after 20 years against Poorter et al.
   (2016)'s Neotropical chronosequences (about half the observed above 1,200 mm of rain).
 - **`meds.model.Run.patches()`** copies per-patch `area` (fraction of the site) and `age` out of a live
   run, through the new C-API entry `meds_run_get_patch_real`; a cohort's `owner_patch` indexes them, so
