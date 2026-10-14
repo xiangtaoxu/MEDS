@@ -167,6 +167,7 @@ program test_slow_ledger
    !       one property that pins the basis.                                                        !
    call check_mortality_water()
    call check_litter_patch_lockstep()
+   call check_litter_without_soil_carbon()
 
    !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
    call check_recruit_pool()
@@ -297,6 +298,43 @@ contains
                           'patch fusion conserves the site-wide litter flux')
       end if
    end subroutine check_litter_patch_lockstep
+
+   !----- With the soil-carbon pools off, the litter is still recorded and still declared leaving at !
+   !      the growth phase (#316): the same litter, and the same growth-phase residual, as with them    !
+   !      on. Before, it was neither recorded nor declared, and the phase read it as a carbon leak. ---!
+   subroutine check_litter_without_soil_carbon()
+      real(wp) :: lit_on, lit_off, res_on, res_off
+      call grow_one_step(.true.,  lit_on,  res_on)
+      call grow_one_step(.false., lit_off, res_off)
+      call check(lit_off > 0.0_wp, 'soil carbon off: the litter is still recorded')
+      call check_close(lit_off, lit_on, 1.0e-12_wp * lit_on, 'soil carbon off: the same litter as with it on')
+      call check_close(res_off, res_on, 1.0e-12_wp * max(lit_on, 1.0e-12_wp),                        &
+                       'soil carbon off: the growth phase closes as it does with it on')
+   end subroutine check_litter_without_soil_carbon
+
+   subroutine grow_one_step(soil_carbon_on, litter, grow_residual)
+      logical,  intent(in)  :: soil_carbon_on
+      real(wp), intent(out) :: litter, grow_residual
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      type(slow_ledger_t) :: lg
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.        ! one step of growth, turnover and mortality, no restructuring
+      c%soil_carbon_on     = soil_carbon_on
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)
+      call finalize_init(st)
+      st%cohort%gpp_accum(1:st%cohort%n)       = 1.0_wp
+      st%cohort%leaf_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%stem_resp_accum(1:st%cohort%n) = 0.0_wp
+      st%cohort%root_resp_accum(1:st%cohort%n) = 0.0_wp
+      lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call vegetation_dynamics(st, c, ledger=lg)
+      litter        = litter_site_total(st)
+      grow_residual = lg%resid_sum(SLOW_PHASE_GROW)%carbon
+   end subroutine grow_one_step
 
    !----- Area-weighted site total of today's litter [kgC/m2/day]. ---------------------------!
    pure function litter_site_total(st) result(t)
