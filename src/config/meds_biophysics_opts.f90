@@ -23,6 +23,7 @@ module meds_biophysics_opts
    public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
+   public :: annual_damping_depth
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
@@ -32,6 +33,10 @@ module meds_biophysics_opts
 
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
    integer(ik), parameter :: ENERGY_BC_DIRICHLET     = 2_ik   !< bottom: conduction to a fixed deep temperature
+   !----- The annual damping depth d = sqrt(2*alpha/omega) of a mid-latitude mineral soil at theta = 0.3. !
+   !      The Dirichlet anchor reflects the annual wave least at d/sqrt(2) below the bottom node: the   !
+   !      default deep_depth below, and the one a soil map's column takes (meds_surface_maps). --------!
+   real(wp), parameter :: annual_damping_depth = 1.973_wp   !< [m]
 
    !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
    !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!

@@ -12,13 +12,14 @@ module meds_config
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
-   use meds_allometry,  only : allometry_t
+   use meds_allometry,  only : allometry_t, HEIGHT_CHAVE
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params,               &
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,                &
+                                  build_soil_hydr_params_layers, build_soil_therm_params_layers,         &
                                   SOIL_LAYER_TEMPLATE, soil_layer_grid
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
@@ -28,17 +29,19 @@ module meds_config
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
    use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_surface_opts,  only : surface_opts_t, soil_maps_on
    implicit none
    private
 
    public :: meds_config_t, hydraulics_config_t, soil_column_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
-   public :: validate_config, growth_window_steps, soil_column_layers
+   public :: validate_config, growth_window_steps, soil_column_layers, soil_column_params
    public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
+   public :: surface_opts_t, soil_maps_on
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -120,7 +123,7 @@ module meds_config
       real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
       integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
       real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
-      !----- Hydraulic texture (uniform over the column in this MVP; per-layer texture is future). --!
+      !----- Hydraulic texture, one for the whole column (or per layer: n_layer_values below). ------!
       integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
       real(wp)    :: theta_res   = 0.078_wp   !< [m3/m3] residual water content
@@ -132,7 +135,27 @@ module meds_config
       real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
       real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
       real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
+      !----- A texture per layer, from the soil maps ([surface], meds_surface_maps), in place of the  !
+      !      one texture above: n_layer_values is the column's layer count, and each array holds    !
+      !      one value per layer. 0 = the one texture. No config key sets these. -------------------!
+      integer(ik) :: n_layer_values = 0_ik
+      real(wp)    :: layer_theta_sat(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_theta_res(n_soil_layer_max)          = 0.0_wp
+      real(wp)    :: layer_ksat(n_soil_layer_max)               = 0.0_wp
+      real(wp)    :: layer_curve_par_a(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_curve_par_n(n_soil_layer_max)        = 0.0_wp
+      real(wp)    :: layer_solid_conductivity(n_soil_layer_max) = 0.0_wp
+      real(wp)    :: layer_dry_conductivity(n_soil_layer_max)   = 0.0_wp
+      real(wp)    :: layer_dry_heat_capacity(n_soil_layer_max)  = 0.0_wp
    end type soil_column_config_t
+
+   !----- The column's texture, one value per layer: the per-layer arrays, or the one texture   !
+   !      repeated (soil_column_texture). --------------------------------------------------------!
+   type :: soil_texture_layers_t
+      real(wp) :: theta_sat(n_soil_layer_max), theta_res(n_soil_layer_max), ksat(n_soil_layer_max)
+      real(wp) :: par_a(n_soil_layer_max), par_n(n_soil_layer_max)
+      real(wp) :: k_solid(n_soil_layer_max), k_dry(n_soil_layer_max), dry_cvol(n_soil_layer_max)
+   end type soil_texture_layers_t
 
    !----- Plant-hydraulics parameters (PFT-uniform MVP). Consumed only by the opt-in fast loop;    !
    !       flattened into the plant hydro_params_t by the fast-context builder. Defaults are the     !
@@ -201,6 +224,9 @@ module meds_config
       !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !
       integer(ik)         :: run_mode = RUN_MODE_SITE
       type(region_opts_t) :: region
+      !----- [surface]: the static maps a run takes its soil and its Chave site index from, at each  !
+      !      polygon's cell (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP3; meds_surface_maps). ---------------!
+      type(surface_opts_t) :: surface
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -439,6 +465,43 @@ contains
       end if
    end subroutine soil_column_layers
 
+   !----- The column's texture per layer: the map's per-layer values, or the one texture. -------!
+   pure subroutine soil_column_texture(sc, tex)
+      type(soil_column_config_t),  intent(in)  :: sc
+      type(soil_texture_layers_t), intent(out) :: tex
+      if (sc%n_layer_values > 0_ik) then
+         tex%theta_sat = sc%layer_theta_sat ; tex%theta_res = sc%layer_theta_res ; tex%ksat = sc%layer_ksat
+         tex%par_a     = sc%layer_curve_par_a ; tex%par_n   = sc%layer_curve_par_n
+         tex%k_solid   = sc%layer_solid_conductivity ; tex%k_dry = sc%layer_dry_conductivity
+         tex%dry_cvol  = sc%layer_dry_heat_capacity
+      else
+         tex%theta_sat = sc%theta_sat ; tex%theta_res = sc%theta_res ; tex%ksat = sc%ksat
+         tex%par_a     = sc%curve_par_a ; tex%par_n   = sc%curve_par_n
+         tex%k_solid   = sc%solid_conductivity ; tex%k_dry = sc%dry_conductivity
+         tex%dry_cvol  = sc%dry_heat_capacity
+      end if
+   end subroutine soil_column_texture
+
+   !---------------------------------------------------------------------------------------!
+   ! The soil column the [soil_column] block describes: its layers (soil_column_layers),    !
+   ! each layer's retention curve and Ks, and, when asked, each layer's thermal texture.   !
+   ! The fast loop, the slow ledger and validate_config all build the column here.         !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_params(sc, soil, therm)
+      type(soil_column_config_t),            intent(in)  :: sc
+      type(soil_params_t),                   intent(out) :: soil
+      type(soil_thermal_params_t), optional, intent(out) :: therm
+      type(soil_texture_layers_t) :: tex
+      real(wp)    :: bottoms(n_soil_layer_max)
+      integer(ik) :: n_layer
+      call soil_column_layers(sc, bottoms, n_layer)
+      call soil_column_texture(sc, tex)
+      call build_soil_hydr_params_layers(n_layer, sc%retention, bottoms, tex%theta_sat, tex%theta_res,  &
+                                         tex%ksat, tex%par_a, tex%par_n, sc%psi_fc, soil)
+      if (present(therm)) call build_soil_therm_params_layers(n_layer, tex%k_solid, tex%k_dry,        &
+                                                              tex%dry_cvol, therm)
+   end subroutine soil_column_params
+
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
    ! timestep dt, the geometric cohort-fusion tolerance multiplier, and the evenly-spaced      !
@@ -596,7 +659,12 @@ contains
       !----- [soil_column]. Every one of these produces a silently WRONG column rather than a     !
       !      crash: a layer count over the compile-time ceiling writes past the active region, a   !
       !      non-positive depth or a theta_sat <= theta_res divides by zero in the retention curve, !
-      !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead. ----!
+      !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead.    !
+      !      A texture per layer (from the soil maps) is checked layer by layer. ------------------!
+      soil_column: block
+      type(soil_texture_layers_t) :: tex
+      real(wp)    :: bottoms(n_soil_layer_max)
+      integer(ik) :: n
       associate (sc => cfg%soil_column)
          if (sc%depth <= 0.0_wp)          error stop tag//'soil_column.depth <= 0'
          if (sc%n_layer_bottoms > 0_ik) then
@@ -609,30 +677,39 @@ contains
             error stop tag//'soil_column.depth is below the deepest default layer (27 m): '//       &
                        'set soil_column.layer_bottoms'
          end if
-         if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
-         if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
-         if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)             &
-            error stop tag//'init.soil_theta must lie in (soil_column.theta_res, theta_sat]'
-         if (sc%ksat <= 0.0_wp)           error stop tag//'soil_column.ksat <= 0'
+         call soil_column_layers(sc, bottoms, n)
+         if (sc%n_layer_values > 0_ik .and. sc%n_layer_values /= n)                                 &
+            error stop tag//'soil_column: the per-layer texture does not match the column''s layers'
+         call soil_column_texture(sc, tex)
+         if (any(tex%theta_sat(1:n) <= tex%theta_res(1:n))) error stop tag//'soil_column.theta_sat <= theta_res'
+         if (any(tex%theta_res(1:n) < 0.0_wp))       error stop tag//'soil_column.theta_res < 0'
+         !----- With a texture per layer, the run starts each layer at its field capacity, so      !
+         !      init.soil_theta is not used (build_fast_context). ----------------------------------!
+         if (sc%n_layer_values == 0_ik) then
+            if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)          &
+               error stop tag//'init.soil_theta must lie in (soil_column.theta_res, theta_sat]'
+         end if
+         if (any(tex%ksat(1:n) <= 0.0_wp))           error stop tag//'soil_column.ksat <= 0'
          !----- curve_par_a and curve_par_n mean different things per family: van Genuchten's alpha  !
          !      [1/m] > 0 and n > 1, Campbell's air-entry suction psi_sat [m] < 0 and exponent b > 0.  !
          !      The other family's pair makes the curve raise a negative base to a fractional power. -!
          if (sc%retention == SOIL_RETENTION_VG) then
-            if (sc%curve_par_a <= 0.0_wp)                                                          &
+            if (any(tex%par_a(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_a (van Genuchten alpha, 1/m) must be > 0'
-            if (sc%curve_par_n <= 1.0_wp)                                                          &
+            if (any(tex%par_n(1:n) <= 1.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_n must exceed 1 for van Genuchten'
          else
-            if (sc%curve_par_a >= 0.0_wp)                                                          &
+            if (any(tex%par_a(1:n) >= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_a (Campbell psi_sat, m) must be < 0'
-            if (sc%curve_par_n <= 0.0_wp)                                                          &
+            if (any(tex%par_n(1:n) <= 0.0_wp))                                                    &
                error stop tag//'soil_column.curve_par_n (Campbell b) must be > 0'
          end if
          if (sc%psi_fc >= 0.0_wp)         error stop tag//'soil_column.psi_fc must be negative (a suction head)'
-         if (sc%solid_conductivity <= 0.0_wp .or. sc%dry_conductivity <= 0.0_wp)                  &
+         if (any(tex%k_solid(1:n) <= 0.0_wp) .or. any(tex%k_dry(1:n) <= 0.0_wp))                  &
             error stop tag//'soil_column conductivities must be positive'
-         if (sc%dry_heat_capacity <= 0.0_wp) error stop tag//'soil_column.dry_heat_capacity <= 0'
+         if (any(tex%dry_cvol(1:n) <= 0.0_wp)) error stop tag//'soil_column.dry_heat_capacity <= 0'
       end associate
+      end block soil_column
 
       !----- [energy] bottom thermal BC (#145). The Dirichlet anchor needs a SITE temperature and a  !
       !      depth BELOW the bottom node; neither can be guessed. `deep_temp` is the mean annual soil !
@@ -640,12 +717,12 @@ contains
       !      in it is a steady flux into the column base, so a silent default would be a silent mean- !
       !      annual bias -- exactly the defect #145 exists to remove. `deep_depth` at or above the    !
       !      bottom NODE gives a non-positive conduction length, i.e. a division by zero or a sign    !
-      !      flip that would pump heat the wrong way.  ------------------------------------------------!
-      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET) then
+      !      flip that would pump heat the wrong way. With the soil maps, the anchor is each polygon's   !
+      !      (apply_surface_inputs), so a configuration the maps have not filled yet has none to check. -!
+      if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET .and.                                         &
+          .not. (soil_maps_on(cfg%surface) .and. cfg%soil_column%n_layer_values == 0_ik)) then
          block
             type(soil_params_t) :: sp
-            real(wp)            :: bottoms(n_soil_layer_max)
-            integer(ik)         :: n_layer
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
                error stop tag//'energy.bottom_bc = "dirichlet" requires energy.deep_temp [K] -- '// &
                           'the mean annual soil temperature below the damping depth. It is a site '//&
@@ -654,16 +731,14 @@ contains
                error stop tag//'energy.deep_temp outside 200..330 K -- it is an absolute temperature'
             !----- Build the real grid rather than re-deriving the bottom node here: the grid rule  !
             !      lives in ONE place and a second copy would drift from it silently. --------------!
-            associate (sc => cfg%soil_column)
-               call soil_column_layers(sc, bottoms, n_layer)
-               call build_soil_hydr_params(n_layer, sc%retention, bottoms, sc%theta_sat,          &
-                    sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, sp)
-            end associate
-            if (cfg%energy%deep_depth <= abs(sp%z_node(n_layer)))                                &
+            call soil_column_params(cfg%soil_column, sp)
+            if (cfg%energy%deep_depth <= abs(sp%z_node(sp%n_active)))                            &
                error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
                           '(it is measured down from the surface, and the anchor conducts to it)'
          end block
       end if
+
+      if (any(cfg%pft%nbg_init_density < 0.0_wp)) error stop tag//'pft.nbg_init_density must be >= 0'
 
       !----- Co-limitation and hyperbola curvatures must lie in (0, 1]. A curvature of zero makes the  !
       !      smoothing quadratic degenerate and a value above one has no root in the physical branch,   !
@@ -817,6 +892,14 @@ contains
             error stop tag//'region.cell_mask_var must name the mask''s variable'
          if (.not. ieee_is_finite(cfg%region%cell_mask_min))                                       &
             error stop tag//'region.cell_mask_min must be a finite number'
+         !----- Every polygon takes its soil from its own cell, and so does its height allometry's   !
+         !      site index (§14 RP3, OR12): a region does not run one hand-set soil everywhere. -------!
+         if (.not. soil_maps_on(cfg%surface))                                                       &
+            error stop tag//'[run].mode = "region" needs the soil maps: surface.soil_depth_map, '//    &
+                            'soil_texture_map and soil_chemistry_map'
+         if (cfg%allom%height_form == HEIGHT_CHAVE .and. len_trim(cfg%surface%chave_e_map) == 0)     &
+            error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
+                            'needs surface.chave_e_map'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
          !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
          !      1st. A site run takes a window starting at any record stamp. ------------------------!
@@ -828,6 +911,14 @@ contains
             end associate
          end if
       end if
+      !----- [surface]: the maps are on the ED_ERA5land grid, and a site reads them at its forcing    !
+      !      cell, so they need that archive. A chave_e map serves the Chave height allometry only. -!
+      if (soil_maps_on(cfg%surface) .or. len_trim(cfg%surface%chave_e_map) > 0) then
+         if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
+            error stop tag//'the [surface] maps need forcing.format = "ED_ERA5land" (they are on its grid)'
+      end if
+      if (len_trim(cfg%surface%chave_e_map) > 0 .and. cfg%allom%height_form /= HEIGHT_CHAVE)          &
+         error stop tag//'surface.chave_e_map needs allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
       !      has to clear the canopy any more: the forcing is moved to each patch's canopy-air top.     !

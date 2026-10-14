@@ -8,7 +8,9 @@
 ! region's files must hold, in every variable's `polygon = p` slice, exactly the site run's        !
 ! series, bit for bit; the detail polygon's own files must equal its site run's files; and the     !
 ! polygon axis must carry the cells' ids and coordinates. The region is run again on four threads  !
-! and must give the same files. Last, meds_main (the second argument)                               !
+! and must give the same files. Every run takes its soil from the archive's [surface] maps (§14     !
+! RP3), so the three polygons have their own soil depth, layers and bottom boundaries, and each site  !
+! run must find the same soil at its cell. Last, meds_main (the second argument)                    !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
 !                                                                                          !
 ! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
@@ -22,7 +24,9 @@ program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
-   use meds_test_era5land_archive, only : write_archive, write_map, NLAT, NLON
+   use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
+                                          NLAT, NLON
+   use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
@@ -42,6 +46,11 @@ program test_region
    integer(ik), parameter :: IDS(NP) = [35_ik, 18_ik, 53_ik]
    real(wp),    parameter :: LAT(NP) = [35.0_wp, 35.0_wp, 25.0_wp], LON(NP) = [160.0_wp, -180.0_wp, 160.0_wp]
    real(wp),    parameter :: ELEV(NP) = [117.0_wp, 100.0_wp, 217.0_wp]
+   integer(ik), parameter :: ROW(NP) = [1_ik, 1_ik, 2_ik], COL(NP) = [17_ik, 0_ik, 17_ik]
+   !----- Their soil (meds_test_era5land_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on  !
+   !      the default ones; sealed (bedrock), leaky (free_drain until #401) and aquifer bottoms. ------!
+   integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]
+   integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
    integer(ik), parameter :: DETAIL = 18_ik
 
    character(len=512)  :: work, meds_main
@@ -60,6 +69,8 @@ program test_region
       error stop 'test_region: pass the work directory and the meds_main executable'
    call execute_command_line('rm -rf "'//trim(work)//'" && mkdir -p "'//trim(work)//'/out"')
    call write_archive(trim(work)//'/archive')
+   call write_surface_maps(trim(work)//'/archive')
+   call write_surface_maps(trim(work)//'/archive/gap', gap=[1_ik, 0_ik])     ! no sand at polygon 18
 
    !----- The region. ----------------------------------------------------------------------------!
    call derive(trim(work)//'/region.toml', region_block(), region=.true.)
@@ -70,6 +81,14 @@ program test_region
                    size(reg%poly) == NP)
    call check_true('polygon ids are the cells'' row-major indices, in row-major order',              &
                    all(reg%poly(:)%id == IDS))
+   do p = 1_ik, NP
+      associate (c => reg%poly(p)%cfg)
+         call check_true('each polygon takes its soil column, bottom boundary and deep temperature '//    &
+                         'from its own cell', reg%poly(p)%fast_ctx%col_config%soil%n_active == N_LAYER(p)   &
+                         .and. c%soil%bottom_bc == BOTTOM(p) .and. c%soil_column%n_layer_values == N_LAYER(p) &
+                         .and. abs(c%energy%deep_temp - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp)
+      end associate
+   end do
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
       if (st /= DRIVER_OK) error stop 'test_region: a region month failed'
@@ -283,6 +302,21 @@ program test_region
    call refused('the lapse keys are refused with the lapse off',                                    &
                 '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
                 'apply only with site.apply_elevation_lapse = true')
+   !----- The [surface] maps (§14 RP3): a region needs the soil maps, a key they provide is refused,  !
+   !      a run cell they leave empty is named, and Chave's E serves only the Chave heights. ----------!
+   call refused('a region needs the soil maps', '[surface]'//nl()//'soil_depth_map = ""'//nl()//        &
+                'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[energy]'//nl()//       &
+                'deep_temp = 284.75'//nl()//region_block(), .true., .false., 'needs the soil maps')
+   call refused('a soil key the maps provide is refused', '[soil_column]'//nl()//'theta_sat = 0.40'//nl()// &
+                site_block(1_ik), .false., .false., 'soil_column.theta_sat comes from the [surface] soil maps')
+   call refused('a deep temperature beside the maps is refused', '[energy]'//nl()//'deep_temp = 290.0'//nl()// &
+                region_block(), .true., .false., 'energy.deep_temp comes from the [surface] soil maps')
+   call refused('a run cell the soil maps leave empty is named', '[surface]'//nl()//'soil_texture_map = "'// &
+                trim(work)//'/archive/gap/soil_texture.nc"'//nl()//region_block(), .true., .false.,         &
+                'sand has no value at the cell (35.00, -180.00)')
+   call refused('a chave_e map needs the Chave height allometry', '[surface]'//nl()//'chave_e_map = "'//    &
+                trim(work)//'/archive/chave_e.nc"'//nl()//site_block(1_ik), .false., .false.,               &
+                'surface.chave_e_map needs allometry.height_allometry = "chave2014"')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &
@@ -302,7 +336,10 @@ contains
           '[forcing]'//nl()//'format = "ED_ERA5land"'//nl()//'data_path = "'//trim(work)//'/archive"'//nl()// &
           'recycle = false'//nl()//                                                                 &
           '[output]'//nl()//'dir = "'//trim(work)//'/out"'//nl()//                                  &
-          '[output.monthly]'//nl()//'enabled = true'//nl()//'file_chunk = "month"'//nl()
+          '[output.monthly]'//nl()//'enabled = true'//nl()//'file_chunk = "month"'//nl()//            &
+          '[surface]'//nl()//'soil_depth_map = "'//trim(work)//'/archive/soil_depth.nc"'//nl()//      &
+          'soil_texture_map = "'//trim(work)//'/archive/soil_texture.nc"'//nl()//                     &
+          'soil_chemistry_map = "'//trim(work)//'/archive/soil_chemistry.nc"'//nl()
    end function common_block
 
    function region_block() result(b)
@@ -406,6 +443,7 @@ contains
       if (present(keep_file_keys)) then
          if (keep_file_keys) drop = .false.
       end if
+      drop = drop .or. (sec == 'energy' .and. key == 'deep_temp')     ! the soil maps give it
       if (region) drop = drop .or. (sec == 'site' .and. (key == 'latitude' .or. key == 'longitude' .or. &
                                                           key == 'elevation'))
    end function drop

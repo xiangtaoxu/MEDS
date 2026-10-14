@@ -53,6 +53,9 @@ module meds_pft_params
                                                                    !<      recruits: seed set, germination and seedling
                                                                    !<      survival up to min_cohort_height together
       real(wp), allocatable :: recruit_shade_decay(:)              !< [1/(m2/m2)] that share falls as exp(-k * patch LAI)
+      !----- A near-bare-ground start's seedlings (ED2's init_density): plants per m2 of each patch, at  !
+      !      min_cohort_height on the polygon's height curve. 0 = no cohort of the PFT (the empty start). !
+      real(wp), allocatable :: nbg_init_density(:)                 !< [plant/m2]
       !----- Wood-density -> mortality-hazard DERIVATION coefficients (Camac et al. 2018 PNAS,  !
       !       a power law centred on mort_rho_ref: param = param_0 * (rho/rho_ref)^exp, always   !
       !       positive). Shared scalars for now (PFT-specific later). --------------------------!
@@ -285,6 +288,8 @@ contains
       allocate(pft%reproduction_investment_fraction(n), pft%recruit_carbon_efficiency(n))
       allocate(pft%recruit_shade_decay(n))
       pft%recruit_shade_decay = 0.0_wp      ! optional key; 0 = the same share under any canopy
+      allocate(pft%nbg_init_density(n))
+      pft%nbg_init_density = 0.0_wp         ! optional key; 0 = bare ground starts empty
       allocate(pft%stem_resp_sapwood25(n))
       pft%stem_resp_sapwood25 = 0.0_wp      ! optional key; 0 = stem respiration by surface alone
       allocate(pft%mort_gamma(n), pft%mort_alpha(n), pft%mort_beta(n))

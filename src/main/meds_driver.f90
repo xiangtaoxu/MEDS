@@ -18,13 +18,15 @@
 module meds_driver
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec, yr_day
-   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART
+   use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART, soil_maps_on
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
    use meds_config_io,              only : load_meds_config, write_pft_params_csv
    use meds_site_state_types,       only : site_t, site_free
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_init,                   only : init_bare_ground, init_from_census, restructure_census_stand
+   use meds_init,                   only : init_bare_ground, seed_bare_ground, init_from_census,      &
+                                           restructure_census_stand
+   use meds_surface_maps,           only : site_surface_inputs
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_forcing_types,          only : met_source_t
@@ -88,6 +90,7 @@ contains
       logical, optional, intent(in)    :: verbose
       type(meds_time_t) :: restart_time
       logical           :: init_ok, fast_state_found
+      character(len=:), allocatable :: msg
       type(output_buffers_t) :: fresh_bufs      !< default-initialised, never written: the reset value
 
       ok = .false.
@@ -116,6 +119,16 @@ contains
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing
       if (run%verbose) write(*,'(2a)') ' config: ', trim(path)
+      !----- 1a. The [surface] maps, at the forcing cell the site reads: its soil column and its   !
+      !          height allometry's site index, before anything is built on them. -----------------!
+      if (soil_maps_on(run%cfg%surface) .or. len_trim(run%cfg%surface%chave_e_map) > 0) then
+         call site_surface_inputs(run%cfg, msg)
+         if (len(msg) > 0) then
+            write(*,'(2a)') ' surface: ', msg
+            return
+         end if
+         if (run%verbose) write(*,'(a)') ' surface: soil and site index from the [surface] maps'
+      end if
 
       !----- 2. Initial community per [init].init_mode (0 bare | 1 census | 2 restart); the file  !
       !         for the non-selected mode is ignored. Unusable input -> bare ground. A successful  !
@@ -167,6 +180,7 @@ contains
       end if
       if (.not. init_ok) then
          call init_bare_ground(run%poly%site, run%cfg, N_PATCH_INIT)
+         call seed_bare_ground(run%poly%site, run%cfg)
          if (run%verbose) write(*,'(a)') ' init  : bare ground (mode 0)'
       end if
 

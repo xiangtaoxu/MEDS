@@ -7,17 +7,31 @@
 ! as NaN. A layered map gives every layer at every cell. A map off the forcing grid, a missing       !
 ! variable and a missing file are refused, each with its own status. The cell mask keeps the cells   !
 ! at or above its threshold, drops the empty one, and leaves the kept cells grouped by chunk the way !
-! the forcing reader needs them. The work directory is the first argument.                          !
+! the forcing reader needs them.                                                                    !
+!                                                                                          !
+! The [surface] inputs (RP3): a run cell the soil maps leave empty is named; every value is read at  !
+! its own cell; a column layer takes the map layers it overlaps, weighted by the overlap, and below  !
+! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map. !
+! The work directory is the first argument.                                                          !
 !==========================================================================================!
 program test_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
-   use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map
+   use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps,     &
+                                          soil_depth_at, bc_class_at, deep_temp_at, chave_e_at,         &
+                                          texture_at, SG_TOP, SG_BOTTOM
    use meds_forcing_types,         only : met_cells_t
-   use meds_era5land_reader,       only : era5land_select_box, ERA_OK
+   use meds_era5land_reader,       only : era5land_select_box, era5land_keep_cells, ERA_OK
    use meds_surface_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
-                                          MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR
+                                          MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
+                                          surface_inputs_t, read_surface_inputs, apply_surface_inputs
+   use meds_config,                only : meds_config_t
+   use meds_surface_opts,          only : surface_opts_t
+   use meds_pedotransfer,          only : soil_texture_t, soil_hydraulics_from_texture,               &
+                                          soil_thermal_from_texture
+   use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,          &
+                                          annual_damping_depth
    implicit none
 
    real(wp), parameter :: FILL = -9999.0_wp
@@ -29,6 +43,12 @@ program test_surface_maps
    real(wp), allocatable :: v(:), v3(:,:)
    integer(ik) :: st, r, c, l, k, n_dropped
    logical :: ok
+   type(surface_opts_t)   :: opts
+   type(surface_inputs_t) :: inp
+   type(meds_config_t)    :: cfg, cfg2
+   type(soil_texture_t)   :: t5, t6, tex
+   character(len=:), allocatable :: msg
+   real(wp) :: ts, tr, al, vn, ks, kso, kd, cv
 
    call get_command_argument(1, work)
    if (len_trim(work) == 0) error stop 'test_surface_maps: pass the work directory'
@@ -119,5 +139,98 @@ program test_surface_maps
    call check_true('a fraction map with a threshold keeps column 3 only', st == MAP_OK .and.               &
                    masked%ncell == 4_ik .and. all(masked%col == 3_ik))
 
+   !----- The [surface] inputs. The box holds (row 2, col 0), which the maps leave empty: named. ------!
+   call write_surface_maps(trim(work)//'/surface')
+   opts%soil_depth_map     = trim(work)//'/surface/soil_depth.nc'
+   opts%soil_texture_map   = trim(work)//'/surface/soil_texture.nc'
+   opts%soil_chemistry_map = trim(work)//'/surface/soil_chemistry.nc'
+   opts%chave_e_map        = trim(work)//'/surface/chave_e.nc'
+   call read_surface_inputs(opts, static, cells, inp, msg)
+   call check_true('a run cell the maps leave empty is named, with the variable',                        &
+                   index(msg, 'soil_depth has no value at the cell (25.00, -180.00) (row 2, col 0)') > 0)
+   masked = cells
+   call era5land_keep_cells(masked, .not. (cells%row == 2_ik .and. cells%col == 0_ik))
+   call read_surface_inputs(opts, static, masked, inp, msg)
+   call check_true('the maps are read at the other 15 cells', len(msg) == 0 .and. inp%soil .and. inp%chave)
+   call check_true('the soil maps'' layers are SoilGrids''', all(inp%layer_top == SG_TOP) .and.           &
+                   all(inp%layer_bottom == SG_BOTTOM))
+   ok = .true.
+   do k = 1_ik, masked%ncell
+      r = masked%row(k) ; c = masked%col(k)
+      t5 = texture_at(3_ik, r, c) ; t6 = texture_at(6_ik, r, c)
+      ok = ok .and. close(inp%soil_depth(k), soil_depth_at(r, c)) .and. nint(inp%bc_class(k)) == bc_class_at(r, c) &
+              .and. close(inp%deep_temp(k), deep_temp_at(r, c)) .and. close(inp%chave_e(k), chave_e_at(r, c))       &
+              .and. close(inp%texture(3, k)%clay, t5%clay) .and. close(inp%texture(6, k)%ph, t6%ph)
+   end do
+   call check_true('every value is its own cell''s', ok)
+
+   !----- Cell (1, 0): 1.1 m deep, so 5 layers, the last 0.6-1.1 m: 0.4 m of map layer 5 and 0.1 m of 6. !
+   do k = 1_ik, masked%ncell
+      if (masked%row(k) == 1_ik .and. masked%col(k) == 0_ik) exit
+   end do
+   call apply_surface_inputs(inp, k, cfg)
+   t5 = texture_at(5_ik, 1_ik, 0_ik) ; t6 = texture_at(6_ik, 1_ik, 0_ik)
+   tex%sand = (0.4_wp*t5%sand + 0.1_wp*t6%sand) / 0.5_wp ; tex%silt = (0.4_wp*t5%silt + 0.1_wp*t6%silt) / 0.5_wp
+   tex%clay = (0.4_wp*t5%clay + 0.1_wp*t6%clay) / 0.5_wp
+   tex%org_carbon = (0.4_wp*t5%org_carbon + 0.1_wp*t6%org_carbon) / 0.5_wp
+   tex%cec = (0.4_wp*t5%cec + 0.1_wp*t6%cec) / 0.5_wp ; tex%ph = (0.4_wp*t5%ph + 0.1_wp*t6%ph) / 0.5_wp
+   tex%bulk_density = (0.4_wp*t5%bulk_density + 0.1_wp*t6%bulk_density) / 0.5_wp
+   tex%coarse_frag  = (0.4_wp*t5%coarse_frag + 0.1_wp*t6%coarse_frag) / 0.5_wp
+   call soil_hydraulics_from_texture(tex, ts, tr, al, vn, ks)
+   call soil_thermal_from_texture(tex, ts, kso, kd, cv)
+   associate (sc => cfg%soil_column)
+      call check_true('the column ends at the map''s depth, on the default layers',                      &
+                      close(sc%depth, soil_depth_at(1_ik, 0_ik)) .and. sc%n_layer_values == 5_ik)
+      call check_true('a layer across two map layers takes their overlap-weighted soil',                 &
+                      close(sc%layer_theta_sat(5), ts) .and. close(sc%layer_theta_res(5), tr) .and.       &
+                      close(sc%layer_curve_par_a(5), al) .and. close(sc%layer_curve_par_n(5), vn) .and.   &
+                      close(sc%layer_ksat(5), ks))
+      call check_true('and its thermal properties from the same soil', close(sc%layer_solid_conductivity(5), kso) &
+                      .and. close(sc%layer_dry_conductivity(5), kd) .and. close(sc%layer_dry_heat_capacity(5), cv))
+      call soil_hydraulics_from_texture(texture_at(2_ik, 1_ik, 0_ik), ts, tr, al, vn, ks)
+      call check_true('a layer on one map layer takes that layer''s soil', close(sc%layer_theta_sat(2), ts) &
+                      .and. close(sc%layer_ksat(2), ks))
+   end associate
+   call check_true('a leaky bottom runs as free_drain (#401)', bc_class_at(1_ik, 0_ik) == 2_ik .and.      &
+                   cfg%soil%bottom_bc == SOIL_BC_FREE_DRAIN)
+   call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
+                   close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
+                   close(cfg%energy%deep_depth, 0.85_wp + annual_damping_depth / sqrt(2.0_wp)))
+   call check_true('Chave''s E is the cell''s', close(cfg%allom%chave_e, chave_e_at(1_ik, 0_ik)))
+
+   !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !
+   !      the maps' 2 m: it takes the deepest map layer's soil. Its bottom is (3 + 17) mod 4 + 1 = 1. ---!
+   call era5land_select_box(static, [26.0_wp, 99.0_wp, 14.0_wp, 161.0_wp], cells, st)
+   call read_surface_inputs(opts, static, cells, inp, msg)
+   do k = 1_ik, cells%ncell
+      if (cells%row(k) == 3_ik .and. cells%col(k) == 17_ik) exit
+   end do
+   call check_true('the second box is read', len(msg) == 0 .and. k <= cells%ncell)
+   call apply_surface_inputs(inp, k, cfg2)
+   call soil_hydraulics_from_texture(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
+   call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
+                   cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
+                   .and. close(cfg2%soil_column%layer_curve_par_n(8), vn))
+   call check_true('a free-draining bottom', bc_class_at(3_ik, 17_ik) == 1_ik .and.                       &
+                   cfg2%soil%bottom_bc == SOIL_BC_FREE_DRAIN)
+   do k = 1_ik, cells%ncell
+      if (bc_class_at(cells%row(k), cells%col(k)) == 3_ik) exit
+   end do
+   call apply_surface_inputs(inp, k, cfg2)
+   call check_true('a sealed bottom runs as bedrock', cfg2%soil%bottom_bc == SOIL_BC_BEDROCK)
+   do k = 1_ik, cells%ncell
+      if (bc_class_at(cells%row(k), cells%col(k)) == 4_ik) exit
+   end do
+   call apply_surface_inputs(inp, k, cfg2)
+   call check_true('an aquifer bottom is an aquifer', cfg2%soil%bottom_bc == SOIL_BC_AQUIFER)
+
    call test_report('test_surface_maps')
+
+contains
+
+   pure logical function close(a, b)
+      real(wp), intent(in) :: a, b
+      close = abs(a - b) <= 1.0e-12_wp * max(abs(a), abs(b), 1.0_wp)
+   end function close
+
 end program test_surface_maps

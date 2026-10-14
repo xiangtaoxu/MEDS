@@ -12,6 +12,11 @@
 !                                                                                          !
 ! A read takes the band of rows the cells span, every column, as one hyperslab: one read per       !
 ! variable for a whole region, which also serves a box that crosses 180 degrees.                   !
+!                                                                                          !
+! The surface inputs ([surface], §14 RP3): read_surface_inputs reads the soil maps and the Chave   !
+! site index at every cell once, and apply_surface_inputs turns one cell's values into that        !
+! polygon's configuration -- its soil column, layer by layer, its bottom boundaries and its height  !
+! allometry's site index. A run cell the maps leave empty is an input error naming the cell.       !
 !==========================================================================================!
 module meds_surface_maps
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan, ieee_is_nan
@@ -19,17 +24,47 @@ module meds_surface_maps
    use meds_kinds,            only : wp, ik
    use meds_netcdf_c
    use meds_forcing_types,    only : met_cells_t
-   use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, ERA_OK, ERA_ERR_OPEN
+   use meds_era5land_reader,  only : era5land_same_grid, era5land_keep_cells, era5land_select_site,   &
+                                     era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
+   use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params,           &
+                                     validate_config
+   use meds_surface_opts,     only : surface_opts_t, soil_maps_on
+   use meds_column_params,    only : soil_params_t, n_soil_layer_max
+   use meds_pedotransfer,     only : soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
+   use meds_water_retention,  only : SOIL_RETENTION_VG
+   use meds_biophysics_opts,  only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,               &
+                                     annual_damping_depth
    implicit none
    private
 
    public :: map_values_at_cells, map_layers_at_cells, apply_cell_mask, map_status_message
    public :: MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR
+   public :: surface_inputs_t, read_surface_inputs, apply_surface_inputs, site_surface_inputs
 
    integer(ik), parameter :: MAP_OK       = 0_ik
    integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the static file) cannot be opened
    integer(ik), parameter :: MAP_ERR_GRID = 2_ik   !< the file is not on the forcing grid
    integer(ik), parameter :: MAP_ERR_VAR  = 3_ik   !< the variable (or its layer dimension) is not there
+
+   !----- The soil maps' layers (ED-SoilMaps v2: SoilGrids 2.0's six depths, to 2 m). ------------!
+   character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
+   !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
+   integer(ik), parameter :: BC_FREE_DRAIN = 1_ik   !< q = K(theta)
+   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta): run as free_drain until #401
+   integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
+   integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
+
+   !----- What the [surface] maps hold at each cell of a run, read once (read_surface_inputs). --!
+   type :: surface_inputs_t
+      logical :: soil  = .false.                          !< the soil maps were read
+      logical :: chave = .false.                          !< the chave_e map was read
+      real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
+      real(wp), allocatable :: soil_depth(:)              !< [m] (cell) the soil column's depth
+      real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, BC_*
+      real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
+      type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
+      real(wp), allocatable :: chave_e(:)                 !< [-] (cell) Chave et al. (2014)'s E
+   end type surface_inputs_t
 
 contains
 
@@ -84,6 +119,242 @@ contains
       case default        ; msg = 'cannot be read'
       end select
    end function map_status_message
+
+   !=======================================================================================!
+   !  read_surface_inputs -- every [surface] map at every cell: the soil depth map's depth,      !
+   !  bottom boundary and deep temperature, the texture and chemistry maps' layers, and the      !
+   !  Chave map's E. A map that cannot be read, or that holds no value at a cell, is an error:    !
+   !  msg says which map, which variable and which cell, and is '' when every value is there.     !
+   !=======================================================================================!
+   subroutine read_surface_inputs(opts, static_path, cells, inp, msg)
+      type(surface_opts_t),          intent(in)  :: opts
+      character(len=*),              intent(in)  :: static_path
+      type(met_cells_t),             intent(in)  :: cells
+      type(surface_inputs_t),        intent(out) :: inp
+      character(len=:), allocatable, intent(out) :: msg
+      real(wp), allocatable :: v(:,:), top_chem(:), bottom_chem(:)
+      integer(ik) :: k
+      msg = ''
+      if (soil_maps_on(opts)) then
+         inp%soil = .true.
+         call need(opts%soil_depth_map, 'soil_depth', '', v) ; if (len(msg) > 0) return
+         inp%soil_depth = v(1, :)
+         call need(opts%soil_depth_map, 'bc_class', '', v) ; if (len(msg) > 0) return
+         inp%bc_class = v(1, :)
+         do k = 1_ik, cells%ncell
+            if (all(nint(inp%bc_class(k), ik) /= [BC_FREE_DRAIN, BC_LEAKY, BC_SEALED, BC_AQUIFER])) then
+               msg = 'soil map '//trim(opts%soil_depth_map)//': bc_class is not 1-4 at '//cell_name(k)
+               return
+            end if
+         end do
+         call need(opts%soil_depth_map, 'deep_temp', '', v) ; if (len(msg) > 0) return
+         inp%deep_temp = v(1, :)
+
+         !----- The layers: the texture and the chemistry maps must share them. ------------------!
+         call layer_bounds(opts%soil_texture_map, inp%layer_top, inp%layer_bottom)
+         if (len(msg) > 0) return
+         call layer_bounds(opts%soil_chemistry_map, top_chem, bottom_chem)
+         if (len(msg) > 0) return
+         if (size(top_chem) /= size(inp%layer_top)) then
+            msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
+                  ' do not have the same layers' ; return
+         end if
+         if (any(top_chem /= inp%layer_top) .or. any(bottom_chem /= inp%layer_bottom)) then
+            msg = 'soil maps '//trim(opts%soil_texture_map)//' and '//trim(opts%soil_chemistry_map)// &
+                  ' do not have the same layers' ; return
+         end if
+         allocate(inp%texture(size(inp%layer_top), cells%ncell))
+         call need(opts%soil_texture_map, 'sand', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%sand = v
+         call need(opts%soil_texture_map, 'silt', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%silt = v
+         call need(opts%soil_texture_map, 'clay', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%clay = v
+         call need(opts%soil_texture_map, 'bulk_density', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%bulk_density = v
+         call need(opts%soil_texture_map, 'coarse_fragments', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%coarse_frag = v
+         call need(opts%soil_chemistry_map, 'organic_carbon', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%org_carbon = v
+         call need(opts%soil_chemistry_map, 'cec', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%cec = v
+         call need(opts%soil_chemistry_map, 'ph_h2o', SOIL_LAYER_DIM, v) ; if (len(msg) > 0) return
+         inp%texture%ph = v
+      end if
+      if (len_trim(opts%chave_e_map) > 0) then
+         inp%chave = .true.
+         call need(opts%chave_e_map, 'chave_e', '', v) ; if (len(msg) > 0) return
+         inp%chave_e = v(1, :)
+      end if
+
+   contains
+
+      !----- One variable at every cell, and every layer of it; msg on a failed read or a gap. ----!
+      subroutine need(path, var, layer_dim, values)
+         character(len=*),      intent(in)  :: path, var, layer_dim
+         real(wp), allocatable, intent(out) :: values(:,:)
+         integer(ik) :: st, c
+         call read_cells(trim(path), var, layer_dim, static_path, cells, values, st)
+         if (st /= MAP_OK) then
+            msg = 'map '//trim(path)//' '//map_status_message(st)//': '//var ; return
+         end if
+         do c = 1_ik, cells%ncell
+            if (any(ieee_is_nan(values(:, c)))) then
+               msg = 'map '//trim(path)//': '//var//' has no value at '//cell_name(c) ; return
+            end if
+         end do
+      end subroutine need
+
+      !----- A soil map's layers: the tops and bottoms [m] of its depth_bnds(depth, nv). ----------!
+      subroutine layer_bounds(path, top, bottom)
+         character(len=*),      intent(in)  :: path
+         real(wp), allocatable, intent(out) :: top(:), bottom(:)
+         integer(c_int)    :: ncid, vid, st, st_close
+         integer(c_size_t) :: n, start2(2), count2(2)
+         real(c_double), allocatable :: b(:,:)
+         msg = 'map '//trim(path)//' '//map_status_message(MAP_ERR_OPEN)
+         if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) return
+         msg = 'map '//trim(path)//' '//map_status_message(MAP_ERR_VAR)//': '//SOIL_LAYER_BOUNDS
+         st = nc_inq_dimlen_f(ncid, SOIL_LAYER_DIM, n)
+         if (st == NC_NOERR) st = nc_inq_varid_f(ncid, SOIL_LAYER_BOUNDS, vid)
+         if (st == NC_NOERR) then
+            allocate(b(2, n))
+            start2 = 0_c_size_t ; count2 = [n, 2_c_size_t]
+            st = nc_get_vara_double(ncid, vid, start2, count2, b)
+         end if
+         st_close = nc_close(ncid)
+         if (st /= NC_NOERR .or. st_close /= NC_NOERR) return
+         top = real(b(1, :), wp) ; bottom = real(b(2, :), wp)
+         msg = ''
+      end subroutine layer_bounds
+
+      !----- A cell, as a message names it. ----------------------------------------------------!
+      function cell_name(c) result(name)
+         integer(ik), intent(in) :: c
+         character(len=:), allocatable :: name
+         character(len=96) :: buf
+         write(buf, '(a,f0.2,a,f0.2,a,i0,a,i0,a)') 'the cell (', cells%lat(c), ', ', cells%lon(c),      &
+                                                  ') (row ', cells%row(c), ', col ', cells%col(c), ')'
+         name = trim(buf)
+      end function cell_name
+
+   end subroutine read_surface_inputs
+
+   !=======================================================================================!
+   !  apply_surface_inputs -- cell k's inputs into the configuration its polygon runs.         !
+   !                                                                                          !
+   !  * The soil column ends at the map's soil depth, on the default layers (soil_column_layers); !
+   !    each layer takes the map layers it overlaps, weighted by the overlap, and below the      !
+   !    deepest map layer (2 m) the deepest one. Its curve and Ks come from the pedotransfer     !
+   !    function, its thermal properties from the same texture.                                  !
+   !  * The bottom water boundary is the map's: free_drain, bedrock for a sealed base, aquifer;  !
+   !    a leaky base runs as free_drain until #401.                                               !
+   !  * The Dirichlet thermal anchor sits at the map's deep temperature, annual_damping_depth /  !
+   !    sqrt(2) below the bottom node, where it reflects the annual wave least.                   !
+   !  * The Chave height allometry takes the cell's E.                                          !
+   !=======================================================================================!
+   subroutine apply_surface_inputs(inp, k, cfg)
+      type(surface_inputs_t), intent(in)    :: inp
+      integer(ik),            intent(in)    :: k
+      type(meds_config_t),    intent(inout) :: cfg
+      type(soil_texture_t) :: tex
+      type(soil_params_t)  :: soil
+      real(wp)    :: bottoms(n_soil_layer_max), top
+      integer(ik) :: n, l
+
+      if (inp%soil) then
+         associate (sc => cfg%soil_column)
+            sc%depth = inp%soil_depth(k) ; sc%n_layer_bottoms = 0_ik
+            sc%retention = SOIL_RETENTION_VG
+            call soil_column_layers(sc, bottoms, n)
+            top = 0.0_wp
+            do l = 1_ik, n
+               tex = layer_texture(inp, k, top, bottoms(l))
+               call soil_hydraulics_from_texture(tex, sc%layer_theta_sat(l), sc%layer_theta_res(l),      &
+                                                 sc%layer_curve_par_a(l), sc%layer_curve_par_n(l),       &
+                                                 sc%layer_ksat(l))
+               call soil_thermal_from_texture(tex, sc%layer_theta_sat(l), sc%layer_solid_conductivity(l), &
+                                              sc%layer_dry_conductivity(l), sc%layer_dry_heat_capacity(l))
+               top = bottoms(l)
+            end do
+            sc%n_layer_values = n
+         end associate
+         select case (nint(inp%bc_class(k), ik))
+         case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_BEDROCK
+         case (BC_AQUIFER) ; cfg%soil%bottom_bc = SOIL_BC_AQUIFER
+         case default      ; cfg%soil%bottom_bc = SOIL_BC_FREE_DRAIN     ! free_drain, and leaky (#401)
+         end select
+         call soil_column_params(cfg%soil_column, soil)
+         cfg%energy%deep_temp  = inp%deep_temp(k)
+         cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + annual_damping_depth / sqrt(2.0_wp)
+      end if
+      if (inp%chave) cfg%allom%chave_e = inp%chave_e(k)
+   end subroutine apply_surface_inputs
+
+   !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !
+   !      by the overlap. The deepest map layer reaches down without end. ----------------------------!
+   pure function layer_texture(inp, k, top, bottom) result(tex)
+      type(surface_inputs_t), intent(in) :: inp
+      integer(ik),            intent(in) :: k
+      real(wp),               intent(in) :: top, bottom
+      type(soil_texture_t) :: tex
+      real(wp)    :: w, wsum, hi
+      integer(ik) :: m, nm
+      nm = size(inp%layer_top, kind=ik)
+      tex%sand = 0.0_wp ; tex%silt = 0.0_wp ; tex%clay = 0.0_wp ; tex%org_carbon = 0.0_wp
+      tex%cec  = 0.0_wp ; tex%ph   = 0.0_wp ; tex%bulk_density = 0.0_wp ; tex%coarse_frag = 0.0_wp
+      wsum = 0.0_wp
+      do m = 1_ik, nm
+         hi = bottom
+         if (m < nm) hi = min(bottom, inp%layer_bottom(m))
+         w = hi - max(top, inp%layer_top(m))
+         if (w <= 0.0_wp) cycle
+         wsum = wsum + w
+         associate (t => inp%texture(m, k))
+            tex%sand         = tex%sand         + w * t%sand
+            tex%silt         = tex%silt         + w * t%silt
+            tex%clay         = tex%clay         + w * t%clay
+            tex%org_carbon   = tex%org_carbon   + w * t%org_carbon
+            tex%cec          = tex%cec          + w * t%cec
+            tex%ph           = tex%ph           + w * t%ph
+            tex%bulk_density = tex%bulk_density + w * t%bulk_density
+            tex%coarse_frag  = tex%coarse_frag  + w * t%coarse_frag
+         end associate
+      end do
+      tex%sand = tex%sand / wsum ; tex%silt = tex%silt / wsum ; tex%clay = tex%clay / wsum
+      tex%org_carbon = tex%org_carbon / wsum ; tex%cec = tex%cec / wsum ; tex%ph = tex%ph / wsum
+      tex%bulk_density = tex%bulk_density / wsum ; tex%coarse_frag = tex%coarse_frag / wsum
+   end function layer_texture
+
+   !=======================================================================================!
+   !  site_surface_inputs -- a site run's [surface] inputs, at the forcing cell its [site]       !
+   !  location reads (the archive's own choice, era5land_select_site), into cfg, which is then   !
+   !  validated again. msg is '' on success, else why the inputs could not be had.               !
+   !=======================================================================================!
+   subroutine site_surface_inputs(cfg, msg)
+      type(meds_config_t),           intent(inout) :: cfg
+      character(len=:), allocatable, intent(out)   :: msg
+      type(met_cells_t)      :: cell
+      type(surface_inputs_t) :: inp
+      character(len=:), allocatable :: static
+      real(wp)    :: distance_km
+      integer(ik) :: st
+      static = trim(era5land_static_file(cfg%forcing))
+      call era5land_select_site(static, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,              &
+                                cfg%forcing%max_distance_km, cell, distance_km, st)
+      if (st /= ERA_OK) then
+         if (st == ERA_ERR_NO_CELL) then
+            msg = 'no valid forcing cell near the site for the [surface] maps'
+         else
+            msg = 'cannot read the forcing''s static file '//static//' for the [surface] maps'
+         end if
+         return
+      end if
+      call read_surface_inputs(cfg%surface, static, cell, inp, msg)
+      if (len(msg) > 0) return
+      call apply_surface_inputs(inp, 1_ik, cfg)
+      call validate_config(cfg)
+   end subroutine site_surface_inputs
 
    !=======================================================================================!
    !  The read: check the grid, read the band of rows the cells span (every column, every     !

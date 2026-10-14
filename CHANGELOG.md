@@ -26,6 +26,39 @@ before and after.
   variable at a list of cells in one hyperslab, and reads a cell the map leaves empty as NaN. The forcing
   reader gains `era5land_same_grid` and `era5land_keep_cells`. `test_surface_maps` covers the reads,
   the refusals and the mask; `test_region` runs a masked region and refuses a mask off the grid.
+- **Each polygon's soil and Chave site index from maps, `[surface]`** (§14, RP3). Four keys name the
+  maps (ED-SoilMaps v2 and Chave et al. 2014's E, all on the forcing grid):
+  - `soil_depth_map`: `soil_depth`, `bc_class` and `deep_temp`;
+  - `soil_texture_map`: sand, silt, clay, bulk density and coarse fragments on SoilGrids' layers;
+  - `soil_chemistry_map`: organic carbon, CEC and pH;
+  - `chave_e_map`.
+
+  A region requires the soil maps, and `chave_e_map` with `height_allometry = "chave2014"`. A site may
+  use them at its forcing cell instead of setting `[soil_column]` by hand. Each cell's column:
+  - ends at the map's depth, on the default layers;
+  - gives each layer the overlap-weighted texture of the map layers it covers (below 2 m, the deepest
+    one's), whose curve and Ks come from the pedotransfer function and thermal properties from CLM5's
+    mineral-soil formulas (new: `soil_thermal_from_texture`);
+  - takes its bottom water boundary from `bc_class` (a leaky bottom runs as `free_drain` until #401);
+  - sets the Dirichlet anchor at `deep_temp`, annual damping depth / √2 below the bottom node;
+  - starts each layer at its own field capacity.
+
+  So that a run never holds two values for one quantity, the keys the maps provide are refused while
+  they are set: `[soil_column]` depth, layers, retention and texture, `soil.bottom_bc`,
+  `energy.deep_temp` and `deep_depth`, `init.soil_theta`, and `allometry.chave_e`. A run cell a map
+  leaves empty stops the run, naming the map, the variable and the cell.
+
+  The soil column now takes a texture per layer: `soil_column_config_t` carries per-layer values
+  (`n_layer_values`), and one builder, `soil_column_params`, assembles the column for the fast loop,
+  the slow ledger and validation. A region's files take their soil-layer depths from its deepest
+  polygon, and each polygon fills its own layers. `test_region` runs its region and its site runs on
+  synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
+  `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
+  per-layer start.
+- **A seeded near-bare-ground start, `[pft].nbg_init_density`** (§14 OR18, ED2's `init_density`).
+  Optional, 0 by default, which is today's empty start. A positive value gives each patch of a
+  bare-ground start one cohort of that PFT with that many plants per m², at `min_cohort_height` on the
+  polygon's own height curve (`seed_bare_ground`). The PFT parameter table records it.
 
 ### Changed
 

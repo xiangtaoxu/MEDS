@@ -14,7 +14,7 @@ module meds_era5land_reader
    use meds_kinds,           only : wp, sp, ik
    use meds_constants,       only : day_sec
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_units_base
-   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC
+   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
    use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
@@ -23,7 +23,7 @@ module meds_era5land_reader
    implicit none
    private
 
-   public :: era5land_path, era5land_default_template, era5land_default_static
+   public :: era5land_path, era5land_default_template, era5land_default_static, era5land_static_file
    public :: era5land_select_site, era5land_select_box, era5land_load_month, era5land_month_hours
    public :: era5land_same_grid, era5land_keep_cells
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN
@@ -88,6 +88,15 @@ contains
       character(len=MET_PATH_LEN) :: t
       t = '{data_path}/ED_ERA5land_static.nc'
    end function era5land_default_static
+
+   !----- The archive's static file a [forcing] block names: static_file, or the default, in its folder. -!
+   function era5land_static_file(f) result(path)
+      type(forcing_config_t), intent(in) :: f
+      character(len=MET_PATH_LEN) :: path
+      path = f%static_file
+      if (len_trim(path) == 0) path = era5land_default_static()
+      path = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
+   end function era5land_static_file
 
    !----- Every occurrence of `token` in `s` replaced by `value`. ----------------------------------!
    pure function replace_all(s, token, value) result(out)

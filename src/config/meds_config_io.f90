@@ -22,6 +22,7 @@ module meds_config_io
    use meds_config,     only : soil_column_config_t,                                              &
                                pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
+   use meds_surface_opts, only : soil_maps_on
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -449,7 +450,14 @@ contains
          call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
       case ('chave2014')
          cfg%allom%height_form = HEIGHT_CHAVE
-         call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+         !----- E is the site's: from [surface].chave_e_map at each polygon's cell, or set here. ---!
+         if (len_trim(cfg%surface%chave_e_map) > 0) then
+            if (toml_has(t, 'allometry.chave_e'))                                                  &
+               error stop 'load_meds_config: allometry.chave_e comes from surface.chave_e_map; '//  &
+                          'remove it from the PFT file'
+         else
+            call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+         end if
       case default   ; call note_missing(m, 'allometry.height_allometry')
       end select
    end subroutine opt_height_allometry
@@ -639,6 +647,37 @@ contains
       if (cfg%forcing%backend /= MET_BACKEND_ED_ERA5LAND)                                        &
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
+
+   !----- [surface] (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP3): the paths of the static maps. The three   !
+   !      soil maps go together: the depth map gives the column, the texture and chemistry maps its    !
+   !      layers. Each key the soil maps provide is refused when they are set, so a run never holds    !
+   !      two values for one quantity (OR12). -----------------------------------------------------!
+   subroutine load_surface_config(t, cfg)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      character(len=*), parameter :: SOIL_MAP_KEYS(15) = [character(len=32) ::                       &
+         'soil_column.depth', 'soil_column.layer_bottoms', 'soil_column.theta_sat',                  &
+         'soil_column.theta_res', 'soil_column.ksat', 'soil_column.curve_par_a',                     &
+         'soil_column.curve_par_n', 'soil_column.solid_conductivity', 'soil_column.dry_conductivity', &
+         'soil_column.dry_heat_capacity', 'soil_column.retention', 'soil.bottom_bc',                  &
+         'energy.deep_temp', 'energy.deep_depth', 'init.soil_theta']
+      integer(ik) :: i, n_set
+      cfg%surface%soil_depth_map     = toml_string(t, 'surface.soil_depth_map',     '')
+      cfg%surface%soil_texture_map   = toml_string(t, 'surface.soil_texture_map',   '')
+      cfg%surface%soil_chemistry_map = toml_string(t, 'surface.soil_chemistry_map', '')
+      cfg%surface%chave_e_map        = toml_string(t, 'surface.chave_e_map',        '')
+      n_set = count([len_trim(cfg%surface%soil_depth_map) > 0, len_trim(cfg%surface%soil_texture_map) > 0, &
+                     len_trim(cfg%surface%soil_chemistry_map) > 0])
+      if (n_set /= 0_ik .and. n_set /= 3_ik)                                                         &
+         error stop 'load_meds_config: [surface] needs soil_depth_map, soil_texture_map and '//       &
+                    'soil_chemistry_map together'
+      if (.not. soil_maps_on(cfg%surface)) return
+      do i = 1_ik, size(SOIL_MAP_KEYS, kind=ik)
+         if (toml_has(t, trim(SOIL_MAP_KEYS(i))))                                                     &
+            error stop 'load_meds_config: '//trim(SOIL_MAP_KEYS(i))//' comes from the [surface] '//   &
+                       'soil maps; remove it'
+      end do
+   end subroutine load_surface_config
 
    !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
    !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
@@ -1094,6 +1133,8 @@ contains
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
+      !----- [surface]: the maps a run takes its soil (and its Chave site index) from. ----------!
+      call load_surface_config(tm, cfg)
 
       !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
       !      a config with no [output] block emits no diagnostic stream).  ------------------!
@@ -1153,6 +1194,7 @@ contains
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
       call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
       call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
+      call opt_pa(tp, 'pft.nbg_init_density',                 cfg%pft%nbg_init_density,                 npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
@@ -1349,14 +1391,14 @@ contains
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
-           //'max_absolute_growth_rate,max_absolute_growth_exponent'
+           //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 61 ITEMS: i0 + 9 + i0 + 2 + i0 + 47. A format SHORTER than the value              !
+            !----- 62 ITEMS: i0 + 9 + i0 + 2 + i0 + 48. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,47(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1378,7 +1420,7 @@ contains
                  p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
-                 p%max_absolute_growth_exponent(pf)
+                 p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf)
          end do
       end associate
       close(u)

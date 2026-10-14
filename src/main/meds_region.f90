@@ -23,18 +23,18 @@ module meds_region
    use meds_kinds,                  only : wp, ik
    use meds_constants,              only : day_sec
    use meds_numerics,               only : ascending_order
-   use meds_config,                 only : meds_config_t
+   use meds_config,                 only : meds_config_t, validate_config
    use meds_config_io,              only : load_meds_config
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days, time_to_string, &
                                            years_between
    use meds_site_state_types,       only : site_free
-   use meds_init,                   only : init_bare_ground
+   use meds_init,                   only : init_bare_ground, seed_bare_ground
    use meds_forcing_types,          only : met_source_t, met_cells_t
    use meds_forcing_config,         only : MET_PATH_LEN
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
-   use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK
-   use meds_era5land_reader,        only : era5land_select_box, era5land_path, era5land_default_static, &
-                                           ERA_OK, ERA_ERR_NO_CELL
+   use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
+                                           surface_inputs_t, read_surface_inputs, apply_surface_inputs
+   use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
                                            open_output_files, attach_output, ensure_output_dir,   &
@@ -81,9 +81,12 @@ contains
       logical, optional,   intent(in)    :: verbose
       type(met_cells_t)          :: cells
       character(len=MET_PATH_LEN) :: static
-      integer(ik)                :: st, p, n, j
+      integer(ik)                :: st, p, n, j, deepest
       integer(ik), allocatable   :: ids(:)
       character(len=24)          :: idstr
+      type(surface_inputs_t)     :: inputs
+      type(meds_config_t)        :: pcfg
+      character(len=:), allocatable :: msg
 
       ok = .false.
       if (present(verbose)) reg%verbose = verbose
@@ -93,9 +96,7 @@ contains
       associate (cfg => reg%cfg)
 
       !----- The cells: the box's valid cells with enough land, in row-major order (§5). ---------!
-      static = cfg%forcing%static_file
-      if (len_trim(static) == 0) static = era5land_default_static()
-      static = era5land_path(static, cfg%forcing%data_path, '', 0_ik, 0_ik)
+      static = era5land_static_file(cfg%forcing)
       call era5land_select_box(static, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
       if (st == ERA_ERR_NO_CELL) then
          write(*,'(a,4(f0.3,1x),a,f0.2)') ' region: no valid cell in box_nwse = ', cfg%region%box_nwse, &
@@ -135,23 +136,38 @@ contains
          end if
       end do
 
+      !----- Each cell's soil and site index, from the [surface] maps, read once for every cell. ----!
+      call read_surface_inputs(cfg%surface, static, cells, inputs, msg)
+      if (len(msg) > 0) then
+         write(*,'(2a)') ' region: ', msg
+         return
+      end if
+
       call met_open(reg%met_src, cfg%forcing, stat=st, run_start=cfg%start_time,                  &
                     run_end=cfg%end_time, cells=cells)
       if (st /= MET_OK) return
       if (reg%verbose) write(*,'(3a)') ' force : met forcing ON (ED_ERA5land archive ', trim(cfg%forcing%data_path), ')'
 
-      !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground. !
+      !----- One polygon per cell, each at its cell centre and orography, in UTC, from bare ground,  !
+      !      with its own configuration: the run's, with the cell's soil and site index. -------------!
       allocate(reg%poly(n), reg%out_bufs(n))
+      deepest = 1_ik
       do p = 1_ik, n
          associate (poly => reg%poly(p))
             poly%cell = p
             poly%id   = ids(p)
             write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
                                                      cells%lon(p), ')'
-            call init_bare_ground(poly%site, cfg, N_PATCH_INIT)
-            call polygon_prepare(cfg, reg%met_src, poly, cells%lat(p), cells%lon(p),               &
+            pcfg = cfg
+            call apply_surface_inputs(inputs, p, pcfg)
+            call validate_config(pcfg)
+            call init_bare_ground(poly%site, pcfg, N_PATCH_INIT)
+            call seed_bare_ground(poly%site, pcfg)
+            call polygon_prepare(pcfg, reg%met_src, poly, cells%lat(p), cells%lon(p),              &
                                  cells%elevation(p), keep_fast_state=.false.,                     &
                                  keep_soil_carbon=.false., patch_threads=1_ik, verbose=.false.)
+            if (poly%fast_ctx%col_config%soil%n_active >                                            &
+                reg%poly(deepest)%fast_ctx%col_config%soil%n_active) deepest = p
          end associate
       end do
 
@@ -160,18 +176,20 @@ contains
       allocate(reg%cost(n)) ; reg%cost = 0.0_wp
 
       !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
-      !      the polygon axis. A detail polygon: its own full single-site file set as well. ----------!
+      !      the polygon axis. Each polygon writes its own soil layers and leaves the rest of the axis  !
+      !      empty; the files' layer depths are the deepest polygon's. A detail polygon: its own full   !
+      !      single-site file set as well. -----------------------------------------------------------!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%poly(1)%fast_ctx%col_config%soil, reg%out_files, reg%verbose, &
-                                cells=cells, polygon_id=ids)
+         call open_output_files(cfg, reg%poly(deepest)%fast_ctx%col_config%soil, reg%out_files,          &
+                                reg%verbose, cells=cells, polygon_id=ids)
          do p = 1_ik, n
             associate (poly => reg%poly(p))
                call attach_output(reg%out_files, reg%out_bufs(p), poly)
                if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
                   allocate(poly%detail_files, poly%detail_bufs(1))
                   write(idstr,'(i0)') poly%id
-                  call open_output_files(cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
+                  call open_output_files(poly%cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
                                          prefix=trim(cfg%output%prefix)//'-p'//trim(idstr))
                   call attach_output(poly%detail_files, poly%detail_bufs(1), poly)
                end if

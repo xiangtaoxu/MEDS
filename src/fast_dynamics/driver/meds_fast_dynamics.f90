@@ -20,7 +20,7 @@ module meds_fast_dynamics
                                      par_w_2_umol,                                                            &
                                      stefan
    use meds_numerics,         only : ascending_order
-   use meds_config,           only : meds_config_t, soil_column_layers
+   use meds_config,           only : meds_config_t, soil_column_params
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
    use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
@@ -42,7 +42,7 @@ module meds_fast_dynamics
                                      PY_LWDOWN, PY_PAR_BEAM, PY_PAR_DIFFUSE, PY_NIR_BEAM,         &
                                      PY_NIR_DIFFUSE, PY_SNOWFALL, PY_CO2, PY_COSZ, PY_RHO_AIR,    &
                                      PY_RAINF, N_PYDIAG, cohort_diag_grow, patch_diag_grow
-   use meds_column_params, only : n_soil_layer_max, PSI_INIT, build_soil_hydr_params, build_soil_therm_params
+   use meds_column_params, only : n_soil_layer_max, PSI_INIT
    use meds_column_state_types, only : xi_accum_t, snow_column_t
    use meds_forcing_types,    only : met_source_t, met_cursor_t, met_forcing_t
    use meds_forcing_kernels,  only : precip_phase
@@ -115,7 +115,7 @@ module meds_fast_dynamics
       real(wp) :: rad_sw_top    = 400.0_wp          !< [W/m2] shortwave into the canopy (leaves)
       real(wp) :: rad_sw_ground = 60.0_wp           !< [W/m2] shortwave reaching the ground
       real(wp) :: precip          = 0.0_wp            !< [kg/m2/s] total precipitation (split like any record)
-      real(wp) :: theta_init      = 0.30_wp         !< [m3/m3] initial soil moisture (all layers)
+      real(wp) :: theta_init(n_soil_layer_max) = 0.30_wp   !< [m3/m3] initial soil moisture, per layer
       real(wp) :: soil_temp_init  = 288.0_wp        !< [K]     initial soil + CAS temperature
       !----- Threads for this polygon's patch loop: [run].n_threads in a site run, 1 in a region,   !
       !      whose threads go to the polygons instead (polygon_prepare sets it). ------------------!
@@ -143,21 +143,9 @@ contains
    subroutine build_fast_context(cfg, ctx)
       type(meds_config_t),  intent(in)  :: cfg
       type(fast_context_t), intent(out) :: ctx
-      real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms
-      integer(ik) :: n_soil_layer
-      !----- The physical soil column, from [soil_column]. These were eleven hydraulic and three   !
-      !      thermal LITERALS here, so the column's depth, layer count and texture could not be    !
-      !      changed without a recompile -- and `depth` is the value the docs flag as shallower     !
-      !      than the annual thermal damping depth, which made that defect unreachable from a       !
-      !      config file. Its layers come from soil_column_layers. ------------------------------!
-      associate (sc => cfg%soil_column)
-         call soil_column_layers(sc, soil_bottoms, n_soil_layer)
-         call build_soil_hydr_params(n_soil_layer, sc%retention, soil_bottoms, sc%theta_sat,       &
-                                     sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,        &
-                                     sc%psi_fc, ctx%col_config%soil)
-         call build_soil_therm_params(n_soil_layer, sc%solid_conductivity, sc%dry_conductivity,    &
-                                      sc%dry_heat_capacity, ctx%col_config%soil_thermal)
-      end associate
+      !----- The physical soil column, from [soil_column]: its layers, and each layer's texture,  !
+      !      one for the whole column or one per layer from the soil maps (soil_column_params). -!
+      call soil_column_params(cfg%soil_column, ctx%col_config%soil, ctx%col_config%soil_thermal)
       !----- Autotrophic maintenance-respiration + heterotrophic-Rh + prescribed soil-C pool. ---!
       !----- Plant hydraulics: flatten the [hydraulics] config into the per-PFT hydraulics_params and   !
       !       build the vulnerability lookup table (dormant at kexp=2; consulted only if wood_kexp     !
@@ -178,7 +166,12 @@ contains
       ctx%soil_emiss     = cfg%soil%ground_emissivity
       ctx%col_config%energy = cfg%energy      ! [energy]       -> soil-thermal solver opts
       !----- The initial soil state, from [init]: what init_fast_reservoirs seeds every layer with. --!
-      ctx%theta_init     = cfg%init_soil_theta
+      !      A column with a texture per layer starts each layer at its own field capacity. ----------!
+      if (cfg%soil_column%n_layer_values > 0_ik) then
+         ctx%theta_init = ctx%col_config%soil%theta_fc
+      else
+         ctx%theta_init = cfg%init_soil_theta
+      end if
       ctx%soil_temp_init = cfg%init_soil_temp
       ctx%col_config%snow   = cfg%snow        ! [snow]         -> snow physical parameter table
       ctx%col_config%aero   = cfg%aero        ! [aerodynamics] -> canopy-aerodynamics constants
@@ -224,11 +217,11 @@ contains
       nsl = ctx%col_config%soil%n_active
       do ip = 1_ik, site%patch%n
          associate (cas => site%patch%cas(ip), se => site%patch%soil_e(ip), sw => site%patch%soil_w(ip))
-            sw%theta(1:nsl)  = ctx%theta_init ; sw%w_surface = 0.0_wp
+            sw%theta(1:nsl)  = ctx%theta_init(1:nsl) ; sw%w_surface = 0.0_wp
             sw%w_surface_enth = 0.0_wp        ! dry pond -> zero enthalpy (issue #78 item 4)
             do k = 1_ik, nsl
                se%soil_energy(k) = temp_to_internal_energy(ctx%col_config%soil_thermal%soil_dry_heat_capacity(k),    &
-                                   ctx%theta_init * rho_h2o, ctx%soil_temp_init, 1.0_wp)
+                                   ctx%theta_init(k) * rho_h2o, ctx%soil_temp_init, 1.0_wp)
                se%soil_temp(k)   = ctx%soil_temp_init ; se%soil_fliq(k) = 1.0_wp
             end do
             cas%can_shv      = ctx%shv_atm ; cas%can_co2 = ctx%co2_atm
