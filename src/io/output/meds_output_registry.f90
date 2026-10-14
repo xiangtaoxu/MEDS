@@ -82,7 +82,6 @@ module meds_output_registry
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
-   public :: manager_restrict_region
    public :: activate_site_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
@@ -1174,22 +1173,6 @@ contains
       files%diag%soil_ready = .false.
    end subroutine manager_setup
 
-   !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
-   !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
-   !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
-   !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
-   !      Called after manager_setup and the overrides, before manager_finalize, so the slab size      !
-   !      manager_finalize computes drops with the cohort axis, and so does every polygon's buffers. --!
-   subroutine manager_restrict_region(files)
-      type(output_files_t),  intent(inout) :: files
-      integer(ik) :: k
-      do k = 1_ik, files%reg%nvar
-         if (ragged_dim(files%reg%var(k)%dim)) files%reg%var(k)%enabled = .false.
-         files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
-      end do
-      call build_freq_index(files%reg)
-   end subroutine manager_restrict_region
-
    !----- Largest slab length any LIVE variable can produce (see manager_finalize). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
@@ -1371,8 +1354,7 @@ contains
       !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
       need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
       site%patch%diag%fast_rows = files%fast_loop_on
-      !----- Additive: a site that writes into two file sets (a region's detail polygon) keeps every  !
-      !      block either set needs. ------------------------------------------------------------------!
+      !----- Additive: a block already on stays on. -----------------------------------------------!
       need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
       need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
       call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)

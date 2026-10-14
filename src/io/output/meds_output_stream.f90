@@ -4,12 +4,13 @@
 ! per-tier, per-time-chunk file (dims + registry-driven variable defs + CF metadata), append one  !
 ! averaged record, and roll to a new file at the chunk boundary (§5). Reuses meds_netcdf_c.       !
 !                                                                                          !
-! One serializer writes every file set. A site's (or a region's detail polygon's) set has one     !
-! polygon's buffers and no polygon axis. A region's set has every polygon's buffers and a         !
-! `polygon` dimension after `time` (MEDS_POLYGON_RUNTIME_PLAN.md §6): each variable of a record is !
-! packed over the polygons into one hyperslab, with the fill value for a polygon that does not     !
-! hold the record (it failed earlier that month). Either way a slab entry past a polygon's live    !
-! length reads as the fill value.                                                                  !
+! One serializer writes every file set. A site's set has one polygon's buffers and no polygon      !
+! axis. A region's set has every polygon's buffers and a `polygon` dimension after `time`          !
+! (MEDS_POLYGON_RUNTIME_PLAN.md §6, §14 RP6): each variable of a record is packed over the          !
+! polygons into one hyperslab, with the fill value for a polygon that does not hold the record (it  !
+! failed earlier that month). Cohort and patch axes are as long as the largest live count among    !
+! the polygons when the file opens, and each polygon's live counts are its own n_cohort and         !
+! n_patch. Either way a slab entry past a polygon's live length reads as the fill value.            !
 !                                                                                          !
 ! netCDF wall: this is the ONLY diagnostic module that touches C; referenced from the manager      !
 ! (main-only), never from the stepper.                                                             !
@@ -46,7 +47,7 @@ contains
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(in)    :: bufs(:)
       integer(ik),            intent(in)    :: t, i
-      integer(ik) :: bucket, np, p, p1, fc
+      integer(ik) :: bucket, np, p, p1, fc, n_cohort, n_patch
       np = size(bufs, kind=ik)
       if (np /= max(files%n_polygon, 1_ik))                                                         &
          error stop 'write_record: one set of buffers per polygon of the file set'
@@ -74,8 +75,15 @@ contains
          end if
          bucket = bucket_key(r1%t_open, fc)
          if (files%stream(t)%ncid < 0_ik .or. bucket /= files%stream(t)%chunk_bucket) then
+            !----- The file's cohort and patch axes: the largest live count among the polygons. ----!
+            n_cohort = 0_ik ; n_patch = 0_ik
+            do p = p1, np
+               if (bufs(p)%queue(t)%n < i) cycle
+               n_cohort = max(n_cohort, bufs(p)%queue(t)%rec(i)%n_cohort)
+               n_patch  = max(n_patch,  bufs(p)%queue(t)%rec(i)%n_patch)
+            end do
             call stream_close_file(files%stream(t))
-            call open_file(files, t, r1, fc, bucket)
+            call open_file(files, t, r1, fc, bucket, n_cohort, n_patch)
          end if
       end associate
       call write_one(files, bufs, t, i, p1)
@@ -147,16 +155,17 @@ contains
 
    !=======================================================================================!
    !  Create a file: dims, the polygon axis and coordinates (a region's), the tier's variables    !
-   !  and CF metadata (§5.3). A site file's cohort/patch axes are trimmed to the live count of the  !
-   !  record that opens it.                                                                        !
+   !  and CF metadata (§5.3). The cohort/patch axes are trimmed to the live counts of the record  !
+   !  that opens it, the largest among a region's polygons.                                       !
    !=======================================================================================!
-   subroutine open_file(files, tier, pr, file_chunk, bucket)
+   subroutine open_file(files, tier, pr, file_chunk, bucket, n_cohort, n_patch)
       type(output_files_t),   intent(inout) :: files
       integer(ik),            intent(in)    :: tier, file_chunk, bucket
       type(pending_record_t), intent(in)    :: pr
+      integer(ik),            intent(in)    :: n_cohort, n_patch   !< the opening record's live counts
       character(len=512) :: path
       character(len=16)  :: stamp
-      integer(c_int)     :: ncid, dt, dpo, dc, dp, ds, dpf, dsz, vid, dims1(1)
+      integer(c_int)     :: ncid, dt, dpo, dc, dp, ds, dpf, dsz, vid, dims1(1), dims2(2)
       integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col
       integer(c_size_t)  :: st1(1), cn1(1)
       integer(ik)        :: j, k, np, cohort_dim, patch_dim
@@ -179,16 +188,15 @@ contains
          case (DIM_SOIL_PATCH) ; hasp = .true. ; hass = .true.
          end select
       end do
-      if (poly .and. (hasc .or. hasp)) error stop 'open_file: a region file holds only fixed-shape variables'
 
-      !----- Trim the cohort/patch axes to the live count of the record that opens this file. The     !
-      !      count is invariant across a <=1-month file (write_record capped file_chunk for cohort/   !
-      !      patch tiers), so this dim fits every record in the file; write_one asserts it.           !
+      !----- Trim the cohort/patch axes to the live counts of the record that opens this file. A     !
+      !      polygon's count is invariant across a <=1-month file (write_record capped file_chunk for !
+      !      cohort/patch tiers), so this dim fits every record in the file; write_one asserts it.    !
       !      max(.,1) avoids a zero-length dim on an empty (bare-ground) window.  --------------------!
-      if (hasc .and. pr%n_cohort > files%cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
-      if (hasp .and. pr%n_patch  > files%patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
-      cohort_dim = max(pr%n_cohort, 1_ik)
-      patch_dim  = max(pr%n_patch,  1_ik)
+      if (hasc .and. n_cohort > files%cohort_max) error stop 'meds_output_stream: n_cohort exceeds cohort_max buffer'
+      if (hasp .and. n_patch  > files%patch_max)  error stop 'meds_output_stream: n_patch exceeds patch_max buffer'
+      cohort_dim = max(n_cohort, 1_ik)
+      patch_dim  = max(n_patch,  1_ik)
 
       stamp = chunk_stamp(pr%t_open, file_chunk)
       if (len_trim(stamp) > 0) then
@@ -221,8 +229,26 @@ contains
          stream%v_minute = int(def_scalar_var(ncid, dt, 'minute', NC_INT, '1', 'clock minute (period start)'), ik)
          stream%v_second = int(def_scalar_var(ncid, dt, 'second', NC_INT, '1', 'clock second (period start)'), ik)
       end if
-      if (hasc) stream%v_ncohort = int(def_scalar_var(ncid, dt, 'n_cohort', NC_INT, '1', 'live cohorts this record'), ik)
-      if (hasp) stream%v_npatch  = int(def_scalar_var(ncid, dt, 'n_patch',  NC_INT, '1', 'live patches this record'), ik)
+      !----- The live counts: one per record, or per record and polygon in a region's file. -------!
+      if (hasc .and. .not. poly)                                                                     &
+         stream%v_ncohort = int(def_scalar_var(ncid, dt, 'n_cohort', NC_INT, '1', 'live cohorts this record'), ik)
+      if (hasp .and. .not. poly)                                                                     &
+         stream%v_npatch  = int(def_scalar_var(ncid, dt, 'n_patch',  NC_INT, '1', 'live patches this record'), ik)
+      if (poly .and. (hasc .or. hasp)) then
+         dims2 = [dt, dpo]
+         if (hasc) then
+            call nc_check(nc_def_var_f(ncid, 'n_cohort', NC_INT, 2_c_int, dims2, vid), 'def n_cohort')
+            call put_var_text(ncid, vid, 'long_name', 'the polygon''s live cohorts this record (the rest is fill)')
+            call nc_check(nc_put_att_int_f(ncid, vid, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
+            stream%v_ncohort = int(vid, ik)
+         end if
+         if (hasp) then
+            call nc_check(nc_def_var_f(ncid, 'n_patch', NC_INT, 2_c_int, dims2, vid), 'def n_patch')
+            call put_var_text(ncid, vid, 'long_name', 'the polygon''s live patches this record (the rest is fill)')
+            call nc_check(nc_put_att_int_f(ncid, vid, '_FillValue', NC_INT, int(MISSING_INT, c_int)), 'fill')
+            stream%v_npatch = int(vid, ik)
+         end if
+      end if
 
       !----- A region's polygon axis: its id, its cell centre and its grid indices, so a region maps  !
       !      back onto the lat/lon grid in one step (OR7). --------------------------------------------!
@@ -455,12 +481,16 @@ contains
       t0 = int(stream%nrec, c_size_t) ; i1 = [t0]
       np  = size(bufs, kind=ik)
       npo = files%n_polygon
-      !----- The cohort/patch axes were trimmed to the opening record's live count; every record in a  !
-      !      <=1-month file shares that count (§4.4). Assert it rather than silently overflow the slab. !
-      if (stream%has_cohort .and. r1%n_cohort > stream%cohort_dim)                                    &
-         error stop 'meds_output_stream: cohort count grew within a file (cohort output needs file_chunk <= month)'
-      if (stream%has_patch .and. r1%n_patch > stream%patch_dim)                                       &
-         error stop 'meds_output_stream: patch count grew within a file (patch output needs file_chunk <= month)'
+      !----- The cohort/patch axes were trimmed to the opening record's live counts; every record in a !
+      !      <=1-month file shares each polygon's count (§4.4). Assert it rather than silently        !
+      !      overflow the slab. ----------------------------------------------------------------------!
+      do p = 1_ik, np
+         if (bufs(p)%queue(t)%n < i) cycle
+         if (stream%has_cohort .and. bufs(p)%queue(t)%rec(i)%n_cohort > stream%cohort_dim)            &
+            error stop 'meds_output_stream: cohort count grew within a file (cohort output needs file_chunk <= month)'
+         if (stream%has_patch .and. bufs(p)%queue(t)%rec(i)%n_patch > stream%patch_dim)               &
+            error stop 'meds_output_stream: patch count grew within a file (patch output needs file_chunk <= month)'
+      end do
       !----- calendar (period start) + live counts. ---!
       call nc_check(nc_put_var1_double(ncid, int(stream%v_time, c_int), i1, time_to_decimal_year(r1%t_open)), 'put time')
       call put_int_rec(ncid, stream%v_year,  t0, int(r1%t_open%year,  c_int))
@@ -469,8 +499,13 @@ contains
       if (stream%v_hour   >= 0_ik) call put_int_rec(ncid, stream%v_hour,   t0, int(r1%t_open%hour,   c_int))
       if (stream%v_minute >= 0_ik) call put_int_rec(ncid, stream%v_minute, t0, int(r1%t_open%minute, c_int))
       if (stream%v_second >= 0_ik) call put_int_rec(ncid, stream%v_second, t0, int(r1%t_open%second, c_int))
-      if (stream%has_cohort) call put_int_rec(ncid, stream%v_ncohort, t0, int(r1%n_cohort, c_int))
-      if (stream%has_patch)  call put_int_rec(ncid, stream%v_npatch,  t0, int(r1%n_patch,  c_int))
+      if (npo > 0_ik) then
+         if (stream%has_cohort) call put_count_rec(stream%v_ncohort, .true.)
+         if (stream%has_patch)  call put_count_rec(stream%v_npatch,  .false.)
+      else
+         if (stream%has_cohort) call put_int_rec(ncid, stream%v_ncohort, t0, int(r1%n_cohort, c_int))
+         if (stream%has_patch)  call put_int_rec(ncid, stream%v_npatch,  t0, int(r1%n_patch,  c_int))
+      end if
 
       do j = 1_ik, reg%nidx(t)
          k = reg%idx_freq(j, t)
@@ -534,6 +569,27 @@ contains
       end do
       stream%nrec = stream%nrec + 1_ik
       end associate
+
+   contains
+      !----- A region record's live counts, one per polygon; the fill value for a polygon without it. !
+      subroutine put_count_rec(vid_ik, cohorts)
+         integer(ik), intent(in) :: vid_ik
+         logical,     intent(in) :: cohorts
+         integer(c_int)    :: counts(np)
+         integer(c_size_t) :: st2(2), cn2(2)
+         integer(ik)       :: q
+         counts = int(MISSING_INT, c_int)
+         do q = 1_ik, np
+            if (bufs(q)%queue(t)%n < i) cycle
+            if (cohorts) then
+               counts(q) = int(bufs(q)%queue(t)%rec(i)%n_cohort, c_int)
+            else
+               counts(q) = int(bufs(q)%queue(t)%rec(i)%n_patch, c_int)
+            end if
+         end do
+         st2 = [t0, 0_c_size_t] ; cn2 = [1_c_size_t, int(np, c_size_t)]
+         call nc_check(nc_put_vara_int(ncid, int(vid_ik, c_int), st2, cn2, counts), 'put live counts')
+      end subroutine put_count_rec
    end subroutine write_one
 
    !----- How many slab entries of variable k a record holds: its live length, or for the soil-by- !

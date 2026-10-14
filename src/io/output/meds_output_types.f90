@@ -232,7 +232,7 @@ module meds_output_types
    !==========================================================================================!
    ! The output manager comes in two types (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
    ! netCDF-FREE plain data; only output_serialize touches C.                                        !
-   !   output_files_t   -- one set of output files (a site's, a region's, a detail polygon's) and    !
+   !   output_files_t   -- one set of output files (a site's or a region's) and                      !
    !                       what writing them needs: registry, diagnostic parameters, file settings,  !
    !                       stream handles. Read-only while a step runs.                              !
    !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !

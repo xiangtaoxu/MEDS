@@ -347,7 +347,6 @@ soil_chemistry_map = "ED_ERA5land_soil_biogeochemical_properties_v2.nc"
 [region]
 box_nwse          = [42.95, -76.95, 41.95, -75.95]   # [N, W, S, E]; may cross 0 or 180 degrees
 land_fraction_min = 0.5                              # skip lakes and fractional coastal cells
-detail_polygons   = [1714634]                        # optional: these also write single-site files
 cell_mask         = "natural_mask.nc"                # optional: a map on the forcing grid ...
 cell_mask_var     = "mask"                           # ... its (lat, lon) variable ...
 cell_mask_min     = 0.5                              # ... and the value a cell needs to run
@@ -363,10 +362,13 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   must be on the forcing grid: the file's `lat` and `lon` must be the ED_ERA5land static file's, or the
   run stops. MEDS never regrids a map; the run log says how many cells the mask kept.
 - **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
-  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold the variables that
-  have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort
-  and patch variables, and the sub-daily tier, are written only for `detail_polygons`, as ordinary
-  single-site files named `<prefix>-p<polygon id>-...`.
+  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold every variable and
+  tier a site run writes, the sub-daily one included; `[output].io_config` chooses them, and with
+  them the volume. A cohort or patch variable is `(time, polygon, cohort)` or `(time, polygon,
+  patch)`, its axis as long as the largest live count among the polygons when the file opens;
+  `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
+  are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
+  the run writes nothing more, so a closed file is never rewritten.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[surface]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[surface].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
@@ -392,10 +394,10 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
-  year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
-  hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
-  same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
-  §14 for the production plan.
+  year on one thread and 81 s on 40 (measured with a detail polygon, before the region files held
+  every variable). The hourly tier's cost grows with the polygons; choose its variables with
+  `[output].io_config`. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 for the production
+  plan.
 
 ## Surface maps
 

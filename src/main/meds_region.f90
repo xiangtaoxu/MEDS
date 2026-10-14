@@ -16,10 +16,11 @@
 ! [run].n_threads threads, each with a single-threaded patch loop (#183 R3).                       !
 !                                                                                          !
 ! Each polygon sits at its cell's centre, at the cell's orography, in UTC, and starts from bare    !
-! ground (OR8) or from its row of a region state file. Region files hold the fixed-shape variables;!
-! [region].detail_polygons also write ordinary single-site files, named <prefix>-p<polygon id>,    !
-! with every variable and tier. With [state].write_state the region writes one state file, every   !
-! polygon in it (meds_io, OR14), every interval_years and at the end.                              !
+! ground (OR8) or from its row of a region state file. The region's files hold every variable and  !
+! tier, each polygon's slice behind a `polygon` axis, cohort and patch axes padded to the largest   !
+! polygon's (OR13). With [state].write_state the region writes one state file, every polygon in it !
+! (meds_io, OR14), every interval_years and at the end. Once a polygon has failed, the end of the   !
+! run writes nothing more.                                                                         !
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
@@ -77,8 +78,8 @@ contains
    end function region_done
 
    !---------------------------------------------------------------------------------------!
-   ! region_open -- config -> the box's cells -> the shared forcing source -> one bare-ground     !
-   ! polygon per cell -> the region files and the detail polygons' own files.                    !
+   ! region_open -- config -> the box's cells -> the shared forcing source -> one polygon per    !
+   ! cell -> the region files.                                                                   !
    !---------------------------------------------------------------------------------------!
    subroutine region_open(path, reg, ok, verbose)
       character(len=*),    intent(in)    :: path
@@ -89,7 +90,6 @@ contains
       character(len=MET_PATH_LEN) :: static
       integer(ik)                :: st, p, n, j, deepest
       integer(ik), allocatable   :: ids(:)
-      character(len=24)          :: idstr
       type(surface_inputs_t)     :: inputs
       type(meds_config_t)        :: pcfg
       character(len=:), allocatable :: msg
@@ -132,18 +132,10 @@ contains
          end if
       end if
 
-      !----- The polygon ids, each cell's row-major index on the global grid. Every detail polygon   !
-      !      must be one of them, checked before anything is opened or built. -----------------------!
+      !----- The polygon ids, each cell's row-major index on the global grid. -----------------------!
       n = cells%ncell
       allocate(ids(n))
       ids = cells%row * cells%nlon + cells%col
-      do j = 1_ik, cfg%region%n_detail
-         if (.not. any(ids == cfg%region%detail_polygons(j))) then
-            write(*,'(a,i0,a)') ' region: detail polygon ', cfg%region%detail_polygons(j),            &
-                                ' is not a polygon of this region'
-            return
-         end if
-      end do
 
       !----- Each cell's soil and site index, from the [surface] maps, read once for every cell. ----!
       call read_surface_inputs(cfg%surface, static, cells, inputs, msg)
@@ -214,25 +206,15 @@ contains
       if (cfg%state_write_state) call ensure_output_dir(trim(cfg%state_output_dir))
       allocate(reg%cost(n)) ; reg%cost = 0.0_wp
 
-      !----- Output. The region files: the configured variables less the ragged and fast ones, with  !
-      !      the polygon axis. Each polygon writes its own soil layers and leaves the rest of the axis  !
-      !      empty; the files' layer depths are the deepest polygon's. A detail polygon: its own full   !
-      !      single-site file set as well. -----------------------------------------------------------!
+      !----- Output. The region files: every configured variable and tier, with the polygon axis.   !
+      !      Each polygon writes its own soil layers, cohorts and patches and leaves the rest of each  !
+      !      axis empty; the files' layer depths are the deepest polygon's. ---------------------------!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
          call open_output_files(cfg, reg%poly(deepest)%fast_ctx%col_config%soil, reg%out_files,          &
                                 reg%verbose, cells=cells, polygon_id=ids)
          do p = 1_ik, n
-            associate (poly => reg%poly(p))
-               call attach_output(reg%out_files, reg%out_bufs(p), poly)
-               if (any(cfg%region%detail_polygons(1:cfg%region%n_detail) == poly%id)) then
-                  allocate(poly%detail_files, poly%detail_bufs(1))
-                  write(idstr,'(i0)') poly%id
-                  call open_output_files(poly%cfg, poly%fast_ctx%col_config%soil, poly%detail_files, .false., &
-                                         prefix=trim(cfg%output%prefix)//'-p'//trim(idstr))
-                  call attach_output(poly%detail_files, poly%detail_bufs(1), poly)
-               end if
-            end associate
+            call attach_output(reg%out_files, reg%out_bufs(p), reg%poly(p))
          end do
       end if
 
@@ -240,8 +222,6 @@ contains
          write(*,'(a)') '==================== MEDS region run ===================='
          write(*,'(a,4(1x,f0.3),a,i0,a,f0.2,a)') ' region: box_nwse =', cfg%region%box_nwse, ', ',    &
                n, ' polygons (land fraction >= ', cfg%region%land_fraction_min, ')'
-         if (cfg%region%n_detail > 0) write(*,'(a,i0,a)') ' region: ', cfg%region%n_detail,        &
-               ' detail polygon(s) with single-site files'
          write(*,'(5a)') ' run   : ', time_to_string(cfg%start_time), ' -> ', time_to_string(cfg%end_time)
          write(*,'(a,f0.2,a)') ' span  : ', years_between(reg%now, cfg%end_time), ' yr'
       end if
@@ -366,16 +346,11 @@ contains
       call state_file_close(sf)
    end subroutine region_write_state
 
-   !----- Write every polygon's queued records: the region files, then each detail polygon's own. --!
+   !----- Write every polygon's queued records into the region files. -----------------------------!
    subroutine io_phase(reg)
       type(meds_region_t), intent(inout) :: reg
-      integer(ik) :: p
       if (.not. reg%cfg%output%enabled) return
       call output_serialize(reg%out_files, reg%out_bufs)
-      do p = 1_ik, size(reg%poly, kind=ik)
-         if (allocated(reg%poly(p)%detail_bufs))                                                  &
-            call output_serialize(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
-      end do
    end subroutine io_phase
 
    !----- One line for the region at a year boundary: the polygons' mean and range of AGB and LAI. -!
@@ -395,17 +370,20 @@ contains
    !---------------------------------------------------------------------------------------!
    ! region_finalize -- the terminal state file, the per-polygon status table (state,             !
    ! conservation), close every file and the forcing source. DRIVER_ERR_AREA if any polygon's      !
-   ! patch areas no longer sum to 1.                                                               !
+   ! patch areas no longer sum to 1. Once a polygon has failed, it writes nothing more: no state   !
+   ! file and no partial periods, so a closed chunk file is never made again from scratch.         !
    !---------------------------------------------------------------------------------------!
    subroutine region_finalize(reg, status)
       type(meds_region_t),   intent(inout) :: reg
       integer(ik), optional, intent(out)   :: status
       integer(ik) :: p, st, n_bad
       real(wp)    :: a1
+      logical     :: failed
 
       st = DRIVER_OK ; n_bad = 0_ik
-      !----- Always the true terminal state, so a restart resumes exactly here. ---------------------!
-      if (reg%cfg%state_write_state) call region_write_state(reg)
+      failed = any(reg%poly(:)%status /= DRIVER_OK)
+      !----- The true terminal state, so a restart resumes exactly here. -----------------------------!
+      if (reg%cfg%state_write_state .and. .not. failed) call region_write_state(reg)
       if (reg%verbose) then
          write(*,'(a)') '-----------------------------------------------------------------------------'
          write(*,'(a)') '  polygon      lat      lon  AGB kgC/m2    LAI  cohorts  area error  energy/water fails'
@@ -426,13 +404,7 @@ contains
       end do
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
 
-      if (reg%cfg%output%enabled) then
-         call output_close(reg%out_files, reg%out_bufs)
-         do p = 1_ik, size(reg%poly, kind=ik)
-            if (allocated(reg%poly(p)%detail_bufs))                                               &
-               call output_close(reg%poly(p)%detail_files, reg%poly(p)%detail_bufs)
-         end do
-      end if
+      if (reg%cfg%output%enabled) call output_close(reg%out_files, reg%out_bufs, flush_partial=.not. failed)
       call met_close(reg%met_src)
       if (present(status)) status = st
    end subroutine region_finalize

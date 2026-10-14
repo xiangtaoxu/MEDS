@@ -167,7 +167,10 @@ module meds_config_keys
       retired_key_t('pft.growth_dbh_slope', GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_dbh_cap',   GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_dbh_max',   GROWTH_CURVE_GONE),                                  &
-      retired_key_t('pft.growth_lai_slope', GROWTH_CURVE_GONE) ]
+      retired_key_t('pft.growth_lai_slope', GROWTH_CURVE_GONE),                                  &
+      retired_key_t('region.detail_polygons', 'the region files hold every variable and tier for '// &
+                    'every polygon, cohort, patch and sub-daily output included; choose the '//      &
+                    'variables with [output].io_config') ]
 
    !----- What the check found, one line per key, reported with the missing required keys. -----!
    integer, parameter :: MAX_REPORT = 256

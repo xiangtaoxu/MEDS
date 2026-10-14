@@ -21,7 +21,7 @@ module meds_config_io
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : soil_column_config_t,                                              &
                                pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
+   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
    use meds_surface_opts, only : soil_maps_on
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -682,14 +682,14 @@ contains
 
    !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
    !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
-   !      required; the selection rule and the detail list default. In site mode a [region] key      !
+   !      required; the selection rule and the cell mask default. In site mode a [region] key        !
    !      would parse and do nothing, so it is rejected.  -------------------------------------------!
    subroutine load_region_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
-      real(wp)    :: buf(MAX_DETAIL_POLYGONS + 1)
-      integer(ik) :: nout, i
+      real(wp)    :: buf(5)
+      integer(ik) :: nout
       select case (trim(toml_string(t, 'run.mode', 'site')))
       case ('site')   ; cfg%run_mode = RUN_MODE_SITE
       case ('region') ; cfg%run_mode = RUN_MODE_REGION
@@ -710,17 +710,6 @@ contains
       cfg%region%cell_mask         = toml_string(t, 'region.cell_mask', '')
       cfg%region%cell_mask_var     = toml_string(t, 'region.cell_mask_var', 'mask')
       cfg%region%cell_mask_min     = toml_real(t, 'region.cell_mask_min', 0.5_wp)
-      if (toml_has(t, 'region.detail_polygons')) then
-         call toml_real_array(t, 'region.detail_polygons', buf, nout)
-         if (nout > MAX_DETAIL_POLYGONS)                                                           &
-            error stop 'load_meds_config: [region].detail_polygons lists more than 64 polygons'
-         do i = 1_ik, nout
-            if (buf(i) < 0.0_wp .or. abs(buf(i) - anint(buf(i))) > 0.0_wp)                          &
-               error stop 'load_meds_config: [region].detail_polygons must be polygon ids (integers >= 0)'
-            cfg%region%detail_polygons(i) = nint(buf(i), ik)
-         end do
-         cfg%region%n_detail = nout
-      end if
    end subroutine load_region_config
 
    !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !

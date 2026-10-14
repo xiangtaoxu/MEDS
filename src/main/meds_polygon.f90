@@ -39,7 +39,7 @@ module meds_polygon
    use meds_output_types,           only : output_files_t, output_buffers_t
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
-                                           manager_set_soil_params, manager_restrict_region,      &
+                                           manager_set_soil_params,                               &
                                            activate_site_diag, apply_variable_override,          &
                                            parse_stream_mask, build_freq_index, OVR_TRUE,         &
                                            OVR_FALSE, OVR_MASK
@@ -77,9 +77,6 @@ module meds_polygon
       type(site_t)           :: site
       type(fast_context_t)   :: fast_ctx          !< built only if fast_biophysics_on
       type(met_cursor_t)     :: met_cur           !< set only if forcing_on
-      !----- A region's detail polygon also writes a full single-site file set of its own. ---------!
-      type(output_files_t),  allocatable :: detail_files
-      type(output_buffers_t), allocatable :: detail_bufs(:)   !< one polygon's: an array of one, as a site run's
       type(budget_t)         :: energy_budget, water_budget   !< whole-column ledgers over the run
       !----- The per-layer face-closure residual over the run (#189). Kept beside the two above       !
       !      because it answers the question they cannot: not "did the column conserve" but "did the  !
@@ -220,13 +217,8 @@ contains
       !      A no-op when the flag is off, so the shipped path is untouched.  ------------------------!
       if (cfg%leaf_thermal_acclimation) call advance_growth_temperature(step_days, poly)
 
-      !----- The fast loop stages sub-daily samples into the buffers that write the FAST tier: a    !
-      !      detail polygon's own files, else the polygon's share of the run's files.  ----------------!
-      if (allocated(poly%detail_bufs)) then
-         call stepper(poly%detail_bufs(1))
-      else
-         call stepper(out_bufs)
-      end if
+      !----- The fast loop stages sub-daily samples into the polygon's share of the run's files. --!
+      call stepper(out_bufs)
       !----- Keep WHERE the worst gap happened, not just how big. A seam that is zero except on the !
       !      days a patch operator fires is telling you something quite different from one that      !
       !      drifts every day, and the date is what distinguishes them. The accumulation itself is   !
@@ -242,7 +234,6 @@ contains
       !      hold `prev`, closing each period `now` has left and queueing it for the I/O phase. ----!
       is_new_day = is_new_month .or. (now%day /= prev%day)
       if (out_files%enabled) call tick_output(out_files, out_bufs)
-      if (allocated(poly%detail_bufs)) call tick_output(poly%detail_files, poly%detail_bufs(1))
 
       !----- The step's diagnostics are read: zero them for the next window. If the step ended on a  !
       !      month boundary, the stand's restructuring is owed: it runs at the start of the next     !
@@ -496,25 +487,22 @@ contains
    !---------------------------------------------------------------------------------------!
    ! open_output_files -- lay out one output file set: the registry from the config, the soil      !
    ! curve the derived soil diagnostics use (the one the fast loop integrates on), the              !
-   ! per-variable overrides of [output].io_config and, for a region's files, the region's           !
-   ! restrictions and polygon axis. A site run's files, a region's files and a detail polygon's own !
-   ! files all come through here; each polygon that writes into the set then calls attach_output.   !
+   ! per-variable overrides of [output].io_config and, for a region's files, the polygon axis. A     !
+   ! site run's files and a region's come through here; each polygon that writes into the set then !
+   ! calls attach_output.                                                                          !
    !---------------------------------------------------------------------------------------!
-   subroutine open_output_files(cfg, soil, files, verbose, prefix, cells, polygon_id)
+   subroutine open_output_files(cfg, soil, files, verbose, cells, polygon_id)
       type(meds_config_t),  intent(in)    :: cfg
       type(soil_params_t),  intent(in)    :: soil       !< the polygon's soil column (its fast context)
       type(output_files_t), intent(inout) :: files
       logical,              intent(in)    :: verbose
-      character(len=*),  optional, intent(in) :: prefix          !< a detail polygon's own file prefix
       type(met_cells_t), optional, intent(in) :: cells           !< a region's cells ...
       integer(ik),       optional, intent(in) :: polygon_id(:)   !< ... and their polygon ids
       call manager_setup(files, cfg)
-      if (present(prefix)) files%prefix = prefix
       if (cfg%fast_biophysics_on) call manager_set_soil_params(files%diag, soil)
       if (len_trim(cfg%output%io_config) > 0)                                                     &
          call apply_io_overrides(files, trim(cfg%output%io_config), verbose)
       if (present(cells)) then
-         call manager_restrict_region(files)
          files%n_polygon   = cells%ncell
          files%polygon_id  = polygon_id
          files%polygon_row = cells%row ; files%polygon_col = cells%col
@@ -525,8 +513,7 @@ contains
 
    !----- A polygon's share of an output file set: its buffers, which take the polygon's own soil   !
    !      curve for the derived soil diagnostics, and the diagnostic blocks its site must accumulate  !
-   !      for the set's variables. A polygon may write into two sets (a region's detail polygon); its !
-   !      site then accumulates what either needs. ---------------------------------------------------!
+   !      for the set's variables. ------------------------------------------------------------------!
    subroutine attach_output(files, bufs, poly)
       type(output_files_t),   intent(in)    :: files
       type(output_buffers_t), intent(inout) :: bufs

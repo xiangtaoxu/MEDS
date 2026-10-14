@@ -83,6 +83,16 @@ before and after.
 
 ### Changed
 
+- **A region's files hold every variable and tier** (§14, RP6, OR13). The region file set now
+  carries the sub-daily tier and the cohort and patch variables, as `(time, polygon, cohort)` and
+  `(time, polygon, patch)`. Each such axis is as long as the largest live count among the polygons
+  when the file opens; `n_cohort(time, polygon)` and `n_patch(time, polygon)` give each polygon's own
+  count, and the entries past it are the fill value. `[region].detail_polygons` is retired and
+  refused, naming `[output].io_config`, so a region has one output path. `region_finalize` writes
+  nothing more once a polygon has failed: before, a library caller that finalized after a failure
+  could flush a stale partial period and recreate an earlier chunk file from scratch.
+  `manager_restrict_region` is gone. `test_region` compares every variable of every tier, cohort and
+  patch ones included, with the site runs, and requires the padding to be the fill value.
 - **One I/O tree, `src/io/`** (`MEDS_POLYGON_RUNTIME_PLAN.md` §14, RP2): every data file a run reads or
   writes is now handled under `src/io/`. The netCDF bindings and the state file (`meds_io.f90`, written
   at checkpoints and read at restart) sit at its root, the forcing code moved from `src/forcing/` to

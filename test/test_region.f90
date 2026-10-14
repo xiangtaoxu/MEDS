@@ -6,8 +6,9 @@
 ! no-data cell and a mostly-water column, runs its three polygons for twelve days across a month   !
 ! boundary. Then each polygon is run again as a site at its cell (centre, orography, UTC). The     !
 ! region's files must hold, in every variable's `polygon = p` slice, exactly the site run's        !
-! series, bit for bit; the detail polygon's own files must equal its site run's files; and the     !
-! polygon axis must carry the cells' ids and coordinates. The region is run again on four threads  !
+! series, bit for bit, on every tier, cohort and patch variables included, with the fill value past !
+! the polygon's own count (§14 RP6); and the polygon axis must carry the cells' ids and             !
+! coordinates. The region is run again on four threads                                              !
 ! and must give the same files. A region run in two halves, the second restarted from the first's   !
 ! state file, must write the second half's files exactly as the whole run does (§14 RP4). Every run  !
 ! takes its soil from the archive's [surface] maps (§14     !
@@ -17,10 +18,8 @@
 !                                                                                          !
 ! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
 ! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
-! key -- and the keys the archive or region mode reject are dropped. The monthly tier is chunked by  !
-! month: a site file caps a tier with cohort variables at a month, and the region's (which has none)  !
-! would otherwise keep the template's year, so the same records would sit in differently named       !
-! files. Everything the test writes goes under the work directory given as the first argument.       !
+! key -- and the keys the archive or region mode reject are dropped. Everything the test writes     !
+! goes under the work directory given as the first argument.                                         !
 !==========================================================================================!
 program test_region
    use iso_c_binding,              only : c_int, c_size_t, c_double
@@ -53,7 +52,6 @@ program test_region
    !      the default ones; sealed (bedrock), leaky (free_drain until #401) and aquifer bottoms. ------!
    integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
-   integer(ik), parameter :: DETAIL = 18_ik
 
    character(len=512)  :: work, meds_main
    type(meds_region_t) :: reg
@@ -61,7 +59,7 @@ program test_region
    type(output_registry_t) :: reg_region, reg_site
    character(len=64), allocatable :: files(:), files2(:)
    integer(ik) :: p, st, f, nf, nbad, nf2, f2
-   logical     :: ok
+   logical     :: ok, ex
    character(len=24) :: idstr
    real(wp)          :: mask(NLON, NLAT, 1)
 
@@ -122,35 +120,22 @@ program test_region
    !----- Every region file against the site files: each polygon's slice, every variable. --------!
    nbad = 0_ik
    do f = 1_ik, nf
-      if (index(files(f), 'region-') /= 1 .or. index(files(f), 'region-p') == 1) cycle
+      if (index(files(f), 'region-') /= 1) cycle
       do p = 1_ik, NP
          write(idstr,'(i0)') IDS(p)
          nbad = nbad + compare_region_file(trim(work)//'/out/'//trim(files(f)), p,                &
                                            trim(work)//'/out/site'//trim(idstr)//files(f)(7:))
       end do
    end do
-   call check_true('each region variable''s polygon slice equals its site run, bit for bit', nbad == 0_ik)
-   call check_true('region files: two months each of the daily and monthly tiers, no fast tier',       &
+   call check_true('each region variable''s polygon slice equals its site run, bit for bit, the '//      &
+                   'padding past its count the fill value', nbad == 0_ik)
+   call check_true('region files: every tier, the sub-daily one included, file for file as a site run',  &
                    count_prefix('region-D-') == 2_ik .and. count_prefix('region-M-') == 2_ik .and.     &
-                   count_prefix('region-F-') == 0_ik)
-
-   !----- The detail polygon's own files against its site run's files. -----------------------------!
-   nbad = 0_ik
-   write(idstr,'(i0)') DETAIL
-   do f = 1_ik, nf
-      if (index(files(f), 'site'//trim(idstr)//'-') /= 1) cycle
-      nbad = nbad + compare_site_file(trim(work)//'/out/region-p'//trim(idstr)//                   &
-                                      files(f)(len_trim('site'//idstr) + 1:),                        &
-                                      trim(work)//'/out/'//trim(files(f)))
-   end do
-   call check_true('the detail polygon writes its site run''s files, fast tier included',             &
-                   count_prefix('region-p'//trim(idstr)//'-') == count_prefix('site'//trim(idstr)//'-') &
-                   .and. count_prefix('region-p'//trim(idstr)//'-F-') == 12_ik)
-   call check_true('the detail polygon''s files equal its site run''s, every variable', nbad == 0_ik)
+                   count_prefix('region-F-') == count_prefix('site18-F-') .and. count_prefix('region-F-') > 0_ik)
 
    !----- The same region on four threads (#183 R3): the polygons run side by side, and every file   !
-   !      must still equal the site runs bit for bit -- region files slice by slice, the detail      !
-   !      polygon's file by file. In a build without OpenMP this is the serial run again. -------------!
+   !      must still equal the site runs bit for bit, slice by slice. In a build without OpenMP this  !
+   !      is the serial run again. --------------------------------------------------------------------!
    call derive(trim(work)//'/regt.toml', '[run]'//nl()//'n_threads = 4'//nl()//'[output]'//nl()//     &
                'prefix = "regt"'//nl()//region_block(), region=.true.)
    call region_open(trim(work)//'/regt.toml', reg, ok, verbose=.false.)
@@ -164,20 +149,13 @@ program test_region
    nbad = 0_ik
    do f = 1_ik, nf
       if (index(files(f), 'region-') /= 1) cycle
-      if (index(files(f), 'region-p') == 1) then
-         write(idstr,'(i0)') DETAIL
-         nbad = nbad + compare_site_file(trim(work)//'/out/regt'//files(f)(7:),                      &
-                                         trim(work)//'/out/site'//trim(idstr)//                       &
-                                         files(f)(len_trim('region-p'//idstr) + 1:))
-      else
-         do p = 1_ik, NP
-            write(idstr,'(i0)') IDS(p)
-            nbad = nbad + compare_region_file(trim(work)//'/out/regt'//files(f)(7:), p,             &
-                                              trim(work)//'/out/site'//trim(idstr)//files(f)(7:))
-         end do
-      end if
+      do p = 1_ik, NP
+         write(idstr,'(i0)') IDS(p)
+         nbad = nbad + compare_region_file(trim(work)//'/out/regt'//files(f)(7:), p,                &
+                                           trim(work)//'/out/site'//trim(idstr)//files(f)(7:))
+      end do
    end do
-   call check_true('on four threads every region and detail file still equals the site runs', nbad == 0_ik)
+   call check_true('on four threads every region file still equals the site runs', nbad == 0_ik)
 
    !----- A region in two halves (§14 RP4), on the archive's 2021 recycled: 2022-12-25 to 2023-01-01  !
    !      writing its state file, then on from it to 2023-01-06. The seam crosses the recycle wrap and  !
@@ -233,9 +211,10 @@ program test_region
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails. The others finish the month: polygons 1     !
    !      and 3 close February's five days and polygon 2 its first. The month's I/O phase writes      !
-   !      what closed, with the fill value where polygon 2 closed nothing, and the region moves on. ---!
-   call derive(trim(work)//'/fail.toml', '[output]'//nl()//'prefix = "fail"'//nl()//                  &
-               '[region]'//nl()//'detail_polygons = [35]'//nl()//region_block(), region=.true.)
+   !      what closed, with the fill value where polygon 2 closed nothing, and the region moves on.   !
+   !      The end of the run then writes nothing more: no partial February. ---------------------------!
+   call derive(trim(work)//'/fail.toml', '[output]'//nl()//'prefix = "fail"'//nl()//region_block(), &
+               region=.true.)
    call region_open(trim(work)//'/fail.toml', reg, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the failing region did not open'
    call region_step_month(reg, st)
@@ -247,6 +226,8 @@ program test_region
    call region_finalize(reg, st)
    call region_free(reg)
    call check_failed_month(trim(work)//'/out/fail-D-202102.nc')
+   inquire(file=trim(work)//'/out/fail-M-202102.nc', exist=ex)
+   call check_true('after a failure the end of the run writes nothing more', .not. ex)
 
    !----- The cell mask (§14 RP2): a 0/1 map that drops polygon 35 leaves 18 and 53, in their order. --!
    mask = 1.0_wp
@@ -297,9 +278,9 @@ program test_region
                 'a [region] block needs [run].mode = "region"')
    call refused('the box must have S < N', '[region]'//nl()//'box_nwse = [20.0, 150.0, 40.0, -150.0]'//nl()// &
                 region_block(), .true., .false., 'region.box_nwse needs')
-   call refused('a detail polygon must be one of the region''s',                                    &
-                '[region]'//nl()//'detail_polygons = [0]'//nl()//region_block(), .true., .false.,       &
-                'is not a polygon of this region')
+   call refused('region.detail_polygons is retired: the region files hold every variable',           &
+                '[region]'//nl()//'detail_polygons = [18]'//nl()//region_block(), .true., .false.,      &
+                'is retired: the region files hold every variable and tier')
    call refused('the mode is "site" or "region"', '[run]'//nl()//'mode = "globe"'//nl()//region_block(), &
                 .true., .false., '[run].mode must be "site" or "region"')
    call refused('the [io] block is refused, naming [state]', '[io]'//nl()//'write_state = false'//nl()// &
@@ -376,7 +357,7 @@ contains
       character(len=:), allocatable :: b
       b = '[run]'//nl()//'mode = "region"'//nl()//'[output]'//nl()//'prefix = "region"'//nl()//     &
           '[region]'//nl()//'box_nwse = [40.0, 150.0, 20.0, -150.0]'//nl()//                        &
-          'land_fraction_min = 0.5'//nl()//'detail_polygons = [18]'//nl()//common_block()
+          'land_fraction_min = 0.5'//nl()//common_block()
    end function region_block
 
    function site_block(p) result(b)
@@ -572,71 +553,46 @@ contains
       sh = [nt, sh]
    end function var_shape
 
-   !----- Region file vs one polygon's site file: the polygon's slice of every live variable. ------!
+   !----- Region file vs one polygon's site file: the polygon's slice of every live variable. Its    !
+   !      first entries are the site's (a cohort or patch axis as long as the site's own count); the  !
+   !      rest of a padded axis is the fill value. The region file has every variable the site has. --!
    integer(ik) function compare_region_file(rpath, p, spath) result(nbad)
       character(len=*), intent(in) :: rpath, spath
       integer(ik),      intent(in) :: p
       integer(c_int) :: rn, sn
-      integer(ik)    :: t, j, k, nt, na, np_, it
+      integer(ik)    :: t, j, k, nt, na, ns, np_, it, base
       integer(ik), allocatable :: rs(:), ss(:)
       real(c_double), allocatable :: xr(:), xs(:)
-      logical :: fr, fs
+      logical :: fr, fs, pad_ok
       nbad = 0_ik
       t = tier_of(rpath)
       rn = open_nc(rpath) ; sn = open_nc(spath)
-      do j = 1_ik, reg_region%nidx(t)
-         k = reg_region%idx_freq(j, t)
-         rs = var_shape(rn, reg_region%var(k)%dim, .true.)
-         ss = var_shape(sn, reg_region%var(k)%dim, .false.)
-         call read_var(rn, trim(reg_region%var(k)%name), rs, xr, fr)
-         call read_var(sn, trim(reg_region%var(k)%name), ss, xs, fs)
-         if (.not. (fr .and. fs) .or. rs(1) /= ss(1)) then
-            write(*,'(5a)') '  missing or mismatched: ', trim(reg_region%var(k)%name), ' in ', rpath, ''
+      do j = 1_ik, reg_site%nidx(t)
+         k = reg_site%idx_freq(j, t)
+         rs = var_shape(rn, reg_site%var(k)%dim, .true.)
+         ss = var_shape(sn, reg_site%var(k)%dim, .false.)
+         call read_var(rn, trim(reg_site%var(k)%name), rs, xr, fr)
+         call read_var(sn, trim(reg_site%var(k)%name), ss, xs, fs)
+         nt = rs(1) ; np_ = rs(2) ; na = product(rs(3:)) ; ns = product(ss(2:))   ! C order: axis fastest
+         if (.not. (fr .and. fs) .or. rs(1) /= ss(1) .or. ns > na) then
+            write(*,'(5a)') '  missing or mismatched: ', trim(reg_site%var(k)%name), ' in ', rpath, ''
             nbad = nbad + 1_ik ; cycle
          end if
-         nt = rs(1) ; np_ = rs(2) ; na = product(rs(3:))      ! C order: axis fastest, then polygon, time
          do it = 0_ik, nt - 1_ik
-            if (any(xr(it*np_*na + (p - 1_ik)*na + 1_ik : it*np_*na + p*na) /= xs(it*na + 1_ik : (it + 1_ik)*na))) then
-               write(*,'(3a,i0,2a)') '  DIFFERS: ', trim(reg_region%var(k)%name), ' polygon ', IDS(p), ' in ', rpath
+            base = it*np_*na + (p - 1_ik)*na
+            if (reg_site%var(k)%xtype == XTYPE_INT) then
+               pad_ok = all(xr(base + ns + 1_ik : base + na) == real(MISSING_INT, c_double))
+            else
+               pad_ok = all(xr(base + ns + 1_ik : base + na) > 1.0e30_c_double)
+            end if
+            if (any(xr(base + 1_ik : base + ns) /= xs(it*ns + 1_ik : (it + 1_ik)*ns)) .or. .not. pad_ok) then
+               write(*,'(3a,i0,2a)') '  DIFFERS: ', trim(reg_site%var(k)%name), ' polygon ', IDS(p), ' in ', rpath
                nbad = nbad + 1_ik ; exit
             end if
          end do
       end do
       call nc_check(nc_close(rn), 'close') ; call nc_check(nc_close(sn), 'close')
    end function compare_region_file
-
-   !----- Two single-site files of the same registry: every live variable of the tier. ------------!
-   integer(ik) function compare_site_file(apath, bpath) result(nbad)
-      character(len=*), intent(in) :: apath, bpath
-      integer(c_int) :: an, bn
-      integer(ik)    :: t, j, k
-      integer(ik), allocatable :: as(:), bs(:)
-      real(c_double), allocatable :: xa(:), xb(:)
-      logical :: fa, fb, ex
-      nbad = 0_ik
-      inquire(file=apath, exist=ex)
-      if (.not. ex) then
-         write(*,'(2a)') '  missing detail file ', apath ; nbad = 1_ik ; return
-      end if
-      t = tier_of(bpath)
-      an = open_nc(apath) ; bn = open_nc(bpath)
-      do j = 1_ik, reg_site%nidx(t)
-         k = reg_site%idx_freq(j, t)
-         as = var_shape(an, reg_site%var(k)%dim, .false.)
-         bs = var_shape(bn, reg_site%var(k)%dim, .false.)
-         call read_var(an, trim(reg_site%var(k)%name), as, xa, fa)
-         call read_var(bn, trim(reg_site%var(k)%name), bs, xb, fb)
-         if (.not. (fa .and. fb) .or. any(as /= bs)) then
-            write(*,'(4a)') '  missing or reshaped: ', trim(reg_site%var(k)%name), ' in ', apath
-            nbad = nbad + 1_ik ; cycle
-         end if
-         if (any(xa /= xb)) then
-            write(*,'(4a)') '  DIFFERS: ', trim(reg_site%var(k)%name), ' in ', apath
-            nbad = nbad + 1_ik
-         end if
-      end do
-      call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
-   end function compare_site_file
 
    !----- The daily file of the month polygon 2 failed in: five records, polygons 1 and 3's days,   !
    !      polygon 2's first, and the fill value in polygon 2's other days, in every site variable. ---!
@@ -679,8 +635,7 @@ contains
       character(len=:), allocatable :: b
       b = '[run]'//nl()//'start_time = "2022-12-25"'//nl()//'end_time = '//last//nl()//                   &
           '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 01:00:00"'//nl()//       &
-          'recycle_end = "2022-01-01 01:00:00"'//nl()//'[output]'//nl()//'prefix = "'//prefix//'"'//nl()// &
-          '[region]'//nl()//'detail_polygons = []'//nl()
+          'recycle_end = "2022-01-01 01:00:00"'//nl()//'[output]'//nl()//'prefix = "'//prefix//'"'//nl()
       if (restart) b = b//'[init]'//nl()//'init_mode = 2'//nl()//'restart_file = "'//trim(work)//          &
                        '/state/half-S-20230101000000.nc"'//nl()
       b = b//region_block()
