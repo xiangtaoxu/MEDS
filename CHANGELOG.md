@@ -620,19 +620,19 @@ America, and all are rerun on this release's code (#368, #373, #376, #378, #382,
 
 ### Fixed
 
-- **An io_config override is held to the FAST guard** (#374). The guard ran on the registry's defaults,
+- **An io_config override is held to the FAST guard** (#374, #405). The guard ran on the registry's defaults,
   before the `meds_io_config.toml` overrides, so an override could put a variable with no FAST-staged
   source on the F stream (a crash) or a FAST-staged one on a coarse tier (an empty variable). Both are
   now refused at start-up with the guard's messages; `docs/science/diagnostics.md`'s example was one.
-- **Litter is recorded with the soil-carbon pools off** (#316). It was accumulated only with
+- **Litter is recorded with the soil-carbon pools off** (#316, #405). It was accumulated only with
   `soil_carbon_on`, so with the pools off the slow ledger's growth phase read every step's necromass
   as a carbon leak (−5.9 kgC m⁻² over 30 years in a demography run) and the litter outputs read 0.
   It is now always recorded and declared leaving; the state is unchanged.
-- **The growth window's sum is its buffer's** (#396). `growth_accum` was a running sum that carried
+- **The growth window's sum is its buffer's** (#396, #405). `growth_accum` was a running sum that carried
   every sample's round-off, so a window of zero growth after a large sample could average slightly
   below zero; it is now the buffer's sum, and a recruit in a reused slot starts with an empty buffer.
   Results move at round-off; restart files are unchanged.
-- **Each cohort's tissue water is checked** (#189): `test_spac_solver` asserts that a cohort's leaf
+- **Each cohort's tissue water is checked** (#189, #405): `test_spac_solver` asserts that a cohort's leaf
   and wood water change by its own uptake less its transpiration, beside the site total.
 
 - **gfortran builds again**: a call in `test_plant_respiration` (#382) ran past column 132, which
