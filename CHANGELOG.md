@@ -14,6 +14,48 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-10-13
+
+A **soil–plant water and examples** release. Soil and plant water are solved together, as one
+implicit network that conserves water to round-off, in place of the Richards solver, the
+plant-hydraulics solver and their floors and clamps (#397). Water stress is one fast and one slow
+control, with no soil wilting point (#384), and the soil takes SoilGrids' layer depths, Mualem's
+L = −1 and a pedotransfer function from texture (#391). Each cohort roots to a depth set by its
+height and draws water through a single-root conductance and its sapwood, whose conductivity follows
+wood density (#378). Growth gains sink limits, sapwood respiration, Chave et al. (2014)'s height
+curve, a leaf-drop turnover gate and a reproduction threshold relative to the local tallest tree, and
+a cohort's geometry is derived from its carbon every step (#382, #385–#388, #392, #402). The examples
+are renumbered to show one module each, from leaf gas exchange to a 983-cell regional run in Central
+America, and all are rerun on this release's code (#368, #373, #376, #378, #382, #402, #403).
+
+**Upgrading from v0.3.3:**
+- **`[phenology]` is rewritten** (#373): one cue model for every PFT. The old keys (`cue_mask`,
+  `k_flush_max`, `k_shed_max`, the `tau_*`, degree-day, chilling, cold-drop, photoperiod,
+  water-threshold and `evg_*` keys, `bare_snap_frac`) and `pft.evergreen` are refused, each naming
+  its replacement; an evergreen PFT is a `pft.min_leaf_cover`. `pheno_flush/shed_cohort` are now
+  `leaf_flush/shed_tendency_cohort`, and an old restart loads with the phenology's memory reset.
+- **Roots and sapwood** (#378): `hydraulics.root_depth`, `specific_root_area`, `k_plant_max` (and
+  `pft.k_plant_max`), `conductance` and `wood_kmax` are refused. Set `root_depth_b1`/`b2`,
+  `specific_root_length` and `fine_root_radius`; the sapwood's conductivity comes from wood density
+  unless `pft.wood_kmax` sets it. `root_beta` defaults to 0.1 (was e⁻⁴).
+- **Water** (#384, #397): `leaf_physiology.low_water_potential_control` and `wstress_nonstomatal`,
+  and `soil.psi_wilt`, `psi_open`, `linearize`, `substep`, `h_init`, `max_substep` and
+  `max_picard`, are refused. The water work counters are `work_water_nsub/newton/reject/nfail_site`;
+  the `work_clamp_*` outputs are gone.
+- **Soil layers** (#391): `soil_column.n_layer` and `grid_growth` are refused. The layers are
+  SoilGrids' depths cut at `[soil_column].depth`, or `layer_bottoms`; `[energy].deep_depth` defaults
+  to 3.145 m.
+- **Renamed:** `pft.repro_carbon_efficiency` is `pft.recruit_carbon_efficiency` (#382);
+  `pft.min_reproduction_height` is `pft.reproduction_height_fraction`, the old height divided by the
+  local maximum height (#388; a config with the old key stops on it as unknown); the driver status
+  `ERR_SOILC` is `ERR_BOUNDS` (#392).
+- **Results move.** `storage_cushion` counts leaf and fine root (0.5 keeps the old 1 × leaf; the
+  reference config ships 3; #385); `retained_carbon_fraction` defaults to 0.3, on all leaf and
+  fine-root loss (#387); the shipped configs' `growth_memory_days` is 365 (#402); and the water
+  network, Mualem's L, cohort fusion and the sink budget move fluxes and stands, each by the amounts
+  below.
+- **`examples/example_biophysics/` is retired** (#378); its configs are in `test/region/`.
+
 ### Added
 
 - **A soil pedotransfer function** (`meds_pedotransfer`, #391): `soil_hydraulics_from_texture` gives a soil
@@ -577,6 +619,9 @@ before and after.
   transpiration corrector; both schemes now solve leaf water implicitly in the network.
 
 ### Fixed
+
+- **gfortran builds again**: a call in `test_plant_respiration` (#382) ran past column 132, which
+  gfortran refuses and ifx accepts; it is wrapped.
 
 - **`test_pheno` follows #387's leaf-drop gate** (#403): it expected background turnover at a shed
   tendency of 1.0, so the `python_api` ctest failed on beta; it now checks both sides of the gate.
@@ -4366,7 +4411,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...beta
+[0.3.4]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1
