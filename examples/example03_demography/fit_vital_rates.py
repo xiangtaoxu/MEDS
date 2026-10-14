@@ -8,10 +8,11 @@ Each law is fitted for each PFT, and each predicts a MEAN rate -- what a cohort 
 
   growth       [cm/yr]    g = [g_min + (g_max - g_min) / (1 + exp(-k (lnD - lnD0)))] exp(-b L)
   mortality    [1/yr]     m = gamma + alpha exp(-beta g)                       (Camac et al. 2018)
-  recruitment  [1/m2/yr]  ln R = c0 + c1 LAI + c2 LAI_pft                       (Poisson GLM)
+  recruitment  [1/m2/yr]  ln R = c0 + c1 LAI                                   (Poisson GLM)
 
-D is dbh [cm]; L the overtopping LAI, the leaf area of taller trees within 20 m [m2/m2]; LAI and
-LAI_pft the leaf area index within 20 m of a quadrat's centre, all of it and the PFT's own.
+D is dbh [cm]; L the overtopping LAI, the leaf area of taller trees within 20 m [m2/m2]; LAI the leaf
+area index within 20 m of a quadrat's centre, all PFTs' together: shade, not seed source -- a PFT's own
+leaf area nearby does not raise its recruitment in the census.
 
 Growth rises with size from g_min to g_max, half-way at D0, and shade shrinks it by exp(-b L); it is
 fitted to each tree's mean by Gamma quasi-likelihood, which needs growth above zero, so increments of
@@ -55,8 +56,8 @@ def fit_growth(dbh, lai_over, g):
     return [float(v) for v in np.exp(min(fits, key=lambda f: f.fun).x)]
 
 
-def recruitment_terms(lai, lai_pft):
-    return np.column_stack([lai, lai_pft])
+def recruitment_terms(lai):
+    return np.column_stack([lai])
 
 
 def glm(model, X, y, weight=None):
@@ -93,7 +94,7 @@ def fit_laws(g, s, r):
         laws["mortality"].append(fit_camac(growth_law(a, sp.dbh.to_numpy(), sp.lai_over.to_numpy()),
                                            sp.dead.to_numpy(), sp.dt.to_numpy()))
         laws["recruitment"].append(glm(PoissonRegressor(alpha=0.0, solver="newton-cholesky", max_iter=1000),
-                                       recruitment_terms(rp.lai, rp.lai_pft), rp.rate, rp.exposure))
+                                       recruitment_terms(rp.lai), rp.rate, rp.exposure))
     return laws
 
 
@@ -107,7 +108,7 @@ def predict(laws, g, s, r):
         m = (s.pft == p).to_numpy()
         ps[m] = -np.expm1(-camac(theta, growth_law(a, s.dbh[m], s.lai_over[m])) * s.dt[m])
         m = (r.pft == p).to_numpy()
-        rp[m] = log_link(c, recruitment_terms(r.lai[m], r.lai_pft[m]))
+        rp[m] = log_link(c, recruitment_terms(r.lai[m]))
     return gp, ps, rp
 
 
@@ -159,7 +160,7 @@ out = {
     "mortality": {"law": "gamma + alpha exp(-beta growth) [1/yr]",
                   "gamma": [t[0] for t in laws["mortality"]], "alpha": [t[1] for t in laws["mortality"]],
                   "beta": [t[2] for t in laws["mortality"]]},
-    "recruitment": {"law": "exp(c0 + c1 LAI + c2 LAI_pft) [1/m2/yr]", "coefficients": laws["recruitment"]},
+    "recruitment": {"law": "exp(c0 + c1 LAI) [1/m2/yr]", "coefficients": laws["recruitment"]},
     "range": {"lai": [0.0, float(r.lai.max())]},
 }
 with open(os.path.join(HERE, "vital_rates.json"), "w") as fh:

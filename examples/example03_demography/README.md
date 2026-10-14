@@ -13,7 +13,7 @@ passes them to the engine's law-free apply-primitives through
 |---|---|---|---|
 | growth | dbh growth g [cm/yr] per cohort | g = [g_min + (g_max − g_min) / (1 + (D/D₀)^−k)] · e^(−b·L) | Gamma quasi-likelihood |
 | mortality | death rate m [1/yr] per cohort | m = γ + α · e^(−β·g) (Camac et al. 2018) | maximum likelihood, P(die in Δt) = 1 − e^(−m·Δt) |
-| recruitment | new stems ≥ 1 cm [1/m²/yr] per PFT and patch | R = exp(c₀ + c₁·LAI + c₂·LAI_PFT) | Poisson GLM, weighted by area × Δt |
+| recruitment | new stems ≥ 1 cm [1/m²/yr] per PFT and patch | R = exp(c₀ + c₁·LAI) | Poisson GLM, weighted by area × Δt |
 
 | PFT | wood density [g cm⁻³] | g_min [cm/yr] | g_max [cm/yr] | D₀ [cm] | k | b | γ [1/yr] | α [1/yr] | β [yr/cm] |
 |---|---|---|---|---|---|---|---|---|---|
@@ -37,9 +37,10 @@ passes them to the engine's law-free apply-primitives through
 - **Mortality** depends on growth alone, as in Camac et al. (2018), who fitted the same form to the BCI
   censuses. Its growth is the growth law's, not the tree's measured growth: a cohort's growth is the
   law's too.
-- **Recruitment** depends on the leaf area index of the patch, all of it (LAI) and the PFT's own
-  (LAI_PFT) -- in the census, the leaf area within 20 m of a quadrat's centre. Trees and quadrats
-  within 20 m of the plot's edge are not fitted.
+- **Recruitment** depends on the leaf area index of the patch, all PFTs' together (LAI) -- in the
+  census, the leaf area within 20 m of a quadrat's centre. It is shade, not seed source: a PFT's own
+  leaf area nearby does not raise its recruitment in the census. Trees and quadrats within 20 m of the
+  plot's edge are not fitted.
 - **PFTs are wood-density classes**: species' wood density from the Global Wood Density Database
   ([`bci_wood_density.csv`](bci_wood_density.csv): neotropical entries, species → genus → family),
   split at 0.42 and 0.58 g cm⁻³ so each class holds a third of the 1985 basal area.
@@ -98,27 +99,27 @@ censuses, the size distribution in 2010, and a run from near-bare ground.
 |---|---|---|
 | growth, R² | 0.10 | 0.88 |
 | mortality, AUC / R² | 0.60 | 0.83 |
-| recruitment, R² | 0.29 | plot total 110 stems ha⁻¹ yr⁻¹, as observed |
+| recruitment, R² | 0.30 | plot total 111 stems ha⁻¹ yr⁻¹ (observed 110) |
 
 | | stems ha⁻¹ | ≥ 10 cm ha⁻¹ | basal area m² ha⁻¹ | by PFT 1 / 2 / 3 |
 |---|---|---|---|---|
 | census 1985 | 4841 | 414 | 31.1 | 10.6 / 9.8 / 10.7 |
 | census 2010 | 4145 | 416 | 30.5 | 10.7 / 9.4 / 10.4 |
-| model 2010, from the 1985 census | 4095 | 394 | 29.6 | 9.1 / 10.1 / 10.5 |
-| model 2100, from the 1985 census | 3917 | 495 | 30.2 | 8.8 / 12.0 / 9.5 |
-| model, 100 years from bare ground | 4021 | 491 | 28.0 | 15.0 / 10.6 / 2.3 |
-| model, 300 years from bare ground | 3832 | 463 | 31.2 | 11.0 / 14.0 / 6.1 |
+| model 2010, from the 1985 census | 4109 | 396 | 29.6 | 9.1 / 10.1 / 10.5 |
+| model 2100, from the 1985 census | 3899 | 495 | 30.0 | 8.3 / 12.2 / 9.5 |
+| model, 100 years from bare ground | 4091 | 494 | 27.5 | 12.8 / 12.2 / 2.4 |
+| model, 300 years from bare ground | 3830 | 459 | 30.9 | 9.8 / 14.7 / 6.3 |
 
 - **From the census, the module tracks the plot's stems for 25 years**, the decline and the size
-  distribution class by class, but runs low on the larger trees: in 2010, 394 trees above 10 cm
+  distribution class by class, but runs low on the larger trees: in 2010, 396 trees above 10 cm
   against 416 and 29.6 m² ha⁻¹ of basal area against 30.5, most of the shortfall PFT 1's.
-- **Run on to 2100, the stand holds its basal area**: it dips to 29.1 m² ha⁻¹ in the 2030s and
-  recovers to 30.2, as PFT 2 gains and PFT 3 loses. These are BCI's present rates run forward, not a
+- **Run on to 2100, the stand holds its basal area**: it dips to 29.0 m² ha⁻¹ around 2040 and
+  recovers to 30.0, as PFT 2 gains and PFT 3 loses. These are BCI's present rates run forward, not a
   prediction.
 - **From bare ground the stand goes through a succession.** Under an open canopy the light-wooded
   PFT 1 grows fastest and rises with PFT 2, within 2 % of the census's basal area by 135 years;
   as the canopy closes PFT 1 declines, PFT 2 holds the canopy, and the dense-wooded PFT 3 builds up
-  slowly beneath. Basal area ends 2 % above the census's; the canopy thins upward to 43 m, as the
+  slowly beneath. Basal area ends 1 % above the census's; the canopy thins upward to 43 m, as the
   census stand does on the same height curve.
 
 <p align="center">
