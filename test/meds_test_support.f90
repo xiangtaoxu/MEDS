@@ -82,7 +82,6 @@ contains
       !----- Leaf physiology: model selectors + shared biochemistry (mirrors the TOML). ---!
       cfg%stomatal_model = SM_MEDLYN ; cfg%temp_response_form = TRESP_PEAKED
       cfg%colimitation = COLIM_QUADRATIC ; cfg%leaf_use_boundary_layer = .false.
-      cfg%leaf_wstress_nonstomatal = .false.   ! issue #47: capacity limb OFF (see meds_config_t)
       cfg%kc25 = 40.49_wp ; cfg%ko25 = 27840.0_wp ; cfg%gstar25 = 4.275_wp
       cfg%ea_kc = 79430.0_wp ; cfg%ea_ko = 36380.0_wp ; cfg%ea_gstar = 37830.0_wp
       cfg%ea_vcmax = 65330.0_wp ; cfg%ea_jmax = 43540.0_wp ; cfg%ea_rd = 46390.0_wp
@@ -96,10 +95,10 @@ contains
          p%dbh_critical = [ 100.0_wp, 100.0_wp, 100.0_wp ]
          p%hgt_max      = [ 46.0_wp, 46.0_wp, 46.0_wp ]
          p%reproduction_investment_fraction = [ 0.3_wp, 0.3_wp, 0.3_wp ]
-         p%repro_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
+         p%recruit_carbon_efficiency = [ 1.0e-3_wp, 1.0e-3_wp, 1.0e-3_wp ]
          p%seed_rain_recruits = [ 0.01_wp, 0.01_wp, 0.01_wp ]
          p%include_pft = [ 1_ik, 1_ik, 1_ik ]
-         p%min_cohort_height = 2.0_wp ; p%min_reproduction_height = 20.0_wp
+         p%min_cohort_height = 2.0_wp ; p%reproduction_height_fraction = 0.47440838365101196_wp  ! 20 m
          p%mort_rho_ref = 0.6_wp
          p%mort_gamma_0 = 0.0094_wp ; p%mort_gamma_exp = -1.8392_wp
          p%mort_alpha_0 = 0.05_wp   ; p%mort_alpha_exp = -1.1493_wp
@@ -121,8 +120,6 @@ contains
          p%theta_cj_c4      = [ 0.80_wp, 0.80_wp, 0.80_wp ]
          p%theta_ic_c4      = [ 0.95_wp, 0.95_wp, 0.95_wp ]
          p%katul_lambda25   = [ 600.0_wp, 800.0_wp, 350.0_wp ]
-         p%wstress_psi_open = [ -0.5_wp, -0.5_wp, -0.5_wp ]
-         p%wstress_psi_close= [ -2.5_wp, -3.0_wp, -2.0_wp ]
          p%wstress_lambda_exp = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%wstress_sref_stomata = [ 2.0_wp, 2.0_wp, 2.0_wp ]
          !----- Carbon-dynamics traits (mirrors meds_config_pft.toml). -----------------------!
@@ -163,7 +160,6 @@ contains
          p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! = 1/old leaf_turnover_rate
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
-         p%evergreen              = [ 1_ik, 1_ik, 1_ik ]
          p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]
          p%f_labile_stem          = [ 0.05_wp, 0.05_wp, 0.05_wp ]
          p%struct_lignin_frac     = [ 0.20_wp, 0.25_wp, 0.30_wp ]

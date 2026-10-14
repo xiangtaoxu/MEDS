@@ -2,9 +2,11 @@
 !==========================================================================================!
 ! meds_plant_respiration -- non-leaf autotrophic-respiration COMPUTE kernels (an ED2 port).  !
 !                                                                                          !
-!   * stem_maintenance_respiration      -- woody-tissue maintenance respiration, ED2 Chambers  !
-!       (2004) surface-area form: a 25 degC baseline (optionally DBH-size-scaled) times a peaked  !
-!       temperature response, times the per-plant stem surface area (cylinder + WAI branch term). !
+!   * stem_maintenance_respiration      -- woody-tissue maintenance respiration: a peaked          !
+!       temperature response times two terms, each with its own 25 degC rate -- the ED2 Chambers  !
+!       (2004) surface-area form (optionally DBH-size-scaled) on the stem surface (cylinder + WAI  !
+!       branch term), and a sapwood term on the sapwood volume (the living wood; Ryan 1990).      !
+!       A PFT sets either rate to 0 to use the other basis alone.                                  !
 !   * fine_root_maintenance_respiration -- fine-root maintenance respiration, ED2 per-broot form: !
 !       a 25 degC per-kgC baseline times the peaked temperature response, times fine-root biomass.  !
 ! (Growth/construction respiration lives with the growth it charges, in meds_plant_carbon_allocation.)!
@@ -40,7 +42,7 @@ contains
    !---------------------------------------------------------------------------------------!
    elemental pure subroutine stem_maintenance_respiration(wood_temp, dbh, height, wai, nplant,          &
                                                          aboveground_frac, is_woody, resp_factor25,     &
-                                                         params, stem_resp)
+                                                         sap_volume, resp_sapwood25, params, stem_resp)
       real(wp),            intent(in)  :: wood_temp   !< [K]  woody-tissue temperature
       real(wp),            intent(in)  :: dbh         !< [cm] stem diameter at breast height
       real(wp),            intent(in)  :: height      !< [m]  cohort height
@@ -52,7 +54,12 @@ contains
       !      used their values everywhere EXCEPT here (issue #128). ------------------------------!
       real(wp),            intent(in)  :: aboveground_frac  !< [--] cohort PFT's aboveground fraction
       logical,             intent(in)  :: is_woody          !< cohort PFT is woody (grass => 0)
-      real(wp),            intent(in)  :: resp_factor25     !< [umol CO2/m2 stem/s @25C] cohort PFT's baseline
+      real(wp),            intent(in)  :: resp_factor25     !< [umol CO2/m2 stem/s @25C] cohort PFT's surface rate
+      !----- The sapwood term: the living wood respires by its volume, so a small stem, all of it  !
+      !      sapwood but little of it per m2 of surface, pays less than the surface form charges   !
+      !      it, and a large one more. The volume includes the coarse roots, as the surface does. --!
+      real(wp),            intent(in)  :: sap_volume        !< [m3/plant] sapwood volume
+      real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
       type(wood_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
       real(wp) :: srf25, tscale, stem_area
@@ -70,7 +77,9 @@ contains
       !      by the aboveground structural fraction (ED2). WAI is per-ground => /nplant.        !
       stem_area = ( pi * (dbh * 1.0e-2_wp) * height                                             &
                   + pi * wai / max(nplant, tiny_num) ) / max(aboveground_frac, tiny_num)
-      stem_resp = srf25 * tscale * stem_area
+      !----- Surface term first, in its original order, so a PFT with no sapwood rate respires    !
+      !      bit for bit as before. --------------------------------------------------------------!
+      stem_resp = srf25 * tscale * stem_area + resp_sapwood25 * tscale * sap_volume
    end subroutine stem_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!

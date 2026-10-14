@@ -46,18 +46,15 @@ end_time   = "2250-01-01"      # stop date (exclusive); 250-year spin-up
 # Fast (sub-daily) biophysics loop, nested within dt_slow: when on, the driver runs
 # nint(dt_slow/dt_fast) sub-steps and the slow loop is driven by the carbon they produce.
 # Off here so this reference config is a pure demographic spin-up with no forcing file;
-# examples/example_biophysics/ turns it on. With it off, growth runs on the [carbon].gpp_ref
+# examples/example04_column_biophysics/ turns it on. With it off, growth runs on the [carbon].gpp_ref
 # stub instead of solved photosynthesis.
 fast_biophysics_on  = false    # master gate for the fast biophysics loop
 dt_fast             = "900s"   # fast biophysics timestep. No longer stability-limited: the CAS<->atm
                                # surface layer is re-solved at every stage, so the period-2 canopy-air
                                # oscillation that forced 150 s is gone (peak-to-peak 7.7 K -> 0.10 K at
-                               # 900 s). Carbon at 900 s is fine too -- PROVIDED the non-stomatal
-                               # water-stress limb stays off (the default; see [leaf_physiology].
-                               # wstress_nonstomatal): with it off, daily GPP is dt_fast-independent to
-                               # 0.05% and ET to ~1%; with it ON, 900 s costs -33% GPP / -24% ET,
-                               # because psi_leaf is not converged in dt_fast and that limb amplifies
-                               # it linearly. See docs/science/numerical_scheme.md sec 5a-6.
+                               # 900 s). The fast water-stress limb reads the leaf potential at the
+                               # start of each step, so carbon under drought depends on dt_fast; see
+                               # docs/science/numerical_scheme.md sec 5a-6.
 # ---- The time integrator and its error control (docs/science/numerical_scheme.md). Every key
 #      is optional, at the default shown. ----
 # time_integrator     = "ark"        # "ark" (ESDIRK2) | "rk45" (explicit, for comparison)
@@ -107,54 +104,54 @@ wood_apoplast_frac        = 0.20      # [-]          wood apoplastic fraction
 wood_water_sat = 1.0       # [kg H2O/kgC] wood saturated water content
 wood_psi50     = -2.0      # [MPa,<0]     xylem potential at 50% loss of conductance
 wood_kexp      = 2.0       # [-]          vulnerability shape (=2 exact atan; else lookup table)
-conductance    = "whole_plant"   # "whole_plant": k_plant_max per leaf area | "segment": the sapwood's
-k_plant_max    = 6.0e-4    # [kg/s/MPa/m2_leaf] max whole-plant conductance (conductance = "whole_plant")
-wood_kmax      = 8.0       # [kg/m/s/MPa] sapwood specific conductivity  (conductance = "segment")
-vessel_curl    = 1.5       # [-]          tortuosity / path-length factor (conductance = "segment")
-# ---- the root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the soil ----
-#      column; layers below root_depth hold no roots. It sets the per-layer water uptake and rhizosphere
-#      conductance, the root-zone temperature of root respiration and the root-weighted soil state.
-#      exp(-4) with a 2 m depth is the exponential exp(-2 * depth [m]).
-root_beta          = 0.01831563888873418   # [-]  ED2 root-profile decay (0,1); smaller = shallower rooting
-root_depth         = 2.0   # [m]      maximum rooting depth
-specific_root_area = 20.0  # [m2/kgC] fine-root absorbing area per unit fine-root carbon
+# ---- the plant's maximum internal conductance is its sapwood's, wood_kmax * sapwood area /
+#      (height * vessel_curl). wood_kmax is a PFT trait: by default exp(2.348 - 2.455 rho + 0.6186/2)
+#      [kg/m/s/MPa] from the PFT's wood density rho (Xu et al. 2016, tropical trees; ED2), which
+#      pft.wood_kmax overrides.
+vessel_curl    = 1.5       # [-]          tortuosity / path-length factor
+# ---- roots, plant traits (pft.<key> overrides each per PFT). A cohort roots to root_depth_b1 *
+#      height^root_depth_b2 [m] (ED2's height allometry, IALLOM 1: 5 m at 35 m), capped at the soil
+#      column; its fine roots fall off within that depth as ED2's (1 - root_beta^(d/D)) / (1 - root_beta)
+#      above depth d. Its root length (fine-root carbon * specific_root_length) sets each layer's
+#      soil->root conductance, 2 pi K L / ln(r_half / fine_root_radius) (Gardner 1960).
+root_beta            = 0.1        # [-]     share of the profile that would lie below the rooting depth (0,1)
+root_depth_b1        = 1.1140580  # [m]     rooting depth = b1 * height[m]^b2
+root_depth_b2        = 0.4223014  # [-]
+specific_root_length = 2.0e4      # [m/kgC] fine-root length per unit fine-root carbon: 10 m per g dry mass, the
+                                  #         tropical fine roots of Panama (Wurzburger & Wright 2015; Cordeiro et
+                                  #         al. 2024) and GRooT, times 2 g dry per g C. All fine-root carbon counts:
+                                  #         the 0-1 mm roots hold 92 % of the length.
+fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root diameters are 0.4-0.6 mm
 
 [soil]
-# Soil-water (Richards) SOLVER options, consumed by the fast loop. Every key is OPTIONAL: it defaults
-# to the value shown, so the whole block may be omitted (byte-identical to the meds_biophysics_opts
-# defaults). This is the solver/BC config, NOT the soil geometry/texture (those are built separately).
+# Soil-water options, consumed by the fast loop. Every key is OPTIONAL: it defaults to the value
+# shown, so the whole block may be omitted (byte-identical to the meds_biophysics_opts defaults).
+# Soil and plant water are solved together as one network (implicit Euler with Newton and its own
+# sub-steps); rtol/atol set its error. This is NOT the soil geometry/texture (see [soil_column]).
 bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
-linearize      = "frozen"     # frozen | picard                  (Richards linearization)
-substep        = "adaptive"   # adaptive | fixed                 (substep controller)
-rtol           = 1.0e-3       # [-]      adaptive substep relative tolerance
-atol           = 1.0e-4       # [m3/m3]  adaptive substep absolute tolerance
-h_init         = 900.0        # [s]      initial substep
-max_substep    = 2000         # [-]      substep cap: a ponded storm on dry soil needs hundreds (BCI, April 2016)
-max_picard     = 5            # [-]      modified-Picard iteration cap
+rtol           = 1.0e-3       # [-]      water-network sub-step relative tolerance
+atol           = 1.0e-4       # [-]      water-network sub-step absolute tolerance: water content for soil
+                              #          layers and the pond, relative water content for plant tissues
 w_pond_max     = 5.0          # [kg/m2]  ponding capacity before surface runoff
 intercept_alpha = 1.0         # [-]      Beer interception efficiency
 intercept_k     = 0.5         # [1/PAI]  Beer interception extinction
 dsl_dmax       = 0.015        # [m]      dry-surface-layer max thickness (soil evaporation)
 dsl_theta_init = 0.8          # [-]      DSL initiation theta_1/theta_sat
-psi_wilt       = -152.96      # [m]      wilting head (~ -1.5 MPa) for the root-sink ramp
-psi_open       = -3.37        # [m]      onset head (~ -0.033 MPa) for the root-sink ramp
 ground_albedo_vis = 0.15      # [-]      bare-soil albedo, visible
 ground_albedo_nir = 0.30      # [-]      bare-soil albedo, near infrared
 ground_emissivity = 0.95      # [-]      bare-soil longwave emissivity
 
 # ------------------------------------------------------------------------------------------
-# [soil_column] -- the PHYSICAL soil column the Richards solver above is solved OVER.
-# [soil] is the solver (tolerances, bottom BC, substepping); this is the ground itself:
+# [soil_column] -- the PHYSICAL soil column the soil water above is solved OVER.
+# [soil] holds the water network's tolerances and the bottom BC; this is the ground itself:
 # the vertical grid, the hydraulic texture and the thermal texture.
 #
-# Every key is OPTIONAL and defaults to the value shown, which is the literal that used to be
-# hard-coded in build_fast_context -- so omitting the whole block reproduces the old behaviour
-# exactly. The values below are a loam-ish placeholder, NOT a measured soil: replace them for a
-# real site. Validated at load: a layer count over the compile-time ceiling, a non-positive
-# depth, theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one
-# produces a silently wrong column rather than a crash.
+# Every key is OPTIONAL and defaults to the value shown. The values below are a loam-ish
+# placeholder, NOT a measured soil: replace them for a real site. Validated at load: a
+# non-positive depth, layer_bottoms that do not increase or do not reach the depth,
+# theta_sat <= theta_res, or a van Genuchten n <= 1 are hard errors, because each one produces a
+# silently wrong column rather than a crash.
 [soil_column]
-n_layer     = 10           # [-]      active soil layers (<= n_soil_layer_max = 20)
 depth       = 2.0          # [m]      total column depth
 #
 #   NOTE ON `depth`. 2.0 m is SHALLOWER than the ~2.5 m annual thermal damping depth at a
@@ -162,7 +159,11 @@ depth       = 2.0          # [m]      total column depth
 #   decaying into it. Deepening the column is the fix (not extrapolating the gradient, which is
 #   degenerate); this key is what makes it reachable. Changing it changes soil temperature.
 #
-grid_growth = 3.0          # [-]      layer-thickness growth with depth (0 = uniform grid)
+#   The layers are SoilGrids 2.0's depths (bottoms 0.05, 0.15, 0.30, 0.60, 1.00 m), then 1.5,
+#   2.0, 3.0, 4.5, 6.5, 9.0, 12, 16, 21 and 27 m, cut at `depth`; a remainder thinner than half
+#   the layer it falls in joins the layer above. layer_bottoms replaces that list (a measured
+#   profile); the column then ends at its last bottom unless `depth` is set.
+# layer_bottoms = [0.05, 0.15, 0.30, 0.60, 1.00, 1.50, 2.00]   # [m] layer bottoms, positive down
 retention   = "van_genuchten"   # van_genuchten | campbell
 theta_sat   = 0.43         # [m3/m3]  porosity
 theta_res   = 0.078        # [m3/m3]  residual water content
@@ -203,11 +204,11 @@ bottom_bc      = "geothermal" # geothermal (adiabatic base, REFLECTS the annual 
                               #      annual damping depth ~ mean annual AIR temperature + 1..2 K.
                               #      An error here is a steady flux into the column base, i.e. a
                               #      mean-annual bias of about the same size at depth.
-#deep_depth    = 3.12         # [m]  depth of the anchor PLANE. The default is the derived optimum
-                              #      for the DEFAULT column (2 m, 10 layers, grid_growth 3): a purely
-                              #      resistive termination reflects least at l = d/sqrt(2), giving
-                              #      1.727 + 1.973/sqrt(2) = 3.12 m. CHANGE IT if you change the
-                              #      column depth or the soil's thermal texture.
+#deep_depth    = 3.145        # [m]  depth of the anchor PLANE. The default is the derived optimum
+                              #      for the DEFAULT column (2 m on the default layers, bottom node
+                              #      1.75 m): a purely resistive termination reflects least at
+                              #      l = d/sqrt(2), giving 1.75 + 1.973/sqrt(2) = 3.145 m. CHANGE IT if
+                              #      you change the column depth or the soil's thermal texture.
 
 [snow]
 # Snow / temporary-surface-water PHYSICAL parameters (MEDS_SNOW_DESIGN P0). The snow store is
@@ -263,8 +264,8 @@ do_patch_disturbance      = true     # annual treefall-gap creation
 do_patch_fissfuse         = true     # annual patch fusion/termination
 max_cohort                = 60       # per-patch cohort-count target (fusion relaxes to hit it)
 n_cohort_fusion_iter      = 6        # tolerance-relaxation iterations
-cohort_size_tol_min       = 0.02     # relative height tolerance, min
-cohort_size_tol_max       = 0.10     # relative height tolerance, max
+cohort_size_tol_min       = 0.02     # height tolerance as a share of the patch's top height, first pass
+cohort_size_tol_max       = 0.10     # its ceiling
 cohort_lai_cap            = 1.0      # [m2/m2] single-cohort LAI cap (split above; fusion blocked above)
 min_cohort_agb            = 1.0e-6   # [kgC/m2] cull cohorts below nplant*agb
 negligible_nplant         = 1.0e-8   # [plant/m2] absolute density floor
@@ -281,7 +282,10 @@ min_patch_area            = 1.0e-4   # cull patches below this area fraction
 patch_min_area_remain     = 0.99     # stop fusing once this area fraction is kept
 enable_patch_fission      = false
 conservation_tol          = 0.001    # 0.1% AGB/area conservation tolerance
-growth_memory_days        = 90.0     # [day] window of the moving-average growth that drives mortality
+growth_memory_days        = 365.0    # [day] window of the moving-average growth that drives mortality: a
+                                     #       full year, so a seasonal pause in growth is not read as decline
+                                     #       (census growth, which the mortality laws are fitted on, is annual).
+                                     #       The diameter sink limit is a budget over the same window.
 
 [disturbance]
 patch_disturbance_rate     = 0.014   # [1/yr] fraction of area disturbed into a new age-0 gap
@@ -293,7 +297,7 @@ min_recruit_size = 1.0e-2            # [plant/m2] pool threshold to spawn a recr
 [init]
 init_mode    = 0                              # 0 = near-bare ground | 1 = cohort census | 2 = restart
 restart_file = "meds_output-S-22500101000000.nc"  # state checkpoint (init_mode = 2)
-census_file  = "examples/example_demography/census_example.csv"  # cohort CSV (init_mode = 1)
+census_file  = "data/census_example.csv"  # cohort CSV (init_mode = 1)
 pft_config   = "meds_config_pft.toml"             # the REQUIRED PFT config file
 # soil_temp          = 288.0      # [K]      initial soil temperature, every layer (init_mode 0 and 1)
 # soil_theta         = 0.30       # [m3/m3]  initial soil moisture, every layer (init_mode 0 and 1)
@@ -390,6 +394,8 @@ gpp_ref       = 0.3            # [kgC/m2 leaf/yr] stub GPP per unit leaf area, u
 [trait_dynamics]
 # trait_plasticity_on = false     # acclimate each cohort's leaf traits (sla, vcmax25, rd25, llspan)
                                   #   to the leaf area above it; false keeps the PFT's top-of-canopy values
+# fineroot_lifespan_plastic = false  # with plasticity on: fine-root turnover x (top-of-canopy leaf lifespan
+                                  #   / the cohort's), so shaded roots are replaced as slowly as shaded leaves
 
 [leaf_physiology]
 # Leaf-level photosynthesis + stomatal conductance: a self-contained leaf gas-exchange model
@@ -399,16 +405,6 @@ stomatal_model     = "medlyn"      # "leuning" | "medlyn" | "katul"
 temp_response_form = "peaked"      # "arrhenius" | "peaked" (high-temperature deactivation)
 colimitation       = "quadratic"   # "min" | "quadratic" (smoothed co-limitation)
 use_boundary_layer = false         # couple via the leaf boundary-layer conductance (env gb)
-wstress_nonstomatal = false        # issue #47: the NON-stomatal (capacity) water-stress limb --
-                                   # a linear psi_leaf ramp on Vcmax/Jmax/TPU. OFF: rarely measured
-                                   # directly, weakly constrained, and a linear AMPLIFIER on a
-                                   # psi_leaf that is itself dt_fast-dependent (it turned a 1 MPa
-                                   # psi error into a 33% GPP shift at dt_fast = 900 s). The
-                                   # STOMATAL limb (psi_soil -> g1/lambda) is unaffected.
-low_water_potential_control = "linear_decline"  # #332: the conductance the stomatal model calculates
-                                   # (g0 included) times a factor falling linearly from 1 at the leaf
-                                   # turgor-loss point to 0 at twice it, on the previous day's predawn
-                                   # leaf potential. The only option; optional (this is the default).
 # Shared FvCB biochemistry at 25 degC + Arrhenius/deactivation terms (Bernacchi et al. 2001).
 kc25    = 40.49      # [Pa]      Michaelis constant for CO2 at 25 degC
 ko25    = 27840.0    # [Pa]      Michaelis constant for O2 at 25 degC
@@ -552,7 +548,7 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #   the top of each patch's canopy air space (its canopy-air depth, which grows with the stand):
 #   potential temperature and humidity are conserved, and the wind follows the patch's own log
 #   profile. Values below are ERA5-Land's; a flux tower gives its sensor heights above the ground,
-#   height_above = "ground" and wind_exposure = "local" (examples/example_flux_tower_bci).
+#   height_above = "ground" and wind_exposure = "local" (examples/example04_column_biophysics).
 # tq_height             = 2.0            # [m] height of air temperature and humidity
 # wind_height           = 10.0           # [m] height of the wind
 # height_above          = "zero_plane"   # "zero_plane" (a reanalysis: its model has no displacement

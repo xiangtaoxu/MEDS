@@ -9,16 +9,16 @@
 !     optional library. That is the §7.6 #4 rule, and it exists because `meds_c_api_demography` !
 !     spent a day not compiling while 42/42 stayed green.                                        !
 !                                                                                          !
-!   * this test runs from `examples/example_biophysics/` and LOADS BOTH of that example's        !
-!     shipped configs. Before this, nothing in the build touched them -- and the sibling          !
-!     example's config had drifted 37 required keys behind the schema exactly that way. A config   !
-!     nothing loads rots like a shim nothing compiles.                                              !
+!   * this test runs from `examples/example04_column_biophysics/` and LOADS BOTH of that          !
+!     example's shipped configs, the default and the calibrated run. The example runs them with   !
+!     scripts the build knows nothing about, and a config nothing loads rots like a shim nothing   !
+!     compiles.                                                                                    !
 !                                                                                          !
 ! The assertions cover the shim's own logic: the invalid-handle guard (every accessor has to      !
 ! return a sentinel rather than index a stale registry slot), distinct handles, and a real         !
 ! open -> step -> finalize -> free cycle through the C boundary.                                    !
 !                                                                                          !
-! The cycle runs on a config DERIVED from the shipped spin-up one: fast biophysics and live met     !
+! The cycle runs on a config DERIVED from the shipped default one: fast biophysics and live met    !
 ! forcing off (the forcing netCDF is not tracked in git), bare ground, three days. The derivation   !
 ! prepends an override block and then copies the original verbatim -- `meds_toml`'s lookup returns  !
 ! the FIRST match for a key, so the prepended values win. Deriving it, rather than writing a config !
@@ -37,8 +37,8 @@ program test_c_api_run
    use meds_test_support, only : banner, check
    implicit none
 
-   character(len=*), parameter :: CFG_SPINUP = 'meds_config_spinup.toml'
-   character(len=*), parameter :: CFG_JULY   = 'meds_config_july.toml'
+   character(len=*), parameter :: CFG_DEFAULT    = 'meds_config_eval.toml'
+   character(len=*), parameter :: CFG_CALIBRATED = 'calibration/meds_config_calibrated.toml'
    character(len=*), parameter :: CFG_DERIVED = 'test_c_api_run_derived.toml'
    integer(c_int)      :: h, h2, status, d0, d1, nsteps
    real(c_double)      :: agb, lai, soilc
@@ -46,22 +46,17 @@ program test_c_api_run
 
    call banner('full-model C-API shim (meds.model)')
 
-   !=== 1. Both SHIPPED example_biophysics configs load. ====================================!
-   !      The schema-drift guard. This example is driven by a shell script and three plotting !
-   !      scripts, none of which the build knows about, so until now nothing here would have  !
-   !      noticed the configs falling behind the config reader.                               !
-   call load_meds_config(CFG_SPINUP, cfg)
-   call check(cfg%pft%n >= 1_c_int, 'the shipped spin-up config loads and carries PFTs')
-   call check(cfg%fast_biophysics_on, 'the spin-up config still requests fast biophysics')
-   call check(cfg%soil_carbon_on, 'the spin-up config still requests SOIL CARBON')
-   call load_meds_config(CFG_JULY, cfg)
-   call check(cfg%pft%n >= 1_c_int, 'the shipped July config loads and carries PFTs')
-   call check(cfg%soil_carbon_on, 'the July config still requests SOIL CARBON')
-   !----- Both stages MUST agree on soil carbon. They did not, which is how the example came to !
-   !      report Rh = 0 and discard its litter: with the feature off there is no soil pool to    !
-   !      receive it, and the slow ledger flagged the discarded carbon as an undeclared residual.!
-   !      A July stage restarting from a spin-up that never built the pools respires nothing     !
-   !      whatever this flag says, so the two have to move together.  ---------------------------!
+   !=== 1. Both SHIPPED example04_column_biophysics configs load. ===========================!
+   !      The schema-drift guard: the example's scripts are outside the build, so nothing else !
+   !      here would notice its configs falling behind the config reader.                      !
+   call load_meds_config(CFG_DEFAULT, cfg)
+   call check(cfg%pft%n >= 1_c_int, 'the shipped default config loads and carries PFTs')
+   call check(cfg%fast_biophysics_on, 'the default config requests fast biophysics')
+   call check(cfg%soil_carbon_on, 'the default config requests SOIL CARBON')
+   call load_meds_config(CFG_CALIBRATED, cfg)
+   call check(cfg%pft%n >= 1_c_int, 'the shipped calibrated config loads and carries PFTs')
+   call check(cfg%fast_biophysics_on, 'the calibrated config requests fast biophysics')
+   call check(cfg%soil_carbon_on, 'the calibrated config requests SOIL CARBON')
 
    !=== 2. The invalid-handle guard. ========================================================!
    !      Every accessor takes a bare integer from the caller. One that was never opened, or  !
@@ -106,11 +101,9 @@ program test_c_api_run
    !      object in that slot still holds whatever the last run left in it. `meds_run_t`'s default  !
    !      initialisers do NOT help: they apply to a fresh variable, not to a slot being reopened.   !
    !                                                                                          !
-   !      This is not hypothetical. examples/example_biophysics opens the spin-up, closes it, and   !
-   !      opens the July stage in the SAME process; before driver_open reset these, stage 2         !
-   !      inherited stage 1's step counters, both whole-column budgets, the slow ledger AND the     !
-   !      soil-carbon seam maximum -- which is how it was caught, both stages reporting an          !
-   !      identical worst gap to four significant figures.  ---------------------------------------!
+   !      A Python process that runs one config after another (a calibration's trials) reuses   !
+   !      slots this way, so the step counters, both whole-column budgets, the slow ledger and the !
+   !      soil-carbon seam maximum must start fresh at every open.  -------------------------------!
    call meds_run_free(h)
    h = meds_run_open(to_c(CFG_DERIVED), int(len(CFG_DERIVED), c_int), 0_c_int)
    call check(h > 0_c_int, 'a second run opens after the first is freed')
@@ -139,7 +132,7 @@ program test_c_api_run
 
 contains
 
-   !----- Prepend an override block to the shipped spin-up config. `meds_toml` returns the FIRST !
+   !----- Prepend an override block to the shipped default config. `meds_toml` returns the FIRST !
    !      match for a key, so these win over the same keys later in the file. What is turned off: !
    !      the fast loop and live met forcing (the forcing netCDF is untracked), the output        !
    !      streams and the state checkpoint (a test must not litter the source tree), and the      !
@@ -163,7 +156,7 @@ contains
       write(uout,'(a)') 'write_state = false'
       write(uout,'(a)') '[output]'
       write(uout,'(a)') 'enabled = false'
-      open(newunit=uin, file=CFG_SPINUP, status='old', action='read')
+      open(newunit=uin, file=CFG_DEFAULT, status='old', action='read')
       do
          read(uin,'(a)',iostat=ios) line
          if (ios /= 0) exit

@@ -26,30 +26,36 @@ failure, not from a plan.
 
 | # | Title | Note |
 |---|---|---|
-| [#1](https://github.com/xiangtaoxu/MEDS/issues/1) | Equal-height shading ambiguity: capped large trees and same-height recruits | Enhancement |
 | [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
 | [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
 | [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
+| [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above `K_MIN` to about −2 MPa for a soil of n near 1.4 |
 
 ---
 
 ## 2. Phenology
 
-Source: `docs/dev_plans/archive/MEDS_PHENOLOGY_RATE_REFACTOR_DESIGN.md`. Science page:
+Source: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`. Science page:
 [`science/plant_phenology.md`](science/plant_phenology.md).
 
-All five cues are wired and selectable as of v0.2.0, and the design plan is archived. What is
-**not** done is validation: no MEDS leaf-area cycle has been scored against an observation, at any
-site, under any strategy. That is not a roadmap item with a design — it is the benchmarking gap in
+One generic cue model (temperature, hours of light, water) with evergreen as a leaf-cover floor.
+The kernel is fitted offline at three sites (`examples/example02_canopy_phenology`); no coupled MEDS
+run's leaf-area cycle has been scored against an observation yet. That is the benchmarking gap in
 §1, of which this is one instance.
 
-- **`root_phen_factor`** — *Candidate.* [#258](https://github.com/xiangtaoxu/MEDS/issues/258) The fine-root side of phenological shedding.
-  Leaf resorption shipped in v0.2.0 (`retained_carbon_fraction`, default 0); the fine-root coupling
-  did not. Phenology stays leaf-only by design, so if adopted it belongs in the carbon layer beside
-  the resorption split.
+- **The water cue on the model's own predawn potential** — *Planned.* A dry-forest run (Guanacaste)
+  with the cue on, since the cue needs the shed → ψ feedback; example02 drives it with a
+  soil-moisture surrogate.
+- **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* The background turnover rate is
+  the model's parameter; leaf lifespan is emergent (plan D2).
+
+- **Drought-driven fine-root dieback** — *Candidate.* Fine roots age on the leaves' turnover gate and
+  share their resorption (#387), but they are not shed with the leaves: root length sets the
+  root–soil conductance, so a drop would cut a leafless plant's water uptake. A root dieback would act
+  per soil layer, on that layer's water, not on the leaves.
 
 ---
 
@@ -75,6 +81,21 @@ Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science pag
 Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science page:
 [`science/numerical_scheme.md`](science/numerical_scheme.md).
 
+- **Soil and plant water as one network.** *Done 2026-10-12.* `MEDS_SPAC_WATER_NETWORK_PLAN.md`;
+  science page [`science/soil_plant_water.md`](science/soil_plant_water.md). The pond, the soil layers
+  and every cohort's wood and leaves are solved together, implicitly, on both schemes; the soil-water
+  solver, the plant-hydraulics solver, the transpiration corrector, the tissue-water floor and RK45's
+  saturation clip are gone. What is left:
+  - **Newton work.** A step takes 3.5 Newton iterations per sub-step on BCI, mostly the small
+    cohorts' wood and leaves at each change in demand, and partly root uptake switching on and off
+    across layers (widening its 10⁻³ MPa ramp to 5×10⁻² cuts the iterations by 14 %). A warm start
+    (persisted unknowns per patch) or eliminating each cohort nonlinearly are the candidates.
+  - **The C API.** The network's process functions and solver take prescribed-potential nodes and
+    fixed-flux boundaries, so a plant-only or soil-only solve is a configuration; exposing it through
+    the C API is open.
+  - **Sensible heat.** On BCI's dry season at 150 s the network's H is 0.8 W m⁻² above the old
+    scheme's while LE agrees to 0.1 W m⁻²; not yet attributed.
+
 - **N5 — an adaptive freeze cadence with a real error estimator.** *Closed 2026-09-30; revisit with
   the numerical scheme.* [#158](https://github.com/xiangtaoxu/MEDS/issues/158) It was proposed when the
   stability limit forced `dt_fast = 150 s` for the whole day. N2a removed that limit and the shipped
@@ -83,10 +104,11 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   the sub-step's forcing samples and output staging.
 - **Fold soil water into the ARK tableau.** *Closed 2026-09-30; revisit with the numerical scheme.*
   [#159](https://github.com/xiangtaoxu/MEDS/issues/159) — successor to #93. In-stage soil water costs
-  +14–26 % and removes a split error of 0.011–0.018 % of column water. On ARK the committed soil state
-  and the fluxes its soil-heat stages use come from one solve, so the borrowed-flux defect class is
-  absent there. The drought result behind closing #93 (2.3 % at 900 s) was measured under
-  `ARREST_GS_CLAMP`, which #335 replaced; re-measure it in that round.
+  +14–26 % and removes a split error of 0.011–0.018 % of column water. The committed soil state and
+  the fluxes the soil-heat stages use come from one solve, the water network, on both schemes, so the
+  borrowed-flux defect class is absent. The drought result behind closing #93 (2.3 % at 900 s) was measured under
+  `ARREST_GS_CLAMP`, since replaced (#335) and then removed in favour of the always-on capacity
+  limb on the current leaf potential; re-measure it in that round.
 - **The `rwc_floor` clamp artefact** ([#104](https://github.com/xiangtaoxu/MEDS/issues/104)). *Closed
   2026-09-30, no change.* A wood store below its apoplastic floor maps to a potential of about
   −10⁴ MPa, and the hydraulics then take many sub-steps to refill it. Measured on the current scheme
@@ -99,13 +121,15 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   Every entry happens on a step whose uptake the soil throttled, the path to revisit if it ever
   matters. Leaf and wood already share one pressure-volume curve (`water_curve_t`), so a
   physiology change would add a special case rather than remove one.
-- **`psi_wood` at 900 s, and a restart's first day.** *Known limitation; revisit with the numerical
-  scheme.* [#162](https://github.com/xiangtaoxu/MEDS/issues/162) `psi_leaf` converges at 900 s on ARK since the
-  transpiration corrector (#91): re-measured 2026-09-30 over July on the established Ithaca stand,
-  daily means at 900 s match a 12.5 s run to 0.001 MPa on every day after the first
-  (`science/numerical_scheme.md` §5a). The first day after a restart still carries a start-up
-  transient (−1.83 against −0.28 MPa), and `psi_wood` keeps 0.17 MPa at 900 s on the 3-hour midday
-  probe through the frozen uptake seam.
+- **`psi_wood` at 900 s, and a restart's first day.** *Re-measure on the water network.*
+  [#162](https://github.com/xiangtaoxu/MEDS/issues/162) `psi_leaf` converged at 900 s on ARK with the
+  transpiration corrector (#91): over July on the established Ithaca stand, daily means at 900 s
+  matched a 12.5 s run to 0.001 MPa on every day after the first (`science/numerical_scheme.md` §5a),
+  with a start-up transient on the first day after a restart (−1.83 against −0.28 MPa) and 0.17 MPa
+  left in `psi_wood` on the 3-hour midday probe through the frozen uptake seam. The water network
+  (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
+  midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
+  transient are still to be re-measured.
 
 ---
 
@@ -199,14 +223,20 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   *calibrated* them. The thirteen traits are selectable per PFT and default to the shared
   `[hydraulics]` block, so a run that does not set them is unchanged — which means MEDS ships with
   hydraulically identical PFTs until somebody puts real trait values in. Wood density is the obvious
-  axis to derive them from (denser wood ⇒ more negative `wood_psi50`, lower `wood_kmax`), as the
-  Camac mortality coefficients already are.
-- **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) The plant hydraulic network resolves the root
-  system as one node against a weighted soil boundary. Sources:
-  `MEDS_MULTILAYER_ROOTS_DESIGN.md` §5, `MEDS_HYDRAULICS_DESIGN.md` §16.
-- **Hydraulic redistribution.** *Planned.* [#181](https://github.com/xiangtaoxu/MEDS/issues/181) Per-layer root efflux is floored at zero in both the
-  plant solver and the soil sink, so uptake is non-negative by construction. Turning it on means
-  deciding how the ledger treats water moving between layers through the plant. Same source.
+  axis to derive them from, as the Camac mortality coefficients already are, and `wood_kmax` now
+  is (Xu et al. 2016); `wood_psi50` (denser wood ⇒ more negative) is next.
+- **Phase B — per-layer root nodes.** *Planned.* [#180](https://github.com/xiangtaoxu/MEDS/issues/180) Each soil layer is now its own path into a cohort's
+  wood in the water network, with no root store between. A root node would be the first unknown of
+  each cohort's block in the arrowhead solve, which takes it as it stands. Sources:
+  `MEDS_MULTILAYER_ROOTS_DESIGN.md` §5, `MEDS_HYDRAULICS_DESIGN.md` §16,
+  `MEDS_SPAC_WATER_NETWORK_PLAN.md`.
+- **Hydraulic redistribution.** *Planned.* [#181](https://github.com/xiangtaoxu/MEDS/issues/181) Root uptake is zero from a layer drier than the
+  wood (a smoothed ramp in `root_water_uptake`), so it is non-negative by construction. Turning
+  redistribution on is a change to that one flow law, plus deciding how the ledger treats water moving
+  between layers through the plant. Same source.
+- **A root radial conductance in series.** *Planned.* [#356](https://github.com/xiangtaoxu/MEDS/issues/356) The soil-to-root path is the
+  rhizosphere's Gardner conductance alone; a radial root conductance in series is a different flow
+  law for that path in `meds_hydr_lib`.
 
 ---
 
@@ -298,6 +328,10 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
   and the allocator's share of a serial BCI run fell from 14.9 % to 7.7 %. What remains is mostly the
   frozen record, built afresh each step (4 % of the serial fast loop): it relies on a new record's
   defaults for its scalars, so reusing it needs a reset that lists them.
+- **The water network's cost.** *Within its gate.* On the BCI profile the soil-plant water network
+  runs at +13.5 % against the solvers it replaced at 12 threads (+19 % serial), inside the plan's
+  +15 % (`MEDS_SPAC_WATER_NETWORK_PLAN.md` §12.4). Most of it is Newton iterations (§4 above) and the
+  per-cohort × per-layer root-uptake evaluation.
 - **Thread and vectorise the cohort axis on the CPU.** *Planned.* [#196](https://github.com/xiangtaoxu/MEDS/issues/196) This is the evaluation's
   headline recommendation. Patch-axis threading already ships; the cohort axis is untouched.
 - **A single-precision experiment** (`wp = real32`). *Decided: no.* [#197](https://github.com/xiangtaoxu/MEDS/issues/197) Measured 56× on the device for

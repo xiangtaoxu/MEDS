@@ -47,6 +47,7 @@
 module meds_site_diag_types
    use meds_kinds,     only : wp, ik
    use meds_constants, only : tiny_num
+   use meds_numerics,  only : pair_mean
    implicit none
    private
 
@@ -142,14 +143,16 @@ module meds_site_diag_types
    integer(ik), parameter, public :: CS_NPP_REPRO    = 8_ik  !< [kgC/plant/yr]  NPP to reproduction
    integer(ik), parameter, public :: CS_GROWTH_RESP  = 9_ik  !< [kgC/plant/yr]  growth respiration
    integer(ik), parameter, public :: CS_STORAGE_RESP = 10_ik !< [kgC/plant/yr]  storage maintenance respiration
-   integer(ik), parameter, public :: N_CSDIAG        = 10_ik
+   integer(ik), parameter, public :: CS_EXUDATE      = 11_ik !< [kgC/plant/yr]  root exudate (carbon the growth sink could not use)
+   integer(ik), parameter, public :: N_CSDIAG        = 11_ik
 
    !----- Fusion kinds for the slow rows. All of them are per-PLANT rates, so all are EXTENSIVE    !
    !      (nplant-weighted) -- the same convention gpp_accum and the maintenance-respiration        !
    !      accumulators already follow in fuse_2_cohorts.  ---------------------------------------!
    integer(ik), parameter, public :: CSDIAG_FUSE(N_CSDIAG) = [                                   &
         FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
-        FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE ]
+        FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE, FK_EXTENSIVE,                    &
+        FK_EXTENSIVE ]
 
    !==========================================================================================!
    !  PER-PATCH diagnostic fields. The fast loop fills the fast rows once per (patch, sub-step)  !
@@ -179,8 +182,8 @@ module meds_site_diag_types
    !----- SLOW-loop patch diagnostics. They share this block (and its weight) with the fast rows    !
    !      above because the reader normalizes by w either way, and the slow driver writes them as   !
    !      a dt-weighted contribution over the same slow step the fast rows span. -------------------!
-   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall
-   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter
+   integer(ik), parameter, public :: PD_LITTER_LEAF     = 21_ik !< [kgC/m2/yr] leaf litterfall (after resorption)
+   integer(ik), parameter, public :: PD_LITTER_FINEROOT = 22_ik !< [kgC/m2/yr] fine-root litter (after resorption)
    integer(ik), parameter, public :: PD_LITTER_STRUCT   = 23_ik !< [kgC/m2/yr] structural litter + CWD
    integer(ik), parameter, public :: PD_RECRUIT_NPLANT  = 24_ik !< [plant/m2/yr] recruitment density flux
    integer(ik), parameter, public :: PD_DISTURB_AREA    = 25_ik !< [1/yr] area fraction disturbed
@@ -226,7 +229,11 @@ module meds_site_diag_types
    !      the ground surface is the top soil layer (PD_SOIL_TEMP_TOP) -- and over a forest this is   !
    !      mostly the canopy. It is a fourth root, so it is formed per sub-step, like the VPD. -------!
    integer(ik), parameter, public :: PD_SKIN_TEMP     = 40_ik  !< [K] (longwave up / sigma)^(1/4)
-   integer(ik), parameter, public :: N_PDIAG            = 40_ik
+   !----- Litter by the tissue it came from, completing PD_LITTER_LEAF / PD_LITTER_FINEROOT (#399): !
+   !      with root_exudate_site they sum to the carbon entering the soil pools. ---------------!
+   integer(ik), parameter, public :: PD_LITTER_WOOD   = 41_ik  !< [kgC/m2/yr] wood + storage of dead plants
+   integer(ik), parameter, public :: PD_LITTER_REPRO  = 42_ik  !< [kgC/m2/yr] fruit and seed that made no recruit
+   integer(ik), parameter, public :: N_PDIAG            = 42_ik
 
    !==========================================================================================!
    !  PER-POLYGON diagnostic fields: quantities that are the same everywhere in the polygon, so   !
@@ -396,16 +403,14 @@ contains
       real(wp),                intent(in)    :: li_r, li_d   !< leaf-area weights (nplant*leaf_area)
       real(wp),                intent(in)    :: np_r, np_d   !< nplant weights
       integer(ik),             intent(in)    :: kinds(:)     !< CDIAG_FUSE or CSDIAG_FUSE
-      real(wp)    :: wi, we
       integer(ik) :: f
       if (.not. d%active) return
-      wi = li_r + li_d ; we = np_r + np_d
       do f = 1_ik, min(int(size(kinds), ik), int(size(d%v, 1), ik))
          select case (kinds(f))
          case (FK_INTENSIVE)
-            if (wi > tiny_num) d%v(f, recc) = (li_r * d%v(f, recc) + li_d * d%v(f, donc)) / wi
+            d%v(f, recc) = pair_mean(d%v(f, recc), li_r, d%v(f, donc), li_d)
          case (FK_EXTENSIVE)
-            if (we > tiny_num) d%v(f, recc) = (np_r * d%v(f, recc) + np_d * d%v(f, donc)) / we
+            d%v(f, recc) = pair_mean(d%v(f, recc), np_r, d%v(f, donc), np_d)
          case default   ! FK_GROUND -- already per m2 of the SAME patch ground, so they add
             d%v(f, recc) = d%v(f, recc) + d%v(f, donc)
          end select
@@ -563,8 +568,8 @@ contains
    pure logical function patch_diag_slow_row(field) result(slow)
       integer(ik), intent(in) :: field
       select case (field)
-      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA, &
-            PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
+      case (PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO,  &
+            PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB)
          slow = .true.
       case default
          slow = .false.

@@ -50,6 +50,7 @@ program test_met_driver
    call test_cosz_reconstruction()
    call test_const_backend()
    call test_netcdf_roundtrip()
+   call test_sunrise_interval()
    call test_nearest_grid()
    call test_lapse()
    call test_terrain_lapse()
@@ -321,6 +322,50 @@ contains
       call test_edge_paths(base)
    end subroutine test_netcdf_roundtrip
 
+   !----- 7b. A SUNRISE HOUR KEEPS ITS LIGHT. The shortwave partition's sun is the interval's mean   !
+   !      cosz, so an hour that is lit only after its midpoint still splits its shortwave into the     !
+   !      four streams, and the instants inside it average back to the hour's mean (#371). The site   !
+   !      longitude is searched so that one hour of the file has a dark midpoint and a lit end. ------!
+   subroutine test_sunrise_interval()
+      type(met_source_t)     :: src
+      type(met_cursor_t)     :: cur
+      type(forcing_config_t) :: fc
+      type(met_forcing_t)    :: met
+      type(meds_time_t)      :: base, now
+      real(wp), parameter    :: SW = 30.0_wp, LAT = 42.44_wp
+      integer  :: h, k, il, hsun
+      real(wp) :: lon, cz_mid, factor, mean_sw
+      print '(a)', '-- test 7b: a sunrise hour keeps its shortwave --'
+      base = meds_time_t(year=2020_ik, month=7_ik, day=1_ik)
+      hsun = -1
+      search: do il = 0, 60
+         lon = -76.5_wp - 0.25_wp * real(il, wp)                     ! one minute of sun time per step
+         do h = 2, 24                                                  ! the hour ending at stamp h (UTC)
+            cz_mid = met_solar_cosz(base, (real(h, wp) - 0.5_wp) * 3600.0_wp, LAT, lon)
+            factor = cosz_reconstruct_factor(base, real(h - 1, wp) * 3600.0_wp, 360.0_wp, 3600.0_wp, LAT, lon)
+            if (cz_mid <= 1.0e-3_wp .and. factor > 0.0_wp .and. &
+                met_solar_cosz(base, real(h, wp) * 3600.0_wp, LAT, lon) > 0.02_wp) then
+               hsun = h ; exit search
+            end if
+         end do
+      end do search
+      call check_true('a sunrise hour with a dark midpoint exists', hsun > 0, real(hsun, wp))
+      call write_synthetic_forcing(NCFILE, base, sw_flat=SW)
+      fc%backend = MET_BACKEND_ED_DEFAULT ; fc%path = NCFILE ; fc%grid_index = 1_ik
+      fc%dt_forcing = 3600.0_wp ; fc%avg_convention = METAVG_END ; fc%sw_partition = SWPART_CLEARIDX
+      fc%latitude_deg = LAT ; fc%longitude_deg = lon ; fc%recycle = .false.
+      call met_open(src, fc) ; call site_cursor(src, cur, fc)
+      mean_sw = 0.0_wp
+      do k = 1, 60                                                     ! one-minute mid-points
+         now = time_advance_seconds(base, (real(hsun - 1, wp) + (real(k, wp) - 0.5_wp) / 60.0_wp) * 3600.0_wp)
+         call met_advance(src, cur, now) ; met = met_instant(src, cur, now)
+         mean_sw = mean_sw + met%swdown() / 60.0_wp
+      end do
+      call check('sunrise hour: its instants average to the hour''s SW', mean_sw, SW, 0.1_wp * SW)
+      call met_close(src)
+      call write_synthetic_forcing(NCFILE, base)
+   end subroutine test_sunrise_interval
+
    !----- 13. THE FILE AND THE CONFIG MUST AGREE (#185). Three things the reader used to take on   !
    !      trust: the record spacing (dt_forcing was read straight from the config and never checked !
    !      against the file at all), and the two self-describing global attributes the prep script    !
@@ -474,11 +519,12 @@ contains
    end subroutine test_recycle_anchor_phase
 
    !----- Write a synthetic (time=25 hourly, grid=2) MEDS forcing NetCDF via meds_netcdf_c. ----!
-   subroutine write_synthetic_forcing(path, base, with_components, with_co2air)
+   subroutine write_synthetic_forcing(path, base, with_components, with_co2air, sw_flat)
       character(len=*),  intent(in) :: path
       type(meds_time_t), intent(in) :: base
       logical, optional, intent(in) :: with_components   !< also write u10 = 3, v10 = -4 (speed 5, not Wind's 3)
       logical, optional, intent(in) :: with_co2air       !< also write CO2air, which the reader rejects (#184)
+      real(wp), optional, intent(in) :: sw_flat          !< every record's SWdown [W/m2], night and day
       integer, parameter :: NT = 25, NG = 2
       integer(c_int) :: st, ncid, td, gd, vt, vla, vlo, vv(7), vu, vw, vc
       integer(c_int) :: dims2(2), dims1(1)
@@ -553,6 +599,7 @@ contains
                   sw_mean = max(0.0_wp, 900.0_wp*sin(3.14159265_wp*(hh-11.0_wp)/12.0_wp))
                   if (hh < 11.0_wp .or. hh > 23.0_wp) sw_mean = 0.0_wp
                   dat(ig,it) = sw_mean * (1.0_wp + 0.3_wp*real(ig-1, wp))
+                  if (present(sw_flat)) dat(ig,it) = sw_flat
                case (7) ; dat(ig,it) = 320.0_wp        ! LWdown
                end select
             end do

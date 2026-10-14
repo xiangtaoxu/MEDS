@@ -43,6 +43,7 @@ program test_output_roundtrip
    use meds_output_integrate, only : output_integrate
    use meds_output_manager,   only : output_serialize, output_close
    use meds_netcdf_c
+   use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params,    only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_water_retention,  only : SOIL_RETENTION_VG
    use meds_output_registry,  only : manager_set_soil_params
@@ -50,6 +51,7 @@ program test_output_roundtrip
    use meds_test_support, only : banner, check, check_close
    use test_ro_support,       only : set_site_agb, set_site_gpp, set_site_soil_temp
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    type(meds_config_t)    :: cfg
    type(site_t)           :: site
@@ -90,8 +92,9 @@ program test_output_roundtrip
    !      a derived quantity) instead of being left for netCDF to fill. Reducing over the axis      !
    !      then gave nonsense -- a 136 K soil column on a real run -- and soil_matric_potential was  !
    !      evaluated on padding whose theta_sat is 0, which a -fpe0 build aborts on.  ---------------!
-   call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,     &
-                               2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, soilp)
+   call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
+                               2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
    call manager_set_soil_params(files, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 

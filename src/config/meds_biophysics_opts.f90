@@ -19,59 +19,39 @@ module meds_biophysics_opts
    implicit none
    private
 
-   !----- Soil-water solver selectors. -----------------------------------------------------!
-   public :: SOIL_SOLVER_BE
+   !----- Soil-water bottom boundary selectors. -------------------------------------------!
    public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
-   public :: SOIL_LIN_FROZEN, SOIL_LIN_PICARD
-   public :: SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
-   integer(ik), parameter :: SOIL_SOLVER_BE = 1_ik         !< linearly-implicit backward-Euler (only solver)
-
    integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (MVP default)
    integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< SIMTOP aquifer / water table (P2)
    integer(ik), parameter :: SOIL_BC_BEDROCK    = 3_ik     !< no-flow  q = 0
 
-   integer(ik), parameter :: SOIL_LIN_FROZEN = 1_ik        !< frozen-coefficient single solve (MVP)
-   integer(ik), parameter :: SOIL_LIN_PICARD = 2_ik        !< Celia modified-Picard (P2)
-
-   integer(ik), parameter :: SOIL_SUBSTEP_ADAPTIVE = 1_ik  !< adaptive step-doubling
-   integer(ik), parameter :: SOIL_SUBSTEP_FIXED    = 2_ik  !< fixed count (GPU warp-uniform)
-
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
    integer(ik), parameter :: ENERGY_BC_DIRICHLET     = 2_ik   !< bottom: conduction to a fixed deep temperature
 
-   !----- Soil-water: pre-extracted solver selectors + tolerances (NOT the whole config). --!
+   !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
+   !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!
    type :: soil_opts_t
-      integer(ik) :: solver    = SOIL_SOLVER_BE
       !----- free_drain (default) | bedrock | aquifer.  NOTE: `aquifer` is the WET-SITE boundary --   !
       !      the water table is DEFINED as the column base, so the bottom face is head-driven against  !
       !      a saturated zone and supplies water upward without limit.  Right for riparian, floodplain !
       !      and wetland stands; WRONG for a typical upland one, where free_drain is the correct        !
       !      choice.  It is not a drop-in "more realistic drainage" option.  ------------------------!
       integer(ik) :: bottom_bc = SOIL_BC_FREE_DRAIN
-      integer(ik) :: linearize = SOIL_LIN_FROZEN
-      integer(ik) :: substep   = SOIL_SUBSTEP_ADAPTIVE
+      !----- The water network's sub-step tolerances (MEDS_SPAC_WATER_NETWORK_PLAN.md D8): a store's  !
+      !      error is weighed against atol of its scale -- water content for soil layers and the      !
+      !      pond, relative water content for plant tissues -- plus rtol of its water. ----------------!
       real(wp)    :: rtol   = 1.0e-3_wp
       real(wp)    :: atol   = 1.0e-4_wp
-      real(wp)    :: h_init = 900.0_wp                   !< [s] initial substep
-      !----- The substep cap. A saturated top layer over soil near its residual water content (a
-      !      ponded storm on a dry-season soil) makes the Richards solve stiff: at Barro Colorado
-      !      Island in April 2016 it took up to ~500 sub-steps of a 15-min step, and at 200 the solve
-      !      stopped short, flagged unconverged, with a 6 g m-2 water error each time. The extra
-      !      sub-steps cost time only at such steps. --------------------------------------------!
-      integer(ik) :: max_substep = 2000_ik
-      integer(ik) :: max_picard  = 5_ik
       real(wp)    :: w_pond_max = 5.0_wp                 !< [kg/m2] ponding capacity before surface runoff
       real(wp)    :: intercept_alpha = 1.0_wp            !< Beer interception efficiency
       real(wp)    :: intercept_k     = 0.5_wp            !< [1/PAI] Beer extinction
       real(wp)    :: dsl_dmax       = 0.015_wp           !< [m] DSL max thickness (soil evap)
       real(wp)    :: dsl_theta_init = 0.8_wp             !< DSL initiation theta_1/theta_sat
-      real(wp)    :: psi_wilt = -152.96_wp               !< [m] wilting head (~ -1.5 MPa) for the sink f_wilt
-      real(wp)    :: psi_open = -3.37_wp                 !< [m] onset head (~ -0.033 MPa) for the f_wilt ramp
       logical     :: debug_error = .false.
       !----- Ground optics under the canopy: the bare soil's shortwave albedo per band and its        !
       !      longwave emissivity, as the canopy radiation solver sees the ground (blended with snow   !
@@ -113,14 +93,14 @@ module meds_biophysics_opts
       !      boundary is, and it is a PHYSICAL choice, not a numerical one: a purely resistive           !
       !      termination reflects least when l_deep = d/sqrt(2), d the annual damping depth.             !
       !                                                                                          !
-      !      The default is that optimum for the DEFAULT column (2 m, 10 layers, grid_growth 3, the      !
+      !      The default is that optimum for the DEFAULT column (2 m on the default layers, the          !
       !      [soil_column] defaults) and a mid-latitude mineral soil at theta = 0.3:                     !
-      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(10)| = 1.727 m                             !
-      !          deep_depth = 1.727 + 1.973/sqrt(2)  = 3.12 m                                            !
+      !          d = sqrt(2*alpha/omega) = 1.973 m,   |z_node(7)| = 1.75 m                               !
+      !          deep_depth = 1.75 + 1.973/sqrt(2)   = 3.145 m                                           !
       !      A measured sweep puts the optimum at 3.0-3.1 m, i.e. the derivation is right to within one   !
       !      sweep step (test_soil_annual_damping; docs/science/soil_biophysics.md).  CHANGE THIS if you  !
       !      change the column depth or the soil's thermal texture -- the formula above is the recipe.    !
-      real(wp)    :: deep_depth  = 3.12_wp        !< [m] depth (positive) of the anchor plane
+      real(wp)    :: deep_depth  = 3.145_wp       !< [m] depth (positive) of the anchor plane
       !----- [K] budget-closure threshold for the debug halt, NOT an integrator tolerance. -----------!
       real(wp)    :: atol        = 1.0e-2_wp
       logical     :: debug_error = .false.

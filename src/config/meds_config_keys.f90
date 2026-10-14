@@ -27,14 +27,68 @@ module meds_config_keys
    !      against an older MEDS says what to change rather than only that something is wrong. ---!
    character(len=*), parameter :: GROWTH_CURVE_GONE = 'growth is carbon-driven, by the NPP the '// &
                                                       'cohort allocates; the empirical growth curve is gone'
+   character(len=*), parameter :: PHENO_SHARP = 'every phenology switch is sigma(s (x - x*)) with one '// &
+      'signed sharpness: flush_temp_sharpness, shed_temp_sharpness, flush_light_sharpness, '//         &
+      'shed_light_sharpness, flush_water_sharpness, shed_water_sharpness'
+   character(len=*), parameter :: PHENO_CHILL = 'chilling is gone: the warmth requirement is the '//   &
+      'constant flush_degree_days, warmth above flush_base_temp summed from midwinter'
+   character(len=*), parameter :: PHENO_COLD = 'senescence follows a cold sum below shed_base_temp '//  &
+      'from midsummer (shed_degree_days) and short days (shed_light_hours, '//                     &
+      'shed_light_sharpness, with a low par_min)'
+   character(len=*), parameter :: PHENO_WATER = 'the water cue is predawn leaf psi summed against the '// &
+      'turgor-loss point: flush_water_sum and shed_water_sum [MPa day]; no soil-water cue'
+   character(len=*), parameter :: PHENO_HABIT = 'leaf habit comes from the phenology parameters: '//    &
+      'min_leaf_cover (the leaf cover senescence stops at) and the cue masks; background turnover '//  &
+      'is not cold-suppressed'
+   character(len=*), parameter :: SOIL_NETWORK = 'soil water is solved with the plants'' water as '// &
+      'one network (implicit Euler, Newton, its own sub-steps), whose error is set by [soil].rtol '// &
+      'and [soil].atol; the Richards solver''s linearization and sub-step controls are gone'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
    end type retired_key_t
    type(retired_key_t), parameter :: RETIRED(*) = [                                          &
       retired_key_t('soil_column.root_beta', 'the root profile is a plant trait: set '//          &
-                    '[hydraulics].root_beta (0 < beta < 1) and root_depth; root_beta = '//        &
-                    'exp(-b*root_depth) gives the old exponential decay b per metre'),           &
+                    '[hydraulics].root_beta (0 < beta < 1), and the rooting depth through '//    &
+                    'root_depth_b1 and root_depth_b2'),                                          &
+      retired_key_t('soil_column.n_layer', 'the soil layers are SoilGrids'' depths (5, 15, 30, '// &
+                    '60, 100, 150, 200 cm, then deeper) cut at soil_column.depth; set '//        &
+                    'soil_column.layer_bottoms [m] for other layers'),                           &
+      retired_key_t('soil_column.grid_growth', 'the layers no longer thicken by a growth '//     &
+                    'factor: see soil_column.n_layer'),                                          &
+      retired_key_t('hydraulics.root_depth', 'each cohort roots to root_depth_b1 * height^'//     &
+                    'root_depth_b2, capped at the soil column: set [hydraulics].root_depth_b1 '// &
+                    'and root_depth_b2 (defaults 1.114 and 0.4223, ED2), or pft.root_depth_b1/b2'), &
+      retired_key_t('hydraulics.specific_root_area', 'the soil->root conductance takes root '//   &
+                    'length: set [hydraulics].specific_root_length [m/kgC] and fine_root_radius '// &
+                    '[m], or their pft.* values'),                                               &
+      retired_key_t('hydraulics.k_plant_max', 'the plant''s conductance is its sapwood''s, '//      &
+                    'wood_kmax * sapwood area / (height * vessel_curl), with wood_kmax from the '// &
+                    'PFT''s wood density (Xu et al. 2016); set pft.wood_kmax to override it'),   &
+      retired_key_t('pft.k_plant_max', 'the plant''s conductance is its sapwood''s, wood_kmax '//    &
+                    '* sapwood area / (height * vessel_curl): set pft.wood_kmax [kg/m/s/MPa], '// &
+                    'which defaults to the PFT''s wood density (Xu et al. 2016)'),             &
+      retired_key_t('hydraulics.conductance', 'the sapwood (segment) conductance is the only '//   &
+                    'form: wood_kmax * sapwood area / (height * vessel_curl)'),                  &
+      retired_key_t('hydraulics.wood_kmax', 'wood_kmax follows each PFT''s wood density (Xu et '// &
+                    'al. 2016: 3.3 kg/m/s/MPa at 0.6 g/cm3); set pft.wood_kmax to override it'), &
+      retired_key_t('leaf_physiology.wstress_nonstomatal', 'the leaf-potential limb on '//      &
+                    'Vcmax/Jmax/TPU is always on: it is the fast water-stress control, from the '// &
+                    'turgor-loss point to twice it (pft.wstress_psi_open/_close override)'),     &
+      retired_key_t('leaf_physiology.low_water_potential_control', 'the linear decline of gs '// &
+                    'on the daily predawn potential is gone: the always-on leaf-potential limb '// &
+                    'on Vcmax/Jmax/TPU closes the stomata within the day instead'),              &
+      retired_key_t('soil.psi_wilt', 'there is no soil-side wilting point: the plant hydraulics '// &
+                    'limits root uptake (the soil->root conductance falls with K(theta), and a '//   &
+                    'layer drier than the wood gives nothing), so a wilting ramp cut the same '//    &
+                    'water twice'),                                                              &
+      retired_key_t('soil.psi_open', 'there is no soil-side wilting ramp: the plant hydraulics '// &
+                    'limits root uptake (see soil.psi_wilt)'),                                   &
+      retired_key_t('soil.linearize', SOIL_NETWORK),                                             &
+      retired_key_t('soil.max_picard', SOIL_NETWORK),                                            &
+      retired_key_t('soil.substep', SOIL_NETWORK),                                               &
+      retired_key_t('soil.h_init', SOIL_NETWORK),                                                &
+      retired_key_t('soil.max_substep', SOIL_NETWORK),                                           &
       retired_key_t('soil.dewmx', 'the canopy films are plant traits now: set pft.leaf_surf_water_max '// &
                     '[kg/m2 leaf] and pft.wood_surf_water_max [kg/m2 wood] in the PFT file; '//   &
                     'both default to 0.1, the old dewmx'),                                       &
@@ -42,6 +96,9 @@ module meds_config_keys
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &
                     'patch count exceeds output.cohort_max or patch_max; raise the cap'),        &
+      retired_key_t('pft.repro_carbon_efficiency', 'renamed pft.recruit_carbon_efficiency: the '// &
+                    'share of reproduction carbon that becomes recruits (seed set, '//         &
+                    'germination and seedling survival together)'),                            &
       retired_key_t('output.carbon_fluxes', 'renamed [output].carbon'),                          &
       retired_key_t('output.water_fluxes', 'renamed [output].water'),                            &
       retired_key_t('output.energy_fluxes', 'renamed [output].energy'),                          &
@@ -65,10 +122,44 @@ module meds_config_keys
       retired_key_t('site.wind_roughness_z0', 'the forcing is moved to each patch''s canopy-air '// &
                     'top; declare its own heights in [forcing]: tq_height, wind_height, '//       &
                     'height_above, wind_exposure'),                                              &
-      retired_key_t('phenology.cue_mask', 'the flush and shed cues are selected independently '// &
-                    'now: set flush_cue_mask (cues that permit flushing, combined by MIN) and '// &
-                    'shed_cue_mask (cues that force shedding, by MAX); a cold-deciduous PFT is '// &
-                    'flush_cue_mask = [1], shed_cue_mask = [1]'),                                &
+      retired_key_t('phenology.cue_mask', 'the flush and shed cues are selected independently: '// &
+                    'flush_cue_mask and shed_cue_mask (TEMP 1, LIGHT 2, WATER 4); a cold-'//     &
+                    'deciduous PFT is flush_cue_mask = [3], shed_cue_mask = [3]'),               &
+      retired_key_t('phenology.k_flush_max', 'renamed flush_rate_max'),                          &
+      retired_key_t('phenology.k_shed_max', 'renamed shed_rate_max'),                            &
+      retired_key_t('phenology.tau_flush', 'renamed flush_cue_timescale'),                       &
+      retired_key_t('phenology.tau_shed', 'renamed shed_cue_timescale'),                         &
+      retired_key_t('phenology.gdd_base_temp', 'renamed flush_base_temp'),                       &
+      retired_key_t('phenology.phen_a', PHENO_CHILL),                                            &
+      retired_key_t('phenology.phen_b', PHENO_CHILL),                                            &
+      retired_key_t('phenology.phen_c', PHENO_CHILL),                                            &
+      retired_key_t('phenology.chill_base_temp', PHENO_CHILL),                                   &
+      retired_key_t('phenology.cold_drop_daylength', PHENO_COLD),                                &
+      retired_key_t('phenology.cold_drop_soiltemp1', PHENO_COLD),                                &
+      retired_key_t('phenology.cold_drop_soiltemp2', PHENO_COLD),                                &
+      retired_key_t('phenology.photo_crit', 'the light cue counts hours of light: use '//         &
+                    'flush_light_hours [h/day] with a low par_min (then ~ the day length)'),     &
+      retired_key_t('phenology.photo_slope', 'renamed flush_light_sharpness [1/h]'),             &
+      retired_key_t('phenology.cue_sharpness', PHENO_SHARP),                                     &
+      retired_key_t('phenology.gdd_width', PHENO_SHARP),                                         &
+      retired_key_t('phenology.daylen_width', PHENO_SHARP),                                      &
+      retired_key_t('phenology.soiltemp_width', PHENO_SHARP),                                    &
+      retired_key_t('phenology.light_width', PHENO_SHARP),                                       &
+      retired_key_t('phenology.water_width', PHENO_WATER),                                       &
+      retired_key_t('phenology.water_off_threshold', PHENO_WATER),                               &
+      retired_key_t('phenology.water_on_threshold', PHENO_WATER),                                &
+      retired_key_t('phenology.water_window', PHENO_WATER),                                      &
+      retired_key_t('phenology.low_psi_threshold', 'renamed shed_water_sum, now a sum of psi '//   &
+                    'below the turgor-loss point [MPa day]'),                                    &
+      retired_key_t('phenology.high_psi_threshold', 'renamed flush_water_sum, now a sum of psi '// &
+                    'above the turgor-loss point [MPa day]'),                                    &
+      retired_key_t('phenology.light_on_threshold', 'the light cue counts hours of light: '//    &
+                    'set par_min to that PAR [umol/m2/s] and shed_light_hours with a positive '// &
+                    'shed_light_sharpness (LIGHT, mask bit 2)'),                                 &
+      retired_key_t('phenology.evg_ref_temp', PHENO_HABIT),                                      &
+      retired_key_t('phenology.evg_slope', PHENO_HABIT),                                         &
+      retired_key_t('pft.evergreen', PHENO_HABIT),                                               &
+      retired_key_t('phenology.bare_snap_frac', 'renamed bare_leaf_cover'),                      &
       retired_key_t('phenology.phenology_on', 'leaf phenology always runs; the per-PFT cues are '//&
                     'the PFT file''s [phenology] block'),                                        &
       retired_key_t('carbon.growth_source', 'growth is always carbon-driven, by the NPP the '//    &

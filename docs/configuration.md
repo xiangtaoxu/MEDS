@@ -68,19 +68,30 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[init]` | How the run starts, and the path to the PFT file. |
 | `[demography]` | Cohort and patch fusion/fission, the cadence switches. |
 | `[disturbance]`, `[recruitment]` | Treefall rates; the seed-rain and reproduction settings. |
-| `[soil_column]` | The **physical ground**: layer count, depth, grid growth, hydraulic texture, retention family, thermal properties. |
+| `[soil_column]` | The **physical ground**: depth and layers, hydraulic texture, retention family, thermal properties. |
 | `[soil]`, `[energy]`, `[snow]`, `[aerodynamics]` | The **solvers over it**: selectors and tolerances. `[soil]` also holds the bare ground's optics: `ground_albedo_vis`, `ground_albedo_nir` and `ground_emissivity`. |
 | `[soil_carbon]` | The CENTURY decomposition: selectors, rate parameters, cold-start spin-up. |
-| `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the conductance form (`conductance = "whole_plant"` or `"segment"`), and the root profile (`root_beta`, `root_depth`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
+| `[hydraulics]` | Plant water transport: the pressure–volume and vulnerability traits, the sapwood path factor `vessel_curl` (the sapwood conductivity follows wood density; `pft.wood_kmax` overrides it), and the roots (`root_beta`, `root_depth_b1`/`b2`, `specific_root_length`, `fine_root_radius`). The root profile is a plant trait, so `[soil_column].root_beta` is refused. |
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
 | `[state]` | Restart checkpointing: output directory, prefix, interval. *(Called `[io]` before v0.3.0; that spelling is now refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
-**`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: a layer count
-above the compile-time ceiling or a saturated water content below the residual produces a silently
-wrong column rather than a crash, so the physical block is validated at load.
+**`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: layer bottoms
+that do not increase, or a saturated water content below the residual, produce a silently wrong column
+rather than a crash, so the physical block is validated at load.
+
+**The soil layers.**
+- **Default:** every column cuts one list of layer bottoms at its `depth`: SoilGrids 2.0's depths
+  (0.05, 0.15, 0.30, 0.60 and 1.00 m), then 1.5, 2, 3, 4.5, 6.5, 9, 12, 16, 21 and 27 m. A remainder
+  thinner than half of the layer it falls in joins the layer above.
+- **What that gives:** the top layer is 5 cm everywhere, shallow soils get few layers, and every column
+  shares one depth axis.
+- **Override:** `layer_bottoms = [...]` [m] replaces the list for a measured profile, and the column
+  ends at its last bottom unless `depth` cuts it.
+- **Refused keys:** `n_layer` and `grid_growth`.
+- **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
 ### The bottom thermal boundary — `[energy].bottom_bc`
 
@@ -92,7 +103,7 @@ happens to it there.
 |---|---|---|
 | `bottom_bc` | `geothermal` (default) \| `dirichlet` | prescribed bottom flux (held at zero — an adiabatic wall that **reflects** the annual wave) vs conduction to a fixed deep temperature |
 | `deep_temp` | [K] | the anchor temperature. **Required** when `bottom_bc = "dirichlet"`; there is no default |
-| `deep_depth` | [m], default 3.12 | depth of the anchor plane below the surface; must lie below the bottom soil node |
+| `deep_depth` | [m], default 3.145 | depth of the anchor plane below the surface; must lie below the bottom soil node |
 
 `deep_temp` is the mean annual soil temperature below the damping depth — close to the mean annual
 air temperature of the forcing that drives the run, and a site property like latitude. It is required
@@ -102,7 +113,7 @@ this boundary condition exists to remove.
 
 `deep_depth` is a physical choice, not a numerical one, and the default is derived: a resistive
 termination reflects least when the anchor sits `d/sqrt(2)` below the bottom node, `d` being the
-annual damping depth. For the default column that is 1.727 + 1.973/√2 = 3.12 m. **Recompute it if you
+annual damping depth. For the default column that is 1.75 + 1.973/√2 = 3.145 m. **Recompute it if you
 change `[soil_column].depth` or the thermal texture** — the derivation, the measured sweep and what
 the anchor does and does not fix are in [`docs/science/soil_biophysics.md`](science/soil_biophysics.md).
 
@@ -118,11 +129,15 @@ once the count is within its **target**.
 
 | | Cohorts | Patches |
 |---|---|---|
-| similar when | their heights differ by less than `tol · hgt_max`, and their combined LAI is below `cohort_lai_cap` | their light profiles differ by at most `tol` on average, and by at most `tol · patch_light_maxdev_factor` in any layer |
+| similar when | their heights differ by less than `tol · h_top`, with `h_top` the height of the patch's tallest cohort, and their combined LAI is below `cohort_lai_cap` | their light profiles differ by at most `tol` on average, and by at most `tol · patch_light_maxdev_factor` in any layer |
 | tolerance, first pass | `cohort_size_tol_min` | `patch_light_tol` |
 | tolerance ceiling | `cohort_size_tol_max` | `patch_light_tol_max` (default 0.15) |
 | passes, at most | `n_cohort_fusion_iter` | `n_patch_fusion_iter` |
 | target | `max_cohort`, in the most crowded patch | `max_patch` |
+
+The cohort tolerance scales with the stand: in a 3 m regrowth patch the first pass merges cohorts
+within about 6 cm, so a cohort that has pulled ahead keeps its light and its suppressed neighbours can
+thin, while in a 30 m forest it merges within about 0.6 m.
 
 A patch's light profile is the fraction of full sunlight left under each of `n_height_layers` equal
 layers up to the tallest `hgt_max`, `exp(−light_ext × LAI at and above the layer)`. Layers fully lit
@@ -147,6 +162,18 @@ coefficients, and the `[allometry]` coefficients. **The number of PFTs is the le
 Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are derived from it as
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
 penalty. Growth, competition and reproduction parameters are per-PFT but ship uniform.
+
+Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
+`[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
+instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s fit for Barro Colorado
+Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, ln H = 0.893 − E +
+0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
+(`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
+seasonal or hotter the site, the larger E and the shorter its trees. Every curve is capped at
+`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
+height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
+allometry.
 
 ## How a run starts
 
@@ -183,7 +210,7 @@ trial restarts from a shared state this way, so a changed `vcmax25` reaches the 
 (`scripts/calibrate_fast`).
 
 A census is how you start from a field inventory; see
-[`examples/example_demography/census_example.csv`](../examples/example_demography/census_example.csv)
+[`data/census_example.csv`](../data/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
 falls back to near-bare ground with a warning.
 
@@ -321,7 +348,8 @@ detail_polygons   = [1714634]                        # optional: these also writ
   must start at 00:00 or 01:00 on the 1st of a month.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
-  (a NaN, an impossible soil-carbon pool) is reported and stops, and the others finish the month.
+  (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
+  finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
@@ -333,7 +361,9 @@ detail_polygons   = [1714634]                        # optional: these also writ
 
 The example configs are the fastest way in, and each is a complete pair:
 
-- [`examples/example_demography/`](../examples/example_demography/) — a 250-year demographic
-  spin-up from near-bare ground.
-- [`examples/example_biophysics/`](../examples/example_biophysics/) — a 50-year spin-up at Ithaca
-  with real forcing, then one July restarted at high output resolution.
+- [`examples/example03_demography/`](../examples/example03_demography/) — the demography engine
+  driven from Python by growth, mortality and recruitment trained on the BCI censuses, from the
+  1985 census and from near-bare ground.
+- [`examples/example04_column_biophysics/`](../examples/example04_column_biophysics/) — the
+  coupled model at the Barro Colorado Island flux tower: forcing from the tower, a start from the
+  plot's census, five years at hourly output, and ten days restarted at half-hourly output.

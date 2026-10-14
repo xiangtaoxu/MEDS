@@ -32,7 +32,7 @@ module meds_met_driver
    use meds_therm_lib, only : air_density
    use meds_time, only : meds_time_t, time_advance_seconds, seconds_into_day, time_to_string
    use meds_forcing_config, only : forcing_config_t, MET_BACKEND_CONST, MET_BACKEND_ED_DEFAULT,   &
-                                   MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN,             &
+                                   MET_BACKEND_ED_ERA5LAND, METAVG_END, METAVG_BEGIN, METAVG_CENTER, &
                                    SWPART_PASSTHROUGH, CLAMP_ERROR, INTERP_LINEAR,                &
                                    LW_SYNTHESIZE, CO2_SOURCE_FILE
    use meds_forcing_types, only : met_forcing_t, met_record_t, met_source_t, met_cursor_t,        &
@@ -441,7 +441,7 @@ contains
       type(met_cursor_t), intent(in) :: cur
       integer(ik),        intent(in)    :: irec
       type(met_record_t), intent(out)   :: rec
-      real(wp)    :: sw_total, cosz_mid, mid_sec, humidity_value
+      real(wp)    :: sw_total, humidity_value
       rec%when   = time_advance_seconds(src%base_time, src%time_sec(irec))
       !----- The values as the source stores them; from here on, one ingest for both. -----------!
       if (src%backend == MET_BACKEND_ED_ERA5LAND) then
@@ -499,15 +499,35 @@ contains
          call assert_finite(rec%nir_diffuse, 'SWdown_nir_diffuse', irec, src%grid_index)
       else
          call assert_finite(sw_total, 'SWdown', irec, src%grid_index)
-         !----- interval-mean cosz for the partition (avg_convention=end -> midpoint = when - dt/2). !
-         mid_sec  = seconds_into_day(rec%when)
-         if (src%fcfg%avg_convention == METAVG_END)   mid_sec = mid_sec - 0.5_wp * src%dt_forcing
-         if (src%fcfg%avg_convention == METAVG_BEGIN)  mid_sec = mid_sec + 0.5_wp * src%dt_forcing
-         cosz_mid = met_solar_cosz(rec%when, mid_sec, cur%latitude_deg, cur%longitude_deg)
-         call partition_shortwave(sw_total, cosz_mid, rec%psurf_pa, src%fcfg%sw_partition,       &
+         call partition_shortwave(sw_total, record_mean_cosz(src, cur, rec%when), rec%psurf_pa,    &
+                                  src%fcfg%sw_partition,                                          &
                                   rec%par_beam, rec%par_diffuse, rec%nir_beam, rec%nir_diffuse)
       end if
    end subroutine read_record
+
+   !----- The sun the shortwave partition uses for one record: the mean of max(cosz, 0) over the  !
+   !      interval the record averages, so the clearness index is a ratio of interval means. A     !
+   !      sunrise or sunset interval whose midpoint is dark still has a sun, and keeps its light.  !
+   !      An instantaneous record uses the sun at its stamp. -------------------------------------!
+   real(wp) function record_mean_cosz(src, cur, when) result(cosz)
+      type(met_source_t), intent(in) :: src
+      type(met_cursor_t), intent(in) :: cur
+      type(meds_time_t),  intent(in) :: when
+      real(wp) :: stamp_sec, start_sec, factor
+      stamp_sec = seconds_into_day(when)
+      select case (src%fcfg%avg_convention)
+      case (METAVG_END)    ; start_sec = stamp_sec - src%dt_forcing
+      case (METAVG_BEGIN)  ; start_sec = stamp_sec
+      case (METAVG_CENTER) ; start_sec = stamp_sec - 0.5_wp * src%dt_forcing
+      case default
+         cosz = met_solar_cosz(when, stamp_sec, cur%latitude_deg, cur%longitude_deg)
+         return
+      end select
+      factor = cosz_reconstruct_factor(when, start_sec, src%dt_forcing / real(N_COSZ_SUB, wp),       &
+                                       src%dt_forcing, cur%latitude_deg, cur%longitude_deg)
+      cosz = 0.0_wp
+      if (factor > 0.0_wp) cosz = 1.0_wp / factor              ! factor = 1 / <cosz>_interval
+   end function record_mean_cosz
 
    !----- MEDS never gap-fills: a NaN in a required field halts the run (design §5.5). ---------!
    subroutine assert_finite(x, name, irec, grid)

@@ -30,8 +30,9 @@ module meds_fast_types
    use meds_plant_types, only : wood_params_t, root_params_t, hydro_params_t, hydro_opts_t, leaf_photo_table_t
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
+   use meds_spac_solver, only : spac_solver_t
    use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
-   use meds_hydr_lib, only : build_hydro_table
+   use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
    use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
@@ -47,7 +48,7 @@ module meds_fast_types
    public :: patch_biophys_t, alloc_patch_biophys, ensure_patch_biophys_capacity
    public :: snow_stage_t
    public :: cas_boundary_t, tissue_coefficients_t, canopy_film_capacity_t, ground_boundary_t
-   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, ark_workspace_t
+   public :: soil_hydrology_t, root_zone_t, plant_water_t, ark_stages_t, fast_workspace_t
    public :: column_state_t, column_frozen_t, column_tend_t
    public :: stage_bflux_t, column_bflux_t
 
@@ -74,13 +75,13 @@ module meds_fast_types
       logical :: cas_vapour = .true.   !< canopy-air-space specific humidity
       logical :: cas_co2    = .true.   !< canopy-air-space CO2 twin
       logical :: soil_heat  = .true.   !< soil thermal column
-      logical :: soil_water = .true.   !< soil water (Richards) column
+      logical :: soil_water = .true.   !< soil water column (the water network's soil stores)
       logical :: hydraulics = .true.   !< plant hydraulics (psi)
    end type process_mask_t
 
    !----- The tolerance GROUPS -- one per physical field class in the fast-loop state. Groups 1-6 are   !
    !      the INTEGRATED state (what the embedded-error WRMS measures); groups 7-8 belong to the nested   !
-   !      SUB-SOLVERS (soil-water Richards on theta, soil-energy on temperature) that the driver drives   !
+   !      SUB-SOLVERS (the water network on theta and RWC, soil-energy on temperature) that the driver drives   !
    !      from this same set -- so ONE tolerance source governs the whole hierarchy (§8c Layer 1). -----!
    integer(ik), parameter :: GRP_ENTH    = 1_ik   !< CAS specific enthalpy   [J/kg]
    integer(ik), parameter :: GRP_SHV     = 2_ik   !< CAS specific humidity   [kg/kg]
@@ -154,7 +155,7 @@ module meds_fast_types
       type(soil_params_t)         :: soil           !< soil geometry + texture (n_active layers)
       type(soil_thermal_params_t) :: soil_thermal   !< soil thermal texture
       type(energy_opts_t)         :: energy         !< soil-thermal solver options
-      type(soil_opts_t)           :: soil_water_opts !< soil-water (Richards) solver options
+      type(soil_opts_t)           :: soil_water_opts !< soil water and water-network options
       type(wood_params_t)         :: wood           !< stem-respiration parameters
       type(root_params_t)         :: root           !< fine-root-respiration parameters
       !----- PER-PFT plant hydraulics (#179). There is deliberately no PFT-uniform companion: a
@@ -166,7 +167,6 @@ module meds_fast_types
       type(hydro_opts_t)          :: hydraulics_opts    !< plant-hydraulics solver options
       type(leaf_photo_table_t)    :: leaf_photo     !< per-PFT leaf-photosynthesis parameters (built once per run)
       type(integrator_opts_t)     :: integrator     !< the fast-loop integrator's configuration (built once per run)
-      real(wp)                    :: specific_root_area = 20.0_wp  !< [m2/kgC] SRA (rhizosphere conductance)
       !----- Canopy-surface water: the interception film and its evaporation/dew exchange            !
       !      (archive/MEDS_ED2_RK45_DESIGN.md sec 3.4). Opt-in, default off, so a config that does not !
       !      set it is unchanged. BOTH integrators honour it: the ARK reads it through the shared      !
@@ -191,6 +191,8 @@ module meds_fast_types
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
       logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
       real(wp),    allocatable :: stem_resp_factor25(:)         !< [umol CO2/m2 stem/s @25C] gathered per-PFT
+      real(wp),    allocatable :: stem_resp_sapwood25(:)        !< [umol CO2/m3 sapwood/s @25C] gathered per-PFT
+      real(wp),    allocatable :: sap_volume(:)                 !< [m3/plant] sapwood volume (stem respiration)
       real(wp),    allocatable :: root_resp_factor25(:)         !< [umol CO2/kgC root/s @25C] gathered per-PFT
       real(wp),    allocatable :: leaf_area(:), nplant(:), dbh(:), broot(:)   !< [m2/plant],[plant/m2],[cm],[kgC/plant]
       real(wp),    allocatable :: bleaf(:), bsap(:), sap_area(:)              !< [kgC/plant],[kgC/plant],[m2] (hydraulics)
@@ -234,6 +236,8 @@ module meds_fast_types
       real(wp), allocatable :: abs_par(:)               !< [W/m2] INCIDENT-equiv PAR (VIS) per cohort; the leaf
                                                         !< model re-applies leaf_absorptance internally (PHOTOSYNTHESIS)
       real(wp), allocatable :: abs_sw_wood(:), abs_lw_wood(:) !< [W/m2] absorbed SW / net LW per cohort (WOOD energy)
+      real(wp), allocatable :: par_top(:)               !< [W/m2] PAR (VIS) reaching the cohort's top: the
+                                                        !< phenology PAR cue's driver (canopy light gradient)
    end type column_forcing_t
 
    !----- The per-patch conservation budgets (one place; the driver accumulates the closed resids).!
@@ -279,52 +283,22 @@ module meds_fast_types
       !      the fast driver accumulates them site-wide. -------------------------------------------!
       integer(ik)    :: integ_nsteps   = 0_ik   !< accepted integrator sub-steps this dt_fast
       integer(ik)    :: integ_nrej   = 0_ik   !< rejected integrator steps this dt_fast
-      integer(ik)    :: soil_nsub    = 0_ik   !< soil-water Richards solver sub-steps
-      integer(ik)    :: hydro_nsub   = 0_ik   !< plant-hydraulics sub-steps, summed over cohorts
-      !----- Set when this step's hydraulics sub-stepping crossed HYDRO_NSUB_THRASH per cohort       !
-      !      (issue #104). Per step, like every other counter here; the driver area-weights it. -------!
-      integer(ik)    :: hydro_thrash       = 0_ik    !< 1 = pathological hydraulics sub-stepping this step
-      integer(ik)    :: hydro_nonconv = 0_ik  !< cohorts whose hydraulics solve did not converge
+      !----- The soil-plant water solver's work this dt_fast (meds_spac_solver). --------------------!
+      integer(ik)    :: water_nsub   = 0_ik   !< accepted sub-steps
+      integer(ik)    :: water_newton = 0_ik   !< Newton iterations
+      integer(ik)    :: water_reject = 0_ik   !< rejected sub-steps (too large an error, or Newton failed)
+      integer(ik)    :: water_nfail  = 0_ik   !< sub-steps taken at the shortest length although unconverged
       !----- P6 (MEDS_ED2_RK45_DESIGN.md): count of sub-steps where the explicit RK45 step committed a   !
       !      railed (clamp-pinned, unphysical) CAS/soil state and the dispatcher rolled back + redid the   !
       !      step on the implicit-CAS ARK path. Rare (a handful over a healthy 30-yr run); a                !
       !      persistently-high value flags a genuinely stiff regime RK45 is degrading to ARK for. ----------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
-      !----- CLAMP activations (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). The stability clamps            !
-      !      (clamp_theta / clamp_cas / clamp_soil_energy) are the one place where a scheme edits      !
-      !      state outside the conservation ledger, and they are TRAJECTORY-dependent -- ifx and       !
-      !      nvfortran do not fire them on the same steps, which is why a compiler-split test          !
-      !      failure was the first symptom. Counting them separates two very different events:         !
-      !                                                                                                !
-      !        STAGE clamps bound a THROWAWAY stage input so the RHS stays evaluable. Harmless in      !
-      !        itself; a rising count means "this dt is too big", and the step is normally rejected.   !
-      !                                                                                                !
-      !        COMMIT clamps edit the state that is actually kept. THESE fabricate mass/energy with    !
-      !        no ledger term (clamp_theta moves theta with no mass debit; clamp_soil_energy then      !
-      !        re-derives temperature at the new water mass), and at the sub-step FLOOR the accept     !
-      !        branch takes the clamped state unconditionally -- the controller cannot veto it.        !
-      !                                                                                                !
-      !      Diluting the two into one counter would hide exactly the signal being sought, so they     !
-      !      are separate. Magnitudes are accumulated for the two stores whose books they break;       !
-      !      the CAS clamp is counted only (rk45_state_railed already covers CAS railing). ARK clamps  !
-      !      its ARS stage-3 extrapolation base ONLY, so its commit counters stay 0 by construction.   !
-      !                                                                                                !
-      !      READ THE MAGNITUDE, NOT THE COUNT. Measured on test_column_rk45: the commit clamp fires    !
-      !      on essentially every sub-step even in a well-behaved wet window (~1250 activations / 96    !
-      !      steps), because the Richards solve routinely lands a whisker outside                       !
-      !      [theta_res, theta_sat]. The count therefore barely separates a healthy column (~1250)      !
-      !      from a saturated, railing one (~2840). The magnitudes separate them by SEVEN ORDERS        !
-      !      (3e-5 vs 1.4e2 kg/m2). So the counts are cheap telemetry; clamp_mass/clamp_energy are      !
-      !      the metric.                                                                                !
-      !                                                                                                !
-      !      Both magnitudes are GROSS: a running sum of |correction|, not a net ledger residual.       !
-      !      Corrections of opposite sign do not cancel here (deliberately -- two large corrections     !
-      !      that happen to cancel are still two moments when the state left its own model), so this    !
-      !      is an upper bound on, not an estimate of, the resulting budget gap. -----------------------!
+      !----- STAGE-clamp activations: how many layers/stores clamp_cas and clamp_soil_energy bounded in a !
+      !      throwaway stage input so the RHS stays evaluable. Harmless in itself; a rising count means   !
+      !      "this dt is too big", and the step is normally rejected. Nothing clamps the COMMITTED state:  !
+      !      RK45 stopped in C1 (MEDS_INTEGRATOR_PARITY.md [RETIRED] row 7), and the tissue-water floor   !
+      !      that fed ARK's commit tally went with the soil-plant water network. ----------------------!
       integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
-      integer(ik)    :: clamp_commit_n = 0_ik   !< COMMITTED-state clamp activations -- unbookkept
-      real(wp)       :: clamp_mass     = 0.0_wp !< [kg/m2] sum |water| moved by a COMMIT clamp_theta
-      real(wp)       :: clamp_energy   = 0.0_wp !< [J/m2]  sum |energy| moved by a COMMIT clamp_soil_energy
       !----- CONSTITUTIVE-DOMAIN excursion of theta (issue #78 item 2), max over the sub-steps of one   !
       !      dt_fast, in m3/m3. Complements clamp_stage_n rather than duplicating it, in two ways: it   !
       !      is a MAGNITUDE where that is a count, and it covers the RK45 stage-1 evaluation, which     !
@@ -454,6 +428,14 @@ module meds_fast_types
       real(wp), allocatable :: qwflux_wl(:)   !< [W/m2 ground] into the leaf, from sapflow (wood->leaf)
       real(wp), allocatable :: q_wood_net(:)  !< [W/m2 ground] into the wood, from root uptake less sapflow
       real(wp) :: water_store_enth = 0.0_wp   !< [W/m2 ground] summed over cohorts
+      !----- Each cohort's transpiration over the step [kg/m2 ground/s], set by the soil-plant water   !
+      !      network once it has solved (MEDS_SPAC_WATER_NETWORK_PLAN.md §12.2 C1). While transp_held  !
+      !      is true the leaf energy balance holds the leaf's transpiration at it, as the stages hold   !
+      !      ground evaporation at the network's value: the canopy air then receives exactly the water   !
+      !      the leaves lose. False (the pre-pass's own evaluation, a hand-built record) computes the    !
+      !      demand from the stomatal conductance and the canopy air's humidity. ---------------------!
+      logical :: transp_held = .false.
+      real(wp), allocatable :: transp_net(:)
       !----- Per-cohort longwave emissivities, the PFT's leaf_emissivity and wood_emissivity: the same   !
       !      values the radiation solver absorbs and emits with (meds_fast_dynamics), so the emission    !
       !      slope 4*eps*sigma*T^3 that couples each tissue's temperature to its longwave is consistent  !
@@ -539,100 +521,71 @@ module meds_fast_types
       !      surface film evaporates with no stomatal resistance, the internal water feeds transpiration   !
       !      through stomata. [kg/m2 GROUND] (already area-referenced, unlike the per-plant fields above,  !
       !      matching biophys%leaf_surf_water/wood_surf_water's own convention from the split-path P1 landing). !
-      !----- SURFACE (ponding) store. In this phase it is PASSED THROUGH the stages and committed  !
-      !      from the scratch hydrology solve, exactly as theta is (see column_fast_step_ark), so    !
-      !      carrying it here changes nothing yet. It lives on the state vector so it can become     !
-      !      PROGNOSTIC without a second lockstep sweep over every combinator -- issue #93 Phase 1.  !
-      !      Until it has a stage RHS it must stay OUT of state_wrms_grouped, like the canopy-surface !
-      !      films below, or the error controller would score a frozen quantity. -------------------!
+      !----- SURFACE (ponding) store. It is PASSED THROUGH the stages and committed from the water   !
+      !      network (see column_fast_step_ark), so carrying it here changes nothing yet. It lives on !
+      !      the state vector so it can become PROGNOSTIC without a second lockstep sweep over every  !
+      !      combinator -- issue #93 Phase 1. Until it has a stage RHS it must stay OUT of             !
+      !      state_wrms_grouped, like the canopy-surface films below, or the error controller would   !
+      !      score a frozen quantity. --------------------------------------------------------------!
       real(wp) :: w_surface      = 0.0_wp         !< [kg/m2] ponded surface water
       real(wp) :: w_surface_enth = 0.0_wp         !< [J/m2]  enthalpy of the ponded water
       real(wp), allocatable :: leaf_surf_water(:) !< [kg/m2 ground] canopy interception film on leaf
       real(wp), allocatable :: wood_surf_water(:) !< [kg/m2 ground] canopy interception film on wood
    end type column_state_t
 
-   !----- Frozen inputs for the whole column: the surface pre-pass + the soil/hydraulics params +   !
-   !      the frozen hydrology surface BCs + per-cohort geometry the hydraulics kernel needs.        !
-   !----- The operator-split SOIL-WATER solve's outcome for this dt_fast: the scratch                !
-   !      advance_soil_water_column's boundary fluxes, its end-of-step stores, the temperatures that      !
-   !      value the water crossing each boundary, and its interior faces + post-solve corrections.    !
-   !                                                                                                  !
-   !      THE FACES AND CORRECTIONS ARE ARK-ONLY (issue #78 item 3). They are the right numbers for a  !
-   !      scheme that commits the scratch solve's theta VERBATIM, which the ARK does. RK45 integrates  !
-   !      its OWN theta, on which the scratch's faces move a different amount of water and the         !
-   !      scratch's clip mass never moves at all, so column_derivs takes both from the stage's own     !
-   !      soil_water_time_deriv. Using these there cost ~2.6e6 J/m2/step of vertical enthalpy          !
-   !      misplacement (soil surface 345 K) against ~2.6e6 J/m2/step of spurious clip cooling -- two   !
-   !      defects of matched magnitude and opposite sign, which is why each hid the other. The whole-  !
-   !      column ledger cannot see a purely VERTICAL misplacement; only the faces' provenance protects  !
-   !      against it. w_flux_frozen is the solver's TIME-MEAN face flux over the step, so it is exactly !
-   !      what the split path advected on (eforc%w_flux = -hflux%w_flux).                              !
+   !----- SOIL WATER over this dt_fast, from the soil-plant water solver (meds_spac_solver,         !
+   !      run in build_column_frozen): its boundary flows, its end-of-step stores, the temperatures    !
+   !      that value the water crossing each boundary, and its interior faces. Every scheme commits    !
+   !      the network's theta and advects the soil's enthalpy on these same faces, so the energy moves !
+   !      with the water the committed theta actually moved: borrowing one solve's faces while         !
+   !      committing another's theta is the defect class (#78 item 3) the whole-column ledger cannot   !
+   !      see, because a purely VERTICAL misplacement still sums correctly against the boundary.       !
    type :: soil_hydrology_t
       real(wp) :: geothermal    = 0.0_wp          !< [W/m2]    bottom heat flux BC
-      real(wp) :: q_top         = 0.0_wp          !< [m/s]     Richards top water flux (infiltration - evaporation)
-      real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] throughfall reaching the soil top face
+      real(wp) :: q_top         = 0.0_wp          !< [m/s]     net top-face water flux (infiltration - exfiltration - evaporation)
+      real(wp) :: infiltration  = 0.0_wp          !< [kg/m2/s] pond -> top layer
       real(wp) :: drainage      = 0.0_wp          !< [kg/m2/s] bottom-face drainage
-      !----- The scratch solve's two post-solve MASS corrections, summed over layers (their per-layer  !
-      !      enthalpies are clip_enth/floor_enth below). The ARK commits the scratch theta verbatim, so !
-      !      these are water that really left (clip -> pond) or was created (theta_res floor) in the    !
-      !      committed state, and the ledgers must book them (2026-09 review, item 1A #5). ------------!
-      real(wp) :: clip_mass     = 0.0_wp          !< [kg/m2/s] saturation-clip water leaving the soil for the pond
-      real(wp) :: floor_mass    = 0.0_wp          !< [kg/m2/s] theta_res-floor water created in the soil
       real(wp) :: runoff_surf   = 0.0_wp          !< [kg/m2/s] surface runoff
-      real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (RK45 rebuilds its OWN pond from it)
+      real(wp) :: precip_ground = 0.0_wp          !< [kg/m2/s] water reaching the ground (the pond's inflow)
       real(wp) :: t_infil       = 0.0_wp          !< [K]       temperature of the infiltrating (pond) water, #78 item 4
-      real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    scratch solve's end-of-step pond ENTHALPY, #78 item 4
+      real(wp) :: w_surface_enth1 = 0.0_wp        !< [J/m2]    end-of-step pond ENTHALPY, #78 item 4
       real(wp) :: t_pond_inflow      = 0.0_wp          !< [K]       temperature of the water entering the pond, #78 item 4
       real(wp) :: runoff_enth   = 0.0_wp          !< [W/m2]    enthalpy leaving with surface runoff, #78 item 4
       real(wp) :: t_film_valuation     = 0.0_wp          !< [K]       valuation T of intercepted water (tsupercool_liq under a pack)
+      !----- Water a supersaturated top layer pushed up into the pond, and the enthalpy it took, valued at !
+      !      the layer's start-of-step temperature (the pond received the same number). ----------------!
+      real(wp) :: exfiltration  = 0.0_wp          !< [kg/m2/s] top layer -> pond
+      real(wp) :: exfil_enth    = 0.0_wp          !< [W/m2]    enthalpy leaving the top layer with it
       real(wp) :: t_bot         = 0.0_wp          !< [K]       bottom-layer soil temperature @ state^n
       real(wp) :: w_surface1    = 0.0_wp          !< [kg/m2]   end-of-step ponded surface water
       real(wp) :: w_flux_frozen(n_soil_layer_max) = 0.0_wp  !< [m/s]   DOWNWARD interior face flux, k=1..nsl-1
-      !----- Enthalpy paired with the hydrology's UNFACED post-solve mass corrections, already valued  !
-      !      at each layer's own state^n temperature (so the correction is temperature-NEUTRAL) and     !
-      !      carried as [W/m2] to join the root_heat_sink column the stages already assemble. ---------!
-      real(wp) :: clip_enth(n_soil_layer_max)  = 0.0_wp     !< [W/m2] enthalpy leaving layer k with clipped water
-      real(wp) :: floor_enth(n_soil_layer_max) = 0.0_wp     !< [W/m2] enthalpy created with theta_res-floored water
-      !----- the AUTHORITATIVE end-of-step soil moisture from the scratch advance_soil_water_column (the robust  !
-      !      ponding/runoff/free-drain Richards solve). The ARK COMMITS this instead of re-solving theta in   !
-      !      the ESDIRK stages (soil water is fully operator-split out; see column_fast_step_ark).            !
+      !----- The network's end-of-step soil moisture, which every scheme commits. -------------------!
       real(wp), allocatable :: theta1(:)          !< [m3/m3]   committed post-step soil moisture (per layer)
       !----- (theta1 - theta^n) / dt_fast: the steady rate at which the stages move soil water, so the   !
       !      water a layer holds keeps pace with the enthalpy its faces carry in (see column_be_stage).  !
       real(wp) :: theta_rate(n_soil_layer_max) = 0.0_wp   !< [1/s]
    end type soil_hydrology_t
 
-   !----- ROOT ZONE: the realized aggregate uptake, where it is placed, and the soil-side hydraulic  !
-   !      boundary the corrector re-solves against. uptake is the pre-pass's plant-side REQUEST      !
-   !      rescaled by the soil's OWN fwilt-limited supply -- the SAME number both the soil-water     !
-   !      tendency's root sink and the per-cohort uptake_frozen are built from, so the wood<->soil   !
-   !      interface closes to the soil's TRUE realized supply. root_share is THIS dt_fast's realized  !
-   !      per-layer uptake shares (sum = 1), built from solve_plant_water_batch's own breakdown so   !
-   !      the root MASS sink and the root HEAT sink land in the same layers by construction; it      !
-   !      falls back to the static root_frac profile when no layer supplies anything. qloss_frozen  !
-   !      is ED2's qloss: the liquid enthalpy the uptake carries out of the soil, per cohort.         !
+   !----- ROOT ZONE over this dt_fast, from the water network: the patch's root uptake, its shares by   !
+   !      layer (sum = 1; the patch's root profile when the roots took nothing), and the liquid         !
+   !      enthalpy it carries out of the soil -- by cohort (ED2's qloss, what each wood is credited)    !
+   !      and by layer (what each soil layer loses), both at each layer's start-of-step temperature.   !
    type :: root_zone_t
-      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] realized (post-rescale) aggregate root uptake
+      real(wp) :: uptake        = 0.0_wp          !< [kg/m2/s] the patch's root uptake
       real(wp), allocatable :: root_share(:)      !< [-]       per-layer root-sink shares (sum = 1)
-      real(wp), allocatable :: psi_soil_pre(:)    !< [MPa] per-layer soil water potential @ state^n (nsl)
-      real(wp), allocatable :: rhizo_cond(:,:)    !< [kg/plant/s/MPa] rhizosphere conductance (nsl, ncoh)
       real(wp), allocatable :: qloss_frozen(:)    !< [W/m2 ground] (ncoh) advected enthalpy leaving the soil with uptake
+      !----- The same enthalpy by layer [W/m2]: each layer's uptake at that layer's start-of-step         !
+      !      temperature, so the soil loses heat where it loses water (plan §12.2 M4). -----------------!
+      real(wp), allocatable :: root_heat(:)       !< (nsl)
    end type root_zone_t
 
-   !----- PLANT WATER: the pre-pass's time-averaged solve_plant_water output (per plant), held      !
-   !      CONSTANT across every sub-stage of the macro-step -- sapflow_frozen is the wood->leaf       !
-   !      transfer; uptake_frozen is the soil->wood transfer, floored >= 0 (no hydraulic              !
-   !      redistribution) and rescaled so sum(uptake_frozen*nplant) == roots%uptake EXACTLY -- and    !
-   !      the cohort geometry the hydraulics kernel reads when the post-stage corrector re-solves it   !
-   !      with the REALISED b-weighted transpiration. column_derivs' mass ODE reads the two fluxes     !
-   !      directly; no PV-curve/conductance evaluation is needed per stage.                           !
+   !----- PLANT WATER over this dt_fast, from the water network, per plant and held CONSTANT across  !
+   !      every stage: sapflow_frozen is the wood -> leaf flow, uptake_frozen the soil -> wood flow.     !
+   !      With the transpiration the stages hold (tissue_coefficients_t%transp_net) they move each      !
+   !      cohort's leaf and wood water exactly to the network's end-of-step values. -------------------!
    type :: plant_water_t
-      real(wp), allocatable :: nplant(:), bleaf(:), bsap(:), broot(:), sap_area(:), height(:), leaf_area(:)
+      real(wp), allocatable :: nplant(:)                            !< [plants/m2] (ncoh)
       real(wp), allocatable :: sapflow_frozen(:), uptake_frozen(:)   !< [kg/plant/s] (ncoh)
-      !----- PFT index, so the post-stage corrector can select each cohort's hydraulic parameters   !
-      !      from the per-PFT table (#179). The geometry above was enough while every PFT shared    !
-      !      one parameter set; it is not any more.                                                  !
-      integer(ik), allocatable :: pft(:)
    end type plant_water_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
@@ -672,25 +625,27 @@ module meds_fast_types
       type(canopy_film_capacity_t) :: film         !< canopy interception film
       type(ground_boundary_t)      :: ground       !< bare-ground boundary
       type(snow_stage_t)           :: snow         !< the snow stage's outcome (all zero without a pack)
-      type(soil_hydrology_t)       :: hydrology    !< the scratch soil-water solve's outcome
-      type(root_zone_t)            :: roots        !< realized uptake, its placement, the rhizosphere boundary
-      type(plant_water_t)          :: plant        !< frozen sapflow/uptake + cohort geometry for the corrector
+      type(soil_hydrology_t)       :: hydrology    !< the water network's soil flows over the step
+      type(root_zone_t)            :: roots        !< the network's root uptake and its placement by layer
+      type(plant_water_t)          :: plant        !< the network's sapflow and uptake per plant
    end type column_frozen_t
 
-   !----- Storage the ARK march reuses from step to step on one thread (#195). Every routine that      !
-   !      writes into it fills its fields in place, so the arrays are allocated again only when the    !
-   !      cohort count changes (when the thread moves to a patch with a different number of cohorts). !
-   !      The step's stages are a record of their own so that the march can hand them to the step      !
-   !      beside its own states without passing any storage twice.                                     !
+   !----- Storage the fast step reuses from step to step on one thread (#195): the soil-plant water  !
+   !      solver (both schemes) and the ARK march's states and stages. Every routine that writes     !
+   !      into it fills its fields in place, so the arrays are allocated again only when the cohort    !
+   !      count changes (when the thread moves to a patch with a different number of cohorts). The    !
+   !      step's stages are a record of their own so that the march can hand them to the step beside   !
+   !      its own states without passing any storage twice.                                            !
    type :: ark_stages_t
       type(column_state_t) :: y2, base3, y3            !< the ARS(2,2,2) stages
       type(surface_tend_t) :: sf2, sf3                 !< the stages' surface tendencies
    end type ark_stages_t
 
-   type :: ark_workspace_t
-      type(column_state_t) :: y_march, y_new, y_err, y_lo   !< the adaptive march's state and trial step
-      type(ark_stages_t)   :: stages                        !< the step's stages
-   end type ark_workspace_t
+   type :: fast_workspace_t
+      type(spac_solver_t)   :: spac                          !< the soil-plant water solver
+      type(column_state_t)  :: y_march, y_new, y_err, y_lo   !< the ARK march's state and trial step
+      type(ark_stages_t)    :: stages                        !< the ARK step's stages
+   end type fast_workspace_t
 
    !----- The whole-column tendency vector + diagnostics. ---------------------------------------!
    type :: column_tend_t
@@ -781,6 +736,9 @@ module meds_fast_types
       !      With a CAS that is constant over the step every stage returns the same temperature and    !
       !      the integral collapses to it, so this degenerates correctly. -----------------------------!
       real(wp), allocatable :: tissue_leaf_int(:), tissue_wood_int(:)   !< [K*s]
+      !----- Each cohort's transpiration over the step [kg/m2 ground], b-weighted the same way: the  !
+      !      water its leaves were debited and the canopy air credited, which the diagnostics report. !
+      real(wp), allocatable :: transp_coh(:)
    end type column_bflux_t
 
 
@@ -824,9 +782,9 @@ module meds_fast_types
       real(wp), allocatable      :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp), allocatable      :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       !----- Lagged per-layer root-uptake SHARES (sum = 1), from the previous fast step's multi-layer  !
-      !       plant solve; the soil sink distributes coh_transp by these (vs static root_frac) so the   !
-      !       soil dries where roots actually took water. Default 0 => root_frac fallback (first step /  !
-      !       single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
+      !       plant solve; the soil sink distributes coh_transp by these (not the root profile) so the  !
+      !       soil dries where roots actually took water. Default 0 => the patch's root profile (first   !
+      !       step / single-layer). RETIRED with the multilayer_roots flag (Phase 1): the per-layer shares are
       !       now built from THIS step's realized uptake, inline on the split path and on column_frozen_t
       !       for ARK/RK45, so nothing lags through patch state any more. ---------------------------!
       !----- WARM START for the adaptive march (MEDS_NUMERICS_SCOPING.md section 8e). The controller     !
@@ -857,6 +815,7 @@ contains
       allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
+               col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
                col_cohort%leaf_area(n), col_cohort%nplant(n),                                                          &
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
@@ -865,6 +824,7 @@ contains
       col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
       col_cohort%is_woody = .true.
       col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
+      col_cohort%stem_resp_sapwood25 = 0.0_wp ; col_cohort%sap_volume = 0.0_wp
       col_cohort%leaf_area = 0.0_wp ; col_cohort%nplant = 0.0_wp ; col_cohort%dbh = 0.0_wp ; col_cohort%broot = 0.0_wp
       col_cohort%bleaf = 0.0_wp ; col_cohort%bsap = 0.0_wp ; col_cohort%sap_area = 0.0_wp
       col_cohort%bwood = 0.0_wp                     ! was ALLOCATED and never initialized
@@ -911,16 +871,18 @@ contains
                                                    apoplast_frac = hcfg%wood_apoplast_frac,                          &
                                                    water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
-      hydraulics_params%k_plant_max    = hcfg%k_plant_max    ; hydraulics_params%wood_kmax      = hcfg%wood_kmax
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
+      hydraulics_params%root_beta      = hcfg%root_beta      ; hydraulics_params%root_depth_b1  = hcfg%root_depth_b1
+      hydraulics_params%root_depth_b2  = hcfg%root_depth_b2
+      hydraulics_params%specific_root_length = hcfg%specific_root_length
+      hydraulics_params%fine_root_radius     = hcfg%fine_root_radius
       call build_hydro_table(hydraulics_params%vuln_table, hydraulics_params%wood_kexp)
    end subroutine fill_hydro_params
 
    !----- PER-PFT hydraulics table (#179). Each entry starts from the shared [hydraulics] block    !
-   !      and then takes whichever traits the [pft] table actually supplied -- HYD_UNSET means      !
-   !      "not given", so a config can make ONE trait per-PFT without restating the other twelve,   !
-   !      and a config with no per-PFT hydraulics at all builds n_pft identical copies of exactly   !
-   !      what apply_hydraulics_config produced before.                                             !
+   !      and the sapwood conductivity of its wood density, and then takes whichever traits the     !
+   !      [pft] table actually supplied -- HYD_UNSET means "not given", so a config can make ONE    !
+   !      trait per-PFT without restating the others.                                              !
    !                                                                                          !
    !      The Kirchhoff lookup is rebuilt PER ENTRY, from that PFT's own wood_kexp: the table is    !
    !      what makes a non-integer vulnerability exponent affordable on the hot path, so sharing    !
@@ -943,9 +905,14 @@ contains
          call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
          call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
-         call ovr(table%pft(i)%k_plant_max,        pft%hyd_k_plant_max(i))
+         table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))
          call ovr(table%pft(i)%vessel_curl,        pft%hyd_vessel_curl(i))
+         call ovr(table%pft(i)%root_beta,          pft%hyd_root_beta(i))
+         call ovr(table%pft(i)%root_depth_b1,      pft%hyd_root_depth_b1(i))
+         call ovr(table%pft(i)%root_depth_b2,      pft%hyd_root_depth_b2(i))
+         call ovr(table%pft(i)%specific_root_length, pft%hyd_specific_root_length(i))
+         call ovr(table%pft(i)%fine_root_radius,   pft%hyd_fine_root_radius(i))
          !----- kexp LAST and separately: changing it invalidates the lookup built above. --------!
          if (pft%hyd_wood_kexp(i) > HYD_UNSET) then
             table%pft(i)%wood_kexp = pft%hyd_wood_kexp(i)

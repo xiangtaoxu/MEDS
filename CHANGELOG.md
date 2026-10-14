@@ -14,6 +14,725 @@ before and after.
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-10-13
+
+A **soil–plant water and examples** release. Soil and plant water are solved together, as one
+implicit network that conserves water to round-off, in place of the Richards solver, the
+plant-hydraulics solver and their floors and clamps (#397). Water stress is one fast and one slow
+control, with no soil wilting point (#384), and the soil takes SoilGrids' layer depths, Mualem's
+L = −1 and a pedotransfer function from texture (#391). Each cohort roots to a depth set by its
+height and draws water through a single-root conductance and its sapwood, whose conductivity follows
+wood density (#378). Growth gains sink limits, sapwood respiration, Chave et al. (2014)'s height
+curve, a leaf-drop turnover gate and a reproduction threshold relative to the local tallest tree, and
+a cohort's geometry is derived from its carbon every step (#382, #385–#388, #392, #402). The examples
+are renumbered to show one module each, from leaf gas exchange to a 983-cell regional run in Central
+America, and all are rerun on this release's code (#368, #373, #376, #378, #382, #402, #403).
+
+**Upgrading from v0.3.3:**
+- **`[phenology]` is rewritten** (#373): one cue model for every PFT. The old keys (`cue_mask`,
+  `k_flush_max`, `k_shed_max`, the `tau_*`, degree-day, chilling, cold-drop, photoperiod,
+  water-threshold and `evg_*` keys, `bare_snap_frac`) and `pft.evergreen` are refused, each naming
+  its replacement; an evergreen PFT is a `pft.min_leaf_cover`. `pheno_flush/shed_cohort` are now
+  `leaf_flush/shed_tendency_cohort`, and an old restart loads with the phenology's memory reset.
+- **Roots and sapwood** (#378): `hydraulics.root_depth`, `specific_root_area`, `k_plant_max` (and
+  `pft.k_plant_max`), `conductance` and `wood_kmax` are refused. Set `root_depth_b1`/`b2`,
+  `specific_root_length` and `fine_root_radius`; the sapwood's conductivity comes from wood density
+  unless `pft.wood_kmax` sets it. `root_beta` defaults to 0.1 (was e⁻⁴).
+- **Water** (#384, #397): `leaf_physiology.low_water_potential_control` and `wstress_nonstomatal`,
+  and `soil.psi_wilt`, `psi_open`, `linearize`, `substep`, `h_init`, `max_substep` and
+  `max_picard`, are refused. The water work counters are `work_water_nsub/newton/reject/nfail_site`;
+  the `work_clamp_*` outputs are gone.
+- **Soil layers** (#391): `soil_column.n_layer` and `grid_growth` are refused. The layers are
+  SoilGrids' depths cut at `[soil_column].depth`, or `layer_bottoms`; `[energy].deep_depth` defaults
+  to 3.145 m.
+- **Renamed:** `pft.repro_carbon_efficiency` is `pft.recruit_carbon_efficiency` (#382);
+  `pft.min_reproduction_height` is `pft.reproduction_height_fraction`, the old height divided by the
+  local maximum height (#388; a config with the old key stops on it as unknown); the driver status
+  `ERR_SOILC` is `ERR_BOUNDS` (#392).
+- **Results move.** `storage_cushion` counts leaf and fine root (0.5 keeps the old 1 × leaf; the
+  reference config ships 3; #385); `retained_carbon_fraction` defaults to 0.3, on all leaf and
+  fine-root loss (#387); the shipped configs' `growth_memory_days` is 365 (#402); and the water
+  network, Mualem's L, cohort fusion and the sink budget move fluxes and stands, each by the amounts
+  below.
+- **`examples/example_biophysics/` is retired** (#378); its configs are in `test/region/`.
+
+### Added
+
+- **A soil pedotransfer function** (`meds_pedotransfer`, #391): `soil_hydraulics_from_texture` gives a soil
+  layer's van Genuchten θ_sat, θ_res, α and n (Hodnett & Tomasella 2002, Table 8; ED2's
+  `soil_hydro_scheme` 2) and its saturated conductivity (Ottoni et al. 2019) from sand, silt, clay,
+  organic carbon, CEC, pH and bulk density, and scales them for coarse fragments (Saxton & Rawls 2006).
+  It is elemental, so one call covers a profile. Against 12,297 measured retention curves (GSHP) it
+  gave the smallest error in plant-available water of the five functions tried (median 0.035 m³ m⁻³
+  from SoilGrids at 0.1°; Rosetta3 0.047, Cosby 0.067); the science page has the numbers and its weak
+  spot (boreal, organic-rich acid soils). `test_pedotransfer` checks the authors' worked example (α
+  0.2452 kPa⁻¹, n 1.3674, θ_sat 0.4993, θ_res 0.2134), its Ks and the coarse-fragment scaling. No
+  configuration calls it yet: `[soil_column]` still takes the curve's parameters directly.
+- **Chave et al. (2014)'s height curve** (#386): `[allometry].height_allometry = "chave2014"` sets height
+  from diameter by Chave's pantropical eq. 6a, ln H = 0.893 - E + 0.760 ln D - 0.0340 (ln D)^2, at its
+  mean (+ 0.243^2/2, as BIOMASS's retrieveH), with the site's stress index E as `[allometry].chave_e`.
+  Height to diameter and biomass to diameter are its exact inverses (the smaller root of a quadratic
+  in ln D), capped at `hgt_max` like the other two curves. `test_allometry` checks the heights against
+  retrieveH and both inverses. Configs that do not set the option are unchanged.
+- **The Python API reads each cohort's carbon budget**: `Run.cohorts` gains `gpp`, `leaf_resp`,
+  `stem_resp` and `root_resp` (the last slow step's GPP and maintenance respiration [kgC/plant]),
+  `npp` and its parts `npp_leaf`, `npp_fineroot`, `npp_wood`, `npp_storage`, `npp_repro`, with
+  `growth_resp` and `exudate` [kgC/plant/yr] (NaN unless the output keeps the slow cohort
+  diagnostics), and `leaf_carbon`, `fineroot_carbon`, `storage_carbon` [kgC/plant] and `llspan` [yr].
+  A test checks that a cohort's GPP less its maintenance respiration closes on its NPP, growth
+  respiration and exudate.
+- **Wood growth can be sink-limited**, in two forms, each optional, per PFT and off at 0:
+  `pft.max_relative_growth_rate` [1/yr] caps a cohort's wood growth in a step at that rate times its
+  wood carbon, and `pft.max_absolute_growth_rate` [cm/yr] caps its diameter growth at that rate times
+  dbh^`pft.max_absolute_growth_exponent` (dbh in cm, exponent 0 by default), as the wood carbon that
+  grows the stem by that much on the model's allometry. With both set the tighter applies. The
+  cap comes from a new function, `growth_sink_limitation` (`meds_sink_limitation`), the place for a
+  more mechanistic sink later. The allocator builds wood up to the cap and turns the rest of the residual
+  into root exudate, charged the same growth respiration as wood, so the cap moves carbon from wood to
+  the patch's below-ground labile litter without changing growth respiration. A new output, `root_exudate_site` [kgC/m²/yr], reports it, and `litter_fineroot_site`
+  (which reads that litter pool) now includes it. The parameter record lists the three keys. With the keys
+  absent every run is unchanged bit for bit.
+- **The light-plasticity slopes can be pinned per PFT**: with `[options].override_derived`, the PFT
+  file's `[derived]` table takes `kplastic_vcmax`, `kplastic_rd`, `kplastic_sla` and `kplastic_llspan`
+  (a cohort's trait is its PFT's top-of-canopy value times exp(k · LAI above it)), each optional, in
+  place of the values derived from `vcmax25` and `leaf_lifespan_toc`. Rd can then fall faster than
+  Vcmax down the canopy, as observed (Needham et al. 2025; Ma et al. 2025), where the derived Rd slope
+  equals Vcmax's. The parameter record lists the four slopes.
+- **Stem respiration can be charged on sapwood volume**: `pft.stem_resp_sapwood25` (optional, per PFT,
+  default 0) [µmol CO2 m⁻³ sapwood s⁻¹ at 25 °C] adds a term on the cohort's sapwood volume (its sapwood
+  carbon as dry mass over the wood density) to the surface term of `stem_resp_factor25`, under the same
+  wood-temperature response. A PFT sets the surface rate to 0 to respire by sapwood alone, which
+  charges saplings far less per m² of leaf and canopy trees more than the surface form (Ryan 1990). With
+  the key absent every run is unchanged bit for bit. The parameter record now lists `stem_resp_factor25`,
+  `stem_resp_sapwood25` and `root_resp_factor25`; `test_plant_respiration` checks the new term.
+- **`[trait_dynamics].fineroot_lifespan_plastic`** (default false; needs `trait_plasticity_on`): a
+  cohort's fine-root turnover is its PFT's `fineroot_turnover_rate` times the PFT's top-of-canopy leaf
+  lifespan over the cohort's own, so a shaded cohort, whose leaves live longer, replaces its roots as
+  slowly as its leaves.
+- **`pft.recruit_shade_decay`** (optional, per PFT, default 0): the recruit carbon efficiency falls as
+  exp(−k · LAI) of the patch a seed lands in, since under a deep canopy fewer seeds germinate and
+  fewer seedlings survive. The recruits and the seed lost to litter take the efficiency from one
+  helper (`cohort_recruit_efficiency`), so the two still add up to the reproduction carbon;
+  `test_slow_ledger` checks the recruit pool's credit against exp(−k · LAI).
+- **Example 05, forest regeneration** (`examples/example05_forest_regeneration/`): the coupled model
+  run through `meds.model.Run` from bare ground at Barro Colorado Island, 1600-2020, on ERA5-Land's
+  2003-2022 at the plot's cell (repeated; cut by `scripts/prepare_era5/make_forcing_file.py`) and the
+  CMIP7 CO2 history. The three PFTs are example 03's wood-density classes with its census-fitted Camac
+  mortality (pinned through `[derived]`, the treefall rate taken off gamma) and BCI height curve. Their
+  leaves are Panama's sun leaves (top-of-canopy lifespan 0.5, 0.7 and 0.9 yr; 100, 110 and 120 g m⁻²)
+  on example 04's Vcmax25, with Ma et al. (2025)'s light plasticity; fine roots turn over at 1.5 times
+  the leaves' rate, stems respire on sapwood volume, and diameter growth is sink-limited at twice the
+  census's 75th percentile (x dbh^0.5). Seed rain brings one sapling per m² a year, shared by the PFTs.
+  `calibrate_growth.py check` compares each cohort's 2005-2010 diameter growth with the census's,
+  measured as the census measures it, by PFT, size and overtopping LAI, and the stand's carbon budget
+  with BCI's (`calibration.json`); `plot_regeneration.py` draws the regrowth against the plot's
+  censuses and tower. By 2010 the stand holds 123 MgC ha⁻¹ aboveground (census 118) and 33 m² ha⁻¹ of
+  basal area (30.5), with GPP 32 MgC ha⁻¹ yr⁻¹ (tower 31).
+- **Example 06, a regional run** (`examples/example06_regional_run/`, #402): Xu et al. (2016)'s four
+  dry-forest leaf habits (soft-wood deciduous, deciduous, brevi-deciduous, evergreen), set at Palo Verde
+  against its 2009 inventory (now example 05's `palo_verde/`: leaf litter, AGB growth, leaf cover, mortality), then
+  a 150-year regrowth from bare ground in 983 cells of Central America (5-25° N, 100-80° W), one
+  single-site run per cell on the cell's ERA5-Land weather, ED soil map and Chave et al. (2014) stress
+  index. The README sets the last ten years' leaf area against MODIS (minimum leaf cover r = 0.69 across
+  cells; the peak LAI is too high, 6.8 against 5.4) and the AGB after 20 years against Poorter et al.
+  (2016)'s Neotropical chronosequences (about half the observed above 1,200 mm of rain).
+- **`meds.model.Run.patches()`** copies per-patch `area` (fraction of the site) and `age` out of a live
+  run, through the new C-API entry `meds_run_get_patch_real`; a cohort's `owner_patch` indexes them, so
+  stand totals can be built from cohorts. `test_model.py` checks that the area-weighted cohort biomass
+  equals `total_agb`.
+- **A Python demography run can start from a census** (#376). `Site(cfg, census=True)` reads the file the
+  config's `[init].census_file` names and restructures the stand as `meds_main` does for
+  `init_mode = 1`, through the new C-API entry `meds_site_init_census` (1 when the file was read,
+  0 when it could not be; Python raises). `test_c_api_demography` covers it on the root config's
+  pseudo census.
+- **A saturating height curve** (#376). `[allometry].height_allometry = "gmm"` replaces the pan-tropical
+  power law with height = gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b), still capped at `[pft].hgt_max`;
+  `meds_config_pft.toml` lists `gmm_a`, `gmm_b` and `gmm_k` at Cano et al. (2019, Biogeosciences
+  16:847)'s fit for the Barro Colorado Nature Monument (58.0 m, 0.73, 21.8). Height inverts in closed
+  form; biomass inverts to diameter by Newton's method, which fusion, fission and the carbon path's
+  wood-carbon size anchor use. The default stays `"power"`, so no existing config changes, and
+  `scripts/prepare_census/make_census.py` follows the option.
+
+### Changed
+
+- **The examples are rerun on the release's code** (#403).
+  - Example 01 reproduces byte-for-byte.
+  - Example 02's four sites are refitted under #387's leaf-drop gate. The old fits shed 0.60 canopies
+    a year at BCI (target 1.0) and 0.275 at Hyytiälä (0.30); now 1.01 / 0.30 / 1.00 / 1.00.
+    `meds.plant.pheno`'s presets take the new values.
+  - Example 03 runs with the top-height fusion, and its recruitment depends on the patch's leaf area
+    alone (skill 0.29 -> 0.30). From the 1985 census, 2010 basal area 29.6 m² ha⁻¹ (census 30.5);
+    300 years from bare ground 30.9.
+  - Example 04's soil column is 2 m (was 6 m: the plot's soil reaches saprolite at 1-2+ m). The
+    refit (1,096 runs; validation cost 63,657 -> 52,187) gives Vcmax25 32.3, g1 2.82 and κ 0.734.
+    Five-year GPP is 8.65 µmol m⁻² s⁻¹ against the target's 8.15. Before the April 2016 storm the top
+    15 cm holds 0.32 m³ m⁻³, against the tower's 0.28 (0.37 on 6 m).
+  - Example 05 has two forests.
+    - BCI 1600-2020 takes example 04's new fit and column: 2010 AGB 123 MgC ha⁻¹ (census 118);
+      3.3 h on 20 threads.
+    - Palo Verde regrows for 150 years with example 06's four PFTs, moved to `palo_verde/` with the
+      2009 inventory check. Seed rain is 0.1 per PFT, as in the regional run. AGB at 150 years is
+      84 MgC ha⁻¹ (inventory 88) but evergreen-heavy; at 20 years 28, against the chronosequence's
+      71 (Poorter et al. 2016).
+  - Example 06's Palo Verde check reruns bit-identically; its README takes the PFTs from example 05.
+
+- **The growth window is a year in every example** (#402; `[demography].growth_memory_days` 90 -> 365 in
+  `meds_config_main.toml` and examples 03-05; example06 already used 365; `test/region` keeps 90). The
+  mortality hazard reads a cohort's mean diameter growth over this window, and over 90 days a dry
+  season's pause read as a growth collapse: at Palo Verde the Camac hazard of the dense-wood PFTs rose
+  from about 0.6 to about 10 % yr^-1 each May-June, and the evergreen PFT's mortality in the 2009 stand
+  falls from 2.8 to 0.6 % yr^-1 with a year. Example 04 barely moves (one year: GPP +0.05 %, LE +0.04 %,
+  H -0.04 %, NEE -0.2 %; final AGB 17.95 -> 17.99 kgC m^-2). The examples are rerun for the release (below).
+- **Cohort fusion's height tolerance is a share of the patch's top height** (#402; `fuse_pass`;
+  `docs/configuration.md`). `cohort_size_tol_min`/`_max` multiplied the PFT's `hgt_max`, a fixed 0.92 m
+  at the first pass for a 46 m PFT whatever the stand. In a young stand that merged each month's
+  recruits into the leading cohort and re-merged the two halves of every split each dry season, so all
+  the stems of a PFT stayed one cohort, no size hierarchy formed and a dense stand could not thin. In a
+  50-yr Palo Verde regrowth from 3 seedlings m^-2 per PFT (Camac mortality, the window budget below)
+  the first stems >= 10 cm now appear at age 20 (none in 50 yr before), the pioneer saplings thin from
+  21,000 to 400 ha^-1, cohorts rise from 10 to 588, and AGB at 50 yr is 53 -> 87 dry Mg ha^-1, close to
+  the 89 a start from 0.1 seedlings m^-2 reaches. Where the canopy is near `hgt_max` fusion is as
+  before; the examples are rerun for the release (below). `test_fusion_cohort` checks a sapling stand and a tall one.
+- **The diameter sink limit is a budget over the growth window, not a cap on each step**
+  (#402; `meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
+  takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
+  buffer, and the step may grow the diameter by `max_absolute_growth_rate x dbh^c x window` less that.
+  A per-step cap threw away every day without spare carbon, so where growth is seasonal a stem could not
+  reach its annual rate: at Palo Verde the leading saplings grew at the cap from August to January and
+  not at all for four to five months, 0.15 cm yr^-1 against a cap of 0.27. In the 2009 Palo Verde stand
+  (Camac mortality, the example's traits) AGB growth of trees >= 10 cm rises 0.53 -> 0.66 kg m^-2 yr^-1,
+  relative growth Ds/D/BD/E 6.2/4.8/3.3/1.0 -> 9.7/6.8/3.9/1.1 % yr^-1 and root exudate falls
+  0.177 -> 0.065 kgC m^-2 yr^-1, so the example's caps were refitted (#402); a 50-yr regrowth there holds
+  28 -> 53 dry Mg ha^-1 of AGB at 50 yr from 3 seedlings m^-2 per PFT, 54 -> 81 from 0.1. Example 05 sets
+  the cap (rerun for the release, below); examples 03-04 do not set it.
+- **Soil and plant water are solved together, as one network** (#397;
+  `docs/science/soil_plant_water.md`, `MEDS_SPAC_WATER_NETWORK_PLAN.md`). Each `dt_fast`, the pond,
+  every soil layer and each cohort's wood and leaves are stores, joined by Darcy faces, per-layer root
+  uptake (Gardner, no hydraulic redistribution), the xylem (Kirchhoff mean) and the boundary flows,
+  and solved by implicit Euler on adaptive sub-steps, with Newton in each store's own unknown (soil
+  effective saturation dry, potential wet; tissue relative water content; pond head) and a
+  block-arrowhead solve that eliminates each cohort onto the soil. Water is advanced by the flows, so the network
+  conserves it to round-off. It replaces the implicit Richards solver, the plant-hydraulics
+  matrix-exponential solver, the uptake rescale, the residual floors and caps, the tissue-water floor,
+  the ARK transpiration corrector and RK45's in-stage soil water and saturation clip; both schemes take
+  water from it.
+  - **Transpiration** is the stomata's demand limited by the water the leaves hold below the closing
+    potential, solved in the network; the energy stages hold it at the network's for the step, as
+    they hold ground evaporation. The demand solve credits the liquid enthalpy of the sapflow that
+    replaces what the leaf transpires (without it the leaf transpired ~4 % less).
+  - **The pond is a store**: rain enters it, it exchanges water both ways with the top layer by
+    Darcy's law, and spills above `w_pond_max`. A layer past saturation stores water through a
+    specific storage of 1e-4 m⁻¹ and drives the excess to the pond and the next layer.
+  - **Root uptake** leaves each layer at that layer's own temperature (`root_heat` per layer).
+  - Example 04, five BCI years: LE 68.76 → 67.99 W m⁻², H 65.64 → 66.99 W m⁻², GPP 8.261 → 8.249
+    µmol m⁻² s⁻¹, Rn 121.00 → 120.90 W m⁻² (tower: 70.38, 30.75, 7.18, 136.42); daily LE RMSE against
+    the tower 18.78 → 18.94 W m⁻², r 0.54 both; whole-column ledgers 0 fails in 1.5e7 checks; run time
+    5:08 → 6:11 (8 threads).
+  - dt-convergence (BCI dry season, 900 against 150 s): window-mean LE −0.2 W m⁻² (was +0.3), largest
+    hourly difference in the mean diurnal cycle 1.9 W m⁻² (was 2.9); the midday `psi_leaf` probe
+    agrees to 0.005 MPa between 75 and 900 s.
+  - Cost on the BCI profile run (6 months, 33 patches): 12 threads 9.28 → 10.53 s (+13.5 %), one
+    thread 61.3 → 72.8 s (+19 %).
+  - 150-year regrowth from 1871 at Palo Verde and BCI (ERA5-Land recycled, soil map v2, with #389's
+    fix): both complete, whole-column ledgers 0 fails in 5e7-1e8 checks; beta stops at BCI on the
+    recycled April storm (1994, and 2014 with #389's fix). At Palo Verde beta's monthly-mean leaf
+    potential falls to -570 MPa in the dry season and the evergreen PFT sheds ~60 % of its leaves; the
+    network's lowest is -5.6 MPa and the evergreen keeps them (year-150 AGB 9.3 against 6.1 kgC m⁻²,
+    GPP equal). Example 06's PFT parameters were refitted on the network (#402). Wall time to 2011
+    against beta: +2 % at Palo Verde, +24 % at BCI (about +20 % per cohort).
+  - The water work counters are renamed for the network: `work_water_nsub_site` (accepted
+    sub-steps), `work_water_newton_site` (Newton iterations), `work_water_reject_site` (rejected
+    sub-steps) and `work_water_nfail_site` (sub-steps taken unconverged), replacing
+    `work_soil_nsub_site`, `work_hydro_nsub_site`, `work_hydro_thrash_site` and `work_nonconv_site`.
+  - The fast step's thread workspace (`fast_workspace_t`, was `ark_workspace_t`) now holds the
+    solver too, for both schemes, so its arrays are allocated only when a patch's shape changes.
+  - **Where the code lives**: the solver is `numerics/meds_spac_solver`, with its linear solve in
+    `meds_arrowhead_solve`; how much water a store holds is in `meds_water_retention`
+    (`soil_water_relations`, `tissue_water_relations`, `pond_water_relations`), how water moves into
+    and through the plant in `meds_hydr_lib` (`rhizosphere_conductance`, `root_water_uptake`,
+    `xylem_sapflow`, `supply_limited_transpiration`), and through the soil in `meds_soil_water`
+    (`soil_water_flux`). The soil read-offs (`soil_psi_from_theta`, `soil_theta_from_psi`) evaluate the
+    solver's own curve kernels, and the Mualem pore connectivity is one constant,
+    `VG_PORE_CONNECTIVITY`.
+- **A run stops on the step a cohort's state leaves its bounds** (#389). Each step, the driver checks
+  every cohort's density, carbon pools, SLA, internal water and leaf and wood films: each must be
+  finite and not negative. A violation stops the run and names the field, the cohort and its patch,
+  where before it surfaced only through something derived from it, often years later. The check
+  shares status 4 with the soil-carbon plausibility check, renamed `DRIVER_ERR_SOILC` ->
+  `DRIVER_ERR_BOUNDS` (Python `ERR_SOILC` -> `ERR_BOUNDS`). `meds.demography.Site.apply_rates`
+  rejects rates that are not finite, and negative mortality or recruitment.
+- **Soil layers: SoilGrids' depths cut at the column depth** (#391; config breaking: `[soil_column].n_layer`
+  and `grid_growth` are refused, naming the replacement).
+  - **The rule.** Every column cuts one list of layer bottoms at `[soil_column].depth`: 0.05, 0.15, 0.30,
+    0.60, 1.00, 1.50, 2.00, 3.00, 4.50, 6.50, 9, 12, 16, 21 and 27 m (`SOIL_LAYER_TEMPLATE`). A remainder
+    thinner than half of the list layer it falls in joins the layer above.
+  - **The override.** `[soil_column].layer_bottoms = [...]` [m] replaces the list for a measured profile.
+    The column then ends at its last bottom unless `depth` cuts it.
+  - **Why.** The exponential grid scaled every layer with the depth: a 0.5 m column on 16 layers had a
+    0.26 cm top layer, a 6 m one 3.2 cm. Now the top layer is 5 cm everywhere, a shallow soil gets few
+    layers (0.3 m: 5, 10 and 15 cm), per-layer soil maps match the layers one to one, and the columns of
+    a region share one depth axis.
+  - **Code.** `build_soil_hydr_params` takes the layer bottoms; the exponential generator and its optional
+    interface argument are gone. `soil_column_layers` (`meds_config`) gives a column's layers, from the
+    template or the list.
+  - **`[energy].deep_depth`.** The default goes 3.12 -> 3.145 m, the derived optimum for the new default
+    2 m column (bottom node 1.75 m). Examples 04 and 05 go 6.72 -> 6.645 m.
+  - **Example 04** (BCI, five years, 6 m: 10 layers instead of 16), calibrated / default:
+    - GPP 8.261 / 10.148 -> 8.262 / 10.149;
+    - LE 68.53 / 83.41 -> 68.53 / 83.41 W m-2;
+    - NEE unchanged;
+    - the 0-15 cm soil water against the tower unchanged;
+    - run time 505 s instead of 543 s (-7 %).
+  - **A 1.4 m column at BCI** (6 layers instead of 16): GPP 8.252 -> 8.249, dry-season LE bias -8.94 ->
+    -8.77 W m-2, in 373 s instead of 432 s (-14 %).
+  - **Tests.** The column tests keep the geometric grids their numbers were written on, through
+    `test/meds_test_soil_grid.f90`. `test_soil_column_config` checks the default column, the cut, the
+    merge rule and the override.
+- **The van Genuchten conductivity uses Mualem's pore connectivity L = -1** (#391; was 0.5), after Schaap &
+  Leij (2000), as ED2 pairs with this curve (`soil_hydro_scheme` 2): K = Ks Se^L [1 - (1 - Se^(1/m))^m]^2,
+  with L the named parameter `VG_PORE_CONNECTIVITY` in `meds_water_retention`. With 0.5, a soil of n
+  near 1.4 (the median of Hodnett & Tomasella's curve over Xu et al. 2016's Central America box)
+  conducts less than ED2's floor (1.16e-13 m/s) from about -0.7 MPa; with -1 it stays above to about -2.2 MPa. Against
+  UNSODA's measured unsaturated conductivity (89 soils, that curve with Ottoni Ks) the bias of log10 K
+  between -0.1 and -1.5 MPa goes from -2.28 to -0.85, and from +0.48 to +1.02 between -10 and -100 kPa.
+  A per-soil L estimated from texture did no better than a fixed one; a film-flow term for drier soil
+  is #390. Example 04 (BCI, five years), calibrated / default: GPP 8.261 / 10.148 unchanged, LE 68.76 /
+  83.72 -> 68.53 / 83.41 W m-2, NEE -2.582 / -3.386 -> -2.641 / -3.449 umol m-2 s-1, the 0-15 cm soil
+  water against the tower r 0.894 -> 0.903; LAI and AGB unchanged. The wet-soil checks of
+  `test_column_ark` and `test_column_rk45` now compare the column with the same day without the input:
+  with the faster drainage a free-draining column can end a day of light rain below where it began, and
+  the rain shows as the water it holds beyond the dry day (+0.109 summed theta).
+  `test_water_processes` checks dK/dSe by finite differences only where Se^(1/m) >= 1e-4: below it
+  Mualem's factor 1 - (1 - Se^(1/m))^m loses digits to cancellation, and with L = -1 K is large enough
+  there for that noise to fail the check (the analytic derivative agrees with a 60-digit difference to
+  4e-6).
+- **Leaf and fine-root turnover follow the leaves' drop, and 30 % of all of it is resorbed** (#387).
+  Background leaf turnover now runs only while no leaves drop (`turnover_gate`: the flush tendency
+  while the shed tendency is at most 0.01, else 0), so a drought drop is not also counted as ageing.
+  Fine roots turn over on the same gate, so they age and regrow with the canopy, but they are not shed
+  with the leaves: root length sets the root-soil conductance, and a drop would cut a leafless plant's
+  water uptake. `retained_carbon_fraction` now resorbs that share of all leaf loss (senescence and
+  background turnover) and of all fine-root loss, and its default is 0.3 (was 0, on senescence only).
+  Examples 03-05 have no phenology, so the gate is exactly 1 for them, and they set the fraction to 0:
+  their results are unchanged to round-off (a year of example 04: daily outputs within 2e-7). In the
+  example 06 regrowth test at Palo Verde (150 years from 3 seedlings per
+  m2 per PFT; leaf lifespan 1 yr and fine roots 1.5 per yr, were 0.5-0.9 yr and 1.67-3 per yr),
+  above-ground biomass at age 20 rose from 21.4 to 31.9 dry Mg/ha and at age 150 from 122 to 190. The
+  2008-2010 inventory run keeps its leaf habits: Ds and D fall to at most 0.10 of full cover, BD keeps
+  0.46-0.63 and E 0.92-0.96.
+- **`storage_cushion` counts leaf and fine root, and the shipped value is 3** (#385; was 1 on leaf
+  alone). A cohort's storage target, and an inventory cohort's starting storage, is `storage_cushion`
+  times its leaf plus fine-root carbon, the carbon one full flush rebuilds (`storage_carbon_target`).
+  At 1 x leaf a drought-deciduous canopy tree could not pay for its next flush: in the example 06 test
+  stand (Palo Verde, 2008-2010) the large trees of every PFT stayed leafless through the wet season
+  with empty storage, and the wet-season stand LAI stayed at 3.3-3.6 (MODIS: 5.3 in October). The
+  examples now set 0.5, which is exactly their earlier storage (root_to_leaf_ratio 1), so their
+  results are unchanged.
+- **Reproduction starts at a share of the local maximum height** (#388): `pft.reproduction_height_fraction`
+  [-], optional with default 0.33, replaces the required `pft.min_reproduction_height` [m]. A cohort
+  reproduces once its height reaches that share of the local maximum height, the height of a 100 cm tree on the run's height curve capped at
+  `hgt_max` (`local_hmax`), so where the local allometry makes trees short (a large Chave E) they mature
+  short; under Chave's curve a given share falls at the same diameter at every site. A config converts
+  as fraction = old height / local maximum height: examples 03-05 and the region test keep their
+  thresholds exactly (20 m = 0.4744 on the power curve, 0.6055 on BCI's gMM curve; example 05's fitted
+  5.27 m = 0.1595), and `calibrate_growth.py` now fits the fraction. The reference
+  `meds_config_pft.toml` takes the default, so its threshold moves from 20 m to 13.9 m (0.33 of the
+  power curve's 42.2 m).
+- **Water stress is one fast and one slow control, and the soil no longer has a wilting point** (#384).
+  - *Fast:* the capacity limb on Vcmax/Jmax/TPU is always on and reads the leaf's current water
+    potential, from the PFT's turgor-loss point (1) to twice it (0). As the leaf wilts, A and with it
+    gs fall to the cuticular g0 within the day. `pft.wstress_psi_open`/`_close` are optional overrides.
+  - *Slow:* beta_stomata on g1 (Katul lambda) on the previous day's predawn potential, unchanged.
+  - *Removed:* the linear gs decline on the predawn potential (`[leaf_physiology].low_water_potential_control`,
+    #332) and the capacity limb's switch (`[leaf_physiology].wstress_nonstomatal`, #47); both keys are
+    refused as retired.
+  - *Soil:* the root sink is the plant's request as given. The wilting ramp on it (`[soil].psi_wilt`,
+    `[soil].psi_open`, retired) and the hard-coded -1.5 MPa wilting-point give-back cut the same water
+    the plant hydraulics already limits, and pinned dry root-zone layers at -1.5 MPa while the wood was
+    at -2 to -4 MPa. A layer now gives at most what it holds above theta_res in one step (the rule
+    ground evaporation follows); the shortfall is booked as `uptake_deficit`.
+  - *Example 04 (BCI):* default-run GPP and LE fall by at most 0.12 % in the late dry seasons
+    (March-April 2016: -0.11 %, -0.12 %); the calibrated run moves by less than 0.001 %.
+  - *Palo Verde dry forest (example 06 test, 2008-2010):* the canopy trees' leaf water no longer hits
+    its floor (249 cohort-hours, 80 unconverged hydraulic solves -> 25 hours in near-leafless Ds
+    saplings, 0 unconverged); transpiration 592 -> 517 mm/yr; the stand LAI's dry-season minimum
+    2.83 -> 1.26 (2009) and 2.10 -> 1.14 (2010), almost all of it from the soil change.
+  - *Step size:* 900 s against 150 s on that dry season moves transpiration by -0.9 % and NPP by +0.7 %.
+
+- **Example 03's growth law is fitted to every tree alive at an interval's start**, the trees that
+  die within it too, as a cohort's growth is. The census measures growth only on the trees that live
+  to the next census, and the slowest growers are the likeliest to die. `prepare_census.py` gives a
+  tree that dies within an interval the growth it put on over the interval before (`died` = 1 in
+  `growth.csv.gz`), and `fit_vital_rates.py` fits growth on 1990-2010, the intervals with a census
+  before them (13 % of the rows are trees that died). The 1-2 cm stems' growth falls 10-30 % (most
+  for PFT 1), stems above 5 cm' by less than 8 %; mortality, fitted on the law's growth, steepens
+  (β 12/14/37 -> 15/19/59 yr cm⁻¹). Cross-validated R² of class means: growth 0.86 -> 0.88,
+  mortality 0.74 -> 0.83. Example 05's mortality pins follow. The run from the 1985 census ends 2010
+  at 29.6 m² ha⁻¹ (census 30.5; was 31.2) with 379 trees above 10 cm (416; was 417) and holds its
+  basal area to 2100 instead of gaining 0.04 m² ha⁻¹ yr⁻¹; from bare ground the stand reaches the
+  census's basal area in about 135 years instead of 90 and ends 4 % above it instead of 17 %.
+- **`pft.repro_carbon_efficiency` is now `pft.recruit_carbon_efficiency`**: the share of a tree's
+  reproduction carbon that becomes recruits at `min_cohort_height` covers seed set, germination and
+  seedling survival together, not only the carbon use. The old key is refused with the new name;
+  every shipped PFT file is renamed, and the parameter record's column with it.
+- **`meds_apply_rates` restructures the stand with the carbon path's own `restructure_stand`**
+  instead of a copy of it kept to reproduce the empirical golden (removed with the empirical laws;
+  see below; #376). The Python-rates path now sorts the cohorts every step, as `vegetation_dynamics`
+  does, and fuses, splits, disturbs and recruits through the same routine as `meds_advance_slow`;
+  `meds_site_init_census` computes the overtopping LAI of the stand it builds.
+
+- **The leaf example is `examples/example01_leaf_gas_exchange/`**, the first of the examples
+  renumbered so that each exercises one module of MEDS (#368). Its plot script moved in from
+  `post_proc/`, and the script and README were cut to the experiment and its current results.
+  - **Outputs regenerated.** They predated the reference light use of v0.3.3 (`phi_psii` 0.74,
+    θ_J 0.70; #351), which lowers the light-limited rate: A at Cᵢ = 1400 in the A–Cᵢ curve falls
+    from 48.7 to 44.0 µmol m⁻² s⁻¹, and the peak A_net from 22.3 to 21.4 (*F. insipida*), 22.3 to
+    21.0 (*L. speciosa*) and 19.0 to 18.1 (*C. longifolium*). The A_net optima are unchanged; the
+    gₛ optima of *F. insipida* and *L. speciosa* move 0.5 °C cooler, to 29.5 and 34.5 °C.
+  - **The A–Cᵢ panel marks the A_c/A_j transition** (Cᵢ ≈ 187 µmol mol⁻¹) instead of a crossing
+    of the two curves below the compensation point.
+- **Leaf phenology is one generic cue model, and evergreen is a leaf-cover floor, not a flag.**
+  The kernel (`meds_phenology`) takes three cues, chosen per PFT for each side by a bit mask:
+  temperature (TEMP 1: a warmth sum above `flush_base_temp` from midwinter, a cold sum below
+  `shed_base_temp` from midsummer), the hours of light (LIGHT 2: the hours a day the PAR reaching the
+  cohort's top exceeds the PFT's `par_min`, as a running mean over `light_window` days) and predawn
+  leaf water potential (WATER 4: summed above and below the turgor-loss point, each sum restarting
+  when the other side's switch crosses 0.5). Every switch is σ(s (x − x*)) with one centre and one
+  signed sharpness; the flush signal is the product of the flush cues' switches, the shed signal the
+  larger of the seasonal trigger (TEMP × LIGHT) and the water trigger. The carbon layer applies one routine, `leaf_turnover_step`: senescence at
+  `shed_rate_max` × the shed tendency down to `min_leaf_cover` of the full canopy, plus background
+  turnover (1/leaf lifespan) scaled by the flush tendency, and a flush cap of `flush_rate_max` × the
+  flush tendency. Gone: the chilling requirement, the soil-temperature cold-drop trigger, the
+  soil-water cue (`root_available_water` and the fast-loop soil reductions for phenology), the
+  consecutive-day ψ counters, the 31 August warmth reset, the evergreen cold suppression of
+  turnover, and `pft.evergreen`. Resorption (`retained_carbon_fraction`) applied to senescence only
+  here; #387 extends it to all leaf and fine-root loss. Design and evidence: `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`; equations:
+  `docs/science/plant_phenology.md`.
+  - **One light cue for every PFT.** A low `par_min` counts the photoperiod, a high one the bright
+    hours. Day length and running-mean PAR each fit some sites and fail others (Harvard Forest is
+    best on day length, 0.0445 against 0.052 on PAR; Hyytiälä on PAR, 0.70 against 1.03; the BCI
+    leaf exchanger on PAR, 0.065 against 0.101). The hours of light with a fitted `par_min` came
+    within 4 % of the better of the two at every site (0.046, 0.59, 0.067 at 33, 280 and
+    700 µmol m⁻² s⁻¹, on tower PAR).
+  - **The hours of light are per cohort.** The two-stream solver returns the light (beam + downward
+    diffuse) reaching each layer's top (`rad_flux_t%incid_top`); each fast step whose visible light
+    there, in photons, exceeds the PFT's `par_min` adds its length to the cohort's
+    `light_hours_accum`, and the phenology driver reads it per day, so the cue carries the canopy
+    light gradient. A cohort with no light memory yet (a cold start, a recruit) starts its running
+    mean from its first day. The site-level shortwave reduction for phenology is gone, and the PAR
+    conversion `par_w_2_umol` moved to `meds_constants`.
+  - **Config (breaking).** The `[phenology]` keys are now `flush_cue_mask`, `shed_cue_mask`,
+    `flush_cue_timescale`, `shed_cue_timescale`, `flush_rate_max`, `shed_rate_max`,
+    `min_leaf_cover`, `bare_leaf_cover`, `flush_base_temp`, `flush_degree_days`,
+    `flush_temp_sharpness`, `shed_base_temp`, `shed_degree_days`, `shed_temp_sharpness`,
+    `par_min`, `flush_light_hours`, `flush_light_sharpness`, `shed_light_hours`,
+    `shed_light_sharpness`, `light_window`, and the optional `flush_water_sum`,
+    `flush_water_sharpness`, `shed_water_sum`, `shed_water_sharpness`. The previous keys
+    (`k_flush_max`, `k_shed_max`, `tau_flush`, `tau_shed`, `cue_sharpness`, `gdd_base_temp`,
+    `phen_a/b/c`, `chill_base_temp`, `cold_drop_*`, `photo_crit`, `photo_slope`, the `*_width`
+    keys, the water and light thresholds, `evg_ref_temp`, `evg_slope`,
+    `bare_snap_frac`) and `pft.evergreen` are refused by name, each with its replacement. Cue bits
+    changed: LIGHT is 2 (the hours of light), WATER 4 (on predawn leaf ψ, the old HYDRO driver);
+    the soil-water cue (old 2), PHOTO (old 8) and the radiation LIGHT bit (old 16) are gone.
+    `light_window` is a key again, now the window of the hours of light.
+  - **Outputs and restarts.** `pheno_flush_cohort` / `pheno_shed_cohort` are
+    `leaf_flush_tendency_cohort` / `leaf_shed_tendency_cohort`. The restart variables are
+    `leaf_flush_tendency`, `leaf_shed_tendency`, `growing_degree_days`, `cold_degree_days`,
+    `wet_psi_sum`, `dry_psi_sum` and `light_hours_mean`; `pheno_water_avg` is gone. A restart file written
+    before this change loads, with the phenology memory at its birth values.
+  - **Python (`meds.plant.pheno`, breaking).** New `Params` / `State` fields and the `par_hours`
+    driver, with `par_hours(par, step_hours, par_min)` to count it from sub-daily PAR;
+    `Phenology.step` returns a `Day` (the two tendencies, leaf cover, senescence, background
+    turnover) and keeps its C structs, so a 20-year daily run takes about 0.1 s.
+    `leaf_step(cover, flush, shed, params)` and `daylength` call the Fortran through the new C-API
+    entries `meds_leaf_turnover_step` and `meds_daylength`. Presets: `temperate_deciduous`,
+    `boreal_evergreen`, `drought_deciduous` and `light_exchanging`, the four habits of example02.
+    `temperate_evergreen`, `integrate_lai` and the `Light` enum are gone.
+  - **What moves numbers.** Any PFT with a `[phenology]` section. A PFT without the
+    section always flushes and loses leaves at its background turnover, as before; the only
+    difference is the dropped cold suppression of an evergreen PFT's turnover, which the old driver
+    evaluated at a fixed 25 °C stub temperature: a factor of 0.9997.
+- **The phenology example is `examples/example02_canopy_phenology/`**: a showcase of the module's
+  structure, one kernel and three cues with four leaf habits as parameter sets, fitted to real data
+  at four forests. Harvard Forest (deciduous broadleaf: warmth and day length; MODIS LAI, HF003
+  leaf fall, HF069 baskets), Hyytiälä (Scots pine: warmth and the bright hours; ICOS needle litter),
+  Barro Colorado Island (a leaf exchanger: senescence in the bright dry season; GLiMP litter) and
+  Palo Verde (drought-deciduous: water and day length; monthly leaf litter from Xu et al. 2016 and
+  MODIS LAI, on a hypothetical leaf water potential from a MEDS run). Every site's light is
+  ERA5-Land through MEDS's forcing reader (`make_era5_par_hours.py`, committed in `drivers/`).
+  `run_phenology.py` runs the compiled kernel, prints scores, writes one figure
+  (`canopy_phenology.png`: the canopy and the monthly leaf fall at each site) and, with `--fit`,
+  refits. At Palo Verde day length carries the fit: water alone reaches a loss of 0.064, day length
+  alone 0.025, both 0.023. The BCI drought-deciduous species set by hand, the four synthetic
+  strategies and `phenology_patterns.png` are gone.
+- **The demography example is `examples/example03_demography/`, and its vital rates are fitted
+  to the Barro Colorado Island 50-ha plot censuses** instead of written by hand (#376).
+  - **The laws**, per PFT, with coefficients in `vital_rates.json`: dbh growth rises with size on a
+    logistic curve in ln D and falls with the overtopping LAI, which the driver reads from the engine
+    and the census gets from the same allometry (the leaf area of taller trees within 20 m)
+    (g = [g_min + (g_max − g_min)/(1 + (D/D₀)^−k)]·e^(−b·L), Gamma quasi-likelihood, increments
+    ≤ 0 set to a tenth of the smallest positive one); mortality is Camac et al. (2018)'s
+    γ + α·e^(−β·g) on that growth, fitted over each census interval; recruits at 1 cm follow a
+    Poisson GLM in the patch's leaf area index (#403; the PFT's own share, which never raised its
+    recruitment in the census, is dropped). The three PFTs are
+    wood-density classes from the Global Wood Density Database (means 0.36, 0.50 and 0.68 g cm⁻³);
+    height follows the Barro Colorado curve of Cano et al. (2019) (`height_allometry = "gmm"`:
+    33 m at 1 m dbh, 43 m at 300 cm), so the canopy thins upward instead of piling up at a cap;
+    trees grow to 300 cm (`dbh_critical`, was 100); recruits enter at 1 cm (`min_cohort_height`
+    2.544 m, was 2.0); the treefall rate is taken off the census mortality of trees tall enough to
+    die in a gap.
+  - **The runs**, both written as netCDF. From the 1985 census the stand tracks the plot through
+    2010 (basal area 31.2 against 30.5 m² ha⁻¹, stems 4055 against 4145 ha⁻¹) and gains 0.04
+    m² ha⁻¹ yr⁻¹ to 2100; from near-bare ground it goes through a succession -- the light-wooded PFT
+    rises fastest, peaks near year 100 and gives way -- and reaches the census's basal area within
+    about 90 years.
+    The canopy-profile and 3-D landscape animations are regenerated from the 300-year
+    near-bare-ground run, and `demography.png` is the example's one figure.
+  - **Removed:** the hand-written laws (`empirical_laws.py`, `empirical_spinup.py`), their goldens
+    (`test/golden/empirical_spinup_golden.csv`, `empirical_spinup_final_cohorts.csv`), the carbon-path
+    driver `run_carbon.py`, the committed run netCDF and the old figures. The pseudo census the
+    tests and the root config start from moves to `data/census_example.csv`.
+  - **Dependency:** fitting needs scikit-learn (listed in `environment.yml` as optional) and scipy;
+    the runs read only the committed coefficients.
+- **`calibrate_fast` gives a run as many threads as its length earns.** A run took one thread, so a
+  fit's iteration waited for its 120-day seasonal runs (about 150 s on one thread) while most cores
+  stood idle. A run now takes one thread for every 15 simulated days, up to the new
+  `[fit].max_threads` (8): the seasonal runs and the 180-day chains run on 8 threads, the ten-day
+  windows on one. `--workers` and a queue worker's `--slots` count cores, a run takes as many as it
+  has threads, and a batch starts its longest runs first. A trial's name does not depend on its
+  thread count, so finished trials are still found.
+  - **The BCI fit** (example 04 on its clay soil, 5 nodes): 66.7 → 18.0 min, with the same 786
+    trials, the same costs and a byte-identical calibrated file, since MEDS's output is the same at
+    any thread count. On one idle node a ten-day window runs in 12.5 s on one thread and 2.2 s on
+    eight; a 120-day run in 151.5 s and 25.9 s.
+- **The flux-tower example is `examples/example04_column_biophysics/`, and
+  `examples/example_biophysics/` is retired** (#378). The Barro Colorado Island example stands for the
+  coupled column in the renumbered examples. Its pipeline is the same (forcing from the tower's
+  meteorology, a start from the 2010 census, the calibration, the comparison with the tower), and
+  a last step shows the column's states: the calibrated run restarted for ten days,
+  20–29 April 2016, with every patch's and cohort's states written each half hour
+  (`output_window.toml`, `plot_window.py`, `window.png`). The restart matches the continuous run to
+  10⁻¹³ K.
+  - **BCI's soil, and the calibration redone on it.** The soil was MEDS's default loam (θs 0.43,
+    n 1.56); by the end of a dry season its whole root zone was near its residual water, and the
+    tower's 0–15 cm sensor read 0.17 m³ m⁻³ wetter. It is now BCI's clay Oxisol, a van Genuchten
+    fit to the plot's paired water content and potential (Kupers et al. 2019) and the tower:
+    θs 0.60, θr 0.10, α 2.0 m⁻¹, n 1.23, Ks 1×10⁻⁵ m s⁻¹ (Godsey et al. 2004), starting at field
+    capacity, 0.42 (was 0.30). In the ten days the model's top 15 cm now holds what the tower's
+    sensor reads (0.28 m³ m⁻³ both, 20–26 April).
+    - The refit (786 trials, 67 min on 5 nodes) moves `leaf_angle_mean` 51.3 → 58.0°,
+      `vcmax25` 31.4 → 32.0, `stomatal_g1` 3.00 → 2.83, `stomatal_g0` 0.0030 → 0.0013 and
+      `wstress_sref_stomata` 1.40 → 5.35, which the tower now barely informs (posterior sd 0.90 of
+      the prior's); κ moves from 0.724 to 0.725.
+    - Five-year means, default / calibrated: GPP 10.22 / 8.60 → 10.45 / 8.72 µmol m⁻² s⁻¹ (the
+      fit's target 8.18), LE 71.6 / 64.0 → 77.4 / 65.2 W m⁻² (tower 75.5), NEE −4.03 / −3.34 →
+      −3.60 / −2.84 µmol m⁻² s⁻¹ (tower −4.24). Validation cost 61,251 → 51,377 before, 62,022 →
+      52,501 now.
+    - Rebuilt end to end from the download, the forcing file is identical value for value.
+  - **`example_biophysics`** (Ithaca: a 50-year spin-up, then one July at hourly output) had not
+    been rerun since v0.3.0. Its July config, PFT file and output table move to `test/region/`, from
+    which the `region` test derives its configs (the config's comments dropped, every key and value
+    the same); `c_api_run` loads example 04's default and calibrated configs instead. The root
+    README's second figure is example 04's ten days.
+  - `plot_evaluation.py` draws the calibration's target for the fluxes the fit adjusts (GPP, and H
+    or LE by their share of the closure gap) instead of testing which differ from the measured
+    flux; its figure and statistics are byte-identical.
+- **Roots belong to each cohort: a rooting depth from its height, ED2's profile within it, and a
+  single-root soil→root conductance** (#378; #375; #377 asks whether the conductance should grow in
+  proportion to root length).
+  - **Depth and profile.** A cohort roots to `root_depth_b1` · height^`root_depth_b2`, ED2's IALLOM 1
+    allometry (1.114 · h^0.4223: 1.8 m at 3 m, 5.0 m at 35 m), capped at the soil column. Within that
+    depth its fine roots follow ED2's (1 − β^(d/D)) / (1 − β) above depth d, with `root_beta` = 0.1
+    as in ED2. Before, one profile (β = e⁻⁴ over a fixed 2 m) served the whole stand.
+  - **Conductance.** Each layer's soil→root conductance is the single-root form 2πK·L / ln(r_half /
+    r_root) (Gardner 1960). L is the cohort's fine-root length (fine-root carbon ×
+    `specific_root_length`, 2.0×10⁴ m kgC⁻¹: 10 m per g dry in Panama and GRooT), r_half comes from the
+    patch's root-length density, and `fine_root_radius` is 0.25 mm. It replaces ED2-hydro's
+    K·√RAI/(π·Δz) (after Katul et al. 2003), which grew by 2√2 each time the layers were halved and by
+    √2 each time a cohort was split, and connected the thick deep layers one to two orders of
+    magnitude more weakly.
+  - The column's stand-wide root profile is gone. A patch's profile, its cohorts' weighted by fine-root
+    carbon, weights the root-zone temperature and spreads uptake when no layer supplies any.
+  - **Config (breaking).** New `[hydraulics]` keys `root_depth_b1`, `root_depth_b2`,
+    `specific_root_length` and `fine_root_radius`, each with a `pft.*` override like the other
+    per-PFT hydraulic traits; `root_beta` defaults to 0.1 (was e⁻⁴). `hydraulics.root_depth` and
+    `hydraulics.specific_root_area` are refused, naming their replacements.
+  - **At BCI** (example 04 on its clay soil). The predawn leaf ψ of the largest patch's tallest tree /
+    of the canopy, 15–26 April 2016, at the end of the El Niño dry season, was −1.15 / −0.98 MPa with
+    the keys calibrated on the previous model. On the new model it is −0.52 / −0.49 MPa on the 2 m
+    column and −0.41 / −0.38 MPa on a 6 m column, which example 04 used until the release's rerun
+    (2 m since, below). The wet-season level is −0.27 MPa, the gravity head. 16 or 20
+    layers give the same ψ, and so do `specific_root_length` 5×10⁴ and radius 0.15 mm, and
+    `root_beta` 0.01 or 0.001: the moist subsoil no longer limits the tree.
+    - **Refit** (756 trials, 21 min on 5 nodes; validation cost 66,201 → 52,687). `wstress_sref_stomata`
+      drops out of the fit: the canopy's predawn ψ never falls below the stomata's water-stress onset
+      (−0.86 MPa), so no window uses it. `leaf_angle_mean` 58.0 → 55.1°, `vcmax25` 32.0 → 31.3,
+      `stomatal_g0` 0.0013 → 0.0005, κ 0.725 → 0.767.
+    - Five-year means, default / calibrated: GPP 10.45 / 8.72 → 10.54 / 8.54 µmol m⁻² s⁻¹ (the fit's
+      target 8.18 → 8.04), LE 77.4 / 65.2 → 79.8 / 63.9 W m⁻² (tower 75.5), NEE −3.60 / −2.84 →
+      −3.58 / −2.68 µmol m⁻² s⁻¹ (tower −4.24).
+    - **The top 15 cm of soil** now stays at 0.37 m³ m⁻³ through the 2016 dry days, 0.09 wetter than the
+      tower's sensor (it matched at 0.28 on the 2 m column): the roots draw from the wettest layers,
+      so the dry season's water comes from the whole 6 m column rather than from the top. A big
+      canopy tree's leaf ψ moves only 0.04 MPa a day, wet season or dry.
+- **A plant's internal conductance is its sapwood's, with the sapwood's conductivity from wood
+  density** (#378). The maximum wood→leaf conductance is `wood_kmax` × sapwood area / (height ×
+  `vessel_curl`), and `wood_kmax` [kg m⁻¹ s⁻¹ MPa⁻¹] is exp(2.348 − 2.455 ρ + 0.6186 / 2), the fit of
+  Xu et al. (2016, New Phytol 212:80) to 72 neotropical species, as ED2 codes it
+  (`plant_hydro_scheme` 2); ρ is held to 0.35–0.95. It is 3.3 at ρ = 0.6, against 2–4 measured on
+  the branches of Panama canopy trees and FATES's 3.0. `pft.wood_kmax` overrides it per PFT.
+  - **Gone:** the whole-plant conductance per unit leaf area (`k_plant_max`, 6×10⁻⁴ kg s⁻¹ MPa⁻¹
+    m⁻², 33 mmol m⁻² s⁻¹ MPa⁻¹), which was the default, and the key that chose between the two.
+    For a 35 m BCI canopy tree the sapwood gives 1.9 mmol m⁻² s⁻¹ MPa⁻¹.
+  - **Config (breaking).** `hydraulics.k_plant_max`, `pft.k_plant_max`, `hydraulics.conductance`
+    and `hydraulics.wood_kmax` are refused, each naming what replaced it. `vessel_curl` (1.5) stays.
+  - **At BCI** (example 04, calibrated; old → new). The daily range of leaf ψ of the canopy trees
+    (over 25 m, every patch) goes from 0.03 to 0.42 MPa in the wet season (October 2015; midday
+    −0.38 → −0.77) and from 0.03 to 0.45–0.52 MPa in the 2016 dry season (March and late April;
+    midday −0.42 → −0.84 to −0.91). The 35 m tree on top of the largest patch goes from 0.04 to
+    0.68–0.75 MPa in the dry season (midday −0.44 → −1.09 to −1.15). Measured canopy trees reach
+    −0.9 to −1.2 MPa at midday in the wet season and −1.4 to −2.0 in the dry. Predawn ψ is unchanged
+    (−0.40 in the dry season, against −0.6 to −1.0 measured). The five-year fluxes move by less than 0.1 %: midday leaf ψ stays above the
+    turgor-loss point (−1.7 MPa), where the stomata start to close, so the calibration stands.
+- **`sw_partition = "weiss_norman"` takes its band constants from Weiss & Norman (1985)** (#369).
+  - **What changed:** the sun's beam above the atmosphere is 600 W m⁻² visible and 720 W m⁻²
+    near-infrared, and 1320 W m⁻² scales the water-vapour absorption. These replace ED2's 0.43 and
+    0.57 of the solar constant, and the solar constant itself.
+  - **Effect:** run on measured shortwave at Hyytiälä, Harvard Forest and BCI, the scheme's PPFD moves
+    from 3–7% below the towers' quantum sensors to within 4% of them (1.04, 1.02 and 0.99 of the
+    measured; `docs/science/forcing.md` §6).
+  - **Unchanged:** the default `clearidx`, which stays 3–11% high. #369 lists that and the other open
+    uncertainties of the shortwave-to-PAR partition.
+
+### Removed
+
+- **`[soil]` keys `linearize`, `substep`, `h_init`, `max_substep` and `max_picard`** (#397):
+  the soil-water solver they configured is gone. A config that sets one stops with a message naming
+  the water network; `rtol` and `atol` remain and set its error.
+- **The commit-clamp outputs** `work_clamp_commit_site`, `work_clamp_mass_site` and
+  `work_clamp_energy_site` (#397): nothing clamps a committed state any more, so they were always
+  zero. `work_clamp_stage_site` stays.
+- **Read-offs and wrappers without a caller** (#397): `soil_hydr_cond_from_theta`,
+  `soil_moist_cap_from_psi`, `kirchhoff_edge`, `kirchhoff_edge_tab` and `dplc_dpsi`; the solver's
+  curves and `xylem_sapflow` are what the model and the tests use.
+- **RK45's warning above `dt_fast` = 300 s** (#397): it warned that RK45 lacked the ARK's
+  transpiration corrector; both schemes now solve leaf water implicitly in the network.
+
+### Fixed
+
+- **An io_config override is held to the FAST guard** (#374, #405). The guard ran on the registry's defaults,
+  before the `meds_io_config.toml` overrides, so an override could put a variable with no FAST-staged
+  source on the F stream (a crash) or a FAST-staged one on a coarse tier (an empty variable). Both are
+  now refused at start-up with the guard's messages; `docs/science/diagnostics.md`'s example was one.
+- **Litter is recorded with the soil-carbon pools off** (#316, #405). It was accumulated only with
+  `soil_carbon_on`, so with the pools off the slow ledger's growth phase read every step's necromass
+  as a carbon leak (−5.9 kgC m⁻² over 30 years in a demography run) and the litter outputs read 0.
+  It is now always recorded and declared leaving; the state is unchanged.
+- **The growth window's sum is its buffer's** (#396, #405). `growth_accum` was a running sum that carried
+  every sample's round-off, so a window of zero growth after a large sample could average slightly
+  below zero; it is now the buffer's sum, and a recruit in a reused slot starts with an empty buffer.
+  Results move at round-off; restart files are unchanged.
+- **Each cohort's tissue water is checked** (#189, #405): `test_spac_solver` asserts that a cohort's leaf
+  and wood water change by its own uptake less its transpiration, beside the site total.
+
+- **gfortran builds again**: a call in `test_plant_respiration` (#382) ran past column 132, which
+  gfortran refuses and ifx accepts; it is wrapped.
+
+- **`test_pheno` follows #387's leaf-drop gate** (#403): it expected background turnover at a shed
+  tendency of 1.0, so the `python_api` ctest failed on beta; it now checks both sides of the gate.
+
+- **Litter goes where the tissue was, and the litter outputs report what their names say** (#399).
+  - **The bugs:** `necromass_to_litter` split leaf necromass above/below ground by `aboveground_frac`, a
+    wood trait, so 30 % of every fallen leaf, and of the fruit and seed that made no recruit (passed in the
+    storage channel), entered the below-ground soil pools. And `litter_leaf_site` / `litter_fineroot_site`
+    reported the labile above- and below-ground pool inputs, not leaf and fine-root litter:
+    `litter_leaf_site` was 0.49 of the leaf litter (`f_labile_leaf` x `aboveground_frac`) plus labile
+    fruit, dead wood and dead storage; `litter_fineroot_site` was mostly root exudate.
+  - **The fix:** leaves and fruit/seed lie entirely above ground; fine roots below; wood and storage keep
+    the `aboveground_frac` split. The driver adds necromass through one routine, `add_necromass`, which
+    also records the carbon by the tissue it came from in the patch litter accumulator. The litter outputs
+    read those: `litter_leaf_site` and `litter_fineroot_site` (after resorption) and two new ones,
+    `litter_wood_site` (wood and storage of dead plants) and `litter_repro_site` (fruit and seed). With
+    `root_exudate_site` they sum to the carbon entering the soil pools; `litter_struct_site` is unchanged.
+  - **Effect** (example 06 contemporary run, Palo Verde 2009 census, 2009-2010): `litter_leaf_site` 0.170
+    -> 0.243 kgC/m2/yr (0.49 kg dry, against 0.54 in the PV litter traps); `litter_fineroot_site` 0.477 ->
+    0.123. The soil input is unchanged in total (1.048 kgC/m2/yr), but more of it is above ground: at the
+    end of 2010 the fast above-ground pool holds 0.242 kgC/m2 (was 0.176) and the fast below-ground pool
+    0.462 (0.527). Plant carbon and heterotrophic respiration over the run are unchanged.
+
+- **The debug build traps no floating invalid in the test suite** (#398; four tests aborted after #392
+  and #397). `conserved` tested a NaN by comparing it, which raises IEEE invalid; it now asks
+  `ieee_is_nan` first. A Newton step of the soil-plant water network was bounded away from empty only
+  for layers on the dry side of their curve, so a wet layer's step could carry its saturation below
+  zero; release builds evaluated that trial to NaN and the line search halved it. Every soil layer now
+  takes at most `STEP_MAX_SHARE` of the way to empty, as the science page states. Results move at the
+  Newton tolerance: the first year differs by 1e-7, and 20 years of regrowth (1871-1891) change GPP
+  and ET by +0.3 % at BCI and under 0.05 % at Palo Verde, with 0.6 % fewer Newton iterations at BCI.
+  ifx Release and Debug 70/70.
+
+- **The BCI 1994-04-20 NaN** (example 06 regrowth; #397): a trace of pond water over dry soil and a
+  conductivity floor let a −6e8 m potential drive 1e-3 m s⁻¹ through a face and the run stopped on day
+  1. The water network has no conductivity floor and starts the pond at the head at which it neither
+  gives nor takes water; the day completes with both whole-column ledgers closed.
+- **A cohort's geometry is derived from its carbon, never integrated** (#389).
+  - **The bug:** the slow update advanced dbh, height, basal area, AGB and leaf area by their own
+    rates beside the carbon pools. On a leafless cohort the leaf carbon floored at 0 while the
+    integrated leaf area drifted to -1e-20 m². The negative leaf area gave a negative film capacity,
+    the film clamp wrote a negative film, and the split's film-conservation test, relative to a net
+    of 3e-30, stopped the Palo Verde regrowth with doubled `gmax` in 1951 ("canopy film water not
+    conserved").
+  - **The fix:** only `nplant` and the four carbon pools have tendencies. The geometry has one
+    writer, `set_cohort_size_from_carbon`, called after every operator that moves carbon or SLA:
+    birth (`set_cohort_size` sets the pools from dbh, then derives the geometry from them), the
+    daily update, trait acclimation, re-acclimation, fusion, fission and the restart read. A state
+    file still carries height, AGB and leaf area for its readers, but the model no longer reads
+    them back. Conservation tests scale with the sum of |terms|, not the net (`conserved` in
+    `meds_numerics`).
+  - **Also:** `advance_plant_traits` left the leaf area stale when SLA fell. Cohort fusion blended
+    SLA on leaf area, so two cohorts with different SLA fused into one with a different leaf area;
+    SLA now blends on leaf carbon, and fusion asserts the leaf area. Fusion's weighted means (traits,
+    tissue temperatures and water, the cohort diagnostics) share one function, `pair_mean`, with no
+    size threshold: the old 1e-30 cutoff left a leafless cohort's SLA unblended (leaf carbon 1e-193 at
+    BCI), and the new assertion caught it. `conserved` allows the double format's floor, tiny/epsilon
+    (~1e-292): below it an optimized build flushes to zero (a leafless pair's leaf area of 1.4e-307
+    fused to 0).
+  - **Effect:** the Palo Verde regrowth with doubled `gmax` runs its 150 years (AGB 6.21 kgC/m² in
+    1951, 11.00 in 2021), and the slow ledger closes on every phase. BCI 1991-2021 from a restart:
+    AGB 16.97 kgC/m² and LAI 6.05 in 2021 (16.84 and 6.20 before), from fusion's SLA blend and the
+    leaf area no longer left stale. Example 04's year moves by at most 0.1 % in any output
+    (heterotrophic respiration; GPP 0.02 %). A restart is still exact.
+- **`root_uptake_cohort` and `root_uptake_site` report the uptake the soil delivered** (#384), the water
+  the wood is credited, not the plant's request before the soil limits it. They were the same number
+  except where the soil cut the request.
+- **`transp_cohort` and `transp_leaf_site` report the water the leaves lose** (#384): the transpiration
+  the fast integrator takes from the leaves over each step, not the leaf solve's stomatal estimate
+  (gs·VPD/P, without the boundary layer or the leaf energy balance), which ran high. Over 914 days at
+  the example 06 test stand (Palo Verde), transpiration goes from 1291 to 1003 mm on clay loam and from
+  658 to 478 mm on sand. A plant's leaf and wood water now changes over each step by the reported root
+  uptake less the reported transpiration, to round-off (1e-13 of uptake), under ARK and RK45.
+- **A leafless cohort's leaf water potential is its wood's less the gravity head** (#384), not the
+  pressure-volume curve read at an empty store (pi0/1e-4, -15,000 to -25,000 MPa), which entered the
+  daily maximum the stomata and the phenology read.
+- **The Kirchhoff conductance table holds for any `wood_kexp`** (#384). For exponents other than 1 or
+  2 the table extrapolated past its range and its single quadrature failed at large potentials, so the
+  flux potential changed sign there and a leaf overdrawn far below its wood never refilled. The table
+  is now built panel by panel, with the analytic tail beyond it.
+- `meds.model.Run.total_basal_area` is documented in m2/m2, the unit the model returns (it said cm2/m2).
+- **The plant hydraulics read the sapwood area in m²** (#378). The cohort keeps it in cm²
+  (`sapwood_area`), and the column handed it on unconverted, so the sapwood conductance was 10⁴
+  times too large: the leaves' ψ did not move at all over a day. Only the segment conductance, which
+  no config had selected, read the area, so no earlier run changed. `cm2_to_m2` moved from the
+  output code to `meds_constants`.
+- **A sunrise or sunset forcing interval keeps its shortwave** (#371).
+  - **The bug:** the partition into beam and diffuse, PAR and NIR took the cos z at the interval's
+    midpoint. When that was dark, all four streams came out zero, however much light the record
+    had. With hourly ERA5-Land, each day lost up to an hour of light at dawn and dusk.
+  - **The fix:** the partition's sun is now the interval's mean of max(cos z, 0), the same mean the
+    disaggregation uses.
+  - **Effect** (sub-steps against tower quantum sensors): the bias in hours with PAR above
+    5 µmol m⁻² s⁻¹ goes from −0.46 to −0.24 h at Harvard Forest, −0.65 to −0.47 h at Hyytiälä and
+    −0.42 to −0.14 h at BCI. The daily shortwave rises by about 0.06%.
+
 ## [0.3.3] — 2026-10-05
 
 A **cross-site fast-calibration protocol** release. `scripts/calibrate_fast` fits MEDS's sub-daily
@@ -3707,7 +4426,8 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 
 ---
 
-[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...beta
+[Unreleased]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.4...beta
+[0.3.4]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/xiangtaoxu/MEDS/compare/v0.3.0...v0.3.1

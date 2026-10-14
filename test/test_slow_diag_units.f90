@@ -43,6 +43,8 @@ program test_slow_diag_units
                                         PD_LITTER_LEAF, PD_LITTER_FINEROOT, PD_LITTER_STRUCT,     &
                                         PD_RECRUIT_NPLANT, PD_DISTURB_AREA, PD_LE, PD_GPP
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
+   use meds_test_soil_grid, only : geometric_layer_bottoms
+   use meds_column_params, only : n_soil_layer_max
    use meds_column_params,       only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention,     only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
@@ -52,6 +54,7 @@ program test_slow_diag_units
    use meds_test_support,        only : banner, build_test_config, check, check_close, check_true, &
                                         test_report
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: nsl = 10_ik
    type(meds_config_t)  :: cfg
@@ -70,8 +73,9 @@ program test_slow_diag_units
    cfg%n_fast_per_slow    = 96_ik
    cfg%soil_carbon_on     = .true.
 
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,          &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, ctx%col_config%soil)
+   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,          &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)
@@ -101,16 +105,16 @@ program test_slow_diag_units
    call advance_slow_dynamics(site, cfg)
    pool1 = sum(site%patch%recruit_pool(:, 1))
 
-   call check(site%patch%litter_in(1)%labile_grnd > 0.0_wp, 'the step actually shed leaf litter')
+   call check(site%patch%litter_in(1)%leaf_c > 0.0_wp, 'the step actually shed leaf litter')
 
    call patch_diag_value(site%patch%diag, PD_LITTER_LEAF, x, np)
    call check(np >= 1_ik, 'the patch diagnostic block reports at least one slot')
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%labile_grnd, 1.0e-10_wp,            &
+   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%leaf_c, 1.0e-10_wp,                 &
                     'PD_LITTER_LEAF rate x elapsed == the leaf litter amount')
    write(*,'(a,es12.5,a)') '   (leaf litterfall: ', x(1), ' kgC/m2/yr)'
 
    call patch_diag_value(site%patch%diag, PD_LITTER_FINEROOT, x, np)
-   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%labile_soil, 1.0e-10_wp,            &
+   call check_close(x(1) * elapsed_yr, site%patch%litter_in(1)%fineroot_c, 1.0e-10_wp,             &
                     'PD_LITTER_FINEROOT rate x elapsed == the fine-root litter amount')
 
    call patch_diag_value(site%patch%diag, PD_LITTER_STRUCT, x, np)

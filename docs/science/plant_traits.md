@@ -68,8 +68,8 @@ one canopy-invariant lifespan, while short-lived PFTs still lengthen.
 Two of the four traits feed back into the carbon budget, so plasticity is not a passive diagnostic:
 
 - **Leaf lifespan → turnover.** Baseline leaf turnover is not an independent parameter; it is
-  $`1/\ell`$ [yr⁻¹]. The driver feeds $`1/\mathrm{cohort\%llspan}`$ to the phenology turnover floor
-  (`turnover_shed_rates`), so a shaded, longer-lived canopy sheds and rebuilds its leaves more slowly.
+  $`1/\ell`$ [yr⁻¹]. The driver feeds $`1/\mathrm{cohort\%llspan}`$ to the background turnover of
+  `leaf_turnover_step`, so a shaded, longer-lived canopy sheds and rebuilds its leaves more slowly.
 
 - **SLA is leaf-area-conserving.** The leaf carbon target is $`L^{*} = A_{\mathrm{leaf}}(\mathrm{dbh},h)/\mathrm{SLA}`$
   (`size2leaf_carbon`): allometry fixes the leaf **area** (crown light-capture), and SLA sets how much
@@ -99,8 +99,8 @@ consumers live outside it.
   `compute_carbon_allocation`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
   `light_plastic_traits` (eq 1) then `update_plastic_trait` (eq 2), then resorbs any SLA overshoot (§4).
 
-- **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the phenology
-  turnover floor uses `1/cohort%llspan`; and `meds_fast_config.leaf_gas_exchange` takes per-cohort
+- **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the background
+  leaf turnover uses `1/cohort%llspan`; and `meds_fast_config.leaf_gas_exchange` takes per-cohort
   `vcmax25`/`rd25` overrides (threaded through the fast-loop column buffer in `meds_fast_types`).
 
 - **Persistence (`meds_io`).** The four trait states are written to and read from the state checkpoint

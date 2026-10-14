@@ -183,6 +183,13 @@ contains
       call check_true('NIR: top cohort (idx2) absorbs more than bottom (idx1)',                 &
                       flux%abs_leaf(RAD_NIR,2) > flux%abs_leaf(RAD_NIR,1),                       &
                       flux%abs_leaf(RAD_NIR,2) - flux%abs_leaf(RAD_NIR,1))
+      !----- The light REACHING each cohort's top (the phenology PAR cue's driver): the top     !
+      !      cohort sees exactly the canopy-top incident, the one below it less. ---------------!
+      call check('VIS reaching the top cohort = canopy-top incident', flux%incid_top(RAD_VIS,2), &
+                 f%incid_beam(RAD_VIS) + f%incid_diff(RAD_VIS), 1.0e-12_wp)
+      call check_true('VIS reaching the lower cohort is less than at the top',                   &
+                      flux%incid_top(RAD_VIS,1) < flux%incid_top(RAD_VIS,2),                     &
+                      flux%incid_top(RAD_VIS,1) / flux%incid_top(RAD_VIS,2))
    end subroutine test_cohort_order
 
    !=======================================================================================!

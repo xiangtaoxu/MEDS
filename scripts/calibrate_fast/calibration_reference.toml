@@ -197,6 +197,9 @@ recompute_every = 3              # the gradient matrix (one-sided differences) i
                                  #   accepted steps and after a rejected one; Broyden's update carries it in between
 timeout_per_day = 90.0           # [s per simulated day] a run's timeout (at least ten days' worth). A run that times
                                  #   out, like any failed run, stops the fit with its log.
+max_threads     = 8              # a run takes one thread for every 15 simulated days, up to this (and up to --workers
+                                 #   on one machine): the 120-day seasonal runs and the chains set an iteration's pace,
+                                 #   the ten-day windows run on one thread. MEDS's output is the same at any count.
 min_process_records = 48         # a key that acts through one process (the registry's `process`: wet canopy, night,
                                  #   snow, drought) is fixed when the kept records sample it fewer times than this
 

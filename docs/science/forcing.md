@@ -122,7 +122,7 @@ last, and nothing is ever filled.
 **Producing one from flux-tower data.** `scripts/prepare_flux_tower/make_tower_forcing.py` reads
 AmeriFlux BASE, FLUXNET (ONEFlux) or a plain CSV described by a site TOML, converts the clock to UTC,
 writes `RHair` as measured, fills gaps explicitly with a per-variable `<Var>_qc` flag, and states the
-tower's heights; `examples/example_flux_tower_bci/` builds Barro Colorado Island's file with it. Its
+tower's heights; `examples/example04_column_biophysics/` builds Barro Colorado Island's file with it. Its
 conversions and checks are in `docs/dev_plans/MEDS_FLUX_TOWER_FORCING_PLAN.md` §7–§9.
 
 **The ED_ERA5land archive (`format = "ED_ERA5land"`).** The global archive built by
@@ -223,12 +223,11 @@ h = 2\pi\!\left(\frac{t_{solar}}{86400}-\tfrac12\right) \qquad(4)
 and never interpolated.
 
 That declination is `solar_declination(doy)` (Cooper 1969), and it is the **only** one in the model:
-`daylength`, which drives the photoperiod phenology cue, reads the same function. It used to carry its
+`daylength` (a utility; the phenology's light cue counts hours of PAR) reads the same function. It used to carry its
 own White (1997) form $`-23.44^\circ\cos\frac{2\pi(\mathrm{doy}+9)}{365}`$. The two are the same
 function offset by 1.25 days — $`-\cos x = \sin(x-\pi/2)`$ puts White's ascending zero crossing at
 doy 82.25 against Cooper's 81 — and Cooper's is the closer to the true vernal equinox near doy 79–80.
-Unifying moved Ithaca daylength by at most **3.7 minutes** (at the equinoxes; ~0 at the solstices) and
-brought the 10.5 h autumn cue **2 days earlier**.
+Unifying moved Ithaca daylength by at most **3.7 minutes** (at the equinoxes; ~0 at the solstices).
 
 ## 5. Shortwave disaggregation: conserving the interval mean
 
@@ -271,8 +270,11 @@ disaggregated independently, each from the record carrying the interval mean —
 ## 6. Splitting shortwave into four streams
 
 Reanalysis ships total downwelling shortwave; the canopy two-stream needs beam and diffuse, in the visible
-and the near-infrared. The split happens **at ingest**, once per record, on that record's interval-midpoint
-$`\cos z`$, so `met_record_t` always holds four streams. Both schemes conserve energy exactly.
+and the near-infrared. The split happens **at ingest**, once per record, so `met_record_t` always holds four
+streams. Its sun is the mean of $`\max(\cos z, 0)`$ over the interval the record averages — the
+$`\langle\cos z\rangle_{win}`$ of the disaggregation above — so the clearness index is a ratio of interval
+means, and a sunrise or sunset interval whose midpoint is dark still splits its light (#371). An
+instantaneous record uses the sun at its stamp. Both schemes conserve energy exactly.
 
 **`clearidx` (default)** — the Erbs et al. (1982) clearness-index correlation. With
 $`k_t = \mathrm{SW}/(S_0\cos z)`$ clipped to $[0,1]$ and $`S_0 = 1361`$ W m⁻²,
@@ -288,13 +290,16 @@ f_{diff} =
 
 Then $`F_{diff}=f_{diff}\,\mathrm{SW}`$ and $`F_{beam}=\mathrm{SW}-F_{diff}`$, each divided into PAR and
 NIR by **fixed energy fractions** — 0.43 of the beam and 0.52 of the diffuse are PAR, the rest NIR; diffuse
-light is PAR-enriched because Rayleigh scattering is strongest at short wavelengths.
+light is PAR-enriched because Rayleigh scattering is strongest at short wavelengths. Against tower quantum
+sensors these fractions give PPFD 3–11% high, mostly from the diffuse 0.52 (#369).
 
-**`weiss_norman`** — the band-specific Weiss & Norman (1985) scheme, a port of ED2's
+**`weiss_norman`** — the band-specific Weiss & Norman (1985) scheme, after ED2's
 `short_bdown_weissnorman`. It builds *potential* (clear-sky) band fluxes from air-mass optical depth, with
 $`m=\sec z`$ and $`p_{rat}=P_{surf}/P_{std}`$ (so it needs surface pressure), then scales them to the
-observed total. Writing $`S_{vis}=0.43\,S_0`$, $`S_{nir}=0.57\,S_0`$, and the NIR water-vapour absorption
-$`w_{10}=S_0\,10^{\,-1.1950+0.4459\log_{10}m-0.0345(\log_{10}m)^2}`$:
+observed total. The sun's beam above the atmosphere is $`S_{vis}=600`$ W m⁻² visible and
+$`S_{nir}=720`$ W m⁻² near-infrared, and the NIR water-vapour absorption is
+$`w_{10}=1320\cdot10^{\,-1.1950+0.4459\log_{10}m-0.0345(\log_{10}m)^2}`$ W m⁻², as WN85 publish them
+(eqs. 1, 4, 6):
 
 ```math
 R^{pot}_{vis,b} = S_{vis}e^{-0.185\,p_{rat}m}\cos z, \qquad
@@ -320,6 +325,21 @@ Below $`\cos z\le\cos 89^\circ`$ the secant is unstable and everything is routed
 0.48 NIR. One ED2-faithful edge survives the port: in a narrow twilight band just above that cutoff
 $`w_{10}`$ can exceed the attenuated NIR beam, so the scaled NIR diffuse goes slightly negative while the
 four streams still sum to `SWdown` exactly.
+
+The diffuse terms of (8) keep ED2's form, which scales the beam it subtracts by $`\cos z`$ once more than
+other implementations of WN85 eq. 3 do (pyTSEB writes $`0.40\,(S_{vis}\cos z-R^{pot}_{vis,b})`$).
+
+**Against towers** (#369). Each tower's measured shortwave is run through the scheme and its PPFD
+($`\times 4.6`$ µmol J⁻¹) set against the tower's quantum sensor, with the sun above 5°. `weiss_norman` gives
+1.04 of the measured PPFD at Hyytiälä (ICOS FI-Hyy, 2018–2024), 1.02 at Harvard Forest (HF001, its eight
+calibration-stable years in 2005–2024) and 0.99 at BCI (2014–2016). These constants with the ED2 form of
+the diffuse terms fit the towers best of the variants tried:
+- a 0.43 / 0.57 split of the solar constant gives 0.97, 0.96 and 0.93;
+- the single-$`\cos z`$ form of eq. 3 gives 1.08, 1.06 and 1.01, with too little diffuse light;
+- `clearidx` gives 1.11, 1.07 and 1.03.
+
+WN85's 600 W m⁻² visible band is the 320–700 nm share of the solar spectrum, so it includes near-UV. #369
+lists this and the other open uncertainties of the partition.
 
 ## 7. Humidity and precipitation phase
 

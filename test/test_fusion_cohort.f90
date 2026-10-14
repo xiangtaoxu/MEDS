@@ -4,12 +4,18 @@ program test_fusion_cohort
    use meds_kinds,           only : wp, ik
    use meds_constants,       only : pio4
    use meds_config,          only : meds_config_t
+   use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
-                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN,       &
+                                               set_cohort_size_from_carbon, cohort_bad_field,       &
+                                               cohort_field_name, cohort_deriv_block,               &
+                                               cohort_deriv_alloc, init_cohort
+   use meds_demography_update, only : fill_cohort_deriv
    use meds_init,            only : init_bare_ground, add_cohort, finalize_init
    use meds_demography_cohort_fusefiss, only : fuse_2_cohorts, new_fuse_cohorts, split_cohorts,        &
                                          max_cohort_count
    use meds_diagnostic_reduce, only : total_nplant, total_agb
+   use meds_allometry,       only : storage_carbon_target
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -116,6 +122,23 @@ program test_fusion_cohort
    call check_close(total_nplant(site), n0,   1.0e-10_wp, 'fusion broke nplant conservation')
    call check_close(total_agb(site),    agb0, cfg%conservation_tol, 'fusion broke AGB conservation')
 
+   !=== 2b. The fusion tolerance is a share of the patch's top height. Two saplings 1.0 and 1.1 cm  !
+   !        wide (about 0.15 m apart) stay apart in a stand of saplings, where 0.02 of the top is   !
+   !        about 5 cm, and merge once the patch holds a 60 cm tree, where it is about 0.6 m. -----!
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
+   call finalize_init(site)
+   call new_fuse_cohorts(site, cfg)
+   call check(site%cohort%n == 2_ik, 'saplings 0.15 m apart merged in a sapling stand')
+   call init_bare_ground(site, cfg, 1_ik)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.0_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 0.05_wp, 1.1_wp)
+   call add_cohort(site, cfg, 1_ik, 1_ik, 1.0e-3_wp, 60.0_wp)
+   call finalize_init(site)
+   call new_fuse_cohorts(site, cfg)
+   call check(site%cohort%n == 2_ik, 'saplings 0.15 m apart not merged under a 60 cm tree')
+
    !=== 3. split_cohorts conserves N and AGB and increases the count. =====================!
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 2.0_wp, 50.0_wp)   ! nplant*leaf_area >> cohort_lai_cap
@@ -175,10 +198,98 @@ program test_fusion_cohort
                        'carbon fuse: wood_carbon not conserved')
       call check_close(site%cohort%nplant(1)*site%cohort%nonstructural_carbon(1), nc_t, 1.0e-9_wp, &
                        'carbon fuse: nonstructural (storage) not conserved')
-      !----- Prove storage was CARRIED, not reset to the allometric storage_cushion*leaf_carbon. -!
-      alloc_store = cfg%pft%storage_cushion(1) * site%cohort%leaf_carbon(1)
+      !----- Prove storage was CARRIED, not reset to the allometric storage target. -------------!
+      alloc_store = storage_carbon_target(cfg%pft%storage_cushion(1), site%cohort%leaf_carbon(1),   &
+                                          site%cohort%fineroot_carbon(1))
       call check(abs(site%cohort%nonstructural_carbon(1) - alloc_store) > 1.0e-6_wp,               &
                  'carbon fuse must CARRY off-allometry storage, not snap it to allometry (BUG2)')
+   end block
+
+   !=== 6. Fusion of cohorts with different SLA conserves leaf AREA (#389): sla blends on leaf    !
+   !     carbon, the quantity it converts, so sum(nplant*leaf_carbon*sla) is what the fused        !
+   !     cohort shows. A leaf-area-weighted sla gave sum(LA*sla)/sum(LA) instead. =================!
+   block
+      real(wp) :: lai0
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp      ! shade-acclimated donor
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call set_cohort_size_from_carbon(site%cohort, 2_ik)
+      lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
+      call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
+                       'fusion of cohorts with different SLA must conserve leaf area')
+      !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
+      !      (the BCI case). A blend that skipped weights below 1e-30 kept one SLA here. ----------!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp
+      site%cohort%leaf_carbon(1) = 1.0e-193_wp ; site%cohort%leaf_carbon(2) = 3.0e-193_wp
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call set_cohort_size_from_carbon(site%cohort, 2_ik)
+      lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
+      call check(abs(site%cohort%nplant(1)*site%cohort%leaf_area(1) - lai0) <= 1.0e-12_wp * lai0,      &
+                 'fusion of leafless cohorts with different SLA must conserve their leaf area too')
+   end block
+
+   !=== 7. Geometry has ONE writer (#389): a cohort placed on the allometry from its dbh carries  !
+   !     exactly the geometry its carbon gives, so a restart that re-derives it gets the same bits. !
+   block
+      real(wp) :: g0(5)
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.4_wp, 17.3_wp)
+      call finalize_init(site)
+      g0 = [site%cohort%dbh(1), site%cohort%height(1), site%cohort%basal_area(1),                    &
+            site%cohort%agb(1), site%cohort%leaf_area(1)]
+      call set_cohort_size_from_carbon(site%cohort, 1_ik)
+      call check(all([site%cohort%dbh(1), site%cohort%height(1), site%cohort%basal_area(1),          &
+                      site%cohort%agb(1), site%cohort%leaf_area(1)] == g0),                          &
+                 'birth geometry must be the geometry derived from the birth carbon, bit for bit')
+
+      !=== 8. The bounds guard names the first field out of bounds, and passes a sound cohort. ==!
+      call check(cohort_bad_field(site%cohort, 1_ik) == 0_ik, 'a fresh cohort is in bounds')
+      site%cohort%leaf_surf_water(1) = -1.0e-30_wp
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'leaf_surf_water',  &
+                 'a negative leaf film is out of bounds, however small')
+      site%cohort%nplant(1) = ieee_value(1.0_wp, ieee_quiet_nan)
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nplant',           &
+                 'a NaN density is out of bounds, and checked first')
+   end block
+
+   !=== 9. The growth window's sum is the buffer's (#396): once a large sample has been evicted, a !
+   !     window of zeros averages exactly zero; and a recruit in a reused slot starts empty. ======!
+   block
+      type(cohort_deriv_block) :: deriv
+      integer(ik) :: k, pos, nwin
+      real(wp)    :: sample
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 1_ik, 0.4_wp, 17.3_wp)
+      call finalize_init(site)
+      nwin = int(size(site%cohort%growth_hist, 1), ik)
+      call cohort_deriv_alloc(deriv, site%cohort%n)
+      pos = 0_ik
+      do k = 1_ik, 3_ik * nwin
+         pos = mod(pos, nwin) + 1_ik
+         sample = 0.0_wp
+         if (k <= 2_ik * nwin) sample = 0.1_wp
+         if (k == 1_ik)        sample = 1.0e8_wp
+         call fill_cohort_deriv(site%cohort, 1_ik, deriv, cfg%dt_years, 0.0_wp, sample,             &
+                                site%cohort%leaf_carbon(1), site%cohort%fineroot_carbon(1),         &
+                                site%cohort%wood_carbon(1), site%cohort%nonstructural_carbon(1),    &
+                                nwin, pos)
+      end do
+      call check(site%cohort%growth_avg(1) == 0.0_wp,                                                &
+                 'a window of zero growth averages exactly zero after a large sample left it')
+      call check(site%cohort%growth_accum(1) == sum(site%cohort%growth_hist(1:nwin, 1)),             &
+                 'the window''s sum is the buffer''s')
+      call init_cohort(site%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp)
+      call check(all(site%cohort%growth_hist(1:nwin, 1) == 0.0_wp) .and.                             &
+                 site%cohort%growth_count(1) == 0_ik, 'a recruit in a reused slot starts with an empty window')
    end block
 
    write(*,'(a)') '   PASS'

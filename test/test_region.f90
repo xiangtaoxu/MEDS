@@ -11,8 +11,8 @@
 ! and must give the same files. Last, meds_main (the second argument)                               !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
 !                                                                                          !
-! The configs are DERIVED from examples/example_biophysics/meds_config_july.toml (the test runs    !
-! from that directory): an override block is prepended -- meds_toml returns the FIRST match of a    !
+! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
+! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
 ! key -- and the keys the archive or region mode reject are dropped. The monthly tier is chunked by  !
 ! month: a site file caps a tier with cohort variables at a month, and the region's (which has none)  !
 ! would otherwise keep the template's year, so the same records would sit in differently named       !
@@ -28,12 +28,12 @@ program test_region
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
                                           MISSING_INT
    use meds_driver,                only : meds_run_t, driver_open, driver_step, driver_finalize,  &
-                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_SOILC
+                                          driver_free, driver_done, DRIVER_OK, DRIVER_ERR_BOUNDS
    use meds_region,                only : meds_region_t, region_open, region_step_month,          &
                                           region_done, region_finalize, region_free
    implicit none
 
-   character(len=*), parameter :: TEMPLATE = 'meds_config_july.toml'
+   character(len=*), parameter :: TEMPLATE = 'meds_config_site.toml'
    character(len=1), parameter :: LETTER(4) = ['F', 'D', 'M', 'Y']
    !----- The box [N, W, S, E] = [40, 150, 20, -150] holds rows 1-2 (35 N, 25 N) and columns 17, 0, 1  !
    !      (160 E, 180, 160 W). (2,0) has no data and column 1 is 30% land, so land_fraction_min = 0.5 !
@@ -190,7 +190,7 @@ program test_region
    call check_true('the month before the failure steps', st == DRIVER_OK)
    reg%poly(2)%site%patch%soil_carbon(1)%slow_carbon = -1.0_wp
    call region_step_month(reg, st)
-   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_SOILC)
+   call check_true('the month a polygon fails in returns its status', st == DRIVER_ERR_BOUNDS)
    call check_true('the failed month is consumed: the region moves on', region_done(reg))
    call region_finalize(reg, st)
    call region_free(reg)
@@ -215,6 +215,16 @@ program test_region
    call refused('output.strict_caps is refused: the caps always stop the run',                     &
                 '[output]'//nl()//'strict_caps = true'//nl()//site_block(1_ik), .false., .false.,     &
                 'is retired: a run always stops at the step')
+   !----- An io_config override is held to the FAST guard as the defaults are (#374): a variable  !
+   !      without a FAST-staged source on the F stream, and a FAST-staged one on a coarse tier. ------!
+   call write_text(trim(work)//'/io_f_coarse.toml', '[variables]'//nl()//'anet_cohort = "F D"')
+   call refused('an io_config override may not put a coarse variable on the F stream',            &
+                '[output]'//nl()//'io_config = "'//trim(work)//'/io_f_coarse.toml"'//nl()//          &
+                site_block(1_ik), .false., .false., 'is not a FAST-staged variable')
+   call write_text(trim(work)//'/io_fast_daily.toml', '[variables]'//nl()//'cas_temp_patch_fast = "D"')
+   call refused('an io_config override may not put a FAST-staged variable on a coarse tier',      &
+                '[output]'//nl()//'io_config = "'//trim(work)//'/io_fast_daily.toml"'//nl()//        &
+                site_block(1_ik), .false., .false., 'is FAST-staged and can only be on the F stream')
    call refused('a [region] block needs region mode', '[run]'//nl()//'mode = "site"'//nl()//          &
                 site_block(1_ik)//'[region]'//nl()//'land_fraction_min = 0.5'//nl(), .false., .false.,  &
                 'a [region] block needs [run].mode = "region"')
@@ -231,12 +241,13 @@ program test_region
    call refused('soil_column.root_beta is refused, naming [hydraulics]',                            &
                 '[soil_column]'//nl()//'root_beta = 2.0'//nl()//site_block(1_ik), .false., .false.,  &
                 'is retired: the root profile is a plant trait: set [hydraulics].root_beta')
-   call refused('hydraulics.conductance is whole_plant or segment',                                 &
-                '[hydraulics]'//nl()//'conductance = "xylem"'//nl()//site_block(1_ik), .false., .false., &
-                'hydraulics.conductance must be')
-   call refused('leaf_physiology.low_water_potential_control is linear_decline',                    &
-                '[leaf_physiology]'//nl()//'low_water_potential_control = "clamp"'//nl()//          &
-                site_block(1_ik), .false., .false., 'low_water_potential_control must be')
+   !----- The whole-plant conductance is gone: k_plant_max is refused, naming the sapwood's. -------!
+   call refused('hydraulics.k_plant_max is refused, naming the sapwood conductance',                 &
+                '[hydraulics]'//nl()//'k_plant_max = 3.0e-4'//nl()//site_block(1_ik), .false., .false., &
+                'is retired: the plant''s conductance is its sapwood''s')
+   call refused('leaf_physiology.low_water_potential_control is retired',                           &
+                '[leaf_physiology]'//nl()//'low_water_potential_control = "linear_decline"'//nl()// &
+                site_block(1_ik), .false., .false., 'is retired: the linear decline of gs')
    !----- The forcing-format rules (MEDS_FLUX_TOWER_FORCING_PLAN.md §5): the old format names stop  !
    !      naming their replacements, every clock is UTC, and the terrain-lapse keys need the lapse. --!
    call refused('format = "netcdf" is refused, naming ED_default',                                  &
@@ -308,6 +319,15 @@ contains
       character(len=1) :: c
       c = new_line('a')
    end function nl
+
+   !----- A small text file in the work directory. --------------------------------------------------!
+   subroutine write_text(path, text)
+      character(len=*), intent(in) :: path, text
+      integer :: u
+      open(newunit=u, file=path, status='replace', action='write')
+      write(u, '(a)') text
+      close(u)
+   end subroutine write_text
 
    !----- meds_main must fail on this config and say why. --------------------------------------------!
    subroutine refused(what, overrides, region, keep_file_keys, message)

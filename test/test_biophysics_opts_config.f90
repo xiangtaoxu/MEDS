@@ -10,7 +10,7 @@ program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER, SOIL_LIN_PICARD, SOIL_SUBSTEP_ADAPTIVE,       &
+                                    SOIL_BC_AQUIFER,                                               &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
@@ -30,10 +30,8 @@ program test_biophysics_opts_config
    open(newunit=u, file=TOMLFILE, status='replace', action='write')
    write(u,'(a)') '[soil]'
    write(u,'(a)') 'bottom_bc  = "aquifer"'
-   write(u,'(a)') 'linearize  = "picard"'
    write(u,'(a)') 'rtol       = 2.5e-4'
-   write(u,'(a)') 'max_picard = 9'
-   write(u,'(a)') 'psi_wilt   = -160.0'
+   write(u,'(a)') 'w_pond_max = 9.0'
    write(u,'(a)') 'ground_albedo_nir = 0.25'
    write(u,'(a)') ''
    write(u,'(a)') '[energy]'
@@ -63,15 +61,12 @@ program test_biophysics_opts_config
 
    !----- [soil]: string selectors -> enums, scalar overrides, and absent-keeps-default. -------!
    call check_true('soil.bottom_bc "aquifer" -> SOIL_BC_AQUIFER', s%bottom_bc == SOIL_BC_AQUIFER, real(s%bottom_bc, wp))
-   call check_true('soil.linearize "picard" -> SOIL_LIN_PICARD',  s%linearize == SOIL_LIN_PICARD, real(s%linearize, wp))
    call check('soil.rtol overridden',       s%rtol,     2.5e-4_wp, 1.0e-12_wp)
-   call check('soil.max_picard overridden', real(s%max_picard, wp), 9.0_wp, 0.0_wp)
-   call check('soil.psi_wilt overridden',   s%psi_wilt, -160.0_wp, 1.0e-9_wp)
+   call check('soil.w_pond_max overridden', s%w_pond_max, 9.0_wp, 0.0_wp)
    call check('soil.ground_albedo_nir overridden', s%ground_albedo_nir, 0.25_wp, 1.0e-12_wp)
    call check('soil.ground_albedo_vis absent -> default 0.15', s%ground_albedo_vis, 0.15_wp, 0.0_wp)
    call check('soil.ground_emissivity absent -> default 0.95', s%ground_emissivity, 0.95_wp, 0.0_wp)
-   call check_true('soil.substep absent -> default ADAPTIVE', s%substep == SOIL_SUBSTEP_ADAPTIVE, real(s%substep, wp))
-   call check('soil.h_init absent -> default 900', s%h_init, 900.0_wp, 1.0e-9_wp)
+   call check('soil.dsl_dmax absent -> default 0.015', s%dsl_dmax, 0.015_wp, 0.0_wp)
    call check('soil.atol absent -> default 1e-4',  s%atol,   1.0e-4_wp, 1.0e-12_wp)
 
    !----- [energy]: what survives is the budget-closure threshold and the debug halt. The adaptive  !
@@ -82,7 +77,7 @@ program test_biophysics_opts_config
    call check_true('energy.bottom_bc "dirichlet" -> ENERGY_BC_DIRICHLET',                          &
                    e%bottom_bc == ENERGY_BC_DIRICHLET, real(e%bottom_bc, wp))
    call check('energy.deep_temp overridden', e%deep_temp, 283.24_wp, 1.0e-9_wp)
-   call check('energy.deep_depth absent -> derived default 3.12', e%deep_depth, 3.12_wp, 1.0e-12_wp)
+   call check('energy.deep_depth absent -> derived default 3.145', e%deep_depth, 3.145_wp, 1.0e-12_wp)
 
    !----- [snow]: overrides + default. ---------------------------------------------------------!
    call check('snow.rho_snow overridden',   sn%rho_snow,   300.0_wp, 1.0e-9_wp)

@@ -13,6 +13,7 @@ module meds_constants
    !----- Geometry. -----------------------------------------------------------------------!
    real(wp), parameter :: pi   = 3.14159265358979323846_wp
    real(wp), parameter :: pio4 = 0.25_wp * pi                 !< basal area = pio4 * dbh^2
+   real(wp), parameter :: cm2_to_m2 = 1.0e-4_wp               !< [m2/cm2] basal and sapwood areas are kept in cm2
 
    !----- Calendar (mean Gregorian year). -------------------------------------------------!
    real(wp), parameter :: yr_day      = 365.2425_wp           !< days per year
@@ -37,6 +38,7 @@ module meds_constants
 
    !----- Canopy-air CO2 balance + soil respiration (carbon <-> mole conversions). --------!
    real(wp), parameter :: mmdry          = 0.0289655_wp        !< [kg/mol] dry-air molar mass (~28.97 g/mol)
+   real(wp), parameter :: mmh2o          = 0.01801528_wp       !< [kg/mol] water molar mass (~18.02 g/mol)
    real(wp), parameter :: umol_2_kgC     = 1.20107e-8_wp       !< [kgC/umol] carbon mass per umol CO2 (12.0107 g/mol)
    real(wp), parameter :: kgC_2_umol     = 1.0_wp / umol_2_kgC !< [umol/kgC]  (~8.3259e7)
    real(wp), parameter :: kgCday_2_umols = kgC_2_umol / day_sec  !< [(umol/m2/s) per (kgC/m2/day)]  (~963.6)
@@ -56,6 +58,9 @@ module meds_constants
    real(wp), parameter :: cp_liq = 4186.0_wp                 !< liquid-water cp (store water, advected enthalpy)
    real(wp), parameter :: cp_ice = 2093.0_wp                 !< ice cp (frozen-store heat capacity)
    real(wp), parameter :: latent_heat_fusion = 3.34e5_wp     !< [J/kg] latent heat of fusion (freeze/thaw plateau)
+
+   !----- PAR (VIS, 400-700 nm) energy -> photon flux [umol photon / J] (~4.57). ---------------!
+   real(wp), parameter :: par_w_2_umol = 4.6_wp
    real(wp), parameter :: k_water = 0.57_wp                  !< liquid-water thermal conductivity
    real(wp), parameter :: k_ice   = 2.29_wp                  !< ice thermal conductivity
    real(wp), parameter :: k_air   = 0.025_wp                 !< air thermal conductivity

@@ -3,26 +3,35 @@
 Self-contained example runs of MEDS, each in its own folder with the config, outputs, figures, and a
 README that shows how to reproduce it (run from the repository root):
 
-- **[`example_demography/`](example_demography/)** — a 250-year demographic spin-up from near-bare
-  ground (cohort/patch dynamics, succession), with the site-timeseries, per-PFT AGB, and animated
-  stand-structure figures.
-- **[`example_leaf_gas_exchange/`](example_leaf_gas_exchange/)** — the standalone leaf-level
-  photosynthesis + stomatal-conductance module: A–Ci, A–PAR, A–temperature and gs–VPD response curves
-  (FvCB C3 / Collatz C4; Leuning / Medlyn / Katul stomata), driven standalone from Python. The same
-  kernels run inside the coupled model; this example isolates them so the response curves are clean.
-- **[`example_biophysics/`](example_biophysics/)** — the fast (sub-daily) loop at hourly resolution:
-  a 50-year spin-up at Ithaca NY, then one July restarted for hourly output, plotting air, canopy-air,
-  tallest-cohort leaf, and soil-surface temperature. Shows the coupled canopy energy balance producing
-  leaf and canopy-air temperatures that the meteorological forcing never contained. This is the one
-  example that drives the **full coupled model from Python** (`meds.model.Run`), with the time loop
-  on the Python side — so it also plots a spin-up trajectory sampled from the running model.
-- **[`example_flux_tower_bci/`](example_flux_tower_bci/)** — forcing built from a flux tower's own
-  meteorology at Barro Colorado Island, Panama: a site TOML declares the data, the tool checks it
-  against the sun and the data, fills gaps with a flag on every value, and states the tower's 41 m
-  heights so MEDS moves each sample to every patch's canopy-air top. Also scores its longwave gap
-  fill on hidden observations. The run starts from the 2010 census of the BCI 50-ha plot, with no
-  spin-up, and is compared with the tower's carbon, water and energy fluxes. The data are
-  downloaded or read in place, never committed.
-- **[`example_phenology/`](example_phenology/)** — the leaf-phenology kernel driven over four synthetic
-  climates, reproducing the four strategies (temperate deciduous / evergreen, tropical drought-deciduous
-  / light-driven leaf-exchanging): relative LAI + the flush and shed rate tendencies for each.
+- **[`example01_leaf_gas_exchange/`](example01_leaf_gas_exchange/)** — the leaf gas-exchange module
+  on its own, driven from Python: C3 photosynthesis, Medlyn stomata and the coupled Cᵢ solve
+  reproduce the A–Cᵢ curve and the leaf-temperature responses of four tropical tree species in
+  Slot & Winter (2017).
+- **[`example02_canopy_phenology/`](example02_canopy_phenology/)** — the leaf-phenology module on
+  its own, driven from Python: one kernel, four forests, four leaf habits, every site's light from
+  ERA5-Land. A deciduous broadleaf on warmth and day length (Harvard Forest: MODIS LAI, leaf fall,
+  litter baskets), an evergreen pine on warmth and the bright hours (Hyytiälä: needle litter), a
+  tropical tree exchanging its leaves in the bright dry season (Barro Colorado Island: litter traps)
+  and a drought-deciduous dry forest on water and day length (Palo Verde: leaf litter, MODIS LAI).
+  They differ only in parameter values; evergreen is a leaf-cover floor.
+- **[`example03_demography/`](example03_demography/)** — the demography module on its own, driven
+  from Python: growth, mortality (Camac et al. 2018) and recruitment are fitted to five intervals of
+  the Barro Colorado Island 50-ha plot census, and the cohort-and-patch engine runs them from the
+  1985 census (it tracks the next 25 years) and from near-bare ground.
+- **[`example04_column_biophysics/`](example04_column_biophysics/)** — the coupled column at the
+  Barro Colorado Island flux tower, Panama: canopy radiation, leaf gas exchange, energy balances,
+  plant hydraulics and soil water every 15 minutes. It starts from the plot's 2010 census, calibrates
+  the fast parameters against the tower, compares five years with its fluxes, and shows ten days
+  at half-hourly output.
+- **[`example05_forest_regeneration/`](example05_forest_regeneration/)** — the whole model at once:
+  two tropical forests regrowing from bare ground, with the column of example 04 every 15 minutes and
+  the demography of example 03 every day, on ERA5-Land weather repeated and the CO₂ of its history.
+  Barro Colorado Island from 1600 to 2020, driven from Python: three PFTs (early, mid and late
+  successional) with Panama's sun leaves and a sink limit on diameter growth, checked against the
+  census's growth and the forest's carbon budget. Palo Verde's dry forest for 150 years: Xu et al.
+  (2016)'s four leaf habits, set against the plots' 2009 inventory.
+- **[`example06_regional_run/`](example06_regional_run/)** — the whole model over a region:
+  forests regrow from bare ground for 150 years in 983 cells of Central America, each a single-site run
+  on its own ERA5-Land weather, soil and height allometry, with example 05's four dry-forest leaf
+  habits (Xu et al. 2016) set at Palo Verde. Their seasonal leaf area is set against MODIS, and their biomass
+  after 20 years against Neotropical chronosequences (Poorter et al. 2016).

@@ -16,3 +16,4 @@ dependencies:
   - pytest           # those tools' tests, which CTest runs when the Python it finds has them
   - scipy            # Voronoi / KD-tree for post_proc/plot_landscape_3d.py
   - pyvista          # optional 3D landscape render (post_proc/plot_landscape_3d.py); pulls VTK
+  - scikit-learn     # optional: the demography example's recruitment GLM (fit_vital_rates.py)

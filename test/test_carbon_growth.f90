@@ -1,14 +1,14 @@
 ! SPDX-License-Identifier: Apache-2.0
-!----- Carbon-driven growth (driver level): the growth-only allocation closure, the driver's -----!
-!----- update_biomass_turnover shed/snap, and a carbon-mode step that grows wood_carbon -> dbh. ---!
+!----- Carbon-driven growth (driver level): the growth-only allocation closure and a carbon-mode --!
+!----- step that grows wood_carbon -> dbh. (Leaf loss: leaf_turnover_step, test_plant_phenology.) --!
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
-   use meds_allometry, only : dbh_to_wai, sapwood_fraction
+   use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t
-   use meds_site_state_types, only : site_t, carbon_flux_block
+   use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc
+   use meds_demography_update, only : update_cohort_states
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : update_biomass_turnover, advance_plant_traits,          &
-                                            shed_turnover_water
+   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_diagnostic_reduce,     only : has_nan
@@ -19,7 +19,6 @@ program test_carbon_growth
    type(meds_config_t) :: cfg
    type(site_t)        :: site
    real(wp)    :: gl, gf, gw, gs, gr, gresp, def, wood0, dbh0
-   real(wp)    :: leaf_shed, root_shed
    logical     :: starv
    integer(ik) :: istep
 
@@ -35,26 +34,7 @@ program test_carbon_growth
    call check(gw > 0.0_wp, 'surplus carbon grows wood')
    call check(gresp > 0.0_wp, 'growth respiration charged on realized growth')
 
-   !=== 2. update_biomass_turnover: current-pool decay, clamp, dormancy snap-to-bare. ==========!
-   ! not dormant (flush high): leaf 0.1/d over pool 1 => 0.1; fine root 0.05/d over pool 0.5 => 0.025.
-   call update_biomass_turnover(0.1_wp, 0.05_wp, 1.0e6_wp, 1.0_wp, 0.5_wp, 1.0_wp, 0.02_wp, 1.0_wp, &
-        leaf_shed, root_shed)
-   call check_close(leaf_shed, 0.1_wp,   1.0e-12_wp, 'turnover: leaf shed = rate*pool*dt')
-   call check_close(root_shed, 0.025_wp, 1.0e-12_wp, 'turnover: fine-root shed = rate*pool*dt')
-   ! clamp: rate*dt > 1 removes at most the whole pool.
-   call update_biomass_turnover(10.0_wp, 0.0_wp, 1.0e6_wp, 0.4_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp, &
-        leaf_shed, root_shed)
-   call check_close(leaf_shed, 0.4_wp, 1.0e-12_wp, 'turnover: leaf shed clamped to pool')
-   ! dormant (flush ~ 0) + residual below snap floor => snap the whole pool to bare.
-   call update_biomass_turnover(0.1_wp, 0.0_wp, 0.0_wp, 0.021_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp,  &
-        leaf_shed, root_shed)
-   call check_close(leaf_shed, 0.021_wp, 1.0e-12_wp, 'turnover: dormant canopy snaps to bare')
-   ! same pool but FLUSHING => no snap, just the decrement.
-   call update_biomass_turnover(0.1_wp, 0.0_wp, 1.0_wp, 0.021_wp, 0.0_wp, 1.0_wp, 0.02_wp, 1.0_wp,  &
-        leaf_shed, root_shed)
-   call check_close(leaf_shed, 0.1_wp*0.021_wp, 1.0e-12_wp, 'turnover: no snap while flushing')
-
-   !=== 3. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
+   !=== 2. A carbon-mode step grows wood_carbon -> dbh, and leaf_area stays leaf_carbon*sla. ==!
    cfg%gpp_ref = 0.5_wp
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 3_ik, 0.1_wp, 20.0_wp)       ! climax cohort
@@ -88,7 +68,7 @@ program test_carbon_growth
       call check(.not. has_nan(site), 'has_nan still true after the state was restored')
    end block
 
-   !=== 3b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!
+   !=== 2b. The cached WOOD geometry must describe TODAY's tree, not the one 30 steps ago. ======!
    !        wood_area / sapwood_carbon / sapwood_area are derived once per size change rather    !
    !        than recomputed every dt_fast, which is what let the fast loop stop gathering into a  !
    !        scratch buffer. That trade is only safe while every path that moves dbh, basal_area   !
@@ -109,7 +89,7 @@ program test_carbon_growth
                        1.0e-13_wp, 'cached sapwood_area is stale after growth')
    end block
 
-   !=== 4. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, leaf lifespan up. ==!
+   !=== 3. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, leaf lifespan up. ==!
    block
       real(wp) :: sla0, vc0, ll0, ns0
       cfg%trait_plasticity_on = .true.
@@ -130,7 +110,7 @@ program test_carbon_growth
                        1.0e-9_wp, 'leaf_area stays leaf_carbon*sla after resorption')
    end block
 
-   !=== 5. shed_turnover_water (P4): a NET leaf/root LOSS sheds water in the SAME proportion as   !
+   !=== 4. shed_turnover_water (P4): a NET leaf/root LOSS sheds water in the SAME proportion as   !
    !    the carbon loss (remaining tissue's rwc unchanged), credited to the patch's shed_water_rate; !
    !    a NET GAIN touches nothing (P3's own mass-conserving seam handles that direction instead). ===!
    block
@@ -186,6 +166,33 @@ program test_carbon_growth
       call shed_turnover_water(site, cfg, npp)
       call check_close(site%cohort%leaf_water_mass(1), 0.0_wp, 1.0e-9_wp,                          &
                        'shed_turnover_water: full leaf-carbon loss sheds ALL leaf water')
+   end block
+
+   !=== The applier advances only the carbon and derives the geometry from it (#389): a cohort   !
+   !    that sheds every leaf ends with leaf area exactly 0, never a round-off negative, and its     !
+   !    dbh and AGB are the allometry of its committed wood carbon.  ===============================!
+   block
+      real(wp) :: dt, dbh_c, h_c, ba_c, agb_c, la_c
+      dt = 1.0_wp / 365.0_wp
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      !----- Shed a hair more leaf carbon than there is, as a rounded loss rate can. ------------!
+      site%deriv%d_leaf_carbon_dt(1)          = -site%cohort%leaf_carbon(1) / dt * (1.0_wp + 1.0e-15_wp)
+      site%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+      site%deriv%d_wood_carbon_dt(1)          = 0.01_wp
+      site%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
+      site%deriv%dln_nplant_dt(1)             = 0.0_wp
+      call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+      call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
+      call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area (#389)')
+      call carbon_to_structure(site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
+                               site%cohort%p_wood_density(1), site%cohort%p_hgt_max(1),             &
+                               site%cohort%p_aboveground_frac(1), site%cohort%sla(1),               &
+                               dbh_c, h_c, ba_c, agb_c, la_c)
+      call check(site%cohort%dbh(1) == dbh_c .and. site%cohort%height(1) == h_c                     &
+                 .and. site%cohort%agb(1) == agb_c, 'applier: geometry is the allometry of the carbon')
    end block
 
    write(*,'(a)') '   PASS'

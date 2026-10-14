@@ -28,8 +28,8 @@ module meds_output_registry
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
                                    XTYPE_DOUBLE, XTYPE_INT, ragged_dim
-   use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB,        &
-                                      cm2_to_m2
+   use meds_diagnostic_reduce, only : W_NONE, W_NPLANT, W_LEAF_AREA, W_BASAL_AREA, W_AGB
+   use meds_constants,         only : cm2_to_m2
    use meds_output_integrate, only : alloc_integ_buffer, src_class, SRCK_FAST,                                         &
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
@@ -45,10 +45,9 @@ module meds_output_registry
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
         FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
         SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT,                            &
-        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_SOIL_NSUB, SRC_S_WORK_HYDRO_NSUB,           &
-        SRC_S_WORK_NONCONV, SRC_S_WORK_HYDRO_THRASH, SRC_S_WORK_RK45_RESCUE,                     &
-        SRC_S_WORK_CLAMP_STAGE, SRC_S_WORK_CLAMP_COMMIT, SRC_S_WORK_CLAMP_MASS,                  &
-        SRC_S_WORK_CLAMP_ENERGY,                                                                 &
+        SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB, SRC_S_WORK_WATER_NEWTON,           &
+        SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT, SRC_S_WORK_RK45_RESCUE,                     &
+        SRC_S_WORK_CLAMP_STAGE,                                                                  &
         SRC_F_SOIL_TEMP, SRC_F_SOIL_WATER, SRC_F_PY0, SRC_F_PD0,                                &
         SRC_F_COH_LEAF_TEMP, SRC_F_COH_GPP, SRC_F_COH_HEIGHT, SRC_F_CD0, FLD_C_DIAG0, FLD_P_DIAG0, &
         FLD_PY_DIAG0
@@ -72,9 +71,9 @@ module meds_output_registry
                                     PY_RAINF, N_PYDIAG,                                          &
                                     CS_DDBH_DT, CS_DAGB_DT, CS_MORT_RATE, CS_NPP_LEAF,            &
                                     CS_NPP_FINEROOT, CS_NPP_WOOD, CS_NPP_STORAGE, CS_NPP_REPRO,   &
-                                    CS_GROWTH_RESP, CS_STORAGE_RESP, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
+                                    CS_GROWTH_RESP, CS_STORAGE_RESP, CS_EXUDATE, PD_LITTER_LEAF, PD_LITTER_FINEROOT, &
                                     PD_MORT_C_BACKGROUND, PD_MORT_C_CULL, PD_MORT_C_DISTURB,             &
-                                    PD_LITTER_STRUCT, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
+                                    PD_LITTER_STRUCT, PD_LITTER_WOOD, PD_LITTER_REPRO, PD_RECRUIT_NPLANT, PD_DISTURB_AREA
    implicit none
    private
 
@@ -199,9 +198,9 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_RD25)
       call add_variable(reg, 'llspan_cohort', 'leaf lifespan', 'yr',                             &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LLSPAN)
-      call add_variable(reg, 'pheno_flush_cohort', 'phenology flush governor', '-',              &
+      call add_variable(reg, 'leaf_flush_tendency_cohort', 'smoothed leaf flush tendency', '-',          &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_FLUSH)
-      call add_variable(reg, 'pheno_shed_cohort', 'phenology active-shed governor', '-',         &
+      call add_variable(reg, 'leaf_shed_tendency_cohort', 'smoothed leaf senescence tendency', '-',      &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_SHED)
       call add_variable(reg, 'dmax_psi_leaf_cohort', 'predawn (daily-max) leaf water potential', 'MPa', &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, DAY_MON, FLD_C_DMAX_PSI_LEAF)
@@ -480,25 +479,20 @@ contains
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_STEPS)
       call add_variable(reg, 'work_integ_rej_site', 'rejected integrator steps (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_REJ)
-      call add_variable(reg, 'work_soil_nsub_site', 'soil-water solver sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_SOIL_NSUB)
-      call add_variable(reg, 'work_hydro_nsub_site', 'plant-hydraulics sub-steps (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_NSUB)
-      call add_variable(reg, 'work_nonconv_site', 'solver non-convergence events (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_NONCONV)
-      call add_variable(reg, 'work_hydro_thrash_site',                                          &
-                        'dt_fast steps with pathological hydraulics sub-stepping (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_HYDRO_THRASH)
+      call add_variable(reg, 'work_water_nsub_site', 'soil-plant water network sub-steps (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NSUB)
+      call add_variable(reg, 'work_water_newton_site', 'soil-plant water network Newton iterations (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NEWTON)
+      call add_variable(reg, 'work_water_reject_site',                                          &
+                        'soil-plant water network sub-steps rejected and retried shorter (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_REJECT)
+      call add_variable(reg, 'work_water_nfail_site',                                           &
+                        'soil-plant water network sub-steps taken although unconverged (period total)', &
+                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_WATER_NFAIL)
       call add_variable(reg, 'work_rk45_rescue_site', 'RK45 steps rescued to the implicit path (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_RK45_RESCUE)
       call add_variable(reg, 'work_clamp_stage_site', 'stage-input clamp activations (period total)', &
                         '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_STAGE)
-      call add_variable(reg, 'work_clamp_commit_site', 'committed-state clamp activations (period total)', &
-                        '--', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_COMMIT)
-      call add_variable(reg, 'work_clamp_mass_site', 'water moved by committed-state clamps (period total)', &
-                        'kg/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_MASS)
-      call add_variable(reg, 'work_clamp_energy_site', 'energy moved by committed-state clamps (period total)', &
-                        'J/m2', DIM_SCALAR, AGG_SUM, GRP_NUMERICS, DAY_MON_YR, SRC_S_WORK_CLAMP_ENERGY)
    end subroutine register_numerics
 
 
@@ -530,7 +524,7 @@ contains
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_CS)
       call add_variable(reg, 'rd_cohort', 'leaf dark respiration', 'umol/m2 leaf/s',             &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, MON, FLD_C_DIAG0 + CD_RD)
-      call add_variable(reg, 'transp_cohort', 'leaf transpiration', 'mol/m2 leaf/s',             &
+      call add_variable(reg, 'transp_cohort', 'leaf transpiration (the water the leaves lose)', 'mol/m2 leaf/s', &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_TRANSP)
       call add_variable(reg, 'beta_stomata_cohort', 'stomatal water-stress factor', '-',         &
                         DIM_COHORT, AGG_TMEAN, GRP_ECOPHYS, DAY_MON, FLD_C_DIAG0 + CD_BETA_STOM)
@@ -606,6 +600,8 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_GROWTH_RESP, w=W_NPLANT)
       call add_variable(reg, 'storage_resp_site', 'storage maintenance respiration', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_STORAGE_RESP, w=W_NPLANT)
+      call add_variable(reg, 'root_exudate_site', 'root exudate: carbon the growth sink could not use', 'kgC/m2/yr', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_CARBON, MON_YR, FLD_C_SDIAG0 + CS_EXUDATE, w=W_NPLANT)
       !----- Site-level demographic RATES: the three terms that MAKE the AGB trajectory, so a      !
       !      reader can check d(agb)/dt against growth - mortality directly from the file.  -------!
       call add_variable(reg, 'agb_growth_site', 'site AGB growth rate', 'kgC/m2/yr',             &
@@ -616,11 +612,20 @@ contains
                         DIM_SCALAR, AGG_TMEAN, GRP_STRUCTURE, MON_YR, FLD_C_SDIAG0 + CS_MORT_RATE, &
                         w=W_NPLANT, mn=.true.)
       !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
-      !      biogeochemistry consumes. With rh_site these close the soil-carbon budget.  ---------!
-      call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon', 'kgC/m2/yr',          &
+      !      biogeochemistry consumes, by the tissue the carbon came from (#399). Leaf + fine root   !
+      !      + wood + fruit/seed + root_exudate_site is the carbon turnover and background mortality !
+      !      send to the soil pools; cohorts culled or killed by disturbance add to the pools        !
+      !      directly (mort_carbon_cull_site, mort_carbon_disturb_site). With soil carbon off they   !
+      !      leave the model (#316). litter_struct_site is a destination (the                        !
+      !      structural pools), so it overlaps the others. --------------------------------------!
+      call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_LEAF)
-      call add_variable(reg, 'litter_fineroot_site', 'fine-root litter carbon', 'kgC/m2/yr',     &
+      call add_variable(reg, 'litter_fineroot_site', 'fine-root litter carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_FINEROOT)
+      call add_variable(reg, 'litter_wood_site', 'wood and storage litter carbon of dead plants', 'kgC/m2/yr', &
+                        DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_WOOD)
+      call add_variable(reg, 'litter_repro_site', 'fruit and seed litter carbon', 'kgC/m2/yr',   &
+                        DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_REPRO)
       call add_variable(reg, 'litter_struct_site', 'structural litter + CWD carbon', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_STRUCT)
       call add_variable(reg, 'nplant_recruit_site', 'recruitment density flux', 'plant/m2/yr',   &
@@ -1010,21 +1015,29 @@ contains
    !      thing a user writes, and it used to silently produce a file full of fill. Rejecting the      !
    !      pairing at start-up, naming the offender and the variable they probably meant, is the whole  !
    !      point: a diagnostic that quietly reports nothing is worse than one that refuses to start.     !
+   !      The meds_io_config.toml overrides are applied after this, so apply_variable_override runs  !
+   !      the same check on each stream mask it sets.                                               !
    subroutine enforce_fast_guard(reg)
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: k
-      logical     :: is_fast_src, on_fast
       do k = 1_ik, reg%nvar
-         is_fast_src = (src_class(reg%var(k)%source_id) == SRCK_FAST)
-         on_fast     = (iand(reg%var(k)%streams, FREQ_FAST) /= 0_ik)
-         if (on_fast .and. .not. is_fast_src)                                                    &
-            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is not a FAST-staged '// &
-                       'variable and cannot be put on the F stream (look for a *_fast twin)'
-         if (is_fast_src .and. iand(reg%var(k)%streams, not(FREQ_FAST)) /= 0_ik)                  &
-            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is FAST-staged and can '// &
-                       'only be on the F stream (the coarse tiers read live state, not the staging)'
+         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, reg%var(k)%streams)
       end do
    end subroutine enforce_fast_guard
+
+   !----- One variable's streams against its source: the FAST tier <-> a FAST-staged source. ---!
+   subroutine check_fast_tier(name, source_id, streams)
+      character(len=*), intent(in) :: name
+      integer(ik),      intent(in) :: source_id, streams
+      logical :: is_fast_src
+      is_fast_src = (src_class(source_id) == SRCK_FAST)
+      if (iand(streams, FREQ_FAST) /= 0_ik .and. .not. is_fast_src)                              &
+         error stop 'meds_output_registry: "'//trim(name)//'" is not a FAST-staged '//            &
+                    'variable and cannot be put on the F stream (look for a *_fast twin)'
+      if (is_fast_src .and. iand(streams, not(FREQ_FAST)) /= 0_ik)                                &
+         error stop 'meds_output_registry: "'//trim(name)//'" is FAST-staged and can '//           &
+                    'only be on the F stream (the coarse tiers read live state, not the staging)'
+   end subroutine check_fast_tier
 
    !----- Step 2: disable every variable in a group whose main-config toggle is .false. -------!
    subroutine apply_group_toggles(reg, out_cfg)
@@ -1073,6 +1086,7 @@ contains
          m = mask
          if (ragged_dim(reg%var(k)%dim) .and. iand(m, FREQ_ANNUAL) /= 0_ik)                      &
             error stop 'meds_output_registry: annual (Y) stream forbidden on cohort/patch variable ('//trim(name)//')'
+         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, m)
          reg%var(k)%streams = m
       end select
    end subroutine apply_variable_override
@@ -1213,7 +1227,7 @@ contains
          files%diag%theta_sat(k) = params%theta_sat(k)
          files%diag%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
-         !      Campbell. Resolved through the SAME accessors the Richards solver uses, so the    !
+         !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
          files%diag%par_a(k)     = curve_a(params, k)
          files%diag%par_n(k)     = curve_n(params, k)

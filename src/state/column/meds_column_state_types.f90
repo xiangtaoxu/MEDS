@@ -82,8 +82,8 @@ module meds_column_state_types
    !      that cohort's PFT f_labile_leaf/f_labile_stem and agf; the kernel maps them straight onto u. !
    !      Units [kgC/m2/day].                                                                          !
    type :: litter_input_t
-      real(wp) :: labile_grnd  = 0.0_wp      !< -> X(1) fast_grnd  (labile leaf/storage, above)
-      real(wp) :: labile_soil  = 0.0_wp      !< -> X(2) fast_soil  (labile fineroot/storage, below)
+      real(wp) :: labile_grnd  = 0.0_wp      !< -> X(1) fast_grnd  (labile leaf, fruit; above-ground storage + wood)
+      real(wp) :: labile_soil  = 0.0_wp      !< -> X(2) fast_soil  (labile fine root; below-ground storage + wood)
       real(wp) :: struct_grnd  = 0.0_wp      !< -> X(3) struct_grnd (structural leaf + CWD, above)
       real(wp) :: struct_soil  = 0.0_wp      !< -> X(4) struct_soil (structural fineroot + belowground CWD)
       real(wp) :: lignin_grnd  = 0.0_wp      !< lignin flux to struct_grnd (sets f_lignin of incoming litter)
@@ -91,6 +91,15 @@ module meds_column_state_types
       ! optional N twin (driver-split by tissue C:N), present only when n_cycle_on:
       real(wp) :: n_labile_grnd = 0.0_wp, n_labile_soil = 0.0_wp
       real(wp) :: n_struct_grnd = 0.0_wp, n_struct_soil = 0.0_wp
+      ! the same carbon by the tissue it came from (diagnostic; the soil reads the pool streams
+      ! above). Leaf litter here is what a litter trap collects: after resorption. Summed, these
+      ! equal labile_grnd + labile_soil + struct_grnd + struct_soil.
+      real(wp) :: leaf_c     = 0.0_wp      !< leaves (turnover, drop, dead plants)
+      real(wp) :: fineroot_c = 0.0_wp      !< fine roots
+      real(wp) :: wood_c     = 0.0_wp      !< wood of dead plants (stem + coarse roots)
+      real(wp) :: storage_c  = 0.0_wp      !< non-structural carbon of dead plants
+      real(wp) :: repro_c    = 0.0_wp      !< reproduction carbon that made no recruit (fruit, seed)
+      real(wp) :: exudate_c  = 0.0_wp      !< root exudate (carbon the growth sink could not use)
    end type litter_input_t
 
    !==========================================================================================!
@@ -289,6 +298,12 @@ contains
       c%n_labile_soil = w1 * a%n_labile_soil + w2 * b%n_labile_soil
       c%n_struct_grnd = w1 * a%n_struct_grnd + w2 * b%n_struct_grnd
       c%n_struct_soil = w1 * a%n_struct_soil + w2 * b%n_struct_soil
+      c%leaf_c        = w1 * a%leaf_c        + w2 * b%leaf_c
+      c%fineroot_c    = w1 * a%fineroot_c    + w2 * b%fineroot_c
+      c%wood_c        = w1 * a%wood_c        + w2 * b%wood_c
+      c%storage_c     = w1 * a%storage_c     + w2 * b%storage_c
+      c%repro_c       = w1 * a%repro_c       + w2 * b%repro_c
+      c%exudate_c     = w1 * a%exudate_c     + w2 * b%exudate_c
    end function blend_litter_input
 
    !----- Area-weighted mix of two daily xi accumulators (patch fusion / disturbance seed) --   !

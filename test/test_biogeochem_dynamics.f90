@@ -18,6 +18,8 @@ program test_biogeochem_dynamics
    use meds_config,              only : meds_config_t
    use meds_site_state_types,    only : site_t
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
+   use meds_test_soil_grid, only : geometric_layer_bottoms
+   use meds_column_params, only : n_soil_layer_max
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics
@@ -27,6 +29,7 @@ program test_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_test_support, only : banner, build_test_config, check, check_close, check_true, test_report
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik)            :: n_budget_fail
    integer(ik), parameter :: nsl = 10_ik
@@ -45,8 +48,9 @@ program test_biogeochem_dynamics
    cfg%n_fast_per_slow    = 48_ik   ! 48 x 150 s = 2 h (window held as dt_fast dropped)
    cfg%soil_carbon_on     = .true.
 
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,            &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, ctx%col_config%soil)
+   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,            &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, ctx%col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, ctx%col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, ctx%col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, ctx%col_config%leaf_surf_water_max, ctx%col_config%wood_surf_water_max)

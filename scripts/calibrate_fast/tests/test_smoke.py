@@ -117,7 +117,7 @@ def make_site(tmp_path, windows, head=""):
                        "co2_source": "file",
                        "co2_file": str(ROOT / "data/co2/co2_cmip7_global_annual_1000-2022.txt"),
                        "recycle": False, "start_clamp": "error"}
-    main["init"].update(init_mode=1, census_file=str(ROOT / "examples/example_demography/census_example.csv"))
+    main["init"].update(init_mode=1, census_file=str(ROOT / "data/census_example.csv"))
     cfg.write(tmp_path)
     (tmp_path / "registry.toml").write_text(
         '[stomatal_g1]\nfile = "pft"\nkey = "pft.stomatal_g1"\npft = 3\nrange = [1.0, 12.0]\n'

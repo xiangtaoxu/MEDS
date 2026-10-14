@@ -14,12 +14,13 @@
 !==========================================================================================!
 module meds_config_io
    use meds_kinds,      only : wp, ik
+   use meds_allometry,  only : HEIGHT_POWER, HEIGHT_GMM, HEIGHT_CHAVE
    use meds_config,     only : meds_config_t, derive_parameters, validate_config,               &
                                BK_SERIAL,                                                       &
                                INTEG_ARK, INTEG_RK45, &
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
-   use meds_config,     only : soil_column_config_t, HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT, &
-                               LWP_CONTROL_LINEAR_DECLINE, pft_stomata_psi_onset
+   use meds_config,     only : soil_column_config_t,                                              &
+                               pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
@@ -43,9 +44,7 @@ module meds_config_io
    use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK,          &
-                                    SOIL_LIN_FROZEN, SOIL_LIN_PICARD,                              &
-                                    SOIL_SUBSTEP_ADAPTIVE, SOIL_SUBSTEP_FIXED
+                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
@@ -177,7 +176,7 @@ contains
    !=======================================================================================!
    !---------------------------------------------------------------------------------------!
    ! [soil_column] -> the PHYSICAL soil column: grid, hydraulic texture, thermal texture.     !
-   ! Distinct from [soil], which is the Richards SOLVER's options over this column. Every key !
+   ! Distinct from [soil], the water network's options over this column. Every key            !
    ! is optional and defaults to the literal that used to be hard-coded in build_fast_context, !
    ! so an absent block reproduces the old behaviour exactly.                                  !
    !---------------------------------------------------------------------------------------!
@@ -185,9 +184,10 @@ contains
       type(toml_table_t),         intent(in)    :: tm
       type(soil_column_config_t), intent(inout) :: c
       character(len=64) :: str
-      c%n_layer     = toml_int (tm, 'soil_column.n_layer',     c%n_layer)
+      !----- A layer_bottoms list without a depth sets the column to end at its last bottom. ---!
+      call toml_real_array(tm, 'soil_column.layer_bottoms', c%layer_bottoms, c%n_layer_bottoms)
+      if (c%n_layer_bottoms > 0_ik) c%depth = c%layer_bottoms(c%n_layer_bottoms)
       c%depth       = toml_real(tm, 'soil_column.depth',       c%depth)
-      c%grid_growth = toml_real(tm, 'soil_column.grid_growth', c%grid_growth)
       if (toml_has(tm, 'soil_column.retention')) then
          str = toml_string(tm, 'soil_column.retention', '')
          select case (trim(str))
@@ -207,7 +207,7 @@ contains
       c%dry_heat_capacity  = toml_real(tm, 'soil_column.dry_heat_capacity',  c%dry_heat_capacity)
    end subroutine load_soil_column
 
-   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water Richards opts
+   subroutine load_soil_opts(tm, s)                     ! [soil] -> soil-water opts
       type(toml_table_t), intent(in)    :: tm
       type(soil_opts_t),  intent(inout) :: s
       character(len=64) :: str
@@ -220,34 +220,13 @@ contains
          case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
          end select
       end if
-      if (toml_has(tm, 'soil.linearize')) then
-         str = toml_string(tm, 'soil.linearize', '')
-         select case (trim(str))
-         case ('frozen') ; s%linearize = SOIL_LIN_FROZEN
-         case ('picard') ; s%linearize = SOIL_LIN_PICARD
-         case default ; error stop 'load_meds_config: soil.linearize must be frozen|picard'
-         end select
-      end if
-      if (toml_has(tm, 'soil.substep')) then
-         str = toml_string(tm, 'soil.substep', '')
-         select case (trim(str))
-         case ('adaptive') ; s%substep = SOIL_SUBSTEP_ADAPTIVE
-         case ('fixed')    ; s%substep = SOIL_SUBSTEP_FIXED
-         case default ; error stop 'load_meds_config: soil.substep must be adaptive|fixed'
-         end select
-      end if
       s%rtol           = toml_real   (tm, 'soil.rtol',            s%rtol)
       s%atol           = toml_real   (tm, 'soil.atol',            s%atol)
-      s%h_init         = toml_real   (tm, 'soil.h_init',          s%h_init)
-      s%max_substep    = toml_int    (tm, 'soil.max_substep',     s%max_substep)
-      s%max_picard     = toml_int    (tm, 'soil.max_picard',      s%max_picard)
       s%w_pond_max     = toml_real   (tm, 'soil.w_pond_max',      s%w_pond_max)
       s%intercept_alpha= toml_real   (tm, 'soil.intercept_alpha', s%intercept_alpha)
       s%intercept_k    = toml_real   (tm, 'soil.intercept_k',     s%intercept_k)
       s%dsl_dmax       = toml_real   (tm, 'soil.dsl_dmax',        s%dsl_dmax)
       s%dsl_theta_init = toml_real   (tm, 'soil.dsl_theta_init',  s%dsl_theta_init)
-      s%psi_wilt       = toml_real   (tm, 'soil.psi_wilt',        s%psi_wilt)
-      s%psi_open       = toml_real   (tm, 'soil.psi_open',        s%psi_open)
       s%ground_albedo_vis = toml_real(tm, 'soil.ground_albedo_vis', s%ground_albedo_vis)
       s%ground_albedo_nir = toml_real(tm, 'soil.ground_albedo_nir', s%ground_albedo_nir)
       s%ground_emissivity = toml_real(tm, 'soil.ground_emissivity', s%ground_emissivity)
@@ -452,6 +431,28 @@ contains
       case default          ; call note_missing(m, key)
       end select
    end subroutine req_sw_partition
+
+   !----- [allometry].height_allometry: "power" (the default, and every config written before the  !
+   !       option), "gmm", which then needs its three coefficients, or "chave2014", which needs the !
+   !       site's stress index chave_e. ---------------------------------------------------------!
+   subroutine opt_height_allometry(t, cfg, m)
+      type(toml_table_t), intent(in) :: t ; type(meds_config_t), intent(inout) :: cfg
+      type(keymiss_t), intent(inout) :: m
+      character(len=64) :: s
+      s = toml_string(t, 'allometry.height_allometry', 'power')
+      select case (trim(s))
+      case ('power') ; cfg%allom%height_form = HEIGHT_POWER
+      case ('gmm')
+         cfg%allom%height_form = HEIGHT_GMM
+         call req_r(t, 'allometry.gmm_a', cfg%allom%gmm_a, m)
+         call req_r(t, 'allometry.gmm_b', cfg%allom%gmm_b, m)
+         call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
+      case ('chave2014')
+         cfg%allom%height_form = HEIGHT_CHAVE
+         call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+      case default   ; call note_missing(m, 'allometry.height_allometry')
+      end select
+   end subroutine opt_height_allometry
 
    subroutine req_lwdown_source(t, key, mode, m)    ! "file" | "synthesize"
       type(toml_table_t), intent(in) :: t ; character(len=*), intent(in) :: key
@@ -735,18 +736,18 @@ contains
    !----- Load the per-PFT [phenology] cue params from the PFT file. Leaf phenology is UNCONDITIONAL !
    !      now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I), so the gate is no longer a run-   !
    !      config flag -- it is the PRESENCE of a [phenology] override in THIS PFT file: absent -> keep !
-   !      the alloc_pft_table literature defaults (a vanilla evergreen: permissive flush, no active    !
-   !      shed, a realistic ~15-day flush cap -- the new default, not a placeholder). Present -> every  !
-   !      per-PFT array is REQUIRED (the no-silent-defaults rule still holds for a deliberate override). !
-   !      The arrays are flattened per cohort into a meds_plant pheno_params_t by the slow-loop         !
-   !      phenology driver.                                                                             !
+   !      the alloc_pft_table defaults (no cues: always flushing, never senescing, losing leaves to    !
+   !      background turnover alone, with a ~15-day flush cap). Present -> every per-PFT array is      !
+   !      REQUIRED except the optional PAR and water keys (the no-silent-defaults rule still            !
+   !      holds for a deliberate override). The arrays are flattened per cohort into a pheno_params_t   !
+   !      by the slow-loop phenology driver.                                                            !
    !                                                                                          !
    !      THE GATE IS THE SECTION, NOT A KEY INSIDE IT (#245). It used to be                           !
    !      `toml_has(t, 'phenology.flush_cue_mask')`, and that key is not one the shipped               !
    !      meds_config_pft.toml ever documented -- it documented `cue_mask`, which no reader consumes.  !
    !      So a config that wrote a full, deliberate [phenology] block was skipped in SILENCE: the      !
    !      presence map never saw the twenty-three required keys go missing, and every PFT fell back    !
-   !      to CUE_NONE/CUE_NONE -- flush = 1, shed = 0, the evergreen fixed point -- whatever it        !
+   !      to CUE_NONE/CUE_NONE -- always flushing, never senescing -- whatever leaf habit it           !
    !      declared. The Ithaca reference stand, declared cold-deciduous, held LAI 5.28-5.66 through    !
    !      every January of a 50-year run. Gating on the section asks whether the author meant to       !
    !      configure phenology at all, which is the question, rather than whether they happened to      !
@@ -757,42 +758,32 @@ contains
       integer(ik),         intent(in)    :: npft
       type(keymiss_t),     intent(inout) :: m
       if (.not. toml_has_section(t, 'phenology')) return
-      call req_pa_int(t, 'phenology.flush_cue_mask',  cfg%pft%pheno_flush_cue_mask,      npft, m)
-      call req_pa_int(t, 'phenology.shed_cue_mask',   cfg%pft%pheno_shed_cue_mask,       npft, m)
-      call req_pa(t, 'phenology.cue_sharpness',       cfg%pft%pheno_cue_sharpness,       npft, m)
-      call req_pa(t, 'phenology.k_flush_max',         cfg%pft%pheno_k_flush_max,         npft, m)
-      call req_pa(t, 'phenology.k_shed_max',          cfg%pft%pheno_k_shed_max,          npft, m)
-      call req_pa(t, 'phenology.tau_flush',           cfg%pft%pheno_tau_flush,           npft, m)
-      call req_pa(t, 'phenology.tau_shed',            cfg%pft%pheno_tau_shed,            npft, m)
-      call req_pa(t, 'phenology.gdd_base_temp',       cfg%pft%pheno_gdd_base_temp,       npft, m)
-      call req_pa(t, 'phenology.chill_base_temp',     cfg%pft%pheno_chill_base_temp,     npft, m)
-      call req_pa(t, 'phenology.phen_a',              cfg%pft%pheno_phen_a,              npft, m)
-      call req_pa(t, 'phenology.phen_b',              cfg%pft%pheno_phen_b,              npft, m)
-      call req_pa(t, 'phenology.phen_c',              cfg%pft%pheno_phen_c,              npft, m)
-      call req_pa(t, 'phenology.cold_drop_daylength', cfg%pft%pheno_cold_drop_daylength, npft, m)
-      call req_pa(t, 'phenology.cold_drop_soiltemp1', cfg%pft%pheno_cold_drop_soiltemp1, npft, m)
-      call req_pa(t, 'phenology.cold_drop_soiltemp2', cfg%pft%pheno_cold_drop_soiltemp2, npft, m)
-      call req_pa(t, 'phenology.photo_crit',          cfg%pft%pheno_photo_crit,          npft, m)
-      call req_pa(t, 'phenology.photo_slope',         cfg%pft%pheno_photo_slope,         npft, m)
-      call req_pa(t, 'phenology.gdd_width',           cfg%pft%pheno_gdd_width,           npft, m)
-      call req_pa(t, 'phenology.daylen_width',        cfg%pft%pheno_daylen_width,        npft, m)
-      call req_pa(t, 'phenology.soiltemp_width',      cfg%pft%pheno_soiltemp_width,      npft, m)
-      call req_pa(t, 'phenology.evg_ref_temp',        cfg%pft%pheno_evg_ref_temp,        npft, m)
-      call req_pa(t, 'phenology.evg_slope',           cfg%pft%pheno_evg_slope,           npft, m)
-      call req_pa(t, 'phenology.bare_snap_frac',      cfg%pft%pheno_bare_snap_frac,      npft, m)
-      !----- The WATER / HYDRO / LIGHT cue parameters (#150). OPTIONAL, because those cues are     !
-      !      opt-in via the cue masks; absent keys keep the alloc_pft_table defaults. Four of them  !
-      !      (water_width, light_*) were on the table but had no loader at all, so they could not   !
-      !      be tuned even after their drivers landed.  ---------------------------------------------!
-      call opt_pa(t, 'phenology.water_off_threshold', cfg%pft%pheno_water_off_threshold, npft, m)
-      call opt_pa(t, 'phenology.water_on_threshold',  cfg%pft%pheno_water_on_threshold,  npft, m)
-      call opt_pa(t, 'phenology.water_window',        cfg%pft%pheno_water_window,        npft, m)
-      call opt_pa(t, 'phenology.water_width',         cfg%pft%pheno_water_width,         npft, m)
-      call opt_pa(t, 'phenology.low_psi_threshold',   cfg%pft%pheno_low_psi_threshold,   npft, m)
-      call opt_pa(t, 'phenology.high_psi_threshold',  cfg%pft%pheno_high_psi_threshold,  npft, m)
-      call opt_pa(t, 'phenology.light_on_threshold',  cfg%pft%pheno_light_on_threshold,  npft, m)
-      call opt_pa(t, 'phenology.light_width',         cfg%pft%pheno_light_width,         npft, m)
-      call opt_pa(t, 'phenology.light_window',        cfg%pft%pheno_light_window,        npft, m)
+      call req_pa_int(t, 'phenology.flush_cue_mask',      cfg%pft%pheno_flush_cue_mask,        npft, m)
+      call req_pa_int(t, 'phenology.shed_cue_mask',       cfg%pft%pheno_shed_cue_mask,         npft, m)
+      call req_pa(t, 'phenology.flush_cue_timescale',     cfg%pft%pheno_flush_cue_timescale,   npft, m)
+      call req_pa(t, 'phenology.shed_cue_timescale',      cfg%pft%pheno_shed_cue_timescale,    npft, m)
+      call req_pa(t, 'phenology.flush_rate_max',          cfg%pft%pheno_flush_rate_max,        npft, m)
+      call req_pa(t, 'phenology.shed_rate_max',           cfg%pft%pheno_shed_rate_max,         npft, m)
+      call req_pa(t, 'phenology.min_leaf_cover',          cfg%pft%pheno_min_leaf_cover,        npft, m)
+      call req_pa(t, 'phenology.bare_leaf_cover',         cfg%pft%pheno_bare_leaf_cover,       npft, m)
+      call req_pa(t, 'phenology.flush_base_temp',         cfg%pft%pheno_flush_base_temp,       npft, m)
+      call req_pa(t, 'phenology.flush_degree_days',       cfg%pft%pheno_flush_degree_days,     npft, m)
+      call req_pa(t, 'phenology.flush_temp_sharpness',    cfg%pft%pheno_flush_temp_sharpness,  npft, m)
+      call req_pa(t, 'phenology.shed_base_temp',          cfg%pft%pheno_shed_base_temp,        npft, m)
+      call req_pa(t, 'phenology.shed_degree_days',        cfg%pft%pheno_shed_degree_days,      npft, m)
+      call req_pa(t, 'phenology.shed_temp_sharpness',     cfg%pft%pheno_shed_temp_sharpness,   npft, m)
+      call req_pa(t, 'phenology.par_min',                 cfg%pft%pheno_par_min,               npft, m)
+      call req_pa(t, 'phenology.flush_light_hours',       cfg%pft%pheno_flush_light_hours,     npft, m)
+      call req_pa(t, 'phenology.flush_light_sharpness',   cfg%pft%pheno_flush_light_sharpness, npft, m)
+      call req_pa(t, 'phenology.shed_light_hours',        cfg%pft%pheno_shed_light_hours,      npft, m)
+      call req_pa(t, 'phenology.shed_light_sharpness',    cfg%pft%pheno_shed_light_sharpness,  npft, m)
+      call req_pa(t, 'phenology.light_window',            cfg%pft%pheno_light_window,          npft, m)
+      !----- OPTIONAL: the water cue, which a PFT turns on through its masks. An absent key keeps  !
+      !      the alloc_pft_table default, which equals the pheno_params_t default. --------------!
+      call opt_pa(t, 'phenology.flush_water_sum',         cfg%pft%pheno_flush_water_sum,       npft, m)
+      call opt_pa(t, 'phenology.flush_water_sharpness',   cfg%pft%pheno_flush_water_sharpness, npft, m)
+      call opt_pa(t, 'phenology.shed_water_sum',          cfg%pft%pheno_shed_water_sum,        npft, m)
+      call opt_pa(t, 'phenology.shed_water_sharpness',    cfg%pft%pheno_shed_water_sharpness,  npft, m)
    end subroutine load_phenology_pft
 
    !----- "day" | "month" | "year" | "run" -> FC_* (unknown -> error stop naming the offender). ---!
@@ -990,20 +981,14 @@ contains
       cfg%hydraulics%wood_water_sat = toml_real(tm, 'hydraulics.wood_water_sat', cfg%hydraulics%wood_water_sat)
       cfg%hydraulics%wood_psi50     = toml_real(tm, 'hydraulics.wood_psi50',     cfg%hydraulics%wood_psi50)
       cfg%hydraulics%wood_kexp      = toml_real(tm, 'hydraulics.wood_kexp',      cfg%hydraulics%wood_kexp)
-      cfg%hydraulics%k_plant_max    = toml_real(tm, 'hydraulics.k_plant_max',    cfg%hydraulics%k_plant_max)
-      cfg%hydraulics%wood_kmax      = toml_real(tm, 'hydraulics.wood_kmax',      cfg%hydraulics%wood_kmax)
       cfg%hydraulics%vessel_curl    = toml_real(tm, 'hydraulics.vessel_curl',    cfg%hydraulics%vessel_curl)
-      if (toml_has(tm, 'hydraulics.conductance')) then
-         select case (trim(adjustl(toml_string(tm, 'hydraulics.conductance', 'whole_plant'))))
-         case ('whole_plant') ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_WHOLE_PLANT
-         case ('segment')     ; cfg%hydraulics%conductance = HYD_CONDUCTANCE_SEGMENT
-         case default
-            error stop 'load_meds_config: hydraulics.conductance must be "whole_plant" or "segment"'
-         end select
-      end if
-      cfg%hydraulics%root_beta          = toml_real(tm, 'hydraulics.root_beta',          cfg%hydraulics%root_beta)
-      cfg%hydraulics%root_depth         = toml_real(tm, 'hydraulics.root_depth',         cfg%hydraulics%root_depth)
-      cfg%hydraulics%specific_root_area = toml_real(tm, 'hydraulics.specific_root_area', cfg%hydraulics%specific_root_area)
+      cfg%hydraulics%root_beta     = toml_real(tm, 'hydraulics.root_beta',     cfg%hydraulics%root_beta)
+      cfg%hydraulics%root_depth_b1 = toml_real(tm, 'hydraulics.root_depth_b1', cfg%hydraulics%root_depth_b1)
+      cfg%hydraulics%root_depth_b2 = toml_real(tm, 'hydraulics.root_depth_b2', cfg%hydraulics%root_depth_b2)
+      cfg%hydraulics%specific_root_length = toml_real(tm, 'hydraulics.specific_root_length',                &
+                                                      cfg%hydraulics%specific_root_length)
+      cfg%hydraulics%fine_root_radius     = toml_real(tm, 'hydraulics.fine_root_radius',                    &
+                                                      cfg%hydraulics%fine_root_radius)
 
       !----- [soil]/[energy]/[snow]/[aerodynamics] fast-loop biophysics run-config (all opt-in;    !
       !      each key DEFAULTED to its meds_biophysics_opts placeholder, so an absent block is a     !
@@ -1102,6 +1087,7 @@ contains
       !      UNCONDITIONAL (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- there is no       !
       !      phenology.phenology_on key any more; see load_phenology_pft for the per-PFT cue params. !
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
+      cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -1115,15 +1101,6 @@ contains
       call req_temp_response (tm, 'leaf_physiology.temp_response_form', cfg%temp_response_form, miss)
       call req_colimitation  (tm, 'leaf_physiology.colimitation',       cfg%colimitation,       miss)
       call req_l(tm, 'leaf_physiology.use_boundary_layer', cfg%leaf_use_boundary_layer, miss)
-      call req_l(tm, 'leaf_physiology.wstress_nonstomatal', cfg%leaf_wstress_nonstomatal, miss)
-      !----- The stomatal control at low leaf water potential (#332); optional, one option today. ----!
-      if (toml_has(tm, 'leaf_physiology.low_water_potential_control')) then
-         select case (trim(adjustl(toml_string(tm, 'leaf_physiology.low_water_potential_control', ''))))
-         case ('linear_decline') ; cfg%low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE
-         case default
-            error stop 'load_meds_config: leaf_physiology.low_water_potential_control must be "linear_decline"'
-         end select
-      end if
       call req_r(tm, 'leaf_physiology.kc25',     cfg%kc25,     miss)
       call req_r(tm, 'leaf_physiology.ko25',     cfg%ko25,     miss)
       call req_r(tm, 'leaf_physiology.gstar25',  cfg%gstar25,  miss)
@@ -1171,16 +1148,22 @@ contains
       call req_pa(tp, 'pft.dbh_critical',                     cfg%pft%dbh_critical,                     npft, miss)
       call req_pa(tp, 'pft.hgt_max',                          cfg%pft%hgt_max,                          npft, miss)
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
-      call req_pa(tp, 'pft.repro_carbon_efficiency',          cfg%pft%repro_carbon_efficiency,          npft, miss)
+      call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
+      call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
-      call req_r(tp, 'pft.min_reproduction_height', cfg%pft%min_reproduction_height, miss)
+      if (toml_has(tp, 'pft.reproduction_height_fraction'))                                       &
+         cfg%pft%reproduction_height_fraction = toml_real(tp, 'pft.reproduction_height_fraction', 0.0_wp)
 
       !----- Leaf-photosynthesis per-PFT traits. ------------------------------------------!
       call req_pa_int(tp, 'pft.photosynthetic_pathway', cfg%pft%photosynthetic_pathway, npft, miss)
       call req_pa_log(tp, 'pft.is_woody',           cfg%pft%is_woody,           npft, miss)
       call req_pa(tp,     'pft.stem_resp_factor25', cfg%pft%stem_resp_factor25, npft, miss)
+      call opt_pa(tp,     'pft.stem_resp_sapwood25', cfg%pft%stem_resp_sapwood25, npft, miss)
+      call opt_pa(tp,     'pft.max_relative_growth_rate', cfg%pft%max_relative_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_rate', cfg%pft%max_absolute_growth_rate, npft, miss)
+      call opt_pa(tp,     'pft.max_absolute_growth_exponent', cfg%pft%max_absolute_growth_exponent, npft, miss)
       call req_pa(tp,     'pft.root_resp_factor25', cfg%pft%root_resp_factor25, npft, miss)
       !----- Canopy optics: shortwave as reflect/transmit per band, longwave as EMISSIVITY. -----!
       call req_pa(tp, 'pft.leaf_reflect_vis',  cfg%pft%leaf_reflect_vis,  npft, miss)
@@ -1212,11 +1195,11 @@ contains
       call req_pa(tp, 'pft.theta_cj_c4',      cfg%pft%theta_cj_c4,      npft, miss)
       call req_pa(tp, 'pft.theta_ic_c4',      cfg%pft%theta_ic_c4,      npft, miss)
       call req_pa(tp, 'pft.katul_lambda25',   cfg%pft%katul_lambda25,   npft, miss)
-      call req_pa(tp, 'pft.wstress_psi_open', cfg%pft%wstress_psi_open, npft, miss)
-      call req_pa(tp, 'pft.wstress_psi_close',cfg%pft%wstress_psi_close,npft, miss)
       call req_pa(tp, 'pft.wstress_lambda_exp',cfg%pft%wstress_lambda_exp,npft, miss)
       call req_pa(tp, 'pft.wstress_sref_stomata',cfg%pft%wstress_sref_stomata,npft, miss)
       call opt_pa(tp, 'pft.stomata_psi_onset',   cfg%pft%stomata_psi_onset,   npft, miss)
+      call opt_pa(tp, 'pft.wstress_psi_open',    cfg%pft%wstress_psi_open,    npft, miss)
+      call opt_pa(tp, 'pft.wstress_psi_close',   cfg%pft%wstress_psi_close,   npft, miss)
       call opt_pa(tp, 'pft.leaf_surf_water_max', cfg%pft%leaf_surf_water_max, npft, miss)
       call opt_pa(tp, 'pft.wood_surf_water_max', cfg%pft%wood_surf_water_max, npft, miss)
 
@@ -1251,19 +1234,22 @@ contains
       call opt_pa(tp, 'pft.wood_water_sat',      cfg%pft%hyd_wood_water_sat,      npft, miss)
       call opt_pa(tp, 'pft.wood_psi50',          cfg%pft%hyd_wood_psi50,          npft, miss)
       call opt_pa(tp, 'pft.wood_kexp',           cfg%pft%hyd_wood_kexp,           npft, miss)
-      call opt_pa(tp, 'pft.k_plant_max',         cfg%pft%hyd_k_plant_max,         npft, miss)
       call opt_pa(tp, 'pft.wood_kmax',           cfg%pft%hyd_wood_kmax,           npft, miss)
       call opt_pa(tp, 'pft.vessel_curl',         cfg%pft%hyd_vessel_curl,         npft, miss)
+      call opt_pa(tp, 'pft.root_beta',           cfg%pft%hyd_root_beta,           npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b1',       cfg%pft%hyd_root_depth_b1,       npft, miss)
+      call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
+      call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
+      call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
       call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
-      call req_pa_int(tp, 'pft.evergreen',          cfg%pft%evergreen,              npft, miss)
       call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
       call req_pa(tp, 'pft.f_labile_stem',          cfg%pft%f_labile_stem,          npft, miss)
       call req_pa(tp, 'pft.struct_lignin_frac',     cfg%pft%struct_lignin_frac,     npft, miss)
 
-      !----- Leaf-phenology per-PFT cue params (required only if this PFT overrides the       !
-      !      literature/vanilla-evergreen defaults; see load_phenology_pft). -----------------!
+      !----- Leaf-phenology per-PFT cue params (required only if this PFT file has a          !
+      !      [phenology] section; see load_phenology_pft). ------------------------------------!
       call load_phenology_pft(tp, cfg, npft, miss)
 
       call req_r(tp, 'camac.mort_rho_ref',   cfg%pft%mort_rho_ref,   miss)
@@ -1283,6 +1269,7 @@ contains
       call req_r(tp, 'allometry.lai_b1',     cfg%allom%lai_b1,    miss)
       call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
       call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
+      call opt_height_allometry(tp, cfg, miss)
 
       !----- Key check: abort with the full list of the missing required keys and of the keys    !
       !      MEDS does not read (unknown or retired), from both files at once. -----------------!
@@ -1313,6 +1300,17 @@ contains
          if (nout == npft) cfg%pft%mort_alpha = buf(1:npft)
          call toml_real_array(tp, 'derived.mort_beta', buf, nout)
          if (nout == npft) cfg%pft%mort_beta = buf(1:npft)
+         !----- ... and the light-plasticity slopes: a cohort's trait is its PFT's top-of-canopy  !
+         !      value times exp(k * LAI above it) [1/(m2/m2)]. Each one is pinned on its own, so Rd !
+         !      can fall faster than Vcmax down the canopy (lower Rd/Vcmax in shade).  -----------!
+         call toml_real_array(tp, 'derived.kplastic_vcmax', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_vm0 = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_rd', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_llspan', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_llspan = buf(1:npft)
       end if
 
       call validate_config(cfg)
@@ -1334,9 +1332,9 @@ contains
          return
       end if
       write(u,'(a)') 'pft,wood_density,dbh_critical,hgt_max,'                                       &
-           //'reproduction_investment_fraction,repro_carbon_efficiency,'                            &
+           //'reproduction_investment_fraction,recruit_carbon_efficiency,'                            &
            //'mort_gamma,mort_alpha,mort_beta,seed_rain_recruits,include_pft,'                         &
-           //'min_cohort_height,min_reproduction_height,'                                              &
+           //'min_cohort_height,reproduction_height_fraction,'                                         &
            //'photosynthetic_pathway,vcmax25,jmax25,tpu25,rd25,kp25,'                                  &
            //'stomatal_g0,stomatal_g1,stomatal_d0,quantum_yield_c4,theta_j,theta_cj_c3,theta_ip_c3,'   &
            //'theta_cj_c4,theta_ic_c4,'                                                               &
@@ -1344,32 +1342,40 @@ contains
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,evergreen,'                 &
-           //'f_labile_leaf,f_labile_stem,struct_lignin_frac'
+           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
+           //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
+           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
+           //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
+           //'max_absolute_growth_rate,max_absolute_growth_exponent'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 49 ITEMS: i0 + 9 + i0 + 2 + i0 + 22 + 11 + i0 + 3. A format SHORTER than the value !
+            !----- 61 ITEMS: i0 + 9 + i0 + 2 + i0 + 47. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,22(",",es15.8),11(",",es15.8),",",i0,3(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,47(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
-                 p%reproduction_investment_fraction(pf), p%repro_carbon_efficiency(pf),                &
+                 p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
-                 p%include_pft(pf), p%min_cohort_height, p%min_reproduction_height,                     &
+                 p%include_pft(pf), p%min_cohort_height, p%reproduction_height_fraction,                &
                  p%photosynthetic_pathway(pf), p%vcmax25(pf), p%jmax25(pf), p%tpu25(pf),                &
                  p%rd25(pf), p%kp25(pf), p%stomatal_g0(pf), p%stomatal_g1(pf), p%stomatal_d0(pf),       &
                  p%quantum_yield_c4(pf), p%theta_j(pf), p%theta_cj_c3(pf), p%theta_ip_c3(pf),           &
                  p%theta_cj_c4(pf), p%theta_ic_c4(pf),                                                  &
-                 p%katul_lambda25(pf), p%wstress_psi_open(pf), p%wstress_psi_close(pf),                 &
+                 p%katul_lambda25(pf), pft_wstress_psi_open(cfg, pf), pft_wstress_psi_close(cfg, pf),   &
                  p%wstress_lambda_exp(pf), p%wstress_sref_stomata(pf), pft_stomata_psi_onset(cfg, pf),   &
                  p%leaf_surf_water_max(pf), p%wood_surf_water_max(pf),                                &
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
                  p%leaf_lifespan_toc(pf),                                                            &
-                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf), p%evergreen(pf),              &
-                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf)
+                 p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
+                 p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
+                 p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
+                 p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
+                 p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
+                 p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
+                 p%max_absolute_growth_exponent(pf)
          end do
       end associate
       close(u)

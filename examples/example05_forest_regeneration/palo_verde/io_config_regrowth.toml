@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Output of meds_config_regrowth.toml: monthly (M) and yearly (Y) site and PFT totals.
+[variables]
+lai_pft            = "M Y"
+lai_site           = "M Y"
+agb_pft            = "M Y"
+nplant_pft         = "M Y"
+basal_area_pft     = "M Y"
+nplant_size        = "M Y"
+canopy_height_site = "M Y"
+gpp_site           = "M Y"
+gpp_pft            = "M Y"
+et_site            = "M Y"
+litter_leaf_site   = "M Y"

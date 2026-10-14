@@ -2,26 +2,31 @@
 !==========================================================================================!
 ! test_phenology_driver -- integration test for the slow-loop leaf-phenology WIRING            !
 ! (meds_vegetation_dynamics.advance_leaf_phenology, the folded phenology driver), as opposed to  !
-! the stateless kernel (test_plant_phenology). It drives a two-cohort site through one synthetic  !
-! Ithaca year, feeding a daily air temperature via the site accumulator the fast loop fills, and  !
-! checks the two GOVERNOR drives:                                                                 !
+! the kernel itself (test_plant_phenology). It drives a two-cohort site through one synthetic    !
+! Ithaca year, feeding the daily drivers through the site accumulators the fast loop fills, and   !
+! checks the two leaf tendencies:                                                                 !
 !                                                                                          !
-!   1. TEMP-DECIDUOUS : a cohort with flush/shed masks = CUE_TEMP flushes (flush_drive high) in     !
-!                       mid-summer and sheds (shed_drive high) in late autumn; GDD accumulates.     !
-!   2. EVERGREEN      : a cohort with both masks CUE_NONE holds flush_drive~1, shed_drive~0 all year.!
-!   3. NO-TEMPERATURE : a step with no accumulated air temperature (pheno_tair_n = 0) is skipped.    !
-!   4. THE FOUR CUE DRIVERS (#150), each against a HAND-COMPUTED value, because nothing else       !
-!      checks that the numbers the fast loop reduces are the numbers the kernel was written        !
-!      against: the soil-temperature cold-drop trigger (no longer the air-temperature proxy), the  !
-!      soil-water running mean, the consecutive-dry-day counter, and the radiation running mean.   !
+!   1. TEMPERATE DECIDUOUS : warmth x light flush, cold x short-day shed (the hours of light are  !
+!                            the day length here, as a low par_min counts) -- flushing in      !
+!                            mid-summer, senescing in late autumn.                               !
+!   2. NO CUES             : a cohort with both masks CUE_NONE stays flushing, never senescing.  !
+!   3. NO-TEMPERATURE      : a step with no accumulated air temperature (pheno_tair_n = 0) is    !
+!                            skipped.                                                            !
+!   4. THE CUE DRIVERS, each against a HAND-COMPUTED value, because nothing else checks that the !
+!      numbers the fast loop reduces are the numbers the kernel reads: the warmth and cold sums,  !
+!      the predawn-psi sums against the PFT's derived turgor-loss point, each cohort's own light  !
+!      mean, and the light memory a new cohort starts from.                                       !
+!   5. ACCEPTANCE          : a drought-deciduous and a light-exchanging PFT run end to end.      !
 !==========================================================================================!
 program test_phenology_driver
    use meds_kinds,                only : wp, ik
-   use meds_config,               only : meds_config_t
-   use meds_site_state_types, only : site_t
+   use meds_config,               only : meds_config_t, pft_leaf_psi_tlp
+   use meds_site_state_types,     only : site_t
    use meds_init,                 only : init_bare_ground, add_cohort
    use meds_vegetation_dynamics,  only : advance_leaf_phenology
-   use meds_phenology_types, only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_HYDRO, CUE_LIGHT
+   use meds_constants,            only : day_sec
+   use meds_time,                 only : daylength
+   use meds_phenology_types,      only : CUE_TEMP, CUE_NONE, CUE_WATER, CUE_LIGHT
    use meds_test_support, only : build_test_config, check_close, check_int, check_true, test_report
    implicit none
 
@@ -29,269 +34,240 @@ program test_phenology_driver
    type(meds_config_t) :: cfg
    type(site_t)        :: site
    integer(ik) :: doy
-   real(wp)    :: fl_temp_200, sh_temp_200, fl_temp_340, sh_temp_340
-   real(wp)    :: fl_ever_200, sh_ever_200, fl_ever_340, sh_ever_340, gdd_summer
+   real(wp)    :: fl_decid_200, sh_decid_200, fl_decid_340, sh_decid_340
+   real(wp)    :: fl_none_200, sh_none_200, fl_none_340, sh_none_340, gdd_summer
 
-
-   !----- Config: one temperature-deciduous PFT (1), the rest evergreen; phenology is             !
-   !       unconditional now (docs/dev_plans/archive/MEDS_SLOW_DYNAMICS_DESIGN.md Part I) -- this test     !
-   !       calls advance_leaf_phenology directly, so no config flag is needed to enable it. --------!
+   !----- Config: PFT 1 temperate deciduous (warmth x light, cold x short days), the rest   !
+   !       with no cues. This test calls advance_leaf_phenology directly. ------------------!
    cfg = build_test_config()
-   cfg%forcing%latitude_deg      = 42.44_wp            ! Ithaca NY (northern hemisphere)
-   cfg%pft%pheno_flush_cue_mask  = CUE_NONE            ! default: permissive flush (evergreen)
-   cfg%pft%pheno_shed_cue_mask   = CUE_NONE            ! default: no active shed
-   cfg%pft%pheno_flush_cue_mask(1) = CUE_TEMP          ! PFT 1: cold-deciduous, flush on GDD
-   cfg%pft%pheno_shed_cue_mask(1)  = CUE_TEMP          ! PFT 1: cold-deciduous, shed on cold-drop
+   cfg%forcing%latitude_deg               = 42.44_wp           ! Ithaca NY (northern hemisphere)
+   cfg%pft%pheno_flush_cue_mask(1)        = CUE_TEMP + CUE_LIGHT
+   cfg%pft%pheno_shed_cue_mask(1)         = CUE_TEMP + CUE_LIGHT
+   cfg%pft%pheno_flush_degree_days(1)     = 92.0_wp
+   cfg%pft%pheno_shed_base_temp(1)        = 290.37_wp
+   cfg%pft%pheno_shed_degree_days(1)      = 48.0_wp
+   cfg%pft%pheno_flush_light_hours(1)     = 10.35_wp
+   cfg%pft%pheno_shed_light_hours(1)      = 9.83_wp
 
-   !----- A site with two cohorts: cohort 1 = PFT 1 (deciduous), cohort 2 = PFT 2 (evergreen). !
+   !----- A site with two cohorts: cohort 1 = PFT 1 (deciduous), cohort 2 = PFT 2 (no cues). -!
    call init_bare_ground(site, cfg, 1_ik)
    call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
    call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 10.0_wp)
    call check_int('two cohorts created', int(site%cohort%n, ik), 2_ik)
-   call check_close('cohort 1 born flushing (flush_drive=1)', site%cohort%pheno_flush_drive(1), 1.0_wp, 1.0e-9_wp)
-   call check_close('cohort 1 born with no active shed',      site%cohort%pheno_shed_drive(1),  0.0_wp, 1.0e-9_wp)
+   call check_close('cohort 1 born flushing',      site%cohort%leaf_flush_tendency(1), 1.0_wp, 1.0e-9_wp)
+   call check_close('cohort 1 born not senescing', site%cohort%leaf_shed_tendency(1),  0.0_wp, 1.0e-9_wp)
 
-   !----- Drive one synthetic year (dt_slow = 1 day). Each day set the site daily-mean air temp !
-   !      (the fast loop's accumulator) to an Ithaca-like sinusoid, then advance the phenology.  !
-   fl_temp_200 = -99.0_wp ; sh_temp_200 = -99.0_wp ; fl_temp_340 = -99.0_wp ; sh_temp_340 = -99.0_wp
-   fl_ever_200 = -99.0_wp ; sh_ever_200 = -99.0_wp ; fl_ever_340 = -99.0_wp ; sh_ever_340 = -99.0_wp
-   gdd_summer  = 0.0_wp
+   !----- Drive one synthetic year (dt_slow = 1 day). ------------------------------------!
    do doy = 1_ik, 365_ik
-      call set_daily_drivers(site, daily_tair(doy), daily_tsoil(doy), 0.8_wp, 300.0_wp)
+      call set_daily_drivers(site, daily_tair(doy), daylength(cfg%forcing%latitude_deg, doy))
       call advance_leaf_phenology(site, cfg, doy)
       if (doy == 200_ik) then
-         fl_temp_200 = site%cohort%pheno_flush_drive(1) ; sh_temp_200 = site%cohort%pheno_shed_drive(1)
-         fl_ever_200 = site%cohort%pheno_flush_drive(2) ; sh_ever_200 = site%cohort%pheno_shed_drive(2)
-         gdd_summer  = site%cohort%pheno_gdd(1)
+         fl_decid_200 = site%cohort%leaf_flush_tendency(1) ; sh_decid_200 = site%cohort%leaf_shed_tendency(1)
+         fl_none_200  = site%cohort%leaf_flush_tendency(2) ; sh_none_200  = site%cohort%leaf_shed_tendency(2)
+         gdd_summer   = site%cohort%growing_degree_days(1)
       end if
       if (doy == 340_ik) then
-         fl_temp_340 = site%cohort%pheno_flush_drive(1) ; sh_temp_340 = site%cohort%pheno_shed_drive(1)
-         fl_ever_340 = site%cohort%pheno_flush_drive(2) ; sh_ever_340 = site%cohort%pheno_shed_drive(2)
+         fl_decid_340 = site%cohort%leaf_flush_tendency(1) ; sh_decid_340 = site%cohort%leaf_shed_tendency(1)
+         fl_none_340  = site%cohort%leaf_flush_tendency(2) ; sh_none_340  = site%cohort%leaf_shed_tendency(2)
       end if
    end do
 
-   !----- 1. Temperature-deciduous: flushing in summer, shedding in autumn. -----------------!
-   call check_true('deciduous flush_drive HIGH in mid-summer (doy 200)', fl_temp_200 > 0.5_wp)
-   call check_true('deciduous shed_drive  LOW  in mid-summer',           sh_temp_200 < 0.2_wp)
-   call check_true('deciduous shed_drive  HIGH in late autumn (doy 340)', sh_temp_340 > 0.5_wp)
-   call check_true('deciduous flush_drive LOW  in late autumn',           fl_temp_340 < 0.5_wp)
-   call check_true('deciduous GDD accumulated by summer',                 gdd_summer > 100.0_wp)
+   !----- 1. Temperate deciduous: flushing in summer, senescing in autumn. -----------------!
+   call check_true('deciduous flush tendency HIGH in mid-summer (doy 200)',  fl_decid_200 > 0.9_wp,  fl_decid_200)
+   call check_true('deciduous shed tendency  LOW  in mid-summer',            sh_decid_200 < 0.05_wp, sh_decid_200)
+   call check_true('deciduous shed tendency  HIGH in late autumn (doy 340)', sh_decid_340 > 0.5_wp,  sh_decid_340)
+   call check_true('deciduous flush tendency LOW  in late autumn',           fl_decid_340 < 0.5_wp,  fl_decid_340)
+   call check_true('deciduous warmth sum accumulated by summer',             gdd_summer > 92.0_wp,   gdd_summer)
 
-   !----- 2. Evergreen cohort: flush_drive ~1, shed_drive ~0 all year. ----------------------!
-   call check_true('evergreen flush_drive ~1 in summer', fl_ever_200 > 0.9_wp)
-   call check_true('evergreen shed_drive  ~0 in summer', sh_ever_200 < 0.1_wp)
-   call check_true('evergreen flush_drive ~1 in autumn', fl_ever_340 > 0.9_wp)
-   call check_true('evergreen shed_drive  ~0 in autumn', sh_ever_340 < 0.1_wp)
+   !----- 2. No cues: flushing, never senescing, all year. ---------------------------------!
+   call check_true('no cues: flush tendency 1 in summer', fl_none_200 > 1.0_wp - 1.0e-12_wp)
+   call check_true('no cues: shed tendency 0 in summer',  sh_none_200 < 1.0e-12_wp)
+   call check_true('no cues: flush tendency 1 in autumn', fl_none_340 > 1.0_wp - 1.0e-12_wp)
+   call check_true('no cues: shed tendency 0 in autumn',  sh_none_340 < 1.0e-12_wp)
 
-   !----- 3. A no-temperature step is skipped (drives + memory unchanged). ------------------!
+   !----- 3. A no-temperature step is skipped (tendencies + memory unchanged). -------------!
    block
       real(wp) :: fl_before, sh_before, gdd_before
-      fl_before  = site%cohort%pheno_flush_drive(1)
-      sh_before  = site%cohort%pheno_shed_drive(1)
-      gdd_before = site%cohort%pheno_gdd(1)
-      call set_daily_drivers(site, 0.0_wp, 0.0_wp, 0.0_wp, 0.0_wp)
+      fl_before  = site%cohort%leaf_flush_tendency(1)
+      sh_before  = site%cohort%leaf_shed_tendency(1)
+      gdd_before = site%cohort%growing_degree_days(1)
+      call set_daily_drivers(site, 0.0_wp, 0.0_wp)
       site%pheno_tair_n = 0_ik                                    ! no fast sub-steps ran
       call advance_leaf_phenology(site, cfg, 1_ik)
-      call check_true('no-temperature step leaves flush_drive unchanged', &
-                      abs(site%cohort%pheno_flush_drive(1) - fl_before) < tiny(1.0_wp))
-      call check_true('no-temperature step leaves shed_drive unchanged', &
-                      abs(site%cohort%pheno_shed_drive(1) - sh_before) < tiny(1.0_wp))
-      call check_true('no-temperature step leaves GDD unchanged', &
-                      abs(site%cohort%pheno_gdd(1) - gdd_before) < tiny(1.0_wp))
+      call check_true('no-temperature step leaves the flush tendency unchanged', &
+                      abs(site%cohort%leaf_flush_tendency(1) - fl_before) < tiny(1.0_wp))
+      call check_true('no-temperature step leaves the shed tendency unchanged', &
+                      abs(site%cohort%leaf_shed_tendency(1) - sh_before) < tiny(1.0_wp))
+      call check_true('no-temperature step leaves the warmth sum unchanged', &
+                      abs(site%cohort%growing_degree_days(1) - gdd_before) < tiny(1.0_wp))
    end block
 
    !=== 4. THE CUE DRIVERS, each against a hand-computed value. ============================!
-   !     These exist because #150's drivers are the one part of the phenology chain nothing had
-   !     checked: the kernel is tested on cue values fed in directly, and the strategies are
-   !     tested end to end for TEMP only. What was never asserted is that the value the fast
-   !     loop reduces into site%pheno_*_sum is the value the kernel reads out of pheno_env_t.
 
-   !----- 4a. The cold-drop trigger reads SOIL temperature, not air. A warm-air / cold-soil day  !
-   !          must shed; if the driver still passed temp_day this cohort would stay flushed.     !
+   !----- 4a. Temperature: 10 days at 288.15 K add 10 x (288.15 - 278.15) to the warmth sum;   !
+   !          before midsummer the cold sum stays 0, after it 10 days at 280.15 K add         !
+   !          10 x (290.37 - 280.15). -------------------------------------------------------!
    block
-      real(wp) :: shed_cold_soil, shed_warm_soil
       call reset_pheno_memory(site)
-      do doy = 1_ik, 20_ik                       ! warm AIR, cold SOIL -> cold-drop must fire
-         call set_daily_drivers(site, 295.0_wp, 270.0_wp, 0.8_wp, 300.0_wp)
-         call advance_leaf_phenology(site, cfg, 200_ik)
+      do doy = 100_ik, 109_ik
+         call set_daily_drivers(site, 288.15_wp, 12.0_wp)
+         call advance_leaf_phenology(site, cfg, doy)
       end do
-      shed_cold_soil = site%cohort%pheno_shed_drive(1)
+      call check_close('warmth sum after 10 days 10 K above base', site%cohort%growing_degree_days(1), &
+                       100.0_wp, 1.0e-9_wp)
+      call check_close('no cold sum before midsummer', site%cohort%cold_degree_days(1), 0.0_wp, 0.0_wp)
       call reset_pheno_memory(site)
-      do doy = 1_ik, 20_ik                       ! same air, warm soil -> no cold drop
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.8_wp, 300.0_wp)
-         call advance_leaf_phenology(site, cfg, 200_ik)
+      do doy = 250_ik, 259_ik
+         call set_daily_drivers(site, 280.15_wp, 12.0_wp)
+         call advance_leaf_phenology(site, cfg, doy)
       end do
-      shed_warm_soil = site%cohort%pheno_shed_drive(1)
-      call check_true('cold SOIL under warm air sheds (driver reads soil, not air)',             &
-                      shed_cold_soil > 0.8_wp, shed_cold_soil)
-      call check_true('warm soil under the same air does not shed',                              &
-                      shed_warm_soil < 0.1_wp, shed_warm_soil)
+      call check_close('cold sum after 10 days below the shed base', site%cohort%cold_degree_days(1), &
+                       10.0_wp * (290.37_wp - 280.15_wp), 1.0e-9_wp)
    end block
 
-   !----- 4b. CUE_WATER: the running mean is x += w*(env - x) with w = dt/window. From x = 0     !
-   !          with a constant input r and w = 0.1, after n days x = r*(1 - 0.9^n) EXACTLY.       !
+   !----- 4b. Water: the dry sum adds (psi_tlp - psi_pd) per day, against the PFT's DERIVED     !
+   !          turgor-loss point; one wet day adds wet credit without wiping it. -------------!
    block
-      real(wp) :: expect
-      cfg%pft%pheno_shed_cue_mask(1) = CUE_WATER
-      cfg%pft%pheno_water_window     = 10.0_wp
+      real(wp) :: tlp, dry7
+      cfg%pft%pheno_flush_cue_mask(1) = CUE_NONE
+      cfg%pft%pheno_shed_cue_mask(1)  = CUE_WATER
+      tlp = pft_leaf_psi_tlp(cfg, 1_ik)
       call reset_pheno_memory(site)
-      do doy = 1_ik, 5_ik
-         call set_daily_drivers(site, 290.0_wp, 290.0_wp, 0.60_wp, 300.0_wp)
-         call advance_leaf_phenology(site, cfg, 200_ik)
-      end do
-      expect = 0.60_wp * (1.0_wp - 0.9_wp**5)
-      call check_close('CUE_WATER running mean after 5 days at 0.60', site%cohort%pheno_water_avg(1), &
-                       expect, 1.0e-12_wp)
-      !----- And it PERSISTS: before #150 the accumulator was a local re-zeroed every day, so     !
-      !      this would read 0.060 (one day's worth) instead of 0.246.  -------------------------!
-      call check_true('the running mean persisted across days (not re-zeroed)',                  &
-                      site%cohort%pheno_water_avg(1) > 0.2_wp, site%cohort%pheno_water_avg(1))
-   end block
-
-   !----- 4c. CUE_HYDRO: consecutive days with dmax_psi_leaf below the turgor-loss point. With    !
-   !          dt = 1 day, low_psi_days after n dry days is exactly n -- and resets to 0 on one    !
-   !          wet day, which is what "consecutive" means and what a daily re-zero could not show. !
-   block
-      cfg%pft%pheno_shed_cue_mask(1) = CUE_HYDRO
-      call reset_pheno_memory(site)
-      site%cohort%dmax_psi_leaf(1) = -4.0_wp        ! well below psi_tlp
+      site%cohort%dmax_psi_leaf(1) = tlp - 1.0_wp           ! 1 MPa below the TLP
       do doy = 1_ik, 7_ik
-         call set_daily_drivers(site, 290.0_wp, 290.0_wp, 0.3_wp, 300.0_wp)
+         call set_daily_drivers(site, 290.0_wp, 12.0_wp)
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      call check_close('CUE_HYDRO dry-day counter after 7 dry days', site%cohort%pheno_low_psi_days(1), &
-                       7.0_wp, 1.0e-12_wp)
-      site%cohort%dmax_psi_leaf(1) = -0.1_wp        ! one wet day
-      call set_daily_drivers(site, 290.0_wp, 290.0_wp, 0.3_wp, 300.0_wp)
+      dry7 = site%cohort%dry_psi_sum(1)
+      call check_close('dry sum after 7 days 1 MPa below the TLP', dry7, 7.0_wp, 1.0e-12_wp)
+      site%cohort%dmax_psi_leaf(1) = tlp + 0.5_wp           ! one wet day
+      call set_daily_drivers(site, 290.0_wp, 12.0_wp)
       call advance_leaf_phenology(site, cfg, 200_ik)
-      call check_close('one wet day resets the CONSECUTIVE dry-day counter',                     &
-                       site%cohort%pheno_low_psi_days(1), 0.0_wp, 1.0e-12_wp)
+      call check_close('one wet day adds wet credit', site%cohort%wet_psi_sum(1), 0.5_wp, 1.0e-12_wp)
+      call check_close('one wet day does not wipe the dry sum', site%cohort%dry_psi_sum(1), dry7, 0.0_wp)
    end block
 
-   !----- 4d. CUE_LIGHT: same exponential mean, on incident shortwave. ----------------------!
+   !----- 4c. Light: x += w*(h - x) with w = dt/window. From x = 0 with a constant input h     !
+   !          and w = 0.1, after n days x = h*(1 - 0.9^n) EXACTLY. Each cohort reads its OWN   !
+   !          hours of light (light_hours_accum, counted at its top): a shaded cohort's mean   !
+   !          stays lower. A cohort with no light memory starts from its first day's hours. ----!
    block
       real(wp) :: expect
-      cfg%pft%pheno_shed_cue_mask(1) = CUE_LIGHT
-      cfg%pft%pheno_light_window     = 10.0_wp
+      cfg%pft%pheno_shed_cue_mask(1:2) = CUE_LIGHT
+      cfg%pft%pheno_light_window(1:2)  = 10.0_wp
       call reset_pheno_memory(site)
+      call set_daily_drivers(site, 290.0_wp, 9.0_wp)
+      call advance_leaf_phenology(site, cfg, 200_ik)
+      call check_close('a cohort with no light memory starts from its first day', &
+                       site%cohort%light_hours_mean(1), 9.0_wp, 0.0_wp)
+      site%cohort%light_hours_mean(1:2) = 0.0_wp
       do doy = 1_ik, 5_ik
-         call set_daily_drivers(site, 290.0_wp, 290.0_wp, 0.8_wp, 400.0_wp)
+         call set_daily_drivers(site, 290.0_wp, 12.0_wp)
+         site%cohort%light_hours_accum(2) = 3.0_wp * cfg%dt_slow / day_sec    ! cohort 2 in shade
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      expect = 400.0_wp * (1.0_wp - 0.9_wp**5)
-      call check_close('CUE_LIGHT running mean after 5 days at 400 W/m2',                        &
-                       site%cohort%pheno_light_avg(1), expect, 1.0e-9_wp)
+      expect = 12.0_wp * (1.0_wp - 0.9_wp**5)
+      call check_close('light running mean after 5 days of 12 h',                                &
+                       site%cohort%light_hours_mean(1), expect, 1.0e-9_wp)
+      call check_close('a shaded cohort reads its own hours of light (3 h)',                     &
+                       site%cohort%light_hours_mean(2), expect / 4.0_wp, 1.0e-9_wp)
+      cfg%pft%pheno_shed_cue_mask(2) = CUE_NONE
    end block
 
-   !=== 5. ACCEPTANCE (#150): the two strategies that could not be selected before now run, and  !
-   !       reproduce the behaviour the design's patterns 3 and 4 describe. =====================!
+   !=== 5. ACCEPTANCE: the drought-deciduous and light-exchanging habits, end to end. =======!
 
-   !----- Pattern 3, facultative drought-deciduous (flush and shed both CUE_HYDRO): full when     !
-   !      watered, sheds under sustained drought, REFLUSHES on rewet. The reflush is the part     !
-   !      that needs the persisted counters -- it depends on high_psi_days building back up.      !
+   !----- Drought deciduous (flush and shed both on water): full when watered, senescing under  !
+   !      sustained drought, flushing again on rewet. -----------------------------------------!
    block
-      real(wp) :: shed_wet, shed_dry, flush_dry, flush_rewet
+      real(wp) :: shed_wet, shed_dry, flush_dry, flush_rewet, tlp
       integer(ik) :: d
-      cfg%pft%pheno_flush_cue_mask(1) = CUE_HYDRO
-      cfg%pft%pheno_shed_cue_mask(1)  = CUE_HYDRO
+      cfg%pft%pheno_flush_cue_mask(1) = CUE_WATER
+      cfg%pft%pheno_shed_cue_mask(1)  = CUE_WATER
+      tlp = pft_leaf_psi_tlp(cfg, 1_ik)
       call reset_pheno_memory(site)
-      site%cohort%dmax_psi_leaf(1) = -0.2_wp                    ! well watered
-      do d = 1_ik, 30_ik
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.9_wp, 300.0_wp)
+      site%cohort%dmax_psi_leaf(1) = 0.5_wp * tlp               ! well watered
+      do d = 1_ik, 60_ik
+         call set_daily_drivers(site, 295.0_wp, 12.0_wp)
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      shed_wet = site%cohort%pheno_shed_drive(1)
-      site%cohort%dmax_psi_leaf(1) = -4.0_wp                    ! sustained drought, past psi_tlp
+      shed_wet = site%cohort%leaf_shed_tendency(1)
+      site%cohort%dmax_psi_leaf(1) = tlp - 2.0_wp               ! sustained drought, past the TLP
       do d = 1_ik, 30_ik
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.1_wp, 300.0_wp)
+         call set_daily_drivers(site, 295.0_wp, 12.0_wp)
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      shed_dry  = site%cohort%pheno_shed_drive(1)
-      flush_dry = site%cohort%pheno_flush_drive(1)
-      site%cohort%dmax_psi_leaf(1) = -0.2_wp                    ! rewet
+      shed_dry  = site%cohort%leaf_shed_tendency(1)
+      flush_dry = site%cohort%leaf_flush_tendency(1)
+      site%cohort%dmax_psi_leaf(1) = 0.5_wp * tlp               ! rewet
       do d = 1_ik, 30_ik
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.9_wp, 300.0_wp)
+         call set_daily_drivers(site, 295.0_wp, 12.0_wp)
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      flush_rewet = site%cohort%pheno_flush_drive(1)
-      call check_true('pattern 3: no active shed when watered', shed_wet < 0.1_wp, shed_wet)
-      call check_true('pattern 3: sheds under sustained drought', shed_dry > 0.8_wp, shed_dry)
-      call check_true('pattern 3: flush suppressed while droughted', flush_dry < 0.2_wp, flush_dry)
-      call check_true('pattern 3: REFLUSHES on rewet', flush_rewet > 0.8_wp, flush_rewet)
+      flush_rewet = site%cohort%leaf_flush_tendency(1)
+      call check_true('drought-deciduous: no senescence when watered',  shed_wet < 0.05_wp,   shed_wet)
+      call check_true('drought-deciduous: senesces under drought',      shed_dry > 0.8_wp,    shed_dry)
+      call check_true('drought-deciduous: flush suppressed in drought', flush_dry < 0.2_wp,   flush_dry)
+      call check_true('drought-deciduous: flushes again on rewet',      flush_rewet > 0.8_wp, flush_rewet)
    end block
 
-   !----- Pattern 4, light-driven leaf-exchanging: flush stays permissive (the fixed high        !
-   !      k_flush_max the design decided on), shed RISES WITH LIGHT. ------------------------!
+   !----- Light-driven leaf exchange: flushing throughout, senescence rising with light. ----!
    block
       real(wp) :: shed_dim, shed_bright, flush_bright
       integer(ik) :: d
-      cfg%pft%pheno_flush_cue_mask(1) = CUE_NONE                ! permissive flush (design sec 10.1)
-      cfg%pft%pheno_shed_cue_mask(1)  = CUE_LIGHT
-      cfg%pft%pheno_light_on_threshold = 200.0_wp
+      cfg%pft%pheno_flush_cue_mask(1)       = CUE_NONE
+      cfg%pft%pheno_shed_cue_mask(1)        = CUE_LIGHT
+      cfg%pft%pheno_shed_light_hours(1)     = 6.0_wp
+      cfg%pft%pheno_shed_light_sharpness(1) = 2.0_wp         ! > 0: many bright hours trigger
       call reset_pheno_memory(site)
       do d = 1_ik, 60_ik
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.8_wp, 60.0_wp)    ! dim
+         call set_daily_drivers(site, 295.0_wp, 2.0_wp)       ! few bright hours
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      shed_dim = site%cohort%pheno_shed_drive(1)
+      shed_dim = site%cohort%leaf_shed_tendency(1)
       call reset_pheno_memory(site)
       do d = 1_ik, 60_ik
-         call set_daily_drivers(site, 295.0_wp, 295.0_wp, 0.8_wp, 500.0_wp)   ! bright
+         call set_daily_drivers(site, 295.0_wp, 10.0_wp)      ! many bright hours
          call advance_leaf_phenology(site, cfg, 200_ik)
       end do
-      shed_bright  = site%cohort%pheno_shed_drive(1)
-      flush_bright = site%cohort%pheno_flush_drive(1)
-      call check_true('pattern 4: little shed under dim light', shed_dim < 0.2_wp, shed_dim)
-      call check_true('pattern 4: shed rises with light',        shed_bright > 0.8_wp, shed_bright)
-      call check_true('pattern 4: flush stays permissive while exchanging leaves',                &
-                      flush_bright > 0.9_wp, flush_bright)
+      shed_bright  = site%cohort%leaf_shed_tendency(1)
+      flush_bright = site%cohort%leaf_flush_tendency(1)
+      call check_true('leaf exchange: little senescence under dim light', shed_dim < 0.05_wp,     shed_dim)
+      call check_true('leaf exchange: senescence rises with light',       shed_bright > 0.8_wp,   shed_bright)
+      call check_true('leaf exchange: still flushing while exchanging',   flush_bright > 0.99_wp, flush_bright)
    end block
 
    call test_report('test_phenology_driver')
 
 contains
 
-   !----- Fill EVERY site accumulator the fast loop fills, exactly as the fast loop fills it: the !
-   !      air-temperature sum is not area-weighted (site-uniform forcing) while the other three   !
-   !      are, so with one patch of area 1 all four are just the value itself. A fixture that     !
-   !      sets only the air temperature leaves soil temperature at 0 K, which trips the           !
-   !      unconditional cold-soil drop in midsummer -- which is exactly what it did.  ------------!
-   subroutine set_daily_drivers(site, tair, tsoil, swater, rad)
+   !----- Fill what the fast loop fills: the site air-temperature sum and, per cohort, the time !
+   !      [h] its top's PAR exceeded par_min over the step -- here `hours` a day at every cohort, !
+   !      so the driver's per-day value recovers it exactly. ------------------------------------!
+   subroutine set_daily_drivers(site, tair, hours)
       type(site_t), intent(inout) :: site
-      real(wp),     intent(in)    :: tair, tsoil, swater, rad
-      site%pheno_tair_sum   = tair ; site%pheno_tair_n = 1_ik
-      site%pheno_soilt_sum  = tsoil
-      site%pheno_swater_sum = swater
-      site%pheno_rad_sum    = rad
+      real(wp),     intent(in)    :: tair, hours
+      site%pheno_tair_sum = tair ; site%pheno_tair_n = 1_ik
+      site%cohort%light_hours_accum(1:site%cohort%n) = hours * cfg%dt_slow / day_sec
    end subroutine set_daily_drivers
 
    !----- Clear every phenology memory so each cue block starts from a known state. ---------!
    subroutine reset_pheno_memory(site)
       type(site_t), intent(inout) :: site
-      site%cohort%pheno_flush_drive(1:site%cohort%n)   = 1.0_wp
-      site%cohort%pheno_shed_drive(1:site%cohort%n)    = 0.0_wp
-      site%cohort%pheno_gdd(1:site%cohort%n)           = 0.0_wp
-      site%cohort%pheno_chill(1:site%cohort%n)         = 0.0_wp
-      site%cohort%pheno_water_avg(1:site%cohort%n)     = 0.0_wp
-      site%cohort%pheno_low_psi_days(1:site%cohort%n)  = 0.0_wp
-      site%cohort%pheno_high_psi_days(1:site%cohort%n) = 0.0_wp
-      site%cohort%pheno_light_avg(1:site%cohort%n)     = 0.0_wp
+      associate (n => site%cohort%n)
+         site%cohort%leaf_flush_tendency(1:n) = 1.0_wp
+         site%cohort%leaf_shed_tendency(1:n)  = 0.0_wp
+         site%cohort%growing_degree_days(1:n) = 0.0_wp
+         site%cohort%cold_degree_days(1:n)    = 0.0_wp
+         site%cohort%dry_psi_sum(1:n)         = 0.0_wp
+         site%cohort%wet_psi_sum(1:n)         = 0.0_wp
+         site%cohort%light_hours_mean(1:n)    = -1.0_wp      ! no light memory
+      end associate
    end subroutine reset_pheno_memory
-
-   !----- Soil temperature: the air sinusoid damped and lagged, as a real column would be. ---!
-   pure real(wp) function daily_tsoil(doy) result(t)
-      integer(ik), intent(in) :: doy
-      t = 283.15_wp + 9.0_wp * sin(twopi * (real(doy, wp) - 130.0_wp) / 365.0_wp)
-   end function daily_tsoil
-
 
    !----- Ithaca-like daily-mean air temperature [K]: ~270 in winter, ~297 in summer. --------!
    pure real(wp) function daily_tair(doy) result(t)
       integer(ik), intent(in) :: doy
       t = 283.15_wp + 14.0_wp * sin(twopi * (real(doy, wp) - 110.0_wp) / 365.0_wp)
    end function daily_tair
-
-
-
 
 end program test_phenology_driver

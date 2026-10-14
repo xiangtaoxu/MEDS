@@ -11,8 +11,8 @@ step's own operators (`docs/configuration.md`, "How a run starts"), so the censu
 measured size and every cell.
 
 ```bash
-python make_census.py --declaration ../../examples/example_flux_tower_bci/bci_census.toml \
-    --out ../../examples/example_flux_tower_bci/data/bci_census2010_meds.csv
+python make_census.py --declaration ../../examples/example04_column_biophysics/bci_census.toml \
+    --out ../../examples/example04_column_biophysics/data/bci_census2010_meds.csv
 ```
 
 The declaration TOML names the table, its checksum and how to read it (`[source]`), the plot and the

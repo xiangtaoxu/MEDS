@@ -76,6 +76,16 @@ def digest(*objs) -> str:
     return hashlib.sha1(text.encode()).hexdigest()
 
 
+#: a run takes one thread for every this many simulated days, up to [fit].max_threads: an iteration
+#: waits for its longest runs (the seasonal runs, the chains), while a ten-day window gains little
+DAYS_PER_THREAD = 15
+
+
+def threads_for(days: float, max_threads: int) -> int:
+    """The threads of a run of `days` simulated days. MEDS's output is the same at any count."""
+    return max(1, min(int(max_threads), math.ceil(float(days) / DAYS_PER_THREAD)))
+
+
 def timeout_for(days: float, per_day: float) -> float:
     """A run's timeout [s]: per_day for each simulated day, at least ten days' worth so a short run's
     start-up (reading the census) fits."""
@@ -95,11 +105,12 @@ def with_keys(base: RunConfig, keys, values, overrides: dict | None = None) -> R
 
 
 def build_trial(base: RunConfig, keys, values, window: Window, state_file, root: Path,
-                overrides: dict | None = None, write_state: bool = False) -> Path:
-    """Write a trial directory (or find the finished one) and return its path."""
+                overrides: dict | None = None, write_state: bool = False, threads: int = 1) -> Path:
+    """Write a trial directory (or find the finished one) and return its path. The thread count is
+    set after the name is made, so a finished trial is found whatever the count it ran with."""
     cfg = with_keys(base, keys, values, overrides)
     run = {"run.start_time": stamp(window.start), "run.end_time": stamp(window.end),
-           "run.slow_on": False, "run.n_threads": 1,
+           "run.slow_on": False, "run.n_threads": 1,         # in the name as 1; the real count is set below
            "init.init_mode": 2, "init.restart_file": str(state_file), "init.reacclimate_traits": True,
            "state.write_state": write_state, "state.output_prefix": PREFIX,
            "state.interval_years": 1000, "output.enabled": True, "output.prefix": PREFIX,
@@ -116,7 +127,7 @@ def build_trial(base: RunConfig, keys, values, window: Window, state_file, root:
     (tdir / "output_variables.toml").write_text(
         "[variables]\n" + "".join(f'{v} = "F"\n' for v in TRIAL_VARIABLES))
     for k, v in {"output.dir": str(tdir / "out"), "state.output_dir": str(tdir / "out"),
-                 "output.io_config": str(tdir / "output_variables.toml")}.items():
+                 "output.io_config": str(tdir / "output_variables.toml"), "run.n_threads": int(threads)}.items():
         cfg.set(k, v)
     cfg.write(tdir)
     return tdir
@@ -228,6 +239,7 @@ class TrialRunner:
     fixed_observation_keys: dict = field(default_factory=dict)   # observation keys not fitted
     keep_netcdf: bool = False
     log: object = print
+    max_threads: int = 1             # a run's threads: threads_for(its days, this)
     seconds: list = field(default_factory=list)
     n_trials: int = 0
 
@@ -240,15 +252,17 @@ class TrialRunner:
     def run(self, value_sets: list, windows) -> list:
         """Run (or find finished) every (values, window) trial; returns, per set of values, its
         trial directories. A failed trial raises TrialError."""
-        dirs = [[build_trial(self.base, self.keys, vals, w, self.states[w.name], self.root, self.overrides)
-                 for w in windows] for vals in value_sets]
+        threads = {w.name: threads_for(w.days, self.max_threads) for w in windows}
+        dirs = [[build_trial(self.base, self.keys, vals, w, self.states[w.name], self.root, self.overrides,
+                             threads=threads[w.name]) for w in windows] for vals in value_sets]
         todo, seen = [], set()
         for vals, tds in zip(value_sets, dirs):
             for w, td in zip(windows, tds):
                 if td not in seen and not (td / "series.npz").exists():
                     seen.add(td)
                     todo.append((td, vals, Task(td.name, command(self.runner, td / "main.toml"), str(td),
-                                                str(td / "run.log"), timeout_for(w.days, self.timeout_per_day))))
+                                                str(td / "run.log"), timeout_for(w.days, self.timeout_per_day),
+                                                threads[w.name])))
         status = self.workers.run([t for _, _, t in todo]) if todo else {}
         self.n_trials += len(todo)
         for td, vals, task in todo:

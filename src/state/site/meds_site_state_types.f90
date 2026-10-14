@@ -19,11 +19,13 @@ module meds_site_state_types
                                       patch_diag_copy_slot, patch_diag_clear_slot,               &
                                       patch_diag_grow, patch_diag_alloc, patch_diag_free,        &
                                       cohort_diag_reset, patch_diag_reset, polygon_diag_reset
+   use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
-   use meds_constants,  only : pio4, tiny_num, cp_liq
+   use meds_constants,  only : cp_liq
+   use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, dbh_to_agb, dbh_to_leaf_area, wood_to_dbh, carbon_to_structure, &
-                               dbh_to_wai, sapwood_fraction
+   use meds_allometry,  only : dbh_to_height, size2leaf_carbon, size2wood_carbon, carbon_to_structure, &
+                               dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t, litter_input_t
@@ -35,10 +37,11 @@ module meds_site_state_types
    public :: cohort_ensure_capacity, cohort_reorder, cohort_compact, gather_pft_params, cohort_alloc
    public :: patch_ensure_capacity, rebuild_csr, copy_cohort_slot, set_cohort_size, init_cohort
    public :: scale_cohort_ground_fields, fuse_cohort_fast_state
-   public :: set_cohort_size_from_carbon, set_cohort_wood_geometry, carbon_flux_block
+   public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
    public :: cohort_tissue_heat_capacity, cohort_tissue_water
+   public :: cohort_bad_field, cohort_field_name
 
    !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity), plus  !
    !      the tissue specific heats. The fast loop reads the latter from `veg_thermal_params_t`,   !
@@ -65,31 +68,32 @@ module meds_site_state_types
    !      would pin it there forever and the daily max would never update. (It did, until measured.)  !
    real(wp), parameter :: DMAX_PSI_LEAF_ACCUM_RESET = -1.0e30_wp
 
-   !----- Initial phenology GOVERNOR drives of a freshly created cohort: born leafed / flushing,  !
-   !      no active shed (= the evergreen fixed point). Plain literals because `state` may not     !
-   !      depend on the plant library (the DAG wall); the phenology driver advances them once real !
-   !      drivers arrive. flush_drive=1 with no active shed keeps a fresh canopy building.          !
+   !----- Initial phenology tendencies of a freshly created cohort: born flushing, not senescing   !
+   !      (the always-flushing fixed point), so a fresh canopy keeps building. Plain literals       !
+   !      because `state` may not depend on the plant library (the DAG wall); the phenology driver   !
+   !      advances them once real drivers arrive.                                                    !
    real(wp), parameter :: PHENO_FLUSH_INIT = 1.0_wp
    real(wp), parameter :: PHENO_SHED_INIT  = 0.0_wp
 
    !---------------------------------------------------------------------------------------!
-   ! All cohorts of the site_t (contiguous SoA). `dbh` is the prognostic size axis; `height`,   !
-   ! `basal_area`, `agb` and `leaf_area` are derived but stored so the hot kernels stay         !
-   ! arithmetic-only. `agb` (per-plant carbon) is the quantity conserved across fusion/        !
-   ! fission; `leaf_area` (per-plant) gives the cohort's LAI contribution (nplant*leaf_area).   !
+   ! All cohorts of the site_t (contiguous SoA). The demographic state is nplant and the four   !
+   ! carbon pools; every slow operator moves only those. The geometry (dbh, height, basal_area, !
+   ! agb, leaf_area and the wood caches) is a function of the pools, stored so the hot kernels  !
+   ! stay arithmetic-only, and written only by set_cohort_size_from_carbon -- after every       !
+   ! operator that moves carbon, never integrated or read back on its own (#389).               !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
       integer(ik) :: n   = 0_ik       !< cohorts in use
       integer(ik) :: cap = 0_ik       !< allocated capacity
-      !----- Prognostic / primary state. --------------------------------------------------!
+      !----- Identity, plant density, and the geometry derived from the carbon pools. --------!
       integer(ik), allocatable :: pft(:)            !< PFT index
       real(wp),    allocatable :: nplant(:)         !< [plant/m2] PRIMARY demographic state
-      real(wp),    allocatable :: dbh(:)            !< [cm]       prognostic size
-      real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), cached
-      real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, cached
-      real(wp),    allocatable :: agb(:)             !< [kgC/plant] conserved carbon, cached
-      real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  leaf area, cached (LAI=nplant*leaf_area)
-      !----- The wood twins of leaf_area, cached the same way and for the same reason: the fast    !
+      real(wp),    allocatable :: dbh(:)            !< [cm]       = wood_to_dbh(wood_carbon), derived
+      real(wp),    allocatable :: height(:)           !< [m]        = dbh_to_height(dbh), derived
+      real(wp),    allocatable :: basal_area(:)        !< [cm2/plant]= pio4*dbh^2, derived
+      real(wp),    allocatable :: agb(:)             !< [kgC/plant] = aboveground_frac*wood_carbon, derived
+      real(wp),    allocatable :: leaf_area(:)           !< [m2/plant]  = sla*leaf_carbon, derived (LAI=nplant*leaf_area)
+      !----- The wood twins of leaf_area, derived the same way and for the same reason: the fast   !
       !      loop needs them every dt_fast and they are pure functions of dbh + gathered PFT       !
       !      traits. Kept PER PLANT, exactly like leaf_area, so nothing here goes stale when        !
       !      mortality changes nplant -- the per-ground index is nplant*area at the point of use     !
@@ -100,19 +104,18 @@ module meds_site_state_types
       real(wp),    allocatable :: overtopping_lai(:)     !< [m2/m2] cumulative LAI of all TALLER cohorts in the patch
                                                          !<         (Beer competition context); a RECOMPUTED diagnostic
                                                          !<         filled by meds_competition%update_overtopping_lai
-      !----- Carbon pools [kgC/plant], on-allometry cached diagnostics (derived in set_cohort_size   !
-      !      from agb & leaf_area). PR3 introduces the fields; PR4 promotes wood_carbon to the        !
-      !      prognostic size anchor. leaf_carbon*sla = leaf_area; wood_carbon*aboveground_frac = agb.  !
-      real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] = leaf_area / sla
-      real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] = root_to_leaf_ratio*leaf_carbon
-      real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] = agb / aboveground_frac
-      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] = storage_cushion*leaf_carbon
+      !----- Carbon pools [kgC/plant]: the prognostic state. wood_carbon is the size anchor; a     !
+      !      cohort placed on the allometry (set_cohort_size) starts with the pools of its dbh.     !
+      real(wp),    allocatable :: leaf_carbon(:)          !< [kgC/plant] prognostic; on allometry = leaf_area(dbh)/sla
+      real(wp),    allocatable :: fineroot_carbon(:)      !< [kgC/plant] prognostic; on allometry = root_to_leaf_ratio*leaf_carbon
+      real(wp),    allocatable :: wood_carbon(:)          !< [kgC/plant] prognostic size anchor
+      real(wp),    allocatable :: nonstructural_carbon(:) !< [kgC/plant] prognostic; starts at storage_cushion*(leaf + fine root)
       !----- Sliding simple-moving-average growth rate [cm/yr] driving growth-dependent          !
       !      mortality. growth_hist is the per-cohort ring buffer of the last growth_window steps !
       !      (column per cohort; the write slot is the site-global growth_hist_pos), growth_accum !
-      !      its running sum and growth_count its fill level (<= window); growth_avg =            !
-      !      accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A PROGNOSTIC        !
-      !      history (not derivable from dbh).                                                    !
+      !      its sum, taken from the buffer each step, and growth_count its fill level (<= window); !
+      !      growth_avg = accum/count is the SMA (GROWTH_AVG_UNSET until the first sample). A      !
+      !      PROGNOSTIC history (not derivable from dbh).                                         !
       real(wp),    allocatable :: growth_avg(:)
       !----- PLANT WATER STATUS driving the stomatal stress limb (issue #95). dmax_psi_leaf is    !
       !      YESTERDAY's daily-MAXIMUM leaf water potential. The daily max occurs near dawn, after    !
@@ -152,7 +155,7 @@ module meds_site_state_types
       !< [MPa] YESTERDAY's completed daily-max psi_leaf (<= 0); the PUBLISHED value the leaf kernel reads
       real(wp),    allocatable :: dmax_psi_leaf(:)
       real(wp),    allocatable :: dmax_psi_leaf_accum(:) !< [MPa] running max over the CURRENT day; write-only until the rollover
-      real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] running sum of the samples in the window
+      real(wp),    allocatable :: growth_accum(:)   !< [cm/yr] sum of the samples in the window
       integer(ik), allocatable :: growth_count(:)   !< samples currently in the window (<= growth_window)
       real(wp),    allocatable :: growth_hist(:,:)  !< (growth_window, cohort) ring buffer of growth samples
       !----- Per-cohort gathered PFT params (kernels never index the PFT table). ----------!
@@ -162,7 +165,7 @@ module meds_site_state_types
       !----- Gathered carbon-allometry traits (for the on-allometry pool diagnostics above). --!
       real(wp),    allocatable :: p_aboveground_frac(:)   !< [--] aboveground fraction of woody carbon
       real(wp),    allocatable :: p_root_to_leaf_ratio(:) !< [--] fine-root:leaf target ratio
-      real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf target
+      real(wp),    allocatable :: p_storage_cushion(:)    !< [--] storage target as multiple of leaf + fine root
       !----- Gathered WOOD-allometry traits (feed the cached wood_area / sapwood_* above). ----!
       real(wp),    allocatable :: p_wai_b1(:), p_wai_b2(:)                  !< [--] ED2 b1WAI / b2WAI
       real(wp),    allocatable :: p_sapwood_area_b1(:), p_sapwood_area_b2(:)!< [--] ED2 b1SA / b2SA
@@ -174,6 +177,7 @@ module meds_site_state_types
       logical,     allocatable :: p_is_woody(:)           !< .false. (grass) => stem respiration is 0
       real(wp),    allocatable :: p_stem_resp_factor25(:) !< [umol CO2/m2 stem/s @25C]
       real(wp),    allocatable :: p_root_resp_factor25(:) !< [umol CO2/kgC root/s @25C]
+      real(wp),    allocatable :: p_stem_resp_sapwood25(:) !< [umol CO2/m3 sapwood/s @25C]
       !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
       !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
       !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
@@ -216,25 +220,22 @@ module meds_site_state_types
       real(wp),    allocatable :: leaf_resp_accum(:) !< [kgC/plant] leaf dark respiration  (ED2 today_leaf_resp)
       real(wp),    allocatable :: stem_resp_accum(:) !< [kgC/plant] stem maintenance resp  (ED2 today_stem_resp)
       real(wp),    allocatable :: root_resp_accum(:) !< [kgC/plant] fine-root maint. resp  (ED2 today_root_resp)
-      !----- PROGNOSTIC leaf-phenology GOVERNOR drives + thermal cue memory (owned here so they ride !
-      !      the cohort lockstep). Advanced daily by the slow-loop phenology advance from the cohort's !
-      !      PFT cue params + drivers; the two rates (k*drive) are derived at the carbon consumer.     !
-      !      Survivor-keeps on cohort fusion (like growth_avg -- the donor's memory is discarded).     !
-      real(wp),    allocatable :: pheno_flush_drive(:)  !< [-] smoothed flush governor in [0,1] (0 => dormant)
-      real(wp),    allocatable :: pheno_shed_drive(:)   !< [-] smoothed active-shed governor in [0,1] (0 => none)
-      !----- The four CUE sub-accumulators (#150). They were locals inside advance_leaf_phenology, so
-      !      `state = pheno_state_t()` re-zeroed them every slow step and the WATER/HYDRO/LIGHT cues
-      !      could never build the multi-day memory they are defined by -- a running mean with a 10-day
-      !      window reset daily is just its own instantaneous input, and a "consecutive dry days"
-      !      counter reset daily never exceeds one. Persisting them is what makes those cues mean
-      !      anything. FUSION POLICY: survivor-keeps, like the four phenology memories below it --
-      !      see the note in fuse_cohort_fast_state.
-      real(wp),    allocatable :: pheno_water_avg(:)     !< [-]     running-mean available water  (CUE_WATER)
-      real(wp),    allocatable :: pheno_low_psi_days(:)  !< [day]   consecutive dry days          (CUE_HYDRO)
-      real(wp),    allocatable :: pheno_high_psi_days(:) !< [day]   consecutive wet days          (CUE_HYDRO)
-      real(wp),    allocatable :: pheno_light_avg(:)     !< [W/m2]  running-mean radiation        (CUE_LIGHT)
-      real(wp),    allocatable :: pheno_gdd(:)          !< [K day] growing-degree-day sum   (CUE_TEMP)
-      real(wp),    allocatable :: pheno_chill(:)        !< [day]   chilling-day count        (CUE_TEMP)
+      !----- The PAR reaching the cohort's top, integrated over the slow step (reset each slow step, !
+      !      like gpp_accum): the phenology PAR cue's driver, so each cohort sees its own place in    !
+      !      the canopy's light gradient. Consumed by the phenology advance before any fusion. ------!
+      real(wp),    allocatable :: light_hours_accum(:) !< [h] time the PAR at the cohort's top exceeded par_min
+      !----- PROGNOSTIC leaf phenology (owned here so it rides the cohort lockstep): the two       !
+      !      smoothed tendencies and the cue memory, advanced daily by the slow-loop phenology        !
+      !      advance; the carbon layer turns the tendencies into leaf growth and loss. The memory     !
+      !      must persist across steps -- a running mean or a seasonal sum reset every step would be  !
+      !      its own instantaneous input. FUSION POLICY: survivor-keeps (see fuse_cohort_fast_state). !
+      real(wp),    allocatable :: leaf_flush_tendency(:)  !< [-]       smoothed flush signal in [0,1]
+      real(wp),    allocatable :: leaf_shed_tendency(:)   !< [-]       smoothed senescence signal in [0,1]
+      real(wp),    allocatable :: growing_degree_days(:)  !< [K day]   warmth sum since midwinter    (TEMP)
+      real(wp),    allocatable :: cold_degree_days(:)     !< [K day]   cold sum since midsummer      (TEMP)
+      real(wp),    allocatable :: dry_psi_sum(:)          !< [MPa day] predawn psi below the TLP     (WATER)
+      real(wp),    allocatable :: wet_psi_sum(:)          !< [MPa day] predawn psi above the TLP     (WATER)
+      real(wp),    allocatable :: light_hours_mean(:)     !< [h/day] running-mean hours of light (LIGHT); < 0: none yet
       !----- Host-only back-index used to regroup the flat array by patch. ----------------!
       integer(ik), allocatable :: owner_patch(:)
       !----- Persistent identity: a global id stamped at creation and carried (in lockstep   !
@@ -330,11 +331,10 @@ module meds_site_state_types
    !      COMPUTES these (carbon or empirical) each step; update_cohort_states then advances the   !
    !      cohort state by them. It is index-aligned with cohort_block but is NOT persistent state:  !
    !      filled the same step it is consumed (before any sort/fuse) and NOT lockstep-reordered.    !
-   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); every other field  !
-   !      is an additive rate (state += rate*dt).                                                   !
+   !      dln_nplant_dt is the LOG-space mortality rate (nplant *= exp(dln*dt)); the carbon pools'  !
+   !      are additive rates (state += rate*dt). Only PROGNOSTIC state has a tendency: the geometry  !
+   !      is derived from the carbon after the update (update_cohort_states), never integrated.     !
    type :: cohort_deriv_block
-      real(wp), allocatable :: d_dbh_dt(:), d_height_dt(:), d_basal_area_dt(:)
-      real(wp), allocatable :: d_agb_dt(:), d_leaf_area_dt(:)
       real(wp), allocatable :: d_leaf_carbon_dt(:), d_fineroot_carbon_dt(:)
       real(wp), allocatable :: d_wood_carbon_dt(:), d_nonstructural_carbon_dt(:)
       real(wp), allocatable :: dln_nplant_dt(:)
@@ -365,10 +365,6 @@ module meds_site_state_types
       !      (never restarted). Air temperature is site-uniform (single-site forcing).            !
       real(wp)           :: pheno_tair_sum = 0.0_wp
       integer(ik)        :: pheno_tair_n   = 0_ik
-      !----- The three remaining cue drivers (#150), same lifecycle. These are AREA-WEIGHTED sums   !
-      !      over (sub-step, patch), so the daily mean is sum / (pheno_tair_n / npatch) -- i.e.      !
-      !      divide by the SUB-STEP count, because the patch areas already sum to 1. Air temperature !
-      !      above is not area-weighted because it is site-uniform under single-site forcing.        !
       !----- GROWTH TEMPERATURE for thermal acclimation (#176): an exponential running mean of the  !
       !      daily-mean air temperature, window [leaf_physiology].acclim_window_days (~30 d), which  !
       !      is what Kattge & Knorr (2007) fitted dS against. PROGNOSTIC and slow, so it is written  !
@@ -376,9 +372,6 @@ module meds_site_state_types
       !      acclimated optimum jump. Negative means "not yet seeded" -- the first slow step adopts  !
       !      that day's mean outright rather than relaxing from an arbitrary origin.                 !
       real(wp)           :: t_growth_avg = -1.0_wp       !< [K] running-mean growth temperature
-      real(wp)           :: pheno_soilt_sum  = 0.0_wp   !< [K]     top-layer soil temperature
-      real(wp)           :: pheno_swater_sum = 0.0_wp   !< [-]     root-weighted available water
-      real(wp)           :: pheno_rad_sum    = 0.0_wp   !< [W/m2]  incident shortwave
       !----- Site evapotranspiration accumulator [kg/m2 = mm] (site-uniform, single-site): the fast   !
       !      loop sums the area-weighted canopy-air -> atmosphere water-vapour flux * dt_fast over the  !
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
@@ -392,16 +385,13 @@ module meds_site_state_types
       !      them over a period like any other diagnostic. --------------------------------------------!
       real(wp)           :: work_integ_steps = 0.0_wp   !< accepted integrator sub-steps
       real(wp)           :: work_integ_rej   = 0.0_wp   !< rejected integrator steps
-      real(wp)           :: work_soil_nsub   = 0.0_wp   !< soil-water Richards sub-steps
-      real(wp)           :: work_hydro_nsub  = 0.0_wp   !< plant-hydraulics sub-steps (summed over cohorts)
-      real(wp)           :: work_nonconv     = 0.0_wp   !< non-convergence events (hydraulics)
-      !----- THRASH detector (issue #104, plan E1b/E3). Counts dt_fast steps in which the plant-       !
-      !      hydraulics solver spent more than HYDRO_NSUB_THRASH sub-steps PER COHORT. Measured, that   !
-      !      is 1.0-1.2 in every physically ordinary state and ~136 once a wood store collapses onto    !
-      !      its water floor -- a 13x wall-clock event that until now produced no output at all. This   !
-      !      is a COST counter, but a nonzero value is also a correctness flag: the states that cause    !
-      !      it are ones whose stores are pinned and whose answer is not to be trusted. ----------------!
-      real(wp)           :: work_hydro_thrash = 0.0_wp  !< dt_fast steps with pathological hydraulics sub-stepping
+      !----- The soil-plant water network's work. A nonzero work_water_nfail is also a correctness     !
+      !      flag: a sub-step taken at the shortest length although Newton had not converged keeps      !
+      !      water exactly but leaves the stores off their curves. -------------------------------------!
+      real(wp)           :: work_water_nsub   = 0.0_wp   !< accepted sub-steps
+      real(wp)           :: work_water_newton = 0.0_wp   !< Newton iterations
+      real(wp)           :: work_water_reject = 0.0_wp   !< rejected sub-steps
+      real(wp)           :: work_water_nfail  = 0.0_wp   !< sub-steps taken although unconverged
       !----- INTEGRATOR-HEALTH accumulators (MEDS_INTEGRATOR_PARITY.md [RETIRED], Phase A). Same cadence and     !
       !      area weighting as the work counters above, but these measure CORRECTNESS rather than       !
       !      cost: how often a scheme had to leave its own model to stay standing, and how much         !
@@ -409,9 +399,6 @@ module meds_site_state_types
       !      whether it actually ran the integrator it was configured for. --------------------------!
       real(wp)           :: work_rk45_rescue = 0.0_wp   !< dt_fast steps RK45 abandoned and redid on split
       real(wp)           :: work_clamp_stage = 0.0_wp   !< stage-input clamp activations (throwaway states)
-      real(wp)           :: work_clamp_commit= 0.0_wp   !< COMMITTED-state clamp activations (unbookkept)
-      real(wp)           :: work_clamp_mass  = 0.0_wp   !< [kg/m2] water created/destroyed by commit clamps
-      real(wp)           :: work_clamp_energy= 0.0_wp   !< [J/m2]  energy created/destroyed by commit clamps
    end type site_t
 
    !----- A small SoA of the per-cohort carbon-NPP pool fluxes [kgC/plant/step], produced by     !
@@ -419,6 +406,12 @@ module meds_site_state_types
    type :: carbon_flux_block
       real(wp), allocatable :: leaf(:), fineroot(:), wood(:), nonstructural(:)
    end type carbon_flux_block
+
+   !----- The bounded cohort fields cohort_bad_field checks, in its order. ------------------!
+   integer(ik), parameter :: N_COHORT_BOUNDED = 10_ik
+   character(len=20), parameter :: COHORT_BOUNDED_NAME(N_COHORT_BOUNDED) = [character(len=20) ::   &
+      'nplant', 'leaf_carbon', 'fineroot_carbon', 'wood_carbon', 'nonstructural_carbon', 'sla',     &
+      'leaf_water_mass', 'wood_water_mass', 'leaf_surf_water', 'wood_surf_water']
 
 contains
 
@@ -432,31 +425,22 @@ contains
       integer(ik) :: m
       logical     :: ok
       m  = max(n, 1_ik)
-      ok = allocated(deriv%d_dbh_dt)             .and. allocated(deriv%d_height_dt)            .and. &
-           allocated(deriv%d_basal_area_dt)      .and. allocated(deriv%d_agb_dt)               .and. &
-           allocated(deriv%d_leaf_area_dt)       .and. allocated(deriv%d_leaf_carbon_dt)       .and. &
-           allocated(deriv%d_fineroot_carbon_dt) .and. allocated(deriv%d_wood_carbon_dt)       .and. &
-           allocated(deriv%d_nonstructural_carbon_dt) .and. allocated(deriv%dln_nplant_dt)
+      ok = allocated(deriv%d_leaf_carbon_dt)       .and. allocated(deriv%d_fineroot_carbon_dt) .and. &
+           allocated(deriv%d_wood_carbon_dt)       .and. allocated(deriv%d_nonstructural_carbon_dt) .and. &
+           allocated(deriv%dln_nplant_dt)
       if (ok) then
-         if (size(deriv%d_dbh_dt) >= m) return   ! big enough (all co-sized) -> reuse
-         deallocate(deriv%d_dbh_dt, deriv%d_height_dt, deriv%d_basal_area_dt, deriv%d_agb_dt,        &
-                    deriv%d_leaf_area_dt, deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt,        &
-                    deriv%d_wood_carbon_dt, deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
+         if (size(deriv%d_leaf_carbon_dt) >= m) return   ! big enough (all co-sized) -> reuse
+         deallocate(deriv%d_leaf_carbon_dt, deriv%d_fineroot_carbon_dt, deriv%d_wood_carbon_dt,      &
+                    deriv%d_nonstructural_carbon_dt, deriv%dln_nplant_dt)
       else                                       ! none or partial -> drop whatever is there
-         if (allocated(deriv%d_dbh_dt))                  deallocate(deriv%d_dbh_dt)
-         if (allocated(deriv%d_height_dt))               deallocate(deriv%d_height_dt)
-         if (allocated(deriv%d_basal_area_dt))           deallocate(deriv%d_basal_area_dt)
-         if (allocated(deriv%d_agb_dt))                  deallocate(deriv%d_agb_dt)
-         if (allocated(deriv%d_leaf_area_dt))            deallocate(deriv%d_leaf_area_dt)
          if (allocated(deriv%d_leaf_carbon_dt))          deallocate(deriv%d_leaf_carbon_dt)
          if (allocated(deriv%d_fineroot_carbon_dt))      deallocate(deriv%d_fineroot_carbon_dt)
          if (allocated(deriv%d_wood_carbon_dt))          deallocate(deriv%d_wood_carbon_dt)
          if (allocated(deriv%d_nonstructural_carbon_dt)) deallocate(deriv%d_nonstructural_carbon_dt)
          if (allocated(deriv%dln_nplant_dt))             deallocate(deriv%dln_nplant_dt)
       end if
-      allocate(deriv%d_dbh_dt(m), deriv%d_height_dt(m), deriv%d_basal_area_dt(m), deriv%d_agb_dt(m), &
-               deriv%d_leaf_area_dt(m), deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m),    &
-               deriv%d_wood_carbon_dt(m), deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
+      allocate(deriv%d_leaf_carbon_dt(m), deriv%d_fineroot_carbon_dt(m), deriv%d_wood_carbon_dt(m),  &
+               deriv%d_nonstructural_carbon_dt(m), deriv%dln_nplant_dt(m))
    end subroutine cohort_deriv_alloc
 
    !=======================================================================================!
@@ -487,17 +471,18 @@ contains
          site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
          site%cohort%p_crown_area_frac, site%cohort%p_is_woody,                                          &
          site%cohort%p_stem_resp_factor25, site%cohort%p_root_resp_factor25,                             &
+         site%cohort%p_stem_resp_sapwood25,                                                              &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
          site%cohort%nonstructural_carbon, site%cohort%owner_patch, site%cohort%global_id,               &
          site%cohort%overtopping_lai,                                                             &
          site%cohort%leaf_temp, site%cohort%wood_temp, site%cohort%leaf_water_mass,               &
          site%cohort%wood_water_mass, site%cohort%leaf_surf_water, site%cohort%wood_surf_water,   &
-         site%cohort%gpp_accum,                                                                   &
+         site%cohort%gpp_accum, site%cohort%light_hours_accum,                                            &
          site%cohort%leaf_resp_accum, site%cohort%stem_resp_accum, site%cohort%root_resp_accum,  &
-         site%cohort%pheno_flush_drive, site%cohort%pheno_shed_drive,                            &
-         site%cohort%pheno_gdd, site%cohort%pheno_chill,                                        &
-         site%cohort%pheno_water_avg, site%cohort%pheno_low_psi_days,                          &
-         site%cohort%pheno_high_psi_days, site%cohort%pheno_light_avg)
+         site%cohort%leaf_flush_tendency, site%cohort%leaf_shed_tendency,                            &
+         site%cohort%growing_degree_days, site%cohort%cold_degree_days,                                        &
+         site%cohort%dry_psi_sum,                                                       &
+         site%cohort%wet_psi_sum, site%cohort%light_hours_mean)
       if (allocated(site%patch%area)) deallocate(site%patch%area, site%patch%age, site%patch%dist_type, &
          site%patch%cohort_offset, site%patch%cohort_count, site%patch%recruit_pool, site%patch%global_id, &
          site%patch%cas, site%patch%soil_e, site%patch%soil_w, site%patch%snow, site%patch%soil_carbon, &
@@ -525,23 +510,24 @@ contains
                cohort%p_sapwood_area_b2(cap))
       allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
       allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
+      allocate(cohort%p_stem_resp_sapwood25(cap))
       allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
-      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap))
+      allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap), cohort%light_hours_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
       allocate(cohort%leaf_resp_accum(cap), cohort%stem_resp_accum(cap), cohort%root_resp_accum(cap))
-      allocate(cohort%pheno_flush_drive(cap), cohort%pheno_shed_drive(cap),                       &
-               cohort%pheno_gdd(cap), cohort%pheno_chill(cap),                                   &
-               cohort%pheno_water_avg(cap), cohort%pheno_low_psi_days(cap),                      &
-               cohort%pheno_high_psi_days(cap), cohort%pheno_light_avg(cap))
+      allocate(cohort%leaf_flush_tendency(cap), cohort%leaf_shed_tendency(cap),                       &
+               cohort%growing_degree_days(cap), cohort%cold_degree_days(cap),                                   &
+               cohort%dry_psi_sum(cap),                                                   &
+               cohort%wet_psi_sum(cap), cohort%light_hours_mean(cap))
       cohort%leaf_temp = LEAF_TEMP_INIT ; cohort%wood_temp = LEAF_TEMP_INIT
       cohort%leaf_water_mass = 0.0_wp ; cohort%wood_water_mass = 0.0_wp ; cohort%gpp_accum = 0.0_wp
+      cohort%light_hours_accum = 0.0_wp
       cohort%leaf_surf_water = 0.0_wp ; cohort%wood_surf_water = 0.0_wp
       cohort%leaf_resp_accum = 0.0_wp ; cohort%stem_resp_accum = 0.0_wp ; cohort%root_resp_accum = 0.0_wp
-      cohort%pheno_flush_drive = PHENO_FLUSH_INIT ; cohort%pheno_shed_drive = PHENO_SHED_INIT
-      cohort%pheno_gdd = 0.0_wp ; cohort%pheno_chill = 0.0_wp
-      cohort%pheno_water_avg = 0.0_wp ; cohort%pheno_low_psi_days = 0.0_wp
-      cohort%pheno_high_psi_days = 0.0_wp ; cohort%pheno_light_avg = 0.0_wp
+      cohort%leaf_flush_tendency = PHENO_FLUSH_INIT ; cohort%leaf_shed_tendency = PHENO_SHED_INIT
+      cohort%growing_degree_days = 0.0_wp ; cohort%cold_degree_days = 0.0_wp
+      cohort%dry_psi_sum = 0.0_wp ; cohort%wet_psi_sum = 0.0_wp ; cohort%light_hours_mean = -1.0_wp
       cohort%pft = 0_ik ; cohort%owner_patch = 0_ik ; cohort%global_id = 0_ik
       cohort%nplant = 0.0_wp ; cohort%dbh = 0.0_wp ; cohort%height = 0.0_wp ; cohort%basal_area = 0.0_wp
       cohort%agb = 0.0_wp ; cohort%leaf_area = 0.0_wp ; cohort%overtopping_lai = 0.0_wp
@@ -559,6 +545,7 @@ contains
       cohort%p_leaf_width = 0.0_wp ; cohort%p_branch_diameter = 0.0_wp ; cohort%p_crown_area_frac = 0.0_wp
       cohort%p_is_woody = .true.
       cohort%p_stem_resp_factor25 = 0.0_wp ; cohort%p_root_resp_factor25 = 0.0_wp
+      cohort%p_stem_resp_sapwood25 = 0.0_wp
       cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
    end subroutine cohort_alloc
 
@@ -644,6 +631,7 @@ contains
       tmp%p_is_woody(1:m) = cohort%p_is_woody(1:m)
       tmp%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(1:m)
       tmp%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(1:m)
+      tmp%p_stem_resp_sapwood25(1:m) = cohort%p_stem_resp_sapwood25(1:m)
       tmp%global_id(1:m)      = cohort%global_id(1:m)
       tmp%leaf_temp(1:m)      = cohort%leaf_temp(1:m)
       tmp%wood_temp(1:m)      = cohort%wood_temp(1:m)
@@ -652,17 +640,17 @@ contains
       tmp%leaf_surf_water(1:m) = cohort%leaf_surf_water(1:m)
       tmp%wood_surf_water(1:m) = cohort%wood_surf_water(1:m)
       tmp%gpp_accum(1:m)      = cohort%gpp_accum(1:m)
+      tmp%light_hours_accum(1:m)      = cohort%light_hours_accum(1:m)
       tmp%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(1:m)
       tmp%stem_resp_accum(1:m) = cohort%stem_resp_accum(1:m)
       tmp%root_resp_accum(1:m) = cohort%root_resp_accum(1:m)
-      tmp%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(1:m)
-      tmp%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(1:m)
-      tmp%pheno_gdd(1:m)        = cohort%pheno_gdd(1:m)
-      tmp%pheno_water_avg(1:m)     = cohort%pheno_water_avg(1:m)
-      tmp%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(1:m)
-      tmp%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(1:m)
-      tmp%pheno_light_avg(1:m)     = cohort%pheno_light_avg(1:m)
-      tmp%pheno_chill(1:m)      = cohort%pheno_chill(1:m)
+      tmp%leaf_flush_tendency(1:m) = cohort%leaf_flush_tendency(1:m)
+      tmp%leaf_shed_tendency(1:m)  = cohort%leaf_shed_tendency(1:m)
+      tmp%growing_degree_days(1:m) = cohort%growing_degree_days(1:m)
+      tmp%cold_degree_days(1:m)    = cohort%cold_degree_days(1:m)
+      tmp%dry_psi_sum(1:m)         = cohort%dry_psi_sum(1:m)
+      tmp%wet_psi_sum(1:m)         = cohort%wet_psi_sum(1:m)
+      tmp%light_hours_mean(1:m)      = cohort%light_hours_mean(1:m)
       !----- Carry the (already grown) diagnostic block over the fresh tmp, whose own diag is      !
       !      inactive -- move_alloc_block copies tmp INTO cohort, so it must be the one holding it. !
       tmp%diag = cohort%diag ; tmp%sdiag = cohort%sdiag
@@ -716,6 +704,7 @@ contains
       call move_alloc(src%p_is_woody, dst%p_is_woody)
       call move_alloc(src%p_stem_resp_factor25, dst%p_stem_resp_factor25)
       call move_alloc(src%p_root_resp_factor25, dst%p_root_resp_factor25)
+      call move_alloc(src%p_stem_resp_sapwood25, dst%p_stem_resp_sapwood25)
       call move_alloc(src%global_id, dst%global_id)
       call move_alloc(src%leaf_temp, dst%leaf_temp)
       call move_alloc(src%wood_temp, dst%wood_temp)
@@ -724,17 +713,17 @@ contains
       call move_alloc(src%leaf_surf_water, dst%leaf_surf_water)
       call move_alloc(src%wood_surf_water, dst%wood_surf_water)
       call move_alloc(src%gpp_accum, dst%gpp_accum)
+      call move_alloc(src%light_hours_accum, dst%light_hours_accum)
       call move_alloc(src%leaf_resp_accum, dst%leaf_resp_accum)
       call move_alloc(src%stem_resp_accum, dst%stem_resp_accum)
       call move_alloc(src%root_resp_accum, dst%root_resp_accum)
-      call move_alloc(src%pheno_flush_drive, dst%pheno_flush_drive)
-      call move_alloc(src%pheno_shed_drive, dst%pheno_shed_drive)
-      call move_alloc(src%pheno_gdd, dst%pheno_gdd)
-      call move_alloc(src%pheno_water_avg, dst%pheno_water_avg)
-      call move_alloc(src%pheno_low_psi_days, dst%pheno_low_psi_days)
-      call move_alloc(src%pheno_high_psi_days, dst%pheno_high_psi_days)
-      call move_alloc(src%pheno_light_avg, dst%pheno_light_avg)
-      call move_alloc(src%pheno_chill, dst%pheno_chill)
+      call move_alloc(src%leaf_flush_tendency, dst%leaf_flush_tendency)
+      call move_alloc(src%leaf_shed_tendency, dst%leaf_shed_tendency)
+      call move_alloc(src%growing_degree_days, dst%growing_degree_days)
+      call move_alloc(src%cold_degree_days, dst%cold_degree_days)
+      call move_alloc(src%dry_psi_sum, dst%dry_psi_sum)
+      call move_alloc(src%wet_psi_sum, dst%wet_psi_sum)
+      call move_alloc(src%light_hours_mean, dst%light_hours_mean)
    end subroutine move_alloc_block
 
    !=======================================================================================!
@@ -840,6 +829,7 @@ contains
       cohort%p_is_woody(1:m) = cohort%p_is_woody(perm(1:m))
       cohort%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(perm(1:m))
       cohort%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(perm(1:m))
+      cohort%p_stem_resp_sapwood25(1:m) = cohort%p_stem_resp_sapwood25(perm(1:m))
       cohort%global_id(1:m)      = cohort%global_id(perm(1:m))
       cohort%leaf_temp(1:m)      = cohort%leaf_temp(perm(1:m))
       cohort%wood_temp(1:m)      = cohort%wood_temp(perm(1:m))
@@ -848,17 +838,17 @@ contains
       cohort%leaf_surf_water(1:m) = cohort%leaf_surf_water(perm(1:m))
       cohort%wood_surf_water(1:m) = cohort%wood_surf_water(perm(1:m))
       cohort%gpp_accum(1:m)      = cohort%gpp_accum(perm(1:m))
+      cohort%light_hours_accum(1:m)      = cohort%light_hours_accum(perm(1:m))
       cohort%leaf_resp_accum(1:m) = cohort%leaf_resp_accum(perm(1:m))
       cohort%stem_resp_accum(1:m) = cohort%stem_resp_accum(perm(1:m))
       cohort%root_resp_accum(1:m) = cohort%root_resp_accum(perm(1:m))
-      cohort%pheno_flush_drive(1:m) = cohort%pheno_flush_drive(perm(1:m))
-      cohort%pheno_shed_drive(1:m)  = cohort%pheno_shed_drive(perm(1:m))
-      cohort%pheno_gdd(1:m)        = cohort%pheno_gdd(perm(1:m))
-      cohort%pheno_water_avg(1:m)     = cohort%pheno_water_avg(perm(1:m))
-      cohort%pheno_low_psi_days(1:m)  = cohort%pheno_low_psi_days(perm(1:m))
-      cohort%pheno_high_psi_days(1:m) = cohort%pheno_high_psi_days(perm(1:m))
-      cohort%pheno_light_avg(1:m)     = cohort%pheno_light_avg(perm(1:m))
-      cohort%pheno_chill(1:m)      = cohort%pheno_chill(perm(1:m))
+      cohort%leaf_flush_tendency(1:m) = cohort%leaf_flush_tendency(perm(1:m))
+      cohort%leaf_shed_tendency(1:m)  = cohort%leaf_shed_tendency(perm(1:m))
+      cohort%growing_degree_days(1:m) = cohort%growing_degree_days(perm(1:m))
+      cohort%cold_degree_days(1:m)    = cohort%cold_degree_days(perm(1:m))
+      cohort%dry_psi_sum(1:m)         = cohort%dry_psi_sum(perm(1:m))
+      cohort%wet_psi_sum(1:m)         = cohort%wet_psi_sum(perm(1:m))
+      cohort%light_hours_mean(1:m)      = cohort%light_hours_mean(perm(1:m))
       !----- The diagnostic accumulators ride the SAME permutation. One call, and it cannot omit  !
       !      a field: they are rows of one 2-D array (meds_site_diag_types, decision 4).  --------!
       call cohort_diag_reorder(cohort%diag,  perm, m)
@@ -928,6 +918,7 @@ contains
       cohort%p_is_woody(dst) = cohort%p_is_woody(src)
       cohort%p_stem_resp_factor25(dst) = cohort%p_stem_resp_factor25(src)
       cohort%p_root_resp_factor25(dst) = cohort%p_root_resp_factor25(src)
+      cohort%p_stem_resp_sapwood25(dst) = cohort%p_stem_resp_sapwood25(src)
       cohort%global_id(dst)      = cohort%global_id(src)
       call cohort_diag_copy_slot(cohort%diag,  dst, src)
       call cohort_diag_copy_slot(cohort%sdiag, dst, src)
@@ -938,17 +929,17 @@ contains
       cohort%leaf_surf_water(dst) = cohort%leaf_surf_water(src)
       cohort%wood_surf_water(dst) = cohort%wood_surf_water(src)
       cohort%gpp_accum(dst)      = cohort%gpp_accum(src)
+      cohort%light_hours_accum(dst)      = cohort%light_hours_accum(src)
       cohort%leaf_resp_accum(dst) = cohort%leaf_resp_accum(src)
       cohort%stem_resp_accum(dst) = cohort%stem_resp_accum(src)
       cohort%root_resp_accum(dst) = cohort%root_resp_accum(src)
-      cohort%pheno_flush_drive(dst) = cohort%pheno_flush_drive(src)
-      cohort%pheno_shed_drive(dst)  = cohort%pheno_shed_drive(src)
-      cohort%pheno_gdd(dst)        = cohort%pheno_gdd(src)
-      cohort%pheno_water_avg(dst)     = cohort%pheno_water_avg(src)
-      cohort%pheno_low_psi_days(dst)  = cohort%pheno_low_psi_days(src)
-      cohort%pheno_high_psi_days(dst) = cohort%pheno_high_psi_days(src)
-      cohort%pheno_light_avg(dst)     = cohort%pheno_light_avg(src)
-      cohort%pheno_chill(dst)      = cohort%pheno_chill(src)
+      cohort%leaf_flush_tendency(dst) = cohort%leaf_flush_tendency(src)
+      cohort%leaf_shed_tendency(dst)  = cohort%leaf_shed_tendency(src)
+      cohort%growing_degree_days(dst) = cohort%growing_degree_days(src)
+      cohort%cold_degree_days(dst)    = cohort%cold_degree_days(src)
+      cohort%dry_psi_sum(dst)         = cohort%dry_psi_sum(src)
+      cohort%wet_psi_sum(dst)         = cohort%wet_psi_sum(src)
+      cohort%light_hours_mean(dst)      = cohort%light_hours_mean(src)
    end subroutine copy_cohort_slot
 
    !---------------------------------------------------------------------------------------!
@@ -1007,8 +998,7 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: recc, donc   !< survivor, donor
       real(wp),           intent(in)    :: np_r, np_d   !< nplant weights
-      real(wp) :: we, clr, cwr, cld, cwd
-      we = np_r + np_d
+      real(wp) :: clr, cwr, cld, cwd
       !----- INTENSIVE: tissue temperatures, weighted by the HEAT CAPACITY that carries them.    !
       !                                                                                          !
       !      These were LEAF-AREA weighted. For leaves that is roughly right, since leaf heat    !
@@ -1025,33 +1015,33 @@ contains
       !      the same way by the caller.  --------------------------------------------------!
       call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clr, cwr)
       call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cld, cwd)
-      call blend(cohort%leaf_temp,        clr, cld, clr + cld)
-      call blend(cohort%wood_temp,        cwr, cwd, cwr + cwd)
+      call blend(cohort%leaf_temp,        clr, cld)
+      call blend(cohort%wood_temp,        cwr, cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
-      call blend(cohort%leaf_water_mass,  np_r, np_d, we)
-      call blend(cohort%wood_water_mass,  np_r, np_d, we)
-      call blend(cohort%gpp_accum,        np_r, np_d, we)
-      call blend(cohort%leaf_resp_accum,  np_r, np_d, we)
-      call blend(cohort%stem_resp_accum,  np_r, np_d, we)
-      call blend(cohort%root_resp_accum,  np_r, np_d, we)
+      call blend(cohort%leaf_water_mass,  np_r, np_d)
+      call blend(cohort%wood_water_mass,  np_r, np_d)
+      call blend(cohort%gpp_accum,        np_r, np_d)
+      call blend(cohort%leaf_resp_accum,  np_r, np_d)
+      call blend(cohort%stem_resp_accum,  np_r, np_d)
+      call blend(cohort%root_resp_accum,  np_r, np_d)
       !----- GROUND: the interception film [kg/m2 ground] -- add, never weight. ----------------!
       cohort%leaf_surf_water(recc) = cohort%leaf_surf_water(recc) + cohort%leaf_surf_water(donc)
       cohort%wood_surf_water(recc) = cohort%wood_surf_water(recc) + cohort%wood_surf_water(donc)
       !----- SURVIVOR-KEEPS, declared rather than left implicit: the phenology memories            !
-      !      (pheno_flush_drive, pheno_shed_drive, pheno_gdd, pheno_chill, and the four #150 cue    !
-      !      sub-accumulators) and dmax_psi_leaf are absent from this routine ON PURPOSE, so the     !
-      !      survivor keeps its own. Two cohorts only fuse when they already match in size, height   !
-      !      and PFT, and every one of these is driven by a site- or patch-level signal both of them !
-      !      saw, so the two memories are near-identical at the moment of fusion and a blend would   !
-      !      move nothing. Blending is also not obviously the right operation for a CONSECUTIVE-DAY  !
-      !      counter: an nplant-weighted average of "7 dry days" and "0 dry days" is 4.1 dry days,   !
-      !      a history neither cohort had. If a future cue is driven by something genuinely          !
+      !      (the two tendencies, the degree-day and psi sums, the light mean), light_hours_accum    !
+      !      (already consumed this step) and dmax_psi_leaf are absent from this routine ON PURPOSE,  !
+      !      so the survivor keeps its own. Two cohorts only fuse when they already match in size,   !
+      !      height and PFT, and every one of these is driven by a signal both of them saw (the PAR at a !
+      !      shared height included), so the two memories are near-identical at fusion and a blend would !
+      !      move nothing. Blending is also not obviously right for a sum that resets on a trigger:  !
+      !      an nplant-weighted average of a sum that has just reset and one that has not is a       !
+      !      history neither cohort had. If a future cue is driven by something genuinely           !
       !      per-cohort and slow, revisit this -- and add it here rather than leaving it implicit.   !
    contains
-      pure subroutine blend(a, wr, wd, wtot)
+      pure subroutine blend(a, wr, wd)
          real(wp), intent(inout) :: a(:)
-         real(wp), intent(in)    :: wr, wd, wtot
-         if (wtot > tiny_num) a(recc) = (wr * a(recc) + wd * a(donc)) / wtot
+         real(wp), intent(in)    :: wr, wd
+         a(recc) = pair_mean(a(recc), wr, a(donc), wd)
       end subroutine blend
    end subroutine fuse_cohort_fast_state
 
@@ -1078,18 +1068,13 @@ contains
          cohort%p_is_woody(i)           = pft%is_woody(p)
          cohort%p_stem_resp_factor25(i) = pft%stem_resp_factor25(p)
          cohort%p_root_resp_factor25(i) = pft%root_resp_factor25(p)
+         cohort%p_stem_resp_sapwood25(i) = pft%stem_resp_sapwood25(p)
       end do
    end subroutine gather_pft_params
 
    !---------------------------------------------------------------------------------------!
-   ! Re-derive the cached geometry (height, basal area, AGB, leaf area) of ONE cohort slot   !
-   ! from its prognostic diameter and gathered wood density. Single-slot host analogue of    !
-   ! the array math in growth_step; used by recruitment, setup, fusion and fission so the     !
-   ! allometry lives in exactly one (shared) place.                                          !
-   !---------------------------------------------------------------------------------------!
-   !---------------------------------------------------------------------------------------!
    ! The cached WOOD geometry of one slot, from the just-set dbh / basal_area / wood_carbon.  !
-   ! Called by BOTH geometry routines so the leaf and wood caches can never disagree about    !
+   ! Part of set_cohort_size_from_carbon, so the leaf and wood caches can never disagree about !
    ! which dbh they were derived from. Everything here is PER PLANT (see the declarations):   !
    ! `wood_area` is the per-plant twin of `leaf_area`, so WAI = nplant*wood_area at the point  !
    ! of use and no cached field carries a stale plant density.                                 !
@@ -1107,20 +1092,25 @@ contains
       cohort%sapwood_area(i)   = f_sap * cohort%basal_area(i)
    end subroutine set_cohort_wood_geometry
 
+   !---------------------------------------------------------------------------------------!
+   ! Place ONE cohort slot on the allometry from its dbh (setup, census, recruitment, a state  !
+   ! file without pools): the four carbon pools a plant of that dbh holds, then the geometry   !
+   ! derived from those pools by set_cohort_size_from_carbon, exactly as after every other     !
+   ! carbon change. Geometry has that one writer, so a cohort's geometry is always the same    !
+   ! function of its carbon and a restart that re-derives it gets the same bits (#389).        !
+   !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size(cohort, i)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
-      cohort%height(i)      = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
-      cohort%basal_area(i)  = pio4 * cohort%dbh(i) * cohort%dbh(i)
-      cohort%agb(i)         = dbh_to_agb(cohort%dbh(i), cohort%height(i), cohort%p_wood_density(i))
-      cohort%leaf_area(i)       = dbh_to_leaf_area(cohort%dbh(i), cohort%height(i))
-      !----- On-allometry carbon pools (PR3 cached diagnostics; reuse the just-computed agb &      !
-      !      leaf_area, so leaf_carbon*sla = leaf_area and wood_carbon*aboveground_frac = agb). -----!
-      cohort%leaf_carbon(i)          = cohort%leaf_area(i) / max(cohort%sla(i), tiny_num)
-      cohort%wood_carbon(i)          = cohort%agb(i) / max(cohort%p_aboveground_frac(i), tiny_num)
+      real(wp) :: height
+      height = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
+      cohort%leaf_carbon(i)          = size2leaf_carbon(cohort%dbh(i), height, cohort%sla(i))
+      cohort%wood_carbon(i)          = size2wood_carbon(cohort%dbh(i), height, cohort%p_wood_density(i), &
+                                                        cohort%p_aboveground_frac(i))
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
-      cohort%nonstructural_carbon(i) = cohort%p_storage_cushion(i) * cohort%leaf_carbon(i)
-      call set_cohort_wood_geometry(cohort, i)
+      cohort%nonstructural_carbon(i) = storage_carbon_target(cohort%p_storage_cushion(i), cohort%leaf_carbon(i),  &
+                                                             cohort%fineroot_carbon(i))
+      call set_cohort_size_from_carbon(cohort, i)
    end subroutine set_cohort_size
 
    !=========================================================================================!
@@ -1163,6 +1153,52 @@ contains
    end function cohort_tissue_water
 
    !---------------------------------------------------------------------------------------!
+   ! The bounds of a cohort's state: its plant density, carbon pools, SLA, and the water it    !
+   ! holds (internal stores and the films on its leaves and wood) are amounts, never below     !
+   ! zero and never infinite. Every operator keeps them in bounds by construction -- the        !
+   ! applier floors the pools, mortality never takes nplant below `negligible`, the fast loop    !
+   ! clamps the films into [0, capacity] -- so a violation is an operator bug. The driver checks !
+   ! this every step and names the field, so the bug is caught the step it happens instead of   !
+   ! through a quantity derived from it, somewhere else, years later (#389). The geometry is not !
+   ! checked: it is a function of these. Returns the first bad field's index, 0 if none.        !
+   !---------------------------------------------------------------------------------------!
+   pure function cohort_bad_field(cohort, i) result(k)
+      type(cohort_block), intent(in) :: cohort
+      integer(ik),        intent(in) :: i
+      integer(ik)                    :: k
+      real(wp)    :: x(N_COHORT_BOUNDED)
+      integer(ik) :: j
+      x = [cohort%nplant(i), cohort%leaf_carbon(i), cohort%fineroot_carbon(i),                      &
+           cohort%wood_carbon(i), cohort%nonstructural_carbon(i), cohort%sla(i),                    &
+           cohort%leaf_water_mass(i), cohort%wood_water_mass(i),                                    &
+           cohort%leaf_surf_water(i), cohort%wood_surf_water(i)]
+      k = 0_ik
+      do j = 1_ik, N_COHORT_BOUNDED
+         !----- NaN first, by classification, as soil_carbon_bad_pool does: a comparison with a NaN !
+         !      raises IEEE invalid, which a trapping build stops on. ---------------------------!
+         if (ieee_is_nan(x(j))) then
+            k = j
+            return
+         end if
+         if (x(j) < 0.0_wp .or. x(j) > huge(x(j))) then
+            k = j
+            return
+         end if
+      end do
+   end function cohort_bad_field
+
+   !----- Name for the index cohort_bad_field returns, so a failure message is readable. -------!
+   pure function cohort_field_name(k) result(nm)
+      integer(ik), intent(in) :: k
+      character(len=20)       :: nm
+      if (k >= 1_ik .and. k <= N_COHORT_BOUNDED) then
+         nm = COHORT_BOUNDED_NAME(k)
+      else
+         nm = '(none)'
+      end if
+   end function cohort_field_name
+
+   !---------------------------------------------------------------------------------------!
    ! Initialize ONE freshly-created cohort slot at BIRTH from (pft, patch, dbh): set the      !
    ! per-slot identity + prognostic + gathered-PFT fields to their birth values, then derive  !
    ! the on-allometry geometry via set_cohort_size. The SINGLE canonical birth-field policy    !
@@ -1194,17 +1230,18 @@ contains
       cohort%dmax_psi_leaf_accum(m) = DMAX_PSI_LEAF_ACCUM_RESET
       cohort%growth_accum(m)     = 0.0_wp
       cohort%growth_count(m)     = 0_ik
+      cohort%growth_hist(:, m)   = 0.0_wp             ! a reused slot keeps a dead cohort's samples otherwise
       cohort%overtopping_lai(m)  = 0.0_wp             ! fresh competition context (recomputed each slow step)
+      cohort%light_hours_accum(m)        = 0.0_wp             ! no light seen yet this step
       call cohort_diag_clear_slot(cohort%diag,  m)    ! fresh diagnostics (slot may be a reused, stale cull)
       call cohort_diag_clear_slot(cohort%sdiag, m)
-      cohort%pheno_flush_drive(m) = PHENO_FLUSH_INIT  ! born flushing (evergreen fixed point)
-      cohort%pheno_shed_drive(m)  = PHENO_SHED_INIT   ! no active shed at birth
-      cohort%pheno_gdd(m)        = 0.0_wp             ! fresh phenology memory
-      cohort%pheno_chill(m)      = 0.0_wp
-      cohort%pheno_water_avg(m)     = 0.0_wp
-      cohort%pheno_low_psi_days(m)  = 0.0_wp
-      cohort%pheno_high_psi_days(m) = 0.0_wp
-      cohort%pheno_light_avg(m)     = 0.0_wp
+      cohort%leaf_flush_tendency(m) = PHENO_FLUSH_INIT  ! born flushing
+      cohort%leaf_shed_tendency(m)  = PHENO_SHED_INIT   ! not senescing at birth
+      cohort%growing_degree_days(m) = 0.0_wp            ! fresh phenology memory
+      cohort%cold_degree_days(m)    = 0.0_wp
+      cohort%dry_psi_sum(m)         = 0.0_wp
+      cohort%wet_psi_sum(m)         = 0.0_wp
+      cohort%light_hours_mean(m) = -1.0_wp          ! no light memory: its first day sets it
       cohort%p_dbh_critical(m)       = pft%dbh_critical(ipft)
       cohort%p_wood_density(m)       = pft%wood_density(ipft)
       cohort%p_hgt_max(m)            = pft%hgt_max(ipft)
@@ -1225,6 +1262,7 @@ contains
       cohort%p_is_woody(m)           = pft%is_woody(ipft)
       cohort%p_stem_resp_factor25(m) = pft%stem_resp_factor25(ipft)
       cohort%p_root_resp_factor25(m) = pft%root_resp_factor25(ipft)
+      cohort%p_stem_resp_sapwood25(m) = pft%stem_resp_sapwood25(ipft)
       cohort%leaf_temp(m)        = LEAF_TEMP_INIT     ! fresh fast state (slot may be a reused, stale cull)
       ! ditto -- reset like cohort_alloc, else a reused slot keeps a dead cohort's wood_temp
       cohort%wood_temp(m)        = LEAF_TEMP_INIT
@@ -1235,14 +1273,15 @@ contains
       cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
       cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)
       cohort%wood_surf_water(m)  = 0.0_wp
-      call set_cohort_size(cohort, m)                 ! height/basal_area/agb/leaf_area + carbon pools from dbh
+      call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
    end subroutine init_cohort
 
    !---------------------------------------------------------------------------------------!
-   ! CARBON-MODE geometry (the inverse of set_cohort_size): with wood_carbon the prognostic    !
-   ! size anchor, derive dbh from it (wood_to_dbh) and the rest of the cached geometry, and take !
-   ! leaf_area straight from the prognostic leaf_carbon. Used by apply_growth. The carbon     !
-   ! pools are the INPUTS here, so they are NOT re-derived (unlike set_cohort_size).             !
+   ! The ONE writer of a cohort's geometry: with wood_carbon the size anchor, derive dbh from   !
+   ! it (wood_to_dbh) and the rest of the geometry, and take leaf_area straight from leaf_carbon. !
+   ! Called after every operator that moves carbon or SLA (birth, the daily update, trait       !
+   ! acclimation, fusion, fission, a restart read). The pools are the inputs and are not        !
+   ! changed.                                                                                     !
    !---------------------------------------------------------------------------------------!
    subroutine set_cohort_size_from_carbon(cohort, i)
       type(cohort_block), intent(inout) :: cohort

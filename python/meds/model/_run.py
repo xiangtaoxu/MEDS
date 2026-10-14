@@ -27,11 +27,22 @@ from ._ffi import lib
 
 #----- Field ids match meds_c_api_demography's, so the two sub-packages read the same way. ----#
 _REAL = {"dbh": 0, "height": 1, "nplant": 2, "agb": 3, "leaf_area": 4,
-         "overtopping_lai": 5, "growth_avg": 6, "wood_carbon": 7}
+         "overtopping_lai": 5, "growth_avg": 6, "wood_carbon": 7,
+         "gpp": 8,   # [kgC/plant] gross GPP over the last slow step (a run's own; not a demography site's)
+         "npp": 9, "npp_wood": 10,   # [kgC/plant/yr] the last slow step's NPP and its wood part; NaN
+                                     # unless the output lists a site NPP total (which keeps them)
+         #----- [kgC/plant] maintenance respiration over the last slow step, against that GPP (a run's own)
+         "leaf_resp": 11, "stem_resp": 12, "root_resp": 13,
+         #----- [kgC/plant] the live pools, and [yr] the leaf lifespan the turnover runs on
+         "leaf_carbon": 14, "fineroot_carbon": 15, "storage_carbon": 16, "llspan": 17,
+         #----- [kgC/plant/yr] the rest of the last slow step's allocation; NaN as npp is
+         "npp_leaf": 18, "npp_fineroot": 19, "npp_storage": 20, "npp_repro": 21,
+         "growth_resp": 22, "exudate": 23}
 _INT = {"pft": 0, "owner_patch": 1, "global_id": 2}
+_PATCH_REAL = {"area": 0, "age": 1}
 
 #----- driver_step status codes (meds_driver's DRIVER_* parameters). --------------------------#
-OK, FINISHED, ERR_NAN, ERR_AREA, ERR_SOILC = 0, 1, 2, 3, 4
+OK, FINISHED, ERR_NAN, ERR_AREA, ERR_BOUNDS = 0, 1, 2, 3, 4
 
 
 class StepInfo:
@@ -80,13 +91,14 @@ class Run:
             #      the only reason a bad state is an exception here instead of a dead
             #      interpreter. See the meds_driver module header.
             raise RuntimeError(f"MEDS: NaN in the state or the energy/water ledger at {self.date}")
-        if status == ERR_SOILC:
-            #----- A CENTURY pool went negative or past the divergence ceiling. The Fortran
-            #      side has already printed which pool and patch; the slow ledger's report
-            #      names the PHASE that did it.
+        if status == ERR_BOUNDS:
+            #----- A cohort's density, carbon or water went negative or infinite, or a CENTURY
+            #      pool went negative or past the divergence ceiling. The Fortran side has
+            #      already printed which field and cohort (or pool and patch); for soil carbon
+            #      the slow ledger's report names the PHASE that did it.
             raise RuntimeError(
-                f"MEDS: physically impossible soil-carbon pool at {self.date} "
-                "(see the printed pool/patch and the slow-ledger IMPOSSIBLE STORE line)")
+                f"MEDS: a cohort or soil-carbon state out of its physical bounds at {self.date} "
+                "(see the printed field and cohort, or pool and patch)")
         if status == FINISHED:
             return None
         if status < 0:
@@ -185,7 +197,7 @@ class Run:
 
     @property
     def total_basal_area(self):
-        """Basal area [cm2/m2]."""
+        """Basal area [m2/m2]."""
         return lib.meds_run_total_basal_area(self.handle)
 
     @property
@@ -224,8 +236,30 @@ class Run:
             out[f] = buf[:n]
         return out
 
+    #----- Per-patch state, copied out ----------------------------------------------------
+    def patches(self, *fields):
+        """Copy per-patch fields into numpy arrays: ``run.patches("area")``.
+
+        ``area`` is the patch's fraction of the site and ``age`` its years since the disturbance
+        that made it. A cohort's ``owner_patch`` (1-based) indexes these, so a site total of a
+        cohort quantity x is ``sum(area[owner_patch - 1] * nplant * x)``.
+        """
+        if not fields:
+            fields = tuple(_PATCH_REAL)
+        n = self.n_patch
+        out = {}
+        for f in fields:
+            if f not in _PATCH_REAL:
+                raise KeyError(f"unknown patch field {f!r}; have {sorted(_PATCH_REAL)}")
+            buf = np.zeros(max(n, 1), dtype=np.float64)
+            lib.meds_run_get_patch_real(self.handle, _PATCH_REAL[f],
+                                        buf.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
+            out[f] = buf[:n]
+        return out
+
     real_fields = tuple(_REAL)
     int_fields = tuple(_INT)
+    patch_fields = tuple(_PATCH_REAL)
 
     def __repr__(self):
         if self.handle is None:
@@ -241,8 +275,8 @@ COMPLETED = " OK: simulation completed, area conserved, no NaNs."
 def run(config, verbose=True):
     """Run a config from its start to its ``end_time``, as the ``meds_main`` executable does: the
     same steps, the same output files and the same closing line on stdout. Returns the number of
-    slow steps. A NaN in the state, an impossible soil-carbon pool or a site whose area is not
-    conserved raises RuntimeError, where the executable would stop."""
+    slow steps. A NaN in the state, a cohort or soil-carbon state out of bounds, or a site whose
+    area is not conserved raises RuntimeError, where the executable would stop."""
     with Run(config, verbose=verbose) as r:
         n = r.run_to_end()
         r.finalize()

@@ -9,11 +9,14 @@ wood_density       = [0.40, 0.60, 0.85]    # [g/cm3] the growth-mortality trade-
 dbh_critical       = [100.0, 100.0, 100.0] # [cm] maximum diameter
 hgt_max            = [46.0, 46.0, 46.0]     # [m] per-PFT asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction diverted to reproduction
-repro_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] reproduction carbon -> establishable recruits
+recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of reproduction carbon that becomes
+                                    #      recruits: seed set, germination and seedling survival together
+# recruit_shade_decay = [0.0, 0.0, 0.0]   # [1/(m2/m2)] that share x exp(-k * patch LAI); optional, default 0
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)
-min_reproduction_height = 20.0             # [m] height a cohort must exceed before it reproduces (all PFTs)
+# reproduction_height_fraction = 0.33        # [--] OPTIONAL (default 0.33): reproduce from this share of the
+#                                           #      local maximum height, the height of a 100 cm tree
 # Leaf photosynthesis / stomatal traits (FvCB C3 + Collatz C4). pathway: 1 = C3, 2 = C4.
 # (Used by the leaf gas-exchange model; not yet coupled to demographic growth.)
 photosynthetic_pathway = [1, 1, 2]                  # pioneer C3, climax C3, a C4 grass
@@ -37,10 +40,10 @@ theta_ip_c3        = [0.95, 0.95, 0.95]            # [--] C3 (Ac,Aj)/Ap co-limit
 theta_cj_c4        = [0.80, 0.80, 0.80]             # [--] C4 co-limitation curvature 1 (C4 only)
 theta_ic_c4        = [0.95, 0.95, 0.95]             # [--] C4 co-limitation curvature 2 (C4 only)
 katul_lambda25     = [600.0, 800.0, 350.0]          # [umol CO2/mol H2O] Katul marginal water-use efficiency
-wstress_psi_open   = [-0.5, -0.5, -0.5]             # [MPa] leaf potential at which beta = 1 (no stress)
-wstress_psi_close  = [-2.5, -3.0, -2.0]             # [MPa] leaf potential at which beta = 0 (full stress)
 wstress_lambda_exp = [1.0, 1.0, 1.0]                # [--] Katul lambda water-stress exponent
 wstress_sref_stomata = [2.0, 2.0, 2.0]              # [1/MPa] Sabot stomatal-stress sensitivity (beta_stomata=exp(sref*(psi-psi_onset)))
+# wstress_psi_open  = [-1.714, -1.714, -1.714]      # [MPa] OPTIONAL current leaf potential where the fast limb on Vcmax/Jmax/TPU starts (default: the turgor-loss point)
+# wstress_psi_close = [-3.43, -3.43, -3.43]         # [MPa] OPTIONAL ... and where it has shut them (default: twice the turgor-loss point)
 # stomata_psi_onset = [-0.857, -0.857, -0.857]      # [MPa] OPTIONAL predawn leaf potential where the stomatal stress begins
                                                     #   (beta_stomata = 1 above it). Absent: half the PFT's leaf turgor-loss
                                                     #   point, the recommended value (-0.857 at the [hydraulics] leaf_pi0 and
@@ -78,7 +81,9 @@ aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction 
 #----- Non-leaf MAINTENANCE respiration (per-PFT; leaf Rd is rd_vcmax_ratio above). These were
 #      three run-uniform literals in the fast driver, so every PFT respired stem and root alike.
 is_woody           = [1, 1, 1]     # 1 = woody (0 = grass: no stem respiration)
-stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C]
+stem_resp_factor25 = [0.06, 0.06, 0.06]  # [umol CO2/m2 stem/s @25C] per stem surface (cylinder + branches)
+# stem_resp_sapwood25 = [0.0, 0.0, 0.0]  # [umol CO2/m3 sapwood/s @25C] per sapwood volume, added to the
+#                                         # surface term; optional, default 0 (set the surface rate to 0 to use it alone)
 root_resp_factor25 = [0.30, 0.30, 0.30]  # [umol CO2/kgC fine root/s @25C]
 
 #----- CANOPY OPTICS (the two-stream's per-PFT table). Shortwave as reflectance + transmittance
@@ -100,15 +105,21 @@ leaf_clumping      = [0.80, 0.80, 0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50, 0.50, 0.50]    # [--] wood clumping factor in (0,1]
 leaf_angle_mean    = [45.0, 45.0, 45.0]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0, 20.0, 20.0]   # [deg] its standard deviation
-storage_cushion        = [1.0, 1.0, 1.0]            # [--] storage target as a multiple of the leaf target
+storage_cushion        = [3.0, 3.0, 3.0]            # [--] storage target as a multiple of the leaf +
+                                                    #      fine-root target (three full flushes); also the
+                                                    #      starting storage of an inventory cohort
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
+# retained_carbon_fraction = [0.3, 0.3, 0.3]       # [--] OPTIONAL (default 0.3): share of all leaf and fine-root
+#                                                  #      loss resorbed to storage rather than littered
 # OPTIONAL carbon traits; absent, each is 0 for every PFT.
 # storage_turnover_rate = [0.0, 0.0, 0.0]          # [1/yr] maintenance loss of the storage pool
-# retained_carbon_fraction = [0.0, 0.0, 0.0]       # [--] shed leaf carbon kept (resorbed) rather than littered
+# max_relative_growth_rate = [0.0, 0.0, 0.0]       # [1/yr] sink limit on wood growth per unit wood carbon
+# max_absolute_growth_rate = [0.0, 0.0, 0.0]       # [cm/yr] sink limit on diameter growth of a 1 cm stem;
+#                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
+# max_absolute_growth_exponent = [0.0, 0.0, 0.0]   # [--] that limit scales as dbh[cm]^exponent (0 = size-independent)
 leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
-evergreen              = [1, 1, 1]                  # 1 = evergreen (cold-suppress turnover), 0 = deciduous
 # Necromass -> litter-destination split (meds_column_state_types%necromass_to_litter). aboveground_frac
 # (above) doubles as the litter above/below-ground split for leaf/storage and wood streams.
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass
@@ -127,9 +138,14 @@ struct_lignin_frac     = [0.20, 0.25, 0.30]         # [--] lignin fraction of th
 # wood_water_sat     = [1.0, 1.0, 1.0]             # [kg H2O/kgC] wood saturated water content
 # wood_psi50         = [-2.0, -2.0, -2.0]          # [MPa] xylem potential at 50 % loss of conductance
 # wood_kexp          = [2.0, 2.0, 2.0]             # [--]  vulnerability-curve shape
-# k_plant_max        = [6.0e-4, 6.0e-4, 6.0e-4]    # [kg/s/MPa/m2 leaf] whole-plant conductance
-# wood_kmax          = [8.0, 8.0, 8.0]             # [kg/m/s/MPa] sapwood specific conductivity
+# wood_kmax          = [5.3, 3.3, 1.8]             # [kg/m/s/MPa] sapwood specific conductivity; absent,
+#                                                  #   it follows wood_density (Xu et al. 2016), shown here
 # vessel_curl        = [1.5, 1.5, 1.5]             # [--]  path-length factor
+# root_beta          = [0.1, 0.1, 0.1]             # [--]  root profile within the rooting depth
+# root_depth_b1      = [1.114058, 1.114058, 1.114058]   # [m] rooting depth = b1 * height^b2
+# root_depth_b2      = [0.4223014, 0.4223014, 0.4223014] # [--]
+# specific_root_length = [2.0e4, 2.0e4, 2.0e4]     # [m/kgC] fine-root length per unit fine-root carbon
+# fine_root_radius   = [2.5e-4, 2.5e-4, 2.5e-4]    # [m]  fine-root radius
 
 [camac]
 # Mortality hazard = mort_gamma + mort_alpha*exp(-mort_beta*growth_avg). Each parameter is a power
@@ -155,65 +171,79 @@ ca_b2      = 0.464          # crown-area exponent
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI
+height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (below); all capped at hgt_max
+# The gMM curve, read only with height_allometry = "gmm": height = gmm_a*dbh^gmm_b / (gmm_k + dbh^gmm_b).
+# These are Cano et al. (2019, Biogeosciences 16:847) eq. 7, fitted to the Barro Colorado Nature Monument.
+# gmm_a = 58.0     # [m] asymptotic height
+# gmm_b = 0.73     # [--] exponent on dbh
+# gmm_k = 21.8     # [cm^gmm_b] half-saturation
+# Chave et al. (2014) eq. 6a, read only with height_allometry = "chave2014":
+# ln height = 0.893 - chave_e + 0.760 ln dbh - 0.0340 (ln dbh)^2 + 0.243^2/2 (the mean, as BIOMASS's retrieveH).
+# chave_e is the site's stress index, E = 1e-3 (0.178 TS - 0.938 CWD - 6.61 PS) (Chave eq. 6b): below 0 at
+# wet, aseasonal sites (taller trees), above 0 where it is dry, seasonal or hot (shorter trees).
+# chave_e = 0.0   # [--] Chave's environmental stress index
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
-# mortality-hazard parameters instead of deriving them from wood density:
+# mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity
+# slopes instead of deriving them from vcmax25 and leaf_lifespan_toc (a cohort's trait is its PFT's
+# top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2)). Each key is optional:
 # [derived]
 # mort_gamma = [...]   # length = number of PFTs
 # mort_alpha = [...]
 # mort_beta  = [...]
+# kplastic_vcmax  = [...]   # < 0: Vcmax25 falls in shade
+# kplastic_rd     = [...]   # < 0: Rd25 falls in shade (derived: the same as kplastic_vcmax)
+# kplastic_sla    = [...]   # > 0: SLA rises in shade
+# kplastic_llspan = [...]   # >= 0: leaf lifespan lengthens in shade
 
 # ------------------------------------------------------------------------------------------
-# Leaf-phenology cue parameters (per PFT). The gate is the PRESENCE of this [phenology] section in
-# THIS file: absent, every PFT keeps the built-in literature defaults, which are a vanilla EVERGREEN
-# (permissive flush, no active shed). Present, every key below is REQUIRED -- a missing one is a hard
-# error naming it, not a silent default. Every array length must equal the number of PFTs.
+# Leaf-phenology cue parameters (per PFT; docs/science/plant_phenology.md). The gate is the
+# PRESENCE of this [phenology] section in THIS file: absent, every PFT keeps the built-in defaults,
+# both masks 0 -- always flushing, never senescing, losing leaves to background turnover alone.
+# Present, every key below is REQUIRED except the optional ones marked; every array length must
+# equal the number of PFTs. Leaf habit (deciduous, semi-deciduous, evergreen) comes from these
+# parameters: a deciduous PFT senesces to min_leaf_cover = 0, an evergreen one stops above 0.
 #
-# A PFT declared `evergreen = [0]` above does NOT by itself give it a leaf-area cycle: what sheds a
-# canopy is the shed cue mask here. Leave this section out and a deciduous PFT will hold full leaf
-# area all winter.
+# Three cues, chosen independently for each side by a bit mask: 1 = TEMP, 2 = LIGHT, 4 = WATER.
+#   TEMP     : warmth above flush_base_temp summed from midwinter; cold below shed_base_temp
+#              summed from midsummer.
+#   LIGHT    : the hours a day the PAR reaching the cohort's top exceeds par_min [umol/m2/s], as a
+#              running mean over light_window [day]. A low par_min counts the photoperiod; a high
+#              one counts the bright hours, with their clouds and the cohort's place in the canopy.
+#   WATER    : predawn leaf water potential summed above and below the PFT's turgor-loss point
+#              [MPa day]; each sum restarts when the other side's switch crosses 0.5.
+# Every switch is sigma(s (x - x*)): a centre x* and a signed sharpness s; it rises from 0.12 to
+# 0.88 over x* +- 2/|s|, and s < 0 turns it on as x falls. The flush signal is the PRODUCT of the
+# flush cues' switches; the shed signal is the larger of the seasonal trigger (the product of the
+# TEMP and LIGHT switches) and the WATER switch. A mask of 0 always flushes / never senesces.
 #
-# The two masks are ORs of the cue bits, and are chosen INDEPENDENTLY:
-#   0 = none | 1 = TEMP (GDD/chilling) | 2 = WATER | 4 = HYDRO (leaf water potential)
-#   8 = PHOTO (daylength) | 16 = LIGHT
-# flush_cue_mask combines its cues by MIN (every listed cue must permit flushing); shed_cue_mask
-# combines by MAX (any listed cue can force shedding). 0 on the flush side is permissive (always
-# allowed); 0 on the shed side means no active shed -- that pair is the evergreen fixed point.
-#
-# Example below: PFT 1 cold-deciduous (TEMP on both sides), PFTs 2 & 3 evergreen.
+# Example below: PFT 1 a temperate deciduous tree (TEMP and LIGHT on both sides), PFTs 2 and 3
+# always flushing and never senescing.
 # [phenology]
-# flush_cue_mask      = [1, 0, 0]                  # [bitmask] cues that PERMIT flushing (MIN)
-# shed_cue_mask       = [1, 0, 0]                  # [bitmask] cues that FORCE shedding  (MAX)
-# cue_sharpness       = [2.0, 2.0, 2.0]            # [--]   logistic slope (larger = sharper threshold)
-# k_flush_max         = [0.06667, 0.06667, 0.06667]# [1/day] max relative flush rate (~full in 15 d)
-# k_shed_max          = [0.05, 0.05, 0.05]         # [1/day] max relative active-shed rate (~bare in 20 d)
-# tau_flush           = [5.0, 5.0, 5.0]            # [day]   flush governor low-pass timescale
-# tau_shed            = [5.0, 5.0, 5.0]            # [day]   shed governor low-pass timescale
-# gdd_base_temp       = [278.15, 278.15, 278.15]   # [K]     GDD accumulation base (5 degC)
-# chill_base_temp     = [278.15, 278.15, 278.15]   # [K]     chilling-day base
-# phen_a              = [-68.0, -68.0, -68.0]      # [K day] GDD-threshold intercept (Botta 2000)
-# phen_b              = [638.0, 638.0, 638.0]      # [K day] GDD-threshold amplitude
-# phen_c              = [-0.01, -0.01, -0.01]      # [1/day] chilling exponent (more chill -> less GDD needed)
-# cold_drop_daylength = [10.9, 10.9, 10.9]         # [h]     autumn short-day drop trigger (White 1997)
-# cold_drop_soiltemp1 = [284.3, 284.3, 284.3]      # [K]     cool-soil drop (with short days)
-# cold_drop_soiltemp2 = [275.15, 275.15, 275.15]   # [K]     very-cold-soil drop (unconditional)
-# photo_crit          = [11.0, 11.0, 11.0]         # [h]     critical daylength (CUE_PHOTO)
-# photo_slope         = [2.0, 2.0, 2.0]            # [1/h]   daylength logistic slope (CUE_PHOTO)
-# gdd_width           = [50.0, 50.0, 50.0]         # [K day] GDD flush transition width
-# daylen_width        = [1.0, 1.0, 1.0]            # [h]     autumn daylength transition width
-# soiltemp_width      = [2.0, 2.0, 2.0]            # [K]     autumn soil-temperature transition width
-# evg_ref_temp        = [278.15, 278.15, 278.15]   # [K]     evergreen cold-limitation reference
-# evg_slope           = [0.4, 0.4, 0.4]            # [1/K]   evergreen cold-limitation slope
-# bare_snap_frac      = [0.02, 0.02, 0.02]         # [--]    below this leaf fraction the canopy snaps bare
+# flush_cue_mask        = [3, 0, 0]                # [bitmask] cues of the flush side
+# shed_cue_mask         = [3, 0, 0]                # [bitmask] cues of the shed side
+# flush_cue_timescale   = [5.0, 5.0, 5.0]          # [day]   smoothing of the flush tendency
+# shed_cue_timescale    = [5.0, 5.0, 5.0]          # [day]   smoothing of the shed tendency
+# flush_rate_max        = [0.06667, 0.06667, 0.06667] # [1/day] leaf growth at full flush tendency
+# shed_rate_max         = [0.05, 0.05, 0.05]       # [1/day] senescence at full shed tendency
+# min_leaf_cover        = [0.0, 0.0, 0.0]          # [--]    leaf cover senescence stops at
+# bare_leaf_cover       = [0.02, 0.02, 0.02]       # [--]    a dormant canopy below this goes bare
+# flush_base_temp       = [278.15, 278.15, 278.15] # [K]     warmth base
+# flush_degree_days     = [100.0, 100.0, 100.0]    # [K day] warmth requirement
+# flush_temp_sharpness  = [0.04, 0.04, 0.04]       # [1/(K day)]
+# shed_base_temp        = [290.15, 290.15, 290.15] # [K]     cold base
+# shed_degree_days      = [50.0, 50.0, 50.0]       # [K day] cold requirement after midsummer
+# shed_temp_sharpness   = [0.1, 0.1, 0.1]          # [1/(K day)]
+# par_min               = [5.0, 5.0, 5.0]          # [umol/m2/s] PAR that counts as an hour of light
+# flush_light_hours     = [12.0, 12.0, 12.0]       # [h/day]
+# flush_light_sharpness = [1.0, 1.0, 1.0]          # [1/h]   a flush gate fits as a step (~8)
+# shed_light_hours      = [11.0, 11.0, 11.0]       # [h/day]
+# shed_light_sharpness  = [-1.0, -1.0, -1.0]       # [1/h]   < 0: short or dim days trigger senescence,
+#                                                  #         > 0: bright days do (leaf exchange)
+# light_window          = [10.0, 10.0, 10.0]       # [day]   running mean of the hours of light
 #
-# The WATER / HYDRO / LIGHT cue parameters are OPTIONAL (those cues are opt-in via the masks);
-# absent keys keep the defaults shown. See docs/configuration.md for what each does.
-# water_off_threshold = [0.2, 0.2, 0.2]            # [--]    WATER cue: available soil water at which shedding is full
-# water_on_threshold  = [0.5, 0.5, 0.5]            # [--]    WATER cue: available soil water at which flushing is full
-# water_window        = [10.0, 10.0, 10.0]         # [day]   WATER cue: soil-water running-mean window
-# water_width         = [0.1, 0.1, 0.1]            # [--]    WATER cue: logistic transition width
-# low_psi_threshold   = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: dry days below the turgor-loss point to full shed
-# high_psi_threshold  = [10.0, 10.0, 10.0]         # [day]   HYDRO cue: wet days to full flush
-# light_on_threshold  = [200.0, 200.0, 200.0]      # [W/m2]  LIGHT cue: radiation at which shedding starts
-# light_width         = [50.0, 50.0, 50.0]         # [W/m2]  LIGHT cue: shedding transition width
-# light_window        = [10.0, 10.0, 10.0]         # [day]   LIGHT cue: radiation running-mean window
+# OPTIONAL: the WATER cue; absent keys keep the defaults shown.
+# flush_water_sum       = [10.0, 10.0, 10.0]       # [MPa day] wet sum that permits flushing
+# flush_water_sharpness = [0.5, 0.5, 0.5]          # [1/(MPa day)]
+# shed_water_sum        = [10.0, 10.0, 10.0]       # [MPa day] dry sum that triggers shedding
+# shed_water_sharpness  = [0.5, 0.5, 0.5]          # [1/(MPa day)]

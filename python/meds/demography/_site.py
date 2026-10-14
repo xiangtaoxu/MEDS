@@ -41,12 +41,18 @@ class Config:
 
 
 class Site:
-    def __init__(self, cfg, n_patch=1):
+    def __init__(self, cfg, n_patch=1, census=False):
+        """A near-bare-ground site of ``n_patch`` empty patches, or with ``census=True`` the stand in
+        the config's [init].census_file, restructured the way meds_main restructures it."""
         self.cfg = cfg
         self.handle = lib.meds_site_create()
         if self.handle < 0:
             raise RuntimeError("MEDS site registry full")
-        lib.meds_site_init_bare(self.handle, cfg.handle, int(n_patch))
+        if not census:
+            lib.meds_site_init_bare(self.handle, cfg.handle, int(n_patch))
+        elif lib.meds_site_init_census(self.handle, cfg.handle) != 1:
+            lib.meds_site_free(self.handle)
+            raise RuntimeError("MEDS could not read the census file named by [init].census_file")
 
     def advance_slow(self, is_new_month, is_new_year):
         """Advance one slow step using the Fortran built-in CARBON orchestration."""
@@ -63,12 +69,20 @@ class Site:
         growth, mortality: per-cohort arrays (length n_cohort). recruitment: a
         (n_pft, n_patch) array. All are passed to the engine's law-free apply-
         primitives; the SoA is reordered by fuse/fission, bumping ``generation``.
+        Mortality and recruitment are rates of loss and gain, so they must be finite and
+        non-negative: the engine keeps density in bounds by construction and does not
+        re-check what a caller hands it.
         """
         n = self.n_cohort
         g = np.ascontiguousarray(growth, dtype=np.float64)
         m = np.ascontiguousarray(mortality, dtype=np.float64)
         # flat column-major (PFT fastest), matching the Fortran (npft, npatch) layout
         r = np.ascontiguousarray(np.asarray(recruitment, dtype=np.float64).reshape(-1, order="F"))
+        if not np.all(np.isfinite(g[:n])):
+            raise ValueError("apply_rates: growth must be finite")
+        for name, x in (("mortality", m[:n]), ("recruitment", r)):
+            if not np.all(np.isfinite(x) & (x >= 0.0)):
+                raise ValueError(f"apply_rates: {name} must be finite and non-negative")
         gp = g.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
         mp = m.ctypes.data_as(ctypes.POINTER(ctypes.c_double)) if n else None
         rp = r.ctypes.data_as(ctypes.POINTER(ctypes.c_double))

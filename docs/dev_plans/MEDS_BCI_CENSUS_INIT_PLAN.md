@@ -3,7 +3,7 @@
 **Status:** written 2026-09-28 against `beta` at `73ab654`, revised the same day after review.
 **First trial implemented 2026-09-29** on `feat/bci-census-init`: P0a–P0c, P1 and the P2 example,
 with the five-year run from the census finishing within the flux period and compared with the tower
-(`examples/example_flux_tower_bci/README.md`). G2 passes (the model's first stand equals the census
+(`examples/example04_column_biophysics/README.md`). G2 passes (the model's first stand equals the census
 file: LAI 5.60, AGB 16.12 kgC m⁻²), G4 matches the simulation (25 patches against 24), and G8 is 7.2
 minutes. `plot_census.py` and the remaining gates are left for the next round. It builds on the
 allometry fix merged into `beta` as #321 (§5.2): every number below uses those defaults. The 2010
@@ -31,7 +31,7 @@ years once. Every tree is the example's one evergreen PFT: functional diversity 
 | D8 | **Three Fortran changes, none of which alters another run:** `[init]` keys for the initial soil state, off by default (P0a); a header-matched census reader with an optional `patch_area` column, which still reads today's files (P0b); and restructuring at census initialization (P0c). |
 | D9 | **Soil carbon starts from the steady-state solve** that already exists (`[soil_carbon].spinup_steady`). The litter input is estimated from the census stand by the tool and checked against the model's first-year litter output. |
 | D10 | **No data in the repository.** The tool reads the census in place, from the path `bci_census.toml` declares (§4), and checks it against the recorded checksum. The README carries the citation and acknowledgement the data asks for. |
-| D11 | **The converter is general, the settings are BCI's.** `scripts/prepare_census/` turns a ForestGEO tree table into a MEDS census CSV; `examples/example_flux_tower_bci/bci_census.toml` declares the BCI source, plot geometry and choices, as `bci_site.toml` does for the tower. |
+| D11 | **The converter is general, the settings are BCI's.** `scripts/prepare_census/` turns a ForestGEO tree table into a MEDS census CSV; `examples/example04_column_biophysics/bci_census.toml` declares the BCI source, plot geometry and choices, as `bci_site.toml` does for the tower. |
 
 ## 2. What the spin-up supplies today, and what replaces it
 

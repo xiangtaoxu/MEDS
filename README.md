@@ -13,27 +13,28 @@ energy, water and CO₂ balance every sub-daily step, and the demography runs on
 balance produces.
 
 <p align="center">
-  <img src="examples/example_demography/example_output_forest.gif" height="230" alt="Canopy-layer stand profile with vertical LAI">
+  <img src="examples/example03_demography/canopy_profile.gif" height="230" alt="Canopy-layer stand profile with vertical LAI">
   &nbsp;&nbsp;
-  <img src="examples/example_demography/forest3d_growth.gif" height="230" alt="3D landscape, trees growing in place">
+  <img src="examples/example03_demography/landscape_growth_3d.gif" height="230" alt="3D landscape, trees growing in place">
 </p>
 
-*A 250-year spin-up from near-bare ground. Left: the vertical leaf-area profile beside a stand
-cross-section, each bar a cohort's canopy disk seen edge-on. Right: the same run as a synthetic
-landscape, with every tree tracked by a persistent id so it grows in place. Colour is plant
-functional type — green pioneer, blue mid-successional, magenta climax — and the sequence is the
-textbook ED succession: bare ground, a pioneer flush, canopy closure. Reproduce it from
-[`examples/example_demography/`](examples/example_demography/).*
+*The demography module alone, 300 years from near-bare ground, with growth, mortality and
+recruitment learned from the Barro Colorado Island 50-ha plot census. Left: the vertical leaf-area
+profile beside a stand cross-section, each bar a cohort's canopy disk seen edge-on. Right: the same
+run as a synthetic landscape, with every tree tracked by a persistent id so it grows in place.
+Colour is plant functional type by wood density — green light, blue medium, magenta dense. Started
+from the 1985 census instead, the same rates track the plot through 2010. Reproduce it from
+[`examples/example03_demography/`](examples/example03_demography/).*
 
-[![Hourly canopy energy balance for one July](examples/example_biophysics/biophysics_july.png)](examples/example_biophysics/)
+[![Ten days of the coupled column at Barro Colorado Island, every half hour](examples/example04_column_biophysics/window.png)](examples/example04_column_biophysics/)
 
-*One July at hourly resolution, year 50 of a run at Ithaca NY. **Only the grey curve is an input** —
-above-canopy air temperature from the ERA5-Land forcing. The canopy air space, the sunlit leaf and
-the soil surface are all solved from it and the incoming shortwave. They separate from the forcing
-in different directions and with different phase, which is what a real surface does and what a
-meteorological file cannot tell you. The same run's carbon and soil-water figures come from the
-same output stream, not three separate studies:
-[`examples/example_biophysics/`](examples/example_biophysics/).*
+*Ten days in one patch of the Barro Colorado Island forest, Panama, every half hour, at the end of
+the 2016 El Niño dry season. **Of what is drawn, only the top panel and the grey air temperature are
+inputs**, from the flux tower's own meteorology. The canopy air, the top tree's leaves and the soil
+are solved: the leaves run 3–6 K above the air at midday, the canopy draws its air's CO₂ down by
+day, and the first storm wets the soil from the top down. The same run starts from the plot's
+census and is calibrated against the tower's fluxes:
+[`examples/example04_column_biophysics/`](examples/example04_column_biophysics/).*
 
 ## What is in the model
 
@@ -43,12 +44,13 @@ same output stream, not three separate studies:
 | Aerodynamics | CLM5 Monin-Obukhov, ED2 Nusselt leaf and wood boundary layers | [canopy_aerodynamics](docs/science/canopy_aerodynamics.md) |
 | Canopy air space | three prognostic twins: enthalpy, humidity, CO₂ | [canopy_air_space](docs/science/canopy_air_space_biophysics.md) |
 | Photosynthesis | FvCB C3 and Collatz C4, three stomatal models, two-limb water stress | [leaf_gas_exchange](docs/science/leaf_gas_exchange.md) |
-| Plant hydraulics | matrix-exponential network solve, multi-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
-| Soil water | implicit Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
+| Plant hydraulics | pressure-volume tissues, Kirchhoff xylem, per-layer root uptake | [plant_hydraulics](docs/science/plant_hydraulics.md) |
+| Soil water | mixed-form Richards, van Genuchten or Campbell retention | [soil_biophysics](docs/science/soil_biophysics.md) |
+| Soil and plant water solve | one implicit network per patch: pond, soil layers, each cohort's wood and leaves | [soil_plant_water](docs/science/soil_plant_water.md) |
 | Energy and snow | **internal energy, not temperature** — freeze/thaw is a read-off, not a branch | [column_biophysics](docs/science/column_biophysics.md) |
 | Meteorological forcing | a global ERA5-Land archive or a site file; interval-mean-conserving disaggregation, moved to each patch's canopy-air top with an optional terrain lapse; never gap-fills | [forcing](docs/science/forcing.md) |
 | Atmospheric CO₂ | a constant, or a prescribed series on model time (CMIP7 global annual means ship) | [forcing](docs/science/forcing.md) |
-| Phenology | rate-based signal kernel: cues → flush and shed tendencies | [plant_phenology](docs/science/plant_phenology.md) |
+| Phenology | one cue kernel (temperature, hours of light, water) → flush and senescence tendencies; evergreen as a leaf-cover floor | [plant_phenology](docs/science/plant_phenology.md) |
 | Carbon allocation | daily FATES PARTEH-H1 priority ladder | [plant_carbon_allocation](docs/science/plant_carbon_allocation.md) |
 | Respiration | leaf, stem and fine-root maintenance; growth charged on realized growth | [plant_respiration](docs/science/plant_respiration.md) |
 | Soil carbon | ED2's CENTURY network as a carbon matrix ODE | [soil_carbon](docs/science/soil_carbon.md) |
@@ -60,7 +62,7 @@ same output stream, not three separate studies:
 Every process closes a conservation budget each step, asserted in the test suite. The patch axis is
 threaded and the output is byte-identical at any thread count.
 
-**Status: v0.3.3, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
+**Status: v0.3.4, and unbenchmarked.** No EDTS-equivalent regression suite has been run, no site has
 been compared flux-for-flux, and no output has been scored against observations. What is verified is
 internal: the test suite on two compilers, per-step conservation ledgers, and thread invariance.
 Treat the numbers a MEDS run produces as a working model's numbers.
@@ -78,9 +80,9 @@ cmake -S . -B build -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 
-./build/meds_main examples/example_demography/example_config_main.toml
+./build/meds_main examples/example03_demography/example_config_main.toml
 python post_proc/plot_site_timeseries.py \
-       examples/example_demography/example_output/example_output-D-output.nc -o timeseries.png
+       examples/example03_demography/output/example_output-D-output.nc -o timeseries.png
 ```
 
 netCDF is a hard dependency and gfortran, ifx and nvfortran are all supported. Details, including

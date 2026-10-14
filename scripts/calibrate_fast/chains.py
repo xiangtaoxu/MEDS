@@ -13,14 +13,14 @@ import datetime as dt
 import threading
 from pathlib import Path
 
-from trials import TrialError, command, digest, log_tail, stamp, timeout_for, with_keys
+from trials import TrialError, command, digest, log_tail, stamp, threads_for, timeout_for, with_keys
 from workers import Task
 
 PREFIX = "c"
 
 
 def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, runner, overrides,
-              timeout_per_day: float) -> Path:
+              timeout_per_day: float, max_threads: int = 1) -> Path:
     """Run one window's chain; return the state file at the window's start."""
     start = window.start - dt.timedelta(days=lead_days)
     tag = digest(window.name, str(start), str(window.start),
@@ -31,8 +31,9 @@ def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, r
     if state.exists():
         return state
     cfg = with_keys(base, keys, values, overrides)
+    threads = threads_for(lead_days, max_threads)
     for k, v in {"run.start_time": stamp(start), "run.end_time": stamp(window.start), "run.slow_on": False,
-                 "run.n_threads": 1, "init.init_mode": 1, "init.restart_file": "none",
+                 "run.n_threads": threads, "init.init_mode": 1, "init.restart_file": "none",
                  "state.write_state": True, "state.output_dir": str(cdir / "out"),
                  "state.output_prefix": PREFIX, "state.interval_years": 1000,
                  "output.enabled": False}.items():
@@ -40,7 +41,7 @@ def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, r
     (cdir / "out").mkdir(parents=True, exist_ok=True)
     main = cfg.write(cdir)
     res = workers.run([Task(f"chain-{window.name}", command(runner, main), str(cdir), str(cdir / "run.log"),
-                            timeout_for(lead_days, timeout_per_day))])
+                            timeout_for(lead_days, timeout_per_day), threads)])
     status = next(iter(res.values()))[0]
     if status != "ok" or not state.exists():
         raise TrialError(f"the chain of {window.name} ({start} -> {window.start}) failed: {status}\n"
@@ -49,14 +50,14 @@ def run_chain(window, lead_days: int, base, keys, values, root: Path, workers, r
 
 
 def run_chains(windows, lead_days: int, base, keys, values, root: Path, workers, runner, overrides,
-               timeout_per_day: float, log=print) -> dict:
+               timeout_per_day: float, log=print, max_threads: int = 1) -> dict:
     """Every window's state, all chains at once: {window name: state file}."""
     states, errors = {}, []
 
     def one(w):
         try:
             states[w.name] = run_chain(w, lead_days, base, keys, values, root, workers, runner, overrides,
-                                       timeout_per_day)
+                                       timeout_per_day, max_threads)
         except Exception as e:           # noqa: BLE001 -- raised below
             errors.append(e)
     log(f"state chains: {len(windows)} windows, each from the initial stand {lead_days} days before it")

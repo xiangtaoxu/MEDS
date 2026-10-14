@@ -11,13 +11,14 @@ module meds_config
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : yr_day, yr_sec, day_sec
    use meds_pft_params, only : pft_table_t, PATH_C3, PATH_C4, derive_pft_rates, derive_leaf_params, HYD_UNSET
-   use meds_allometry,  only : set_allometry
+   use meds_allometry,  only : set_allometry, HEIGHT_POWER
    use meds_time,       only : meds_time_t, time_lt, time_valid, time_to_string,                &
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
+   use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params,               &
+                                  SOIL_LAYER_TEMPLATE, soil_layer_grid
    use meds_forcing_config, only : forcing_config_t, LW_SYNTHESIZE, METAVG_INSTANT, METAVG_CENTER,   &
                                    METAVG_END, MET_BACKEND_ED_ERA5LAND, SWPART_PASSTHROUGH,        &
                                    WIND_EXPOSURE_OPEN_TERRAIN, ARCHIVE_DT_SEC
@@ -32,8 +33,8 @@ module meds_config
    public :: meds_config_t, allometry_config_t, hydraulics_config_t, soil_column_config_t
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
-   public :: validate_config, growth_window_steps
-   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset
+   public :: validate_config, growth_window_steps, soil_column_layers
+   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -41,8 +42,6 @@ module meds_config
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
    public :: INTEG_ARK, INTEG_RK45
-   public :: LWP_CONTROL_LINEAR_DECLINE
-   public :: HYD_CONDUCTANCE_WHOLE_PLANT, HYD_CONDUCTANCE_SEGMENT
    public :: CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
 
    !----- Time-step modes. ----------------------------------------------------------------!
@@ -76,15 +75,6 @@ module meds_config
    !      CO2 source is folded implicit, so the explicit tableau is empty (f_E == 0) and the scheme    !
    !      is a 2-solve ESDIRK2 with gamma = 1 - 1/sqrt(2) (the ARS(2,2,2) value). The config string    !
    !      stays "ark" for compatibility. ------------------------------------------------------------!
-   !----- STOMATAL CONTROL AT LOW LEAF WATER POTENTIAL ([leaf_physiology].low_water_potential_control, !
-   !      #332). Without one, a plant transpires with an empty internal store: beta_stomata scales g1 !
-   !      only, so conductance falls to the residual g0 and never reaches zero (issue #95). This     !
-   !      multiplies the conductance the stomatal model calculates, g0 included, by a factor that    !
-   !      falls LINEARLY from 1 at the turgor-loss point psi_tlp to 0 at 2*psi_tlp. It replaced a    !
-   !      hard shutdown at 2*psi_tlp, whose step no calibration could see past. -------------------!
-   integer(ik), parameter :: LWP_CONTROL_LINEAR_DECLINE = 1_ik  !< "linear_decline" (the only option)
-   integer(ik), parameter :: HYD_CONDUCTANCE_WHOLE_PLANT = 1_ik  !< [hydraulics] conductance = "whole_plant"
-   integer(ik), parameter :: HYD_CONDUCTANCE_SEGMENT     = 2_ik  !< [hydraulics] conductance = "segment"
    !----- RESERVED: a "dynamic vapour pressure" control -- the substomatal air held at the Kelvin     !
    !      humidity exp(psi/(rho_w*Rv*T)) rather than saturated, so the transpiration gradient shrinks  !
    !      with psi and REVERSES into foliar water uptake once e_i < e_a. It was implemented, measured  !
@@ -95,9 +85,6 @@ module meds_config
    !      route to representing foliar uptake rather than as a stress arrestor. ---------------------!
    integer(ik), parameter :: INTEG_ARK   = 2_ik  !< ESDIRK2 coupled implicit column (DEFAULT)
    integer(ik), parameter :: INTEG_RK45   = 3_ik  !< adaptive Cash-Karp RK45, the ACCURACY BASELINE
-   !----- Above this dt_fast, an rk45 run is warned that it lacks the ARK-only transpiration       !
-   !      corrector (#160). Not a hard limit -- rk45 at a fine step is the intended use.            !
-   real(wp),    parameter :: RK45_UNCORRECTED_DT_WARN = 300.0_wp   !< [s]
 
    !----- Fast-loop ERROR-CONTROL selectors (MEDS_NUMERICS_SCOPING.md goal (a); consumed by            !
    !      meds_fast_control). Strictness LEVEL ([fast].error_level): L0 fixed / L1 adaptive (default) / !
@@ -121,6 +108,9 @@ module meds_config
       real(wp) :: ca_b1 = 0.0_wp, ca_b2 = 0.0_wp      !< crown-area scale / exponent
       real(wp) :: lai_b1 = 0.0_wp, lai_b2 = 0.0_wp    !< per-stem leaf-area scale / exponent
       real(wp) :: light_ext = 0.0_wp                  !< Beer-Lambert extinction through overtopping LAI
+      integer(ik) :: height_form = HEIGHT_POWER       !< the height curve: power law, gMM or Chave (2014)
+      real(wp) :: gmm_a = 0.0_wp, gmm_b = 0.0_wp, gmm_k = 0.0_wp   !< gMM height coefficients
+      real(wp) :: chave_e = 0.0_wp                    !< Chave (2014) stress index E
    end type allometry_config_t
 
    !----- SOIL COLUMN: the site's geometry, texture and thermal properties. Consumed once per run  !
@@ -133,14 +123,15 @@ module meds_config
    !       damping depth, so the fix for that was unreachable from a config file.                     !
    !                                                                                          !
    !       Every key is OPTIONAL and defaults to the literal it replaced, so a config without the     !
-   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which is    !
-   !       the Richards SOLVER's options (tolerances, bottom BC, substepping): this block is the       !
-   !       PHYSICAL column those options are solved over.                                              !
+   !       block is bit-identical to the old behaviour. NOTE the distinction from [soil], which holds  !
+   !       the soil water's options (bottom BC, the water network's tolerances, the pond): this block   !
+   !       is the PHYSICAL column they apply to.                                                         !
    type :: soil_column_config_t
-      !----- Vertical grid. `grid_growth` = 0 gives a uniform grid; > 0 thickens layers with depth. -!
-      integer(ik) :: n_layer     = 10_ik      !< [-]  active soil layers (<= n_soil_layer_max)
-      real(wp)    :: depth       = 2.0_wp     !< [m]  total column depth (positive; z is negative down)
-      real(wp)    :: grid_growth = 3.0_wp     !< [-]  layer-thickness growth factor with depth
+      !----- Vertical grid: SOIL_LAYER_TEMPLATE, or the `layer_bottoms` list when          !
+      !      set, cut at `depth` (soil_column_layers). ----------------------------------- !
+      real(wp)    :: depth           = 2.0_wp    !< [m]  total column depth (positive; z is negative down)
+      integer(ik) :: n_layer_bottoms = 0_ik      !< [-]  entries of layer_bottoms; 0 = the template
+      real(wp)    :: layer_bottoms(n_soil_layer_max) = 0.0_wp   !< [m] layer bottoms, positive down
       !----- Hydraulic texture (uniform over the column in this MVP; per-layer texture is future). --!
       integer(ik) :: retention   = SOIL_RETENTION_VG  !< van_genuchten | campbell
       real(wp)    :: theta_sat   = 0.43_wp    !< [m3/m3] porosity
@@ -167,23 +158,23 @@ module meds_config
       !----- Xylem vulnerability + conductance. -------------------------------------------!
       real(wp) :: wood_psi50 = -2.0_wp   !< [MPa,<0] potential at 50% loss
       real(wp) :: wood_kexp  =  2.0_wp   !< [-]  vulnerability shape (a)
-      real(wp) :: k_plant_max = 6.0e-4_wp !< [kg/s/MPa/m2_leaf] whole-plant conductance
-      !----- How the plant's maximum internal conductance is set: `whole_plant` (default) takes      !
-      !      k_plant_max per unit leaf area; `segment` takes the sapwood's specific conductivity over    !
-      !      the path, wood_kmax * sapwood area / (height * vessel_curl). -----------------------------!
-      integer(ik) :: conductance = HYD_CONDUCTANCE_WHOLE_PLANT
-      real(wp) :: wood_kmax   = 8.0_wp    !< [kg/m/s/MPa] sapwood specific conductivity (conductance = segment)
-      real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor (conductance = segment)
-      !----- The root profile, a plant trait: ED2's root_beta^(depth/root_depth), normalized over the   !
-      !       soil column; layers below root_depth hold no roots. It sets the per-layer root boundary  !
-      !       (uptake and rhizosphere conductance), the root-zone temperature of root respiration, and !
-      !       the root-weighted soil state. The default beta = exp(-4) with a 2 m rooting depth is the  !
-      !       exponential profile exp(-2 m^-1 * depth) that [soil_column].root_beta = 2 used to give.   !
-      !       Hydraulic redistribution stays off -- per-layer efflux is floored at zero in both the     !
-      !       plant solver and the soil sink (docs/ROADMAP.md section 7). -----------------------------!
-      real(wp) :: root_beta          = 0.018315638888734179_wp  !< [-] ED2 root-profile decay (0,1): exp(-4)
-      real(wp) :: root_depth         = 2.0_wp   !< [m]      maximum rooting depth
-      real(wp) :: specific_root_area = 20.0_wp  !< [m2/kgC] fine-root absorbing area per unit root carbon
+      !----- The plant's maximum internal conductance is the sapwood's: wood_kmax * sapwood area /     !
+      !      (height * vessel_curl). wood_kmax is a PFT trait from wood density (Xu et al. 2016), which  !
+      !      pft.wood_kmax overrides; vessel_curl stretches the path beyond the plant's height. -------!
+      real(wp) :: vessel_curl = 1.5_wp    !< [-] tortuosity / path-length factor (ED2)
+      !----- Roots, plant traits (each a default that pft.<key> overrides per PFT). A cohort roots to  !
+      !       root_depth_b1 * height^root_depth_b2 (ED2's height allometry, IALLOM 1), capped at the     !
+      !       soil column, and its fine roots fall off within that depth as ED2's (1 - beta^(d/D)) /    !
+      !       (1 - beta). Its root length, fine-root carbon * specific_root_length, sets the soil->root   !
+      !       conductance of each layer (the single-root form, Gardner 1960). Hydraulic redistribution  !
+      !       stays off -- per-layer efflux is floored at zero in both the plant solver and the soil    !
+      !       sink (docs/ROADMAP.md section 7). -------------------------------------------------------!
+      real(wp) :: root_beta            = 0.1_wp        !< [-] share of the profile left below the rooting depth (0,1)
+      real(wp) :: root_depth_b1        = 1.1140580_wp  !< [m] rooting depth = b1 * height[m]^b2 (ED2 IALLOM 1:
+      real(wp) :: root_depth_b2        = 0.4223014_wp  !< [-]   5 m at 35 m; Christoffersen 2013)
+      real(wp) :: specific_root_length = 2.0e4_wp      !< [m/kgC] fine-root length per unit fine-root carbon:
+                                                       !<   10 m/g dry for tropical fine roots (Panama, GRooT) * 2
+      real(wp) :: fine_root_radius     = 2.5e-4_wp     !< [m] fine-root radius: tropical diameters 0.4-0.6 mm
       !----- OPT-IN: couple the plant hydraulics to the per-layer soil column (feed per-layer psi_soil  !
       !       + rhizosphere conductance into the multi-layer root boundary) instead of a single root-    !
    end type hydraulics_config_t
@@ -232,12 +223,6 @@ module meds_config
       !----- Fast-loop TIME integrator selector + ARK knobs ([fast], DEFAULTED reads). ----------------!
       !      every existing config + the golden anchor byte-identical). --------------------------------!
       integer(ik) :: time_integrator      = INTEG_ARK !< INTEG_ARK (default) | INTEG_RK45
-      !----- The stomatal control at low leaf water potential (LWP_CONTROL_*, #332): the stomatal     !
-      !      conductance times a factor falling linearly from 1 at psi_tlp to 0 at 2*psi_tlp, on the    !
-      !      previous day's daily-max leaf potential. The thermodynamic route -- the substomatal air   !
-      !      at its Kelvin humidity, so the driving gradient shrinks with psi with no threshold at all  !
-      !      -- was built and removed (issue #96); once #96 is in, this control matters less. -------!
-      integer(ik) :: low_water_potential_control = LWP_CONTROL_LINEAR_DECLINE !< [leaf_physiology]
       logical     :: ark_adaptive         = .true.      !< adaptive (embedded-error) vs fixed-substep march
       real(wp)    :: ark_rtol             = 1.0e-3_wp   !< adaptive relative tolerance (broadcast to all tol groups)
       !----- ONE master relative-accuracy dial for the WHOLE fast loop (§8c Layer 1): when > 0 it       !
@@ -354,16 +339,6 @@ module meds_config
       integer(ik) :: temp_response_form        !< TRESP_ARRHENIUS | TRESP_PEAKED
       integer(ik) :: colimitation             !< COLIM_MIN | COLIM_QUADRATIC
       logical     :: leaf_use_boundary_layer  !< if .true., couple via the leaf boundary layer (gb)
-      !----- NON-STOMATAL (capacity) water-stress limb: a linear psi_leaf ramp downregulating       !
-      !      Vcmax/Jmax/TPU (Sabot 2022 / Zhou 2013's beta_nonstomata). OFF by default (issue #47): !
-      !      the term is rarely measured directly, its two parameters (wstress_psi_open/_close) are !
-      !      weakly constrained, and it acts as a LINEAR AMPLIFIER on psi_leaf -- with the ramp of  !
-      !      the shipped PFT file, slope 0.5 per MPa, so a 1 MPa error in psi_leaf becomes a 50%    !
-      !      error in Vcmax. Before the transpiration corrector (#91), psi_leaf was not converged   !
-      !      in dt_fast (daytime mean -0.23 MPa at 12.5 s vs -1.19 MPa at 900 s), and this limb     !
-      !      turned that into a 33% GPP shift; with it off, daily GPP is dt_fast-independent to     !
-      !      0.05%. The stomatal limb (beta_stomata, driven by psi_SOIL) is unaffected and stays on. !
-      logical     :: leaf_wstress_nonstomatal  !< if .true., apply the psi_leaf capacity limb
       !----- Leaf physiology: shared biochemistry at 25 degC + Arrhenius/deactivation terms.-!
       real(wp) :: kc25, ko25, gstar25                   !< [Pa]    Michaelis constants + CO2 compensation point
       real(wp) :: ea_kc, ea_ko, ea_gstar                !< [J/mol] activation energies (Bernacchi et al. 2001)
@@ -397,6 +372,10 @@ module meds_config
       !       (sla/vcmax25/rd25/llspan) stay at their top-of-canopy PFT values (bit-identical to the   !
       !       static path). When ON, the slow-loop driver acclimates them to cumulative LAI above.     !
       logical     :: trait_plasticity_on = .false.
+      !----- Fine roots live as long as the leaves they feed: with plasticity on, a cohort's       !
+      !       fine-root turnover is its PFT's times (top-of-canopy leaf lifespan / its own), so a   !
+      !       shaded cohort replaces its roots as slowly as its leaves. OPT-IN: default .false.     !
+      logical     :: fineroot_lifespan_plastic = .false.
 
       !----- Meteorological forcing ([forcing]/[site]). OPT-IN: forcing_on default .false. (the   !
       !       whole [forcing] block is gated on it), so a config with no [forcing] block runs the   !
@@ -421,7 +400,7 @@ module meds_config
       !----- Fast-loop biophysics run-config ([soil]/[energy]/[snow]/[aerodynamics], all opt-in;    !
       !       defaults = meds_biophysics_opts placeholders). build_fast_context copies each verbatim !
       !       into the column config (col_config%soil_water_opts/energy/snow/aero); an absent block is a no-op. ------!
-      type(soil_opts_t)   :: soil        !< [soil]         soil-water Richards solver opts (-> col_config%soil_water_opts)
+      type(soil_opts_t)   :: soil        !< [soil]         soil water and water-network opts (-> col_config%soil_water_opts)
       type(energy_opts_t) :: energy      !< [energy]       soil-thermal solver opts       (-> col_config%energy)
       type(snow_params_t) :: snow        !< [snow]         snow physical parameter table  (-> col_config%snow)
       type(aero_cfg_t)    :: aero        !< [aerodynamics] canopy-aerodynamics constants  (-> col_config%aero)
@@ -454,6 +433,22 @@ module meds_config
    end type meds_config_t
 
 contains
+
+   !---------------------------------------------------------------------------------------!
+   ! The column's layers: the bottoms [m, positive down] of `layer_bottoms` when the       !
+   ! config sets it, else SOIL_LAYER_TEMPLATE, cut at `depth` (soil_layer_grid).           !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine soil_column_layers(sc, bottoms, n_layer)
+      type(soil_column_config_t), intent(in)  :: sc
+      real(wp),                   intent(out) :: bottoms(n_soil_layer_max)
+      integer(ik),                intent(out) :: n_layer
+      if (sc%n_layer_bottoms > 0_ik) then
+         call soil_layer_grid(sc%depth, sc%layer_bottoms, sc%n_layer_bottoms, bottoms, n_layer)
+      else
+         call soil_layer_grid(sc%depth, SOIL_LAYER_TEMPLATE, size(SOIL_LAYER_TEMPLATE, kind=ik),   &
+                              bottoms, n_layer)
+      end if
+   end subroutine soil_column_layers
 
    !---------------------------------------------------------------------------------------!
    ! Compute the DERIVED configuration from the (already-loaded) primary parameters: the      !
@@ -513,7 +508,8 @@ contains
       type(meds_config_t), intent(inout) :: cfg
       call set_allometry(cfg%allom%b1Ht, cfg%allom%b2Ht, cfg%allom%agb_c1, cfg%allom%agb_c2,       &
                          cfg%allom%ca_b1, cfg%allom%ca_b2, cfg%allom%lai_b1, cfg%allom%lai_b2,      &
-                         cfg%allom%light_ext)
+                         cfg%allom%light_ext, cfg%allom%height_form, cfg%allom%gmm_a,               &
+                         cfg%allom%gmm_b, cfg%allom%gmm_k, cfg%allom%chave_e)
       call derive_config(cfg)
       call derive_pft_rates(cfg%pft)
       call derive_leaf_params(cfg%pft)
@@ -559,29 +555,52 @@ contains
       end if
    end function pft_stomata_psi_onset
 
+   !----- The current leaf potential [MPa] at which the fast water-stress limb (beta_nonstomata,  !
+   !      on Vcmax/Jmax/TPU) starts and completes: the [pft] wstress_psi_open / wstress_psi_close   !
+   !      where given, else the PFT's turgor-loss point and twice it. A leaf keeps its capacity    !
+   !      while it holds turgor and loses it as it wilts. ------------------------------------------!
+   pure real(wp) function pft_wstress_psi_open(cfg, ipft) result(psi_open)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_open = pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%wstress_psi_open)) then
+         if (cfg%pft%wstress_psi_open(ipft) > HYD_UNSET) psi_open = cfg%pft%wstress_psi_open(ipft)
+      end if
+   end function pft_wstress_psi_open
+
+   pure real(wp) function pft_wstress_psi_close(cfg, ipft) result(psi_close)
+      type(meds_config_t), intent(in) :: cfg
+      integer(ik),         intent(in) :: ipft
+      psi_close = 2.0_wp * pft_leaf_psi_tlp(cfg, ipft)
+      if (allocated(cfg%pft%wstress_psi_close)) then
+         if (cfg%pft%wstress_psi_close(ipft) > HYD_UNSET) psi_close = cfg%pft%wstress_psi_close(ipft)
+      end if
+   end function pft_wstress_psi_close
+
    !---------------------------------------------------------------------------------------!
    ! Validate a configuration; halt on a setting that would corrupt the run.               !
    !---------------------------------------------------------------------------------------!
    subroutine validate_config(cfg)
       type(meds_config_t), intent(in) :: cfg
       character(len=*), parameter :: tag = 'meds_config: '
+      integer(ik) :: ipft
 
       !----- [hydraulics]: the rooting traits set the root profile over the soil column, and the    !
-      !      segment conductance needs a positive conductivity and path factor, shared and per PFT. -!
-      if (cfg%hydraulics%root_beta <= 0.0_wp .or. cfg%hydraulics%root_beta >= 1.0_wp)             &
-         error stop tag//'hydraulics.root_beta must lie in (0, 1)'
-      if (cfg%hydraulics%root_depth <= 0.0_wp) error stop tag//'hydraulics.root_depth <= 0'
-      if (cfg%hydraulics%conductance == HYD_CONDUCTANCE_SEGMENT) then
-         if (cfg%hydraulics%wood_kmax <= 0.0_wp .or. cfg%hydraulics%vessel_curl <= 0.0_wp)         &
-            error stop tag//'hydraulics.conductance = "segment" needs wood_kmax > 0 and vessel_curl > 0'
-         if (allocated(cfg%pft%hyd_wood_kmax)) then
-            if (any(cfg%pft%hyd_wood_kmax > HYD_UNSET .and. cfg%pft%hyd_wood_kmax <= 0.0_wp))       &
-               error stop tag//'pft.wood_kmax must be > 0 with conductance = "segment"'
-         end if
-         if (allocated(cfg%pft%hyd_vessel_curl)) then
-            if (any(cfg%pft%hyd_vessel_curl > HYD_UNSET .and. cfg%pft%hyd_vessel_curl <= 0.0_wp))   &
-               error stop tag//'pft.vessel_curl must be > 0 with conductance = "segment"'
-         end if
+      !      sapwood conductance needs a positive conductivity and path factor, shared and per PFT. --!
+      call check_root_traits([cfg%hydraulics%root_beta], [cfg%hydraulics%root_depth_b1],            &
+                             [cfg%hydraulics%root_depth_b2], [cfg%hydraulics%specific_root_length],   &
+                             [cfg%hydraulics%fine_root_radius], 'hydraulics')
+      if (allocated(cfg%pft%hyd_root_beta))                                                       &
+         call check_root_traits(cfg%pft%hyd_root_beta, cfg%pft%hyd_root_depth_b1, cfg%pft%hyd_root_depth_b2, &
+                                cfg%pft%hyd_specific_root_length, cfg%pft%hyd_fine_root_radius, 'pft')
+      if (cfg%hydraulics%vessel_curl <= 0.0_wp) error stop tag//'hydraulics.vessel_curl must be > 0'
+      if (allocated(cfg%pft%hyd_wood_kmax)) then
+         if (any(cfg%pft%hyd_wood_kmax > HYD_UNSET .and. cfg%pft%hyd_wood_kmax <= 0.0_wp))          &
+            error stop tag//'pft.wood_kmax must be > 0'
+      end if
+      if (allocated(cfg%pft%hyd_vessel_curl)) then
+         if (any(cfg%pft%hyd_vessel_curl > HYD_UNSET .and. cfg%pft%hyd_vessel_curl <= 0.0_wp))      &
+            error stop tag//'pft.vessel_curl must be > 0'
       end if
       !----- [soil] ground optics. --------------------------------------------------------------!
       if (cfg%soil%ground_albedo_vis < 0.0_wp .or. cfg%soil%ground_albedo_vis >= 1.0_wp .or.       &
@@ -595,10 +614,17 @@ contains
       !      non-positive depth or a theta_sat <= theta_res divides by zero in the retention curve, !
       !      and a van Genuchten n <= 1 makes the curve's exponent negative. Fail loud instead. ----!
       associate (sc => cfg%soil_column)
-         if (sc%n_layer < 1_ik .or. sc%n_layer > n_soil_layer_max)                                &
-            error stop tag//'soil_column.n_layer outside 1..n_soil_layer_max'
          if (sc%depth <= 0.0_wp)          error stop tag//'soil_column.depth <= 0'
-         if (sc%grid_growth < 0.0_wp)     error stop tag//'soil_column.grid_growth < 0'
+         if (sc%n_layer_bottoms > 0_ik) then
+            if (sc%layer_bottoms(1) <= 0.0_wp .or. any(sc%layer_bottoms(2:sc%n_layer_bottoms)              &
+                <= sc%layer_bottoms(1:sc%n_layer_bottoms - 1)))                                     &
+               error stop tag//'soil_column.layer_bottoms must be positive depths [m] that increase'
+            if (sc%layer_bottoms(sc%n_layer_bottoms) < sc%depth)                                    &
+               error stop tag//'soil_column.layer_bottoms must reach soil_column.depth'
+         else if (sc%depth > SOIL_LAYER_TEMPLATE(size(SOIL_LAYER_TEMPLATE))) then
+            error stop tag//'soil_column.depth is below the deepest default layer (27 m): '//       &
+                       'set soil_column.layer_bottoms'
+         end if
          if (sc%theta_sat <= sc%theta_res) error stop tag//'soil_column.theta_sat <= theta_res'
          if (sc%theta_res < 0.0_wp)       error stop tag//'soil_column.theta_res < 0'
          if (cfg%init_soil_theta <= sc%theta_res .or. cfg%init_soil_theta > sc%theta_sat)             &
@@ -634,20 +660,22 @@ contains
       if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET) then
          block
             type(soil_params_t) :: sp
+            real(wp)            :: bottoms(n_soil_layer_max)
+            integer(ik)         :: n_layer
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
                error stop tag//'energy.bottom_bc = "dirichlet" requires energy.deep_temp [K] -- '// &
                           'the mean annual soil temperature below the damping depth. It is a site '//&
                           'property, like latitude; there is no safe default.'
             if (cfg%energy%deep_temp < 200.0_wp .or. cfg%energy%deep_temp > 330.0_wp)             &
                error stop tag//'energy.deep_temp outside 200..330 K -- it is an absolute temperature'
-            !----- Build the real grid rather than re-deriving the bottom node here: the exponential !
-            !      generator lives in ONE place and a second copy would drift from it silently. -----!
+            !----- Build the real grid rather than re-deriving the bottom node here: the grid rule  !
+            !      lives in ONE place and a second copy would drift from it silently. --------------!
             associate (sc => cfg%soil_column)
-               call build_soil_hydr_params(sc%n_layer, sc%retention, sc%depth, sc%grid_growth,   &
-                    sc%theta_sat, sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n,         &
-                    cfg%hydraulics%root_beta, cfg%hydraulics%root_depth, sc%psi_fc, sp)
+               call soil_column_layers(sc, bottoms, n_layer)
+               call build_soil_hydr_params(n_layer, sc%retention, bottoms, sc%theta_sat,          &
+                    sc%theta_res, sc%ksat, sc%curve_par_a, sc%curve_par_n, sc%psi_fc, sp)
             end associate
-            if (cfg%energy%deep_depth <= abs(sp%z_node(cfg%soil_column%n_layer)))                &
+            if (cfg%energy%deep_depth <= abs(sp%z_node(n_layer)))                                &
                error stop tag//'energy.deep_depth must lie BELOW the bottom soil node '//          &
                           '(it is measured down from the surface, and the anchor conducts to it)'
          end block
@@ -731,24 +759,10 @@ contains
          !      bias entirely (-33.1% -> +0.9% at 900 s, and flat in dt_fast), so it is the LAGGED     !
          !      leaf-water-potential feedback, not a quadrature error. Until that lag gets the same    !
          !      per-stage treatment the conductances just got, a long dt_fast is cheap in wall-clock   !
-         !      and expensive in carbon. -------------------------------------------------------------!
-         !----- ...and the size of that bias depends ENTIRELY on whether the non-stomatal        !
-         !      (capacity) water-stress limb is active. It is a linear ramp on Vcmax/Jmax/TPU in    !
-         !      psi_leaf, so it AMPLIFIES the psi error into a carbon error. With it off (the        !
-         !      default, issue #47) daily GPP is dt_fast-independent to 0.05% and ET to ~1%. The     !
-         !      table below predates the transpiration corrector (#91), which removed most of the    !
-         !      psi error it amplifies; it has not been re-measured (numerical_scheme.md 5a). ------!
-         if (cfg%dt_fast > 225.0_wp .and. cfg%leaf_wstress_nonstomatal) then
-            print '(a)', 'WARNING [meds_config]: dt_fast > 225 s WITH the non-stomatal water-stress'
-            print '(a)', '  limb on ([leaf_physiology].wstress_nonstomatal) biases the CARBON budget.'
-            print '(a)', '  That limb is a linear amplifier on any psi_leaf error. Measured on a high-LAI'
-            print '(a)', '  sunlit stand vs a 12.5 s reference, before the transpiration corrector (#91):'
-            print '(a)', '    dt_fast    150 s   300 s   450 s   900 s'
-            print '(a)', '    GPP       -3.8%  -12.6%  -19.8%  -33.1%'
-            print '(a)', '    ET        -2.6%   -8.7%  -14.5%  -23.8%'
-            print '(a)', '  With the limb off those become -0.0% / -1.2% at 900 s. No conservation'
-            print '(a)', '  budget detects either. Prefer dt_fast <= 225 s, or leave the limb off.'
-         else if (cfg%dt_fast > 900.0_wp) then
+         !      and expensive in carbon. The transpiration corrector (#91) removed most of that psi    !
+         !      error; the soil-plant water network now solves leaf water implicitly with the soil's   !
+         !      on both schemes. The table predates both (numerical_scheme.md 5a). -------------------!
+         if (cfg%dt_fast > 900.0_wp) then
             print '(a)', 'WARNING [meds_config]: dt_fast > 900 s is beyond the measured range. At'
             print '(a)', '  900 s the canopy air is stable and carbon and daily leaf water potential'
             print '(a)', '  converge; above it neither has been measured.'
@@ -772,25 +786,6 @@ contains
             error stop tag//'error_level out of range (L0|L1|L2)'
          if (cfg%ark_rtol <= 0.0_wp)          error stop tag//'ark_rtol <= 0'
          if (cfg%ark_fixed_substep < 1_ik)    error stop tag//'ark_fixed_substep < 1'
-         !----- RK45 AT PRODUCTION CADENCE CARRIES AN ERROR THE DEFAULT PATH DOES NOT, and nothing  !
-         !      used to say so (#160). The transpiration corrector that fixed a ~1 MPa psi_leaf      !
-         !      error -- a 314x improvement, PR #91 -- lives in advance_water_mass_full, which the   !
-         !      ARK path calls and the RK45 path does not. A run that selects rk45 at a coarse       !
-         !      dt_fast therefore gets a psi_leaf the default scheme would not produce, silently.    !
-         !      WARN rather than stop: rk45 is the deliberate accuracy baseline and is exactly what  !
-         !      you want at a fine dt_fast, where the uncorrected error is small. The threshold is   !
-         !      the cadence at which psi_leaf WITHOUT the corrector is known not to converge          !
-         !      (docs/science/numerical_scheme.md section 7 item 1: daytime-mean -0.23 MPa at 12.5 s  !
-         !      against -1.19 MPa at 900 s, measured before #91).                                                                 !
-         if (cfg%time_integrator == INTEG_RK45 .and. cfg%dt_fast > RK45_UNCORRECTED_DT_WARN) then
-            write(*,'(a)')    ' meds_config: WARNING -- time_integrator = "rk45" at dt_fast > 300 s.'
-            write(*,'(a,f8.1,a)') '   dt_fast = ', cfg%dt_fast, ' s.'
-            write(*,'(a)')    '   The transpiration corrector (PR #91) is ARK-only, so this run carries a'
-            write(*,'(a)')    '   psi_leaf error the default scheme does not -- up to ~1 MPa at 900 s. RK45'
-            write(*,'(a)')    '   is the ACCURACY BASELINE and is meant for a fine dt_fast; anything keyed'
-            write(*,'(a)')    '   to psi_leaf (hydraulic stress, phenology cues) inherits the error here.'
-            write(*,'(a)')    '   Use time_integrator = "ark" for production, or reduce dt_fast.'
-         end if
          !----- §7 C3: the sub-daily probe is the ONE fast-loop writer that is not thread-safe --      !
          !      it holds a `save`d unit and appends to a shared file, so under threads its rows would   !
          !      interleave in thread-arrival order and stop being a reproducible diagnostic. Serializing !
@@ -932,42 +927,34 @@ contains
             end if
          end if
       end if
-      !----- Leaf phenology (UNCONDITIONAL now -- no more phenology_on gate; a config's per-PFT cue   !
-      !      params are either a deliberate [phenology] override in the PFT file, or the             !
-      !      alloc_pft_table literature defaults, so validate them unconditionally either way. The    !
-      !      daily-mean temperature that drives the active TEMP/GDD cue comes from the fast loop's     !
-      !      met forcing WHEN a calendar context is supplied (advance_leaf_phenology no-ops otherwise, !
-      !      leaving the cue drives at their vanilla-evergreen fixed point) -- so there is no fast/     !
-      !      forcing precondition to enforce here any more. ALL FIVE cue bits are wired since #150 --   !
-      !      TEMP(1), WATER(2), HYDRO(4), PHOTO(8) and LIGHT(16) -- so no bit is rejected any more; the  !
-      !      WATER/HYDRO/LIGHT drivers are the root-weighted available-water fraction, the cohort's      !
-      !      published predawn leaf potential and the daily-mean incident shortwave. Each mask is a bit  !
-      !      set in [0,31]; the rate scales must be non-negative (flush strictly positive).               !
-      !                                                                                          !
-      !      SELECTABLE IS NOT VALIDATED. The kernel is unit-tested for all four strategies and the      !
-      !      four cue drivers each have a hand-computed unit test, but no MEDS run's leaf-area cycle     !
-      !      has ever been scored against a phenology observation, under ANY strategy. See the release   !
-      !      notes and docs/science/plant_phenology.md.  -------------------------------------------------!
-      if (any(cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) < 0_ik .or.                           &
-              cfg%pft%pheno_flush_cue_mask(1:cfg%pft%n) > 31_ik) .or.                         &
-          any(cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) < 0_ik .or.                            &
-              cfg%pft%pheno_shed_cue_mask(1:cfg%pft%n) > 31_ik))                              &
-         error stop tag//'pheno_{flush,shed}_cue_mask out of range [0,31]'
-      !----- CUE_WATER thresholds bracket a FRACTION in [0,1], and flush must sit above shed or the   !
-      !      logistic pair is inverted -- the cohort would flush when dry and shed when wet. -----------!
-      if (any(cfg%pft%pheno_water_on_threshold(1:cfg%pft%n) <=                                &
-              cfg%pft%pheno_water_off_threshold(1:cfg%pft%n)))                                &
-         error stop tag//'phenology.water_on_threshold must exceed water_off_threshold'
-      if (any(cfg%pft%pheno_water_window(1:cfg%pft%n) <= 0.0_wp) .or.                         &
-          any(cfg%pft%pheno_light_window(1:cfg%pft%n) <= 0.0_wp))                             &
-         error stop tag//'phenology water/light running-mean windows must be > 0'
-      if (any(cfg%pft%pheno_low_psi_threshold(1:cfg%pft%n) <= 0.0_wp) .or.                    &
-          any(cfg%pft%pheno_high_psi_threshold(1:cfg%pft%n) <= 0.0_wp))                       &
-         error stop tag//'phenology low/high_psi_threshold (days) must be > 0'
-      if (any(cfg%pft%pheno_k_flush_max(1:cfg%pft%n) <= 0.0_wp))                              &
-         error stop tag//'pheno_k_flush_max must be > 0'
-      if (any(cfg%pft%pheno_k_shed_max(1:cfg%pft%n) < 0.0_wp))                                &
-         error stop tag//'pheno_k_shed_max must be >= 0'
+      !----- Leaf phenology: every PFT's cue parameters are validated, from a [phenology] section  !
+      !      or the alloc_pft_table defaults. Each mask is a set of TEMP(1), LIGHT(2), WATER(4).     !
+      !      A sharpness of 0 would make its switch a constant 0.5, so it is refused.              !
+      associate (p => cfg%pft, n => cfg%pft%n)
+         if (any(p%pheno_flush_cue_mask(1:n) < 0_ik .or. p%pheno_flush_cue_mask(1:n) > 7_ik) .or.      &
+             any(p%pheno_shed_cue_mask(1:n)  < 0_ik .or. p%pheno_shed_cue_mask(1:n)  > 7_ik))          &
+            error stop tag//'phenology flush_cue_mask / shed_cue_mask out of range [0,7]'
+         if (any(p%pheno_flush_cue_timescale(1:n) <= 0.0_wp) .or.                                     &
+             any(p%pheno_shed_cue_timescale(1:n)  <= 0.0_wp) .or.                                     &
+             any(p%pheno_light_window(1:n)        <= 0.0_wp))                                         &
+            error stop tag//'phenology cue timescales and light_window must be > 0'
+         if (any(p%pheno_par_min(1:n) < 0.0_wp))                                                      &
+            error stop tag//'phenology.par_min must be >= 0'
+         if (any(p%pheno_flush_rate_max(1:n) <= 0.0_wp))                                              &
+            error stop tag//'phenology.flush_rate_max must be > 0'
+         if (any(p%pheno_shed_rate_max(1:n) < 0.0_wp))                                                &
+            error stop tag//'phenology.shed_rate_max must be >= 0'
+         if (any(p%pheno_min_leaf_cover(1:n) < 0.0_wp .or. p%pheno_min_leaf_cover(1:n) >= 1.0_wp) .or. &
+             any(p%pheno_bare_leaf_cover(1:n) < 0.0_wp .or. p%pheno_bare_leaf_cover(1:n) >= 1.0_wp))   &
+            error stop tag//'phenology min_leaf_cover / bare_leaf_cover must be in [0,1)'
+         if (any(p%pheno_flush_temp_sharpness(1:n) == 0.0_wp) .or.                                   &
+             any(p%pheno_shed_temp_sharpness(1:n)  == 0.0_wp) .or.                                   &
+             any(p%pheno_flush_light_sharpness(1:n) == 0.0_wp) .or.                                  &
+             any(p%pheno_shed_light_sharpness(1:n)  == 0.0_wp) .or.                                  &
+             any(p%pheno_flush_water_sharpness(1:n) == 0.0_wp) .or.                                  &
+             any(p%pheno_shed_water_sharpness(1:n)  == 0.0_wp))                                      &
+            error stop tag//'a phenology sharpness is 0: its switch would be a constant 0.5'
+      end associate
       if (cfg%cohort_size_tol_min <= 0.0_wp)            error stop tag//'cohort_size_tol_min <= 0'
       if (cfg%cohort_size_tol_max < cfg%cohort_size_tol_min) error stop tag//'cohort_size_tol_max < min'
       if (cfg%n_cohort_fusion_iter < 1_ik)                   error stop tag//'n_cohort_fusion_iter < 1'
@@ -977,6 +964,8 @@ contains
          error stop tag//'init.soil_temp outside 233-333 K'
       if (cfg%init_reacclimate_traits .and. cfg%init_mode /= INIT_RESTART)                          &
          error stop tag//'init.reacclimate_traits applies to a restart (init.init_mode = 2) only'
+      if (cfg%fineroot_lifespan_plastic .and. .not. cfg%trait_plasticity_on)                          &
+         error stop tag//'trait_dynamics.fineroot_lifespan_plastic needs trait_plasticity_on = true'
       if (cfg%patch_light_tol_max < cfg%patch_light_tol)   error stop tag//'patch_light_tol_max < patch_light_tol'
       if (cfg%n_height_layers < 2_ik)                error stop tag//'n_height_layers < 2'
       if (cfg%min_patch_area <= 0.0_wp)              error stop tag//'min_patch_area <= 0'
@@ -985,6 +974,11 @@ contains
       if (cfg%patch_disturbance_rate < 0.0_wp)       error stop tag//'patch_disturbance_rate < 0'
       if (cfg%disturbance_survive_height <= 0.0_wp)  error stop tag//'disturbance_survive_height <= 0'
       if (any(cfg%pft%wood_density <= 0.0_wp))       error stop tag//'wood_density <= 0'
+      if (any(cfg%pft%stem_resp_sapwood25 < 0.0_wp)) error stop tag//'stem_resp_sapwood25 < 0'
+      if (any(cfg%pft%max_relative_growth_rate < 0.0_wp))                                          &
+         error stop tag//'max_relative_growth_rate < 0'
+      if (any(cfg%pft%max_absolute_growth_rate < 0.0_wp))                                          &
+         error stop tag//'max_absolute_growth_rate < 0'
       !----- A recruit must survive its own birth: pool threshold must exceed the cull. ---!
       if (cfg%min_recruit_size <= cfg%negligible_nplant)                                   &
          error stop tag//'min_recruit_size must exceed negligible_nplant'
@@ -1019,9 +1013,11 @@ contains
       if (any(cfg%pft%katul_lambda25 <= 0.0_wp))     error stop tag//'katul_lambda25 <= 0'
       if (any(cfg%pft%wstress_lambda_exp < 0.0_wp .or. cfg%pft%wstress_lambda_exp > 8.0_wp)) &
          error stop tag//'wstress_lambda_exp must be in [0,8]'
-      if (any(cfg%pft%wstress_psi_open > 0.0_wp))    error stop tag//'wstress_psi_open must be <= 0'
-      if (any(cfg%pft%wstress_psi_close >= cfg%pft%wstress_psi_open))                      &
-         error stop tag//'wstress_psi_close must be below wstress_psi_open'
+      do ipft = 1_ik, cfg%pft%n
+         if (pft_wstress_psi_open(cfg, ipft) > 0.0_wp) error stop tag//'wstress_psi_open must be <= 0'
+         if (pft_wstress_psi_close(cfg, ipft) >= pft_wstress_psi_open(cfg, ipft))           &
+            error stop tag//'wstress_psi_close must be below wstress_psi_open'
+      end do
       if (any(cfg%pft%wstress_sref_stomata <= 0.0_wp))                                     &
          error stop tag//'wstress_sref_stomata must be > 0 (beta_stomata = exp(sref*(psi - psi_onset)))'
       if (any(cfg%pft%stomata_psi_onset > 0.0_wp))                                         &
@@ -1044,5 +1040,20 @@ contains
               (cfg%pft%theta_ic_c4 <= 0.0_wp .or. cfg%pft%theta_ic_c4 >= 1.0_wp)))         &
          error stop tag//'C4 theta_ic_c4 must be in (0,1)'
    end subroutine validate_config
+
+   !----- The root traits, as the [hydraulics] defaults or the per-PFT values (HYD_UNSET: not given). !
+   subroutine check_root_traits(beta, b1, b2, srl, radius, block)
+      real(wp),         intent(in) :: beta(:), b1(:), b2(:), srl(:), radius(:)
+      character(len=*), intent(in) :: block
+      character(len=*), parameter  :: tag = 'meds_config: '
+      if (any(beta > HYD_UNSET .and. (beta <= 0.0_wp .or. beta >= 1.0_wp)))                     &
+         error stop tag//block//'.root_beta must lie in (0, 1)'
+      if (any(b1 > HYD_UNSET .and. b1 <= 0.0_wp)) error stop tag//block//'.root_depth_b1 must be > 0'
+      if (any(b2 > HYD_UNSET .and. b2 < 0.0_wp)) error stop tag//block//'.root_depth_b2 must be >= 0'
+      if (any(srl > HYD_UNSET .and. srl <= 0.0_wp))                                              &
+         error stop tag//block//'.specific_root_length must be > 0'
+      if (any(radius > HYD_UNSET .and. radius <= 0.0_wp))                                        &
+         error stop tag//block//'.fine_root_radius must be > 0'
+   end subroutine check_root_traits
 
 end module meds_config

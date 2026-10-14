@@ -40,9 +40,10 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 | [`canopy_aerodynamics.md`](science/canopy_aerodynamics.md) | Monin-Obukhov surface layer, leaf and wood boundary layers, in-canopy wind. |
 | [`canopy_air_space_biophysics.md`](science/canopy_air_space_biophysics.md) | The three prognostic canopy-air twins: enthalpy, humidity, CO₂. |
 | [`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) | Photosynthetic demand, three stomatal-conductance models, two-limb water stress, the coupled Cᵢ solver. |
-| [`plant_hydraulics.md`](science/plant_hydraulics.md) | The plant water-transport ODE: pressure-volume and Kirchhoff curves, xylem vulnerability, the matrix-exponential solver. |
+| [`plant_hydraulics.md`](science/plant_hydraulics.md) | Plant water transport: pressure-volume and Kirchhoff curves, xylem vulnerability, per-layer root uptake. |
+| [`soil_plant_water.md`](science/soil_plant_water.md) | The pond, soil layers and every cohort's wood and leaves solved as one water network: implicit Euler, Newton, the grouped solve. |
 | [`vegetation_energy_dynamics.md`](science/vegetation_energy_dynamics.md) | Leaf and wood temperature as an exact exponential relaxation. |
-| [`soil_biophysics.md`](science/soil_biophysics.md) | Soil water (implicit Richards) and soil heat, both as conserved quantities. |
+| [`soil_biophysics.md`](science/soil_biophysics.md) | Soil water (mixed-form Richards) and soil heat, both as conserved quantities. |
 | [`snow_biophysics.md`](science/snow_biophysics.md) | The snow and temporary-surface-water store. |
 | [`forcing.md`](science/forcing.md) | Meteorological forcing: the file format, temporal interpolation, the interval-mean-conserving shortwave disaggregation, calendar recycling. |
 
@@ -50,7 +51,7 @@ The changelog is at the repository root: [`../CHANGELOG.md`](../CHANGELOG.md).
 
 | Page | Covers |
 |---|---|
-| [`plant_phenology.md`](science/plant_phenology.md) | The leaf-phenology signal kernel: cues → two governor drives → flush and shed rates. |
+| [`plant_phenology.md`](science/plant_phenology.md) | Leaf phenology: temperature, hours-of-light and water cues → flush and senescence tendencies → leaf growth and loss. |
 | [`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) | The daily PARTEH-H1 carbon budget: net carbon → priority ladder → per-pool growth. |
 | [`plant_respiration.md`](science/plant_respiration.md) | The autotrophic budget: leaf, stem and fine-root maintenance, and growth respiration on realized growth. |
 | [`plant_traits.md`](science/plant_traits.md) | Light-driven leaf-trait plasticity and its carbon consequences. |

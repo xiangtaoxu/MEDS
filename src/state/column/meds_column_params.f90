@@ -7,7 +7,7 @@
 ! These describe the same stores meds_column_state_types holds, but they are fixed or derived    !
 ! once per column and never integrated, which is the line the plan's placement rule 3 draws.     !
 ! Three kinds sit here, and they are worth telling apart:                                        !
-!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE) -- compile-time ceilings,    !
+!   * DIMENSIONS  (n_soil_layer_max, n_snow_layer_max) -- compile-time ceilings,                  !
 !     not settings. They are what keep the columns allocatable-free and GPU-eligible.            !
 !   * BIRTH VALUES (LEAF_TEMP_INIT, PSI_INIT) -- the state a fresh cohort starts from.           !
 !   * DERIVED BUNDLES (soil_params_t, soil_thermal_params_t) -- assembled per column at run time  !
@@ -20,29 +20,37 @@
 !==========================================================================================!
 module meds_column_params
    use meds_kinds,            only : wp, ik
-   use meds_constants,        only : tiny_num
-   use meds_hydr_lib,         only : root_fraction_profile
    use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    implicit none
    private
 
-   public :: n_soil_layer_max, n_snow_layer_max, N_HYDRO_NODE, LEAF_TEMP_INIT, PSI_INIT
+   public :: n_soil_layer_max, n_snow_layer_max, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
-   public :: root_available_water
+   public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
    public :: curve_a, curve_n
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
    integer(ik), parameter :: n_snow_layer_max = 1_ik        !< MVP single bulk layer; P1 raises to ED2 nzs~8
 
-   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep). N_HYDRO_NODE !
-   !      MUST equal meds_plant_types%N_HYDRO (the psi node count); a fresh cohort starts at a     !
-   !      mild tension + a neutral leaf temperature (both relax within one fast step).            !
-   integer(ik), parameter :: N_HYDRO_NODE   = 3_ik          !< == N_HYDRO (leaf/wood/root psi nodes)
+   !----- The soil layers every column cuts at its own depth: bottoms [m, down] at         !
+   !      SoilGrids 2.0's depths to 1 m (0-5, 5-15, 15-30, 30-60, 60-100 cm), its          !
+   !      100-200 cm interval split at 1.5 m, then thickening to 27 m (each layer at       !
+   !      most twice the one above). Every column's top layer is 5 cm, a shallow soil      !
+   !      gets few layers rather than thin ones, per-layer soil maps match the layers      !
+   !      one to one, and every column shares one depth axis. ---------------------------- !
+   real(wp), parameter :: SOIL_LAYER_TEMPLATE(15) = [0.05_wp, 0.15_wp, 0.30_wp, 0.60_wp, 1.00_wp,     &
+                          1.50_wp, 2.00_wp, 3.00_wp, 4.50_wp, 6.50_wp, 9.00_wp, 12.0_wp, 16.0_wp, 21.0_wp, 27.0_wp]
+   !----- A remainder below the cut thinner than this share of the list layer it           !
+   !      falls in joins the layer above, so no column ends in a sliver. ----------------- !
+   real(wp), parameter :: LAYER_MERGE_SHARE = 0.5_wp
+   real(wp), parameter :: GRID_TOL = 1.0e-6_wp     !< [m] a depth this close to a list bottom ends on it
+
+   !----- Per-cohort fast state carried on cohort_block (rides the cohort lockstep): a fresh      !
+   !      cohort starts at a mild tension + a neutral leaf temperature (both relax within one fast !
+   !      step).                                                                                   !
    real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
    real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
-
-   real(wp),    parameter :: PSI_WP = -152.96_wp           !< [m] -1.5 MPa head (wilting-point derivation)
 
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
    !      interface elevations z <= 0 below ground; dz, dz_node are positive magnitudes). Fixed- !
@@ -62,8 +70,6 @@ module meds_column_params
       real(wp) :: psi_sat(n_soil_layer_max)   = 0.0_wp       !< [m] Campbell air-entry potential (option)
       real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
-      real(wp) :: theta_wp(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] wilting point (DERIVED)
-      real(wp) :: root_frac(n_soil_layer_max) = 0.0_wp       !< [-] normalized root fraction (sum = 1)
    end type soil_params_t
 
    !----- Per-column soil THERMAL texture (geometry + porosity arrive via soil_params_t). ----!
@@ -76,33 +82,6 @@ module meds_column_params
 
 contains
 
-   !---------------------------------------------------------------------------------------!
-   ! root_available_water -- the ROOT-WEIGHTED fraction of extractable soil water [0,1], the   !
-   ! driver behind the CUE_WATER phenology cue (#150).                                         !
-   !                                                                                          !
-   !   f = sum_k root_frac(k) * clamp01( (theta_k - theta_wp_k) / (theta_fc_k - theta_wp_k) )   !
-   !                                                                                          !
-   ! A FRACTION, not a potential: the kernel's thresholds are 0.2 (shed) and 0.5 (flush) and    !
-   ! its transition width 0.1, which only make sense on [0,1]. Weighting by root_frac (which    !
-   ! sums to 1) is what makes it the water the PLANT can reach rather than a column average --  !
-   ! a deep wet layer under a dry rooting zone must not read as "well watered". theta_fc and    !
-   ! theta_wp are the DERIVED thresholds build_soil_hydr_params already put on the parameter    !
-   ! struct from the retention curve, so this introduces no second definition of either.        !
-   !---------------------------------------------------------------------------------------!
-   pure function root_available_water(theta, soil) result(f_avail)
-      real(wp),            intent(in) :: theta(:)   !< [m3/m3] layer water content
-      type(soil_params_t), intent(in) :: soil
-      real(wp)    :: f_avail, span
-      integer(ik) :: k
-      f_avail = 0.0_wp
-      do k = 1_ik, soil%n_active
-         span = soil%theta_fc(k) - soil%theta_wp(k)
-         if (span <= 0.0_wp) cycle                  ! degenerate texture: contributes nothing
-         f_avail = f_avail + soil%root_frac(k)                                                  &
-                 * min(1.0_wp, max(0.0_wp, (theta(k) - soil%theta_wp(k)) / span))
-      end do
-   end function root_available_water
-
    !=======================================================================================!
    !  Per-column soil PARAMETER assemblers. Both are `pure` -- they take plain scalar texture/    !
    !  geometry inputs and fill a parameter struct; they depend on NO soil STATE (theta/energy),  !
@@ -111,42 +90,54 @@ contains
    !=======================================================================================!
 
    !---------------------------------------------------------------------------------------!
-   ! Assemble a per-column soil_params_t: the ED2 negative-z geometry (exponential generator !
-   ! OR an explicit soil_layer_z interface array), uniform texture broadcast, an exponential  !
-   ! root profile, and the DERIVED thresholds theta_fc/theta_wp (from the retention curve).   !
+   ! A column's layer bottoms [m, positive down]: `list` (SOIL_LAYER_TEMPLATE or a         !
+   ! config list) cut at `depth`. The last layer ends at the depth; a remainder thinner    !
+   ! than LAYER_MERGE_SHARE of the list layer it falls in joins the layer above. A list    !
+   ! that ends above the depth gets one more layer down to it (the config refuses one).    !
    !---------------------------------------------------------------------------------------!
-   pure subroutine build_soil_hydr_params(n_active, retention, soil_depth, grid_growth, theta_sat,  &
-                                theta_res, ksat, par_a, par_n, root_beta, root_depth, psi_fc_m, params,    &
-                                soil_layer_z_in)
-      integer(ik),         intent(in)  :: n_active, retention
-      real(wp),            intent(in)  :: soil_depth, grid_growth, theta_sat, theta_res
-      real(wp),            intent(in)  :: ksat, par_a, par_n, psi_fc_m
-      real(wp),            intent(in)  :: root_beta   !< [-] ED2 root-profile decay (0,1): the plant's [hydraulics] trait
-      real(wp),            intent(in)  :: root_depth  !< [m] maximum rooting depth (> 0): the plant's [hydraulics] trait
-      type(soil_params_t), intent(out) :: params
-      real(wp), optional,  intent(in)  :: soil_layer_z_in(:)
+   pure subroutine soil_layer_grid(depth, list, n_list, bottoms, n_layer)
+      real(wp),    intent(in)  :: depth, list(:)
+      integer(ik), intent(in)  :: n_list
+      real(wp),    intent(out) :: bottoms(n_soil_layer_max)
+      integer(ik), intent(out) :: n_layer
       integer(ik) :: k
-      real(wp)    :: denom, rsum
+      real(wp)    :: top
+      bottoms = 0.0_wp
+      n_layer = 0_ik
+      top     = 0.0_wp
+      do k = 1_ik, n_list
+         if (list(k) >= depth - GRID_TOL) exit                 ! list layer k holds the cut
+         n_layer = n_layer + 1_ik
+         bottoms(n_layer) = list(k)
+         top = list(k)
+      end do
+      if (k <= n_list .and. n_layer > 0_ik) then
+         if (depth - top < LAYER_MERGE_SHARE * (list(k) - top)) n_layer = n_layer - 1_ik
+      end if
+      n_layer = n_layer + 1_ik
+      bottoms(n_layer) = depth
+   end subroutine soil_layer_grid
+
+   !---------------------------------------------------------------------------------------!
+   ! Assemble a per-column soil_params_t: the ED2 negative-z geometry from the layer       !
+   ! bottoms (soil_layer_grid), uniform texture broadcast, and the DERIVED threshold       !
+   ! theta_fc (from the retention curve). The roots are the cohorts' own                   !
+   ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                       !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine build_soil_hydr_params(n_active, retention, layer_bottoms, theta_sat, theta_res,  &
+                                ksat, par_a, par_n, psi_fc_m, params)
+      integer(ik),         intent(in)  :: n_active, retention
+      real(wp),            intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
+      real(wp),            intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
+      type(soil_params_t), intent(out) :: params
+      integer(ik) :: k
 
       params%n_active  = n_active
       params%retention = retention
 
       !----- Interface elevations soil_layer_z(k) <= 0 (k=1 surface, deeper = more negative). -!
-      if (present(soil_layer_z_in)) then
-         params%soil_layer_z(1:n_active+1) = soil_layer_z_in(1:n_active+1)
-      else
-         if (abs(grid_growth) < tiny_num) then          ! uniform grid: the exact 0/0 limit of below
-            do k = 1_ik, n_active + 1_ik
-               params%soil_layer_z(k) = -soil_depth * real(k - 1_ik, wp) / real(n_active, wp)
-            end do
-         else
-            denom = exp(grid_growth) - 1.0_wp
-            do k = 1_ik, n_active + 1_ik
-               params%soil_layer_z(k) = -soil_depth                                         &
-                  * (exp(grid_growth * real(k - 1_ik, wp) / real(n_active, wp)) - 1.0_wp) / denom
-            end do
-         end if
-      end if
+      params%soil_layer_z(1)              = 0.0_wp
+      params%soil_layer_z(2:n_active + 1) = -layer_bottoms(1:n_active)
 
       !----- Thicknesses, node elevations, internode spacings (dz, dz_node > 0). ----------!
       do k = 1_ik, n_active
@@ -170,23 +161,9 @@ contains
          params%vg_n(1:n_active)     = par_n
       end if
 
-      !----- Derived thresholds (from the retention curve). -------------------------------!
+      !----- Derived threshold (from the retention curve). --------------------------------!
       params%theta_fc(1:n_active) =                                                          &
          soil_theta_from_psi(retention, psi_fc_m, theta_sat, theta_res, par_a, par_n)
-      params%theta_wp(1:n_active) =                                                          &
-         soil_theta_from_psi(retention, PSI_WP, theta_sat, theta_res, par_a, par_n)
-
-      !----- The stand's root profile, from the plant's rooting traits ([hydraulics].root_beta and  !
-      !      root_depth): ED2's cumulative form, root_beta^(d_top/D) - root_beta^(d_bot/D) over each  !
-      !      layer's depths d, clamped to the rooting depth D, then normalized to sum 1 over the       !
-      !      column. Layers below D hold no roots. --------------------------------------------------!
-      rsum = 0.0_wp
-      do k = 1_ik, n_active
-         params%root_frac(k) = root_fraction_profile(root_beta, root_depth, -params%soil_layer_z(k),     &
-                                                     -params%soil_layer_z(k+1_ik))
-         rsum = rsum + params%root_frac(k)
-      end do
-      if (rsum > tiny_num) params%root_frac(1:n_active) = params%root_frac(1:n_active) / rsum
    end subroutine build_soil_hydr_params
 
    !---------------------------------------------------------------------------------------!
@@ -207,7 +184,7 @@ contains
    !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for       !
    !  Campbell. They live HERE, beside soil_params_t, because they are a property of that type   !
    !  -- which family its two generic curve parameters mean. They were previously private        !
-   !  duplicates inside meds_soil_water; every consumer (the Richards solver, the diagnostic      !
+   !  duplicates inside meds_soil_water; every consumer (the water network, the diagnostic        !
    !  psi read-off) now shares this ONE mapping, so a family added later cannot be taught to       !
    !  one caller and not the other.                                                                !
    !=======================================================================================!

@@ -33,7 +33,7 @@
 !==========================================================================================!
 module meds_diagnostic_reduce
    use meds_kinds,     only : wp, ik
-   use meds_constants, only : tiny_num
+   use meds_constants, only : tiny_num, cm2_to_m2
    use meds_site_state_types,   only : site_t
    use meds_column_params, only : n_soil_layer_max
    use meds_diagnostic_kernels, only : dbh_class_index
@@ -56,9 +56,6 @@ module meds_diagnostic_reduce
              total_soilc_struct_soil, total_soilc_microbial, total_soilc_slow,                    &
              total_soilc_passive, total_rh
    public :: count_cohorts, has_nan, print_summary
-
-   !----- cm2 -> m2, for basal area (stored per plant in cm2, reported per ground area in m2). !
-   real(wp), parameter, public :: cm2_to_m2 = 1.0e-4_wp
 
    !=======================================================================================!
    !  WEIGHT KINDS. A weight is a PER-COHORT quantity w_i; patch area is applied separately    !

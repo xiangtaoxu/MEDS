@@ -23,16 +23,19 @@ program test_column_ark
    use meds_water_retention, only : SOIL_RETENTION_VG
    use meds_biophysics_opts, only : SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
+   use meds_test_soil_grid, only : geometric_layer_bottoms
+   use meds_column_params, only : n_soil_layer_max
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts
    use meds_fast_step,          only : column_fast_step
    use meds_fast_frozen,        only : build_column_frozen
-   use meds_fast_types,         only : column_frozen_t, column_state_t, ark_workspace_t
+   use meds_fast_types,         only : column_frozen_t, column_state_t, fast_workspace_t
    use meds_water_retention,     only : psi_from_water_content, water_content
    use meds_test_support, only : build_test_config, check_close, check_true, test_report
    implicit none
+   real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
    integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
@@ -47,7 +50,7 @@ program test_column_ark
    type(patch_biophys_t)  :: biophys
    type(column_forcing_t) :: forc
    type(column_budget_t)  :: budget
-   type(ark_workspace_t)  :: ws          !< the ARK march's storage, reused step to step
+   type(fast_workspace_t) :: ws          !< the fast step's storage, reused step to step
    type(meds_time_t)      :: sim_date
    real(wp)    :: gpp_rk45(n), gpp_ark(n), gpp_coh(n), tcas, qsat, worst_super, tcas_1, tcas_8
    real(wp)    :: psi_leaf_diag
@@ -73,8 +76,9 @@ program test_column_ark
    !      the chain that delivers it (PFT table -> init_cohort -> cohort block -> the view).   !
    call check_close(col_cohort%aboveground_frac(1), cfg%pft%aboveground_frac(1), 1.0e-14_wp,   &
                     'aboveground_frac did not reach the column view from the PFT table')
-   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, 2.0_wp, 3.0_wp, 0.43_wp, 0.078_wp,           &
-                          2.89e-6_wp, 3.6_wp, 1.56_wp, exp(-4.0_wp), 2.0_wp, -3.37_wp, col_config%soil)
+   call geometric_layer_bottoms(2.0_wp, nsl, 3.0_wp, test_bottoms)
+   call build_soil_hydr_params(nsl, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,           &
+                          2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, col_config%soil)
    call build_soil_therm_params(nsl, 3.0_wp, 0.15_wp, 2.0e6_wp, col_config%soil_thermal)
    call apply_hydraulics_config(cfg%hydraulics, cfg%pft, col_config%hydraulics_table)
    call apply_canopy_film_config(cfg%pft, col_config%leaf_surf_water_max, col_config%wood_surf_water_max)
@@ -113,7 +117,7 @@ program test_column_ark
       cfg%pft%leaf_emissivity = 0.93_wp ; cfg%pft%wood_emissivity = 0.87_wp
       call reset_state()
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%spac, n, nsl, fz, ys)
       call check_close(fz%tissue%leaf_emiss(1), 0.93_wp, 0.0_wp, 'energy balance uses the PFT leaf emissivity')
       call check_close(fz%tissue%wood_emiss(1), 0.87_wp, 0.0_wp, 'energy balance uses the PFT wood emissivity')
       cfg%pft%leaf_emissivity = eps_leaf0 ; cfg%pft%wood_emissivity = eps_wood0
@@ -211,8 +215,8 @@ contains
    !       no psi-limit, rainfall==0) and assert the 7 conservation budgets close. -------------------!
    !----- PHASE 0/3 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): the aquifer bottom BC used to hard      !
    !      error-stop on this path. It is now a head-driven, two-way boundary with no prognostic state, !
-   !      and the ARK commits the scratch advance_soil_water_column theta verbatim, so it inherits it      !
-   !      unchanged. A column started DRY must wet from below with both ledgers closed. ---------------!
+   !      and the ARK commits the water network's theta, so it inherits it unchanged. A column started  !
+   !      DRY must wet from below with both ledgers closed. -------------------------------------------!
    !----- PHASE 4 (MEDS_INTEGRATOR_PHYSICS_PARITY_PLAN.md): prognostic WOOD, operator-split behind    !
    !      the L-stable veg_energy_balance store term (store_hcap_per_dt > 0), available on ARK and     !
    !      RK45. Two assertions:                                                                       !
@@ -259,7 +263,7 @@ contains
       forc%enthalpy_atm = cas_enthalpy_of_temp(t0, 0.008_wp)
       biophys%wood_water_mass(1:n) = 0.8_wp * biophys%wood_water_mass(1:n)        ! dried wood
       call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
-                               n, nsl, fz, ys)
+                               ws%spac, n, nsl, fz, ys)
       refill = sum((fz%plant%uptake_frozen(1:n) - fz%plant%sapflow_frozen(1:n)) * col_cohort%nplant(1:n))
       call check_true('dried wood over moist soil refills', refill > 0.0_wp, refill)
       call check_true('the refill brings the wood no heat (soil, wood and leaf at one temperature)',            &
@@ -326,12 +330,13 @@ contains
    !       run completes, the soil wets, and the budgets close (ENERGY machine, WATER split-tol). ------!
    subroutine test_ark_budgets_wet()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
+      call march_dry_day(theta_dry)                       ! the same day without the rain
+      call reset_state()
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          forc%rainfall = 8.0e-5_wp                         ! ~0.29 mm/hr continuous rain (rainfall>0)
@@ -340,8 +345,8 @@ contains
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       call check_true('ARK wet: ran 96 wet steps (no guard error stop)', budget%cas_energy%n_check == 576_ik,         &
               real(budget%cas_energy%n_check, wp))
-      call check_true('ARK wet: rain wetted the soil column (theta rose)', theta_col1 > theta_col0,                   &
-              theta_col1 - theta_col0)
+      call check_true('ARK wet: rain wetted the soil column (wetter than the day without rain)',   &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('ARK wet: ENERGY budgets close (incl. advection)',                                              &
               budget%cas_energy%n_fail == 0_ik .and. budget%soil_energy%n_fail == 0_ik                                &
               .and.               budget%whole_energy%n_fail == 0_ik, budget%whole_energy%worst)
@@ -389,21 +394,22 @@ contains
    !      by build_column_frozen). ---------------------------------------------------------------------!
    subroutine test_ark_shed_water()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_ARK ; cfg%ark_adaptive = .true.
       cfg%ark_rtol = 1.0e-4_wp ; cfg%ark_coupled = .true.
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      call march_dry_day(theta_dry)                       ! the same day without the shed water
+      call reset_state()
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (theta rose)',               &
-              theta_col1 > theta_col0, theta_col1 - theta_col0)
+      call check_true('ARK shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('ARK shed water: whole-column WATER still closes with shed_water_rate active',                  &
               budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
       call check_true('ARK shed water: whole-column ENERGY still closes (no separate energy wiring needed)',          &
@@ -416,20 +422,21 @@ contains
    !      frozen, so one test each there already covers both). --------------------------------------!
    subroutine test_rk45_shed_water()
       integer(ik) :: istep
-      real(wp)    :: theta_col0, theta_col1
+      real(wp)    :: theta_dry, theta_col1
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      call march_dry_day(theta_dry)                       ! the same day without the shed water
+      call reset_state()
       biophys%shed_water_rate = 8.0e-5_wp                     ! P4: frozen for the whole day (rainfall stays 0)
-      theta_col0 = sum(biophys%soil_w%theta(1:nsl))
       do istep = 1_ik, 576_ik
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
       end do
       theta_col1 = sum(biophys%soil_w%theta(1:nsl))
       biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (theta rose)',              &
-              theta_col1 > theta_col0, theta_col1 - theta_col0)
+      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
+              theta_col1 > theta_dry, theta_col1 - theta_dry)
       call check_true('rk45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
               budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
       call check_true('rk45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
@@ -487,18 +494,14 @@ contains
    !=======================================================================================!
    ! N2b -- psi_leaf must be CONVERGED IN dt_fast, and the plant total must still conserve.
    !
-   ! WHAT THIS CATCHES. build_column_frozen runs solve_plant_water_batch, an exact matrix
-   ! exponential over the whole dt_fast, whose OWN end-of-step leaf potential is dt-converged
-   ! (measured flat at -0.331 MPa from dt_fast 25 s to 900 s). The persisted state, however, is
-   ! a separate explicit Euler step, and it used to be charged the ENDPOINT-refreshed
-   ! transpiration while being credited the STATE-n-consistent sapflow. Because the kernel defines
-   ! sapflow = dw_l/dt + transp, that mismatch is not a discretisation error at all: it is exactly
-   ! dt*(transp_prepass - transp_realised), a flux inconsistency growing LINEARLY in dt. The leaf --
-   ! the smallest store in the column -- absorbed all of it, and psi_leaf ran away with dt_fast:
-   ! -0.334 MPa at 5 s vs -1.788 MPa at 900 s on the 3 h midday probe, while every OTHER state and
-   ! every flux converged. With the corrector in advance_water_mass_full the same probe gives
-   ! -0.333 vs -0.328 MPa (error 1.454 -> 0.0046 MPa), and BOTH versions agree at dt = 5 s to
-   ! 8e-4 MPa -- the fix changes the discretisation, not the dt->0 limit.
+   ! WHAT THIS CATCHES. The leaf is the smallest store in the column, so any mismatch between the
+   ! transpiration charged to it and the sapflow credited to it lands there, and psi_leaf runs away
+   ! with dt_fast. It has happened: the old explicit plant-water step was charged the
+   ! ENDPOINT-refreshed transpiration while being credited the STATE-n sapflow, a flux
+   ! inconsistency growing LINEARLY in dt, and psi_leaf went from -0.334 MPa at 5 s to -1.788 MPa
+   ! at 900 s on the 3 h midday probe while every OTHER state and every flux converged. Now the
+   ! water network solves the leaf implicitly with the soil, and the energy stages hold
+   ! transpiration at the network's value, so the leaf is charged and credited the same step.
    !
    ! No conservation ledger sees this. The whole-column water budget closes either way, because
    ! the plant store absorbing a flux mismatch IS a closed budget -- which is exactly why this
@@ -607,5 +610,21 @@ contains
       forc%shv_atm = 0.008_wp ; forc%co2_atm = 400.0_wp
       call set_aero_env_atm(aenv, t_air, forc%shv_atm, forc%co2_atm)   ! #97: else MO sees a fixed 298.15 K
    end subroutine set_diurnal_forcing
+
+
+   !----- The same 24 h with no rain and no shed water, from the state the caller set up: the       !
+   !      column's summed water content at the end. Free drainage empties a wet column whatever      !
+   !      falls on it, so an input wets the soil when the column ends wetter than this day does. --!
+   subroutine march_dry_day(theta_sum)
+      real(wp), intent(out) :: theta_sum
+      integer(ik) :: istep
+      biophys%shed_water_rate = 0.0_wp
+      do istep = 1_ik, 576_ik
+         call set_diurnal_forcing(istep)
+         forc%rainfall = 0.0_wp
+         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
+      end do
+      theta_sum = sum(biophys%soil_w%theta(1:nsl))
+   end subroutine march_dry_day
 
 end program test_column_ark

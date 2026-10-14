@@ -33,8 +33,15 @@ module meds_forcing_kernels
    real(wp), parameter :: PHASE_BAND_K   = 1.0_wp      !< [K] half-width of the rain/snow phase-transition band
    real(wp), parameter :: EARTH_RADIUS_M = 6.371e6_wp  !< [m] mean Earth radius (great-circle grid match)
 
-   !----- Weiss & Norman (1985) band-specific SW partition constants (port of ED2 -------------!
+   !----- Weiss & Norman (1985) band-specific SW partition constants (after ED2's ---------------!
    !      short_bdown_weissnorman, radiate_utils.f90). Empirical/physical -> module parameters.  !
+   !      The sun's beam above the atmosphere is 600 W/m2 visible and 720 W/m2 near-infrared, and   !
+   !      1320 W/m2 scales the water-vapour absorption, as WN85 publish them (eqs. 1, 4, 6). Run on  !
+   !      measured shortwave at Hyytiala, Harvard Forest and BCI, the scheme then gives PPFD within  !
+   !      4% of the towers' quantum sensors (docs/science/forcing.md section 6; #369).             !
+   real(wp), parameter :: WN_VIS_TOA = 600.0_wp    !< [W/m2] visible beam above the atmosphere (WN85 eq.1)
+   real(wp), parameter :: WN_NIR_TOA = 720.0_wp    !< [W/m2] near-infrared beam above the atmosphere (WN85 eq.4)
+   real(wp), parameter :: WN_W10_TOA = 1320.0_wp   !< [W/m2] scale of the NIR water-vapour absorption (WN85 eq.6)
    real(wp), parameter :: WN_PAR_BEAM_EXPEXT = -0.185_wp   !< visible-beam atmospheric extinction (WN85 eq.1)
    real(wp), parameter :: WN_NIR_BEAM_EXPEXT = -0.060_wp   !< NIR-beam atmospheric extinction (WN85 eq.4)
    real(wp), parameter :: WN_PAR2DIFF_SUN    = 0.400_wp    !< visible beam->diffuse potential fraction (WN85 eq.3)
@@ -42,7 +49,6 @@ module meds_forcing_kernels
    real(wp), parameter :: WN_W10_A = -1.1950_wp, WN_W10_B = 0.4459_wp, WN_W10_C = -0.0345_wp  !< NIR water absorption (WN85 eq.6)
    real(wp), parameter :: WN_PAR_ACT_A = 0.90_wp, WN_PAR_ACT_B = 0.70_wp   !< visible actual-beam fraction (WN85 eq.11)
    real(wp), parameter :: WN_NIR_ACT_A = 0.88_wp, WN_NIR_ACT_B = 0.68_wp   !< NIR actual-beam fraction (WN85 eq.12)
-   real(wp), parameter :: WN_FVIS_BEAM = 0.43_wp, WN_FNIR_BEAM = 0.57_wp   !< TOA visible/NIR beam energy fractions
    real(wp), parameter :: WN_FVIS_DIFF = 0.52_wp, WN_FNIR_DIFF = 0.48_wp   !< dawn all-diffuse visible/NIR fractions
    real(wp), parameter :: WN_TWOTHIRDS = 2.0_wp / 3.0_wp
    real(wp), parameter :: WN_COSZ_MIN  = 0.017452406437_wp  !< cos(89 deg): below this the sun is grazing -> all diffuse
@@ -182,7 +188,7 @@ contains
    end subroutine partition_shortwave
 
    !=======================================================================================!
-   !  WEISS & NORMAN (1985) band-specific SW partition (port of ED2 short_bdown_weissnorman,     !
+   !  WEISS & NORMAN (1985) band-specific SW partition (after ED2 short_bdown_weissnorman,       !
    !  radiate_utils.f90). Potential band beam/diffuse fluxes from air-mass optical depth on a      !
    !  clear sky; the ratio of observed-to-potential total sets the actual beam fraction per band    !
    !  (cloudier -> more diffuse). Conserves energy EXACTLY: par_full + nir_full = ratio*(pot) = sw, !
@@ -192,7 +198,7 @@ contains
       real(wp), intent(in)  :: sw, cosz, psurf_pa
       real(wp), intent(out) :: par_beam, par_diffuse, nir_beam, nir_diffuse
       real(wp) :: secz, log10secz, prat, w10
-      real(wp) :: par_beam_top, nir_beam_top, par_beam_pot, par_diff_pot, par_full_pot
+      real(wp) :: par_beam_pot, par_diff_pot, par_full_pot
       real(wp) :: nir_beam_pot, nir_diff_pot, nir_full_pot, ratio, par_full, nir_full
       real(wp) :: aux_par, aux_nir, fvis_beam, fnir_beam
 
@@ -205,18 +211,18 @@ contains
       secz      = 1.0_wp / cosz
       log10secz = log10(secz)
       prat      = psurf_pa / p_std
-      par_beam_top = WN_FVIS_BEAM * SOLAR_CONSTANT           ! TOA visible/NIR beam energy
-      nir_beam_top = WN_FNIR_BEAM * SOLAR_CONSTANT
 
-      !----- potential (clear-sky) visible beam + diffuse (WN85 eq.1, eq.3, eq.9). ------------!
-      par_beam_pot = par_beam_top * exp(WN_PAR_BEAM_EXPEXT * prat * secz) * cosz
-      par_diff_pot = WN_PAR2DIFF_SUN * (par_beam_top - par_beam_pot) * cosz
+      !----- potential (clear-sky) visible beam + diffuse (WN85 eq.1, eq.3, eq.9). The diffuse   !
+      !      term keeps ED2's form, which scales the beam it subtracts by cosz once more than    !
+      !      other implementations of eq.3 do (#369). ----------------------------------------!
+      par_beam_pot = WN_VIS_TOA * exp(WN_PAR_BEAM_EXPEXT * prat * secz) * cosz
+      par_diff_pot = WN_PAR2DIFF_SUN * (WN_VIS_TOA - par_beam_pot) * cosz
       par_full_pot = par_beam_pot + par_diff_pot
 
       !----- potential NIR: water-vapour absorption w10, then beam + diffuse (WN85 eq.6,4,5,10). !
-      w10          = SOLAR_CONSTANT * 10.0_wp ** (WN_W10_A + log10secz * (WN_W10_B + WN_W10_C * log10secz))
-      nir_beam_pot = (nir_beam_top * exp(WN_NIR_BEAM_EXPEXT * prat * secz) - w10) * cosz
-      nir_diff_pot = WN_NIR2DIFF_SUN * (nir_beam_top - nir_beam_pot - w10) * cosz
+      w10          = WN_W10_TOA * 10.0_wp ** (WN_W10_A + log10secz * (WN_W10_B + WN_W10_C * log10secz))
+      nir_beam_pot = (WN_NIR_TOA * exp(WN_NIR_BEAM_EXPEXT * prat * secz) - w10) * cosz
+      nir_diff_pot = WN_NIR2DIFF_SUN * (WN_NIR_TOA - nir_beam_pot - w10) * cosz
       nir_full_pot = nir_beam_pot + nir_diff_pot
 
       !----- scale the potential to the OBSERVED total; beam fraction shrinks under cloud (eq.7/8). !

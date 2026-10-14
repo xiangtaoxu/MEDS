@@ -15,10 +15,11 @@
 !==========================================================================================!
 program test_allometry_defaults
    use meds_kinds,        only : wp
-   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real
+   use meds_toml,         only : toml_table_t, toml_parse_file, toml_has, toml_real, toml_string
    use meds_allometry,    only : b1Ht, b2Ht, agb_c1, agb_c2, ca_b1, ca_b2, lai_b1, lai_b2,      &
-                                 light_ext
+                                 light_ext, height_form, gmm_a, gmm_b, gmm_k, HEIGHT_POWER
    use meds_test_support, only : banner, check, check_close
+   use meds_pft_params,   only : pft_table_t, alloc_pft_table
    implicit none
 
    real(wp), parameter :: c2b              = 2.0_wp          ! ED2 C2B, carbon -> biomass
@@ -27,6 +28,7 @@ program test_allometry_defaults
    real(wp), parameter :: ed2_bl_xx_scale  = 0.46769540_wp   ! ED2 c14f15_bl_xx(1)
    real(wp), parameter :: rtol             = 1.0e-12_wp
    type(toml_table_t)  :: t
+   type(pft_table_t)   :: pft
    character(len=512)  :: arg
    logical             :: ok
 
@@ -53,6 +55,22 @@ program test_allometry_defaults
    call same('lai_b1', lai_b1)
    call same('lai_b2', lai_b2)
    call same('light_ext', light_ext)
+
+   !----- The height curve: the shipped config and the initializer are both the power law, and  !
+   !      the gMM initializers are Cano et al. (2019) eq. 7, the values the config lists. -------!
+   call check(trim(toml_string(t, 'allometry.height_allometry', '')) == 'power',                    &
+              'meds_config_pft.toml sets [allometry].height_allometry = "power"')
+   call check(height_form == HEIGHT_POWER, 'the height-curve initializer is the power law')
+   call check_close(gmm_a, 58.0_wp, rtol, 'gmm_a initializer = Cano et al. (2019) eq. 7')
+   call check_close(gmm_b, 0.73_wp, rtol, 'gmm_b initializer = Cano et al. (2019) eq. 7')
+   call check_close(gmm_k, 21.8_wp, rtol, 'gmm_k initializer = Cano et al. (2019) eq. 7')
+
+   !----- Reproduction: the shipped config omits the optional fraction, so it takes the table's  !
+   !      default, 0.33 of the local maximum height. ---------------------------------------------!
+   call check(.not. toml_has(t, 'pft.reproduction_height_fraction'),                              &
+              'meds_config_pft.toml leaves pft.reproduction_height_fraction at its default')
+   call alloc_pft_table(pft, 1)
+   call check_close(pft%reproduction_height_fraction, 0.33_wp, rtol, 'reproduction_height_fraction default = 0.33')
 
    print '(a)', 'test_allometry_defaults: ALL PASSED'
 

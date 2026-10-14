@@ -201,7 +201,7 @@ meds_config_load(path, path_len) -> handle                                 ! dem
 ```
 
 `meds_leaf_solve` takes all 35 leaf parameters as an explicit struct — which is what makes
-`examples/example_leaf_gas_exchange/reproduce_slot2017.py` possible ("the model lives in Fortran,
+`examples/example01_leaf_gas_exchange/reproduce_slot2017.py` possible ("the model lives in Fortran,
 but no parameters are hard-coded there"). Merging the libraries does not touch that. Both existing
 examples change **only their import line**:
 
