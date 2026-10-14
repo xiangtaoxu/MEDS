@@ -14,6 +14,15 @@ before and after.
 
 ## [Unreleased]
 
+### Changed
+
+- **One I/O tree, `src/io/`** (`MEDS_POLYGON_RUNTIME_PLAN.md` §14, RP2): every data file a run reads or
+  writes is now handled under `src/io/`. The netCDF bindings and the state file (`meds_io.f90`, written
+  at checkpoints and read at restart) sit at its root, the forcing code moved from `src/forcing/` to
+  `src/io/input/forcing/`, and the output and diagnostic modules to `src/io/output/`. Paths only: every
+  library keeps its name and its links, and results are byte-identical. `.claude/rules/output.md` now
+  applies to `src/io/output/` and the two root files.
+
 ## [0.3.4] — 2026-10-13
 
 A **soil–plant water and examples** release. Soil and plant water are solved together, as one

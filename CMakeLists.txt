@@ -244,7 +244,7 @@ add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_state_site meds_slow_kernels)
 meds_fortran_flags(meds_demography)
 
-#----- Output PREP (src/io -- netCDF + diagnostics only now that toml/config_io have left): the netCDF-FREE half of the output subsystem -- the site-level        #
+#----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_demography (site_t + the reductions) ONLY -- NO netCDF --  #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
@@ -252,11 +252,11 @@ meds_fortran_flags(meds_demography)
 #      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
 #      a required manual edit (unlike src/plant / src/biophysics, which do glob).                    #
 add_library(meds_io_prep STATIC
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_kernels.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_reduce.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_diagnostic_kernels.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_diagnostic_reduce.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_types.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_integrate.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_registry.f90)
 target_link_libraries(meds_io_prep PUBLIC meds_demography)
 meds_fortran_flags(meds_io_prep)
 
@@ -296,10 +296,11 @@ add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_
 target_link_libraries(meds_netcdf_c PUBLIC meds_shared netCDF::netcdf)
 meds_fortran_flags(meds_netcdf_c)
 
-#----- Meteorological (and future disturbance / land-use) FORCING (src/forcing). The reader +    #
-#      disaggregation kernels + runtime types. Links meds_shared + the netCDF bindings ONLY (NOT   #
-#      demography): a prescribed external driver, low in the DAG. Design MEDS_FORCING_DESIGN.md.    #
-file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/forcing/*.f90)
+#----- Meteorological (and future disturbance / land-use) FORCING (src/io/input/forcing): the    #
+#      reader + disaggregation kernels + runtime types. Links meds_shared + the netCDF bindings    #
+#      ONLY (NOT demography): a prescribed external driver, low in the DAG.                        #
+#      Design MEDS_FORCING_DESIGN.md.                                                              #
+file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/input/forcing/*.f90)
 add_library(meds_forcing STATIC ${FORCING_SOURCES})
 target_link_libraries(meds_forcing PUBLIC meds_config meds_netcdf_c)
 meds_fortran_flags(meds_forcing)
@@ -369,14 +370,14 @@ else()
    message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
 
-#----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
+#----- Output layer (src/io and src/io/output): the netCDF state/diagnostic writer. Links the promoted netCDF        #
 #      bindings (meds_netcdf_c, above) + demography (state serialization). netCDF is always         #
 #      compiled. (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --      #
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
 #      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
 add_library(meds_io_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_stream.f90
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_manager.f90)
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_manager.f90)
 target_link_libraries(meds_io_stream PUBLIC meds_demography meds_netcdf_c meds_io_prep)
 meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)

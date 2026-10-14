@@ -3,7 +3,7 @@
 How MEDS reports itself: what a variable means, how it is aggregated across the demographic
 hierarchy and across time, and how to ask for the ones you want.
 
-Implementation: `src/io/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
+Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
 `meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
 accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is

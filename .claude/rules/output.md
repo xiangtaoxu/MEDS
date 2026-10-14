@@ -1,6 +1,8 @@
 ---
 paths:
-  - "src/io/**"
+  - "src/io/output/**"
+  - "src/io/meds_io.f90"
+  - "src/io/meds_netcdf_c.f90"
   - "src/config/meds_output_config.f90"
   - "test/test_output_*.f90"
   - "test/test_diagnostic_reduce.f90"
