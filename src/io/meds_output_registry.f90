@@ -613,8 +613,10 @@ contains
                         w=W_NPLANT, mn=.true.)
       !----- Litterfall: the vegetation -> soil carbon seam, from the SAME accumulator the        !
       !      biogeochemistry consumes, by the tissue the carbon came from (#399). Leaf + fine root   !
-      !      + wood + fruit/seed + root_exudate_site is the carbon entering the soil pools, so with  !
-      !      rh_site they close the soil-carbon budget. litter_struct_site is a destination (the     !
+      !      + wood + fruit/seed + root_exudate_site is the carbon turnover and background mortality !
+      !      send to the soil pools; cohorts culled or killed by disturbance add to the pools        !
+      !      directly (mort_carbon_cull_site, mort_carbon_disturb_site). With soil carbon off they   !
+      !      leave the model (#316). litter_struct_site is a destination (the                        !
       !      structural pools), so it overlaps the others. --------------------------------------!
       call add_variable(reg, 'litter_leaf_site', 'leaf litterfall carbon (after resorption)', 'kgC/m2/yr', &
                         DIM_SCALAR, AGG_TMEAN, GRP_BIOGEOCHEM, MON_YR, FLD_P_DIAG0 + PD_LITTER_LEAF)
@@ -1013,21 +1015,29 @@ contains
    !      thing a user writes, and it used to silently produce a file full of fill. Rejecting the      !
    !      pairing at start-up, naming the offender and the variable they probably meant, is the whole  !
    !      point: a diagnostic that quietly reports nothing is worse than one that refuses to start.     !
+   !      The meds_io_config.toml overrides are applied after this, so apply_variable_override runs  !
+   !      the same check on each stream mask it sets.                                               !
    subroutine enforce_fast_guard(reg)
       type(output_registry_t), intent(in) :: reg
       integer(ik) :: k
-      logical     :: is_fast_src, on_fast
       do k = 1_ik, reg%nvar
-         is_fast_src = (src_class(reg%var(k)%source_id) == SRCK_FAST)
-         on_fast     = (iand(reg%var(k)%streams, FREQ_FAST) /= 0_ik)
-         if (on_fast .and. .not. is_fast_src)                                                    &
-            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is not a FAST-staged '// &
-                       'variable and cannot be put on the F stream (look for a *_fast twin)'
-         if (is_fast_src .and. iand(reg%var(k)%streams, not(FREQ_FAST)) /= 0_ik)                  &
-            error stop 'meds_output_registry: "'//trim(reg%var(k)%name)//'" is FAST-staged and can '// &
-                       'only be on the F stream (the coarse tiers read live state, not the staging)'
+         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, reg%var(k)%streams)
       end do
    end subroutine enforce_fast_guard
+
+   !----- One variable's streams against its source: the FAST tier <-> a FAST-staged source. ---!
+   subroutine check_fast_tier(name, source_id, streams)
+      character(len=*), intent(in) :: name
+      integer(ik),      intent(in) :: source_id, streams
+      logical :: is_fast_src
+      is_fast_src = (src_class(source_id) == SRCK_FAST)
+      if (iand(streams, FREQ_FAST) /= 0_ik .and. .not. is_fast_src)                              &
+         error stop 'meds_output_registry: "'//trim(name)//'" is not a FAST-staged '//            &
+                    'variable and cannot be put on the F stream (look for a *_fast twin)'
+      if (is_fast_src .and. iand(streams, not(FREQ_FAST)) /= 0_ik)                                &
+         error stop 'meds_output_registry: "'//trim(name)//'" is FAST-staged and can '//           &
+                    'only be on the F stream (the coarse tiers read live state, not the staging)'
+   end subroutine check_fast_tier
 
    !----- Step 2: disable every variable in a group whose main-config toggle is .false. -------!
    subroutine apply_group_toggles(reg, out_cfg)
@@ -1076,6 +1086,7 @@ contains
          m = mask
          if (ragged_dim(reg%var(k)%dim) .and. iand(m, FREQ_ANNUAL) /= 0_ik)                      &
             error stop 'meds_output_registry: annual (Y) stream forbidden on cohort/patch variable ('//trim(name)//')'
+         call check_fast_tier(reg%var(k)%name, reg%var(k)%source_id, m)
          reg%var(k)%streams = m
       end select
    end subroutine apply_variable_override

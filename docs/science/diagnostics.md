@@ -263,12 +263,15 @@ io_config = "meds_io_config.toml"
 
 ```toml
 [variables]
-anet_cohort   = "F D"     # sub-daily leaf physiology for one diagnostic run
+gpp_cohort_fast = "F"     # sub-daily leaf physiology for one diagnostic run
+anet_cohort   = "D"       # ... and its daily mean
 agb_size      = "M Y"
 growth_avg_cohort = false
 ```
 
-A name matching no registered variable is a hard error, not a silent no-op.
+A name matching no registered variable is a hard error, not a silent no-op, and so is a variable on
+a tier it has no source for: only the `*_fast` variables go on the F stream, and they go nowhere
+else.
 
 ---
 

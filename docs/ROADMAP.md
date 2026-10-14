@@ -26,7 +26,6 @@ failure, not from a plan.
 
 | # | Title | Note |
 |---|---|---|
-| [#1](https://github.com/xiangtaoxu/MEDS/issues/1) | Equal-height shading ambiguity: capped large trees and same-height recruits | Enhancement |
 | [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
@@ -53,11 +52,10 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
 - **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* The background turnover rate is
   the model's parameter; leaf lifespan is emergent (plan D2).
 
-- **`root_phen_factor`** — *Candidate.* [#258](https://github.com/xiangtaoxu/MEDS/issues/258) The fine-root side of phenological shedding.
-  Resorption (`retained_carbon_fraction`, default 0.3) covers all leaf and fine-root loss, and fine
-  roots age on the leaves' turnover gate, but they are not shed with the leaves: root length sets the
-  root–soil conductance, so a drop would cut a leafless plant's water uptake. A drought-driven root
-  dieback would act per soil layer, on that layer's water, not on the leaves.
+- **Drought-driven fine-root dieback** — *Candidate.* Fine roots age on the leaves' turnover gate and
+  share their resorption (#387), but they are not shed with the leaves: root length sets the
+  root–soil conductance, so a drop would cut a leafless plant's water uptake. A root dieback would act
+  per soil layer, on that layer's water, not on the leaves.
 
 ---
 

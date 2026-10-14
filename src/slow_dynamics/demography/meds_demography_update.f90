@@ -59,14 +59,14 @@ contains
       deriv%d_wood_carbon_dt(i)          = (wood_carbon_new          - cohort%wood_carbon(i))          / dt_yr
       deriv%d_nonstructural_carbon_dt(i) = (nonstructural_carbon_new - cohort%nonstructural_carbon(i)) / dt_yr
       deriv%dln_nplant_dt(i)             = -mortality
-      !----- Advance the moving-average ring buffer with the caller's sample (fill or evict). --!
-      if (cohort%growth_count(i) < n_window) then
-         cohort%growth_accum(i) = cohort%growth_accum(i) + ring_sample
-         cohort%growth_count(i) = cohort%growth_count(i) + 1_ik
-      else
-         cohort%growth_accum(i) = cohort%growth_accum(i) + ring_sample - cohort%growth_hist(hist_pos, i)
-      end if
+      !----- Advance the moving-average ring buffer with the caller's sample (fill or evict), and   !
+      !      take the window's sum from the buffer itself. A running sum (add the new sample, take  !
+      !      off the evicted one) carries the round-off of every sample it has seen, so a window of  !
+      !      zeros after a large sample could read slightly negative (#396). The slots this cohort   !
+      !      has not written yet are zero: init_cohort clears the column. -----------------------!
+      if (cohort%growth_count(i) < n_window) cohort%growth_count(i) = cohort%growth_count(i) + 1_ik
       cohort%growth_hist(hist_pos, i) = ring_sample
+      cohort%growth_accum(i) = sum(cohort%growth_hist(1:n_window, i))
       cohort%growth_avg(i) = cohort%growth_accum(i) / real(cohort%growth_count(i), wp)
    end subroutine fill_cohort_deriv
 
@@ -173,10 +173,9 @@ contains
                !      within-layer order. Exact-equality is the right test -- recruits are born from !
                !      one shared `recruit_dbh`, so they tie bit-exactly.                             !
                !                                                                                  !
-               !      THIS DOES NOT REACH THE LIGHT-CAPTURE PATH. canopy_radiation orders cohorts   !
-               !      BOTTOM(1)->TOP(n) and builds one discrete RT layer each, so tied cohorts      !
-               !      STACK there and the lower PFT index is systematically placed above (#207).    !
-               !      What is co-dominant here is the light-plastic TRAIT driver, not photosynthesis.!
+               !      The light capture agrees: canopy_radiation puts exactly tied cohorts in one   !
+               !      radiative-transfer layer (#207). What this sweep drives is the light-plastic  !
+               !      traits and the demography's competition index.                                !
                k = i
                do while (k < i1)
                   if (cohort%height(k + 1_ik) /= cohort%height(i)) exit

@@ -229,11 +229,12 @@ contains
    !=======================================================================================!
    subroutine test_conservation()
       type(spac_solver_t) :: spac
-      real(wp) :: theta(soil%n_active), w0, w1, dt, hour, resid, worst, flows
+      real(wp) :: theta(soil%n_active), w0, w1, dt, hour, resid, worst, flows, worst_coh
+      real(wp), allocatable :: wc0(:), wc1(:)
       integer(ik) :: step, nfail
       theta = 0.33_wp
       call make_stand(spac, 4_ik, theta, 0.0_wp, 0.95_wp, 0.9_wp, 0.0_wp)
-      dt = 900.0_wp ; worst = 0.0_wp ; nfail = 0_ik
+      dt = 900.0_wp ; worst = 0.0_wp ; worst_coh = 0.0_wp ; nfail = 0_ik
       do step = 1_ik, 192
          hour = mod(real(step, wp) * dt / 3600.0_wp, 24.0_wp)
          spac%e_demand = 5.0e-5_wp * max(0.0_wp, sin(pi * (hour - 6.0_wp) / 12.0_wp))                        &
@@ -241,15 +242,20 @@ contains
          spac%rain = 0.0_wp
          if (step >= 60 .and. step < 68) spac%rain = 2.0e-2_wp      ! 72 mm/h for two hours
          if (step >= 150 .and. step < 160) spac%rain = 1.0e-3_wp    ! a long drizzle
-         w0 = total_water(spac)
+         w0 = total_water(spac) ; wc0 = sum(spac%water_coh, dim=1)
          call spac_advance(spac, soil, sopts, forc, hyd, dt)
-         w1 = total_water(spac)
+         w1 = total_water(spac) ; wc1 = sum(spac%water_coh, dim=1)
+         !----- Each cohort's leaf + wood water changes by its own uptake less its transpiration (#189). !
+         worst_coh = max(worst_coh, maxval(abs((wc1 - wc0) - (sum(spac%uptake, dim=1) - spac%transp)))    &
+                                    / max(maxval(wc0), 1.0e-6_wp))
          flows = spac%rain * dt - spac%drain - spac%evap - spac%spill - sum(spac%transp)
          resid = abs((w1 - w0) - flows)
          worst = max(worst, resid / max(w0, 1.0_wp))
          nfail = nfail + spac%nfail
       end do
       call check_true('conservation: every step closes to round-off', worst < 1.0e-13_wp, worst)
+      call check_true('conservation: every cohort''s tissue water closes to round-off', worst_coh < 1.0e-12_wp, &
+                      worst_coh)
       call check_int('conservation: no sub-step forced through', nfail, 0_ik)
    end subroutine test_conservation
 

@@ -217,8 +217,8 @@ contains
       !      pools it left behind. Both were computed before the commit and are now computed after !
       !      it; the header of accumulate_mortality_litter has the decomposition that says why.    !
       !      UNCONDITIONAL since #169: the routine also records how much carbon died, which is a       !
-      !      demographic question that does not stop being asked when the soil pools are off, so the  !
-      !      soil_carbon_on guard moved INSIDE to cover only the litter half.                          !
+      !      demographic question that does not stop being asked when the soil pools are off; and the !
+      !      litter is recorded whether or not they are on (#316).                                    !
       call accumulate_mortality_litter(site, cfg, nplant_before, site%patch%litter_in)
       call shed_mortality_water(site, cfg, nplant_before, mort_water)
 
@@ -396,9 +396,9 @@ contains
 
    !----- Site-total carbon in this step's litter accumulator [kgC/m2 site]. The ledger declares  !
    !       this leaving the live pools at SLOW_PHASE_GROW and arriving in the CENTURY pools at      !
-   !       SLOW_PHASE_SOILC. With soil_carbon_on off the accumulator stays zero and nothing is      !
-   !       declared, which is correct and deliberate: the necromass genuinely goes nowhere, and the !
-   !       growth phase's residual is the model saying so (§10.2.2 item 5).  -----------------------!
+   !       SLOW_PHASE_SOILC. With soil_carbon_on off it is still accumulated and declared leaving   !
+   !       at SLOW_PHASE_GROW, and nothing arrives at SLOW_PHASE_SOILC: no soil pool takes it, so   !
+   !       the necromass leaves the model as a declared outflow (#316). ---------------------------!
    !----- The CO2 this step handed to the fast tier [kgC/m2 site]: growth respiration less the    !
    !       starvation over-report, the mirror of slow_fast_carbon_handover. It leaves the plant     !
    !       inside this ledger's window and reaches the canopy air inside the NEXT fast window, so   !
@@ -736,26 +736,25 @@ contains
             co2_owed(ip) = co2_owed(ip) + cohort%nplant(j) * (growth_resp - deficit)
 
             !----- leaf_shed_c + fineroot_shed_c = this step's TURNOVER litter -> the per-patch      !
-            !      soil-carbon pools (B1, OPT-IN [soil_carbon].soil_carbon_on -- default .false.       !
-            !      keeps this bit-identical). The SEED LOSS joins them: reproduction carbon is        !
-            !      debited in full from the parent, and only the recruit carbon efficiency of it ever !
+            !      litter accumulator, whether or not the soil-carbon pools are on (#316): with them   !
+            !      off the necromass leaves the model, declared at SLOW_PHASE_GROW, and the litter     !
+            !      outputs still report it. The SEED LOSS joins them: reproduction carbon is debited  !
+            !      in full from the parent, and only the recruit carbon efficiency of it ever         !
             !      establishes -- the remaining ~99.9% is dead seed and dead seedling, which is        !
             !      NECROMASS, not nothing. It falls with the canopy (above ground, f_labile_leaf).   !
-            if (cfg%soil_carbon_on) then
-               seed_lost = g_repro * cohort%nplant(j)                                              &
-                         * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
-               !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
-               !      (#151); the rest went to storage above, so each pool's full removal is matched  !
-               !      exactly by (storage credit + litter input).  -----------------------------------!
-               call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
-                        (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
-                        seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
-                        pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
-               !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
-               !      labile, below-ground carbon, where the microbes respire it. -------------------!
-               lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
-               lit(ip)%exudate_c   = lit(ip)%exudate_c   + exudate * cohort%nplant(j)
-            end if
+            seed_lost = g_repro * cohort%nplant(j)                                              &
+                      * (1.0_wp - min(max(efficiency(j), 0.0_wp), 1.0_wp))
+            !----- Only the NON-resorbed share of the leaf and fine-root shed becomes litter      !
+            !      (#151); the rest went to storage above, so each pool's full removal is matched  !
+            !      exactly by (storage credit + litter input).  -----------------------------------!
+            call add_necromass(lit(ip), (leaf_shed_c - leaf_retained_c) * cohort%nplant(j),       &
+                     (fineroot_shed_c - fineroot_retained_c) * cohort%nplant(j), 0.0_wp, 0.0_wp,   &
+                     seed_lost, pft%f_labile_leaf(pf), pft%f_labile_stem(pf),                       &
+                     pft%aboveground_frac(pf), pft%struct_lignin_frac(pf))
+            !----- ROOT EXUDATE: the carbon the growth sink could not use enters the soil as     !
+            !      labile, below-ground carbon, where the microbes respire it. -------------------!
+            lit(ip)%labile_soil = lit(ip)%labile_soil + exudate * cohort%nplant(j)
+            lit(ip)%exudate_c   = lit(ip)%exudate_c   + exudate * cohort%nplant(j)
          end do
       end associate
 
@@ -987,16 +986,15 @@ contains
             ip = cohort%owner_patch(j)
             !----- The BACKGROUND pathway's carbon (#169), on the same density and the same pools    !
             !      the litter below is valued on -- one measurement, two consumers, so the pathway    !
-            !      split and the litter can never disagree. Recorded BEFORE the soil_carbon_on guard: !
-            !      how much biomass died is demography, not biogeochemistry. As a rate [kgC/m2/yr]    !
-            !      times the step's weight in seconds, which is the block's contract (#239).          !
+            !      split and the litter can never disagree: how much biomass died is demography, not  !
+            !      biogeochemistry. As a rate [kgC/m2/yr] times the step's weight in seconds, which   !
+            !      is the block's contract (#239).                                                    !
             if (site%patch%diag%active)                                                            &
                site%patch%diag%v(PD_MORT_C_BACKGROUND, ip) =                                       &
                   site%patch%diag%v(PD_MORT_C_BACKGROUND, ip)                                      &
                   + (died_nplant * (cohort%leaf_carbon(j) + cohort%fineroot_carbon(j)              &
                                   + cohort%wood_carbon(j) + cohort%nonstructural_carbon(j))        &
                      / cfg%dt_years) * cfg%dt_slow
-            if (.not. cfg%soil_carbon_on) cycle
             call add_necromass(lit(ip), died_nplant * cohort%leaf_carbon(j),                      &
                      died_nplant * cohort%fineroot_carbon(j), died_nplant * cohort%wood_carbon(j),  &
                      died_nplant * cohort%nonstructural_carbon(j), 0.0_wp,                         &
