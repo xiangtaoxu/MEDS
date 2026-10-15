@@ -740,6 +740,32 @@ regional run (983 cells, v0.3.4) taught. This section replaces R4–R6 (§10). I
 not renumber them, and its phases are RP0–RP7 because R1–R12 are already the 2026-09-27 code
 review's items.
 
+> **Status 2026-10-14: RP0–RP6 implemented on `feat/region-runtime`, one commit per phase.** Each
+> phase passed the suite in ifx, gfortran and ifx Debug, and every phase ran the six regression
+> cases (`~/claude_workspace/meds_runs/rr`). Every site case stayed byte-identical to v0.3.4
+> throughout; the Palo Verde region case changed once, at RP3, when it began reading its soil from
+> the maps. Where the code differs from the text below:
+> - The per-layer column lives in `soil_column_config_t` (`n_layer_values` and per-layer arrays),
+>   built for the fast loop, the slow ledger and validation by `soil_column_params`.
+> - RP3 adds `soil_thermal_from_texture` (CLM5 mineral soil) and `annual_damping_depth`.
+> - A region restart reads each polygon's row by id, and the file must hold exactly the region's
+>   polygons.
+>
+> **RP7, the small pilot** (`~/claude_workspace/meds_runs/region_pilot`, one exclusive R128C40 node),
+> ran example 06's cells as region runs: its cell mask, the v2 soil maps, Chave's E and
+> `nbg_init_density = 3`.
+> - **35 cells (10–12° N, 86–84° W), 5 years, 36 threads:** 288 s and 219 MB. A restart from the
+>   1875-01-01 state file reproduced all 17 later months, every variable.
+> - **11 cells, 25 years, past the 20-year recycle wrap:** with and without the forcing cache, the
+>   monthly output and all three state files are identical. Wall time was 1,816 s against 1,380 s,
+>   but the cached run went first, on a cold file system. That difference is the operating system's
+>   page cache, not RP5's; at about 55 s of compute per model year, the read is a small share either
+>   way.
+> - **All 983 forcing cells of example 06 are complete in every map,** so the full region opens.
+>   Their bottoms are 831 leaky (run as free drain, #401), 86 free drain and 66 aquifer.
+>
+> The full pilot (983 cells, 150 years, about seven regions) awaits the owner's go, for its cost.
+
 ### 14.1 What a region run is for
 
 - **A region run fills one node.** It runs a box of cells side by side in one process, one thread
