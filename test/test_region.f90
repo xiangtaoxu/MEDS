@@ -13,7 +13,8 @@
 ! state file, must write the second half's files exactly as the whole run does (§14 RP4). Every run  !
 ! takes its soil from the archive's [maps] files (§14    !
 ! RP3), so the three polygons have their own soil depth, layers and bottom boundaries, and each site  !
-! run must find the same soil at its cell. Last, meds_main (the second argument)                    !
+! run must find the same soil at its cell; the region files carry each polygon's own layers and map  !
+! inputs. Last, meds_main (the second argument)                                                     !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
 !                                                                                          !
 ! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
@@ -28,6 +29,7 @@ program test_region
    use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
                                           NLAT, NLON
    use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
+   use meds_column_params,         only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
                                           DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH, XTYPE_INT,  &
@@ -51,6 +53,7 @@ program test_region
    !----- Their soil (meds_test_era5land_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on  !
    !      the default ones; sealed (bedrock), leaky (free_drain until #401) and aquifer bottoms. ------!
    integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]
+   real(wp),    parameter :: COLUMN_DEPTH(NP) = [1.95_wp, 1.10_wp, 2.25_wp]
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
 
    character(len=512)  :: work, meds_main
@@ -116,6 +119,7 @@ program test_region
    !----- The polygon axis. ----------------------------------------------------------------------!
    call list_files(trim(work)//'/out', files, nf)
    call check_polygon_axis(trim(work)//'/out/region-D-202101.nc')
+   call check_polygon_inputs('-D-202101.nc')
 
    !----- Every region file against the site files: each polygon's slice, every variable. --------!
    nbad = 0_ik
@@ -730,5 +734,56 @@ contains
       call check_true('col is the column index', found .and. all(nint(x, ik) == mod(IDS, 18_ik)))
       call nc_check(nc_close(ncid), 'close')
    end subroutine check_polygon_axis
+
+   !----- Each polygon's own layers and map inputs (§14 RP3). Its row of soil_z is its site run's     !
+   !      soil_z down to its own bottom layer, and the fill value below. Its soil_z_bnds run from the !
+   !      surface, layer to layer, down to its soil depth, with each node midway. Polygons 1 and 3     !
+   !      both have seven layers, ending at 1.95 and 2.25 m, so their bottom nodes differ. --------------!
+   subroutine check_polygon_inputs(suffix)
+      character(len=*), intent(in) :: suffix
+      integer(c_int) :: ncid, sn, vid
+      real(c_double), allocatable :: z(:), b(:), zs(:), depth(:), bc(:), tdeep(:)
+      real(c_double) :: top(n_soil_layer_max), bot(n_soil_layer_max)
+      logical     :: fz, fb, fd, fc, ft, fs, same_z, edges
+      integer(ik) :: p, ns, n, k, base
+      character(len=24) :: id
+      ncid = open_nc(trim(work)//'/out/region'//suffix)
+      ns = dim_len(ncid, 'soil')
+      call read_var(ncid, 'soil_z', [NP, ns], z, fz)
+      call read_var(ncid, 'soil_z_bnds', [NP, ns, 2_ik], b, fb)
+      call read_var(ncid, 'soil_depth', [NP], depth, fd)
+      call read_var(ncid, 'bottom_bc', [NP], bc, fc)
+      call read_var(ncid, 'deep_temp', [NP], tdeep, ft)
+      same_z = fz .and. ns == n_soil_layer_max
+      edges  = fb .and. fd .and. ns == n_soil_layer_max
+      do p = 1_ik, NP
+         if (.not. (same_z .and. edges)) exit
+         n = N_LAYER(p) ; base = (p - 1_ik) * ns
+         write(id,'(i0)') IDS(p)
+         sn = open_nc(trim(work)//'/out/site'//trim(id)//suffix)
+         call read_var(sn, 'soil_z', [ns], zs, fs)
+         call nc_check(nc_close(sn), 'close')
+         same_z = fs .and. all(z(base + 1_ik : base + n) == zs(1:n)) .and.                           &
+                  all(z(base + n + 1_ik : base + ns) > 1.0e30_c_double)      ! the loop stops at a miss
+         do k = 1_ik, ns
+            top(k) = b(2_ik * (base + k) - 1_ik) ; bot(k) = b(2_ik * (base + k))
+         end do
+         edges = top(1) == 0.0_c_double .and. all(top(2:n) == bot(1:n - 1_ik)) .and.                 &
+                 all(z(base + 1_ik : base + n) == 0.5_c_double * (top(1:n) + bot(1:n))) .and.         &
+                 bot(n) == -depth(p) .and. abs(depth(p) - COLUMN_DEPTH(p)) < 1.0e-6_wp .and.          &
+                 all(top(n + 1_ik : ns) > 1.0e30_c_double) .and. all(bot(n + 1_ik : ns) > 1.0e30_c_double)
+      end do
+      call check_true('each polygon''s row of soil_z is its site run''s, down to its own bottom layer, '// &
+                      'and the fill value below', same_z)
+      call check_true('the two seven-layer polygons keep their own bottom nodes',                     &
+                      fz .and. z(7) /= z(2_ik * ns + 7_ik))
+      call check_true('soil_z_bnds run from the surface, layer to layer, to each polygon''s soil_depth', edges)
+      call check_true('bottom_bc and deep_temp are each polygon''s own',                             &
+                      fc .and. ft .and. all(nint(bc, ik) == BOTTOM) .and.                             &
+                      all([(abs(tdeep(p) - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp, p = 1_ik, NP)]))
+      call check_true('no chave_e without the Chave height allometry',                               &
+                      nc_inq_varid_f(ncid, 'chave_e', vid) /= NC_NOERR)
+      call nc_check(nc_close(ncid), 'close')
+   end subroutine check_polygon_inputs
 
 end program test_region

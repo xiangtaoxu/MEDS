@@ -50,11 +50,23 @@ before and after.
 
   The soil column now takes a texture per layer: `soil_column_config_t` carries per-layer values
   (`n_layer_values`), and one builder, `soil_column_params`, assembles the column for the fast loop,
-  the slow ledger and validation. A region's files take their soil-layer depths from its deepest
-  polygon, and each polygon fills its own layers. `test_region` runs its region and its site runs on
-  synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
+  the slow ledger and validation. Each polygon fills its own layers of a region's files, which carry
+  each polygon's own layer depths and map inputs (below). `test_region` runs its region and its site
+  runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **A region's files carry each polygon's own soil layers and map inputs** (§14, RP3). The soil
+  coordinate of a region file is per polygon: `soil_z (polygon, soil)`, each polygon's layer node
+  depths, with CF bounds `soil_z_bnds (polygon, soil, nv)`, each layer's top and bottom, so a
+  polygon's bottom layer ends at its own soil depth; below it both are the fill value. Before, the
+  files carried one `soil_z`, the deepest polygon's, which put a shallower polygon's cut bottom layer
+  at the wrong depth (in example 06 by a median 7 %, at most 25 %). Each file also carries, per
+  polygon, the inputs its cell's maps gave it as it runs them: `soil_depth`, `bottom_bc` (CF flags;
+  a leaky base runs as free_drain), `deep_temp` and, with the Chave height allometry, `chave_e`.
+  `attach_output` records each polygon's row; `open_output_files` takes a soil column only for a
+  site, so a region no longer picks its deepest polygon. Site files are unchanged. `test_region`
+  checks each polygon's row against its site run's `soil_z`, the bounds against its soil depth, and
+  its bottom boundary and deep temperature against its cell.
 - **A region reports what its forcing reads cost.** Its log gives the time spent loading forcing
   before each month and the archive months read from file, each year and in all. A recycled window
   is re-read from file every cycle; the operating system's page cache serves those re-reads (§14

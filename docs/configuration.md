@@ -363,6 +363,14 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
   are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
+- **Each polygon's soil and map inputs in its files.** Polygons have their own layers, so a region
+  file's soil coordinate is per polygon: `soil_z (polygon, soil)` holds each polygon's layer node
+  depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
+  bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
+  below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
+  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2,
+  3 for free_drain, aquifer, bedrock; a leaky base runs as free_drain), `deep_temp` [K] and, with
+  `height_allometry = "chave2014"`, `chave_e`. A site file keeps its one-dimensional `soil_z`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its

@@ -93,7 +93,7 @@ contains
       logical, optional,   intent(in)    :: verbose
       type(met_cells_t)          :: cells
       character(len=MET_PATH_LEN) :: static
-      integer(ik)                :: st, p, n, j, deepest
+      integer(ik)                :: st, p, n, j
       integer(ik), allocatable   :: ids(:)
       type(map_inputs_t)     :: inputs
       type(meds_config_t)        :: pcfg
@@ -176,7 +176,6 @@ contains
       !      or its row of the restart file, with its own configuration: the run's, with the cell's  !
       !      soil and site index. ---------------------------------------------------------------------!
       allocate(reg%poly(n), reg%out_bufs(n))
-      deepest = 1_ik
       reg%now = cfg%start_time
       do p = 1_ik, n
          associate (poly => reg%poly(p))
@@ -202,8 +201,6 @@ contains
                                  cells%elevation(p), keep_fast_state=fast_found,                  &
                                  keep_soil_carbon=cfg%init_mode == INIT_RESTART, patch_threads=1_ik, &
                                  verbose=.false.)
-            if (poly%fast_ctx%col_config%soil%n_active >                                            &
-                reg%poly(deepest)%fast_ctx%col_config%soil%n_active) deepest = p
          end associate
       end do
 
@@ -213,11 +210,10 @@ contains
 
       !----- Output. The region files: every configured variable and tier, with the polygon axis.   !
       !      Each polygon writes its own soil layers, cohorts and patches and leaves the rest of each  !
-      !      axis empty; the files' layer depths are the deepest polygon's. ---------------------------!
+      !      axis empty; the files carry each polygon's own layer depths and map inputs. --------------!
       if (cfg%output%enabled) then
          call ensure_output_dir(trim(cfg%output%dir))
-         call open_output_files(cfg, reg%poly(deepest)%fast_ctx%col_config%soil, reg%out_files,          &
-                                reg%verbose, cells=cells, polygon_id=ids)
+         call open_output_files(cfg, reg%out_files, reg%verbose, cells=cells, polygon_id=ids)
          do p = 1_ik, n
             call attach_output(reg%out_files, reg%out_bufs(p), reg%poly(p))
          end do

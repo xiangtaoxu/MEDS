@@ -264,6 +264,15 @@ module meds_output_types
       integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
       integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices
       real(wp),    allocatable :: polygon_lat(:), polygon_lon(:)   !< [deg] cell centre
+      !----- Each polygon's own soil layers and the inputs its cell's maps gave it (§14 RP3), as it  !
+      !      runs them, recorded by attach_output: its files' soil coordinate and static variables. -!
+      integer(ik), allocatable :: polygon_n_soil(:)          !< active soil layers
+      real(wp),    allocatable :: polygon_soil_z(:,:)        !< (layer, polygon) [m] node depths, <= 0
+      real(wp),    allocatable :: polygon_soil_face(:,:)     !< (layer + 1, polygon) [m] layer faces, <= 0
+      real(wp),    allocatable :: polygon_soil_depth(:)      !< [m] soil column depth
+      integer(ik), allocatable :: polygon_bottom_bc(:)       !< the bottom water boundary (SOIL_BC_*)
+      real(wp),    allocatable :: polygon_deep_temp(:)       !< [K] deep soil temperature
+      real(wp),    allocatable :: polygon_chave_e(:)         !< [-] Chave's E; only with that allometry
    end type output_files_t
 
    type :: output_buffers_t

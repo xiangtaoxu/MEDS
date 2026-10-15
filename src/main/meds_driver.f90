@@ -242,7 +242,7 @@ contains
       !          writes them.                                                                      !
       if (run%cfg%output%enabled) then
          call ensure_output_dir(trim(run%cfg%output%dir))
-         call open_output_files(run%cfg, run%poly%fast_ctx%col_config%soil, run%out_files, run%verbose)
+         call open_output_files(run%cfg, run%out_files, run%verbose, soil=run%poly%fast_ctx%col_config%soil)
          call attach_output(run%out_files, run%out_bufs(1), run%poly)
          if (run%verbose) write(*,'(a)') ' output: diagnostic aggregation ON ([output])'
       end if

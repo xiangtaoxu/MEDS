@@ -752,9 +752,11 @@ review's items.
 > - A region restart reads each polygon's row by id, and the file must hold exactly the region's
 >   polygons.
 > - The block is `[maps]` (owner, 2026-10-14), not `[surface]`.
-> - **Still open from RP3's output list:** the region files do not yet carry the layer depths as a
->   `(polygon, soil)` coordinate (their `soil_z` is the deepest polygon's), nor each polygon's map
->   inputs as static `(polygon)` variables.
+> - **RP3's output list, finished later the same day:** a region file's `soil_z` is
+>   `(polygon, soil)`, each polygon's own nodes, with `soil_z_bnds` (each layer's top and bottom) as
+>   its CF bounds; until then it was the deepest polygon's, which put a shallower polygon's bottom
+>   node off by a median 7 % (at most 25 %) in example 06. `soil_depth`, `bottom_bc`, `deep_temp` and
+>   (with Chave) `chave_e` are static `(polygon)` variables, as each polygon runs them.
 >
 > **RP7, the small pilot** (`~/claude_workspace/meds_runs/region_pilot`, one exclusive R128C40 node),
 > ran example 06's cells as region runs: its cell mask, the v2 soil maps, Chave's E and
