@@ -612,7 +612,7 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 # [region] -- ONLY with [run].mode = "region" (a [region] block in a site run is refused).         #
 # Every valid cell of the box with enough land becomes a polygon at its cell centre and orography, #
 # so [site].latitude/longitude/elevation and [forcing].max_distance_km are refused in region mode.  #
-# Needs format = "ED_ERA5land" and the [surface] soil maps. Starts from bare ground (init_mode = 0)  #
+# Needs format = "ED_ERA5land" and the [maps] soil maps. Starts from bare ground (init_mode = 0)  #
 # or a region state file (init_mode = 2); [state].write_state writes one, every polygon in it.      #
 #-------------------------------------------------------------------------------------------------#
 # [region]
@@ -624,15 +624,15 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 # cell_mask_min     = 0.5            # default 0.5: a 0/1 mask works as is; a fraction takes a threshold
 
 #-------------------------------------------------------------------------------------------------#
-# [surface] -- the static maps a run takes its soil and its Chave site index from, each on the      #
-# ED_ERA5land grid (so they need format = "ED_ERA5land"); docs/configuration.md "Surface maps".    #
+# [maps] -- the static maps a run takes its soil and its Chave site index from, each on the       #
+# ED_ERA5land grid (so they need format = "ED_ERA5land"); docs/configuration.md "Input maps".      #
 # A region needs the three soil maps, and chave_e_map with height_allometry = "chave2014". A site  #
 # may use them too, read at its forcing cell, in place of setting [soil_column] by hand. With the   #
 # soil maps set, every key they provide is refused: soil_column.depth, layer_bottoms, retention     #
 # and the texture keys, soil.bottom_bc, energy.deep_temp and deep_depth, and init.soil_theta (each  #
 # layer then starts at its field capacity). soil_column.psi_fc still defines that capacity.         #
 #-------------------------------------------------------------------------------------------------#
-# [surface]
+# [maps]
 # soil_depth_map     = "/path/to/ED_ERA5land_soil_depth_v2.nc"
 #                    #   soil_depth [m], bc_class (1 free_drain; 2 leaky, run as free_drain until #401;
 #                    #   3 sealed, run as bedrock; 4 aquifer) and deep_temp [K], each (lat, lon)

@@ -39,7 +39,7 @@ module meds_region
    use meds_forcing_config,         only : MET_PATH_LEN
    use meds_met_driver,             only : met_open, met_close, met_prefetch, MET_OK
    use meds_surface_maps,           only : apply_cell_mask, map_status_message, MAP_OK,           &
-                                           surface_inputs_t, read_surface_inputs, apply_surface_inputs
+                                           map_inputs_t, read_map_inputs, apply_map_inputs
    use meds_era5land_reader,        only : era5land_select_box, era5land_static_file, ERA_OK, ERA_ERR_NO_CELL
    use meds_diagnostic_reduce,      only : total_area, total_agb, total_lai, count_cohorts
    use meds_polygon,                only : meds_polygon_t, polygon_prepare, polygon_step,        &
@@ -64,6 +64,11 @@ module meds_region
       type(meds_time_t)     :: now
       integer(ik)           :: step_days = 1_ik
       integer(ik)           :: iyear = 0_ik       !< years stepped, for [state].interval_years
+      !----- The time spent loading the forcing before each month (met_prefetch), over the run and   !
+      !      this year, and the archive month files read before this year: the year summary and the  !
+      !      end of the run report them, so a run shows what its forcing reads cost. -----------------!
+      real(wp)              :: read_seconds = 0.0_wp, year_read_seconds = 0.0_wp
+      integer(ik)           :: year_loads0 = 0_ik
       !----- Last month's wall time per polygon: the next month starts the costliest first, so a   !
       !      slow polygon does not leave the other threads idle at the end of the month. ------------!
       real(wp),    allocatable :: cost(:)
@@ -90,7 +95,7 @@ contains
       character(len=MET_PATH_LEN) :: static
       integer(ik)                :: st, p, n, j, deepest
       integer(ik), allocatable   :: ids(:)
-      type(surface_inputs_t)     :: inputs
+      type(map_inputs_t)     :: inputs
       type(meds_config_t)        :: pcfg
       character(len=:), allocatable :: msg
       type(meds_time_t)          :: restart_time
@@ -137,8 +142,8 @@ contains
       allocate(ids(n))
       ids = cells%row * cells%nlon + cells%col
 
-      !----- Each cell's soil and site index, from the [surface] maps, read once for every cell. ----!
-      call read_surface_inputs(cfg%surface, static, cells, inputs, msg)
+      !----- Each cell's soil and site index, from the [maps] files, read once for every cell. ----!
+      call read_map_inputs(cfg%maps, static, cells, inputs, msg)
       if (len(msg) > 0) then
          write(*,'(2a)') ' region: ', msg
          return
@@ -180,7 +185,7 @@ contains
             write(poly%label,'(a,i0,a,f0.2,a,f0.2,a)') 'polygon ', poly%id, ' (', cells%lat(p), ', ', &
                                                      cells%lon(p), ')'
             pcfg = cfg
-            call apply_surface_inputs(inputs, p, pcfg)
+            call apply_map_inputs(inputs, p, pcfg)
             call validate_config(pcfg)
             fast_found = .false.
             if (cfg%init_mode == INIT_RESTART) then
@@ -271,7 +276,10 @@ contains
          new_year(s)  = step_end(s)%year /= step_start(s)%year
          new_month(s) = new_year(s) .or. step_end(s)%month /= step_start(s)%month
       end do
+      call system_clock(tick0, tick_rate)
       call met_prefetch(reg%met_src, reg%now)
+      call system_clock(tick1)
+      reg%year_read_seconds = reg%year_read_seconds + real(tick1 - tick0, wp) / real(max(tick_rate, 1_ik), wp)
 
       !----- The compute phase: every polygon through the month, costliest first. No file is      !
       !      touched here; each polygon writes only its own state and buffers. ---------------------!
@@ -305,7 +313,11 @@ contains
       end do
       reg%now = step_end(nstep)
 
-      if (new_year(nstep) .and. reg%verbose) call region_summary(reg, time_to_string(reg%now))
+      if (new_year(nstep)) then
+         if (reg%verbose) call region_summary(reg, time_to_string(reg%now))
+         reg%read_seconds = reg%read_seconds + reg%year_read_seconds
+         reg%year_read_seconds = 0.0_wp ; reg%year_loads0 = reg%met_src%n_loads
+      end if
 
       !----- The I/O phase: the month's records, and at a year's end every interval_years the       !
       !      region's state file. ------------------------------------------------------------------!
@@ -365,6 +377,8 @@ contains
       write(*,'(a,a10,a,3(1x,f0.3),a,3(1x,f0.3))') ' ', when(1:10), '  AGB kgC/m2 min/mean/max:',   &
             minval(agb), sum(agb) / size(agb), maxval(agb), '   LAI:', minval(lai),                  &
             sum(lai) / size(lai), maxval(lai)
+      write(*,'(a,f0.2,a,i0,a)') '             forcing: ', reg%year_read_seconds, ' s loading, ',        &
+            reg%met_src%n_loads - reg%year_loads0, ' archive month(s) read from file'
    end subroutine region_summary
 
    !---------------------------------------------------------------------------------------!
@@ -403,6 +417,9 @@ contains
          end associate
       end do
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
+      if (reg%verbose) write(*,'(a,f0.2,a,i0,a,l1)') ' forcing: ',                                  &
+            reg%read_seconds + reg%year_read_seconds, ' s loading in all, ', reg%met_src%n_loads,       &
+            ' archive month(s) read from file; recycle window kept in memory: ', allocated(reg%met_src%cache)
 
       if (reg%cfg%output%enabled) call output_close(reg%out_files, reg%out_bufs, flush_partial=.not. failed)
       call met_close(reg%met_src)

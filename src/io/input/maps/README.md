@@ -7,7 +7,7 @@ The design is `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP2, RP3).
 
 | Module | What it does |
 |---|---|
-| `meds_surface_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads the `[surface]` maps at a run's cells (`read_surface_inputs`) and turns one cell's values into its polygon's soil column, bottom boundaries and Chave E (`apply_surface_inputs`; `site_surface_inputs` for a site). |
+| `meds_surface_maps` | Reads a map variable at a list of cells: 2-D `(lat, lon)` or layered `(layer, lat, lon)`, one hyperslab over the rows the cells span. Applies a region's cell mask. Reads the `[maps]` maps at a run's cells (`read_map_inputs`) and turns one cell's values into its polygon's soil column, bottom boundaries and Chave E (`apply_map_inputs`; `site_map_inputs` for a site). |
 
 ## Rules
 
@@ -25,7 +25,7 @@ The design is `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP2, RP3).
 - **The cell mask** (`[region].cell_mask`, `cell_mask_var`, `cell_mask_min`): `meds_region` keeps the
   cells of its box whose mask value is at least the threshold, through `apply_cell_mask`, which
   regroups the kept cells by archive chunk (`era5land_keep_cells`).
-- **The surface inputs** (`[surface]`): `meds_region` reads them for every polygon once and gives each
+- **The input maps** (`[maps]`): `meds_region` reads them for every polygon once and gives each
   polygon its cell's; `meds_driver` reads them at a site's forcing cell. A run cell a map leaves empty
   is an error that names the map, the variable and the cell (OR17). The products' variable names are
   fixed here: ED-SoilMaps v2 (`soil_depth`, `bc_class`, `deep_temp`; `sand`, `silt`, `clay`,

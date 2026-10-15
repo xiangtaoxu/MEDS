@@ -11,7 +11,7 @@
 ! coordinates. The region is run again on four threads                                              !
 ! and must give the same files. A region run in two halves, the second restarted from the first's   !
 ! state file, must write the second half's files exactly as the whole run does (§14 RP4). Every run  !
-! takes its soil from the archive's [surface] maps (§14     !
+! takes its soil from the archive's [maps] files (§14    !
 ! RP3), so the three polygons have their own soil depth, layers and bottom boundaries, and each site  !
 ! run must find the same soil at its cell. Last, meds_main (the second argument)                    !
 ! must refuse each config that breaks a region-mode rule (§9), with that rule's message.            !
@@ -313,21 +313,21 @@ program test_region
    call refused('the lapse keys are refused with the lapse off',                                    &
                 '[site]'//nl()//'apply_elevation_lapse = false'//nl()//site_block(1_ik), .false., .false., &
                 'apply only with site.apply_elevation_lapse = true')
-   !----- The [surface] maps (§14 RP3): a region needs the soil maps, a key they provide is refused,  !
+   !----- The [maps] files (§14 RP3): a region needs the soil maps, a key they provide is refused,  !
    !      a run cell they leave empty is named, and Chave's E serves only the Chave heights. ----------!
-   call refused('a region needs the soil maps', '[surface]'//nl()//'soil_depth_map = ""'//nl()//        &
+   call refused('a region needs the soil maps', '[maps]'//nl()//'soil_depth_map = ""'//nl()//        &
                 'soil_texture_map = ""'//nl()//'soil_chemistry_map = ""'//nl()//'[energy]'//nl()//       &
                 'deep_temp = 284.75'//nl()//region_block(), .true., .false., 'needs the soil maps')
    call refused('a soil key the maps provide is refused', '[soil_column]'//nl()//'theta_sat = 0.40'//nl()// &
-                site_block(1_ik), .false., .false., 'soil_column.theta_sat comes from the [surface] soil maps')
+                site_block(1_ik), .false., .false., 'soil_column.theta_sat comes from the [maps] soil maps')
    call refused('a deep temperature beside the maps is refused', '[energy]'//nl()//'deep_temp = 290.0'//nl()// &
-                region_block(), .true., .false., 'energy.deep_temp comes from the [surface] soil maps')
-   call refused('a run cell the soil maps leave empty is named', '[surface]'//nl()//'soil_texture_map = "'// &
+                region_block(), .true., .false., 'energy.deep_temp comes from the [maps] soil maps')
+   call refused('a run cell the soil maps leave empty is named', '[maps]'//nl()//'soil_texture_map = "'// &
                 trim(work)//'/archive/gap/soil_texture.nc"'//nl()//region_block(), .true., .false.,         &
                 'sand has no value at the cell (35.00, -180.00)')
-   call refused('a chave_e map needs the Chave height allometry', '[surface]'//nl()//'chave_e_map = "'//    &
+   call refused('a chave_e map needs the Chave height allometry', '[maps]'//nl()//'chave_e_map = "'//    &
                 trim(work)//'/archive/chave_e.nc"'//nl()//site_block(1_ik), .false., .false.,               &
-                'surface.chave_e_map needs allometry.height_allometry = "chave2014"')
+                'maps.chave_e_map needs allometry.height_allometry = "chave2014"')
    call refused('a region''s recycle window starts at 00:00 or 01:00 on the 1st',                   &
                 '[forcing]'//nl()//'recycle = true'//nl()//'recycle_start = "2021-01-01 06:00:00"'//nl()// &
                 'recycle_end = "2022-01-01 06:00:00"'//nl()//region_block(), .true., .false.,          &
@@ -348,7 +348,7 @@ contains
           'recycle = false'//nl()//                                                                 &
           '[output]'//nl()//'dir = "'//trim(work)//'/out"'//nl()//                                  &
           '[output.monthly]'//nl()//'enabled = true'//nl()//'file_chunk = "month"'//nl()//            &
-          '[surface]'//nl()//'soil_depth_map = "'//trim(work)//'/archive/soil_depth.nc"'//nl()//      &
+          '[maps]'//nl()//'soil_depth_map = "'//trim(work)//'/archive/soil_depth.nc"'//nl()//      &
           'soil_texture_map = "'//trim(work)//'/archive/soil_texture.nc"'//nl()//                     &
           'soil_chemistry_map = "'//trim(work)//'/archive/soil_chemistry.nc"'//nl()
    end function common_block

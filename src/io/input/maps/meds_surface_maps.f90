@@ -13,8 +13,8 @@
 ! A read takes the band of rows the cells span, every column, as one hyperslab: one read per       !
 ! variable for a whole region, which also serves a box that crosses 180 degrees.                   !
 !                                                                                          !
-! The surface inputs ([surface], §14 RP3): read_surface_inputs reads the soil maps and the Chave   !
-! site index at every cell once, and apply_surface_inputs turns one cell's values into that        !
+! The surface inputs ([maps], §14 RP3): read_map_inputs reads the soil maps and the Chave   !
+! site index at every cell once, and apply_map_inputs turns one cell's values into that        !
 ! polygon's configuration -- its soil column, layer by layer, its bottom boundaries and its height  !
 ! allometry's site index. A run cell the maps leave empty is an input error naming the cell.       !
 !==========================================================================================!
@@ -28,7 +28,7 @@ module meds_surface_maps
                                      era5land_static_file, ERA_OK, ERA_ERR_OPEN, ERA_ERR_NO_CELL
    use meds_config,           only : meds_config_t, soil_column_layers, soil_column_params,           &
                                      validate_config
-   use meds_surface_opts,     only : surface_opts_t, soil_maps_on
+   use meds_maps_opts,     only : maps_opts_t, soil_maps_on
    use meds_column_params,    only : soil_params_t, n_soil_layer_max
    use meds_pedotransfer,     only : soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
    use meds_water_retention,  only : SOIL_RETENTION_VG
@@ -39,7 +39,7 @@ module meds_surface_maps
 
    public :: map_values_at_cells, map_layers_at_cells, apply_cell_mask, map_status_message
    public :: MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR
-   public :: surface_inputs_t, read_surface_inputs, apply_surface_inputs, site_surface_inputs
+   public :: map_inputs_t, read_map_inputs, apply_map_inputs, site_map_inputs
 
    integer(ik), parameter :: MAP_OK       = 0_ik
    integer(ik), parameter :: MAP_ERR_OPEN = 1_ik   !< the file (or the static file) cannot be opened
@@ -54,8 +54,8 @@ module meds_surface_maps
    integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
    integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
 
-   !----- What the [surface] maps hold at each cell of a run, read once (read_surface_inputs). --!
-   type :: surface_inputs_t
+   !----- What the [maps] maps hold at each cell of a run, read once (read_map_inputs). --!
+   type :: map_inputs_t
       logical :: soil  = .false.                          !< the soil maps were read
       logical :: chave = .false.                          !< the chave_e map was read
       real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
@@ -64,7 +64,7 @@ module meds_surface_maps
       real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
       type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
       real(wp), allocatable :: chave_e(:)                 !< [-] (cell) Chave et al. (2014)'s E
-   end type surface_inputs_t
+   end type map_inputs_t
 
 contains
 
@@ -121,16 +121,16 @@ contains
    end function map_status_message
 
    !=======================================================================================!
-   !  read_surface_inputs -- every [surface] map at every cell: the soil depth map's depth,      !
+   !  read_map_inputs -- every [maps] map at every cell: the soil depth map's depth,      !
    !  bottom boundary and deep temperature, the texture and chemistry maps' layers, and the      !
    !  Chave map's E. A map that cannot be read, or that holds no value at a cell, is an error:    !
    !  msg says which map, which variable and which cell, and is '' when every value is there.     !
    !=======================================================================================!
-   subroutine read_surface_inputs(opts, static_path, cells, inp, msg)
-      type(surface_opts_t),          intent(in)  :: opts
+   subroutine read_map_inputs(opts, static_path, cells, inp, msg)
+      type(maps_opts_t),          intent(in)  :: opts
       character(len=*),              intent(in)  :: static_path
       type(met_cells_t),             intent(in)  :: cells
-      type(surface_inputs_t),        intent(out) :: inp
+      type(map_inputs_t),        intent(out) :: inp
       character(len=:), allocatable, intent(out) :: msg
       real(wp), allocatable :: v(:,:), top_chem(:), bottom_chem(:)
       integer(ik) :: k
@@ -238,10 +238,10 @@ contains
          name = trim(buf)
       end function cell_name
 
-   end subroutine read_surface_inputs
+   end subroutine read_map_inputs
 
    !=======================================================================================!
-   !  apply_surface_inputs -- cell k's inputs into the configuration its polygon runs.         !
+   !  apply_map_inputs -- cell k's inputs into the configuration its polygon runs.         !
    !                                                                                          !
    !  * The soil column ends at the map's soil depth, on the default layers (soil_column_layers); !
    !    each layer takes the map layers it overlaps, weighted by the overlap, and below the      !
@@ -253,8 +253,8 @@ contains
    !    sqrt(2) below the bottom node, where it reflects the annual wave least.                   !
    !  * The Chave height allometry takes the cell's E.                                          !
    !=======================================================================================!
-   subroutine apply_surface_inputs(inp, k, cfg)
-      type(surface_inputs_t), intent(in)    :: inp
+   subroutine apply_map_inputs(inp, k, cfg)
+      type(map_inputs_t), intent(in)    :: inp
       integer(ik),            intent(in)    :: k
       type(meds_config_t),    intent(inout) :: cfg
       type(soil_texture_t) :: tex
@@ -289,12 +289,12 @@ contains
          cfg%energy%deep_depth = abs(soil%z_node(soil%n_active)) + annual_damping_depth / sqrt(2.0_wp)
       end if
       if (inp%chave) cfg%allom%chave_e = inp%chave_e(k)
-   end subroutine apply_surface_inputs
+   end subroutine apply_map_inputs
 
    !----- The soil of the column's layer [top, bottom]: the map layers it overlaps, each weighted  !
    !      by the overlap. The deepest map layer reaches down without end. ----------------------------!
    pure function layer_texture(inp, k, top, bottom) result(tex)
-      type(surface_inputs_t), intent(in) :: inp
+      type(map_inputs_t), intent(in) :: inp
       integer(ik),            intent(in) :: k
       real(wp),               intent(in) :: top, bottom
       type(soil_texture_t) :: tex
@@ -327,15 +327,15 @@ contains
    end function layer_texture
 
    !=======================================================================================!
-   !  site_surface_inputs -- a site run's [surface] inputs, at the forcing cell its [site]       !
+   !  site_map_inputs -- a site run's [maps] inputs, at the forcing cell its [site]       !
    !  location reads (the archive's own choice, era5land_select_site), into cfg, which is then   !
    !  validated again. msg is '' on success, else why the inputs could not be had.               !
    !=======================================================================================!
-   subroutine site_surface_inputs(cfg, msg)
+   subroutine site_map_inputs(cfg, msg)
       type(meds_config_t),           intent(inout) :: cfg
       character(len=:), allocatable, intent(out)   :: msg
       type(met_cells_t)      :: cell
-      type(surface_inputs_t) :: inp
+      type(map_inputs_t) :: inp
       character(len=:), allocatable :: static
       real(wp)    :: distance_km
       integer(ik) :: st
@@ -344,17 +344,17 @@ contains
                                 cfg%forcing%max_distance_km, cell, distance_km, st)
       if (st /= ERA_OK) then
          if (st == ERA_ERR_NO_CELL) then
-            msg = 'no valid forcing cell near the site for the [surface] maps'
+            msg = 'no valid forcing cell near the site for the [maps] maps'
          else
-            msg = 'cannot read the forcing''s static file '//static//' for the [surface] maps'
+            msg = 'cannot read the forcing''s static file '//static//' for the [maps] maps'
          end if
          return
       end if
-      call read_surface_inputs(cfg%surface, static, cell, inp, msg)
+      call read_map_inputs(cfg%maps, static, cell, inp, msg)
       if (len(msg) > 0) return
-      call apply_surface_inputs(inp, 1_ik, cfg)
+      call apply_map_inputs(inp, 1_ik, cfg)
       call validate_config(cfg)
-   end subroutine site_surface_inputs
+   end subroutine site_map_inputs
 
    !=======================================================================================!
    !  The read: check the grid, read the band of rows the cells span (every column, every     !

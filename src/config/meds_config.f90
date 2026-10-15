@@ -29,7 +29,7 @@ module meds_config
    use meds_biophysics_opts, only : ENERGY_BC_DIRICHLET
    use meds_biogeochem_opts, only : decomp_opts_t
    use meds_region_opts,   only : region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   use meds_surface_opts,  only : surface_opts_t, soil_maps_on
+   use meds_maps_opts,  only : maps_opts_t, soil_maps_on
    implicit none
    private
 
@@ -41,7 +41,7 @@ module meds_config
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
-   public :: surface_opts_t, soil_maps_on
+   public :: maps_opts_t, soil_maps_on
    public :: BK_SERIAL, BK_MULTICORE, BK_GPU
    public :: DIST_PRIMARY, DIST_TREEFALL
    public :: INIT_BARE, INIT_CENSUS, INIT_RESTART
@@ -135,7 +135,7 @@ module meds_config
       real(wp)    :: solid_conductivity = 3.0_wp    !< [W/m/K]  mineral-solid conductivity
       real(wp)    :: dry_conductivity   = 0.15_wp   !< [W/m/K]  dry-matrix conductivity
       real(wp)    :: dry_heat_capacity  = 2.0e6_wp  !< [J/m3/K] dry-matrix volumetric heat capacity
-      !----- A texture per layer, from the soil maps ([surface], meds_surface_maps), in place of the  !
+      !----- A texture per layer, from the soil maps ([maps], meds_surface_maps), in place of the  !
       !      one texture above: n_layer_values is the column's layer count, and each array holds    !
       !      one value per layer. 0 = the one texture. No config key sets these. -------------------!
       integer(ik) :: n_layer_values = 0_ik
@@ -224,9 +224,9 @@ module meds_config
       !      and the selection rules in [region] (MEDS_POLYGON_RUNTIME_PLAN.md §9).                  !
       integer(ik)         :: run_mode = RUN_MODE_SITE
       type(region_opts_t) :: region
-      !----- [surface]: the static maps a run takes its soil and its Chave site index from, at each  !
+      !----- [maps]: the static maps a run takes its soil and its Chave site index from, at each  !
       !      polygon's cell (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP3; meds_surface_maps). ---------------!
-      type(surface_opts_t) :: surface
+      type(maps_opts_t) :: maps
       !----- Fast (sub-daily) biophysics loop. --------------------------------------------!
       logical     :: fast_biophysics_on          !< master gate for the fast biophysics loop
       real(wp)    :: dt_fast                      !< [s] fast biophysics timestep (nested within dt_slow)
@@ -718,9 +718,9 @@ contains
       !      annual bias -- exactly the defect #145 exists to remove. `deep_depth` at or above the    !
       !      bottom NODE gives a non-positive conduction length, i.e. a division by zero or a sign    !
       !      flip that would pump heat the wrong way. With the soil maps, the anchor is each polygon's   !
-      !      (apply_surface_inputs), so a configuration the maps have not filled yet has none to check. -!
+      !      (apply_map_inputs), so a configuration the maps have not filled yet has none to check. -!
       if (cfg%energy%bottom_bc == ENERGY_BC_DIRICHLET .and.                                         &
-          .not. (soil_maps_on(cfg%surface) .and. cfg%soil_column%n_layer_values == 0_ik)) then
+          .not. (soil_maps_on(cfg%maps) .and. cfg%soil_column%n_layer_values == 0_ik)) then
          block
             type(soil_params_t) :: sp
             if (cfg%energy%deep_temp <= 0.0_wp)                                                  &
@@ -893,12 +893,12 @@ contains
             error stop tag//'region.cell_mask_min must be a finite number'
          !----- Every polygon takes its soil from its own cell, and so does its height allometry's   !
          !      site index (§14 RP3, OR12): a region does not run one hand-set soil everywhere. -------!
-         if (.not. soil_maps_on(cfg%surface))                                                       &
-            error stop tag//'[run].mode = "region" needs the soil maps: surface.soil_depth_map, '//    &
+         if (.not. soil_maps_on(cfg%maps))                                                       &
+            error stop tag//'[run].mode = "region" needs the soil maps: maps.soil_depth_map, '//    &
                             'soil_texture_map and soil_chemistry_map'
-         if (cfg%allom%height_form == HEIGHT_CHAVE .and. len_trim(cfg%surface%chave_e_map) == 0)     &
+         if (cfg%allom%height_form == HEIGHT_CHAVE .and. len_trim(cfg%maps%chave_e_map) == 0)     &
             error stop tag//'[run].mode = "region" with allometry.height_allometry = "chave2014" '//   &
-                            'needs surface.chave_e_map'
+                            'needs maps.chave_e_map'
          !----- A region loads a month's forcing once, before the month (region_step_month), so the  !
          !      recycle seam must fall on a month boundary: a window starting at 00:00 or 01:00 on the !
          !      1st. A site run takes a window starting at any record stamp. ------------------------!
@@ -910,14 +910,14 @@ contains
             end associate
          end if
       end if
-      !----- [surface]: the maps are on the ED_ERA5land grid, and a site reads them at its forcing    !
+      !----- [maps]: the maps are on the ED_ERA5land grid, and a site reads them at its forcing    !
       !      cell, so they need that archive. A chave_e map serves the Chave height allometry only. -!
-      if (soil_maps_on(cfg%surface) .or. len_trim(cfg%surface%chave_e_map) > 0) then
+      if (soil_maps_on(cfg%maps) .or. len_trim(cfg%maps%chave_e_map) > 0) then
          if (.not. (cfg%forcing%forcing_on .and. cfg%forcing%backend == MET_BACKEND_ED_ERA5LAND))     &
-            error stop tag//'the [surface] maps need forcing.format = "ED_ERA5land" (they are on its grid)'
+            error stop tag//'the [maps] files need forcing.format = "ED_ERA5land" (they are on its grid)'
       end if
-      if (len_trim(cfg%surface%chave_e_map) > 0 .and. cfg%allom%height_form /= HEIGHT_CHAVE)          &
-         error stop tag//'surface.chave_e_map needs allometry.height_allometry = "chave2014"'
+      if (len_trim(cfg%maps%chave_e_map) > 0 .and. cfg%allom%height_form /= HEIGHT_CHAVE)          &
+         error stop tag//'maps.chave_e_map needs allometry.height_allometry = "chave2014"'
       !----- Forcing: the forcing's own heights must be physical, and an open-terrain wind must have  !
       !      been made above its exposure roughness and below its blending height. No reference height  !
       !      has to clear the canopy any more: the forcing is moved to each patch's canopy-air top.     !

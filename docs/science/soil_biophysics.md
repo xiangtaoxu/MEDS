@@ -185,8 +185,8 @@ and runs low where soil structure adds large pores.
 
 ### The column from the soil maps
 
-With the `[surface]` soil maps (ED-SoilMaps v2; `docs/configuration.md` "Surface maps"),
-`apply_surface_inputs` (`meds_surface_maps`) builds each cell's column. A region's polygons and a site
+With the `[maps]` soil maps (ED-SoilMaps v2; `docs/configuration.md` "Input maps"),
+`apply_map_inputs` (`meds_surface_maps`) builds each cell's column. A region's polygons and a site
 on the ED_ERA5land grid build it the same way.
 
 - **The layers.** The column ends at the map's `soil_depth`, on the layers above.

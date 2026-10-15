@@ -26,7 +26,7 @@ module meds_driver
    use meds_demography_update,      only : update_overtopping_lai
    use meds_init,                   only : init_bare_ground, seed_bare_ground, init_from_census,      &
                                            restructure_census_stand
-   use meds_surface_maps,           only : site_surface_inputs
+   use meds_surface_maps,           only : site_map_inputs
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_vegetation_dynamics,    only : advance_plant_traits, reacclimate_plant_traits
    use meds_forcing_types,          only : met_source_t
@@ -119,15 +119,15 @@ contains
       !----- 1. Read the run configuration. --------------------------------------------------!
       call load_meds_config(trim(path), run%cfg)   ! hard error if a file or required key is missing
       if (run%verbose) write(*,'(2a)') ' config: ', trim(path)
-      !----- 1a. The [surface] maps, at the forcing cell the site reads: its soil column and its   !
+      !----- 1a. The [maps] files, at the forcing cell the site reads: its soil column and its   !
       !          height allometry's site index, before anything is built on them. -----------------!
-      if (soil_maps_on(run%cfg%surface) .or. len_trim(run%cfg%surface%chave_e_map) > 0) then
-         call site_surface_inputs(run%cfg, msg)
+      if (soil_maps_on(run%cfg%maps) .or. len_trim(run%cfg%maps%chave_e_map) > 0) then
+         call site_map_inputs(run%cfg, msg)
          if (len(msg) > 0) then
-            write(*,'(2a)') ' surface: ', msg
+            write(*,'(2a)') ' maps  : ', msg
             return
          end if
-         if (run%verbose) write(*,'(a)') ' surface: soil and site index from the [surface] maps'
+         if (run%verbose) write(*,'(a)') ' maps  : soil and site index from the [maps] files'
       end if
 
       !----- 2. Initial community per [init].init_mode (0 bare | 1 census | 2 restart); the file  !

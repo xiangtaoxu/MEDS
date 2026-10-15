@@ -9,7 +9,7 @@
 ! at or above its threshold, drops the empty one, and leaves the kept cells grouped by chunk the way !
 ! the forcing reader needs them.                                                                    !
 !                                                                                          !
-! The [surface] inputs (RP3): a run cell the soil maps leave empty is named; every value is read at  !
+! The [maps] inputs (RP3): a run cell the soil maps leave empty is named; every value is read at  !
 ! its own cell; a column layer takes the map layers it overlaps, weighted by the overlap, and below  !
 ! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map. !
 ! The work directory is the first argument.                                                          !
@@ -25,9 +25,9 @@ program test_surface_maps
    use meds_era5land_reader,       only : era5land_select_box, era5land_keep_cells, ERA_OK
    use meds_surface_maps,          only : map_values_at_cells, map_layers_at_cells, apply_cell_mask,  &
                                           MAP_OK, MAP_ERR_OPEN, MAP_ERR_GRID, MAP_ERR_VAR,              &
-                                          surface_inputs_t, read_surface_inputs, apply_surface_inputs
+                                          map_inputs_t, read_map_inputs, apply_map_inputs
    use meds_config,                only : meds_config_t
-   use meds_surface_opts,          only : surface_opts_t
+   use meds_maps_opts,          only : maps_opts_t
    use meds_pedotransfer,          only : soil_texture_t, soil_hydraulics_from_texture,               &
                                           soil_thermal_from_texture
    use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,          &
@@ -43,8 +43,8 @@ program test_surface_maps
    real(wp), allocatable :: v(:), v3(:,:)
    integer(ik) :: st, r, c, l, k, n_dropped
    logical :: ok
-   type(surface_opts_t)   :: opts
-   type(surface_inputs_t) :: inp
+   type(maps_opts_t)   :: opts
+   type(map_inputs_t) :: inp
    type(meds_config_t)    :: cfg, cfg2
    type(soil_texture_t)   :: t5, t6, tex
    character(len=:), allocatable :: msg
@@ -139,18 +139,18 @@ program test_surface_maps
    call check_true('a fraction map with a threshold keeps column 3 only', st == MAP_OK .and.               &
                    masked%ncell == 4_ik .and. all(masked%col == 3_ik))
 
-   !----- The [surface] inputs. The box holds (row 2, col 0), which the maps leave empty: named. ------!
+   !----- The [maps] inputs. The box holds (row 2, col 0), which the maps leave empty: named. ------!
    call write_surface_maps(trim(work)//'/surface')
    opts%soil_depth_map     = trim(work)//'/surface/soil_depth.nc'
    opts%soil_texture_map   = trim(work)//'/surface/soil_texture.nc'
    opts%soil_chemistry_map = trim(work)//'/surface/soil_chemistry.nc'
    opts%chave_e_map        = trim(work)//'/surface/chave_e.nc'
-   call read_surface_inputs(opts, static, cells, inp, msg)
+   call read_map_inputs(opts, static, cells, inp, msg)
    call check_true('a run cell the maps leave empty is named, with the variable',                        &
                    index(msg, 'soil_depth has no value at the cell (25.00, -180.00) (row 2, col 0)') > 0)
    masked = cells
    call era5land_keep_cells(masked, .not. (cells%row == 2_ik .and. cells%col == 0_ik))
-   call read_surface_inputs(opts, static, masked, inp, msg)
+   call read_map_inputs(opts, static, masked, inp, msg)
    call check_true('the maps are read at the other 15 cells', len(msg) == 0 .and. inp%soil .and. inp%chave)
    call check_true('the soil maps'' layers are SoilGrids''', all(inp%layer_top == SG_TOP) .and.           &
                    all(inp%layer_bottom == SG_BOTTOM))
@@ -168,7 +168,7 @@ program test_surface_maps
    do k = 1_ik, masked%ncell
       if (masked%row(k) == 1_ik .and. masked%col(k) == 0_ik) exit
    end do
-   call apply_surface_inputs(inp, k, cfg)
+   call apply_map_inputs(inp, k, cfg)
    t5 = texture_at(5_ik, 1_ik, 0_ik) ; t6 = texture_at(6_ik, 1_ik, 0_ik)
    tex%sand = (0.4_wp*t5%sand + 0.1_wp*t6%sand) / 0.5_wp ; tex%silt = (0.4_wp*t5%silt + 0.1_wp*t6%silt) / 0.5_wp
    tex%clay = (0.4_wp*t5%clay + 0.1_wp*t6%clay) / 0.5_wp
@@ -201,12 +201,12 @@ program test_surface_maps
    !----- Rows 2-3, columns 14-17: cell (3, 17) is 2.55 m deep, 8 layers, the last 2.0-2.55 m, below    !
    !      the maps' 2 m: it takes the deepest map layer's soil. Its bottom is (3 + 17) mod 4 + 1 = 1. ---!
    call era5land_select_box(static, [26.0_wp, 99.0_wp, 14.0_wp, 161.0_wp], cells, st)
-   call read_surface_inputs(opts, static, cells, inp, msg)
+   call read_map_inputs(opts, static, cells, inp, msg)
    do k = 1_ik, cells%ncell
       if (cells%row(k) == 3_ik .and. cells%col(k) == 17_ik) exit
    end do
    call check_true('the second box is read', len(msg) == 0 .and. k <= cells%ncell)
-   call apply_surface_inputs(inp, k, cfg2)
+   call apply_map_inputs(inp, k, cfg2)
    call soil_hydraulics_from_texture(texture_at(6_ik, 3_ik, 17_ik), ts, tr, al, vn, ks)
    call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
                    cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
@@ -216,12 +216,12 @@ program test_surface_maps
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 3_ik) exit
    end do
-   call apply_surface_inputs(inp, k, cfg2)
+   call apply_map_inputs(inp, k, cfg2)
    call check_true('a sealed bottom runs as bedrock', cfg2%soil%bottom_bc == SOIL_BC_BEDROCK)
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 4_ik) exit
    end do
-   call apply_surface_inputs(inp, k, cfg2)
+   call apply_map_inputs(inp, k, cfg2)
    call check_true('an aquifer bottom is an aquifer', cfg2%soil%bottom_bc == SOIL_BC_AQUIFER)
 
    call test_report('test_surface_maps')

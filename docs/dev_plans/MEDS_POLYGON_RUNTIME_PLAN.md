@@ -750,6 +750,10 @@ review's items.
 > - RP3 adds `soil_thermal_from_texture` (CLM5 mineral soil) and `annual_damping_depth`.
 > - A region restart reads each polygon's row by id, and the file must hold exactly the region's
 >   polygons.
+> - The block is `[maps]` (owner, 2026-10-14), not `[surface]`.
+> - **Still open from RP3's output list:** the region files do not yet carry the layer depths as a
+>   `(polygon, soil)` coordinate (their `soil_z` is the deepest polygon's), nor each polygon's map
+>   inputs as static `(polygon)` variables.
 >
 > **RP7, the small pilot** (`~/claude_workspace/meds_runs/region_pilot`, one exclusive R128C40 node),
 > ran example 06's cells as region runs: its cell mask, the v2 soil maps, Chave's E and
@@ -757,10 +761,22 @@ review's items.
 > - **35 cells (10–12° N, 86–84° W), 5 years, 36 threads:** 288 s and 219 MB. A restart from the
 >   1875-01-01 state file reproduced all 17 later months, every variable.
 > - **11 cells, 25 years, past the 20-year recycle wrap:** with and without the forcing cache, the
->   monthly output and all three state files are identical. Wall time was 1,816 s against 1,380 s,
->   but the cached run went first, on a cold file system. That difference is the operating system's
->   page cache, not RP5's; at about 55 s of compute per model year, the read is a small share either
->   way.
+>   monthly output and all three state files are identical.
+> - **The cache's benefit, isolated** (`run_cache_test.sh`): 32 cells (12–14° N, 90–87° W), three
+>   model years on a one-year window (2017), each arm on its own fresh node at the same time, timing
+>   the forcing load itself. Output is identical in all three arms.
+>
+>   | Arm | year 1 (from file) | years 2 and 3 | wall |
+>   |---|---|---|---|
+>   | cache on | 17.3 s | 0.00 s, 0.00 s | 92 s |
+>   | cache off: re-reads find the node's page cache | 15.1 s | 1.27 s, 1.25 s | 95 s |
+>   | cache off, page cache dropped every 2 s | 35.6 s | 33.2 s, 33.7 s | 185 s |
+>
+>   A cold month costs about 1.3 s for these cells. A re-read the node's page cache still holds
+>   costs about 0.1 s, so there the cache saves about 5 % of a young stand's 25 s of compute per
+>   model year, and less as stands grow. Where the page cache cannot hold the window, every cycle
+>   pays the cold cost, as much as 60 % of that compute, and the cache removes it. The evicting arm
+>   overstates this: it drops pages during a month's own read as well, which doubles even year 1.
 > - **All 983 forcing cells of example 06 are complete in every map,** so the full region opens.
 >   Their bottoms are 831 leaky (run as free drain, #401), 86 free drain and 66 aquifer.
 >
@@ -798,7 +814,7 @@ review's items.
   runs because region mode has no per-cell soil or stress index yet (#183, status 2026-10-14). Its
   setup scripts did, per cell:
   - the cell choice: the mask (RP2);
-  - the soil, Chave E and the deep temperature: the products named in `[surface]`, read and
+  - the soil, Chave E and the deep temperature: the products named in `[maps]`, read and
     processed per cell by one module (RP2, RP3);
   - the starting recruits sized on the cell's height curve: `nbg_init_density` (RP3);
   - the forcing cut: none; the region reads the archive itself (RP5 reads it once).
@@ -972,11 +988,11 @@ src/io/
   - **Processing** (RP3): the layer mapping, the bottom-condition mapping and the per-polygon record.
     The pedotransfer and thermal functions stay in `shared/functions/` as stateless curves, and the
     module calls them.
-- **The locations come from the config.** A `[surface]` block names each product's file, wherever
+- **The locations come from the config.** A `[maps]` block names each product's file, wherever
   it is kept; its options leaf goes in `config/`, as the placement table asks:
 
 ```toml
-[surface]
+[maps]
 soil_depth_map     = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_depth_v2.nc"
 soil_texture_map   = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_texture_v2.nc"
 soil_chemistry_map = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_biogeochemical_properties_v2.nc"
@@ -1009,7 +1025,7 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
 
 #### RP3 — each cell's inputs from the maps · about 4–5 days · after RP1 and RP2
 
-- **The inputs (the `[surface]` maps, through RP2's module).** For each polygon, at its own forcing
+- **The inputs (the `[maps]` files, through RP2's module).** For each polygon, at its own forcing
   cell, the module builds a record of its map values: from the box's slab, read once, in a region,
   or from one cell in a site. One routine then applies the record to the polygon's copy of the
   config (RP1). The owning blocks keep their parameters; the record is only the hand-off from data
@@ -1050,7 +1066,7 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
 - **A deliberate difference from example 06.** Example 06 fitted one van Genuchten curve to the whole
   column; RP3 gives each layer its own curve. RP7 compares the two.
 - **Required in region mode (OR12).**
-  - A region run stops with an error without the three `[surface]` soil maps, or without
+  - A region run stops with an error without the three `[maps]` soil maps, or without
     `chave_e_map` when `height_allometry = "chave2014"`, or when a map lacks a variable it needs.
   - A region config that also hand-sets a key the maps provide is refused.
   - A site run takes either the maps (read at its forcing cell) or the hand-set keys, not both.
@@ -1064,7 +1080,7 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
   - One map-built layer matches `test_pedotransfer`'s worked example.
   - `nbg_init_density = 3` matches example 06's census start (3 m⁻² of each PFT at 1.5 m) at the
     same E.
-  - Refusals: a region without its `[surface]` maps, a hand-set key in a region, and an empty value
+  - Refusals: a region without its `[maps]` files, a hand-set key in a region, and an empty value
     at a run cell (the error names the cell and the variable).
 
 #### RP4 — the region state file and restart · about 3–4 days · after RP1
@@ -1140,7 +1156,7 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
   - a kill and resume, which must be byte-identical;
   - three cells byte-identical to site runs with the same maps.
 - **The docs.**
-  - `docs/configuration.md` covers every new key: `[region].cell_mask*`, `[surface].*_map`,
+  - `docs/configuration.md` covers every new key: `[region].cell_mask*`, `[maps].*_map`,
     `pft.nbg_init_density` and `[forcing].cache_mb`.
   - `src/io/input/maps/README.md` covers the map module and the products it reads.
   - `src/README.md` shows `io/` with `input/forcing`, `input/maps` and `output`, and the new
@@ -1181,7 +1197,7 @@ RP6 one output file set (independent) ──────────────
 |---|---|---|---|
 | OR10 | Cells per region | Any number; three to five per core is the guidance. Patch threads inside a region's polygons: #400, not planned now. | — |
 | OR11 | How cells are chosen | The box, plus a cell mask on the forcing grid. No cell list. | RP2 |
-| OR12 | How a cell gets its own inputs | Natively from data, read at the cell's forcing cell into the polygon's copy of the one config; required in region mode. **Revised 2026-10-14 (owner):** all map reading and processing in one source file (`src/io/input/maps/meds_surface_maps.f90`), in one I/O tree: `src/io/` with `input/forcing` (moved from `src/forcing`), `input/maps` and `output` (the owner's layout), with each product's location given in one `[surface]` block, wherever the product is kept. This replaces map keys spread over the owning blocks. Site runs take the maps or hand-set keys. The file and block names are proposals. | RP2, RP3 |
+| OR12 | How a cell gets its own inputs | Natively from data, read at the cell's forcing cell into the polygon's copy of the one config; required in region mode. **Revised 2026-10-14 (owner):** all map reading and processing in one source file (`src/io/input/maps/meds_surface_maps.f90`), in one I/O tree: `src/io/` with `input/forcing` (moved from `src/forcing`), `input/maps` and `output` (the owner's layout), with each product's location given in one `[maps]` block, wherever the product is kept. This replaces map keys spread over the owning blocks. Site runs take the maps or hand-set keys. The block is `[maps]` (owner, 2026-10-14). | RP2, RP3 |
 | OR13 | Cohort and patch variables in the region file | Padded to the largest polygon's count per file. `detail_polygons` retired. | RP6 |
 | OR14 | The state file's layout | The same padded layout, with a leading `polygon` axis. Site state files unchanged. | RP4 |
 | OR15 | Per-cell allometry | B2 first, as its own byte-identical refactor; the owner's new height allometry follows on it. | RP0 |

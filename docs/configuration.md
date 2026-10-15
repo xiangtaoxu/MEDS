@@ -169,8 +169,8 @@ instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s
 Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, ln H = 0.893 − E +
 0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
 (`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
-seasonal or hotter the site, the larger E and the shorter its trees. With `[surface].chave_e_map`, each
-polygon takes E from its own cell instead, and `chave_e` is refused ([Surface maps](#surface-maps)).
+seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
+polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
 Every curve is capped at
 `[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
 its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
@@ -339,7 +339,7 @@ site runs (a job array, or one allocation filled with GNU parallel).
 [run]
 mode = "region"
 
-[surface]                                            # required: each polygon's soil (see below)
+[maps]                                               # required: each polygon's soil (see below)
 soil_depth_map     = "ED_ERA5land_soil_depth_v2.nc"
 soil_texture_map   = "ED_ERA5land_soil_texture_v2.nc"
 soil_chemistry_map = "ED_ERA5land_soil_biogeochemical_properties_v2.nc"
@@ -369,9 +369,9 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
   are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
   the run writes nothing more, so a closed file is never rewritten.
-- **Soil.** Every polygon takes its soil column from its own cell, through the `[surface]` soil
+- **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
-  `[surface].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
+  `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
   configuration is checked on its own.
 - **Rules.** A region needs `[forcing].format = "ED_ERA5land"` with forcing and the fast loop on. It
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
@@ -399,9 +399,9 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `[output].io_config`. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 for the production
   plan.
 
-## Surface maps
+## Input maps
 
-`[surface]` names the static maps a run takes its soil from, and Chave's site index E. Each map is
+`[maps]` names the static maps a run takes its soil from, and Chave's site index E. Each map is
 on the ED_ERA5land grid: its `lat` and `lon` must be the archive's static file's, so a cell's value
 sits at the cell's own row and column, and MEDS never regrids. `src/io/input/maps/meds_surface_maps.f90`
 reads every map and is the only module that does.

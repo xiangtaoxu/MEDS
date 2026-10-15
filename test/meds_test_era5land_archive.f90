@@ -5,7 +5,7 @@
 ! 16-cell chunk columns wide, every month of 2021 and January 2022 (so a recycle window may start  !
 ! after January 1st), two no-data cells, a mostly-water column, and values that are analytic       !
 ! functions of cell and hour, so every check has a known answer. Shared by test_met_era5land (the  !
-! reader) and test_region (a region against site runs). write_surface_maps adds the [surface] maps:  !
+! reader) and test_region (a region against site runs). write_surface_maps adds the [maps] maps:  !
 ! soil depth, texture and chemistry on SoilGrids' six layers, and Chave's E, each a function of the  !
 ! cell (soil_depth_at, ..., texture_at), empty at the no-data cells.                                  !
 !==========================================================================================!
@@ -196,7 +196,7 @@ contains
    end subroutine write_map
 
    !=======================================================================================!
-   !  The [surface] maps, each value a function of its cell (and layer):                         !
+   !  The [maps] files, each value a function of its cell (and layer):                         !
    !  dir/soil_depth.nc (soil_depth, bc_class, deep_temp), dir/soil_texture.nc and               !
    !  dir/soil_chemistry.nc (on SoilGrids' layers, with depth_bnds), dir/chave_e.nc. The no-data  !
    !  cells are empty; gap = [row, col] also leaves sand empty at that cell.                       !

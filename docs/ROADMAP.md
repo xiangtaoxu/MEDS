@@ -266,7 +266,7 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon, in
   one process, all sharing one forcing reader. `MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP0–RP7) made a
   region fill one node, replacing R4–R6 of its §10:
-  - a cell mask, each polygon's soil and Chave E from the `[surface]` maps, and a seeded
+  - a cell mask, each polygon's soil and Chave E from the `[maps]` files, and a seeded
     bare-ground start (`pft.nbg_init_density`);
   - region state files and restarts;
   - the recycle window kept in memory (`[forcing].cache_mb`);

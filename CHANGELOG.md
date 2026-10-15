@@ -26,7 +26,7 @@ before and after.
   variable at a list of cells in one hyperslab, and reads a cell the map leaves empty as NaN. The forcing
   reader gains `era5land_same_grid` and `era5land_keep_cells`. `test_surface_maps` covers the reads,
   the refusals and the mask; `test_region` runs a masked region and refuses a mask off the grid.
-- **Each polygon's soil and Chave site index from maps, `[surface]`** (§14, RP3). Four keys name the
+- **Each polygon's soil and Chave site index from maps, `[maps]`** (§14, RP3). Four keys name the
   maps (ED-SoilMaps v2 and Chave et al. 2014's E, all on the forcing grid):
   - `soil_depth_map`: `soil_depth`, `bc_class` and `deep_temp`;
   - `soil_texture_map`: sand, silt, clay, bulk density and coarse fragments on SoilGrids' layers;
@@ -61,7 +61,8 @@ before and after.
   of reading its files again every cycle. A window that does not fit is read every cycle, with a note
   at open; 0 never keeps it. The values are the same either way: `test_met_era5land` runs two cycles
   with and without the cache and requires every record to agree, each month's files to be read
-  once with the cache, and a window over the budget to be read every cycle.
+  once with the cache, and a window over the budget to be read every cycle. A region's log reports
+  the time spent loading forcing and the archive months read from file, each year and in all.
 - **Region state files and restarts** (§14, RP4, OR14). With `[state].write_state`, a region writes
   one state file every `interval_years` and at the end, holding every polygon:
   - a `polygon` axis leads each variable, and `polygon_id` names the rows;
