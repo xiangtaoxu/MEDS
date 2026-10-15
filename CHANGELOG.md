@@ -55,6 +55,14 @@ before and after.
   runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **Runoff output: `runoff_site`, `runoff_surf_site` and `drainage_site`** (period totals, kg/m², water
+  group, site level, like `et_site`). Surface runoff is the pond's spill above its capacity
+  (`w_pond_max`); drainage is the flux through the soil column's bottom: free drainage, 0 on bedrock,
+  and net (negative when water rises) from an aquifer. `runoff_site` is their sum. The water network
+  already moved both every 15-minute step and the whole-column water budget counted them; the column
+  budget now hands them to the fast driver (`runoff_surf_export`, `drainage_export`), which folds
+  them over patches and sub-steps into two site accumulators beside `et_accum`, in the same fixed
+  order, so they do not depend on the thread count.
 - **A region's files carry each polygon's own soil layers and map inputs** (§14, RP3). The soil
   coordinate of a region file is per polygon: `soil_z (polygon, soil)`, each polygon's layer node
   depths, with CF bounds `soil_z_bnds (polygon, soil, nv)`, each layer's top and bottom, so a

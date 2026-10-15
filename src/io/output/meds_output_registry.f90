@@ -46,6 +46,7 @@ module meds_output_registry
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
         FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
         SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT,                            &
+        SRC_S_RUNOFF, SRC_S_RUNOFF_SURF, SRC_S_DRAINAGE,                                         &
         SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB, SRC_S_WORK_WATER_NEWTON,           &
         SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT, SRC_S_WORK_RK45_RESCUE,                     &
         SRC_S_WORK_CLAMP_STAGE,                                                                  &
@@ -361,6 +362,15 @@ contains
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',       &
                         DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_ET)
+      !----- The water leaving the soil column: surface runoff (the pond's spill above its capacity) !
+      !      and drainage (the bottom flux: free drainage, 0 on bedrock, net and signed with an       !
+      !      aquifer), and their sum. ------------------------------------------------------------------!
+      call add_variable(reg, 'runoff_site', 'site runoff: surface runoff + drainage (period total)', 'kg/m2', &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF)
+      call add_variable(reg, 'runoff_surf_site', 'site surface runoff (period total)', 'kg/m2',  &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF_SURF)
+      call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom (period total)', 'kg/m2', &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_DRAINAGE)
       !----- Area-weighted SITE soil columns (DIM_SOIL). --------------------------------------!
       call add_variable(reg, 'soil_water_site', 'area-weighted volumetric soil moisture', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WATER)

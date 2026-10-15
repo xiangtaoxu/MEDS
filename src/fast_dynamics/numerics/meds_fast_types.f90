@@ -268,6 +268,11 @@ module meds_fast_types
       !      the conservation ledgers are: what atm_fluxes reports as LE and H. ---------------------!
       real(wp)       :: atm_heat_export = 0.0_wp   !< [J/m2]  sensible heat over this dt_fast
       real(wp)       :: atm_vap_export  = 0.0_wp   !< [kg/m2] over this dt_fast
+      !----- The water leaving the soil column this dt_fast, as the water network moved it: the pond's  !
+      !      spill above its capacity (surface runoff) and the bottom flux (drainage; net upward from  !
+      !      an aquifer is negative). ------------------------------------------------------------------!
+      real(wp)       :: runoff_surf_export = 0.0_wp   !< [kg/m2] over this dt_fast
+      real(wp)       :: drainage_export    = 0.0_wp   !< [kg/m2] over this dt_fast
       !----- Soil-carbon matrix Rh diagnostics (B2, MEDS_SLOW_DYNAMICS_DESIGN.md Part II): filled     !
       !      by column_prepass ONLY when cfg%soil_carbon_on (else left at 0, matching the OLD          !
       !      constant-pool scalar path that runs instead). xi_step is this sub-step's per-pool          !

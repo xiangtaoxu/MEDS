@@ -311,17 +311,17 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 
 ## 7. Variable inventory
 
-252 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
+255 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
 groups, axes and default streams — it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 67 | | site | 141 |
+| structure | 67 | | site | 144 |
 | energy | 48 | | cohort | 55 |
 | carbon | 34 | | patch | 29 |
 | forcing | 28 | | pft | 9 |
 | ecophys | 24 | | soil | 7 |
-| water | 18 | | dbh_class | 6 |
+| water | 21 | | dbh_class | 6 |
 | biogeochem | 15 | | (patch, soil) | 5 |
 | numerics | 13 | | | |
 | radiation | 5 | | | |

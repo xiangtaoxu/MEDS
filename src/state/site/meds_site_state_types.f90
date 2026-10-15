@@ -381,6 +381,10 @@ module meds_site_state_types
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
       !      (total_et) at the output tick. Transient (never restarted).                                !
       real(wp)           :: et_accum       = 0.0_wp
+      !----- And the water the soil column lost the same way [kg/m2 = mm]: the pond's spill (surface   !
+      !      runoff) and the bottom flux (drainage; negative when an aquifer feeds the column). --------!
+      real(wp)           :: runoff_surf_accum = 0.0_wp
+      real(wp)           :: drainage_accum    = 0.0_wp
       !----- Integrator WORK accumulators (MEDS_NUMERICS_SCOPING.md section 5.3): summed over patches   !
       !      and fast sub-steps within a slow step, reset alongside et_accum. These are the COST axis   !
       !      of the scheme benchmark -- wall-clock is too coarse and too machine-dependent to rank      !

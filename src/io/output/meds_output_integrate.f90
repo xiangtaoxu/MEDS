@@ -60,6 +60,7 @@ module meds_output_integrate
    public :: FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ
    !----- Site-only scalars (4000-4999). -----------------------------------------------------!
    public :: SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT
+   public :: SRC_S_RUNOFF, SRC_S_RUNOFF_SURF, SRC_S_DRAINAGE
    public :: SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB,                              &
              SRC_S_WORK_WATER_NEWTON, SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT
    public :: SRC_S_WORK_RK45_RESCUE, SRC_S_WORK_CLAMP_STAGE
@@ -174,6 +175,9 @@ module meds_output_integrate
    integer(ik), parameter :: SRC_S_N_COHORT         = 4002_ik
    integer(ik), parameter :: SRC_S_N_PATCH          = 4003_ik
    integer(ik), parameter :: SRC_S_CANOPY_HEIGHT    = 4004_ik !< [m] tallest live cohort
+   integer(ik), parameter :: SRC_S_RUNOFF           = 4005_ik !< [kg/m2] surface runoff + drainage
+   integer(ik), parameter :: SRC_S_RUNOFF_SURF      = 4006_ik !< [kg/m2] the pond's spill
+   integer(ik), parameter :: SRC_S_DRAINAGE         = 4007_ik !< [kg/m2] the column's bottom flux
    integer(ik), parameter :: SRC_S_WORK_STEPS       = 4030_ik
    integer(ik), parameter :: SRC_S_WORK_REJ         = 4031_ik
    integer(ik), parameter :: SRC_S_WORK_WATER_NSUB   = 4032_ik
@@ -695,6 +699,9 @@ contains
       integer(ik),  intent(in) :: source_id
       select case (source_id)
       case (SRC_S_ET)         ; val = total_et(site)
+      case (SRC_S_RUNOFF)     ; val = site%runoff_surf_accum + site%drainage_accum
+      case (SRC_S_RUNOFF_SURF); val = site%runoff_surf_accum
+      case (SRC_S_DRAINAGE)   ; val = site%drainage_accum
       case (SRC_S_N_COHORT)   ; val = real(site%cohort%n, wp)
       case (SRC_S_N_PATCH)    ; val = real(site%patch%n, wp)
       case (SRC_S_CANOPY_HEIGHT)

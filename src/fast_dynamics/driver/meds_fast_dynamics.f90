@@ -99,7 +99,9 @@ module meds_fast_dynamics
    !      own height. --------------------------------------------------------------------------------!
    integer(ik), parameter :: RED_RAINF         = 11_ik   !< rain [kg/m2/s]
    integer(ik), parameter :: RED_SNOWFALL      = 12_ik   !< snow [kg/m2/s]
-   integer(ik), parameter :: N_RED             = 12_ik
+   integer(ik), parameter :: RED_RUNOFF_SURF   = 13_ik   !< surface runoff [kg/m2], area-weighted
+   integer(ik), parameter :: RED_DRAINAGE      = 14_ik   !< drainage at the column's bottom [kg/m2]
+   integer(ik), parameter :: N_RED             = 14_ik
 
    !----- Everything the fast driver needs beyond the site + cfg: the static column config plus !
    !      the reference met + initial soil state. The CALLER builds this (from TOML in the       !
@@ -630,6 +632,9 @@ contains
             end if
             !----- Integrate the area-weighted CAS->atm latent flux -> site ET [kg/m2 = mm] over the step. !
             red_site(RED_ET, isub, ip) = site%patch%area(ip) * (le_flux / latent_heat_vap) * cfg%dt_fast
+            !----- And the water leaving its soil column: surface runoff and bottom drainage [kg/m2]. ----!
+            red_site(RED_RUNOFF_SURF, isub, ip) = site%patch%area(ip) * budget%runoff_surf_export
+            red_site(RED_DRAINAGE,    isub, ip) = site%patch%area(ip) * budget%drainage_export
             !----- section 5.3 WORK: area-weight like every other site diagnostic, so a patch that     !
             !      needs more sub-steps is not double-counted by its area share. ------------------------!
             red_site(RED_INTEG_STEPS,  isub, ip) = site%patch%area(ip) * real(budget%integ_nsteps,   wp)
@@ -786,7 +791,7 @@ contains
       !  bit-for-bit to what the serial driver produced. -----------------------------------------------!
       !=========================================================================================!
       site%pheno_tair_sum = 0.0_wp ; site%pheno_tair_n = 0_ik
-      site%et_accum       = 0.0_wp
+      site%et_accum       = 0.0_wp ; site%runoff_surf_accum = 0.0_wp ; site%drainage_accum = 0.0_wp
       site%work_integ_steps = 0.0_wp ; site%work_integ_rej  = 0.0_wp
       site%work_water_nsub  = 0.0_wp ; site%work_water_newton = 0.0_wp
       site%work_water_nfail = 0.0_wp ; site%work_water_reject = 0.0_wp
@@ -794,6 +799,8 @@ contains
       do ip = 1_ik, npatch
          do isub = 1_ik, nsub
             site%et_accum          = site%et_accum          + red_site(RED_ET,            isub, ip)
+            site%runoff_surf_accum = site%runoff_surf_accum + red_site(RED_RUNOFF_SURF,   isub, ip)
+            site%drainage_accum    = site%drainage_accum    + red_site(RED_DRAINAGE,      isub, ip)
             site%pheno_tair_sum    = site%pheno_tair_sum    + red_site(RED_PHENO_TAIR,    isub, ip)
             site%pheno_tair_n      = site%pheno_tair_n      + 1_ik
             site%work_integ_steps  = site%work_integ_steps  + red_site(RED_INTEG_STEPS,   isub, ip)
