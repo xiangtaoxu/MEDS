@@ -269,7 +269,6 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   - a cell mask, each polygon's soil and Chave E from the `[maps]` files, and a seeded
     bare-ground start (`pft.nbg_init_density`);
   - region state files and restarts;
-  - the recycle window kept in memory (`[forcing].cache_mb`);
   - every variable and tier in the region's one file set (`detail_polygons` retired).
 
   Not planned: tiles, launchers and MPI; a larger area runs as several regions, one node each.

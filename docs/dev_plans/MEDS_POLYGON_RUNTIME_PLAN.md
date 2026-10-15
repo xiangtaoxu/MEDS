@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3 ✅ as threads over polygons (b3bd130; the flattened patch loop deferred, efficiency plan §2.7); R4–R6 replaced by §14's phases RP0–RP7 (a region fills one node: allometry as an argument, per-polygon config and soil, a cell mask, per-cell inputs from maps, a padded state file, a forcing cache, one output file set, a pilot), all open.
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3 ✅ as threads over polygons (b3bd130; the flattened patch loop deferred, efficiency plan §2.7); R4–R6 replaced by §14's phases RP0–RP7 (a region fills one node: allometry as an argument, per-polygon config and soil, a cell mask, per-cell inputs from maps, a padded state file, a forcing cache, one output file set, a pilot); RP0–RP4 and RP6–RP7 implemented on `feat/region-runtime`, RP5 measured and dropped.
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -740,7 +740,8 @@ regional run (983 cells, v0.3.4) taught. This section replaces R4–R6 (§10). I
 not renumber them, and its phases are RP0–RP7 because R1–R12 are already the 2026-09-27 code
 review's items.
 
-> **Status 2026-10-14: RP0–RP6 implemented on `feat/region-runtime`, one commit per phase.** Each
+> **Status 2026-10-14: RP0–RP4 and RP6 implemented on `feat/region-runtime`; RP5 implemented,
+> measured and dropped (below).** Each
 > phase passed the suite in ifx, gfortran and ifx Debug, and every phase ran the six regression
 > cases (`~/claude_workspace/meds_runs/rr`). Every site case stayed byte-identical to v0.3.4
 > throughout; the Palo Verde region case changed once, at RP3, when it began reading its soil from
@@ -762,6 +763,22 @@ review's items.
 >   1875-01-01 state file reproduced all 17 later months, every variable.
 > - **11 cells, 25 years, past the 20-year recycle wrap:** with and without the forcing cache, the
 >   monthly output and all three state files are identical.
+> - **RP5's cache dropped (owner, 2026-10-14).** The operating system's page cache already holds a
+>   recycled window, so the cache saved only the decompression of each re-read 16 × 16 × 744 chunk,
+>   about 2 ms per chunk and variable. Measured cold and warm through MEDS's reader on months nothing
+>   had read (`run_read_test.sh`):
+>
+>   | | example 06's 978 cells, 73 chunks | a 1.5° box, 162 cells, 4 chunks |
+>   |---|---|---|
+>   | cold month | 10 s | 3.7 s |
+>   | warm re-read | 1.1 s | 0.09 s |
+>   | compute per month, 40 threads | 45 s (young) to ~220 s | 9 s (young) to ~37 s |
+>   | page cache for a 20-year window | ~39 GB | ~12 GB |
+>   | the cache's copy of it | 5.6 GB | 0.9 GB |
+>
+>   A warm re-read is 0.2–2 % of wall time; both windows fit a 128 GB node's page cache, which kept
+>   these files for days. A region's log reports its forcing load time, so a run whose page cache
+>   cannot hold the window (a node shared with memory-hungry jobs, or a far larger region) shows it.
 > - **The cache's benefit, isolated** (`run_cache_test.sh`): 32 cells (12–14° N, 90–87° W), three
 >   model years on a one-year window (2017), each arm on its own fresh node at the same time, timing
 >   the forcing load itself. Output is identical in all three arms.
@@ -1113,6 +1130,9 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
 
 #### RP5 — read each forcing month once · about 1–2 days · independent
 
+> **Dropped 2026-10-14 (owner),** after it was implemented and measured: the page cache already serves
+> a recycled window's re-reads, and the cache saved under 2 % of wall time (§14 status, above).
+
 - **The cache.** When the run recycles a window, keep its months in the shared source's memory:
   `values(hour, cell, var)` in float32, 23.8 KB per cell-month, or 0.86 GB for a 20-year window and
   150 cells.
@@ -1152,12 +1172,12 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
   - the soil differs by design (per-layer curves against one fitted curve), so compare the maps of
     leaf area, AGB and GPP;
   - node use against §14.2's table;
-  - the serial read's share, with and without RP5;
+  - the serial read's share, from each region's log;
   - a kill and resume, which must be byte-identical;
   - three cells byte-identical to site runs with the same maps.
 - **The docs.**
   - `docs/configuration.md` covers every new key: `[region].cell_mask*`, `[maps].*_map`,
-    `pft.nbg_init_density` and `[forcing].cache_mb`.
+    and `pft.nbg_init_density`.
   - `src/io/input/maps/README.md` covers the map module and the products it reads.
   - `src/README.md` shows `io/` with `input/forcing`, `input/maps` and `output`, and the new
     library edge. It gains placement rows: a time-varying driver goes in `io/input/forcing/`, a
@@ -1175,7 +1195,7 @@ chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
 RP0 allometry ──> RP1 polygon config/soil ──┬──> RP3 maps ──┐
 RP2 map module + mask ──────────────────────┘               │
                           RP1 ──> RP4 state file ───────────┼──> RP7 pilot + docs
-RP5 forcing cache (independent) ────────────────────────────┤
+RP5 forcing cache (dropped)                                 │
 RP6 one output file set (independent) ──────────────────────┘
 ```
 

@@ -417,9 +417,9 @@ contains
          end associate
       end do
       if (n_bad > 0_ik) write(*,'(a,i0,a)') ' ERROR: ', n_bad, ' polygon(s) did not conserve area'
-      if (reg%verbose) write(*,'(a,f0.2,a,i0,a,l1)') ' forcing: ',                                  &
+      if (reg%verbose) write(*,'(a,f0.2,a,i0,a)') ' forcing: ',                                     &
             reg%read_seconds + reg%year_read_seconds, ' s loading in all, ', reg%met_src%n_loads,       &
-            ' archive month(s) read from file; recycle window kept in memory: ', allocated(reg%met_src%cache)
+            ' archive month(s) read from file'
 
       if (reg%cfg%output%enabled) call output_close(reg%out_files, reg%out_bufs, flush_partial=.not. failed)
       call met_close(reg%met_src)
