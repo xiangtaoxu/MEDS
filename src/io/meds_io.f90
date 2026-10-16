@@ -301,15 +301,30 @@ contains
       subroutine dv(name, xtype, dimids, lname)
          character(len=*), intent(in) :: name, lname
          integer(c_int),   intent(in) :: xtype, dimids(:)
-         integer(c_int) :: v, dims(size(dimids) + 1)
-         integer        :: nd
+         integer(c_int)    :: v, dims(size(dimids) + 1)
+         integer(c_size_t) :: chunk(size(dimids) + 1)
+         integer           :: nd, k
          nd = 0
          if (sf%region) then ; nd = 1 ; dims(1) = d_poly ; end if
          dims(nd + 1:nd + size(dimids)) = dimids ; nd = nd + size(dimids)
          call nc_check(nc_def_var_f(ncid, name, xtype, int(nd, c_int), dims(1:nd), v), 'state def '//name)
          call nc_check(nc_put_att_text_f(ncid, v, 'long_name',                              &
                        int(len_trim(lname), c_size_t), lname), 'state long_name '//name)
-         if (sf%region) call nc_check(nc_def_var_deflate(ncid, v, 1_c_int, 1_c_int, 1_c_int), 'state deflate '//name)
+         if (.not. sf%region) return
+         !----- One polygon's row per chunk. Each polygon writes its own rows (state_file_put), so a   !
+         !      chunk shared by many polygons is decompressed and recompressed at each of their writes   !
+         !      once the chunks of a row outgrow HDF5's chunk cache: example 06's 606-polygon region     !
+         !      spent hours on one checkpoint whose neighbours took minutes. A polygon-only variable is   !
+         !      one small chunk, which the cache holds. ---------------------------------------------!
+         if (nd > 1) then
+            chunk(1) = 1_c_size_t
+            do k = 2, nd
+               call nc_check(nc_inq_dimlen(ncid, dims(k), chunk(k)), 'state dimlen '//name)
+               chunk(k) = max(chunk(k), 1_c_size_t)
+            end do
+            call nc_check(nc_def_var_chunking(ncid, v, NC_CHUNKED, chunk(1:nd)), 'state chunk '//name)
+         end if
+         call nc_check(nc_def_var_deflate(ncid, v, 1_c_int, 1_c_int, 1_c_int), 'state deflate '//name)
       end subroutine dv
    end subroutine state_file_open
 

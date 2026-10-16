@@ -55,6 +55,11 @@ before and after.
   runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **A region's state file is chunked one polygon per chunk.** Each polygon writes its own rows, and
+  netCDF's default chunks spanned up to ~120 polygons, so once a row's chunks outgrew HDF5's chunk
+  cache every polygon's write decompressed and recompressed them: example 06's 606-polygon region
+  spent over four hours on its 1946 checkpoint, whose 1921 one took five minutes. The values in the
+  file are unchanged; only its layout differs.
 - **A region warns at open when `OMP_STACKSIZE` is not set** (with more than one thread). Each polygon
   steps on an OpenMP worker thread, whose default stack (4 MB with ifx) a grown stand's automatic
   arrays overflow: example 06's regions died with a segmentation fault after 43 and 51 years of
