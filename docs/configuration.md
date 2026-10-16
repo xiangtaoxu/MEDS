@@ -382,6 +382,11 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   file (`init_mode = 2`), never a census, and it runs without the fast probe. A region loads each
   month's forcing once, before the month, so a recycle window must start at 00:00 or 01:00 on the
   1st of a month.
+- **Threads.** A region steps its polygons on `[run].n_threads` OpenMP threads, each polygon on one
+  thread. A worker thread's stack is `OMP_STACKSIZE`, 4 MB by default with ifx, not the process's,
+  and a grown stand's automatic arrays overflow it after a few decades of regrowth: the run dies with
+  a segmentation fault. Set `OMP_STACKSIZE=512M` (it reserves address space; only what a thread
+  touches is used). A region with more than one thread warns at open when it is not set.
 - **State files.** With `[state].write_state`, a region writes one state file every
   `interval_years` and at the end, `<prefix>-S-<date>.nc` like a site's. It holds every polygon: a
   `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as

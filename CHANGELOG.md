@@ -55,6 +55,11 @@ before and after.
   runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
   `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
   per-layer start.
+- **A region warns at open when `OMP_STACKSIZE` is not set** (with more than one thread). Each polygon
+  steps on an OpenMP worker thread, whose default stack (4 MB with ifx) a grown stand's automatic
+  arrays overflow: example 06's regions died with a segmentation fault after 43 and 51 years of
+  regrowth (the cores showed a worker thread's stack pointer at its 4 MiB stack's guard page).
+  `docs/configuration.md` gives the setting, `OMP_STACKSIZE=512M`.
 - **Runoff output: `runoff_site`, `runoff_surf_site` and `drainage_site`** (period totals, kg/m², water
   group, site level, like `et_site`). Surface runoff is the pond's spill above its capacity
   (`w_pond_max`); drainage is the flux through the soil column's bottom: free drainage, 0 on bedrock,

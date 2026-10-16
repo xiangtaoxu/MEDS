@@ -109,6 +109,14 @@ contains
       if (reg%verbose) write(*,'(2a)') ' config: ', trim(path)
       associate (cfg => reg%cfg)
 
+      !----- A region steps each polygon on an OpenMP worker thread, whose stack is OMP_STACKSIZE (4 MB  !
+      !      by default with ifx), not the process's. A grown stand's automatic arrays overflow 4 MB after !
+      !      a few decades of regrowth and the run dies with SIGSEGV (example 06, 2026-10-15; the          !
+      !      stack-ceiling note in CMakeLists.txt). Say so at open when neither variable sets it. ---------!
+      if (cfg%n_threads > 1_ik .and. .not. (env_set('OMP_STACKSIZE') .or. env_set('KMP_STACKSIZE')))  &
+         write(*,'(2a)') ' WARNING: region: OMP_STACKSIZE is not set, and a grown stand overflows a worker ', &
+                         'thread''s default stack (4 MB with ifx); set it, e.g. OMP_STACKSIZE=512M'
+
       !----- The cells: the box's valid cells with enough land, in row-major order (§5). ---------!
       static = era5land_static_file(cfg%forcing)
       call era5land_select_box(static, cfg%region%box_nwse, cells, st, cfg%region%land_fraction_min)
@@ -229,6 +237,14 @@ contains
       end associate
       ok = .true.
    end subroutine region_open
+
+   !----- Is the environment variable set? ---------------------------------------------------------!
+   logical function env_set(name) result(yes)
+      character(len=*), intent(in) :: name
+      integer :: n, st
+      call get_environment_variable(name, length=n, status=st)
+      yes = st == 0 .and. n > 0
+   end function env_set
 
    !---------------------------------------------------------------------------------------!
    ! region_step_month -- one month of the whole region: load the month's forcing for every cell, !
