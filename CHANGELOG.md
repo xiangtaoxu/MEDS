@@ -261,6 +261,10 @@ before and after.
   at PAR 1500–2000 the net rate loses 31–34 %, 27–31 % and 12–15 %. The comments in
   `python/meds/plant/leaf.py` and `meds_pft_params.f90` quote the same numbers. §4.4's example g0 is
   example 04's current fit (0.33 mmol m⁻² s⁻¹, losing 0.012 mmol m⁻² s⁻¹ at 3.5 kPa; it said 0.46).
+- **`plant_hydraulics.md` eq. (14) answers whether root conductance grows with root length** (#377).
+  A constant absorbing fraction of the root length scales the root length and the root-length
+  density alike, which is exactly a rescaled specific root length: `specific_root_length` is the knob
+  to fit. Uptake that grows less than linearly would be a root conductance in series (#356).
 
 ## [0.3.4] — 2026-10-13
 

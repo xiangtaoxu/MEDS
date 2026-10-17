@@ -261,9 +261,11 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 - **Cohort-level sunlit and shaded leaves.** *Open question.* [#343](https://github.com/xiangtaoxu/MEDS/issues/343) Every leaf of a cohort
   photosynthesises at the cohort's mean light, as in ED2; FATES and CLM5 split each leaf layer into
   sunlit and shaded fractions.
-- **Whether the soil-to-root conductance grows in proportion to fine-root length.** *Open question.*
-  [#377](https://github.com/xiangtaoxu/MEDS/issues/377) The Gardner form (`docs/science/plant_hydraulics.md` eq. (14)) makes it linear in root
-  length up to a logarithmic crowding term; real uptake may grow less than linearly.
+- **Whether the soil-to-root conductance grows in proportion to fine-root length.** *Open question,
+  answered.* [#377](https://github.com/xiangtaoxu/MEDS/issues/377) The Gardner form (`docs/science/plant_hydraulics.md` eq. (14)) makes it linear in
+  root length up to a logarithmic crowding term. A constant absorbing fraction of the root length is
+  exactly a rescaled specific root length, so it adds no freedom; uptake growing less than linearly
+  would be the series root conductance of #356. The issue closes at the release.
 - **Size-dependent physiological parameters.** *Open question.* [#381](https://github.com/xiangtaoxu/MEDS/issues/381) Turnover rates, the
   root-to-shoot ratio and leaf photosynthetic traits vary with plant size; MEDS holds them per PFT.
 

@@ -175,8 +175,11 @@ $`r_{\text{half},k}`$ comes from the patch's root-length density in the layer, a
 root length and falls only by the logarithm as roots crowd, so it does not depend on how the soil is
 layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
 \Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
-orders of magnitude more weakly. Whether the absorbing length really grows in proportion to fine-root carbon is
-open (see `docs/ROADMAP.md`).
+orders of magnitude more weakly. Only part of a fine root may absorb water, but a constant absorbing
+fraction of the root length is exactly a rescaled specific root length: it scales $L_k$ and the
+root-length density in $`r_{\text{half},k}`$ alike, so `specific_root_length` is the knob to fit.
+Uptake that grows less than linearly with root length would be a root conductance in series with
+$g_k$ (see `docs/ROADMAP.md`).
 
 Each layer is its own path from the soil to the wood, so the uptake from layer $k$ is
 
