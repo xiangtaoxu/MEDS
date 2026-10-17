@@ -40,7 +40,7 @@ at once, together with any missing required ones. Each line gives a suggestion:
 - a misspelling gets the key it most likely meant.
 
 A key that parses and does nothing is worse than one that is absent: `[forcing] dt_forcing = 7200`
-(the key is `timestep`) used to run silently at the file's own spacing. The test
+(the key is `timestep`) would otherwise run silently at the file's own spacing. The test
 `config_keys_listed` holds the two references equal to the keys the loader reads, so a new key is
 listed when it is added.
 
@@ -75,7 +75,7 @@ All non-PFT settings. Named on the command line; it names the PFT file via `[ini
 | `[forcing]`, `[site]` | The meteorological driver, and where the site is. |
 | `[region]` | For `mode = "region"` only: the box of forcing cells and which of them to simulate. |
 | `[output]` | Which diagnostics are written, on which axes, at which timescales. |
-| `[state]` | Restart checkpointing: output directory, prefix, interval. *(Called `[io]` before v0.3.0; that spelling is now refused.)* |
+| `[state]` | Restart checkpointing: output directory, prefix, interval. *(The spelling `[io]` is refused.)* |
 | `[options]` | `override_derived` and other run switches. |
 
 **`[soil_column]` is the ground; `[soil]` is the solver over it.** The split matters: layer bottoms
@@ -234,10 +234,9 @@ each layer starts at its own field capacity instead, and `soil_theta` is refused
 
 Two streams, both with the stem `<output_dir>/<output_prefix>` from `[state]`:
 
-- **Diagnostic timeseries** — the `[output]` subsystem. 252 variables across 9 groups and 7 axes,
+- **Diagnostic timeseries** — the `[output]` subsystem. 284 variables across 9 groups and 7 axes,
   each switchable individually per timescale (sub-daily, daily, monthly, annual). Run
-  `meds_main --dump-io-config` to generate a file listing every available variable name; the
-  override mechanism always worked, what was missing was any way to learn what exists.
+  `meds_main --dump-io-config` to generate a file listing every available variable name.
   See [`science/diagnostics.md`](science/diagnostics.md).
 - **State checkpoints** — `<prefix>-S-<YYYYMMDDHHMMSS>.nc`, enabled with `[state].write_state`. The
   instantaneous prognostic state only, no diagnostics, written every `[state].interval_years` and at
@@ -248,11 +247,10 @@ A checkpoint is raw prognostic state at an instant and a diagnostic record is a 
 two streams are deliberately separate because conflating them is how a restart silently starts from
 a mean.
 
-> **`[io]` was renamed to `[state]`.** The block was named for a legacy diagnostic writer that was
-> retired at v0.1; what remained was the restart stream, so `io` named the one output path it did
-> *not* cover. Since v0.3.0 a config that still spells it `[io]` is refused at load, with a message
-> naming the new keys: rename the block, and `io.state_interval_years` to `state.interval_years`
-> (the `state_` prefix was stuttering once the block itself was called `state`).
+> **The block is `[state]`, not `[io]`.** It holds only the restart stream, so `io` would name the
+> one output path it does *not* cover. A config that spells it `[io]` is refused at load, with a
+> message naming the keys: the block is `[state]`, and `io.state_interval_years` is
+> `state.interval_years`.
 
 ## The forcing file
 
@@ -434,7 +432,8 @@ forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or 
   - 1 is `free_drain`;
   - 3 (sealed) runs as `bedrock`;
   - 4 is `aquifer`;
-  - 2 (leaky) runs as `free_drain` until a leaky bottom exists (#401).
+  - 2 (leaky) runs as `free_drain`: there is no leaky bottom boundary (see [`ROADMAP.md`](ROADMAP.md)
+    §8).
 - **The thermal anchor** sits at `deep_temp`, annual damping depth / √2 below the bottom node, where it
   reflects the annual wave least. It is used when `[energy].bottom_bc = "dirichlet"`.
 

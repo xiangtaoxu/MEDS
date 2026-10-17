@@ -87,15 +87,15 @@ demographic trajectories and the closure identities from **MONTHLY/ANNUAL**.
 It is not a benchmark. MEDS has never been scored against flux-tower or inventory data, and the
 notebook does not pretend to. What it checks is what is knowable without observations: identities
 the output must satisfy, and magnitudes and shapes that are either physically possible or are not.
-That is still enough to catch a great deal — the first run of it turned up three defects (#245,
-#246, #247) and one documented-behaviour surprise.
+That is still enough to catch a great deal — a process silently switched off, padding written as
+data, a stale row count — that the model's own conservation checks do not see.
 
 Two things it teaches that are easy to get wrong when reading these files by hand:
 
 - **Turning a rate back into an amount needs the width of its own window**, `t[i+1] - t[i]`, and the
   trailing partial window has to be dropped because its width is unknown. Pairing a rate with the
-  *previous* window's width is silently fine until the end of a run, where it turned one disturbance
-  event into a 10.8 kgC/m² phantom.
+  *previous* window's width is silently fine until the end of a run, where it can turn one
+  disturbance event into a 10.8 kgC/m² phantom.
 - **`litter_*_site` is not all the carbon entering the soil.** The cull and disturbance mortality
   pathways add necromass straight to the patch soil-carbon pools, bypassing the litter accumulator
   the litter variables read. Closing the soil-carbon budget from file needs the

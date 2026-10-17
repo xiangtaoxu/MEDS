@@ -16,8 +16,8 @@ Symbols: $`u_*`$ = friction velocity; $\zeta = z/L$ = Monin-Obukhov stability pa
 length); $`z_{0m}, z_{0h}, z_{0q}`$ = roughness lengths for momentum / heat / vapour; $d$ = displacement
 height; $`\kappa`$ = von Karman constant; $`\Psi_m,\Psi_h`$ = integrated stability functions;
 $`\mathrm{Rib}`$ = bulk Richardson number. Everything is per unit ground area. All routines are `pure`
-and write per-cohort outputs into caller-owned SoA slices — never an array-valued function result into a
-call (`CLAUDE.md` issue #7).
+and write per-cohort outputs into caller-owned SoA slices — never an array-valued function result passed
+straight into a call, which nvfortran miscompiles (see `CLAUDE.md`).
 
 ## 1. Roughness, displacement, and the reference geometry
 
@@ -29,11 +29,14 @@ z_{0m} = (1-\mathrm{snowfac})\,c_{z0}\,h + \mathrm{snowfac}\,z_{0,snow}, \qquad
 d = c_d\,h\,(1-\mathrm{snowfac}) \qquad(1)
 ```
 
-with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`) and $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`). The
-canopy displacement height $`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$ is the surface-layer thickness the
-Monin-Obukhov solve integrates over, and the **prognostic CAS depth** is
-$`\max(\text{min\_canopy\_depth},\,h)`$ — it sets the CAS air mass per ground area, hence every twin's
-storage capacity.
+with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`), $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`) and
+$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes a
+closed, unburied canopy ($`\mathrm{snowfac}=0`$, and $`f_{open}=0`$ in §3), so the snow and open-canopy
+blends are inactive in a run (see docs/ROADMAP.md). The canopy displacement height
+$`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$ is the surface-layer thickness the Monin-Obukhov solve integrates
+over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
+the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
+sets the CAS air mass per ground area, hence every twin's storage capacity.
 
 ## 2. The CLM5 Monin-Obukhov surface layer
 
@@ -45,13 +48,15 @@ $`\theta_v=\theta\,(1+0.61\,q)`$ and the CAS↔atmosphere differences $`\Delta\t
 
 ```math
 \mathrm{Rib} = \frac{g\,z_{ldis}\,\Delta\theta_v}{\theta_{v,atm}\,u_m^2}, \qquad
-u_m = \begin{cases}\max(u_{ref},0.1) & \Delta\theta_v\ge0\ \text{(stable)}\\[2pt]
-\sqrt{u_{ref}^2+w_c^2} & \Delta\theta_v<0\ \text{(convective)}\end{cases} \qquad(2)
+u_m = \begin{cases}\bar u & \Delta\theta_v\ge0\ \text{(stable)}\\[2pt]
+\sqrt{\bar u^2+w_c^2} & \Delta\theta_v<0\ \text{(convective)}\end{cases}, \qquad
+\bar u = \max(u_{ref},\,u_{b,min}) \qquad(2)
 ```
 
-($w_c$ = convective velocity scale). Each sweep evaluates the CLM5 momentum and scalar **profile
-denominators** $D_m(\zeta)$ and $D_h(\zeta)$ over four stability ranges (very-unstable / unstable /
-stable / very-stable, `d_mom` and `d_heat`), then updates $`u_*`$, the scalar factor, and $\zeta$:
+($w_c$ = convective velocity scale `wc`; $`u_{b,min}`$ = `ubmin`, the reference-wind floor). Each sweep
+evaluates the CLM5 momentum and scalar **profile denominators** $D_m(\zeta)$ and $D_h(\zeta)$ over four
+stability ranges (very-unstable / unstable / stable / very-stable, `d_mom` and `d_heat`), then updates
+$`u_*`$, the scalar factor, and $\zeta$:
 
 ```math
 u_* = \max\!\Big(u_{*,min},\,\frac{\kappa\,u_m}{D_m(\zeta)}\Big), \qquad
@@ -88,7 +93,7 @@ g_{ac} = \rho_{mol}\,u_*\,\mathrm{temp2} \qquad(5)
 $g_{ah}$ [kg m⁻² s⁻¹] drives the enthalpy twin, $g_{aw}$ the vapour twin, and $g_{ac}$ [mol m⁻² s⁻¹]
 the CO₂ twin (molar, using dry-air molar density). Dropping the profile factor ($`\mathrm{temp1}=1`$)
 over-couples the CAS to the free atmosphere by $`\sim1/\mathrm{temp1}`$ and damps the nocturnal
-sub-canopy CO₂ build-up (the tracked BUG8). The kernel also reports the scale stars
+sub-canopy CO₂ build-up. The kernel also reports the scale stars
 $`t_*=\mathrm{temp1}\,\Delta\theta`$, $`q_*=\mathrm{temp2}\,\Delta q`$, $`c_*=\mathrm{temp2}\,\Delta
 C`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
 
@@ -97,19 +102,19 @@ C`$, and $`\mathrm{Rib}`$, $\zeta$, $L$ as diagnostics.
 the air temperature there and $`\theta_{CAS}`$ the canopy-air temperature, so
 $`\Delta\theta = T_{atm} - T_{CAS}`$. That is the difference the canopy air's energy budget
 exchanges, $`g_{ah}\,(h_{CAS}-h_{atm})`$ on actual temperatures, so the reported sensible heat
-$`H = g_{ah}\,c_p\,(T_{CAS}-T_{atm})`$ is the flux the budget books. Before v0.3.1 $`\theta_{atm}`$ was
-referenced to the ground, $`T_{atm}+(g/c_p)\,z_{ref}`$, and $`\theta_{CAS}`$ was not. That added
-$`(g/c_p)\,z_{ref}`$, 0.4 K at a 40 m canopy, of stable stratification to every solve, and lowered the
-reported H by $`g_{ah}\,g\,z_{ref}`$, about 100 W m⁻² at Barro Colorado Island.
+$`H = g_{ah}\,c_p\,(T_{CAS}-T_{atm})`$ is the flux the budget books. The two temperatures must share the
+reference: referencing $`\theta_{atm}`$ to the ground, $`T_{atm}+(g/c_p)\,z_{ref}`$, while $`\theta_{CAS}`$
+is not, would add $`(g/c_p)\,z_{ref}`$ (0.4 K at a 40 m canopy) of spurious stable stratification to every
+solve and lower the reported H by $`g_{ah}\,g\,z_{ref}`$, about 100 W m⁻² at Barro Colorado Island.
 
 ### These three are re-solved at *every integrator stage*, and that is load-bearing
 
 Almost everything the fast loop computes per-cohort — photosynthesis, stomatal conductance, the leaf
 boundary layers, radiation, hydraulics — is **frozen once per `dt_fast`** (see
-[numerical_scheme](numerical_scheme.md) §2). Equations (5) are the exception: `mo_surface_layer` is
-re-solved at each stage of the time integrator, against that stage's own canopy-air temperature and
-humidity, and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated. The per-cohort boundary layers
-around it stay frozen.
+[numerical_scheme](numerical_scheme.md) §2). The conductances of eq. (5) are the exception:
+`mo_surface_layer` is re-solved at each stage of the time integrator, against that stage's own canopy-air
+temperature and humidity, and only $`g_{ah}`$, $`g_{aw}`$, $`g_{ac}`$ are updated
+(`refresh_cas_conductances`). The per-cohort boundary layers around it stay frozen.
 
 The reason is a feedback loop that runs entirely through this kernel. A warmer canopy air makes the
 surface layer **more unstable**, which raises $`u_*`$ *and* $`\mathrm{temp1}`$, which vents the canopy
@@ -161,22 +166,24 @@ u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\
 
 floored at `ugbmin`. From the top cohort down, the wind attenuates through each crown by ED2's
 per-cohort **crown-area extinction** (crown area $c_a$ bounds the exposure): the wind at a cohort's
-mid-crown and the value handed to the cohort below are
+mid-crown (also floored at `ugbmin`) and the value handed to the cohort below are
 
 ```math
 u_{ico} = u_h\big[c_a\,e^{-0.25\,\mathrm{LAI}/c_a} + (1-c_a)\big], \qquad
 u_h \leftarrow u_h\big[c_a\,e^{-0.50\,\mathrm{LAI}/c_a} + (1-c_a)\big] \qquad(8)
 ```
 
-so the cascade walks **top → bottom** (the cohort SoA is gathered bottom → top for the RT contract, so
-the driver reverses at the call site; both reversals are identity for $n\le1$).
+so the cascade walks **top → bottom**. The kernel's cohort arrays run bottom → top (the radiation
+convention) while the cohort block is gathered tallest first, so `aero_bottom_to_top` reverses them at
+the call site; the reversal is the identity for $n\le1$.
 
 **Boundary-layer conductance** for each cohort's leaves (flat plate) and wood (cylinder) is ED2's
 Nusselt kernel `boundary_gbh_mos`, the parallel sum of forced (Reynolds) and free (Grashof) convection
 — the free term matters at low wind. With Reynolds $`\mathrm{Re}=u\,\ell/\alpha_{th}`$ and Grashof
 $`\mathrm{Gr}=g\,|T_{elem}-T_{CAS}|\,\ell^3/(T_{CAS}\,\nu^2)`$ over a characteristic length $\ell$
 (leaf width or branch diameter). $`T_{elem}`$ is the leaf temperature for the leaf layer and the wood
-temperature for the wood layer; before v0.3.1 the wood layer used the leaf temperature too.
+temperature for the wood layer. For the cylinder each forced term carries an offset,
+$`o+a\,\mathrm{Re}^{\,n}`$ (`ocyli_*`).
 
 ```math
 \mathrm{Nu}_{forced}=\max\!\big(a_{lam}\mathrm{Re}^{\,n_{lam}},\,a_{turb}\mathrm{Re}^{\,n_{turb}}\big),
@@ -191,26 +198,34 @@ g_{bh} = \max\!\Big(g_{bh,min},\ \big(\mathrm{Nu}_{forced}+\mathrm{Nu}_{free}\bi
 ```
 
 The kinematic viscosity $\nu$ and thermal diffusivity $\alpha_{th}$ are linear-in-temperature about a
-20 °C reference. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$ (`gbh_2_gbw`). $g_{bh}$ is a
-velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas-exchange seam forms the
-molar $`g_{b,mol}=g_{bw}\,\rho`$.
+20 °C reference (`kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air`), and
+$`g_{bh,min}=`$ `gbhmos_min`. The vapour conductance is $`g_{bw}=1.075\,g_{bh}`$ (`gbh_2_gbw`).
+$g_{bh}$ is a velocity [m s⁻¹] — the energy kernel consumes it directly, and the leaf gas-exchange seam
+forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{leaf})`$ the molar density of air at the leaf temperature [mol m⁻³].
 
 ## Parameters (config names, `[aerodynamics]` / `aero_cfg_t`)
 
 | Symbol | Config key | Meaning |
 |---|---|---|
-| $`\kappa`$ | `vonk` | von Karman constant (0.4) |
+| $`\kappa`$ | — (`vonkarman`, `meds_constants`) | von Karman constant (0.4) |
 | $`c_{z0}`$ | `z0m_ratio` | roughness / canopy height (0.13) |
 | $`c_d`$ | `d_ratio` | displacement / canopy height (0.63) |
+| $`z_{0,snow}`$ | `snow_rough` | snow-surface roughness, also the $`z_{0m}`$ floor [m] |
 | — | `n_iter_mo` | fixed Monin-Obukhov iterations (4, GPU-uniform) |
 | $`\zeta_m,\zeta_t`$ | `zeta_m`, `zeta_t` | momentum / scalar range transitions (CLM5) |
+| — | `zeta_max_stable` | cap on the stable initial guess of $\zeta$ (CLM5) |
 | $w_c$ | `wc` | convective velocity scale (MoninObukIni) |
 | $`u_{*,min}`$ | `ustmin` | friction-velocity floor |
+| $`u_{b,min}`$ | `ubmin` | reference-wind floor in eq. (2) |
+| — | `ugbmin` | floor on the canopy-top and in-canopy wind |
 | $`c_s,\gamma_g`$ | `cs_dense`, `gamma_g` | CLM4 dense-canopy ground conductance |
 | — | `gbh_2_gbw` | boundary-layer heat:vapour ratio (1.075) |
-| — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients |
-| — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients |
+| $`g_{bh,min}`$ | `gbhmos_min` | boundary-layer conductance floor [m s⁻¹] |
+| — | `kin_visc0`, `dkin_visc`, `th_diff0`, `dth_diff`, `t_ref_air` | linear-in-T air viscosity and diffusivity |
+| — | `aflat_*/bflat_*` | flat-plate (leaf) Nusselt coefficients (`aero_cfg_t` only, no TOML key) |
+| — | `ocyli_*/acyli_*/bcyli_*` | cylinder (wood) Nusselt coefficients (`aero_cfg_t` only, no TOML key) |
 | — | `min_canopy_depth` | CAS-depth floor [m] |
+| — | `canopy_freeboard` | CAS depth above the tallest cohort [m] |
 
 ## References
 - ED2 `../ED2/ED/src/dynamics/canopy_struct_dynamics.f90` (`canopy_turbulence8`) — boundary layers +
@@ -225,10 +240,13 @@ molar $`g_{b,mol}=g_{bw}\,\rho`$.
 | Concept | Routine (`meds_canopy_aerodynamics`) |
 |---|---|
 | master per-patch seam | `canopy_aerodynamics` |
+| roughness + displacement, eq. (1) | `canopy_roughness` |
 | Monin-Obukhov solve ($`u_*`$, temp1, $\zeta$) | `mo_surface_layer` |
 | profile denominators $D_m, D_h$ | `d_mom`, `d_heat` |
 | stability functions $`\Psi_m,\Psi_h`$ | `stabfunc1`, `stabfunc2`, `psim` |
 | canopy-top / in-canopy wind | `reduced_wind` + crown-area extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
+| atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
+| per-stage re-solve of eq. (5) | `meds_fast_time_derivs`: `refresh_cas_conductances` |
 | types (cfg / env / geom / out) | `meds_biophysics_opts`: `aero_cfg_t`; `meds_canopy_types`: `aero_env_t`, `aero_geom_t`, `aero_out_t` |
-| bottom→top cohort reversal | `meds_fast_ark`: `aero_bottom_to_top` |
+| bottom→top cohort reversal | `meds_fast_prepass`: `aero_bottom_to_top` |

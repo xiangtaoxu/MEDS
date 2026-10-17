@@ -2,12 +2,13 @@
 
 Leaf traits are not static PFT constants — they **acclimate to the light environment** within a plant's
 lifetime. MEDS models this with a small **stateless, elemental** kernel, `meds_plant_trait_dynamics`, that
-ports ED2's `update_cohort_plastic_trait` (Lloyd et al. 2010 canopy trait gradients). The first cut covers
+ports ED2's `update_cohort_plastic_trait` (Lloyd et al. 2010 canopy trait gradients). It covers
 **light-driven plasticity** of four cohort-level leaf traits — specific leaf area (SLA), photosynthetic
 capacity ($`V_{\mathrm{cmax25}}`$), leaf dark respiration ($`R_{\mathrm{d25}}`$), and leaf lifespan
 ($`\ell`$). Ma et al. (2025) show that constraining exactly this plasticity with canopy observations
-markedly improves predicted tropical-forest demography, structure, and biomass. Thermal acclimation is a
-deferred sibling. See `docs/dev_plans/archive/MEDS_PLANT_TRAIT_DYNAMICS_DESIGN.md`.
+markedly improves predicted tropical-forest demography, structure, and biomass. Thermal acclimation of
+photosynthetic capacity is a separate, site-level mechanism (`leaf_gas_exchange.md` §"Thermal
+acclimation"); per-cohort acclimation is open (see `docs/ROADMAP.md`).
 
 The kernel is two pure functions (targets, then a relaxation step); the per-cohort trait **state**, the
 orchestration, and every carbon consequence live in the driver (`meds_vegetation_dynamics`) and the core
@@ -40,9 +41,9 @@ X \leftarrow X + f\,\big(X^{\mathrm{tgt}} - X\big), \qquad f = 1 - e^{-\Delta t/
 ```
 
 A long-lived (deeply shaded) canopy therefore acclimates slowly, and — because $`\ell`$ is itself plastic —
-the relaxation is self-consistent. There is no free acclimation-timescale parameter and no `is_instant`
-switch; instead a single `instant` flag jumps straight to the target ($`f=1`$), used **once** on a census
-restart (§5), where the cohorts sit in an established stand but carry no trait history.
+the relaxation is self-consistent. There is no free acclimation-timescale parameter; a single `instant`
+flag jumps straight to the target ($`f=1`$), used **once** on a census restart (§5), where the cohorts sit
+in an established stand but carry no trait history.
 
 ## 3. The four slopes (derived per PFT)
 
@@ -70,6 +71,8 @@ Two of the four traits feed back into the carbon budget, so plasticity is not a 
 - **Leaf lifespan → turnover.** Baseline leaf turnover is not an independent parameter; it is
   $`1/\ell`$ [yr⁻¹]. The driver feeds $`1/\mathrm{cohort\%llspan}`$ to the background turnover of
   `leaf_turnover_step`, so a shaded, longer-lived canopy sheds and rebuilds its leaves more slowly.
+  With `[trait_dynamics].fineroot_lifespan_plastic` the fine roots turn over more slowly in the same
+  proportion, `fineroot_turnover_rate` $`\times\,\ell_{\mathrm{toc}}/\ell`$.
 
 - **SLA is leaf-area-conserving.** The leaf carbon target is $`L^{*} = A_{\mathrm{leaf}}(\mathrm{dbh},h)/\mathrm{SLA}`$
   (`size2leaf_carbon`): allometry fixes the leaf **area** (crown light-capture), and SLA sets how much
@@ -91,43 +94,50 @@ consumers live outside it.
 - **State (`meds_site_state_types`).** The four traits are per-cohort SoA fields **without** the `p_`
   prefix — the convention that marks them *dynamic* (`p_<trait>` = a cached static PFT constant). They are
   seeded from the PFT top-of-canopy values at birth, threaded through the one centralized lockstep
-  machinery, and **leaf-area-weighted on cohort fusion** (intensive per-leaf-area properties).
+  machinery, and blended on cohort fusion on the quantity each is per: $`V_{\mathrm{cmax25}}`$,
+  $`R_{\mathrm{d25}}`$ and $`\ell`$ are per leaf area, so leaf area weights them; SLA is leaf area per leaf
+  carbon, so leaf carbon weights it and the fused cohort shows the leaf area its two parents showed.
 
 - **Orchestration (`meds_vegetation_dynamics.advance_plant_traits`).** A slow-loop step, opt-in via
-  `[trait_dynamics].trait_plasticity_on` (default off ⇒ traits stay at top-of-canopy, **bit-identical** to
-  the static path). It runs **after** the competition sweep refreshes `overtopping_lai` and **before**
+  `[trait_dynamics].trait_plasticity_on` (default off ⇒ every cohort keeps its PFT's
+  top-of-canopy traits). It runs **after** the competition sweep refreshes `overtopping_lai` and **before**
   `compute_carbon_allocation`, so this step's leaf demand and turnover see the updated traits. Per cohort it calls
-  `light_plastic_traits` (eq 1) then `update_plastic_trait` (eq 2), then resorbs any SLA overshoot (§4).
+  `light_plastic_traits` (eq. (1)) then `update_plastic_trait` (eq. (2)), then resorbs any SLA overshoot (§4).
 
 - **Consumers.** `compute_carbon_allocation` uses `cohort%sla` for the leaf-area-conserving target; the background
-  leaf turnover uses `1/cohort%llspan`; and `meds_fast_config.leaf_gas_exchange` takes per-cohort
-  `vcmax25`/`rd25` overrides (threaded through the fast-loop column buffer in `meds_fast_types`).
+  leaf turnover uses `1/cohort%llspan`; and the fast loop's `leaf_gas_exchange_batch` (called from
+  `meds_fast_prepass.canopy_leaf_gas_exchange`) takes per-cohort `vcmax25`/`rd25` (threaded through the
+  fast-loop column buffer in `meds_fast_types`), with `leaf_params_at_capacity` scaling
+  $`J_{\mathrm{max25}}`$ and TPU with the plastic $`V_{\mathrm{cmax25}}`$. The single-leaf wrapper
+  `meds_fast_config.leaf_gas_exchange` takes the same two overrides.
 
 - **Persistence (`meds_io`).** The four trait states are written to and read from the state checkpoint
-  (tolerant of pre-feature files, which restart at top-of-canopy), so a **state** restart recovers the
-  acclimated traits exactly. A **census** restart instead acclimates instantaneously in `meds_main`
+  (optional on read: a state file without them restarts at top-of-canopy), so a **state** restart
+  recovers the acclimated traits exactly; `[init].reacclimate_traits` instead re-derives them from this
+  run's PFT file. A **census** restart acclimates instantaneously in `meds_driver`
   (`advance_plant_traits(..., instantaneous=.true.)`), because census cohorts carry no history.
 
 ## Parameters
 
 | Symbol | Config key | Meaning |
 |---|---|---|
-| $`k_{\mathrm{SLA}}, k_{V}, k_{R}, k_{\ell}`$ | `kplastic_sla`, `kplastic_vm0`, `kplastic_rd`, `kplastic_llspan` | light-response slopes — **derived** per PFT (§3), overridable |
-| $`\ell_{\mathrm{toc}}`$ | `leaf_lifespan_toc` | top-of-canopy leaf lifespan [yr]; baseline turnover = $`1/\ell`$ (replaced `leaf_turnover_rate`) |
+| $`k_{\mathrm{SLA}}, k_{V}, k_{R}, k_{\ell}`$ | `[derived]` `kplastic_sla`, `kplastic_vcmax`, `kplastic_rd`, `kplastic_llspan` | light-response slopes — **derived** per PFT (§3); a `[derived]` block in the PFT file pins them when `[options].override_derived = true` |
+| $`\ell_{\mathrm{toc}}`$ | `leaf_lifespan_toc` | top-of-canopy leaf lifespan [yr]; baseline turnover = $`1/\ell`$ |
 | $`\mathrm{SLA}_{\mathrm{toc}}, V_{\mathrm{toc}}, R_{\mathrm{toc}}`$ | `sla`, `vcmax25`, `rd25` | top-of-canopy trait values (base PFT traits) |
 | — | `[trait_dynamics].trait_plasticity_on` | opt-in master switch (default off) |
+| — | `[trait_dynamics].fineroot_lifespan_plastic` | fine-root turnover scaled by $`\ell_{\mathrm{toc}}/\ell`$ (default off) |
 
 ## Code map
 
 | Concept | Routine |
 |---|---|
-| light target traits (eq 1) | `meds_plant_trait_dynamics`: `light_plastic_traits` (+ private `light_gradient`) |
-| replacement-weighted / instant update (eq 2) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
-| derived slopes (eqs 3–4) | `meds_pft_params`: `derive_pft_rates` |
+| light target traits (eq. (1)) | `meds_plant_trait_dynamics`: `light_plastic_traits` (+ private `light_gradient`) |
+| replacement-weighted / instant update (eq. (2)) | `meds_plant_trait_dynamics`: `update_plastic_trait` |
+| derived slopes (eqs. (3)–(4)) | `meds_pft_params`: `derive_pft_rates` |
 | per-cohort trait state + fusion weighting | `meds_site_state_types` (SoA `sla/vcmax25/rd25/llspan`); `meds_demography_cohort_fusefiss`: `fuse_2_cohorts` |
 | slow-loop orchestration + SLA-overshoot resorption | `meds_vegetation_dynamics`: `advance_plant_traits` |
-| carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `1/cohort%llspan`); `meds_fast_config`: `leaf_gas_exchange` (`vcmax25`/`rd25`) |
-| state persistence + census instant | `meds_io`: `io_write_state`/`io_read_state`; `meds_main` (census restart) |
+| carbon / gas-exchange consumers | `compute_carbon_allocation` (`cohort%sla`, `1/cohort%llspan`); `meds_leaf_gas_exchange`: `leaf_gas_exchange_batch`, `leaf_params_at_capacity` (`vcmax25`/`rd25`) |
+| state persistence + census instant | `meds_io`: `state_write_state`/`io_read_state`; `meds_driver` (census restart); `meds_vegetation_dynamics`: `reacclimate_plant_traits` |
 
 ## References
 - **Ma, Y., Moorcroft, P. R., Wright, S. J., Rogers, A., Lamour, J., Davidson, K. J., Serbin, S. P.,

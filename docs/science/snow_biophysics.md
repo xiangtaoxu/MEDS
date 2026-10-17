@@ -13,24 +13,24 @@ stores are woven each `dt_fast`.
 
 ## The snow store
 
-The `snow_*` kernels live in `meds_ground_biophysics` (`docs/dev_plans/archive/MEDS_SNOW_DESIGN.md` P0 — a single
-bulk layer). The prognostic state is water-equivalent mass `swe` [kg m⁻²] and **extensive** internal
-energy [J m⁻²]; temperature and liquid fraction are read-offs of `internal_energy_to_temp` (`dry_hcap=0`), so
-**melt/refreeze is the internal-energy plateau**, exactly as for soil. The fast-loop driver orchestrates
-**accumulate → energy step → drain**:
+The `snow_*` kernels live in `meds_ground_biophysics`; the pack is a single bulk layer (see
+`docs/ROADMAP.md` for multi-layer snow). The prognostic state is water-equivalent mass `swe`
+[kg m⁻²] and **extensive** internal energy [J m⁻²]; temperature and liquid fraction are read-offs of
+`internal_energy_to_temp` (`dry_hcap=0`), so **melt/refreeze is the internal-energy plateau**, exactly
+as for soil. The fast-loop driver orchestrates **accumulate → energy step → drain**:
 
 - **Accumulate** (`snow_accumulate`): snowfall lands as ice at $`\min(T_{3ple},T_{air})`$, rain-on-snow
   as liquid at $`T_{air}`$ (refreezing later via the inverter). A layer is created only above
   `min_new_snow_mass`; sub-threshold snow is folded into the soil store by the caller.
-- **Energy step** (`snow_energy_step`): the same bounded, L-stable, plateau-aware linearized BE step as
-  the veg store — net SW (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction,
-  with the emission response made consistent with the linearization slope (the wood-store lesson). The
-  **snow-base → soil-top conductance** is the series resistance of the half snow layer and the top soil
-  node; $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
-  winter soil surface, and it becomes the soil's top BC.
+- **Energy step** (`snow_energy_step`): a bounded, L-stable, plateau-aware linearized BE step — net SW
+  (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, with the emission
+  response made consistent with the linearization slope, so the update stays bounded and cannot
+  overshoot. The **snow-base → soil-top conductance** is the series resistance of the half snow layer
+  and the top soil node; $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical
+  decoupling that caps the winter soil surface, and it becomes the soil's top BC.
 - **Drain** (`snow_drain_meltwater`): free liquid above the holding capacity percolates out as a paired
-  (mass, enthalpy) hand-off to soil infiltration; full melt-out dumps the residual and reverts to bare
-  ground.
+  (mass, enthalpy) hand-off to the pond, which it reaches at the melt temperature and infiltrates
+  from; full melt-out dumps the residual and reverts to bare ground.
 
 ### Sublimation saturates over ice
 
@@ -48,20 +48,22 @@ rather than stepping, which matters because a step here lands in the right-hand 
 controller integrates.
 
 $`f_{liq}`$ is the pack's own prognostic liquid fraction, not a temperature threshold. The energy side
-was already ice-aware — removing `enthalpy_vapor` from an ice-referenced layer debits sublimation
-(vaporization + fusion) automatically — so before this the model treated the surface as ice for
-*enthalpy* and as liquid for *vapour pressure*. Over ice $`e_{sat}`$ is **10 % lower at −10 °C, 22 % at
-−20 °C and 34 % at −30 °C**, so the liquid curve overstated the driving gradient by those factors. The
-ice form is within 0.1 % of Murphy & Koop (2005) at −10 °C and 0.9 % at −30 °C.
+is ice-aware — removing `enthalpy_vapor` from an ice-referenced layer debits sublimation
+(vaporization + fusion) automatically — so the vapour side must be too: the liquid curve alone would
+treat the surface as ice for *enthalpy* and as liquid for *vapour pressure*. Over ice $`e_{sat}`$ is
+**10 % lower at −10 °C, 22 % at −20 °C and 34 % at −30 °C**, so the liquid curve would overstate the
+driving gradient by those factors. The ice form is within 0.1 % of Murphy & Koop (2005) at −10 °C and
+0.9 % at −30 °C.
 
 The same blend is used for ground evaporation from frozen soil, weighted by the top layer's
 `soil_fliq`. It is deliberately **not** used for dewpoint conversion or diagnostic VPD: dewpoint is
 *defined* over liquid, so an ice branch there would mis-convert the forcing.
 
 The **Niu-Yang (2007) snow-cover fraction** $`\mathrm{snowfac}=\tanh(\text{depth}/\text{scale})`$
-(`snow_cover_fraction`) ramps the ground optics albedo, the soil-top-BC blend, and the aerodynamic
-roughness — and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
-(stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store.
+(`snow_cover_fraction`) ramps the ground optics albedo and the soil-top-BC blend, and area-weights ("sub-column") all boundary exchange so a thin patchy pack barely exchanges
+(stable and continuous through $`\mathrm{snowfac}\to0`$). Snow-off is bit-identical to no store. The
+aerodynamic roughness does not see the pack: the driver passes `snowfac = 0` to the aerodynamics
+([canopy_aerodynamics](canopy_aerodynamics.md) §1; see `docs/ROADMAP.md`).
 
 ---
 
@@ -80,5 +82,6 @@ roughness — and area-weights ("sub-column") all boundary exchange so a thin pa
 | prognostic snow type | `meds_column_state_types`: `snow_column_t` |
 
 ## References
+- Murphy & Koop (2005), *Q. J. R. Meteorol. Soc.* 131:1539 — vapour pressure over ice.
 - Niu & Yang (2007), *JGR* 112:D21101 — snow-cover fraction.
-- Design doc: `MEDS_SNOW_DESIGN.md`.
+- Design record: `docs/dev_plans/archive/MEDS_SNOW_DESIGN.md`.

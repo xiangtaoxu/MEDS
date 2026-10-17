@@ -44,7 +44,7 @@ $\varepsilon>0$, apoplastic fraction $a_f\in[0,1)$, saturated water content $w_{
 **Turgor loss point** and the symplastic RWC there:
 
 ```math
-\psi_{tlp}=\frac{\pi_0\,\varepsilon}{\pi_0+\varepsilon}, \qquad R_{tlp}=\frac{\pi_0+\varepsilon}{\varepsilon}
+\psi_{tlp}=\frac{\pi_0\,\varepsilon}{\pi_0+\varepsilon}, \qquad R_{tlp}=\frac{\pi_0+\varepsilon}{\varepsilon} \qquad(3)
 ```
 
 **Potential ↔ symplastic RWC** ($R$):
@@ -54,7 +54,7 @@ $\varepsilon>0$, apoplastic fraction $a_f\in[0,1)$, saturated water content $w_{
 \pi_0/R & R< R_{tlp}\ \text{(flaccid)}\end{cases}
 \qquad
 R(\psi)=\begin{cases}\dfrac{b+\sqrt{b^2-4\varepsilon\pi_0}}{2\varepsilon},\ b=\psi+\varepsilon+\pi_0 & \psi\ge\psi_{tlp}\\[6pt]
-\pi_0/\psi & \psi<\psi_{tlp}\end{cases}
+\pi_0/\psi & \psi<\psi_{tlp}\end{cases} \qquad(4)
 ```
 
 **Tissue water and capacitance** ($`W_{sat}=w_{sat}\cdot\text{biomass}`$; the apoplast is a constant
@@ -62,16 +62,17 @@ reservoir):
 
 ```math
 W(\psi)=(1-a_f)\,W_{sat}\,R(\psi)+a_f\,W_{sat}, \qquad
-C(\psi)=\frac{dW}{d\psi}=(1-a_f)\,W_{sat}\,\frac{dR}{d\psi}
+C(\psi)=\frac{dW}{d\psi}=(1-a_f)\,W_{sat}\,\frac{dR}{d\psi} \qquad(5)
 ```
 
 ```math
 \frac{dR}{d\psi}=\begin{cases}\big(\varepsilon-\pi_0/R^2\big)^{-1} & \text{turgid}\\[2pt]
--R^2/\pi_0 & \text{flaccid}\end{cases}
+-R^2/\pi_0 & \text{flaccid}\end{cases} \qquad(6)
 ```
 
-A pure-elastic (X16-style) linear proxy capacitance is available for calibration:
-$`C_{\text{lin}}=(1-a_f)\,w_{sat}/(\varepsilon+|\pi_0|)`$.
+At full turgor ($R=1$) the turgid branch gives $`dR/d\psi = 1/(\varepsilon+|\pi_0|)`$, so there the
+capacitance equals the pure-elastic (X16-style) linear value
+$`C_{\text{lin}}=(1-a_f)\,W_{sat}/(\varepsilon+|\pi_0|)`$.
 
 ## 3. Xylem vulnerability and the Kirchhoff conductance law
 
@@ -79,7 +80,7 @@ The retained conductance fraction (1 − PLC) is a Weibull-like curve in $r=\psi
 ($\psi_{50}<0$ is the potential at 50 % loss; $a=$ `wood_kexp` the shape):
 
 ```math
-k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}}
+k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}} \qquad(7)
 ```
 
 **Vulnerability enters through the Kirchhoff (matric flux) potential — never pointwise.** Define
@@ -87,7 +88,7 @@ k(\psi)=\frac{1}{1+(\psi/\psi_{50})^{a}}=\frac{1}{1+r^{a}}
 ```math
 \Phi(\psi)=\int_0^{\psi} k(s)\,ds=\psi_{50}\!\int_0^{r}\frac{du}{1+u^{a}}
 =\begin{cases}\psi_{50}\ln(1+r) & a=1\\ \psi_{50}\arctan(r) & a=2\\
-\psi_{50}\cdot\text{(7-pt Gauss–Legendre panels)} & \text{else}\end{cases}
+\psi_{50}\cdot\text{(7-pt Gauss–Legendre panels)} & \text{else}\end{cases} \qquad(8)
 ```
 
 The **edge conductance** over a finite drop is the $\psi$-averaged retained fraction — the
@@ -95,15 +96,18 @@ finite-difference-consistent conductance that reproduces the exact Kirchhoff-int
 
 ```math
 K_{ij}=k_{\text{cond}}\,\frac{\Phi(\psi_{up})-\Phi(\psi_{down})}{\psi_{up}-\psi_{down}}
-\;\xrightarrow[\Delta\psi\to0]{}\; k_{\text{cond}}\,k(\psi)
+\;\xrightarrow[\Delta\psi\to0]{}\; k_{\text{cond}}\,k(\psi) \qquad(9)
 ```
 
 $k_{\text{cond}}$ is the maximum (fully-hydrated) per-plant conductance, the sapwood's over the
 path from the stem base to the crown:
 
 ```math
-k_{\text{cond}}=\frac{K_s\,A_{sap}}{H\cdot\text{vessel\_curl}},\qquad
-K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right)
+k_{\text{cond}}=\frac{K_s\,A_{sap}}{H\cdot\text{vessel\_curl}} \qquad(10)
+```
+
+```math
+K_s=\exp\!\left(2.348-2.455\,\rho+\tfrac{1}{2}\,0.6186\right) \qquad(11)
 ```
 
 $A_{sap}$ is the sapwood area of the stem allometry, $H$ the plant's height, and `vessel_curl`
@@ -119,24 +123,26 @@ $\rho$ = 0.6 (Meinzer et al. 2008), and FATES's default is 3.0. For a 35 m BCI c
 tree (72 cm dbh, 0.30 m² of sapwood, 553 m² of leaf) the 0.60 value gives
 $k_{\text{cond}}$ = 0.019 kg s⁻¹ MPa⁻¹: 1.9 mmol m⁻² s⁻¹ MPa⁻¹ per unit leaf area, and
 63 g m⁻² s⁻¹ MPa⁻¹ per unit sapwood, inside the 25–131 measured from soil to branch on Panama
-canopy trees (Meinzer et al. 2003). For general $`a\notin\{1,2\}`$ the integral is precomputed once into a fixed
+canopy trees (Meinzer et al. 2003).
+
+For general $`a\notin\{1,2\}`$ the Kirchhoff integral, eq. (8), is precomputed once into a fixed
 uniform-grid **lookup table** $G(r)$ over $`0\le r\le 8`$ and read by linear interpolation on the hot
 path (the closed forms are kept for $`a\in\{1,2\}`$); the table stores $r$-normalized $G$, so $\psi_{50}$
 is a runtime scale. It is built panel by panel, so it rises monotonically, and past $r = 8$ the
-tail $\int u^{-a}\,du$ is added analytically, so the potential keeps approaching its asymptote even
+tail $`\int u^{-a}\,du`$ is added analytically, so the potential keeps approaching its asymptote even
 for a leaf dried far beyond the vulnerability curve.
 
 ## 4. Root water uptake
 
 $Q_{\text{root}}$ enters the wood from the soil, along one path per soil layer the cohort roots in
-(ED2-faithful; see `MEDS_MULTILAYER_ROOTS_DESIGN.md`). Each path sees its layer's soil ψ and
-**unsaturated** conductivity $K_{soil}(k)=K(\theta_k)$, from the layer's retention curve.
+(as in ED2). Each path sees its layer's soil ψ and
+**unsaturated** conductivity $`K_{soil}(k)=K(\theta_k)`$, from the layer's retention curve.
 
 **Each cohort has its own roots.** It roots to a depth set by its height (ED2's IALLOM 1 allometry,
 Christoffersen 2013), capped at the soil column's bottom $z_{\text{bot}}$:
 
 ```math
-D=\min\!\left(b_{1Rd}\,h^{\,b_{2Rd}},\ z_{\text{bot}}\right)
+D=\min\!\left(b_{1Rd}\,h^{\,b_{2Rd}},\ z_{\text{bot}}\right) \qquad(12)
 ```
 
 with $`b_{1Rd}`$ = `root_depth_b1` (1.114 m) and $`b_{2Rd}`$ = `root_depth_b2` (0.4223), which give 5 m
@@ -144,7 +150,7 @@ for a 35 m tree and 1.8 m for a 3 m sapling. Within $D$ its fine roots fall off 
 ED2's `distrib_root`: the share above depth $d$ is
 
 ```math
-Y(d)=\frac{1-\beta^{\,\min(d,D)/D}}{1-\beta},
+Y(d)=\frac{1-\beta^{\,\min(d,D)/D}}{1-\beta} \qquad(13)
 ```
 
 so a layer between $d_{k-1}$ and $d_k$ holds $`Y(d_k)-Y(d_{k-1})`$, the shares sum to one, and a layer
@@ -160,7 +166,7 @@ so per plant
 ```math
 g_k=\frac{2\pi\,K_{soil}(k)\,L_k}{\ln\!\left(r_{\text{half},k}/r_{\text{root}}\right)},\qquad
 L_k=b_{root}\cdot\text{SRL}\cdot Y_k,\qquad
-r_{\text{half},k}=\left(\pi\,\frac{\sum_{\text{cohorts}} n_{plant}\,L_k}{\Delta z_k}\right)^{-1/2}
+r_{\text{half},k}=\left(\pi\,\frac{\sum_{\text{cohorts}} n_{plant}\,L_k}{\Delta z_k}\right)^{-1/2} \qquad(14)
 ```
 
 where $L_k$ is the plant's fine-root length in the layer (SRL = `specific_root_length`, m kgC⁻¹),
@@ -169,20 +175,19 @@ $`r_{\text{half},k}`$ comes from the patch's root-length density in the layer, a
 root length and falls only by the logarithm as roots crowd, so it does not depend on how the soil is
 layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
 \Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
-orders of magnitude more weakly (#375). Whether the absorbing length really grows in proportion to fine-root carbon is open
-(#377).
+orders of magnitude more weakly. Whether the absorbing length really grows in proportion to fine-root carbon is
+open (see `docs/ROADMAP.md`).
 
 Each layer is its own path from the soil to the wood, so the uptake from layer $k$ is
 
 ```math
-U_k = g_k\,r\!\left(\psi_{soil,k}+\rho g\,z_k-\psi_W\right),\qquad Q_{\text{root}}=\sum_k U_k
+U_k = g_k\,r\!\left(\psi_{soil,k}+\rho g\,z_k-\psi_W\right),\qquad Q_{\text{root}}=\sum_k U_k \qquad(15)
 ```
 
 with $r$ zero below zero and the identity above a width of 10⁻³ MPa, joined smoothly
-([soil_plant_water](soil_plant_water.md) eq. 1). **Hydraulic redistribution is not enabled:** a layer
+([soil_plant_water](soil_plant_water.md) eq. (1)). **Hydraulic redistribution is not enabled:** a layer
 drier than the wood gives nothing and takes nothing, so every $U_k\ge 0$. HR — the per-layer efflux
-and the soil re-wetting it implies — is deferred (see
-`docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`).
+and the soil re-wetting it implies — is not represented (see `docs/ROADMAP.md`).
 
 ## 5. The solver
 
@@ -194,17 +199,18 @@ flows themselves, so the plant and soil water budgets close to round-off.
 
 ## Parameters (config names, `[hydraulics]` / `hydraulics_config_t`)
 
-> **These are per-PFT** (#179). The `[hydraulics]` block is the shared base; any of the thirteen
-> traits below can be given a per-PFT array in the `[pft]` table under the **same key name**, and
-> that value wins for that PFT. An absent key falls back to the `[hydraulics]` scalar, so a config
-> can make **one** trait per-PFT without restating the other twelve, and a config that mentions none
-> is byte-identical to before.
+> **These are per-PFT.** The `[hydraulics]` block is the shared base; any `[hydraulics]` trait
+> below can be given a per-PFT array in the `[pft]` table under the **same key name**, and that
+> value wins for that PFT. An absent key falls back to the `[hydraulics]` scalar, so a config can
+> make **one** trait per-PFT without restating the others, and a config that mentions none runs
+> every PFT on the `[hydraulics]` values. `wood_kmax` is a `[pft]` key only, and the sapwood
+> allometry is a required `[pft]` trait.
 >
 > `apply_hydraulics_config` builds the per-PFT table and there is deliberately **no** PFT-uniform
 > companion struct: a second, easier-to-reach copy is how a caller ends up silently running every
 > PFT on the first one's hydraulics. Each entry carries its **own** Kirchhoff lookup, rebuilt from
-> that PFT's `wood_kexp` — sharing one would have given every PFT the first one's vulnerability
-> shape while every budget still closed.
+> that PFT's `wood_kexp` — sharing one would give every PFT the first one's vulnerability shape
+> while every budget still closes.
 
 | Symbol | Config key | Meaning |
 |---|---|---|
@@ -220,15 +226,14 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
 | SRL | `specific_root_length` | fine-root length per unit fine-root carbon [m kgC⁻¹] |
 | $`r_{\text{root}}`$ | `fine_root_radius` | absorbing-root radius [m] |
-| $b_{1SA}, b_{2SA}$ | `sapwood_area_b1`, `sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |
+| $`b_{1SA}, b_{2SA}`$ | `pft.sapwood_area_b1`, `pft.sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |
 
 ## References
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.
 - Bartlett, Scoffoni & Sack (2012); Tyree & Hammel (1972) — pressure–volume theory.
 - Gardner (1960) *Soil Science* 89:63–73; Cowan (1965) *J. Appl. Ecol.* 2:221–239 — single-root rhizosphere conductance.
 - Christoffersen (2013), PhD thesis, University of Arizona — the rooting-depth allometry (ED2 IALLOM 1).
-- ED2 `ED/src/dynamics/plant_hydro.f90`; `docs/dev_plans/archive/MEDS_HYDRAULICS_DESIGN.md` (§4 governing
-  equations, §16 per-layer roots); `docs/dev_plans/archive/MEDS_MULTILAYER_ROOTS_DESIGN.md`.
+- ED2 `ED/src/dynamics/plant_hydro.f90`.
 
 ## Code map
 

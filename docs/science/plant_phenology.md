@@ -86,8 +86,9 @@ Water has no calendar, so each sum restarts when the *other* side's switch cross
 sum when the wet switch turns on, the wet sum when the dry switch does. The crossing, not the level:
 a long wet season would otherwise hold the wet switch on and wipe every drought. A brief rain adds
 some wet credit without erasing the drought sum, unlike a consecutive-day counter. $`\psi_{\mathrm{tlp}}`$
-is not a phenology key: it is derived from the same pressure–volume curve the leaf stress arrestor
-uses (`pv_psi_tlp`), so the cue and the arrestor share one threshold.
+is not a phenology key: it is derived (`pv_psi_tlp`) from the same pressure–volume curve that anchors
+the leaf's capacity ramp under water stress (`leaf_gas_exchange.md` §4.1), so the cue and the ramp
+share one threshold.
 
 ## 3. Combining the switches
 
@@ -206,7 +207,8 @@ light from ERA5-Land through MEDS's forcing reader:
   of Xu et al. (2016) and MODIS LAI. The water driver is hypothetical, the canopy predawn leaf ψ of a
   MEDS run at the site.
 
-Five results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md` §8–§12):
+Five results shaped the design (the tests are in `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`
+§8–§13):
 
 - **No chilling.** Removing the chilling requirement changed neither temperate fit.
 - **One light cue, the hours of light above a fitted `par_min`.** Day length and running-mean PAR
@@ -235,8 +237,8 @@ Five results shaped the design (`docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.m
 What is **not** validated: no coupled MEDS run's leaf-area cycle has yet been scored against
 observations; the water cue has been exercised only on a soil surrogate (BCI) and on a MEDS run's
 leaf potential without the shed-to-water feedback (Palo Verde), not on a run's own predawn leaf
-potential with it. The fits capture the mean seasonal cycle; four to five scored years per site do
-not constrain its year-to-year variation.
+potential with it (see `docs/ROADMAP.md`). The fits capture the mean seasonal cycle; four to five
+scored years per site do not constrain its year-to-year variation.
 
 ## Parameters (`[phenology]` per-PFT block)
 
@@ -260,9 +262,9 @@ not constrain its year-to-year variation.
 
 The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults;
 present, every key above is required except the optional water keys. A sharpness
-of 0 is rejected (the switch would be a constant 0.5). The keys of the previous scheme (`k_flush_max`,
-`tau_flush`, `cue_sharpness`, `phen_a/b/c`, the cold-drop and chilling keys, `pft.evergreen`, …) are
-refused by name with a pointer to their replacement.
+of 0 is rejected (the switch would be a constant 0.5). Retired keys (`k_flush_max`, `tau_flush`,
+`cue_sharpness`, `phen_a/b/c`, the cold-drop and chilling keys, `pft.evergreen`, …) are refused by
+name, with a pointer to the key or rule that replaces them.
 
 ### Drivers
 
@@ -287,8 +289,7 @@ restart files.
 - **Rivera et al. (2002)**, *Trees* 16:445 — increasing day length induces flushing of tropical dry
   forest trees before the rains.
 - **Kim et al. (2012)**, *Glob. Change Biol.* 18:1322 — light-driven leaf phenology in the tropics.
-- ED2 `ED/src/dynamics/phenology_driv.f90`, `phenology_aux.f90`; the design record,
-  `docs/dev_plans/MEDS_PHENOLOGY_SENESCENCE_PLAN.md`.
+- ED2 `ED/src/dynamics/phenology_driv.f90`, `phenology_aux.f90`.
 
 ## Code map
 
