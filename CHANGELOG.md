@@ -294,6 +294,38 @@ before and after.
   longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
   path and sees the change.
 
+- **The ground couples to the canopy air through the open canopy, as in CLM** (#410). The
+  ground↔canopy-air conductance blended a bare-soil and a dense-canopy term in ED2's series form by an
+  open fraction the driver always passed as 0, so every patch, a cohort-free gap or a sparse regrowing
+  stand among them, coupled its ground as under a closed canopy. Each patch's open fraction
+  W = exp(−(LAI + WAI)) now weighs the two linearly, as CLM does (`docs/science/canopy_aerodynamics.md`
+  eq. (6), `open_canopy_fraction`): a patch without cohorts couples its ground like bare soil, and at
+  LAI 6 (W ≈ 0.0025) the dense form sets it. Snow still never buries the canopy (`snowfac = 0`, see
+  `docs/ROADMAP.md`). The bare-ground coupling, ~17 times stiffer, exposed an overshoot in the snow
+  pack's energy step, which evaluated its fluxes at a linearized temperature, and on the melt plateau
+  explicitly at 0 °C: in `test_region`'s January start from bare ground a 0.25 kg m⁻² pack went from
+  243 K to 91 K and below 0 K in three steps. `snow_energy_step` is now a linearized backward-Euler
+  step on the pack's enthalpy, solved in closed form on the ice line, the melt plateau or the liquid
+  line (`docs/science/snow_biophysics.md`), so a thin pack relaxes to its balance and stops there.
+  Before → after (period means; the ground's sensible heat and evaporation from an instrumented copy
+  of both builds):
+  - BCI regeneration from bare ground, its first 5 years (`meds_config_regeneration.toml`): ground
+    conductance 8.0×10⁻⁴ → 1.33×10⁻² m s⁻¹; ground sensible heat 6.6 → 18.6 W m⁻², ground evaporation
+    28.0 → 54.1 W m⁻²; top-soil temperature 306.1 → 300.2 K (column −4.5 K); ET 791 → 1092 mm yr⁻¹,
+    drainage −14 %, soil water −0.9 %; GPP +6.5 %, LAI 0.91 → 0.97, AGB +11 %.
+  - Palo Verde's inventory run (2008-07 → 2011-01, LAI 4.4): ground conductance 1.3 → 4.0×10⁻³ m s⁻¹;
+    ground sensible heat 4.1 → 8.5 W m⁻², ground evaporation 4.7 → 5.8 W m⁻²; site H 49.7 → 51.3 W m⁻²
+    (+3.2 %), LE 79.4 → 80.3 W m⁻² (+1.1 %); top soil −0.86 K, soil water −0.07 %; LAI +0.3 %, GPP
+    +0.3 %.
+  - BCI, example 04's calibrated run from the census to its window (2012-08 → 2016-04, LAI 5.6): ground
+    conductance +38 % (its gaps); site H −0.14 W m⁻² (−0.2 %), LE +0.71 W m⁻² (+1.05 %); top soil
+    −0.21 K, soil water −0.09 %; LAI +0.02 %, GPP +0.03 %. Its ten-day window (2016-04-20 → 05-01):
+    H and LE +0.4 %, top soil −0.20 K.
+
+  `test_aerodynamics` checks the two limits exactly, the monotone rise between and W itself;
+  `test_snow` adds a cold pack under warm air and a melting pack under cold dry air, each at a
+  bare-ground conductance, which the old step drove hundreds of kelvin past their balance.
+
 ### Documentation
 
 - **Source comments state rationale, not history, and cite the science pages** (#409). Every

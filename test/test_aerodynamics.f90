@@ -10,7 +10,10 @@
 !   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
 !      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
 !      in the open-canopy limit.                                                                 !
-! The equations are docs/science/canopy_aerodynamics.md §2 and §4 (eqs. (3), (7)-(10)).    !
+!   6. OPEN CANOPY: the ground conductance is the bare-ground value at an open fraction W = 1    !
+!      (a patch with no leaf or wood area), the dense-canopy value at W = 0, and rises            !
+!      monotonically between; W = exp(-(LAI + WAI)).                                             !
+! The equations are docs/science/canopy_aerodynamics.md §2-§4 (eqs. (3), (6)-(10)).        !
 !==========================================================================================!
 program test_aerodynamics
    use meds_test_assert, only : check, check_true, test_report
@@ -19,7 +22,7 @@ program test_aerodynamics
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_biophysics_opts, only : aero_cfg_t
    use meds_canopy_aerodynamics, only : canopy_aerodynamics, mo_surface_layer,            &
-                                        reduced_wind, boundary_gbh_mos
+                                        reduced_wind, boundary_gbh_mos, open_canopy_fraction
    implicit none
 
    call test_neutral()
@@ -27,6 +30,7 @@ program test_aerodynamics
    call test_wind_profile()
    call test_boundary_layer()
    call test_master()
+   call test_open_canopy()
 
    call test_report('test_aerodynamics')
 
@@ -124,5 +128,48 @@ contains
       ggbare_open = out%ggbare
       call check('ggnet == ggbare when open', out%ggnet, ggbare_open, 1.0e-12_wp)
    end subroutine test_master
+
+   !----- 6. The open-canopy blend of the ground conductance (eq. (6)). ----------------------!
+   subroutine test_open_canopy()
+      type(aero_cfg_t)  :: cfg
+      type(aero_env_t)  :: env
+      type(aero_geom_t) :: geom
+      type(aero_out_t)  :: out
+      integer(ik), parameter :: n = 2_ik, nw = 11_ik
+      real(wp) :: height(n), lai(n), tl(n), tw(n), lw(n), bd(n), gg(nw)
+      integer(ik) :: k
+      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
+      tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
+      lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
+      geom%veg_height = 18.0_wp ; geom%snowfac = 0.0_wp
+      env%t_ground = env%can_temp + 2.0_wp           ! a warm ground: the dense term's stability is 0
+      call alloc_aero_out(out, n)
+
+      !----- The open fraction: 1 on bare ground, exp(-PAI) under plants. --------------------------!
+      call check('a patch with no leaf or wood area is fully open', open_canopy_fraction(0.0_wp, 0.0_wp), &
+                 1.0_wp, 0.0_wp)
+      call check('W = exp(-(LAI + WAI))', open_canopy_fraction(5.0_wp, 1.0_wp), exp(-6.0_wp), 1.0e-15_wp)
+
+      !----- The two limits, exactly, and a monotone rise between them. ----------------------------!
+      do k = 1_ik, nw
+         geom%opencan_frac = real(k - 1_ik, wp) / real(nw - 1_ik, wp)
+         call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+         gg(k) = out%ggnet
+         if (k == 1_ik) call check('W = 0: the dense-canopy conductance', out%ggnet, out%ggveg, 0.0_wp)
+         if (k == nw)   call check('W = 1: the bare-ground conductance', out%ggnet, out%ggbare, 0.0_wp)
+      end do
+      call check_true('the bare-ground conductance exceeds the dense one', out%ggbare > out%ggveg,  &
+                      out%ggbare - out%ggveg)
+      call check_true('the ground conductance rises monotonically with W', all(gg(2:) > gg(:nw - 1)), &
+                      minval(gg(2:) - gg(:nw - 1)))
+      !----- At LAI 6 (W = 0.0025) the blend is the linear weighting of the two terms, and the       !
+      !      ground stays far closer to the dense value than to the bare one. ------------------------!
+      geom%opencan_frac = open_canopy_fraction(6.0_wp, 0.0_wp)
+      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
+      call check('LAI 6: W ggbare + (1 - W) ggveg', out%ggnet,                                       &
+                 geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg, 1.0e-15_wp)
+      call check_true('LAI 6: the ground couples nearly as under the dense form alone',                &
+                      out%ggnet - out%ggveg < 0.01_wp * (out%ggbare - out%ggveg), out%ggnet / out%ggveg)
+   end subroutine test_open_canopy
 
 end program test_aerodynamics

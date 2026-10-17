@@ -408,9 +408,12 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 Gaps and residues found in the 2026-10-17 annotation review.
 
-- **The snow-burial and open-canopy blends are inactive.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver
-  passes `snowfac = 0` and `opencan_frac = 0` to the aerodynamics, so the snow-burial roughness blend
-  and the open-canopy ground-conductance blend (`docs/science/canopy_aerodynamics.md` §1, §3) never act.
+- **Snow never buries the canopy.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver passes `snowfac = 0`
+  to the aerodynamics, so a pack never lowers the roughness and displacement
+  (`docs/science/canopy_aerodynamics.md` §1) and never raises the ground conductance's open fraction
+  (§3, CLM's exposed leaf and wood area). Trigger: the first snowy site. The open-canopy half is *done
+  in beta*: each patch's open fraction exp(−(LAI + WAI)) blends the bare-soil and dense-canopy ground
+  conductances, as CLM does, so a patch without cohorts couples its ground as bare soil.
 - **Ground optics are bare soil plus snow.** *Candidate.* [#411](https://github.com/xiangtaoxu/MEDS/issues/411) Litter, standing water and soil moisture
   do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
 - **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412) No maintenance respiration on

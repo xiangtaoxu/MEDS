@@ -10,6 +10,10 @@
 !   5. ISOTHERMAL cold pack: with no radiative/turbulent forcing + t_base=t_soil, state is steady  !
 !      and g_base ~ 0.                                                                             !
 !   6. RAIN-ON-SNOW: warm rain on a sub-freezing pack adds mass + refreezes (energy rises).         !
+!   7. STIFF COUPLING: a thin pack under an open patch's bare-ground conductance relaxes toward its !
+!      balance without overshooting it: a cold pack under warm air warms but stays below t_3ple, a  !
+!      melting pack under cold dry air freezes through the plateau and stops near the air, over a  !
+!      day of steps as well; both ledgers close.                                                    !
 !==========================================================================================!
 program test_snow
    use meds_test_assert, only : check, check_true, test_report
@@ -30,6 +34,7 @@ program test_snow
    call test_melt_event()
    call test_isothermal()
    call test_rain_on_snow()
+   call test_stiff_coupling()
 
    call test_report('test_snow')
 
@@ -231,5 +236,66 @@ contains
       call check('rain enthalpy exact', snow%snow_energy(1) - e0,                                   &
                  2.0e-3_wp * 900.0_wp * internal_energy_liquid(278.0_wp), 1.0e-6_wp)
    end subroutine test_rain_on_snow
+
+   !----- A thin pack (0.25-0.3 kg/m2) under the bare-ground conductance of an open patch: an explicit  !
+   !      flux at t_3ple, or the nonlinear sublimation at a linearized temperature, would drive it   !
+   !      hundreds of kelvin past its balance. -----------------------------------------------------!
+   subroutine test_stiff_coupling()
+      type(snow_column_t) :: snow
+      type(snow_env_t)    :: env
+      type(snow_params_t) :: p
+      type(snow_flux_t)   :: fx
+      type(snow_melt_t)   :: melt
+      real(wp), parameter :: SWE = 0.3_wp, DT = 900.0_wp, AF = 0.2_wp
+      real(wp) :: e0, m_in, m_out, e_in, e_out, t_min, worst_resid
+      integer(ik) :: k
+      print '(a)', 'test_stiff_coupling:'
+      call default_params(p)
+      env%ggnet = 0.065_wp ; env%rho_air = 1.19_wp ; env%press = 101325.0_wp
+      env%t_soil_top = t_3ple ; env%k_soil_top = 1.5_wp ; env%dz_soil_top = 0.025_wp
+
+      !----- (a) A cold pack (243 K) under warm, moist canopy air: it warms toward the air, not past it. -!
+      snow = snow_column_t()
+      snow%nlayer = 1_ik ; snow%swe(1) = SWE
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, 243.0_wp, 0.0_wp)
+      snow%snow_depth(1)  = SWE / p%rho_snow
+      env%abs_sw = 0.0_wp ; env%abs_lw = 20.0_wp ; env%can_temp = 268.8_wp ; env%can_shv = 1.79e-3_wp
+      e0 = snow%snow_energy(1)
+      call snow_energy_step(snow, env, p, DT, AF, fx)
+      call check_true('a cold pack under warm air and on warm soil warms, and stays frozen',             &
+                      snow%snow_temp(1) > 243.0_wp .and. snow%snow_temp(1) < t_3ple .and.                &
+                      snow%snow_fliq(1) == 0.0_wp, snow%snow_temp(1))
+      call check('its energy change is the boundary exchange', snow%snow_energy(1) - e0,                  &
+                 DT * (fx%rnet - fx%h_snow - fx%le_snow - fx%g_base), 1.0e-9_wp * abs(e0))
+
+      !----- (b) A melting pack (10 % liquid) under cold, dry canopy air: it freezes through the plateau and !
+      !      cools toward the air; over a day it stays near the air, and both ledgers close. --------------!
+      snow = snow_column_t()
+      snow%nlayer = 1_ik ; snow%swe(1) = SWE
+      snow%snow_energy(1) = temp_to_internal_energy(0.0_wp, SWE, t_3ple, 0.1_wp)
+      snow%snow_depth(1)  = SWE / p%rho_snow
+      env%abs_lw = -60.0_wp ; env%can_temp = 255.0_wp ; env%can_shv = 3.0e-4_wp
+      m_in = SWE ; m_out = 0.0_wp ; e_in = snow%snow_energy(1) ; e_out = 0.0_wp
+      worst_resid = 0.0_wp ; t_min = t_3ple
+      do k = 1_ik, 96_ik
+         call snow_energy_step(snow, env, p, DT, AF, fx)
+         m_out = m_out + fx%w_flux * DT
+         e_in  = e_in  + DT * (fx%rnet - fx%h_snow - fx%le_snow - fx%g_base)
+         worst_resid = max(worst_resid, abs(fx%energy_resid))
+         if (k == 1_ik) call check_true('one step freezes the liquid without passing the air temperature', &
+                                        snow%snow_fliq(1) == 0.0_wp .and. snow%snow_temp(1) > env%can_temp - 5.0_wp, &
+                                        snow%snow_temp(1))
+         call snow_drain_meltwater(snow, p, melt)
+         m_out = m_out + melt%melt_mass + melt%dump_mass
+         e_out = e_out + melt%melt_enth + melt%dump_enth
+         if (snow%nlayer == 0_ik) exit
+         t_min = min(t_min, snow%snow_temp(1))
+      end do
+      call check_true('over a day the pack never falls more than 5 K below the air', t_min > env%can_temp - 5.0_wp, &
+                      t_min)
+      call check('MASS closure', snow%swe(1), m_in - m_out, 1.0e-12_wp)
+      call check('ENERGY closure', snow%snow_energy(1), e_in - e_out, 1.0e-6_wp * abs(e0))
+      call check('per-step energy_resid = 0', worst_resid, 0.0_wp, 1.0e-6_wp)
+   end subroutine test_stiff_coupling
 
 end program test_snow

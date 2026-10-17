@@ -15,9 +15,10 @@
 ! Monin-Obukhov denominators with a fixed-iteration solve (no root-find, no I/O -> GPU     !
 ! portable); the leaf/wood boundary layers use ED2's forced+free convection Nusselt kernel !
 ! (needed for low-wind free convection); the in-canopy wind uses ED2's per-cohort          !
-! extinction through closed crowns; the ground conductance uses the CLM4-like dense-canopy !
-! form. All `pure`; per-cohort outputs are written into caller-owned SoA slices (never an  !
-! array-valued function result passed into a call: see CLAUDE.md).                         !
+! extinction through closed crowns; the ground conductance blends a bare-ground value and  !
+! CLM4's dense-canopy form by the patch's open fraction, as CLM does. All `pure`;          !
+! per-cohort outputs are written into caller-owned SoA slices (never an array-valued       !
+! function result passed into a call: see CLAUDE.md).                                      !
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
@@ -45,6 +46,7 @@ module meds_canopy_aerodynamics
    public :: reduced_wind                    !< log-profile wind at a height (exposed for tests)
    public :: boundary_gbh_mos                !< Nusselt boundary-layer conductance (exposed for tests)
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
+   public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
 
 contains
 
@@ -68,6 +70,14 @@ contains
       g_atm_vapour = rho      * ustar * temp_vapour
       g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
+
+   !----- A patch's open fraction W = exp(-(LAI + WAI)), CLM's weight of the bare-ground term in the  !
+   !      ground conductance (docs/science/canopy_aerodynamics.md eq. (6)): 1 on bare ground, 0.0025   !
+   !      at a plant area index of 6. lai and wai are the patch's totals [m2/m2]. ---------------------!
+   elemental real(wp) function open_canopy_fraction(lai, wai) result(w)
+      real(wp), intent(in) :: lai, wai
+      w = safe_exp(-(lai + wai))
+   end function open_canopy_fraction
 
    !----- Roughness length and zero-plane displacement of a patch, from its canopy height with      !
    !      the snow blend (docs/science/canopy_aerodynamics.md eq. (1)). The ONE definition: the     !
@@ -125,7 +135,9 @@ contains
       out%qstar = out%temp2 * (env%shv_atm   - env%can_shv)
       out%cstar = out%temp2 * (env%co2_atm   - env%can_co2)
 
-      !----- 3. Ground <-> CAS conductances (bare similarity + CLM4 dense-canopy blend). ---!
+      !----- 3. Ground <-> CAS conductances: the bare-ground similarity value and CLM4's dense-canopy !
+      !      one, blended linearly by the patch's open fraction W, as CLM does (eq. (6)). W = 1 is bare  !
+      !      ground, W -> 0 a dense canopy. -------------------------------------------------------------!
       out%ggbare = out%ustar * out%temp1                           ! [m/s] bare-ground scalar conductance
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
@@ -134,12 +146,7 @@ contains
                     * (env%can_temp - env%t_ground) / denom))
       end if
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
-      if (geom%opencan_frac > 0.999_wp .or. geom%snowfac >= 0.9_wp) then
-         out%ggnet = out%ggbare
-      else
-         out%ggnet = out%ggbare * out%ggveg                                                     &
-                     / (out%ggveg + (1.0_wp - geom%opencan_frac) * out%ggbare + tiny_num)
-      end if
+      out%ggnet = geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg
 
       !----- 4. In-canopy wind: top-of-canopy wind, then extinction through each cohort's closed    !
       !      crowns, top -> bottom (docs/science/canopy_aerodynamics.md eq. (8)). -------------------!

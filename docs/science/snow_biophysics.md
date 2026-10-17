@@ -22,12 +22,19 @@ as for soil. The fast-loop driver orchestrates **accumulate → energy step → 
 - **Accumulate** (`snow_accumulate`): snowfall lands as ice at $`\min(T_{3ple},T_{air})`$, rain-on-snow
   as liquid at $`T_{air}`$ (refreezing later via the inverter). A layer is created only above
   `min_new_snow_mass`; sub-threshold snow is folded into the soil store by the caller.
-- **Energy step** (`snow_energy_step`): a bounded, L-stable, plateau-aware linearized BE step — net SW
-  (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, with the emission
-  response made consistent with the linearization slope, so the update stays bounded and cannot
-  overshoot. The **snow-base → soil-top conductance** is the series resistance of the half snow layer
-  and the top soil node; $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical
-  decoupling that caps the winter soil surface, and it becomes the soil's top BC.
+- **Energy step** (`snow_energy_step`): a linearized backward-Euler step on the pack's enthalpy — net SW
+  (snow albedo) + net LW − sensible − sublimation/evaporation − base conduction, each linearized about
+  the pack's temperature $`T^n`$, so the net flux $R(T)$ is linear and falls as $T$ rises. The pack's
+  enthalpy $`E(T)`$ rises with $T$ along the ice line, across the melt plateau and along the liquid
+  line, so the balance $`E(T) = E^n + \Delta t\,f_{snow}\,R(T)`$ has one root, found in closed form on
+  the plateau when its enthalpy range holds it, else on the ice or the liquid line. The pack ends at
+  that root exactly: a thin pack under an open patch's bare-ground conductance relaxes toward its
+  balance and cannot overshoot it, and a melting pack under cold air freezes through the plateau and
+  stops where the balance does. Sublimation takes its latent heat from the balance, and the mass
+  that leaves takes the pack's specific energy with it, so the rest keeps $T$. The **snow-base →
+  soil-top conductance** is the series resistance of the half snow layer and the top soil node;
+  $`k_{snow}\ll k_{soil}`$ throttles it as the pack deepens, the physical decoupling that caps the
+  winter soil surface, and it becomes the soil's top BC.
 - **Drain** (`snow_drain_meltwater`): free liquid above the holding capacity percolates out as a paired
   (mass, enthalpy) hand-off to the pond, which it reaches at the melt temperature and infiltrates
   from; full melt-out dumps the residual and reverts to bare ground.

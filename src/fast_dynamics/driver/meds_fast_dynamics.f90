@@ -50,7 +50,7 @@ module meds_fast_dynamics
    use meds_forcing_kernels,  only : precip_phase
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
-   use meds_canopy_aerodynamics, only : canopy_roughness
+   use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
@@ -324,7 +324,7 @@ contains
       type(met_forcing_t),    allocatable :: met_top_pool(:)   !< the sample at the patch's canopy-air top
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
-      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days
+      real(wp)    :: sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days
       real(wp)    :: prow(N_PDIAG)                !< the patch block's row for one (patch, sub-step)
       real(wp)    :: z_top, rough_p, displace_p   !< [m] this patch's canopy-air top, roughness, displacement
       integer(ik) :: j, i, i0, ncoh, ith, kb
@@ -481,7 +481,8 @@ contains
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days, prow, kb, &
+      !$omp            sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days,   &
+      !$omp            prow, kb,                                                                    &
       !$omp            sw_ground, z_top, rough_p, displace_p)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
@@ -504,19 +505,22 @@ contains
          !      forms). Capacity was ensured above (ncoh <= ncoh_max always); this just updates the !
          !      ACTIVE count -- no allocation. -----------------------------------------------------!
          call copy_column_cohort(col_cohort, site%cohort, i0, ncoh)
-         sum_lai = 0.0_wp
+         sum_lai = 0.0_wp ; sum_wai = 0.0_wp
          do j = 1_ik, ncoh
             sum_lai = sum_lai + col_cohort%lai(j)
+            sum_wai = sum_wai + col_cohort%wai(j)
          end do
 
-         !----- Per-patch canopy geometry. The driver passes a closed, unburied canopy              !
-         !      (opencan_frac = 0, snowfac = 0), so the aerodynamics' open-canopy and snow blends   !
-         !      are inactive (see docs/ROADMAP.md). ------------------------------------------------!
+         !----- Per-patch canopy geometry. The ground conductance weighs bare ground by the patch's  !
+         !      open fraction exp(-(LAI + WAI)) (docs/science/canopy_aerodynamics.md eq. (6)), so a   !
+         !      patch without cohorts couples its ground as bare soil. The canopy is never buried in  !
+         !      snow (snowfac = 0; see docs/ROADMAP.md). ------------------------------------------------!
          ageom%veg_height   = ctx%veg_height_bare
          do j = 1_ik, ncoh
             ageom%veg_height = max(ageom%veg_height, col_cohort%height(j))
          end do
-         ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
+         ageom%opencan_frac = open_canopy_fraction(sum_lai, sum_wai)
+         ageom%snowfac      = 0.0_wp
 
          call alloc_forcing(forc, ncoh)
 
