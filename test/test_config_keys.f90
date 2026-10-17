@@ -54,6 +54,71 @@ program test_config_keys
    call check_config_keys(t, PFT_KEYS, report)
    call check(report%n == 5_ik, 'every main-file key is unknown to the PFT reference')
 
+   !----- Keys whose feature is gone are refused with what replaced it: the inert above-ground  !
+   !      litter shares and the nitrogen keys of a cycle that is not built. -------------------!
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[soil_carbon]'
+   write(u,'(a)') 'n_cycle_on = true'
+   write(u,'(a)') 'agf_fast   = 0.5'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   call check(ok, 'the retired-key config parses')
+   report = key_report_t()
+   call check_config_keys(t, MAIN_KEYS, report)
+   call check(report%n == 2_ik, 'both retired soil-carbon keys are reported')
+   call check(index(report%line(1), 'soil_carbon.n_cycle_on') > 0 .and. index(report%line(1), 'retired') > 0 &
+              .and. index(report%line(1), 'ED-MORE') > 0, 'the nitrogen key says the cycle is not built')
+   call check(index(report%line(2), 'soil_carbon.agf_fast') > 0 .and. index(report%line(2), 'retired') > 0 &
+              .and. index(report%line(2), 'f_labile_leaf') > 0, 'the litter share says the litter splits by tissue')
+
+   !----- In the PFT file: the crown-area allometry and the crown fraction, gone with the       !
+   !      closed crown. ----------------------------------------------------------------------!
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[pft]'
+   write(u,'(a)') 'crown_area_frac = [1.0]'
+   write(u,'(a)') '[allometry]'
+   write(u,'(a)') 'ca_b1 = 0.370'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   call check(ok, 'the retired PFT-key config parses')
+   report = key_report_t()
+   call check_config_keys(t, PFT_KEYS, report)
+   call check(report%n == 2_ik, 'both retired crown-area keys are reported')
+   call check(index(report%line(1), 'pft.crown_area_frac') > 0 .and. index(report%line(1), 'retired') > 0 &
+              .and. index(report%line(1), 'closed-crown') > 0, 'the crown fraction says the crowns close')
+   call check(index(report%line(2), 'allometry.ca_b1') > 0 .and. index(report%line(2), 'retired') > 0  &
+              .and. index(report%line(2), 'closed-crown') > 0, 'the crown-area allometry says the crowns close')
+
+   !----- Leaves are parameterized by their turnover rate: the lifespan key, its plasticity slope  !
+   !      and the fine-root switch named after it are refused, each with its conversion. ---------!
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[pft]'
+   write(u,'(a)') 'leaf_lifespan_toc = [2.0]'
+   write(u,'(a)') '[derived]'
+   write(u,'(a)') 'kplastic_llspan = [0.12]'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   call check(ok, 'the lifespan-key config parses')
+   report = key_report_t()
+   call check_config_keys(t, PFT_KEYS, report)
+   call check(report%n == 2_ik, 'both retired lifespan keys are reported')
+   call check(index(report%line(1), 'pft.leaf_lifespan_toc') > 0 .and. index(report%line(1), 'retired') > 0 &
+              .and. index(report%line(1), 'leaf_turnover_rate_toc [1/yr] = 1 / the lifespan') > 0,          &
+              'the lifespan key gives the rate as its reciprocal')
+   call check(index(report%line(2), 'derived.kplastic_llspan') > 0 .and. index(report%line(2), 'retired') > 0 &
+              .and. index(report%line(2), 'kplastic_leaf_turnover = -kplastic_llspan') > 0,                 &
+              'the lifespan slope gives the rate''s slope with its sign')
+   open(newunit=u, file='test_config_keys.toml', status='replace', action='write')
+   write(u,'(a)') '[trait_dynamics]'
+   write(u,'(a)') 'fineroot_lifespan_plastic = true'
+   close(u)
+   call toml_parse_file('test_config_keys.toml', t, ok)
+   report = key_report_t()
+   call check_config_keys(t, MAIN_KEYS, report)
+   call check(report%n == 1_ik .and. index(report%line(1), 'retired') > 0 .and.                        &
+              index(report%line(1), 'trait_dynamics.fineroot_turnover_plastic') > 0,                   &
+              'the fine-root switch names its new key')
+
    open(newunit=u, file='test_config_keys.toml', status='old')
    close(u, status='delete')
    write(*,'(a)') 'test_config_keys: ALL PASSED'

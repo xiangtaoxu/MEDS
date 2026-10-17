@@ -108,8 +108,8 @@ def test_biomass_mortality_between_two_censuses():
 def test_litter_streams_carry_all_the_litter():
     pp = {"b1Ht": 1.139963, "b2Ht": 0.564899, "agb_c1": 0.03365, "agb_c2": 0.976, "lai_b1": 0.23384770,
           "lai_b2": 0.6410495, "hgt_max": 46.0, "rho": 0.6, "sla": 13.0, "root_to_leaf": 1.0,
-          "aboveground_frac": 0.7, "leaf_lifespan": 2.0, "fineroot_turnover": 0.8,
+          "aboveground_frac": 0.7, "leaf_turnover": 0.5, "fineroot_turnover": 0.8,
           "f_labile_leaf": 0.7, "f_labile_stem": 0.05}
     per_day, per_year = mc.litter_input(np.array([10.0, 30.0, 60.0]), 400.0, pp, 0.02)
     assert sum(per_day.values()) * mc.YR_DAY == pytest.approx(sum(per_year.values()))
-    assert per_year["fine_root"] == pytest.approx(per_year["leaf"] * 2.0 * 0.8)   # same carbon, 0.8/yr vs 1/2 yr
+    assert per_year["fine_root"] == pytest.approx(per_year["leaf"] / 0.5 * 0.8)   # same carbon, 0.8/yr vs 0.5/yr

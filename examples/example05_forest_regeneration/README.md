@@ -130,14 +130,14 @@ Set for this example:
 | | early | mid | late | from |
 |---|---|---|---|---|
 | wood density [g cm⁻³] | 0.36 | 0.50 | 0.68 | example 03 |
-| leaf lifespan at the canopy top [yr] | 0.5 | 0.7 | 0.9 | Panama's sun leaves (Kitajima et al. 1997, 2005, 2013) |
+| leaf turnover at the canopy top [yr⁻¹] | 2.0 | 1.43 | 1.11 | 1 / the lifespans of Panama's sun leaves, 0.5, 0.7 and 0.9 yr (Kitajima et al. 1997, 2005, 2013) |
 | leaf mass per area [g m⁻²] | 100 | 110 | 120 | Panama's crane leaves (Xu et al. 2017) |
 | fine-root turnover [yr⁻¹] | 3.0 | 2.14 | 1.67 | 1.5 × the leaves' |
 | g_max [cm yr⁻¹] | 0.42 | 0.31 | 0.12 | 2 × the census's 75th percentile in full light |
 
 - **Shade**: Vcmax25, Rd25 and leaf mass per area fall with the leaf area above a cohort as Ma et
-  al. (2025) measured at BCI; leaf lifespan rises at half their rate, 1.8 times longer under 5 m² m⁻²
-  of taller leaves.
+  al. (2025) measured at BCI; leaf turnover slows at half the rate their leaf lifespans lengthen,
+  1.8 times slower under 5 m² m⁻² of taller leaves.
 - **Sink limit**: a cohort's diameter grows at most g_max · dbh^0.5 a year (the census's shape);
   the carbon left over is exuded by the roots.
 - **Respiration**: of the fine roots, whose carbon equals the leaves', and of the stems, on sapwood
@@ -161,8 +161,9 @@ python run_example.py --plot-only                            # redraw regenerati
 
 The first step cuts BCI's ERA5-Land cell out of the processed archive
 ([`make_forcing_file.py`](../../scripts/prepare_era5/make_forcing_file.py); about 7 minutes) into
-`data/`. The run takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and
-size-class totals to `output/`, with the full stand checkpointed every 20 years.
+`data/`; the archive is `--era5-archive` or the environment variable `ERA5LAND_ARCHIVE`. The run
+takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and size-class totals to
+`output/`, with the full stand checkpointed every 20 years.
 
 ## 2. Palo Verde: a tropical dry forest, 150 years
 
@@ -232,10 +233,14 @@ trees of 10 cm and more.
 ```bash
 cd examples/example05_forest_regeneration/palo_verde
 python run_palo_verde.py --era5-archive /path/to/ED_ERA5land   # forcing, inventory check, regrowth, figure
-python run_palo_verde.py --skip-inventory                      # the regrowth only
+python run_palo_verde.py --skip-inventory                      # the regrowth only, once the forcing is cut
 python run_palo_verde.py --plot-only                           # redraw palo_verde.png
 ```
 
+The archive can also be named by the environment variable `ERA5LAND_ARCHIVE`. The regrowth reads the
+forcing cut into `palo_verde/data/`; the inventory check reads the archive itself, so the script runs a
+copy of `meds_config_inventory.toml` with the archive's folder in `[forcing].data_path`
+(`palo_verde/output/config/inventory.toml`). To run that config by hand, set `data_path` to the folder.
 The forcing cut takes about 4 minutes, the inventory check 2 and the regrowth about an hour on 12
 threads (`[run].n_threads`). Output goes to `palo_verde/output/`.
 

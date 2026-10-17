@@ -32,7 +32,7 @@ module meds_fast_rk45
                                      column_budget_t, mask_is_full
    use meds_fast_frozen,      only : build_column_frozen
    use meds_column_state_ops, only : state_init, state_axpy, state_accum, state_sub, zero_like, apply_process_mask,     &
-                                     clamp_cas, clamp_soil_energy, soil_water_store,                &
+                                     clamp_cas, soil_water_store,                                   &
                                      soil_energy_store, plant_water_store, canopy_film_store,       &
                                      deposit_condensate, clamp_canopy_film, unpack_column_state,     &
                                      diagnose_soil_temps, transp_per_leaf_area
@@ -128,16 +128,18 @@ contains
    ! caller books the rainfall into the pond once per dt_fast.                                          !
    !                                                                                                    !
    ! STAGE CLAMPING (the explicit counterpart of ark2_column_step's base3 clamp_cas): every             !
-   ! y_stage is explicit-only here (no ESDIRK stabilization), so a stiff surface<->soil                 !
-   ! coupling under a too-large trial dt (a sparse or near-bare patch: small ground-CAS heat            !
-   ! capacity relative to its coupling conductance) can drive soil_energy far outside its               !
-   ! physical domain WITHIN a single stage evaluation, where the temperature read-off and the           !
-   ! kernels downstream of it leave their valid range rather than return a large-but-finite             !
-   ! value the controller could reject. Clamping y_stage before each column_derivs call keeps           !
-   ! every stage evaluation finite (an in-range y_stage is untouched, so this is a no-op on any         !
-   ! well-resolved step); the resulting k_i is then a legitimate derivative at a physical (if           !
-   ! boundary-pinned) state, and the normal 5th/4th embedded-error comparison rejects and               !
-   ! shrinks dt exactly as for any other oversized step -- no separate detection logic needed. ---------!
+   ! y_stage is explicit-only here (no ESDIRK stabilization), so a stiff leaf<->canopy-air coupling     !
+   ! under a too-large trial dt can drive the canopy-air enthalpy or humidity far outside its           !
+   ! physical domain WITHIN a single stage evaluation, where cas_temp_of_enthalpy diagnoses a wild      !
+   ! temperature and qsat overflows rather than returning a large-but-finite value the controller      !
+   ! could reject. clamp_cas bounds each y_stage's canopy air before its column_derivs call; the        !
+   ! resulting k_i is then a legitimate derivative at a physical (if boundary-pinned) state, and the    !
+   ! normal 5th/4th embedded-error comparison rejects and shrinks dt exactly as for any other           !
+   ! oversized step -- no separate detection logic needed. The soil energy needs no such clamp: a       !
+   ! stage reads it only through the temperature read-off, which any finite energy inverts with its     !
+   ! liquid fraction in [0, 1], and through terms linear in that temperature (conduction, the ground's  !
+   ! sensible heat, the enthalpy of its evaporation); the evaporation rate itself is frozen from the    !
+   ! water network for the whole dt_fast. --------------------------------------------------------------!
    pure subroutine rk45_column_step(y, frozen, col_config, n, nsl, dt, y_out, y_err, w_out, e_in, e_out,          &
                                     clamp_stage_n, cond_out,                                         &
                                     tissue_leaf_int, tissue_wood_int, transp_int, cond_enth_out,       &
@@ -184,7 +186,6 @@ contains
 
       call state_init(y, n, nsl, y_stage) ; call state_accum(y_stage, dt*A21, k1, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k2, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(2), atm_enth(2), atm_vap(2), cond(2), cond_enth(2), atm_heat(2))
       tleaf_s(1:n,2) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,2) = surf_tend%wood_temp(1:n)
@@ -193,7 +194,6 @@ contains
       call state_init(y, n, nsl, y_stage)
       call state_accum(y_stage, dt*A31, k1, n, nsl) ; call state_accum(y_stage, dt*A32, k2, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k3, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(3), atm_enth(3), atm_vap(3), cond(3), cond_enth(3), atm_heat(3))
       tleaf_s(1:n,3) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,3) = surf_tend%wood_temp(1:n)
@@ -203,7 +203,6 @@ contains
       call state_accum(y_stage, dt*A41, k1, n, nsl) ; call state_accum(y_stage, dt*A42, k2, n, nsl)
       call state_accum(y_stage, dt*A43, k3, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k4, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(4), atm_enth(4), atm_vap(4), cond(4), cond_enth(4), atm_heat(4))
       tleaf_s(1:n,4) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,4) = surf_tend%wood_temp(1:n)
@@ -213,7 +212,6 @@ contains
       call state_accum(y_stage, dt*A51, k1, n, nsl) ; call state_accum(y_stage, dt*A52, k2, n, nsl)
       call state_accum(y_stage, dt*A53, k3, n, nsl) ; call state_accum(y_stage, dt*A54, k4, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k5, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(5), atm_enth(5), atm_vap(5), cond(5), cond_enth(5), atm_heat(5))
       tleaf_s(1:n,5) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,5) = surf_tend%wood_temp(1:n)
@@ -224,7 +222,6 @@ contains
       call state_accum(y_stage, dt*A63, k3, n, nsl) ; call state_accum(y_stage, dt*A64, k4, n, nsl)
       call state_accum(y_stage, dt*A65, k5, n, nsl)
       call clamp_cas(y_stage, nfire=clamp_stage_n)
-      call clamp_soil_energy(y_stage, col_config, nsl, nfire=clamp_stage_n)
       call column_derivs(y_stage, frozen, col_config, n, nsl, k6, sf_out=surf_tend)
       call stage_bnd(y_stage, frozen, surf_tend, rnet(6), atm_enth(6), atm_vap(6), cond(6), cond_enth(6), atm_heat(6))
       tleaf_s(1:n,6) = surf_tend%leaf_temp(1:n) ; twood_s(1:n,6) = surf_tend%wood_temp(1:n)

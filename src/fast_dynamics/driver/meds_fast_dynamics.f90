@@ -26,11 +26,9 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t, soil_column_params
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
-                                       specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_column_view, only : copy_column_cohort
-   use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_buffers_t
    use meds_site_diag_types,  only : N_CDIAG, N_PDIAG, patch_diag_block, polygon_diag_block,     &
@@ -51,7 +49,7 @@ module meds_fast_dynamics
    use meds_forcing_kernels,  only : precip_phase
    use meds_met_driver,       only : met_advance, met_instant
    use meds_lapse_rate,       only : met_to_cas_top
-   use meds_canopy_aerodynamics, only : canopy_roughness
+   use meds_canopy_aerodynamics, only : canopy_roughness, open_canopy_fraction
    use meds_site_state_types, only : site_t, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, ensure_aero_out_capacity, rad_pft_optics_t, &
                                  rad_forcing_t, rad_flux_t, alloc_rad_forcing, N_RAD_BAND_DEFAULT, RAD_VIS, RAD_NIR, RAD_LW, &
@@ -325,7 +323,7 @@ contains
       type(met_forcing_t),    allocatable :: met_top_pool(:)   !< the sample at the patch's canopy-air top
       real(wp),               allocatable :: gpp_pool(:,:), leaf_resp_pool(:,:)
       real(wp),               allocatable :: stem_resp_pool(:,:), root_resp_pool(:,:), psi_leaf_pool(:,:)
-      real(wp)    :: sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days
+      real(wp)    :: sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days
       real(wp)    :: prow(N_PDIAG)                !< the patch block's row for one (patch, sub-step)
       real(wp)    :: z_top, rough_p, displace_p   !< [m] this patch's canopy-air top, roughness, displacement
       integer(ik) :: j, i, i0, ncoh, ith, kb
@@ -410,12 +408,6 @@ contains
          if (do_cdiag) out_bufs%fast_coh_cdiag = 0.0_wp
       end if
 
-      !----- Reconcile stored tissue water against the capacity today's biomass allows, BEFORE    !
-      !      anything reads it. It WRITES, so it runs once per call, outside every loop: inside   !
-      !      the integrator's inner loop that mass edit would be unbooked, and the whole-column   !
-      !      ledger could not see it. ------------------------------------------------------------!
-      call reconcile_tissue_water_capacity(site, ctx%col_config%hydraulics_table)
-
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -482,7 +474,8 @@ contains
 
       !$omp parallel do default(shared) schedule(dynamic, 1) num_threads(n_thread)                  &
       !$omp    private(ip, ith, isub, j, i, i0, ncoh,                                              &
-      !$omp            sum_lai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days, prow, kb, &
+      !$omp            sum_lai, sum_wai, le_flux, h_flux, rnet, gpp_patch, npp_patch, dt_fast_days,   &
+      !$omp            prow, kb,                                                                    &
       !$omp            sw_ground, z_top, rough_p, displace_p)
       do ip = 1_ik, npatch
          !----- This thread's slot in the scratch pool. The `!$` sentinel keeps the non-OpenMP build  !
@@ -505,19 +498,22 @@ contains
          !      forms). Capacity was ensured above (ncoh <= ncoh_max always); this just updates the !
          !      ACTIVE count -- no allocation. -----------------------------------------------------!
          call copy_column_cohort(col_cohort, site%cohort, i0, ncoh)
-         sum_lai = 0.0_wp
+         sum_lai = 0.0_wp ; sum_wai = 0.0_wp
          do j = 1_ik, ncoh
             sum_lai = sum_lai + col_cohort%lai(j)
+            sum_wai = sum_wai + col_cohort%wai(j)
          end do
 
-         !----- Per-patch canopy geometry. The driver passes a closed, unburied canopy              !
-         !      (opencan_frac = 0, snowfac = 0), so the aerodynamics' open-canopy and snow blends   !
-         !      are inactive (see docs/ROADMAP.md). ------------------------------------------------!
+         !----- Per-patch canopy geometry. The ground conductance weighs bare ground by the patch's  !
+         !      open fraction exp(-(LAI + WAI)) (docs/science/canopy_aerodynamics.md eq. (6)), so a   !
+         !      patch without cohorts couples its ground as bare soil. The canopy is never buried in  !
+         !      snow (snowfac = 0; see docs/ROADMAP.md). ------------------------------------------------!
          ageom%veg_height   = ctx%veg_height_bare
          do j = 1_ik, ncoh
             ageom%veg_height = max(ageom%veg_height, col_cohort%height(j))
          end do
-         ageom%opencan_frac = 0.0_wp ; ageom%snowfac = 0.0_wp
+         ageom%opencan_frac = open_canopy_fraction(sum_lai, sum_wai)
+         ageom%snowfac      = 0.0_wp
 
          call alloc_forcing(forc, ncoh)
 
@@ -545,12 +541,10 @@ contains
             i = i0 + j - 1_ik
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
-            !----- Tissue water is READ here, never written. The PSI_INIT seed and the capacity     !
-            !      clamp are a slow-loop concern -- capacity is a function of leaf/sapwood/root     !
-            !      carbon, which only the slow loop changes -- and both WRITE, so they are          !
-            !      `reconcile_tissue_water_capacity`, run once per call before the patch loop.      !
-            !      Capacity is constant across a slow step, so the clamp is idempotent and the seed !
-            !      fires at most once. -------------------------------------------------------------!
+            !----- Tissue water is READ here, never written. Fitting it to the capacity the biomass  !
+            !      allows is the slow tier's: a cohort is born with its water, new leaves take theirs   !
+            !      from the wood, and water above the capacity is shed before the fast loop runs       !
+            !      (docs/science/soil_plant_water.md §2), all booked by the slow ledger. ---------------!
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !
@@ -600,7 +594,6 @@ contains
             !      apply_rt_forcing). ----------------------------------------------------------------!
             if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
-                                 cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv),          &
                                  biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
                                  ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
@@ -980,7 +973,7 @@ contains
    !      two-stream ABSORBED VIS by that same absorptance to hand back an incident-equivalent PAR  !
    !      -- otherwise leaf absorptance would be applied twice. abs_sw stays true ABSORBED SW (the  !
    !      leaf energy balance wants absorbed).                                                      !
-   subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp, tcas,          &
+   subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp,                &
                                soil_temp_top, snow, snow_params, soil_albedo, soil_emiss, rad_opt, met, &
                                leaf_absorptance)
       type(column_forcing_t),  intent(inout) :: forc
@@ -989,7 +982,6 @@ contains
       real(wp),                intent(in)    :: lai(:), wai(:)   !< [m2/m2] leaf / wood area index
       real(wp),                intent(in)    :: height(:)        !< [m] cohort height
       real(wp),                intent(in)    :: leaf_temp(:), wood_temp(:)   !< [K] lagged tissue temperatures
-      real(wp),                intent(in)    :: tcas             !< [K] CAS temperature (unused: the RT emits at T_rad, below)
       real(wp),                intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground emission)
       type(snow_column_t),     intent(in)    :: snow             !< pack store (albedo / emissivity ramp)
       type(snow_params_t),     intent(in)    :: snow_params
@@ -1023,8 +1015,8 @@ contains
          !      (start-of-sub-step) tissue temperatures (docs/science/canopy_radiation_transfer.md §3), !
          !      so the longwave field between cohorts, sky and ground sees both tissues. abs_lw below   !
          !      is therefore the NET longwave with the tissue emitting at T_rad, while                  !
-         !      veg_energy_balance linearizes the emission change about T_cas (t_emit = T_cas,          !
-         !      docs/science/vegetation_energy_dynamics.md eq. (1)): emission is not counted exactly    !
+         !      veg_energy_balance linearizes the emission change about T_cas                           !
+         !      (docs/science/vegetation_energy_dynamics.md eq. (1)): emission is not counted exactly   !
          !      once at the tissue's own temperature, a known residual ("The emission base" there). ----!
          lf_bt      = lai(i) / max(lai(i) + wai(i), tiny_num)
          tcan_bt(j) = (lf_bt * leaf_temp(i) ** 4                                             &

@@ -3,16 +3,16 @@
 """Check, and calibrate, the PFTs' growth against BCI's census.
 
 What pft_parameters.toml sets from data, and why, is in its comments: wood, size and mortality are
-example 03's census fits; the leaves' top-of-canopy lifespan and mass per area are Panama's sun
-leaves', with Ma et al. (2025)'s light plasticity; fine-root carbon equals leaf carbon; stem
-respiration is charged on sapwood volume at a rate set from stand totals in the literature; the fine
-roots' own respiration, the share of growth put into reproduction and the sink limit on diameter
-growth are set from field data too.
+example 03's census fits; the leaves' top-of-canopy turnover rate (1 / their lifespan) and mass per
+area are Panama's sun leaves', with Ma et al. (2025)'s light plasticity; fine-root carbon equals leaf
+carbon; stem respiration is charged on sapwood volume at a rate set from stand totals in the
+literature; the fine roots' own respiration, the share of growth put into reproduction and the sink
+limit on diameter growth are set from field data too.
 
 `check` runs that file as it is against the census and writes calibration.json. The search fits three
 parameters, shared by the PFTs: the height at which trees start to reproduce (only trees above it
 pay for reproduction, so it shapes growth by size), fine-root turnover as a multiple of the leaves'
-(1 / leaf_lifespan_toc), and one scale on the three PFTs' Vcmax25 (the growth level; the plasticity
+(leaf_turnover_rate_toc), and one scale on the three PFTs' Vcmax25 (the growth level; the plasticity
 slopes follow it). The shipped onset height, 5.27 m, is its fit; root turnover (1.5 x the leaves') and
 Vcmax25 (example 04's, a scale of 1) are set from data instead.
 
@@ -70,7 +70,7 @@ RESULT = os.path.join(HERE, "calibration.json")
 
 #: The fitted parameters and their boxes.
 FIT = {"reproduction_height_fraction": (0.15, 0.9),   # [--] of the local maximum height (5-30 m at BCI)
-       "fineroot_turnover": (1.5, 5.0),          # [--] fine-root turnover x leaf_lifespan_toc
+       "fineroot_turnover": (1.5, 5.0),          # [--] fine-root turnover / leaf_turnover_rate_toc
        "vcmax_scale": (0.7, 1.2)}                # [--] on the PFT file's Vcmax25
 #: Stand totals of the trial's years 2-5, (mean, sd) each, added to the loss as ((x - mean) / sd)^2.
 TARGETS = {"fineroot": (0.27, 0.11),    # fine roots' share of NPP: Malhi, Doughty & Galbraith (2011), 35 sites
@@ -106,7 +106,7 @@ def apply(cfg, par):
     cfg.set("derived.kplastic_vcmax", k_vc, file="pft")
     cfg.set("derived.kplastic_rd", k_rd, file="pft")
     cfg.set("pft.fineroot_turnover_rate",
-            [par["fineroot_turnover"] / ll for ll in cfg.get("pft.leaf_lifespan_toc", file="pft")], file="pft")
+            [par["fineroot_turnover"] * r for r in cfg.get("pft.leaf_turnover_rate_toc", file="pft")], file="pft")
     cfg.set("pft.reproduction_height_fraction", par["reproduction_height_fraction"], file="pft")
     return cfg
 

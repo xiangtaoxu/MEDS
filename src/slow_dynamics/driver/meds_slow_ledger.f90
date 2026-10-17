@@ -33,7 +33,7 @@ module meds_slow_ledger
    use meds_constants,          only : rho_h2o
    use meds_config,             only : meds_config_t, soil_column_params
    use meds_site_state_types,   only : site_t, cohort_tissue_heat_capacity,                    &
-                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    use meds_column_params,      only : soil_params_t
    use meds_therm_lib,          only : cas_molar_density
    use meds_allometry,          only : min_cohort_carbon
@@ -49,7 +49,8 @@ module meds_slow_ledger
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
-             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC
+             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
+             SLOW_PHASE_TISSUE_WATER
 
    !----- The phases a slow step is divided into. Each is marked at the boundary of the operator  !
    !      group that owns it, so a residual names the operator that produced it. -----------------!
@@ -61,7 +62,8 @@ module meds_slow_ledger
    integer(ik), parameter :: SLOW_PHASE_PATCH    = 6_ik  !< patch sort / fuse / terminate (+ trailing cohort ops)
    integer(ik), parameter :: SLOW_PHASE_CANOPY   = 7_ik  !< refresh_canopy_depth (the open CAS control volume)
    integer(ik), parameter :: SLOW_PHASE_SOILC    = 8_ik  !< the CENTURY daily step
-   integer(ik), parameter :: N_SLOW_PHASE        = 8_ik
+   integer(ik), parameter :: SLOW_PHASE_TISSUE_WATER = 9_ik  !< tissue water above capacity shed, before the fast loop
+   integer(ik), parameter :: N_SLOW_PHASE        = 9_ik
 
    !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
    !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
@@ -369,7 +371,7 @@ contains
                !----- Tissue heat, through the SHARED capacity (state/site), so the ledger, the    !
                !      demography operators and the slow driver cannot drift apart on what a        !
                !      cohort's thermal mass is. ---------------------------------------------------!
-               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_SAPW,               &
+               call cohort_tissue_heat_capacity(c, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,           &
                                                 TISSUE_HCAP_MIN, cap_leaf, cap_wood)
                store%energy = store%energy + a * (cap_leaf * c%leaf_temp(i) + cap_wood * c%wood_temp(i))
             end do
@@ -391,7 +393,7 @@ contains
          i0 = site%patch%cohort_offset(ip)
          i1 = i0 + site%patch%cohort_count(ip) - 1_ik
          do i = i0, i1
-            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_SAPW,        &
+            call cohort_tissue_heat_capacity(site%cohort, i, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,    &
                                              TISSUE_HCAP_MIN, cap_leaf, cap_wood)
             e = e + site%patch%area(ip) * (cap_leaf * site%cohort%leaf_temp(i)                    &
                                          + cap_wood * site%cohort%wood_temp(i))
@@ -456,6 +458,7 @@ contains
       case (SLOW_PHASE_PATCH)    ; nm = 'patch fuse/term'
       case (SLOW_PHASE_CANOPY)   ; nm = 'canopy depth'
       case (SLOW_PHASE_SOILC)    ; nm = 'soil carbon'
+      case (SLOW_PHASE_TISSUE_WATER) ; nm = 'tissue water'
       case default               ; nm = '?'
       end select
    end function slow_phase_name

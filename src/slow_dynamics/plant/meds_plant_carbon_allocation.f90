@@ -83,13 +83,13 @@ contains
       !      neither; without them wood takes the whole residual. -----------------------------------!
       real(wp), intent(in),  optional :: wood_growth_max  !< [kgC/plant] sink-limited wood growth this step
       real(wp), intent(out), optional :: exudate          !< [kgC/plant] residual the sink cannot use (>= 0)
-      real(wp) :: net, g, cost, avail, store_left, draw, debt, store_hcap_per_dt, c_repro, c_wood, c_exudate
+      real(wp) :: net, g, cost, avail, store_left, draw, debt, storage_refill, c_repro, c_wood, c_exudate
 
       growth_leaf = 0.0_wp
       growth_fineroot = 0.0_wp
       growth_wood = 0.0_wp
       growth_repro = 0.0_wp
-      store_hcap_per_dt = 0.0_wp
+      storage_refill = 0.0_wp
       draw = 0.0_wp
       growth_resp = 0.0_wp
       deficit = 0.0_wp
@@ -118,8 +118,8 @@ contains
       call fill_carbon_demand(leaf_demand,     g, cost, avail, store_left, draw, growth_leaf,     growth_resp)
       call fill_carbon_demand(fineroot_demand, g, cost, avail, store_left, draw, growth_fineroot, growth_resp)
       !----- P2: refill storage from remaining NPP only (no construction cost). -----------------!
-      store_hcap_per_dt = min(max(storage_demand, 0.0_wp), max(avail, 0.0_wp))
-      avail   = avail - store_hcap_per_dt
+      storage_refill = min(max(storage_demand, 0.0_wp), max(avail, 0.0_wp))
+      avail   = avail - storage_refill
       !----- P3: reproduction -- a fraction of the post-storage residual, construction-charged. --!
       c_repro      = max(repro_frac, 0.0_wp) * max(avail, 0.0_wp)
       growth_repro = c_repro / cost
@@ -141,7 +141,7 @@ contains
       growth_resp = growth_resp + growth_respiration(growth_wood + c_exudate, g)
       if (present(exudate)) exudate = c_exudate
 
-      npp_store = store_hcap_per_dt - draw
+      npp_store = storage_refill - draw
    end subroutine plant_carbon_allocation
 
    !---------------------------------------------------------------------------------------!

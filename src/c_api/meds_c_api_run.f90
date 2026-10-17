@@ -259,11 +259,11 @@ contains
          case (11_c_int) ; buf(1:n) = real(c%leaf_resp_accum(1:n), c_double)
          case (12_c_int) ; buf(1:n) = real(c%stem_resp_accum(1:n), c_double)
          case (13_c_int) ; buf(1:n) = real(c%root_resp_accum(1:n), c_double)
-         !----- The live pools [kgC/plant] and the leaf lifespan the turnover runs on [yr]. ------!
+         !----- The live pools [kgC/plant] and the baseline leaf turnover rate [1/yr]. ----------!
          case (14_c_int) ; buf(1:n) = real(c%leaf_carbon(1:n),          c_double)
          case (15_c_int) ; buf(1:n) = real(c%fineroot_carbon(1:n),      c_double)
          case (16_c_int) ; buf(1:n) = real(c%nonstructural_carbon(1:n), c_double)
-         case (17_c_int) ; buf(1:n) = real(c%llspan(1:n),               c_double)
+         case (17_c_int) ; buf(1:n) = real(c%leaf_turnover_rate(1:n),   c_double)
          !----- The last slow step's allocation [kgC/plant/yr]: NPP (leaf, fine-root, wood,        !
          !      reproduction and storage growth) and its parts, the growth respiration and the root  !
          !      exudate; NaN unless the output needs the slow cohort diagnostics that hold them (a   !

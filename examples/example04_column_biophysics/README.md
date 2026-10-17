@@ -18,13 +18,15 @@ The example:
 
 ```bash
 cd examples/example04_column_biophysics
-python run_example.py --forcing-only            # the data, the forcing and its figures
-python run_example.py                           # every step, with the shipped calibration
-python run_example.py --calibrate --workers 40  # ... and redo the calibration first
+python run_example.py --forcing-only                     # the data, the forcing and its figures
+python run_example.py --census-dir /path/to/bci_census   # every step, with the shipped calibration
+python run_example.py --calibrate --workers 40           # ... and redo the calibration first
 ```
 
 It needs numpy, pandas, netCDF4, matplotlib and a built `meds_main` (`--meds-main`, default
-`../../build-ifx/meds_main`). Every step together takes about 20 minutes on 8 threads. The
+`../../build-ifx/meds_main`). The first full run builds the census file from the census tables, which
+it reads from `--census-dir` or the environment variable `BCI_CENSUS_DIR` (see The data); later runs
+reuse `data/bci_census2010_meds.csv`. Every step together takes about 20 minutes on 8 threads. The
 calibration's 1,096 runs took 55 minutes on 100 cores of five nodes, with the queue workers of
 [`scripts/calibrate_fast`](../../scripts/calibrate_fast/README.md).
 
@@ -36,8 +38,10 @@ calibration's 1,096 runs took 55 minutes on 100 cores of five nodes, with the qu
   which supported the tower.
 - **Census:** the BCI 50-ha plot's 2010 census (and 2005, for the plot's mortality). Condit et al.
   2019, Dryad [doi:10.15146/5xcp-0d46](https://doi.org/10.15146/5xcp-0d46), CC0; the PIs ask to be
-  told of papers that use it. Dryad refuses scripts, so download `bci.tree.zip` in a browser;
-  [`bci_census.toml`](bci_census.toml) names the copy to read.
+  told of papers that use it. Dryad refuses scripts, so download `bci.tree.zip` in a browser and
+  export the 2010 and 2005 tree tables (`bci.tree7`, `bci.tree6`) as `bci_2010.csv` and `bci_2005.csv`
+  into one folder. [`bci_census.toml`](bci_census.toml) declares how to read them; `run_example.py`
+  writes the folder into the copy it runs (`data/bci_census.toml`).
 
 ## 1. The forcing
 
@@ -63,7 +67,7 @@ corrected to the tower. On observations hidden from it, the longwave fill scores
   patches and 2,553 cohorts. One evergreen PFT ([`pft_parameters.toml`](pft_parameters.toml)) with
   MEDS's default allometry puts it at LAI 5.6 and 16.1 kgC m⁻² aboveground (the census's own
   estimate is 15.1).
-- **Leaf traits follow the light** down the canopy, and the canopy holds rain and dew.
+- **Leaf traits follow the light** down the canopy, and the canopy holds the rain it intercepts.
 - **Each tree roots to a depth set by its height** (5 m for a 35 m tree), cut at the soil's base, and
   water rises to its leaves through its sapwood, whose conductivity is set by wood density.
 - **The soil is BCI's clay**, 2 m deep, about the plot's soil above the saprolite; its water retention

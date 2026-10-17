@@ -36,7 +36,7 @@ module meds_polygon
    use meds_demography_cohort_fusefiss, only : max_cohort_count
    use meds_budget_check,           only : budget_t, budget_report
    use meds_slow_ledger,            only : slow_ledger_t, slow_ledger_report
-   use meds_output_types,           only : output_files_t, output_buffers_t
+   use meds_output_types,           only : output_files_t, output_buffers_t, MISSING_VALUE
    use meds_output_integrate,       only : output_integrate, output_integrate_fast, close_tier
    use meds_output_registry,        only : manager_setup, manager_finalize, manager_alloc_buffers, &
                                            manager_set_soil_params,                               &
@@ -45,6 +45,7 @@ module meds_polygon
                                            OVR_FALSE, OVR_MASK
    use meds_column_params,          only : soil_params_t, n_soil_layer_max
    use meds_allometry,              only : HEIGHT_CHAVE
+   use meds_biophysics_opts,        only : SOIL_BC_AQUIFER
    use meds_forcing_types,          only : met_cells_t
    use meds_toml,                   only : toml_table_t, toml_parse_file
    implicit none
@@ -522,6 +523,7 @@ contains
          allocate(files%polygon_soil_face(n_soil_layer_max + 1_ik, n), source=0.0_wp)
          allocate(files%polygon_soil_depth(n), files%polygon_deep_temp(n), source=0.0_wp)
          allocate(files%polygon_bottom_bc(n), source=0_ik)
+         allocate(files%polygon_drain_factor(n), source=0.0_wp)
          if (cfg%allom%height_form == HEIGHT_CHAVE) allocate(files%polygon_chave_e(n), source=0.0_wp)
       end if
       call manager_finalize(files)
@@ -530,9 +532,8 @@ contains
    !----- A polygon's share of an output file set: its buffers, which take the polygon's own soil !
    !      curve for the derived soil diagnostics, and the diagnostic blocks its site must         !
    !      accumulate for the set's variables. In a region's set, also its row of the per-polygon  !
-   !      variables: its layers and the inputs its cell's maps gave it, as it runs them (a leaky  !
-   !      base runs as free_drain; see docs/ROADMAP.md). A region always runs the fast loop, so   !
-   !      its column is built. -------------------------------------------------------------------!
+   !      variables: its layers and the inputs its cell's maps gave it, as it runs them. A region !
+   !      always runs the fast loop, so its column is built. --------------------------------------!
    subroutine attach_output(files, bufs, poly)
       type(output_files_t),   intent(inout) :: files
       type(output_buffers_t), intent(inout) :: bufs
@@ -550,6 +551,8 @@ contains
          files%polygon_soil_face(:, p) = soil%soil_layer_z
          files%polygon_soil_depth(p)   = cfg%soil_column%depth
          files%polygon_bottom_bc(p)    = cfg%soil%bottom_bc
+         files%polygon_drain_factor(p) = merge(MISSING_VALUE, cfg%soil%drain_factor,             &
+                                               cfg%soil%bottom_bc == SOIL_BC_AQUIFER)
          files%polygon_deep_temp(p)    = cfg%energy%deep_temp
          if (allocated(files%polygon_chave_e)) files%polygon_chave_e(p) = cfg%allom%chave_e
       end associate

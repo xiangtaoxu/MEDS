@@ -46,7 +46,7 @@ module meds_output_integrate
    public :: FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID
    public :: FLD_C_LAI, FLD_C_WAI, FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON
    public :: FLD_C_STORAGE_CARBON, FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_ONE
-   public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN, FLD_C_OVERTOP_LAI
+   public :: FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER, FLD_C_OVERTOP_LAI
    public :: FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP, FLD_C_ROOT_RESP
    public :: FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED
    public :: FLD_C_DIAG0, FLD_P_DIAG0, FLD_C_SDIAG0, FLD_PY_DIAG0
@@ -105,7 +105,7 @@ module meds_output_integrate
    integer(ik), parameter :: FLD_C_SLA             = 1015_ik
    integer(ik), parameter :: FLD_C_VCMAX25         = 1016_ik
    integer(ik), parameter :: FLD_C_RD25            = 1017_ik
-   integer(ik), parameter :: FLD_C_LLSPAN          = 1018_ik
+   integer(ik), parameter :: FLD_C_LEAF_TURNOVER   = 1018_ik
    integer(ik), parameter :: FLD_C_OVERTOP_LAI     = 1019_ik
    integer(ik), parameter :: FLD_C_GPP_ACCUM       = 1020_ik
    integer(ik), parameter :: FLD_C_LEAF_RESP       = 1021_ik
@@ -435,7 +435,7 @@ contains
       case (FLD_C_SLA)             ; x(1:n) = site%cohort%sla(1:n)
       case (FLD_C_VCMAX25)         ; x(1:n) = site%cohort%vcmax25(1:n)
       case (FLD_C_RD25)            ; x(1:n) = site%cohort%rd25(1:n)
-      case (FLD_C_LLSPAN)          ; x(1:n) = site%cohort%llspan(1:n)
+      case (FLD_C_LEAF_TURNOVER)   ; x(1:n) = site%cohort%leaf_turnover_rate(1:n)
       case (FLD_C_OVERTOP_LAI)     ; x(1:n) = site%cohort%overtopping_lai(1:n)
       case (FLD_C_GPP_ACCUM)       ; x(1:n) = site%cohort%gpp_accum(1:n)
       case (FLD_C_LEAF_RESP)       ; x(1:n) = site%cohort%leaf_resp_accum(1:n)

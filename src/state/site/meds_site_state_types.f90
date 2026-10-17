@@ -22,11 +22,15 @@ module meds_site_state_types
    use, intrinsic :: ieee_arithmetic, only : ieee_is_nan
    use meds_kinds,      only : wp, ik
    use meds_constants,  only : cp_liq
+   use meds_water_retention, only : wood_thermal_water
    use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
                                carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
-   use meds_column_params, only : LEAF_TEMP_INIT
+   use meds_column_params, only : LEAF_TEMP_INIT, PSI_INIT, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, &
+                                  TISSUE_HCAP_MIN
+   use meds_config,        only : hydraulics_config_t, pft_tissue_curves
+   use meds_water_retention, only : water_curve_t, water_content
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t, litter_input_t
    implicit none
@@ -40,20 +44,12 @@ module meds_site_state_types
    public :: set_cohort_size_from_carbon, carbon_flux_block
    public :: cohort_deriv_block, cohort_deriv_alloc
    public :: assign_cohort_id, assign_patch_id, reset_step_diagnostics
-   public :: cohort_tissue_heat_capacity, cohort_tissue_water
+   public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity),      !
-   !      plus the tissue specific heats (docs/science/vegetation_energy_dynamics.md eq.         !
-   !      (8)). The fast loop reads the latter from `veg_thermal_params_t`, which no config      !
-   !      sets -- these are its initializers. They live here because meds_demography and the     !
-   !      slow driver need them and may not link meds_fast_kernels, and one shared set beats     !
-   !      three private copies. They are hard-coded parameters, not config keys. ----------------!
-   real(wp), parameter, public :: C2B_WOOD        = 2.0_wp   !< carbon -> biomass (carbon fraction 0.5)
-   real(wp), parameter, public :: WOOD_MOIST_FRAC = 1.0_wp   !< [kg water/kg dry] fresh-sapwood moisture
-   real(wp), parameter, public :: TISSUE_C_LEAF   = 3200.0_wp !< [J/kg/K] dry leaf specific heat
-   real(wp), parameter, public :: TISSUE_C_SAPW   = 2700.0_wp !< [J/kg/K] dry wood specific heat
-   real(wp), parameter, public :: TISSUE_HCAP_MIN = 20.0_wp   !< [J/m2/K] resolvability floor
+   !----- The tissue heat constants live in meds_column_params, shared with the fast loop; they are   !
+   !      re-exported here for meds_demography and the slow driver. -------------------------------!
+   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
@@ -177,20 +173,20 @@ module meds_site_state_types
       !----- Gathered canopy-element geometry (the aerodynamic boundary layers). --------------!
       real(wp),    allocatable :: p_leaf_width(:)         !< [m]  characteristic leaf width
       real(wp),    allocatable :: p_branch_diameter(:)    !< [m]  characteristic branch diameter
-      real(wp),    allocatable :: p_crown_area_frac(:)    !< [--] crown area as a fraction of the patch
       !----- Gathered non-leaf MAINTENANCE respiration traits. ---------------------------------!
       logical,     allocatable :: p_is_woody(:)           !< .false. (grass) => stem respiration is 0
       real(wp),    allocatable :: p_stem_resp_factor25(:) !< [umol CO2/m2 stem/s @25C]
       real(wp),    allocatable :: p_root_resp_factor25(:) !< [umol CO2/kgC root/s @25C]
       real(wp),    allocatable :: p_stem_resp_sapwood25(:) !< [umol CO2/m3 sapwood/s @25C]
       !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
-      !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
-      !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
-      !       vcmax25/rd25 feed leaf gas exchange. -------------------------------------------------!
+      !       at birth and acclimated to light by meds_plant_trait_dynamics; blended on cohort fusion  !
+      !       on the quantity each is per (meds_demography_cohort_fusefiss). sla enters the leaf       !
+      !       carbon<->area map, leaf_turnover_rate sets baseline leaf turnover, vcmax25/rd25 feed     !
+      !       leaf gas exchange. ------------------------------------------------------------------!
       real(wp),    allocatable :: sla(:)            !< [m2/kgC]     specific leaf area
       real(wp),    allocatable :: vcmax25(:)        !< [umol/m2/s]  max carboxylation at 25 degC
       real(wp),    allocatable :: rd25(:)           !< [umol/m2/s]  leaf dark respiration at 25 degC
-      real(wp),    allocatable :: llspan(:)         !< [yr]         leaf lifespan (baseline turnover = 1/llspan)
+      real(wp),    allocatable :: leaf_turnover_rate(:) !< [1/yr]   baseline leaf turnover
       !----- PROGNOSTIC fast-biophysics per-cohort state (owned here so it rides the cohort     !
       !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion for the       !
       !      intensive quantities). leaf_temp is a warm-start for the VPD lag. -----------------!
@@ -200,13 +196,11 @@ module meds_site_state_types
       !      hydraulic state; psi is diagnosed from mass via psi_from_water_content wherever         !
       !      needed (docs/science/plant_hydraulics.md §2). EXTENSIVE per plant (like AGB):           !
       !      fusion conserves the nplant-weighted TOTAL, not a leaf-area-weighted mean               !
-      !      (fuse_cohort_fast_state). Genuine sub-slow-step hydraulic memory. A fresh/reused        !
-      !      slot is seeded 0, a sentinel: computing the true water_content(PSI_INIT) seed needs     !
-      !      plant-hydraulics PFT traits, which the state layer cannot reach, so the fast            !
-      !      driver's first touch of a sentinel cohort seeds it properly                             !
-      !      (meds_fast_dynamics.f90). --------------------------------------------------------------!
-      real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water (0 = uninitialized)
-      real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood water (0 = uninitialized)
+      !      (fuse_cohort_fast_state). Genuine sub-slow-step hydraulic memory. A cohort is born      !
+      !      holding the water its tissues hold at PSI_INIT (init_cohort), so 0 is a real amount: a  !
+      !      leafless cohort's leaves hold none. ------------------------------------------------------!
+      real(wp),    allocatable :: leaf_water_mass(:) !< [kg/plant] internal leaf water
+      real(wp),    allocatable :: wood_water_mass(:) !< [kg/plant] internal wood (sapwood + fine-root) water
       !----- Leaf/wood SURFACE (interception film) water [kg/m2 GROUND] -- a store DISTINCT from     !
       !      the internal water above (docs/science/soil_biophysics.md, "Canopy interception"):      !
       !      rain intercepted onto the canopy, evaporating through the boundary layer (no            !
@@ -214,9 +208,7 @@ module meds_site_state_types
       !      intercept_canopy_layer's own leaf_water/rain_above/rainfall are all per m2 of the       !
       !      WHOLE patch, not per plant), so fusion SUMS it (like two ground-area contributions      !
       !      adding up), NOT nplant-weights it -- the opposite convention from                       !
-      !      leaf_water_mass/wood_water_mass just above. A fresh/reused slot seeds a TRUE 0          !
-      !      (bone dry is a real initial condition here, not a sentinel -- no PFT-trait lookup       !
-      !      is needed to seed it, unlike the internal water mass). ---------------------------------!
+      !      leaf_water_mass/wood_water_mass just above. A new cohort's films are dry. ---------------!
       real(wp),    allocatable :: leaf_surf_water(:) !< [kg/m2 ground] leaf interception film
       real(wp),    allocatable :: wood_surf_water(:) !< [kg/m2 ground] wood interception film
       real(wp),    allocatable :: gpp_accum(:)      !< [kgC/plant] GROSS GPP accumulated over the slow step
@@ -478,12 +470,12 @@ contains
          site%cohort%dmax_psi_leaf, site%cohort%dmax_psi_leaf_accum,                            &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
          site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
-         site%cohort%llspan, site%cohort%p_aboveground_frac,                                            &
+         site%cohort%leaf_turnover_rate, site%cohort%p_aboveground_frac,                                &
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
          site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
          site%cohort%p_sapwood_area_b2, site%cohort%p_leaf_width, site%cohort%p_branch_diameter,         &
-         site%cohort%p_crown_area_frac, site%cohort%p_is_woody,                                          &
+         site%cohort%p_is_woody,                                                                         &
          site%cohort%p_stem_resp_factor25, site%cohort%p_root_resp_factor25,                             &
          site%cohort%p_stem_resp_sapwood25,                                                              &
          site%cohort%leaf_carbon, site%cohort%fineroot_carbon, site%cohort%wood_carbon,                  &
@@ -522,10 +514,10 @@ contains
       allocate(cohort%wood_area(cap), cohort%sapwood_carbon(cap), cohort%sapwood_area(cap))
       allocate(cohort%p_wai_b1(cap), cohort%p_wai_b2(cap), cohort%p_sapwood_area_b1(cap),          &
                cohort%p_sapwood_area_b2(cap))
-      allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap), cohort%p_crown_area_frac(cap))
+      allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap))
       allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
       allocate(cohort%p_stem_resp_sapwood25(cap))
-      allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
+      allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%leaf_turnover_rate(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap), cohort%light_hours_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
@@ -556,11 +548,11 @@ contains
       cohort%wood_area = 0.0_wp ; cohort%sapwood_carbon = 0.0_wp ; cohort%sapwood_area = 0.0_wp
       cohort%p_wai_b1 = 0.0_wp ; cohort%p_wai_b2 = 0.0_wp
       cohort%p_sapwood_area_b1 = 0.0_wp ; cohort%p_sapwood_area_b2 = 0.0_wp
-      cohort%p_leaf_width = 0.0_wp ; cohort%p_branch_diameter = 0.0_wp ; cohort%p_crown_area_frac = 0.0_wp
+      cohort%p_leaf_width = 0.0_wp ; cohort%p_branch_diameter = 0.0_wp
       cohort%p_is_woody = .true.
       cohort%p_stem_resp_factor25 = 0.0_wp ; cohort%p_root_resp_factor25 = 0.0_wp
       cohort%p_stem_resp_sapwood25 = 0.0_wp
-      cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
+      cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%leaf_turnover_rate = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
@@ -628,7 +620,7 @@ contains
       tmp%sla(1:m)                 = cohort%sla(1:m)
       tmp%vcmax25(1:m)               = cohort%vcmax25(1:m)
       tmp%rd25(1:m)                  = cohort%rd25(1:m)
-      tmp%llspan(1:m)                = cohort%llspan(1:m)
+      tmp%leaf_turnover_rate(1:m)    = cohort%leaf_turnover_rate(1:m)
       tmp%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(1:m)
       tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
@@ -641,7 +633,6 @@ contains
       tmp%p_sapwood_area_b2(1:m) = cohort%p_sapwood_area_b2(1:m)
       tmp%p_leaf_width(1:m) = cohort%p_leaf_width(1:m)
       tmp%p_branch_diameter(1:m) = cohort%p_branch_diameter(1:m)
-      tmp%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(1:m)
       tmp%p_is_woody(1:m) = cohort%p_is_woody(1:m)
       tmp%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(1:m)
       tmp%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(1:m)
@@ -701,7 +692,7 @@ contains
       call move_alloc(src%sla, dst%sla)
       call move_alloc(src%vcmax25, dst%vcmax25)
       call move_alloc(src%rd25, dst%rd25)
-      call move_alloc(src%llspan, dst%llspan)
+      call move_alloc(src%leaf_turnover_rate, dst%leaf_turnover_rate)
       call move_alloc(src%p_aboveground_frac, dst%p_aboveground_frac)
       call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
@@ -714,7 +705,6 @@ contains
       call move_alloc(src%p_sapwood_area_b2, dst%p_sapwood_area_b2)
       call move_alloc(src%p_leaf_width, dst%p_leaf_width)
       call move_alloc(src%p_branch_diameter, dst%p_branch_diameter)
-      call move_alloc(src%p_crown_area_frac, dst%p_crown_area_frac)
       call move_alloc(src%p_is_woody, dst%p_is_woody)
       call move_alloc(src%p_stem_resp_factor25, dst%p_stem_resp_factor25)
       call move_alloc(src%p_root_resp_factor25, dst%p_root_resp_factor25)
@@ -826,7 +816,7 @@ contains
       cohort%sla(1:m)                 = cohort%sla(perm(1:m))
       cohort%vcmax25(1:m)               = cohort%vcmax25(perm(1:m))
       cohort%rd25(1:m)                  = cohort%rd25(perm(1:m))
-      cohort%llspan(1:m)                = cohort%llspan(perm(1:m))
+      cohort%leaf_turnover_rate(1:m)    = cohort%leaf_turnover_rate(perm(1:m))
       cohort%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(perm(1:m))
       cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
@@ -839,7 +829,6 @@ contains
       cohort%p_sapwood_area_b2(1:m) = cohort%p_sapwood_area_b2(perm(1:m))
       cohort%p_leaf_width(1:m) = cohort%p_leaf_width(perm(1:m))
       cohort%p_branch_diameter(1:m) = cohort%p_branch_diameter(perm(1:m))
-      cohort%p_crown_area_frac(1:m) = cohort%p_crown_area_frac(perm(1:m))
       cohort%p_is_woody(1:m) = cohort%p_is_woody(perm(1:m))
       cohort%p_stem_resp_factor25(1:m) = cohort%p_stem_resp_factor25(perm(1:m))
       cohort%p_root_resp_factor25(1:m) = cohort%p_root_resp_factor25(perm(1:m))
@@ -915,7 +904,7 @@ contains
       cohort%sla(dst)                 = cohort%sla(src)
       cohort%vcmax25(dst)               = cohort%vcmax25(src)
       cohort%rd25(dst)                  = cohort%rd25(src)
-      cohort%llspan(dst)                = cohort%llspan(src)
+      cohort%leaf_turnover_rate(dst)    = cohort%leaf_turnover_rate(src)
       cohort%p_aboveground_frac(dst)    = cohort%p_aboveground_frac(src)
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
@@ -928,7 +917,6 @@ contains
       cohort%p_sapwood_area_b2(dst) = cohort%p_sapwood_area_b2(src)
       cohort%p_leaf_width(dst) = cohort%p_leaf_width(src)
       cohort%p_branch_diameter(dst) = cohort%p_branch_diameter(src)
-      cohort%p_crown_area_frac(dst) = cohort%p_crown_area_frac(src)
       cohort%p_is_woody(dst) = cohort%p_is_woody(src)
       cohort%p_stem_resp_factor25(dst) = cohort%p_stem_resp_factor25(src)
       cohort%p_root_resp_factor25(dst) = cohort%p_root_resp_factor25(src)
@@ -1028,8 +1016,8 @@ contains
       !      the sapwood ring, which set_cohort_size_from_carbon re-derives from the merged dbh;  !
       !      that leaves a small thermal-mass change, of the same kind growth makes and declared   !
       !      the same way by the caller.  --------------------------------------------------!
-      call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clr, cwr)
-      call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cld, cwd)
+      call cohort_tissue_heat_capacity(cohort, recc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, clr, cwr)
+      call cohort_tissue_heat_capacity(cohort, donc, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cld, cwd)
       call blend(cohort%leaf_temp,        clr, cld)
       call blend(cohort%wood_temp,        cwr, cwd)
       !----- EXTENSIVE: internal tissue water [kg/plant] and the per-plant flux accumulators. --!
@@ -1079,7 +1067,6 @@ contains
          cohort%p_sapwood_area_b2(i)    = pft%sapwood_area_b2(p)
          cohort%p_leaf_width(i)         = pft%leaf_width(p)
          cohort%p_branch_diameter(i)    = pft%branch_diameter(p)
-         cohort%p_crown_area_frac(i)    = pft%crown_area_frac(p)
          cohort%p_is_woody(i)           = pft%is_woody(p)
          cohort%p_stem_resp_factor25(i) = pft%stem_resp_factor25(p)
          cohort%p_root_resp_factor25(i) = pft%root_resp_factor25(p)
@@ -1139,29 +1126,33 @@ contains
    ! state layer, which all three already import, so it is the one place all three can       !
    ! share.                                                                                  !
    !                                                                                         !
-   ! It reproduces meds_fast_frozen's construction exactly, including two choices worth      !
-   ! naming: the WOOD's thermal water is the SAPWOOD ring at a fixed moisture fraction, NOT  !
-   ! the hydraulic store `wood_water_mass` (heartwood is taken as dry, which is what makes   !
-   ! it heartwood), and both dry capacities are floored at `hcap_min` so a bare-canopy       !
-   ! cohort stays thermally resolvable. The fast loop builds its own copy                    !
-   ! (docs/science/vegetation_energy_dynamics.md eq. (8)); this function is the half of that !
-   ! pair that three libraries can reach.                                                    !
+   ! It reproduces meds_fast_frozen's construction exactly                                   !
+   ! (docs/science/vegetation_energy_dynamics.md eq. (8)), including two choices worth       !
+   ! naming. The WOOD's dry tissue is all the wood, at the dry specific heat, and its water  !
+   ! is the sapwood share of the hydraulic store `wood_water_mass` (wood_thermal_water, one  !
+   ! function for both): the fine roots' share sits in the soil and heartwood holds none.    !
+   ! Each dry capacity is at least `hcap_min` per unit of the tissue's own area, so a        !
+   ! tissue's capacity scales with its area as its fluxes do, and splitting a cohort in two  !
+   ! changes neither the sum nor a fusion weight. The fast loop builds its own copy from the !
+   ! column view; this function is the half of that pair that three libraries can reach.     !
    !=========================================================================================!
-   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf, cap_wood)
+   pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_wood_dry, hcap_min, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
-      real(wp),           intent(in)  :: c_leaf, c_sapw, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2/K]
-      real(wp),           intent(out) :: cap_leaf, cap_wood         !< [J/m2 ground/K]
+      real(wp),           intent(in)  :: c_leaf, c_wood_dry, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2 tissue/K]
+      real(wp),           intent(out) :: cap_leaf, cap_wood             !< [J/m2 ground/K]
       real(wp) :: n
       n = cohort%nplant(i)
-      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min)                      &
+      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min * n * cohort%leaf_area(i))   &
                + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
-      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_sapw, hcap_min)                      &
-               + cohort%sapwood_carbon(i) * n * C2B_WOOD * WOOD_MOIST_FRAC * cp_liq
+      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_wood_dry, hcap_min * n * cohort%wood_area(i))  &
+               + n * wood_thermal_water(cohort%wood_water_mass(i), cohort%sapwood_carbon(i),              &
+                                        cohort%fineroot_carbon(i)) * cp_liq
    end subroutine cohort_tissue_heat_capacity
 
-   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the store the plant      !
-   !       hydraulics carries, distinct from the sapwood moisture the thermal capacity above uses. !
+   !----- One cohort's INTERNAL (hydraulic) tissue water [kg/m2 ground]: the stores the plant     !
+   !       hydraulics carries, of which the heat capacity above counts the leaf's and the wood     !
+   !       store's sapwood share. -----------------------------------------------------------------!
    pure function cohort_tissue_water(cohort, i) result(w)
       type(cohort_block), intent(in) :: cohort
       integer(ik),        intent(in) :: i
@@ -1174,11 +1165,12 @@ contains
    ! The bounds of a cohort's state: its plant density, carbon pools, SLA, and the water it    !
    ! holds (internal stores and the films on its leaves and wood) are amounts, never below     !
    ! zero and never infinite. Every operator keeps them in bounds by construction -- the        !
-   ! applier floors the pools, mortality never takes nplant below `negligible`, the fast loop    !
-   ! clamps the films into [0, capacity] -- so a violation is an operator bug. The driver checks !
-   ! this every step and names the field, so the bug is caught the step it happens instead of   !
-   ! through a quantity derived from it, somewhere else, years later. The geometry is not       !
-   ! checked: it is a function of these. Returns the first bad field's index, 0 if none.        !
+   ! applier zeroes only a pool's round-off, mortality never takes nplant below `negligible`,   !
+   ! the fast loop clamps the films into [0, capacity] -- so a violation is an operator bug.    !
+   ! The driver checks this every step and names the field, so the bug is caught the step it    !
+   ! happens instead of through a quantity derived from it, somewhere else, years later. The    !
+   ! geometry is not checked: it is a function of these. Returns the first bad field's index,   !
+   ! 0 if none.                                                                                 !
    !---------------------------------------------------------------------------------------!
    pure function cohort_bad_field(cohort, i) result(k)
       type(cohort_block), intent(in) :: cohort
@@ -1225,11 +1217,14 @@ contains
    ! hold a stale value; it is recomputed by update_overtopping_lai every slow step anyway).    !
    ! The caller ensures capacity, stamps the global id, and bumps cohort%n.                    !
    !---------------------------------------------------------------------------------------!
-   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, birth_temp)
+   subroutine init_cohort(cohort, m, pft, ipft, owner_patch, nplant, dbh, hydraulics, birth_temp)
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: m, ipft, owner_patch
       type(pft_table_t),  intent(in)    :: pft
       real(wp),           intent(in)    :: nplant, dbh
+      !----- The shared [hydraulics] traits, which with the PFT's own give its tissue curves: the new  !
+      !      cohort is born holding the water its tissues hold at PSI_INIT. -------------------------!
+      type(hydraulics_config_t), intent(in) :: hydraulics
       !----- Birth TEMPERATURE. Defaults to LEAF_TEMP_INIT, a single global constant of 288.15 K,   !
       !      which is fine for a setup call with no environment yet but wrong for a recruit: a      !
       !      sapling appearing in an Ithaca January is born ~23 K warmer than the air it stands in, !
@@ -1237,6 +1232,7 @@ contains
       !      canopy-air temperature passes it, so the recruit starts in thermal equilibrium with    !
       !      its patch instead of with a compile-time constant.  ---------------------------------!
       real(wp), optional, intent(in)    :: birth_temp
+      type(water_curve_t) :: leaf_curve, wood_curve
       cohort%pft(m)              = ipft
       cohort%owner_patch(m)      = owner_patch
       cohort%nplant(m)           = nplant
@@ -1266,7 +1262,7 @@ contains
       cohort%sla(m)                = pft%sla(ipft)
       cohort%vcmax25(m)              = pft%vcmax25(ipft)          ! dynamic leaf traits born at
       cohort%rd25(m)                 = pft%rd25(ipft)             ! top-of-canopy; plasticity relaxes
-      cohort%llspan(m)               = pft%leaf_lifespan_toc(ipft)! them toward the shaded target
+      cohort%leaf_turnover_rate(m)   = pft%leaf_turnover_rate_toc(ipft) ! them toward the shaded target
       cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)
@@ -1276,7 +1272,6 @@ contains
       cohort%p_sapwood_area_b2(m)    = pft%sapwood_area_b2(ipft)
       cohort%p_leaf_width(m)         = pft%leaf_width(ipft)
       cohort%p_branch_diameter(m)    = pft%branch_diameter(ipft)
-      cohort%p_crown_area_frac(m)    = pft%crown_area_frac(ipft)
       cohort%p_is_woody(m)           = pft%is_woody(ipft)
       cohort%p_stem_resp_factor25(m) = pft%stem_resp_factor25(ipft)
       cohort%p_root_resp_factor25(m) = pft%root_resp_factor25(ipft)
@@ -1287,12 +1282,31 @@ contains
       if (present(birth_temp)) then
          cohort%leaf_temp(m) = birth_temp ; cohort%wood_temp(m) = birth_temp
       end if
-      cohort%leaf_water_mass(m)  = 0.0_wp             ! sentinel: the fast driver seeds a real value on first touch
-      cohort%wood_water_mass(m)  = 0.0_wp             ! (needs plant-hydraulics PFT traits, unavailable here)
-      cohort%leaf_surf_water(m)  = 0.0_wp             ! true IC: a new cohort's canopy starts bone dry (no lookup needed)
+      cohort%leaf_surf_water(m)  = 0.0_wp             ! a new cohort's canopy starts dry
       cohort%wood_surf_water(m)  = 0.0_wp
       call set_cohort_size(cohort, m)                 ! carbon pools from dbh, then the geometry from them
+      call pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
+      call set_cohort_tissue_water(cohort, m, PSI_INIT, leaf_curve, wood_curve)
    end subroutine init_cohort
+
+   !----- The carbon whose water a cohort's wood store holds [kgC/plant]: the sapwood ring and the   !
+   !      fine roots, one store in the plant-water network (docs/science/soil_plant_water.md §1). ---!
+   elemental pure real(wp) function cohort_wood_store_carbon(sapwood_carbon, fineroot_carbon) result(c)
+      real(wp), intent(in) :: sapwood_carbon, fineroot_carbon   !< [kgC/plant]
+      c = sapwood_carbon + fineroot_carbon
+   end function cohort_wood_store_carbon
+
+   !----- Fill a cohort's leaf and wood stores with the water they hold at potential `psi` on their  !
+   !      own curves (docs/science/plant_hydraulics.md eq. (5)): a cohort's water at birth. ---------!
+   pure subroutine set_cohort_tissue_water(cohort, i, psi, leaf_curve, wood_curve)
+      type(cohort_block),  intent(inout) :: cohort
+      integer(ik),         intent(in)    :: i
+      real(wp),            intent(in)    :: psi                    !< [MPa]
+      type(water_curve_t), intent(in)    :: leaf_curve, wood_curve
+      cohort%leaf_water_mass(i) = water_content(psi, leaf_curve, cohort%leaf_carbon(i))
+      cohort%wood_water_mass(i) = water_content(psi, wood_curve,                                     &
+                                     cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
+   end subroutine set_cohort_tissue_water
 
    !---------------------------------------------------------------------------------------!
    ! The ONE writer of a cohort's geometry: with wood_carbon the size anchor, derive dbh from   !

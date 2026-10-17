@@ -7,12 +7,13 @@
 #   - hydraulics, turgor-loss point, P50, Vcmax25 and rooting depth from Xu's wood-density relations;
 #   - storage_cushion 3, three full flushes of leaf and fine root;
 #   - phenology on the water cue alone, shed_rate_max 0.15 / 0.15 / 0.025 / 0.01 per day;
-#   - stomata: g1 on Lin et al. (2015)'s wood-density slope (-3.97 per g/cm3), anchored to example 04's
-#     calibrated 2.82 at 0.60; a stomatal stress slope of 0.4 per MPa (Sabot et al. 2022's fits for
-#     tropical trees) that starts below field capacity; g0 is example 04's;
+#   - stomata: g1 falling with wood density as Lin et al. (2015)'s line does, scaled to example 04's
+#     calibrated 2.82 at 0.60 (-2.70 per g/cm3, where Lin's slope is -3.97); a stomatal stress slope of
+#     0.4 per MPa (Sabot et al. 2022's fits for tropical trees) that starts below field capacity; g0 is
+#     this set's own, from example 04's fit on a 1.4 m soil column (as are leaf_angle_mean and z0m_ratio);
 #   - height: Chave et al. (2014) with the stress index of the Palo Verde forcing cell;
-#   - leaf lifespans 0.5, 0.5, 0.8 and 1.5 yr, and fine-root turnover 1.5 per yr for every PFT, on the
-#     leaves' turnover gate.
+#   - leaf turnover 2, 2, 1.25 and 0.67 per yr (lifespans of 0.5, 0.5, 0.8 and 1.5 yr), and fine-root
+#     turnover 1.5 per yr for every PFT, on the leaves' turnover gate.
 # Comments further down that mention BCI or three PFTs are example 05's: they say where a value came from.
 # Every per-PFT array has length 4.
 
@@ -34,9 +35,10 @@ include_pft        = [1, 1, 1, 1]
 #      drop is the phenology's, and background turnover runs only while no leaves drop. SLA and Vcmax25
 #      are Xu et al. (2016)'s (on their lines); SLA is carbon-based. Fine-root carbon equals leaf carbon
 #      (ED2's q = 1), and fine roots turn over at 1.5 per yr on the leaves' turnover gate, slower in the
-#      shade as the leaves are ([trait_dynamics].fineroot_lifespan_plastic); 30 % of all leaf and
+#      shade as the leaves are ([trait_dynamics].fineroot_turnover_plastic); 30 % of all leaf and
 #      fine-root loss is resorbed.
-leaf_lifespan_toc  = [0.5, 0.5, 0.8, 1.5]         # [yr] deciduous leaves live half a year (PV litter 0.5 kg/m2/yr)
+leaf_turnover_rate_toc = [2.0, 2.0, 1.25, 0.6667]   # [1/yr] 1 / (0.5, 0.5, 0.8, 1.5 yr): deciduous leaves live
+                                                   #   half a year (PV litter 0.5 kg/m2/yr)
 sla                = [20.8, 20.6, 18.6, 15.8]   # [m2/kgC] 2 x Xu's SLA (m2/kg dry): 10.4, 10.3, 9.3, 7.9
 vcmax25            = [65.64, 50.85, 36.62, 30.18]   # [umol/m2/s] from Xu (2016) A_area-WD (Table 1), inverted with
                                                     #   MEDS's leaf (the design plan's §6.2); Jmax, TPU, Rd follow the ratios
@@ -73,19 +75,19 @@ sapwood_area_b1    = [1.582, 1.582, 1.582, 1.582]
 sapwood_area_b2    = [1.764, 1.764, 1.764, 1.764]
 leaf_width         = [0.04, 0.04, 0.04, 0.04]
 branch_diameter    = [0.02, 0.02, 0.02, 0.02]
-crown_area_frac    = [1.0, 1.0, 1.0, 1.0]
 
-#----- Leaf photosynthesis and stomata: example 04's calibration (Vcmax25 is above). -------------------
+#----- Leaf photosynthesis and stomata: example 04's calibrated set but g0 and g1 (Vcmax25 is above). --
 photosynthetic_pathway = [1, 1, 1, 1]
 jmax_vcmax_ratio   = [1.6983, 1.6983, 1.6983, 1.6983]
 tpu_vcmax_ratio    = [0.167, 0.167, 0.167, 0.167]
 rd_vcmax_ratio     = [0.015, 0.015, 0.015, 0.015]
 kp25               = [1.0e-9, 1.0e-9, 1.0e-9, 1.0e-9]
-stomatal_g0        = [0.000463421, 0.000463421, 0.000463421, 0.000463421]   # [mol/m2/s] example 04 calibration,
-                                                                            #   about the mean cuticular conductance
-                                                                            #   (Duursma et al. 2019)
-stomatal_g1        = [3.49, 3.04, 2.44, 2.09]   # Medlyn [kPa^0.5] Lin et al. (2015) WD slope -3.97, anchored to
-                                                #   ex04's 2.82 at WD 0.60
+stomatal_g0        = [0.000463421, 0.000463421, 0.000463421, 0.000463421]   # [mol/m2/s] this set's own, from
+                                                                            #   example 04's fit on a 1.4 m soil column;
+                                                                            #   a tenth of the mean minimum conductance
+                                                                            #   in Duursma et al. (2019), ~5 mmol/m2/s
+stomatal_g1        = [3.49, 3.04, 2.44, 2.09]   # Medlyn [kPa^0.5] 2.82 - 2.70 (WD - 0.60): Lin et al. (2015)'s
+                                                #   slope -3.97 scaled to ex04's 2.82 at WD 0.60
 stomatal_d0        = [1500.0, 1500.0, 1500.0, 1500.0]
 quantum_yield_c4   = [0.0, 0.0, 0.0, 0.0]
 theta_j            = [0.70, 0.70, 0.70, 0.70]
@@ -118,7 +120,7 @@ is_woody           = [1, 1, 1, 1]
 # respiration and the roots' growth respiration.
 root_resp_factor25 = [2.7, 2.7, 2.7, 2.7]     # [umol CO2/kgC fine root/s @25C]
 
-#----- Canopy optics (example 04; leaf_angle_mean is its calibrated value). --------------------------
+#----- Canopy optics (example 04; leaf_angle_mean is this set's own, from example 04's fit on a 1.4 m column).
 leaf_reflect_vis   = [0.10, 0.10, 0.10, 0.10]
 leaf_transmit_vis  = [0.05, 0.05, 0.05, 0.05]
 leaf_reflect_nir   = [0.45, 0.45, 0.45, 0.45]
@@ -131,7 +133,7 @@ wood_transmit_nir  = [0.001, 0.001, 0.001, 0.001]
 wood_emissivity    = [0.90, 0.90, 0.90, 0.90]
 leaf_clumping      = [0.80, 0.80, 0.80, 0.80]
 wood_clumping      = [0.50, 0.50, 0.50, 0.50]
-leaf_angle_mean    = [55.1153, 55.1153, 55.1153, 55.1153]   # [deg]
+leaf_angle_mean    = [55.1153, 55.1153, 55.1153, 55.1153]   # [deg] this set's own: example 04's fit on a 1.4 m column
 leaf_angle_std     = [20.0, 20.0, 20.0, 20.0]
 
 #----- Hydraulics (MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md §6.2): ED2 X16 / base relations in WD and SLA. -----#
@@ -168,24 +170,22 @@ mort_beta_exp  = 0.2792
 # Light plasticity, trait = top-of-canopy value x exp(k x overtopping LAI) (docs/science/plant_traits.md
 # eq. (1)): Ma et al. (2025, JGR Biogeosciences) from BCI's crane, saplings against canopy leaves --
 # k_Vcmax = -(0.00242 Vcmax25 + 0.06212), k_Rd = -(0.18974 Rd25 + 0.11744) with Rd25 = 0.015 Vcmax25,
-# k_SLA 0.199 -- and half of their k_LL 0.240: shade lengthens leaf life 1.5 times in Kitajima et al.
-# (2013)'s seedling gardens and 2 times from canopy to understory in Xu et al. (2017), against 3.3 times
-# at LAI 5 with 0.240.
+# k_SLA 0.199 -- and the leaf turnover rate at minus half of their leaf-lifespan slope k_LL 0.240: shade
+# lengthens leaf life 1.5 times in Kitajima et al. (2013)'s seedling gardens and 2 times from canopy to
+# understory in Xu et al. (2017), against 3.3 times at LAI 5 with 0.240.
 kplastic_vcmax  = [-0.221, -0.1852, -0.1507, -0.1352]   # Ma et al. (2025): -(0.00242 V0 + 0.06212)
 kplastic_rd     = [-0.3042, -0.2622, -0.2217, -0.2033]   # Ma et al. (2025): -(0.18974 * 0.015 V0 + 0.11744)
 kplastic_sla    = [0.199, 0.199, 0.199, 0.199]
-kplastic_llspan = [0.120, 0.120, 0.120, 0.120]
+kplastic_leaf_turnover = [-0.120, -0.120, -0.120, -0.120]
 
 # Height on Chave et al. (2014)'s pantropical curve (eq. 6a) with the stress index E of the Palo Verde
-# forcing cell (10.4 N, 85.3 W) in /ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc, Chave's own E raster
-# on the ERA5-Land grid; leaf area and biomass follow from the height.
+# forcing cell (10.4 N, 85.3 W) in Chave's own E raster on the ERA5-Land grid (example 06's chave_e_map);
+# leaf area and biomass follow from the height.
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
-ca_b1      = 0.370
-ca_b2      = 0.464
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5

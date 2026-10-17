@@ -23,7 +23,8 @@ program test_c_api_leaf
    use, intrinsic :: iso_c_binding, only : c_double, c_int
    use meds_kinds,        only : wp, ik
    use meds_c_api_leaf,    only : leaf_env_c, leaf_params_c, leaf_flux_c, meds_leaf_solve,        &
-                                 meds_arrhenius, meds_peaked_arrhenius
+                                 meds_arrhenius, meds_peaked_arrhenius, leaf_kinetics_c,          &
+                                 meds_rubisco_kinetics
    use meds_plant_types, only : PATH_C3
    use meds_leaf_opts,    only : SM_MEDLYN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_PEAKED
@@ -33,6 +34,7 @@ program test_c_api_leaf
    type(leaf_env_c)    :: env
    type(leaf_params_c) :: p
    type(leaf_flux_c)   :: f0, f1, f2, fb
+   type(leaf_kinetics_c) :: kin
    real(wp)            :: k25, arr
 
    call banner('leaf C-API shim')
@@ -75,6 +77,17 @@ program test_c_api_leaf
                         int(COLIM_QUADRATIC, c_int), 1_c_int, fb)
    call check(fb%converged /= 0_c_int, 'C-API solve converges with the boundary layer ON')
    call check(fb%cs < 400.0_wp, 'C-API boundary layer draws cs below ca (flag reached the kernel)')
+
+   !=== 5. The kinetics entry reads the parameters it is given: at 25 C and 21 % O2 Gamma* is    !
+   !      gstar25 at 100 kPa as a mole fraction (42.75 umol/mol), Kc and Ko are their partial     !
+   !      pressures over the air's pressure, and O2 is o2_mol_frac (leaf_gas_exchange.md eq. (3)). !
+   call meds_rubisco_kinetics(p, 298.15_c_double, 101325.0_c_double, kin)
+   call check_close(real(kin%gstar, wp), 42.75_wp, 1.0e-12_wp, 'C-API Gamma* is 42.75 umol/mol at 25 C')
+   call check_close(real(kin%kc, wp), 40.49_wp / 101325.0_wp * 1.0e6_wp, 1.0e-12_wp,            &
+                    'C-API Kc is kc25 over the pressure at 25 C')
+   call check_close(real(kin%ko, wp), 27840.0_wp / 101325.0_wp * 1.0e6_wp, 1.0e-12_wp,          &
+                    'C-API Ko is ko25 over the pressure at 25 C')
+   call check_close(real(kin%o2, wp), 209000.0_wp, 1.0e-12_wp, 'C-API O2 is o2_mol_frac in umol/mol')
 
    write(*,'(a)') '   PASS'
 

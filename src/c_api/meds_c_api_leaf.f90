@@ -16,13 +16,14 @@ module meds_c_api_leaf
    use meds_kinds,             only : wp, ik
    use meds_plant_types,       only : leaf_env_t, leaf_photo_params_t, leaf_flux_t
    use meds_leaf_gas_exchange, only : solve_leaf_gas_exchange
-   use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j
+   use meds_leaf_gas_exchange, only : assimilation_demand_c3, electron_transport_j, rubisco_kinetics
    use meds_temp_response,     only : peaked_arrhenius_scale, arrhenius_scale
    implicit none
    private
 
-   public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c
+   public :: leaf_env_c, leaf_params_c, leaf_flux_c, leaf_c3_demand_c, leaf_kinetics_c
    public :: meds_leaf_solve, meds_leaf_solve_batch, meds_assimilation_demand_c3, meds_electron_transport_j
+   public :: meds_rubisco_kinetics
    public :: meds_peaked_arrhenius, meds_arrhenius
 
    !----- C-interoperable mirror of leaf_env_t (8 doubles). --------------------------------!
@@ -55,6 +56,11 @@ module meds_c_api_leaf
    type, bind(c) :: leaf_c3_demand_c
       real(c_double) :: A_gross, Ac, Aj, Ap
    end type leaf_c3_demand_c
+
+   !----- C-interoperable C3 Rubisco kinetics as mole fractions [umol/mol] (4 doubles). -----!
+   type, bind(c) :: leaf_kinetics_c
+      real(c_double) :: kc, ko, gstar, o2
+   end type leaf_kinetics_c
 
 contains
 
@@ -120,6 +126,22 @@ contains
                            int(colim), real(theta_cj, wp), real(theta_ip, wp), a_gross, ac, aj, ap)
       dem_c%A_gross = a_gross ; dem_c%Ac = ac ; dem_c%Aj = aj ; dem_c%Ap = ap
    end subroutine meds_assimilation_demand_c3
+
+   !---------------------------------------------------------------------------------------!
+   ! The C3 Rubisco kinetics Kc, Ko, Gamma* and O2 as mole fractions [umol/mol] at a leaf    !
+   ! temperature [K] and pressure [Pa] (rubisco_kinetics; docs/science/leaf_gas_exchange.md  !
+   ! eq. (3)): the solver's own values, for callers of meds_assimilation_demand_c3.          !
+   !---------------------------------------------------------------------------------------!
+   subroutine meds_rubisco_kinetics(params_c, t_leaf, pressure, kin_c) bind(c, name="meds_rubisco_kinetics")
+      type(leaf_params_c),   intent(in)  :: params_c
+      real(c_double), value, intent(in)  :: t_leaf, pressure
+      type(leaf_kinetics_c), intent(out) :: kin_c
+      type(leaf_photo_params_t) :: p
+      real(wp) :: kc, ko, gstar, o2
+      p = to_params(params_c)
+      call rubisco_kinetics(p, real(t_leaf, wp), real(pressure, wp), kc, ko, gstar, o2)
+      kin_c%kc = kc ; kin_c%ko = ko ; kin_c%gstar = gstar ; kin_c%o2 = o2
+   end subroutine meds_rubisco_kinetics
 
    !---------------------------------------------------------------------------------------!
    ! Electron-transport rate J from Jmax and incident PAR (non-rectangular hyperbola).      !

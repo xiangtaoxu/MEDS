@@ -52,18 +52,28 @@ $`\theta J^2 - (I_2 + J_{max})J + I_2 J_{max}=0`$ (smaller root), with
 $`I_2 = \tfrac12\,\phi_{\text{PSII}}\,\alpha_{\text{leaf}}\,\mathrm{PAR}`$.
 
 **$`\Gamma^*`$ is proportional to the oxygen partial pressure**, because it is set by Rubisco's
-specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. MEDS therefore scales it off
-the O₂ its reference value was measured at,
+specificity for CO₂ over O₂: $`\Gamma^* = \tfrac{1}{2} O / S_{c/o}`$. The O₂ partial pressure is
+the O₂ mole fraction times the air's pressure, as the CO₂ one is, so $`\Gamma^*`$ as a mole fraction
+depends on the O₂ mole fraction and **not on pressure**. MEDS computes it as a mole fraction from the
+O₂ and the pressure its reference value is stated at,
 
 ```math
-\Gamma^*(T, O) = \Gamma^*_{25}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
-\qquad O_\mathrm{ref} = 0.209 \qquad(3)
+\Gamma^*(T, O) = \frac{\Gamma^*_{25}}{P_\mathrm{ref}}\,f_{\mathrm{Arr}}(T)\;\frac{O}{O_\mathrm{ref}},
+\qquad O_\mathrm{ref} = 0.209,\quad P_\mathrm{ref} = 100\ \mathrm{kPa} \qquad(3)
 ```
 
-so `o2_mol_frac` reaches **both** places oxygen enters the C3 demand — the Michaelis term
-$`K_c(1 + O/K_o)`$ and the compensation point. The shipped `gstar25` = 4.275 Pa is Bernacchi et al.
-(2001), measured at 21 % O₂, so the factor is exactly 1 in any default run. It matters for
-palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
+The shipped `gstar25` = 4.275 Pa is Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ at 21 % O₂, written
+as a partial pressure at 100 kPa, so $`\Gamma^*`$ at 25 °C is 42.75 µmol mol⁻¹ at any elevation.
+$`K_c`$ and $`K_o`$, the Michaelis constants of dissolved CO₂ and O₂, are partial pressures and are
+divided by the local pressure; $`O/K_o`$ is then the ratio of the two partial pressures
+(`rubisco_kinetics` in `meds_leaf_gas_exchange`, `meds.plant.leaf.rubisco_kinetics` in Python).
+Dividing `gstar25` by the local pressure instead would raise $`\Gamma^*`$ by 11 % at 1000 m and by
+43 % at 3000 m, cutting gross photosynthesis in dim light, where photorespiration sets the quantum
+yield, by about 4 % and 14 % (25 °C, 400 µmol mol⁻¹, PAR 100).
+
+The O₂ factor makes `o2_mol_frac` reach **both** places oxygen enters the C3 demand — the Michaelis
+term $`K_c(1 + O/K_o)`$ and the compensation point — and is exactly 1 in any default run. It matters
+for palaeo-atmosphere work (Carboniferous/Permian O₂ is reconstructed near 30–35 %) and for the low-O₂
 sensitivity experiment that is the standard way to isolate photorespiration: measured on a
 midday tropical leaf, halving O₂ raises $`A_\mathrm{net}`$ by 22 % and 35 % O₂ cuts it by 24 %.
 
@@ -90,21 +100,29 @@ They share units and a functional form, and nothing else. Implementations genera
 co-limitation curvature much closer to 1 (CLM and FATES use ~0.98 for the C3 $A_c/A_j$ transition)
 than the 0.7–0.9 that fits the $J$ hyperbola.
 
-Using `theta_j` for the co-limitation would cost assimilation exactly where the model spends most of
-its time, because $A_c$ and $A_j$ sit close together at ambient CO₂. At PFT-1 kinetics,
-$C_i = 280$ µmol mol⁻¹, saturating light:
+Using a $J$ curvature for the co-limitation would cost assimilation exactly where the model spends
+most of its time, because $A_c$ and $A_j$ sit close together at ambient CO₂. Measured with
+`meds.plant.leaf` at 25 °C and 101.325 kPa, $C_i = 280$ µmol mol⁻¹, with PFT 1's ratios
+($`J_{max} = 1.8\,V_{cmax}`$, $`\mathrm{TPU} = 0.167\,V_{cmax}`$, $`R_d = 0.015\,V_{cmax}`$),
+against the sharp $\min(A_c,A_j,A_p)$:
 
-| curvature used | $A_g$ | vs $\min(A_c,A_j,A_p) = 14.40$ |
+| `theta_cj_c3` / `theta_ip_c3` | gross $A$, saturating light ($J = J_{max}$) | net $A$, PAR 1500–2000 µmol m⁻² s⁻¹ |
 |---|---|---|
-| `theta_j` = 0.85 (the $J$ curvature) | 10.80 | **−25.0 %** |
-| `theta_cj_c3` = 0.98, `theta_ip_c3` = 0.95 | 13.22 | −8.2 % |
+| 0.85 / 0.85 (a $J$ curvature on both transitions) | **−27.4 %** | **−31 to −34 %** |
+| 0.85 / 0.95 (on $A_c$/$A_j$ only) | −23.7 % | −27 to −31 % |
+| 0.98 / 0.95 (shipped) | −9.8 % | −12 to −15 % |
 
-With `theta_j` the shortfall is nearly independent of $V_{cmax}$ — 30, 31, 31, 32 % at
-$V_{cmax,25}$ = 60, 90, 120, 150 — a systematic offset rather than a regime effect, so **no measured
+At saturating light the shortfall is the same at every $V_{cmax,25}$ from 60 to 150, because all
+three rates scale with $V_{cmax}$ (at $V_{cmax,25}$ = 60 the min is 14.51 µmol m⁻² s⁻¹ and the three
+pairs give 10.53, 11.06 and 13.09). The finite-light column spans PAR 1500 and 2000 and
+$V_{cmax,25}$ = 60, 90, 120, 150, with $J$ from the hyperbola (`theta_j` 0.70, absorptance 0.85,
+$`\phi_{\text{PSII}}`$ 0.74); the net rate loses more than the gross because $R_d$ does not shrink
+with it. Either way the loss is a systematic offset rather than a regime effect, so **no measured
 $V_{cmax}$ would reproduce a measured assimilation rate**. The shipped $V_{cmax,25}$ presets sit
 mid-range for their PFT descriptions and are not tuned to offset a smoothing loss.
 
-Kernels: `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`, `combine_limits`.
+Kernels: `rubisco_kinetics`, `assimilation_demand_c3`, `assimilation_demand_c4`, `electron_transport_j`,
+`combine_limits`.
 
 ---
 
@@ -304,7 +322,7 @@ $`\beta_s`$ scales $`g_1`$ only, so on its own it leaves a drought-stressed leaf
 $`g_0 + 1.6\,A/C_s`$ (Medlyn's "1 +" term) for as long as it still photosynthesises. The fast control
 removes the $`A`$-driven part as the leaf wilts, so no further factor on $`g_s`$ is needed: what is
 left is $`g_0`$, the cuticular loss, which a real leaf has too. At a VPD of 3.5 kPa a $`g_0`$ of
-0.46 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.016 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
+0.33 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.012 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
 shipped PFT file loses 0.35 mmol m⁻² s⁻¹, which is why $`g_0`$ should be set to a measured minimum
 conductance.
 
@@ -383,6 +401,7 @@ Then $g_s$, $C_s$, $C_i$, and $E$ are assembled consistently.
 
 | Concept | Routine (`meds_leaf_gas_exchange`) |
 |---|---|
+| Rubisco kinetics $K_c$, $K_o$, $`\Gamma^*`$ in µmol mol⁻¹, eq. (3) | `rubisco_kinetics` |
 | C3 / C4 demand | `assimilation_demand_c3`, `assimilation_demand_c4` |
 | electron transport $J$ | `electron_transport_j` |
 | Leuning / Medlyn / Katul-$\lambda$ | `stomata_gs_leuning`, `stomata_gs_medlyn`, `katul_lambda` |

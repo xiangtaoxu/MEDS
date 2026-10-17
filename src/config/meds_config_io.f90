@@ -49,7 +49,7 @@ module meds_config_io
    use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
+                                    SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
@@ -217,10 +217,12 @@ contains
       character(len=64) :: str
       if (toml_has(tm, 'soil.bottom_bc')) then
          str = toml_string(tm, 'soil.bottom_bc', '')
+         !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0  !
+         !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
          select case (trim(str))
-         case ('free_drain') ; s%bottom_bc = SOIL_BC_FREE_DRAIN
+         case ('free_drain') ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 1.0_wp
+         case ('bedrock')    ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 0.0_wp
          case ('aquifer')    ; s%bottom_bc = SOIL_BC_AQUIFER
-         case ('bedrock')    ; s%bottom_bc = SOIL_BC_BEDROCK
          case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
          end select
       end if
@@ -316,7 +318,6 @@ contains
                           trim(toml_string(tm, 'soil_carbon.decomp_scheme', 'ed2')) == 'century5')
       s%step_solver   = merge(DECOMP_STEP_EXPM, DECOMP_STEP_EULER,                                 &
                           trim(toml_string(tm, 'soil_carbon.step_solver', 'euler')) == 'expm')
-      s%n_cycle_on    = toml_logical(tm, 'soil_carbon.n_cycle_on', s%n_cycle_on)
       s%k_fast   = toml_real(tm, 'soil_carbon.k_fast',   s%k_fast)
       s%k_struct = toml_real(tm, 'soil_carbon.k_struct', s%k_struct)
       s%k_micr   = toml_real(tm, 'soil_carbon.k_micr',   s%k_micr)
@@ -336,8 +337,6 @@ contains
       s%fx_micr_pass_slp = toml_real(tm, 'soil_carbon.fx_micr_pass_slp', s%fx_micr_pass_slp)
       s%fx_slow_pass_int = toml_real(tm, 'soil_carbon.fx_slow_pass_int', s%fx_slow_pass_int)
       s%fx_slow_pass_slp = toml_real(tm, 'soil_carbon.fx_slow_pass_slp', s%fx_slow_pass_slp)
-      s%agf_fast   = toml_real(tm, 'soil_carbon.agf_fast',   s%agf_fast)
-      s%agf_struct = toml_real(tm, 'soil_carbon.agf_struct', s%agf_struct)
       s%rh_q10                = toml_real(tm, 'soil_carbon.rh_q10',                s%rh_q10)
       s%rh_t_ref              = toml_real(tm, 'soil_carbon.rh_t_ref',              s%rh_t_ref)
       s%resp_temp_increase    = toml_real(tm, 'soil_carbon.resp_temp_increase',    s%resp_temp_increase)
@@ -345,10 +344,6 @@ contains
       s%resp_opt_water        = toml_real(tm, 'soil_carbon.resp_opt_water',        s%resp_opt_water)
       s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
-      s%c2n_structural = toml_real(tm, 'soil_carbon.c2n_structural', s%c2n_structural)
-      s%c2n_slow       = toml_real(tm, 'soil_carbon.c2n_slow',       s%c2n_slow)
-      s%c2n_fast       = toml_real(tm, 'soil_carbon.c2n_fast',       s%c2n_fast)
-      s%n_immobil_supply_scale = toml_real(tm, 'soil_carbon.n_immobil_supply_scale', s%n_immobil_supply_scale)
    end subroutine load_soil_carbon_opts
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode
@@ -1116,7 +1111,7 @@ contains
       !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology always runs;        !
       !      its per-PFT cue params are read by load_phenology_pft. ------------------------------!
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
-      cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
+      cfg%fineroot_turnover_plastic = toml_logical(tm, 'trait_dynamics.fineroot_turnover_plastic', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -1244,7 +1239,6 @@ contains
       call req_pa(tp, 'pft.sapwood_area_b2',        cfg%pft%sapwood_area_b2,        npft, miss)
       call req_pa(tp, 'pft.leaf_width',              cfg%pft%leaf_width,              npft, miss)
       call req_pa(tp, 'pft.branch_diameter',         cfg%pft%branch_diameter,         npft, miss)
-      call req_pa(tp, 'pft.crown_area_frac',         cfg%pft%crown_area_frac,         npft, miss)
       call req_pa(tp, 'pft.root_to_leaf_ratio',     cfg%pft%root_to_leaf_ratio,     npft, miss)
       call req_pa(tp, 'pft.huber_value',            cfg%pft%huber_value,            npft, miss)
       call req_pa(tp, 'pft.aboveground_frac',       cfg%pft%aboveground_frac,       npft, miss)
@@ -1275,7 +1269,7 @@ contains
       call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
       call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
       call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
-      call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
+      call req_pa(tp, 'pft.leaf_turnover_rate_toc', cfg%pft%leaf_turnover_rate_toc, npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
@@ -1298,8 +1292,6 @@ contains
       call req_r(tp, 'allometry.b2Ht',       cfg%allom%b2Ht,      miss)
       call req_r(tp, 'allometry.agb_c1',     cfg%allom%agb_c1,    miss)
       call req_r(tp, 'allometry.agb_c2',     cfg%allom%agb_c2,    miss)
-      call req_r(tp, 'allometry.ca_b1',      cfg%allom%ca_b1,     miss)
-      call req_r(tp, 'allometry.ca_b2',      cfg%allom%ca_b2,     miss)
       call req_r(tp, 'allometry.lai_b1',     cfg%allom%lai_b1,    miss)
       call req_r(tp, 'allometry.lai_b2',     cfg%allom%lai_b2,    miss)
       call req_r(tp, 'allometry.light_ext',  cfg%allom%light_ext, miss)
@@ -1343,8 +1335,8 @@ contains
          if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
          call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
          if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
-         call toml_real_array(tp, 'derived.kplastic_llspan', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_llspan = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_leaf_turnover', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_leaf_turnover = buf(1:npft)
       end if
 
       call validate_config(cfg)
@@ -1376,9 +1368,9 @@ contains
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
+           //'leaf_turnover_rate_toc,fineroot_turnover_rate,wood_carbon_density,'            &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
-           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
+           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
            //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density'
       associate (p => cfg%pft)
@@ -1402,11 +1394,11 @@ contains
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
-                 p%leaf_lifespan_toc(pf),                                                            &
+                 p%leaf_turnover_rate_toc(pf),                                                       &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
                  p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
                  p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
-                 p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
+                 p%kplastic_sla(pf), p%kplastic_leaf_turnover(pf),                                   &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
                  p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf)

@@ -93,6 +93,12 @@ rather than a crash, so the physical block is validated at load.
 - **Refused keys:** `n_layer` and `grid_growth`.
 - **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
+**The bottom water boundary — `[soil].bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
+The first two are the ends of one drainage boundary, $`q = f\,K(\theta_n)`$ at $f = 1$ and $f = 0$; a
+leaky base, $0 < f < 1$, comes from the soil maps' `f_leak` (Input maps, below). `aquifer` is a water
+table at the column base, for wet sites only ([`science/soil_biophysics.md`](science/soil_biophysics.md),
+"Boundary conditions").
+
 ### The bottom thermal boundary — `[energy].bottom_bc`
 
 The default 2.0 m column sits against an annual thermal damping depth of about 2 m, so the annual
@@ -161,7 +167,9 @@ coefficients, and the `[allometry]` coefficients. **The number of PFTs is the le
 
 Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are derived from it as
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
-penalty. Growth, competition and reproduction parameters are per-PFT but ship uniform.
+penalty. The one exception to the growth-driven hazard is a cohort with no leaves and no storage, which
+dies in the step it is found (`science/plant_carbon_allocation.md` §2). Growth, competition and
+reproduction parameters are per-PFT but ship uniform.
 
 Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
 `[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
@@ -172,10 +180,21 @@ Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, l
 seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
 polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
 Every curve is capped at
-`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+`[pft].hgt_max`, and biomass and leaf area take the height it gives. A cohort reproduces once
 its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
 height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
 allometry.
+
+Leaves are parameterized by their turnover: `[pft].leaf_turnover_rate_toc` [yr⁻¹, > 0] is the share
+of a top-of-canopy cohort's leaf carbon its background turnover replaces a year, and with
+`[trait_dynamics].trait_plasticity_on` it slows in shade (`docs/science/plant_traits.md` eq. (1)).
+Three keys named after a leaf lifespan are refused, each with its replacement:
+- `[pft].leaf_lifespan_toc` [yr]: set `leaf_turnover_rate_toc` to its reciprocal (a 2-yr lifespan is
+  a rate of 0.5);
+- `[derived].kplastic_llspan`: `kplastic_leaf_turnover` is its negative (≤ 0, the rate falls in shade);
+- `[trait_dynamics].fineroot_lifespan_plastic`: `fineroot_turnover_plastic`.
+
+A state file that stores the rate as a lifespan (`llspan`) is read as its reciprocal.
 
 ## How a run starts
 
@@ -203,10 +222,11 @@ prints the counts before and after.
 
 **A restart can take this run's leaf traits** instead of the state file's:
 `[init].reacclimate_traits = true` (restart only; default false). The plastic traits (`sla`,
-`vcmax25`, `rd25`, leaf lifespan) are then set as a census start sets them from this run's PFT file:
+`vcmax25`, `rd25`, `leaf_turnover_rate`) are then set as a census start sets them from this run's PFT file:
 acclimated to each cohort's leaf area above it, as the state file holds it, with
 `[trait_dynamics].trait_plasticity_on`, and the PFT's top-of-canopy values without it. Leaf area stays
-as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a restart
+as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a lower
+SLA takes at most the storage a cohort holds, and its leaf area then falls short by the rest. A restart
 whose PFT file gives the traits the state already has changes nothing. A calibration
 trial restarts from a shared state this way, so a changed `vcmax25` reaches the cohorts
 (`scripts/calibrate_fast`).
@@ -219,8 +239,12 @@ each patch one cohort of every PFT with a positive value. That many plants per m
 
 A census is how you start from a field inventory; see
 [`data/census_example.csv`](../data/census_example.csv)
-and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
-falls back to near-bare ground with a warning.
+and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90).
+
+**A census or state file that cannot start the run stops it**, naming the mode and the file: one
+that cannot be opened, a census with no row for the site, or a region's state file given to a site
+run. Only `init_mode = 0` starts from near-bare ground; a run that asks for a stand never starts
+from bare ground instead. `meds_main` stops, and `meds.model.Run` raises `RuntimeError`.
 
 **The initial soil state** is `[init].soil_temp` [K] and `[init].soil_theta` [m³ m⁻³], both optional:
 every soil layer of every patch starts there, unless a state checkpoint restores the soil. They
@@ -366,9 +390,11 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
   bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
   below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
-  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2,
-  3 for free_drain, aquifer, bedrock; a leaky base runs as free_drain), `deep_temp` [K] and, with
-  `height_allometry = "chave2014"`, `chave_e`. A site file keeps its one-dimensional `soil_z`.
+  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2
+  for drain, aquifer), `drain_factor` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
+  free-draining base, the cell's `f_leak` on a leaky one, 0 on a sealed one; the fill value on an
+  aquifer), `deep_temp` [K] and, with `height_allometry = "chave2014"`, `chave_e`. A site file keeps
+  its one-dimensional `soil_z`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
@@ -390,13 +416,20 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as
   long as the largest polygon's, and `n_cohort`, `n_patch` and `n_window` mark each polygon's live
   part (the rest is the fill value); `lat` and `lon` are its cell's centre. A region restarted from
-  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, and the file must hold
-  exactly the region's polygons. A restart continues exactly: a region run in two halves, across a
+  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, the cell's index on the
+  forcing grid. The file must hold every polygon of the region and may hold more, so a region whose
+  cell failed resumes from its last state file with that cell masked out (`[region].cell_mask`); the
+  other polygons run on as they would have. A restart file that cannot be opened, or a site's, stops
+  the region, naming the file. A restart continues exactly: a region run in two halves, across a
   recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
-  (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
-  finish the month.
+  (a NaN, a cohort or soil-carbon state out of bounds) stops at the failing step, and the others
+  finish the month. The month's records are then written, with the fill value where the failed
+  polygon has none, and so is a state file that falls due at the month's end (the failed polygon as
+  it stood); the log names the polygon and the date, and `meds_main` stops with an error. So the
+  region ends after the month in which a polygon failed: no later month runs, and no end-of-run state
+  file is written.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40 (measured with a detail polygon, before the region files held
@@ -413,7 +446,7 @@ reads every map and is the only module that does.
 
 | Key | File (ED-SoilMaps v2) | Variables |
 |---|---|---|
-| `soil_depth_map` | `ED_ERA5land_soil_depth_v2.nc` | `soil_depth` [m], `bc_class`, `deep_temp` [K] |
+| `soil_depth_map` | `ED_ERA5land_soil_depth_v2.nc` | `soil_depth` [m], `bc_class`, `f_leak`, `deep_temp` [K] |
 | `soil_texture_map` | `ED_ERA5land_soil_texture_v2.nc` | `sand`, `silt`, `clay` [%], `bulk_density` [g cm⁻³], `coarse_fragments` [% volume], on SoilGrids' six layers (`depth_bnds` [m]) |
 | `soil_chemistry_map` | `ED_ERA5land_soil_biogeochemical_properties_v2.nc` | `organic_carbon` [g kg⁻¹], `cec` [cmol(c) kg⁻¹], `ph_h2o`, on the same layers |
 | `chave_e_map` | `ED_ERA5land_Chave2014_E.nc` | `chave_e` |
@@ -428,12 +461,13 @@ forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or 
   maps' 2 m, it takes the deepest map layer. Its retention curve and Ks come from MEDS's
   pedotransfer function, and its thermal properties from the same texture by CLM5's mineral-soil
   formulas ([`science/soil_biophysics.md`](science/soil_biophysics.md)).
-- **The bottom water boundary** follows `bc_class`:
-  - 1 is `free_drain`;
-  - 3 (sealed) runs as `bedrock`;
-  - 4 is `aquifer`;
-  - 2 (leaky) runs as `free_drain`: there is no leaky bottom boundary (see [`ROADMAP.md`](ROADMAP.md)
-    §8).
+- **The bottom water boundary** follows `bc_class`. The first three drain through the base at
+  $`q = f\,K(\theta_n)`$ ([`science/soil_biophysics.md`](science/soil_biophysics.md), Boundary
+  conditions):
+  - 1 is `free_drain`, $f = 1$;
+  - 2 (leaky) drains at the cell's `f_leak` (0.05 in ED-SoilMaps v2), which must be in (0, 1];
+  - 3 (sealed) is `bedrock`, $f = 0$;
+  - 4 is `aquifer`.
 - **The thermal anchor** sits at `deep_temp`, annual damping depth / √2 below the bottom node, where it
   reflects the annual wave least. It is used when `[energy].bottom_bc = "dirichlet"`.
 

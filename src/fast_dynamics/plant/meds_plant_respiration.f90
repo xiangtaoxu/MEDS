@@ -5,7 +5,7 @@
 !                                                                                          !
 !   * stem_maintenance_respiration -- woody-tissue maintenance respiration, eq. (3): a     !
 !       peaked temperature response times two terms, each with its own 25 degC rate -- the !
-!       ED2 Chambers (2004) surface-area form (optionally DBH-size-scaled) on the stem     !
+!       ED2 Chambers (2004) surface-area form on the stem                                  !
 !       surface (cylinder + WAI branch term), and a sapwood term on the sapwood volume     !
 !       (the living wood; Ryan 1990). A PFT sets either rate to 0 to use the other basis   !
 !       alone.                                                                             !
@@ -65,15 +65,13 @@ contains
       real(wp),            intent(in)  :: resp_sapwood25    !< [umol CO2/m3 sapwood/s @25C] cohort PFT's sapwood rate
       type(wood_params_t), intent(in)  :: params      !< run-uniform trait POD (broadcast)
       real(wp),            intent(out) :: stem_resp   !< [umol CO2 / plant / s]
-      real(wp) :: srf25, tscale, stem_area
+      real(wp) :: tscale, stem_area
 
       if (.not. is_woody) then
          stem_resp = 0.0_wp
          return
       end if
 
-      !----- Size-dependent baseline at 25 degC (scaler = 0 => flat), Chambers et al. 2004. --!
-      srf25  = resp_factor25 * 10.0_wp ** (params%stem_resp_size_scaler * dbh)
       !----- Peaked temperature response (= 1 at 25 degC), shared with leaf Rd. ---------------!
       tscale = peaked_arrhenius_scale(1.0_wp, params%ea, params%hd, params%ds, wood_temp)
       !----- Per-plant stem surface area: cylinder lateral area + the WAI branch term, scaled !
@@ -82,7 +80,7 @@ contains
                   + pi * wai / max(nplant, tiny_num) ) / max(aboveground_frac, tiny_num)
       !----- The surface and sapwood terms share the temperature response (eq. (3)); a PFT with   !
       !      no sapwood rate respires by its surface alone. --------------------------------------!
-      stem_resp = srf25 * tscale * stem_area + resp_sapwood25 * tscale * sap_volume
+      stem_resp = resp_factor25 * tscale * stem_area + resp_sapwood25 * tscale * sap_volume
    end subroutine stem_maintenance_respiration
 
    !---------------------------------------------------------------------------------------!

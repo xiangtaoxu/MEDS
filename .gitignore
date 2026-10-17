@@ -33,6 +33,7 @@ compile_commands.json
 *.h5out
 *.nc.out
 *.nc
+*_pft_parameters.csv
 *.png
 # ... but curated example figures ARE tracked. Listed one by one on purpose: `!examples/**/*.png`
 # would also un-ignore every figure a user's own run drops into an example directory.

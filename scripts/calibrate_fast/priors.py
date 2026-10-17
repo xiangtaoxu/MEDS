@@ -31,6 +31,9 @@ R_GAS = 8.314462618          # [J mol-1 K-1]
 T25 = 298.15                 # [K]
 BETA_LEAST_COST = 146.0      # the unit-cost ratio of carboxylation to transpiration (Stocker et al. 2020)
 PAR_PER_SW = 2.1             # [umol J-1] PAR photons per joule of total shortwave (MEDS's constant-path blend)
+#: the O2 mole fraction and pressure gstar25 is stated at, as in MEDS's leaf kernel: Gamma* as a mole
+#: fraction does not depend on pressure (docs/science/leaf_gas_exchange.md eq. (3))
+O2_REF_GSTAR, P_REF_GSTAR = 0.209, 1.0e5          # [mol mol-1], [Pa]
 EEO_KEYS = {"pft.stomatal_g1": "g1", "pft.vcmax25": "vcmax25"}
 KATTGE_KNORR = {"pft.jmax_vcmax_ratio": (2.59, 0.035), "leaf_physiology.ds_vcmax": (668.39, 1.07),
                 "leaf_physiology.ds_jmax": (659.70, 0.75)}
@@ -100,7 +103,7 @@ def viscosity_ratio(t_k: float) -> float:
 
 def kinetics(lp: dict, t_k: float, p_pa: float) -> dict:
     """MEDS's Rubisco kinetics as partial pressures [Pa] at t_k and the site's pressure."""
-    gstar = _arr(lp["gstar25"], lp["ea_gstar"], t_k) * lp["o2_mol_frac"] / 0.209 * p_pa / 101325.0
+    gstar = _arr(lp["gstar25"], lp["ea_gstar"], t_k) * lp["o2_mol_frac"] / O2_REF_GSTAR * p_pa / P_REF_GSTAR
     kc, ko = _arr(lp["kc25"], lp["ea_kc"], t_k), _arr(lp["ko25"], lp["ea_ko"], t_k)
     o2 = lp["o2_mol_frac"] * p_pa
     return {"gstar": gstar, "kc": kc, "ko": ko, "o2": o2, "k": kc * (1.0 + o2 / ko)}

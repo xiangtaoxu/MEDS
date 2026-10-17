@@ -9,10 +9,12 @@
 !   C. WHOLE-COLUMN CONSERVATION LEDGER: the water AND energy budgets close over a 24 h dry          !
 !      diurnal march to machine precision. RK45 carries every store in its tableau, so it is     !
 !      gated at a tight tolerance directly.                                                      !
+!   K. CAMPBELL SEED: on a Campbell soil the pre-pass seeds a new cohort's predawn potential     !
+!      from the top layer through the Campbell curve.                                            !
 !==========================================================================================!
 program test_column_rk45
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : rho_h2o, grav_head
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -20,11 +22,12 @@ program test_column_rk45
    use meds_canopy_types, only : aero_env_t, aero_geom_t, aero_out_t, alloc_aero_out
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
-   use meds_water_retention, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
-   use meds_column_params, only : n_soil_layer_max
+   use meds_column_params, only : n_soil_layer_max, soil_params_t
+   use meds_site_diag_types, only : N_CDIAG, CD_PSI_PREDAWN
    use meds_column_params, only : PSI_INIT, build_soil_hydr_params, build_soil_therm_params
    use meds_fast_types,          only : column_config_t, column_cohort_t, column_forcing_t,     &
                                         column_budget_t, alloc_column_cohort, apply_hydraulics_config, apply_canopy_film_config
@@ -158,13 +161,14 @@ program test_column_rk45
    !=== G. TINY NEWLY-RECRUITED COHORT: LAI/WAI at a just-recruited cohort's real magnitude (a 30-yr         !
    !       Ithaca run's first recruitment event) guards two RK45-only failure modes a mature-canopy          !
    !       cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp overflowing           !
-   !       through a near-zero veg_energy_balance denominator, which the coupling floor prevents             !
-   !       (docs/science/vegetation_energy_dynamics.md eq. (1)), and (2) soil theta/soil_energy              !
-   !       leaving their physical domain within a single explicit stage for a near-bare patch, which         !
-   !       crashes ground_evaporation_rate's fractional power, which clamp_cas/clamp_soil_energy in          !
-   !       every RK45 stage prevent (meds_fast_rk45.f90). A mature canopy, whose                             !
-   !       coupling/heat-capacity terms sit far above the floor and whose surface<->soil coupling is far     !
-   !       from stiff, trips neither -- this test is the ONLY one in the suite with a cohort that small.     !
+   !       through a near-zero veg_energy_balance denominator, which cannot happen because the forcing,      !
+   !       the coupling and the heat capacity all scale with the tissue's area                               !
+   !       (docs/science/vegetation_energy_dynamics.md eqs. (1), (8)), and (2) the canopy air or the soil    !
+   !       leaving its physical domain within a single explicit stage for a near-bare patch, which the       !
+   !       RK45 stage clamp on the canopy air and the frozen ground evaporation keep evaluable               !
+   !       (meds_fast_rk45.f90). A mature canopy, whose coupling and heat capacity are large and whose       !
+   !       surface<->soil coupling is far from stiff, trips neither -- this test is the ONLY one in the      !
+   !       suite with a cohort that small.                                                                   !
    call test_rk45_tiny_cohort()
 
    !=== H. DENSE COLD CANOPY: a very dense canopy (LAI=8) under a hard cold snap makes the diagnostic    !
@@ -190,6 +194,12 @@ program test_column_rk45
    !       dry-down sits near theta_res and the moist tests in wet soil; this one sits in between, and  !
    !       asks for closure at the ledger's own round-off rather than at its 1e-4 relative tolerance. ==!
    call test_rk45_dry_uptake_seam()
+
+   !=== K. A new cohort's predawn potential is seeded from the top soil layer's (the leaf kernel's   !
+   !       stomatal limb reads it until the cohort has a day of its own). On a Campbell soil the      !
+   !       seed must come from the Campbell curve: the column's one parameter pair is (psi_sat, b)    !
+   !       there, and reading it as van Genuchten's would give a wrong potential, or none. ===========!
+   call test_campbell_predawn_seed()
 
    call test_report('test_column_rk45')
 
@@ -238,7 +248,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -271,7 +281,7 @@ contains
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !
@@ -624,7 +634,8 @@ contains
       end do
       w_worst = budget%whole_water%worst
       psi_top = soil_psi_from_theta(col_config%soil%retention, biophys%soil_w%theta(1), col_config%soil%theta_sat(1), &
-                                    col_config%soil%theta_res(1), col_config%soil%vg_alpha(1), col_config%soil%vg_n(1))
+                                    col_config%soil%theta_res(1), col_config%soil%curve_par_a(1),          &
+                                    col_config%soil%curve_par_n(1))
       theta_seed = theta0
       call check_true('RK45 dry seam: the fixture really is moderately dry (-150 m < psi < -3 m)',                    &
               psi_top < -3.0_wp .and. psi_top > -150.0_wp, psi_top)
@@ -634,6 +645,29 @@ contains
               w_worst < 1.0e-8_wp, w_worst)
    end subroutine test_rk45_dry_uptake_seam
 
+
+   subroutine test_campbell_predawn_seed()
+      real(wp), parameter :: theta_sat = 0.43_wp, theta_res = 0.0_wp, psi_sat = -0.26_wp, b = 5.65_wp
+      type(soil_params_t) :: vg_soil
+      real(wp) :: cdiag(N_CDIAG, n), seed
+      vg_soil = col_config%soil
+      call build_soil_hydr_params(nsl, SOIL_RETENTION_CAMPBELL, test_bottoms, theta_sat, theta_res,     &
+                                  2.89e-6_wp, psi_sat, b, -3.37_wp, col_config%soil)
+      call set_noon_forcing()
+      call reset_state()
+      cfg%time_integrator = INTEG_RK45
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
+      cdiag = 0.0_wp
+      call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws,           &
+                            gpp_coh=gpp_coh, cdiag=cdiag)
+      col_config%soil = vg_soil
+      seed = grav_head * soil_psi_from_theta(SOIL_RETENTION_CAMPBELL, theta_seed, theta_sat, theta_res, psi_sat, b)
+      call check_true('Campbell seed: the cohort has no predawn potential of its own yet',                            &
+              col_cohort%dmax_psi_leaf(1) > 0.0_wp, col_cohort%dmax_psi_leaf(1))
+      call check_true('Campbell seed: the top layer is unsaturated (a seed below zero)', seed < 0.0_wp, seed)
+      call check_true('Campbell seed: the predawn seed is the Campbell curve''s top-layer potential',                 &
+              abs(cdiag(CD_PSI_PREDAWN, 1) - seed) <= 1.0e-12_wp * abs(seed), cdiag(CD_PSI_PREDAWN, 1))
+   end subroutine test_campbell_predawn_seed
 
    subroutine reset_state()
       integer(ik) :: kk

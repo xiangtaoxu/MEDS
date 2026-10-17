@@ -116,7 +116,6 @@ contains
          !----- Canopy-element geometry. --------------------------------------------------!
          p%leaf_width             = [ 0.04_wp, 0.04_wp, 0.04_wp ]
          p%branch_diameter        = [ 0.02_wp, 0.02_wp, 0.02_wp ]
-         p%crown_area_frac        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%root_to_leaf_ratio     = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%huber_value            = [ 1.0e-4_wp, 1.5e-4_wp, 2.0e-4_wp ]
          p%aboveground_frac       = [ 0.7_wp, 0.7_wp, 0.7_wp ]
@@ -141,7 +140,7 @@ contains
          p%leaf_angle_std    = [ 20.0_wp, 20.0_wp, 20.0_wp ]
          p%storage_cushion        = [ 1.0_wp, 1.0_wp, 1.0_wp ]
          p%growth_resp_factor     = [ 0.3_wp, 0.3_wp, 0.3_wp ]
-         p%leaf_lifespan_toc      = [ 1.0_wp, 2.0_wp, 1.0_wp/0.33_wp ]   ! [yr] = 1 / leaf turnover rate
+         p%leaf_turnover_rate_toc = [ 1.0_wp, 0.5_wp, 0.33_wp ]          ! [1/yr]
          p%fineroot_turnover_rate = [ 1.0_wp, 0.8_wp, 0.6_wp ]
          p%wood_carbon_density    = [ 200.0_wp, 300.0_wp, 425.0_wp ]
          p%f_labile_leaf          = [ 0.80_wp, 0.70_wp, 0.60_wp ]
@@ -151,7 +150,6 @@ contains
 
       cfg%allom%b1Ht   = 1.139963_wp   ; cfg%allom%b2Ht   = 0.564899_wp
       cfg%allom%agb_c1 = 0.03365_wp ; cfg%allom%agb_c2 = 0.976_wp
-      cfg%allom%ca_b1  = 0.370_wp      ; cfg%allom%ca_b2  = 0.464_wp
       cfg%allom%lai_b1 = 0.23384770_wp ; cfg%allom%lai_b2 = 0.6410495_wp
       cfg%allom%light_ext = 0.5_wp
       call derive_parameters(cfg)

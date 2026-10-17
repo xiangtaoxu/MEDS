@@ -22,7 +22,6 @@
 !   The 0.243^2/2 turns the fit's log-scale median into the mean, as BIOMASS's retrieveH does.   !
 !   dbh(height) is the smaller root of that quadratic in ln(dbh), the rising branch.            !
 !   local_hmax         = height(HMAX_DBH = 100 cm), capped: the local maximum height    [m]       !
-!   crown_area(dbh,h)  = ca_b1 * (dbh^2*h)^ca_b2                                [m2]          !
 !   agb(dbh,h,rho)     = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2                  [kgC/plant]   !
 !   leaf_area(dbh,h)   = lai_b1 * (dbh^2*h)^lai_b2                              [m2/plant]    !
 !                                                                                          !
@@ -46,8 +45,7 @@ module meds_allometry
    private
 
    public :: allometry_t
-   public :: dbh_to_height, height_to_dbh, dbh_to_crown_area, dbh_to_agb, agb_to_dbh,         &
-             dbh_to_leaf_area, local_hmax
+   public :: dbh_to_height, height_to_dbh, dbh_to_agb, agb_to_dbh, dbh_to_leaf_area, local_hmax
    public :: size2leaf_carbon, size2wood_carbon, wood_to_dbh, carbon_to_structure, min_cohort_carbon
    public :: storage_carbon_target
    public :: dbh_to_wai, sapwood_fraction
@@ -77,8 +75,6 @@ module meds_allometry
       real(wp)    :: b2Ht        = 0.564899_wp    !< [--]  height <-> diameter slope
       real(wp)    :: agb_c1      = 0.03365_wp     !< [kgC] AGB scale (Chave 2014 eq. 4 / C2B)
       real(wp)    :: agb_c2      = 0.976_wp       !< [--]  AGB exponent on rho and on dbh^2*h (Chave 2014)
-      real(wp)    :: ca_b1       = 0.370_wp       !< [--]  crown-area scale
-      real(wp)    :: ca_b2       = 0.464_wp       !< [--]  crown-area exponent
       real(wp)    :: lai_b1      = 0.23384770_wp  !< [--]  per-stem leaf-area scale (= ED2 SLA*bleaf)
       real(wp)    :: lai_b2      = 0.6410495_wp   !< [--]  per-stem leaf-area exponent
       real(wp)    :: light_ext   = 0.5_wp         !< [--]  Beer-Lambert extinction through overtopping LAI
@@ -149,14 +145,6 @@ contains
       real(wp), intent(in) :: b, c
       x = -2.0_wp * c / (b + sqrt(max(b * b - 4.0_wp * CHAVE_C * c, 0.0_wp)))
    end function chave_small_root
-
-   !----- Crown area [m2]. ----------------------------------------------------------------!
-   elemental pure function dbh_to_crown_area(allom, dbh, h) result(ca)
-      type(allometry_t), intent(in) :: allom
-      real(wp),          intent(in) :: dbh, h
-      real(wp)                      :: ca
-      ca = allom%ca_b1 * (dbh * dbh * h) ** allom%ca_b2
-   end function dbh_to_crown_area
 
    !----- Aboveground biomass [kgC/plant]. ------------------------------------------------!
    elemental pure function dbh_to_agb(allom, dbh, h, rho) result(agb)

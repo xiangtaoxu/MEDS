@@ -30,9 +30,9 @@ d = c_d\,h\,(1-\mathrm{snowfac}) \qquad(1)
 ```
 
 with $`c_{z0}=`$ `z0m_ratio` (0.13, ED2 `vh2vr`), $`c_d=`$ `d_ratio` (0.63, ED2 `vh2dh`) and
-$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes a
-closed, unburied canopy ($`\mathrm{snowfac}=0`$, and $`f_{open}=0`$ in §3), so the snow and open-canopy
-blends are inactive in a run (see docs/ROADMAP.md). The canopy displacement height
+$`z_{0,snow}=`$ `snow_rough`, which also floors $`z_{0m}`$ (`canopy_roughness`). The driver passes an
+unburied canopy ($`\mathrm{snowfac}=0`$), so the snow blend is inactive in a run (see docs/ROADMAP.md);
+the open-canopy blend of §3 acts. The canopy displacement height
 $`z_{ldis}=\max(z_{ref}-d,\,2z_{0m})`$ is the surface-layer thickness the Monin-Obukhov solve integrates
 over, and the **prognostic CAS depth** is $`\max(\text{min\_canopy\_depth},\,h+\text{canopy\_freeboard})`$,
 the tallest cohort plus a freeboard ([canopy_air_space_biophysics](canopy_air_space_biophysics.md)) — it
@@ -140,20 +140,26 @@ is `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §1g–1h.
 
 ## 3. Ground ↔ CAS conductance
 
-The ground-to-CAS scalar conductance blends a bare-ground similarity term with a CLM4-like dense-canopy
-form (`ggbare`/`ggveg`/`ggnet`):
+The ground-to-CAS scalar conductance blends a bare-ground similarity term with CLM4's dense-canopy
+form (`ggbare`/`ggveg`/`ggnet`), weighted by the patch's open fraction $W$ as CLM weighs them
+(Zeng et al. 2005; the stability factor is Sakaguchi and Zeng 2009's):
 
 ```math
 g_{g,bare} = u_*\,\mathrm{temp1}, \qquad
 g_{g,veg} = \frac{c_s\,u_*}{1+\gamma_g\,\mathrm{stab}}, \qquad
-g_{g,net} = \frac{g_{g,bare}\,g_{g,veg}}{g_{g,veg} + (1-f_{open})\,g_{g,bare}} \qquad(6)
+g_{g,net} = W\,g_{g,bare} + (1-W)\,g_{g,veg}, \qquad
+W = e^{-(\mathrm{LAI}+\mathrm{WAI})} \qquad(6)
 ```
 
 where `stab` is a bounded buoyancy factor in the CAS↔ground temperature difference, $`c_s=`$
-`cs_dense`, $`\gamma_g=`$ `gamma_g`, and $`f_{open}=`$ `opencan_frac`. A fully open canopy or a
-deeply-buried one collapses to the bare-ground value. The **soil-evaporation aerodynamic resistance** is
-$`r_{aero}=1/g_{g,net}`$, and $`g_{g,net}`$ is the ground sensible/latent conductance in the surface
-energy balance.
+`cs_dense`, $`\gamma_g=`$ `gamma_g`, and LAI and WAI are the patch's leaf and wood area indices
+(`open_canopy_fraction`; the kernel takes $W$ as `opencan_frac`). A patch with no cohorts ($W=1$)
+couples its ground as bare soil; under a closed canopy the dense form sets the conductance ($W=0.0025$
+at LAI + WAI = 6). CLM blends the transfer coefficients that multiply one velocity scale; with both
+terms on $`u_*`$, that is this linear blend of the conductances. Snow does not bury the canopy here:
+CLM's burial would raise $W$ through the exposed leaf and wood area, and waits for a snowy site (see
+docs/ROADMAP.md). The **soil-evaporation aerodynamic resistance** is $`r_{aero}=1/g_{g,net}`$, and
+$`g_{g,net}`$ is the ground sensible/latent conductance in the surface energy balance.
 
 ## 4. In-canopy wind and the leaf/wood boundary layers
 
@@ -164,13 +170,17 @@ energy balance.
 u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\zeta_0)\big] \qquad(7)
 ```
 
-floored at `ugbmin`. From the top cohort down, the wind attenuates through each crown by ED2's
-per-cohort **crown-area extinction** (crown area $c_a$ bounds the exposure): the wind at a cohort's
-mid-crown (also floored at `ugbmin`) and the value handed to the cohort below are
+floored at `ugbmin`. From the top cohort down, the wind attenuates through each cohort's crowns by
+ED2's per-cohort extinction, here with **closed crowns**: every cohort's crowns cover its patch (crown
+area 1, as in the two-stream radiation, `canopy_radiation_transfer.md` §3), so the wind meets all of the
+cohort's leaf area. Cohorts of one height are one layer, as they are in the radiation
+(`canopy_radiation_transfer.md` §4): LAI below is the layer's summed leaf area, every member meets the
+layer's wind, and a cohort split into two of half the density meets the wind the whole one does. The
+wind at a layer's mid-crown (also floored at `ugbmin`) and the value handed to the layer below are
 
 ```math
-u_{ico} = u_h\big[c_a\,e^{-0.25\,\mathrm{LAI}/c_a} + (1-c_a)\big], \qquad
-u_h \leftarrow u_h\big[c_a\,e^{-0.50\,\mathrm{LAI}/c_a} + (1-c_a)\big] \qquad(8)
+u_{ico} = u_h\,e^{-0.25\,\mathrm{LAI}}, \qquad
+u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(8)
 ```
 
 so the cascade walks **top → bottom**. The kernel's cohort arrays run bottom → top (the radiation
@@ -232,6 +242,9 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
   in-canopy wind.
 - CLM5 Technical Note (Oleson et al. 2018) — Monin-Obukhov surface layer, stability functions.
 - Businger et al. (1971); Paulson (1970) — surface-layer flux-profile relations.
+- Zeng, X., et al. (2005), Treatment of undercanopy turbulence in land models, *J. Climate* 18,
+  5086–5094 — the open-fraction blend of eq. (6); Sakaguchi, K., and X. Zeng (2009), *J. Geophys.
+  Res.* 114, D01107 — its under-canopy stability factor.
 - `docs/dev_plans/archive/MEDS_COLUMN_DYNAMICS_DESIGN.md` (Part I, ED2↔CLM reconciliation);
   `docs/dev_plans/archive/MEDS_ENERGY_BALANCE_DESIGN.md`.
 
@@ -241,10 +254,11 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 |---|---|
 | master per-patch seam | `canopy_aerodynamics` |
 | roughness + displacement, eq. (1) | `canopy_roughness` |
+| open fraction $W$, eq. (6) | `open_canopy_fraction` |
 | Monin-Obukhov solve ($`u_*`$, temp1, $\zeta$) | `mo_surface_layer` |
 | profile denominators $D_m, D_h$ | `d_mom`, `d_heat` |
 | stability functions $`\Psi_m,\Psi_h`$ | `stabfunc1`, `stabfunc2`, `psim` |
-| canopy-top / in-canopy wind | `reduced_wind` + crown-area extinction (inline) |
+| canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
 | per-stage re-solve of eq. (5) | `meds_fast_time_derivs`: `refresh_cas_conductances` |

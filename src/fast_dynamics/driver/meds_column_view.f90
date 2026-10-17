@@ -30,6 +30,7 @@ module meds_column_view
    use meds_constants,        only : cm2_to_m2
    use meds_site_state_types, only : cohort_block, cohort_alloc, init_cohort, set_cohort_size, C2B_WOOD
    use meds_pft_params,       only : pft_table_t
+   use meds_config,           only : hydraulics_config_t
    use meds_fast_types,       only : column_cohort_t, ensure_column_cohort_capacity
    implicit none
    private
@@ -76,7 +77,6 @@ contains
          cc%rd25(j)          = cohort%rd25(i)
          cc%dmax_psi_leaf(j) = cohort%dmax_psi_leaf(i)
          !----- Canopy-element geometry (per-PFT traits, gathered on the block). ----------!
-         cc%crown(j)         = cohort%p_crown_area_frac(i)
          cc%leaf_width(j)    = cohort%p_leaf_width(i)
          cc%branch_diam(j)   = cohort%p_branch_diameter(i)
          cc%aboveground_frac(j) = cohort%p_aboveground_frac(i)
@@ -109,7 +109,9 @@ contains
       call cohort_alloc(block, n, 1_ik)   ! growth ring buffer irrelevant to a fixture
       block%n = n
       do j = 1_ik, n
-         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j))
+         !----- The [hydraulics] defaults stand in for the birth water's curves: the view carries no !
+         !      tissue water (the column's stores are the caller's), so the choice reaches nothing. -!
+         call init_cohort(block, j, pft, ipft(j), 1_ik, nplant(j), dbh(j), hydraulics_config_t())
       end do
       call copy_column_cohort(cc, block, 1_ik, n)
    end subroutine column_cohort_init
