@@ -243,6 +243,32 @@ before and after.
   different SLAs and rates conserves the leaf carbon turned over; `test_state_roundtrip` reads an
   `llspan` state file as 1/`llspan`; `test_config_keys` the three refusals; `test_plant_trait_dynamics`
   the rate's gradient, its reciprocal lifespan form and the relaxation.
+- **The examples are rerun after the sweep** (the sweep's decision D7: the contemporary runs only).
+  - Example 01: Γ* no longer depends on pressure (#342), so at 101.325 kPa the compensation point is
+    48 µmol mol⁻¹ (was 47), the A_c/A_j transition 185 (187) and each species' peak A_net 0.4–0.8 %
+    lower (*F. insipida* 21.4 → 21.3 µmol m⁻² s⁻¹); the optimum temperatures are unchanged.
+  - Example 02 reproduces byte for byte, its figure too.
+  - Example 03 reproduces v0.3.4 to round-off: the census run to 3×10⁻¹⁴, the bare-ground run's totals
+    to 10⁻⁸ (its cohort counts by at most 2). Its three post_proc renders are redrawn from this run.
+  - Example 04 is refitted, since its diurnal H is a calibration target and #419 raised daytime H by
+    about 10 W m⁻²: 836 runs in 28 minutes on 200 cores (validation cost 62,356 → 50,905; v0.3.4's fit
+    63,657 → 52,187). Vcmax25 32.3 → 31.9 µmol m⁻² s⁻¹ (its EEO prior centre 41.0 → 39.9, #342), g1
+    2.82 → 2.79, g0 0.33 → 0.28 mmol m⁻² s⁻¹, leaf angle 54.9 → 56.5°, `z0m_ratio` 0.0528 → 0.0538,
+    κ 0.734 → 0.743. `wstress_sref_stomata` is now screened out as uninformed (posterior/prior sd ratio
+    0.95) and fixed at its prior, 2 (it was fitted to 2.03 at a ratio of 1.00). Validation RMSE, default
+    → calibrated: GPP 2.40 → 1.58, LE 1.67 → 1.60, H 3.82 → 3.95, u\* 1.75 → 0.66, upwelling longwave
+    3.84 → 3.56. Over 2012-08 to 2017-07 the calibrated run's GPP is 8.60 µmol m⁻² s⁻¹ (was 8.65;
+    target 8.12, was 8.15), LE 63.8 W m⁻² (62.9) and H by day 158.1 W m⁻² (146.3; target 166.6); the
+    default's H by day 142.4 (132.7). `leaf_gas_exchange.md` §4.4's g0 example follows the new fit.
+  - Example 05, BCI's census check: GPP 31.3 → 31.2 MgC ha⁻¹ yr⁻¹ (example 04's corrected tower GPP
+    31.3 → 31.1), NPP 12.3 → 12.4, stem respiration 4.6 → 4.5, diameter growth within 0.005 cm yr⁻¹.
+    Palo Verde's inventory check (2008-07 to 2010-12): leaf litter 0.48 → 0.49 kg m⁻² yr⁻¹, March–April
+    LAI 2.1 → 2.2, GPP +0.5 % and NPP +2 % (the soil 0.9 K cooler under the open canopy, #410, cuts root
+    respiration by 6 %); growth and mortality unchanged at the table's precision.
+  - Not rerun (D6, D7): example 05's BCI regeneration 1600–2020 and Palo Verde's 150-year regrowth,
+    and example 06. Their READMEs say that their figures and numbers were made with v0.3.4 (example 06:
+    with the region runtime that followed it) and not repeated after the sweep (D12). Example 05's
+    configs keep example 04's v0.3.4 calibration until those runs are repeated.
 
 ### Removed
 
