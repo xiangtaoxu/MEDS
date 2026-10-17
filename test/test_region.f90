@@ -10,12 +10,14 @@
 ! included, with the fill value past the polygon's own count; and the polygon axis must    !
 ! carry the cells' ids and coordinates. The region is run again on four threads and must   !
 ! give the same files. A region run in two halves, the second restarted from the first's   !
-! state file, must write the second half's files exactly as the whole run does. Every run  !
-! takes its soil from the archive's [maps] files (docs/configuration.md §Input maps), so   !
-! the three polygons have their own soil depth, layers and bottom boundaries, and each     !
-! site run must find the same soil at its cell; the region files carry each polygon's own  !
-! layers and map inputs. Last, meds_main (the second argument) must refuse each config     !
-! that breaks a region-mode rule, with that rule's message.                                !
+! state file, must write the second half's files exactly as the whole run does, and a      !
+! region with a cell masked out must resume from that file, its polygons running on as     !
+! they do in the second half. Every run takes its soil from the archive's [maps] files     !
+! (docs/configuration.md §Input maps), so the three polygons have their own soil depth,    !
+! layers and bottom boundaries, and each site run must find the same soil at its cell; the !
+! region files carry each polygon's own layers and map inputs. Last, meds_main (the second !
+! argument) must refuse each config that breaks a region-mode rule, with that rule's       !
+! message.                                                                                 !
 !                                                                                          !
 ! The configs are DERIVED from test/region/meds_config_site.toml (the test runs from that          !
 ! directory): an override block is prepended -- meds_toml returns the FIRST match of a              !
@@ -58,7 +60,7 @@ program test_region
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
 
    character(len=512)  :: work, meds_main
-   type(meds_region_t) :: reg
+   type(meds_region_t) :: reg, resumed
    type(meds_run_t)    :: run
    type(output_registry_t) :: reg_region, reg_site
    character(len=64), allocatable :: files(:), files2(:)
@@ -184,15 +186,15 @@ program test_region
    end do
    call check_true('a region restarted from its state file across the recycle wrap writes the whole run''s files', &
                    nbad == 0_ik .and. f2 >= 2_ik)
-   call refused('a region restart needs a region state file', '[init]'//nl()//'init_mode = 2'//nl()//   &
-                'restart_file = "'//trim(work)//'/none.nc"'//nl()//region_block(), .true., .false.,       &
-                'is not a region state file')
 
    !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
    !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
-   !      restructured at its first step. -------------------------------------------------------------!
+   !      restructured at its first step. It writes a site's state file, which a region refuses     !
+   !      below. -------------------------------------------------------------------------------------!
    call derive(trim(work)//'/reuse.toml', '[run]'//nl()//'end_time = "2021-02-01"'//nl()//            &
-               '[output]'//nl()//'enabled = false'//nl()//site_block(1_ik), region=.false.)
+               '[output]'//nl()//'enabled = false'//nl()//'[state]'//nl()//'write_state = true'//nl()//   &
+               'output_dir = "'//trim(work)//'/state"'//nl()//'output_prefix = "site"'//nl()//          &
+               site_block(1_ik), region=.false.)
    call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the reuse run did not open'
    do while (.not. driver_done(run))
@@ -208,6 +210,18 @@ program test_region
                    all(run%poly%site%patch%cas(1:run%poly%site%patch%n)%can_depth                     &
                        == run%cfg%aero%min_canopy_depth))
    call driver_finalize(run, st) ; call driver_free(run)
+
+   !----- A state file that cannot start the run stops it, naming the file: one that is not there,  !
+   !      a region's in a site run (its variables have a polygon axis), and a site's in a region. ---!
+   call refused('a region restart from a missing state file stops, saying it cannot be opened',     &
+                '[init]'//nl()//'init_mode = 2'//nl()//'restart_file = "'//trim(work)//'/none.nc"'//nl()// &
+                region_block(), .true., .false., trim(work)//'/none.nc cannot be opened')
+   call refused('a site run refuses a region state file', '[init]'//nl()//'init_mode = 2'//nl()//      &
+                'restart_file = "'//trim(work)//'/state/half-S-20230101000000.nc"'//nl()//site_block(1_ik), &
+                .false., .false., 'half-S-20230101000000.nc is a region''s state file')
+   call refused('a region refuses a site state file', '[init]'//nl()//'init_mode = 2'//nl()//          &
+                'restart_file = "'//trim(work)//'/state/site-S-20210201000000.nc"'//nl()//region_block(), &
+                .true., .false., 'site-S-20210201000000.nc is a site''s state file')
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails. The others finish the month: polygons 1     !
@@ -243,6 +257,36 @@ program test_region
                            size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
    if (ok) call region_free(reg)
    call write_map(trim(work)//'/archive/offgrid.nc', 'keep', mask, -1.0_wp, lat_shift=0.05_wp)
+
+   !----- A region resumes without a cell: the first half's state file holds polygons 35, 18 and 53,  !
+   !      the region masked as above 18 and 53. Each starts from its own row of the file and runs on  !
+   !      exactly as it does in the second half, which resumed all three. ----------------------------!
+   call derive(trim(work)//'/half3.toml', '[region]'//nl()//'cell_mask = "'//trim(work)//'/archive/keep.nc"'// &
+               nl()//'cell_mask_var = "keep"'//nl()//recycled('half3', '"2023-01-06"', .true.), region=.true.)
+   call region_open(trim(work)//'/half3.toml', resumed, ok, verbose=.false.)
+   call check_true('a region resumes from a state file that holds its polygons and more', ok)
+   if (.not. ok) error stop 'test_region: the masked region did not resume'
+   call check_true('the resumed region holds polygons 18 and 53',                                     &
+                   size(resumed%poly) == 2 .and. all(resumed%poly(:)%id == [18_ik, 53_ik]))
+   call check_true('each resumed polygon''s stand is its row of the state file',                     &
+                   rows_resumed(trim(work)//'/state/half-S-20230101000000.nc', resumed))
+   do while (.not. region_done(resumed))
+      call region_step_month(resumed, st)
+      if (st /= DRIVER_OK) error stop 'test_region: the resumed masked region failed'
+   end do
+   call region_finalize(resumed, st)
+   call region_free(resumed)
+   nbad = 0_ik ; f2 = 0_ik
+   do f = 1_ik, nf2
+      if (index(files2(f), 'half2-') /= 1) cycle
+      f2 = f2 + 1_ik
+      do p = 2_ik, NP                                    ! half3's polygon p - 1 is half2's polygon p
+         nbad = nbad + compare_polygons(trim(work)//'/out/half3'//files2(f)(6:), p - 1_ik,           &
+                                        trim(work)//'/out/'//trim(files2(f)), p)
+      end do
+   end do
+   call check_true('the resumed polygons run on as they do in the region that resumed all three',     &
+                   nbad == 0_ik .and. f2 >= 2_ik)
 
    !----- Region-mode rules (docs/configuration.md §Regional runs, Rules): each bad config is      !
    !      refused with its own message. The bad keys come first, so they win over the good region  !
@@ -693,6 +737,125 @@ contains
       end do
       call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
    end function compare_whole_file
+
+   !----- Polygon pa of one region file against polygon pb of another of the same tier: every live   !
+   !      variable, entry for entry where both files have the entry, and the fill value where only one !
+   !      does (each file's cohort, patch and soil axes are its largest polygon's). --------------------!
+   integer(ik) function compare_polygons(apath, pa, bpath, pb) result(nbad)
+      character(len=*), intent(in) :: apath, bpath
+      integer(ik),      intent(in) :: pa, pb
+      integer(c_int) :: an, bn
+      integer(ik)    :: t, j, k, it, i1, i2, ea(2), eb(2)
+      integer(ik), allocatable :: as(:), bs(:)
+      real(c_double), allocatable :: xa(:), xb(:)
+      real(c_double) :: va, vb
+      logical :: fa, fb, ex, in_a, in_b, int_var, same
+      nbad = 0_ik
+      inquire(file=apath, exist=ex)
+      if (.not. ex) then
+         write(*,'(2a)') '  missing resumed file ', apath ; nbad = 1_ik ; return
+      end if
+      t = tier_of(bpath)
+      an = open_nc(apath) ; bn = open_nc(bpath)
+      do j = 1_ik, reg_region%nidx(t)
+         k = reg_region%idx_freq(j, t)
+         as = var_shape(an, reg_region%var(k)%dim, .true.)
+         bs = var_shape(bn, reg_region%var(k)%dim, .true.)
+         call read_var(an, trim(reg_region%var(k)%name), as, xa, fa)
+         call read_var(bn, trim(reg_region%var(k)%name), bs, xb, fb)
+         if (.not. (fa .and. fb) .or. as(1) /= bs(1)) then
+            write(*,'(4a)') '  missing or mismatched: ', trim(reg_region%var(k)%name), ' in ', apath
+            nbad = nbad + 1_ik ; cycle
+         end if
+         ea = 1_ik ; eb = 1_ik                           ! the axes after (time, polygon), at most two
+         ea(1:size(as) - 2) = as(3:) ; eb(1:size(bs) - 2) = bs(3:)
+         int_var = reg_region%var(k)%xtype == XTYPE_INT
+         same = .true.
+         do it = 0_ik, as(1) - 1_ik
+            do i1 = 0_ik, max(ea(1), eb(1)) - 1_ik
+               do i2 = 0_ik, max(ea(2), eb(2)) - 1_ik
+                  in_a = i1 < ea(1) .and. i2 < ea(2) ; in_b = i1 < eb(1) .and. i2 < eb(2)
+                  if (in_a) va = xa(((it*as(2) + pa - 1_ik)*ea(1) + i1)*ea(2) + i2 + 1_ik)
+                  if (in_b) vb = xb(((it*bs(2) + pb - 1_ik)*eb(1) + i1)*eb(2) + i2 + 1_ik)
+                  if (in_a .and. in_b) then
+                     same = same .and. va == vb
+                  else if (in_a) then
+                     same = same .and. is_fill(va, int_var)
+                  else
+                     same = same .and. is_fill(vb, int_var)
+                  end if
+               end do
+            end do
+         end do
+         if (.not. same) then
+            write(*,'(4a)') '  DIFFERS after the resume: ', trim(reg_region%var(k)%name), ' in ', apath
+            nbad = nbad + 1_ik
+         end if
+      end do
+      call nc_check(nc_close(an), 'close') ; call nc_check(nc_close(bn), 'close')
+   end function compare_polygons
+
+   logical function is_fill(x, int_var)
+      real(c_double), intent(in) :: x
+      logical,        intent(in) :: int_var
+      if (int_var) then
+         is_fill = x == real(MISSING_INT, c_double)
+      else
+         is_fill = x > 1.0e30_c_double
+      end if
+   end function is_fill
+
+   !----- Each polygon of a resumed region against its row of the state file it resumed from, the   !
+   !      file's polygons being IDS: its counts, each cohort's plant density, diameter and carbon     !
+   !      pools, and each patch's area and soil water, matched by their persistent ids. --------------!
+   logical function rows_resumed(path, r) result(same)
+      character(len=*),    intent(in) :: path
+      type(meds_region_t), intent(in) :: r
+      integer(c_int) :: ncid
+      real(c_double), allocatable :: meta(:), gid(:), nplant(:), dbh(:), leafc(:), woodc(:)
+      real(c_double), allocatable :: pgid(:), area(:), theta(:)
+      integer(ik), allocatable :: row_ids(:)
+      integer(ik) :: q, row, nc, np_, ncoh, npat, nsoil, i, j, base
+      logical :: found(9)
+      ncid = open_nc(path)
+      nc = dim_len(ncid, 'cohort') ; np_ = dim_len(ncid, 'patch') ; nsoil = dim_len(ncid, 'soil_layer')
+      call read_var(ncid, 'meta_int',         [NP, 11_ik],       meta,   found(1))
+      call read_var(ncid, 'global_cohort_id', [NP, nc],          gid,    found(2))
+      call read_var(ncid, 'nplant',           [NP, nc],          nplant, found(3))
+      call read_var(ncid, 'dbh',              [NP, nc],          dbh,    found(4))
+      call read_var(ncid, 'leaf_carbon',      [NP, nc],          leafc,  found(5))
+      call read_var(ncid, 'wood_carbon',      [NP, nc],          woodc,  found(6))
+      call read_var(ncid, 'global_patch_id',  [NP, np_],         pgid,   found(7))
+      call read_var(ncid, 'patch_area',       [NP, np_],         area,   found(8))
+      call read_var(ncid, 'soil_theta',       [NP, np_, nsoil],  theta,  found(9))
+      call nc_check(nc_close(ncid), 'close')
+      same = all(found)
+      if (.not. same) return
+      do q = 1_ik, size(r%poly, kind=ik)
+         row = findloc(IDS, r%poly(q)%id, dim=1) - 1_ik
+         ncoh = nint(meta(row*11_ik + 1_ik), ik) ; npat = nint(meta(row*11_ik + 2_ik), ik)
+         associate (c => r%poly(q)%site%cohort, pt => r%poly(q)%site%patch)
+            same = same .and. c%n == ncoh .and. pt%n == npat
+            if (.not. same) return
+            row_ids = nint(gid(row*nc + 1_ik : row*nc + ncoh), ik)
+            do i = 1_ik, ncoh
+               j = findloc(row_ids, c%global_id(i), dim=1)
+               if (j == 0_ik) then ; same = .false. ; return ; end if
+               base = row*nc + j
+               same = same .and. c%nplant(i) == nplant(base) .and. c%dbh(i) == dbh(base)            &
+                           .and. c%leaf_carbon(i) == leafc(base) .and. c%wood_carbon(i) == woodc(base)
+            end do
+            row_ids = nint(pgid(row*np_ + 1_ik : row*np_ + npat), ik)
+            do i = 1_ik, npat
+               j = findloc(row_ids, pt%global_id(i), dim=1)
+               if (j == 0_ik) then ; same = .false. ; return ; end if
+               base = (row*np_ + j - 1_ik)*nsoil
+               same = same .and. pt%area(i) == area(row*np_ + j)                                    &
+                           .and. all(pt%soil_w(i)%theta(1:nsoil) == theta(base + 1_ik : base + nsoil))
+            end do
+         end associate
+      end do
+   end function rows_resumed
 
    !----- The region's state file: a polygon axis holding the three polygons, each with its own     !
    !      counts in meta_int, on cohort and patch axes as long as the largest polygon's. -------------!

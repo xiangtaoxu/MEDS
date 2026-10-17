@@ -39,6 +39,7 @@ module meds_io
 
    public :: state_write_state, io_read_state
    public :: state_file_t, state_file_open, state_file_put, state_file_close, state_file_polygons
+   public :: state_file_refusal
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
@@ -557,11 +558,43 @@ contains
    end subroutine state_file_polygons
 
    !---------------------------------------------------------------------------------------!
+   ! Why the state file at `path` cannot start a region run (`region`) or a site run, or ''    !
+   ! when it can: it cannot be opened, or it holds the other kind's state. A region's file has  !
+   ! a `polygon` axis, one row per polygon, and a site's has none. io_read_state refuses the    !
+   ! same files, so a caller whose read failed can say why.                                     !
+   !---------------------------------------------------------------------------------------!
+   function state_file_refusal(path, region) result(why)
+      character(len=*), intent(in)  :: path
+      logical,          intent(in)  :: region
+      character(len=:), allocatable :: why
+      integer(c_int) :: ncid, st
+      logical        :: holds_region
+      why = ''
+      if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) then
+         why = 'cannot be opened'
+         return
+      end if
+      holds_region = has_polygon_axis(ncid)
+      st = nc_close(ncid)
+      if (holds_region .and. .not. region)                                                         &
+         why = 'is a region''s state file (one row per polygon); a site run restarts from a site''s'
+      if (region .and. .not. holds_region) why = 'is a site''s state file; a region restarts from a region''s'
+   end function state_file_refusal
+
+   !----- Does the open state file hold a region's state, a `polygon` axis ahead of every other? ---!
+   logical function has_polygon_axis(ncid)
+      integer(c_int), intent(in) :: ncid
+      integer(c_size_t) :: n
+      has_polygon_axis = nc_inq_dimlen_f(ncid, 'polygon', n) == NC_NOERR
+   end function has_polygon_axis
+
+   !---------------------------------------------------------------------------------------!
    ! Reconstruct a site from a state file written by state_file_put: a site's file, or with   !
    ! `polygon` (1-based) that row of a region's. The geometry is re-derived from the carbon    !
    ! pools (set_cohort_size_from_carbon); the CSR map and within-patch sort order are rebuilt. !
-   ! found=.false. (no error stop) if the file cannot be opened, so the caller can fall back.  !
-   ! Errors out only on a genuine inconsistency (PFT-count mismatch).                          !
+   ! found=.false. (no error stop) if the file cannot be opened or holds the other kind's      !
+   ! state, a region's read as a site's or a site's as a polygon's (state_file_refusal says    !
+   ! which). Errors out only on a genuine inconsistency (PFT-count mismatch).                  !
    !---------------------------------------------------------------------------------------!
    subroutine io_read_state(site, cfg, path, restart_time, found, fast_found, restructure_pending, &
                             restructure_new_year, polygon)
@@ -596,6 +629,12 @@ contains
       if (region) slot = polygon - 1_ik
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
+      !----- A region's variables have a polygon axis ahead of the others, so reading the other     !
+      !      kind's file would take the wrong elements. ----------------------------------------------!
+      if (has_polygon_axis(ncid) .neqv. region) then
+         st = nc_close(ncid)
+         return
+      end if
       pending = 'none'
       if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
       if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'

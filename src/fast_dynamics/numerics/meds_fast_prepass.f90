@@ -245,7 +245,7 @@ contains
                hyd_table%pft(col_cohort%pft(i)), hyd_opts)
       end do
       dmax_psi_seed = grav_head * soil_psi_from_theta(soil%retention, biophys%soil_w%theta(1),        &
-                    soil%theta_sat(1), soil%theta_res(1), soil%vg_alpha(1), soil%vg_n(1))
+                    soil%theta_sat(1), soil%theta_res(1), soil%curve_par_a(1), soil%curve_par_n(1))
       do i = 1_ik, n
          if (col_cohort%dmax_psi_leaf(i) > 0.0_wp) then
             dmax_psi_arr(i) = dmax_psi_seed                    ! UNSET sentinel -> seed from the soil

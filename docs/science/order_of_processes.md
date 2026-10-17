@@ -20,8 +20,9 @@ same way ([§1](#1-a-run)).
 **Setup** (`driver_open`):
 
 1. Read the configuration.
-2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A restart
-   also restores the calendar date and any restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
+2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A census
+   or state file that cannot start the run stops it. A restart also restores the calendar date and any
+   restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
 3. Open the forcing source. Prepare the polygon: the fast context, the forcing cursor, and the fast
    reservoirs (unless the restart restored them); the initial snow; the canopy-air depth, from the
    stand; the steady-state soil carbon (unless restored); and the slow ledger.

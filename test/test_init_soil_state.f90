@@ -66,7 +66,7 @@ program test_init_soil_state
    call build_fast_context(cfg, ctx)
    associate (soil => ctx%col_config%soil)
       call check(soil%n_active == n .and. all(soil%theta_sat(1:n) == cfg%soil_column%layer_theta_sat(1:n))  &
-                 .and. all(soil%vg_n(1:n) == cfg%soil_column%layer_curve_par_n(1:n)),                       &
+                 .and. all(soil%curve_par_n(1:n) == cfg%soil_column%layer_curve_par_n(1:n)),                       &
                  'a layer did not take its own curve')
       call check(all(ctx%col_config%soil_thermal%soil_dry_heat_capacity(1:n) ==                             &
                      cfg%soil_column%layer_dry_heat_capacity(1:n)), 'a layer did not take its own heat capacity')

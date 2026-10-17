@@ -358,7 +358,7 @@ contains
       logical  :: ok_d, ok_v
       sp%n_active = 3 ; sp%retention = SOIL_RETENTION_VG
       sp%dz(1:3) = 0.03_wp ; sp%theta_sat(1:3) = 0.4314_wp ; sp%theta_res(1:3) = 0.0981_wp
-      sp%vg_alpha(1:3) = 0.7607_wp ; sp%vg_n(1:3) = 1.3554_wp ; sp%ksat(1:3) = 4.54e-6_wp
+      sp%curve_par_a(1:3) = 0.7607_wp ; sp%curve_par_n(1:3) = 1.3554_wp ; sp%ksat(1:3) = 4.54e-6_wp
       f%t_ground = 300.0_wp ; f%q_air = 0.012_wp ; f%rho_air = 1.15_wp ; f%r_aero = 60.0_wp
       ok_d = .true. ; ok_v = .true.
       do i = 1, 30
