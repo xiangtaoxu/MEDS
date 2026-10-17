@@ -275,6 +275,11 @@ before and after.
   example 04's README) said the canopy intercepts rain and dew; the canopy air's condensate goes to
   soil layer 1, which `numerical_scheme.md` §7 now explains by its size (at most 0.5 % of
   evapotranspiration at BCI).
+- **`docs/configuration.md` says what a failed polygon does to a region.** It said the failed polygon
+  is reported and the others finish the month; it now adds what follows, as `meds_main` does it: the
+  month's records are written (the fill value where the failed polygon has none), and a state file
+  that falls due at the month's end, and then the run stops with an error, so the region ends after
+  the month in which the polygon failed, with no end-of-run state file.
 
 ## [0.3.4] — 2026-10-13
 

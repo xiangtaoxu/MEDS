@@ -395,8 +395,12 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
-  (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
-  finish the month.
+  (a NaN, a cohort or soil-carbon state out of bounds) stops at the failing step, and the others
+  finish the month. The month's records are then written, with the fill value where the failed
+  polygon has none, and so is a state file that falls due at the month's end (the failed polygon as
+  it stood); the log names the polygon and the date, and `meds_main` stops with an error. So the
+  region ends after the month in which a polygon failed: no later month runs, and no end-of-run state
+  file is written.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
   year on one thread and 81 s on 40 (measured with a detail polygon, before the region files held
