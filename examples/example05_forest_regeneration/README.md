@@ -161,8 +161,9 @@ python run_example.py --plot-only                            # redraw regenerati
 
 The first step cuts BCI's ERA5-Land cell out of the processed archive
 ([`make_forcing_file.py`](../../scripts/prepare_era5/make_forcing_file.py); about 7 minutes) into
-`data/`. The run takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and
-size-class totals to `output/`, with the full stand checkpointed every 20 years.
+`data/`; the archive is `--era5-archive` or the environment variable `ERA5LAND_ARCHIVE`. The run
+takes about 3.3 hours on 20 threads and writes monthly and yearly site, PFT and size-class totals to
+`output/`, with the full stand checkpointed every 20 years.
 
 ## 2. Palo Verde: a tropical dry forest, 150 years
 
@@ -232,10 +233,14 @@ trees of 10 cm and more.
 ```bash
 cd examples/example05_forest_regeneration/palo_verde
 python run_palo_verde.py --era5-archive /path/to/ED_ERA5land   # forcing, inventory check, regrowth, figure
-python run_palo_verde.py --skip-inventory                      # the regrowth only
+python run_palo_verde.py --skip-inventory                      # the regrowth only, once the forcing is cut
 python run_palo_verde.py --plot-only                           # redraw palo_verde.png
 ```
 
+The archive can also be named by the environment variable `ERA5LAND_ARCHIVE`. The regrowth reads the
+forcing cut into `palo_verde/data/`; the inventory check reads the archive itself, so the script runs a
+copy of `meds_config_inventory.toml` with the archive's folder in `[forcing].data_path`
+(`palo_verde/output/config/inventory.toml`). To run that config by hand, set `data_path` to the folder.
 The forcing cut takes about 4 minutes, the inventory check 2 and the regrowth about an hour on 12
 threads (`[run].n_threads`). Output goes to `palo_verde/output/`.
 

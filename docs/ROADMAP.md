@@ -24,19 +24,23 @@ The issues that predate this roadmap. Everything in sections 2–12 has an issue
 filed 2026-09-13); these are listed separately because they were filed from measurement or from a
 failure, not from a plan.
 
+**The open-issue sweep (October 2026)** fixes, measures or defers every open issue before the move
+to ED-MORE; which issue is in which phase, and why, is in
+[`dev_plans/MEDS_ISSUE_SWEEP_PLAN.md`](dev_plans/MEDS_ISSUE_SWEEP_PLAN.md). An issue it has fixed in
+`beta` stays listed here until the release that closes it.
+
 | # | Title | Note |
 |---|---|---|
-| [#74](https://github.com/xiangtaoxu/MEDS/issues/74) | Condensate is deposited into soil layer 1, not onto leaf/wood surface water | |
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
-| [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
-| [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
-| [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
 | [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | Nothing in the mortality law sees a cohort's carbon state, so a cohort that has lost its leaves and its storage persists while its leaf carbon decays geometrically. A carbon deficit destroys no tissue either: it is netted from the CO₂ the cohort owes (`docs/science/plant_carbon_allocation.md` §2). |
 | [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | The slow applier (`update_cohort_states_kernel`) and `reacclimate_plant_traits` keep a pool non-negative with `max(…, 0)`, which creates the carbon an overdraw would have taken; the per-step bounds guard cannot see it. |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
-| [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | The plant hydraulics and the pedotransfer functions use one value, the soil water the other; 0.03 %. |
-| [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. |
+| [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | Every head-to-pressure conversion, soil and plant alike, uses `grav_head`; `grav` appears only where the acceleration itself is meant (the Kelvin factor of soil evaporation, the aerodynamics, the lapse rate). The two differ by 0.03 %. |
+| [#427](https://github.com/xiangtaoxu/MEDS/issues/427) | Campbell retention: the predawn-potential seed reads van Genuchten parameters | The seed of a new cohort's predawn potential reads 0 MPa (a wet soil) and divides by zero; the water network itself reads the right pair. Van Genuchten runs, every shipped config, are unaffected. |
+| [#428](https://github.com/xiangtaoxu/MEDS/issues/428) | A missing census or restart file silently starts a site run from bare ground | The only notice needs `verbose`; a region stops, but calls a missing file "not a region state file". |
+| [#429](https://github.com/xiangtaoxu/MEDS/issues/429) | `meds.canopy.Canopy` ignores a config rewritten at the same path | It caches the open model by path, so a loop that rewrites one trial config keeps the first one's parameters. |
+| [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. Meanwhile `post_proc/README.md` says which layout each script reads. |
 | [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
 
 ---
@@ -151,6 +155,10 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
 
 - **A separate canopy film store with phase change.** *Planned.* [#165](https://github.com/xiangtaoxu/MEDS/issues/165) Intercepted water currently
   has no independent thermal state and cannot freeze.
+- **Intercepted-water evaporation under ERA5-Land forcing.** *Open question.* [#433](https://github.com/xiangtaoxu/MEDS/issues/433) At BCI the
+  canopy films evaporate about 34 % of the rain and 75 % of ET on ERA5-Land, against about 11 % and 20 %
+  on the tower's forcing; the drizzle of the reanalysis, the film capacities and the wet fraction's form
+  are the candidates.
 - **The free-convection slope.** *Closed 2026-09-30; revisit with the numerical scheme.*
   [#167](https://github.com/xiangtaoxu/MEDS/issues/167) The design note says the true sensible-heat
   slope is `1.25·h` and the solved `ΔT_leaf` is overstated ~20 % in calm conditions. Measured, it is
@@ -179,6 +187,16 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
 - **The wood's heat capacity uses a fixed sapwood moisture.** *Candidate.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The water
   network carries the wood's own water, and the leaf's capacity already uses its prognostic water; the
   wood's does not.
+- **The sub-canopy ground conductance.** *Open question.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
+  `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
+  (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a
+  modelling choice; whether it matters is measured once the open-canopy blend (#410) acts.
+- **No litter layer.** *Open question.* [#268](https://github.com/xiangtaoxu/MEDS/issues/268) No surface organic horizon for the ground energy
+  balance or soil evaporation to act on. To be measured per patch after #410: the case behind it was a
+  site mean dominated by gap patches.
+- **One well-mixed canopy air space.** *Open question.* [#269](https://github.com/xiangtaoxu/MEDS/issues/269) The canopy air is one slab, where
+  a real sub-canopy is cooler and steadier than the air above the crowns; a layered canopy air would
+  resolve it. To be measured per patch after #410, as #268.
 
 ---
 
@@ -257,13 +275,16 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   law for that path in `meds_hydr_lib`.
 - **Γ* with surface pressure.** *Candidate.* [#342](https://github.com/xiangtaoxu/MEDS/issues/342) `gstar25` is a partial pressure at 100 kPa, so
   Γ* as a mole fraction rises as the pressure falls, where it should not depend on pressure. Negligible
-  at BCI (Γ* +0.7 %, A −0.1 %); to fix before high-elevation sites.
+  at BCI (Γ* +0.7 %, A −0.1 %), but example 06's domain already holds high sites: 29 % of its cells are
+  above 1000 m.
 - **Cohort-level sunlit and shaded leaves.** *Open question.* [#343](https://github.com/xiangtaoxu/MEDS/issues/343) Every leaf of a cohort
   photosynthesises at the cohort's mean light, as in ED2; FATES and CLM5 split each leaf layer into
   sunlit and shaded fractions.
-- **Whether the soil-to-root conductance grows in proportion to fine-root length.** *Open question.*
-  [#377](https://github.com/xiangtaoxu/MEDS/issues/377) The Gardner form (`docs/science/plant_hydraulics.md` eq. (14)) makes it linear in root
-  length up to a logarithmic crowding term; real uptake may grow less than linearly.
+- **Whether the soil-to-root conductance grows in proportion to fine-root length.** *Done in beta
+  (answered).* [#377](https://github.com/xiangtaoxu/MEDS/issues/377) The Gardner form (`docs/science/plant_hydraulics.md` eq. (14)) makes it linear in
+  root length up to a logarithmic crowding term. A constant absorbing fraction of the root length is
+  exactly a rescaled specific root length, so it adds no freedom; uptake growing less than linearly
+  would be the series root conductance of #356. The issue closes at the release.
 - **Size-dependent physiological parameters.** *Open question.* [#381](https://github.com/xiangtaoxu/MEDS/issues/381) Turnover rates, the
   root-to-shoot ratio and leaf photosynthetic traits vary with plant size; MEDS holds them per PFT.
 
@@ -284,7 +305,7 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
 - **Forcing adapters for NLDAS-3, Daymet and CHIRPS** (forcing phase F6). *Candidate.*
   [#302](https://github.com/xiangtaoxu/MEDS/issues/302) Deferred 2026-09-27; ERA5-Land stays the
   only product. Each would follow the ED_ERA5land pattern: a downloader, the same flat monthly
-  archive, and a `met_source` entry (`MEDS_FORCING_DESIGN.md` §16). NLDAS-3 (~1 km, hourly) could
+  archive, and a `met_source` entry (`archive/MEDS_FORCING_DESIGN.md` §16). NLDAS-3 (~1 km, hourly) could
   drive MEDS alone but needs regional archives and its own chunk size (OD3); Daymet and CHIRPS are
   daily corrections to an hourly base.
 - **ED_ERA5land archive years before June 2002.** *Planned.*
@@ -305,7 +326,10 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
   - a leaky soil bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401));
   - the rest of the runtime consolidation ([#310](https://github.com/xiangtaoxu/MEDS/issues/310));
-  - example 06 as region runs, which awaits the owner's go for its cost.
+  - resuming a region from a state file without a failed cell ([#431](https://github.com/xiangtaoxu/MEDS/issues/431)): a restart must hold
+    exactly the region's polygons, so a cell that fails cannot be masked out and the run resumed.
+
+  Example 06 runs as two region runs.
 - **A source interface for the met reader.** *Done in beta.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) The two file sources
   are modules of their own (`meds_met_file_source`, `meds_met_archive_source`), each an open and one
   record's values as stored, over what they share (`meds_met_source_common`). The reader keeps
@@ -406,11 +430,23 @@ Gaps and residues found in the 2026-10-17 annotation review.
 - **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
-- **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner.
-- **Example 05's Palo Verde PFTs** label values "example 04's calibration" that differ from it. *Candidate.*
-  [#424](https://github.com/xiangtaoxu/MEDS/issues/424)
-- **`leaf_gas_exchange.md` §2 gives the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
-  [#425](https://github.com/xiangtaoxu/MEDS/issues/425)
+- **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner. Until the
+  rewrite, a banner at the top of the page lists the statements that are now wrong.
+- **Example 05's Palo Verde PFTs** carry `stomatal_g0`, `leaf_angle_mean` and `z0m_ratio` from example
+  04's fit on a 1.4 m soil column, not its current fit. *Done in beta.* [#424](https://github.com/xiangtaoxu/MEDS/issues/424) They are labelled
+  as the set's own values; taking the current fit would need example 05's Palo Verde runs and example
+  06 repeated (the owner: relabel only).
+- **`leaf_gas_exchange.md` §2 gave the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Done in
+  beta.* [#425](https://github.com/xiangtaoxu/MEDS/issues/425) Re-measured with `meds.plant.leaf`: the table states each number's conditions
+  (−27.4 % of gross A at saturating light, −31 to −34 % of net A at PAR 1500–2000).
+- **Examples need the development cluster's data paths; a stale root CSV; stale counts.** *Done in
+  beta.* [#430](https://github.com/xiangtaoxu/MEDS/issues/430) Every example takes its data folders from an option or an environment variable
+  and stops with a message without them; the root `meds_output_pft_parameters.csv` is gone; `CLAUDE.md`
+  and `README.md` give 72 tests and 284 variables.
+- **The crown-area allometry is required config but never used.** *Planned.* [#432](https://github.com/xiangtaoxu/MEDS/issues/432)
+  `[allometry].ca_b1`/`ca_b2` are required, but `dbh_to_crown_area` is never called, and
+  `crown_area_frac` (1.0 in every shipped config) only sets the in-canopy wind's crown cover. The open
+  canopy of #410 uses the leaf and wood area instead.
 - **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
   a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
   `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`

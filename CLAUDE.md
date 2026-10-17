@@ -43,7 +43,7 @@ this machine is in `CLAUDE.local.md`.
 cmake -S . -B build-ifx -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_PREFIX_PATH=$CONDA_PREFIX
 cmake --build build-ifx -j
-ctest --test-dir build-ifx --output-on-failure          # 53 tests, about 25 s
+ctest --test-dir build-ifx --output-on-failure          # 72 tests (73 with the Python library), ~70 s; -j 5: 25 s
 
 # Debug (-stand f18 -check all -fpe0) for engine work; the whole suite passes here too:
 cmake -S . -B build-debug -DCMAKE_Fortran_COMPILER=ifx -DCMAKE_BUILD_TYPE=Debug \

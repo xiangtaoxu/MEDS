@@ -8,10 +8,10 @@ the hourly values, as the coupled model sees it). The script counts, for each UT
 whose PAR exceeds each value of a grid of par_min, and writes them to drivers/era5_par_hours_<site>.csv.gz.
 run_phenology.py turns a count into hours (x 0.25) and interpolates between grid values.
 
-The CSVs are committed: the archive (/ibstorage/SharedData/ED_ERA5land on the Cornell BioHPC
-cluster) is not public in this form. Regenerating needs the archive and a MEDS build whose shortwave
-split uses the interval-mean sun, so a sunrise or sunset hour still splits its light
-(docs/science/forcing.md §6):
+The CSVs are committed, because the processed archive is not public (scripts/prepare_era5 builds it
+from ERA5-Land). Regenerating needs the archive (--archive, or the environment variable ERA5LAND_ARCHIVE)
+and a MEDS build whose shortwave split uses the interval-mean sun, so a sunrise or sunset hour still
+splits its light (docs/science/forcing.md §6):
 
     python make_era5_par_hours.py --meds-main ../../build-ifx/meds_main --archive /path/to/ED_ERA5land
 """
@@ -95,16 +95,19 @@ def count(site, work):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--meds-main", default=os.path.join(ROOT, "build-ifx", "meds_main"))
-    ap.add_argument("--archive", default="/ibstorage/SharedData/ED_ERA5land")
+    ap.add_argument("--archive", default=os.environ.get("ERA5LAND_ARCHIVE"), help="the ED_ERA5land archive")
     ap.add_argument("--work", default=os.path.join(HERE, "data", "era5_par_runs"))
     ap.add_argument("sites", nargs="*", default=list(SITES))
     args = ap.parse_args()
+    if not args.archive:
+        raise SystemExit("ERROR: give the ED_ERA5land archive: --archive, or set ERA5LAND_ARCHIVE")
     os.makedirs(os.path.join(HERE, "drivers"), exist_ok=True)
     for site in args.sites:
         work = os.path.abspath(os.path.join(args.work, site))
         os.makedirs(work, exist_ok=True)
         main_toml = configure(site, work, args.archive)
-        subprocess.run([args.meds_main, str(main_toml)], cwd=work, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run([os.path.abspath(args.meds_main), str(main_toml)], cwd=work, check=True,
+                       stdout=subprocess.DEVNULL)
         table = count(site, work)
         lat, lon, *_ = SITES[site]
         path = os.path.join(HERE, "drivers", f"era5_par_hours_{site}.csv.gz")

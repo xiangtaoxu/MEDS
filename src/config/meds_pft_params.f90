@@ -85,9 +85,10 @@ module meds_pft_params
       real(wp), allocatable :: theta_j(:)            !< [--]    non-rectangular hyperbola curvature (C3 J)
       !----- CO-LIMITATION curvatures, one pair per pathway. These describe how sharply the        !
       !      leaf transitions between two LIMITING PROCESSES and are physically distinct from      !
-      !      theta_j, the curvature of the electron-transport hyperbola; using theta_j for         !
-      !      them costs a quarter of assimilation where A_c and A_j sit close together             !
-      !      (docs/science/leaf_gas_exchange.md §2, "The co-limitation curvatures are not          !
+      !      theta_j, the curvature of the electron-transport hyperbola. A J curvature of 0.85     !
+      !      on both costs 27 % of gross assimilation at saturating light and Ci 280 (31-34 % of   !
+      !      net assimilation at PAR 1500-2000), because A_c and A_j sit close together at ambient !
+      !      CO2 (docs/science/leaf_gas_exchange.md §2, "The co-limitation curvatures are not      !
       !      theta_J"). ---------------------------------------------------------------------------!
       real(wp), allocatable :: theta_cj_c3(:)        !< [--]    C3 Ac/Aj co-limitation curvature
       real(wp), allocatable :: theta_ip_c3(:)        !< [--]    C3 (Ac,Aj)/Ap co-limitation curvature

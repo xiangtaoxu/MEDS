@@ -18,7 +18,7 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
-canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
+canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 # Each cohort's Vcmax25, Rd25, SLA and leaf lifespan follow the leaf area above it.
 [trait_dynamics]
@@ -138,7 +138,7 @@ leaf_absorptance = 0.85
 phi_psii         = 0.74
 
 [aerodynamics]
-z0m_ratio = 0.0535721             # example 04's calibration
+z0m_ratio = 0.0535721             # the Palo Verde set's own, from example 04's fit on a 1.4 m soil column
 
 #----- The site and its weather. ----------------------------------------------------------------------
 [site]
@@ -175,7 +175,7 @@ recycle_start  = "2003-01-01 01:00:00"
 recycle_end    = "2023-01-01 01:00:00"
 start_clamp    = "error"
 
-#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (/ibstorage/ED-Data/ED-SoilMaps). --
+#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (docs/configuration.md, Input maps). --
 [soil_carbon]
 soil_carbon_on = true             # starts empty; the start file carries no soil pools
 
