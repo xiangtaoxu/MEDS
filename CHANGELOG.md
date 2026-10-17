@@ -174,6 +174,12 @@ before and after.
   eq. (8) in place of its small-crown test. The keys are removed from every shipped TOML (the root
   references, the examples, the example 04 calibration file and `test/region`). Results are
   byte-identical (the crown fraction was 1 everywhere).
+- **The stem respiration's size scaler** (#412, part 3). `stem_resp_size_scaler` was a `wood_params_t`
+  default of 0 that no key could set, applied every step as a factor 10^(0·dbh) = 1 on the stem surface
+  rate. The field and the factor are gone, and `docs/science/plant_respiration.md` eq. (3) drops it. §7
+  said shipped runs have no size scaling of stem respiration; it now says the surface rate has no size
+  factor of its own and that example 05's and 06's PFTs scale stem respiration with size through the
+  sapwood basis. `test_plant_respiration`'s size-scaler test goes with it. Results are byte-identical.
 
 ### Fixed
 

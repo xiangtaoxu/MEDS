@@ -394,8 +394,9 @@ Gaps and residues found in the 2026-10-17 annotation review.
 - **Ground optics are bare soil plus snow.** *Candidate.* [#411](https://github.com/xiangtaoxu/MEDS/issues/411) Litter, standing water and soil moisture
   do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
 - **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412) No maintenance respiration on
-  reproductive tissue, no substrate or moisture limitation of maintenance respiration, and the stem
-  size scaler is σ = 0 (`docs/science/plant_respiration.md` §7).
+  reproductive tissue, and no substrate or moisture limitation of maintenance respiration
+  (`docs/science/plant_respiration.md` §7). The stem's unused size scaler is gone; stem respiration
+  grows with size through its surface or sapwood basis.
 - **An unattributed energy residual under a melting snow pack.** *Open question.* [#413](https://github.com/xiangtaoxu/MEDS/issues/413) The whole-column
   ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
   about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it

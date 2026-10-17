@@ -39,7 +39,7 @@ A PFT sets one rate to 0 to use the other alone; `stem_resp_sapwood25` defaults 
 that does not name it respires by surface alone:
 
 ```math
-R_{\mathrm{stem}} \;=\; s(T_w)\,\Big[\,r^{\mathrm{stem}}_{25}\,10^{\,\sigma\,\mathrm{dbh}}\,A_{\mathrm{stem}}
+R_{\mathrm{stem}} \;=\; s(T_w)\,\Big[\,r^{\mathrm{stem}}_{25}\,A_{\mathrm{stem}}
 \;+\; r^{\mathrm{sap}}_{25}\,V_{\mathrm{sap}}\Big],
 \qquad
 A_{\mathrm{stem}} \;=\; \frac{\pi\,(10^{-2}\,\mathrm{dbh})\,h \;+\; \pi\,\mathrm{WAI}/n}{f_{\mathrm{ag}}},
@@ -76,9 +76,10 @@ Four details are load-bearing:
   (Westerband et al. 2022). A volume basis is only as good as the sapwood fraction behind it (Rowland et
   al. 2018), which is why a sapwood rate is best set against a stand's total stem respiration.
 
-The size scaler $\sigma$ = `stem_resp_size_scaler` ships at **0** (flat in diameter) — a module default
-on `wood_params_t`, not a TOML key. ED2's positive DBH exponent (~0.0041 cm⁻¹) is noisy and pulls against
-the shrinking-live-fraction argument for large stems, so MEDS leaves the seam present and switched off.
+The surface rate has no size factor of its own. ED2's optional DBH exponent on it (~0.0041 cm⁻¹,
+$`10^{\,0.0041\,\mathrm{dbh}}`$) is noisy and pulls against the shrinking-live-fraction argument for
+large stems; how stem respiration grows with size is set instead by the choice of basis above, and a
+PFT that wants it to grow faster than the surface uses the sapwood term.
 
 ## 3. Fine-root maintenance respiration
 
@@ -185,7 +186,9 @@ canopy-air budget these fluxes enter is in `docs/science/canopy_air_space_biophy
   pool is one per-plant pool spread over the layers by the root profile, not a prognostic pool per layer.
 - **No substrate or moisture limitation of maintenance respiration** — it runs at the temperature-set rate
   whatever the carbon status; §6's starvation correction is after-the-fact bookkeeping, not a rate law.
-- **No size scaling of the stem baseline** in shipped runs ($\sigma = 0$, §2).
+- **No size factor on the stem surface rate** (ED2's optional DBH exponent, §2). Stem respiration
+  still grows with size through its basis: the shipped example 05 and 06 PFTs scale it through the
+  sapwood term, which charges saplings less and canopy trees more than the surface term (§2).
 
 See `docs/ROADMAP.md` §7 for the open items.
 
@@ -200,7 +203,6 @@ See `docs/ROADMAP.md` §7 for the open items.
 | $`f_{\mathrm{ag}}`$ | `aboveground_frac` | aboveground fraction of woody carbon; scales the stem area (eq. (3)) |
 | $g$ | `growth_resp_factor` | construction-cost fraction charged on realized growth (shipped 0.3) |
 | $`R_{d25}`$ | `rd25` (plastic per cohort) | leaf dark-respiration capacity — see `plant_traits.md`, `leaf_gas_exchange.md` |
-| $\sigma$ | `stem_resp_size_scaler` | DBH size effect; a `wood_params_t` default of 0, not a TOML key |
 | $`E_a, H_d, \Delta S`$ | `wood_params_t` / `root_params_t` | peaked-Arrhenius parameters, defaulted to the leaf $R_d$ values |
 
 ## Where the code is
@@ -217,4 +219,4 @@ See `docs/ROADMAP.md` §7 for the open items.
 | growth respiration (eq. (6)) | `meds_plant_carbon_allocation`: `growth_respiration`, charged inside `fill_carbon_demand` / `plant_carbon_allocation` |
 | growth respiration → canopy air | `meds_vegetation_dynamics`: `compute_carbon_allocation` → `patch%slow_co2_rate` → `meds_fast_prepass` |
 | per-PFT traits + TOML loading | `meds_pft_params` (`pft_table_t`), `meds_config_io` (`[pft]` block, every key required) |
-| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, size scaler, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |
+| tests | `test/test_plant_respiration.f90` (grass gate, 25 °C identity, T-response, WAI branch term, `aboveground_frac` inverse scaling, root pool scaling, per-PFT trait differentiation, the sapwood term); growth respiration in `test/test_plant_carbon_allocation.f90` |
