@@ -29,7 +29,8 @@ module meds_vegetation_dynamics
                                          SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,   &
                                          SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, KGC_PER_UMOL_C,   &
                                          slow_tissue_heat
-   use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
+   use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, advance_pool,           &
+                                      update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
    use meds_demography_rates,    only : npp_to_growth, camac_mortality, decline_to_floor_mortality,  &
@@ -55,7 +56,7 @@ module meds_vegetation_dynamics
 
    public :: vegetation_dynamics, restructure_stand, advance_leaf_phenology, advance_plant_traits
    public :: reacclimate_plant_traits
-   public :: shed_turnover_water, accumulate_recruit_pool
+   public :: shed_turnover_water, accumulate_recruit_pool, update_cohort_derivatives
 
    !----- Guard: baseline leaf turnover = 1/llspan; floor llspan so a degenerate value cannot divide-by-0.
    real(wp), parameter :: tiny_llspan = 1.0e-6_wp         !< [yr]
@@ -427,11 +428,14 @@ contains
 
       associate (cohort => site%cohort)
          do i = 1_ik, cohort%n
-            !----- Tentative new pools (never let a pool go negative), in locals. -------------!
-            lc_new = max(cohort%leaf_carbon(i)          + npp%leaf(i),          0.0_wp)
-            fc_new = max(cohort%fineroot_carbon(i)      + npp%fineroot(i),      0.0_wp)
-            wc_new = max(cohort%wood_carbon(i)          + npp%wood(i),          0.0_wp)
-            nc_new = max(cohort%nonstructural_carbon(i) + npp%nonstructural(i), 0.0_wp)
+            !----- Tentative new pools, in locals, by the applier's own rule (advance_pool): a pool !
+            !      the step empties lands on 0 to round-off, and an overdraw stays negative, so the  !
+            !      applier carries it on and the bounds guard stops the run naming the pool. A floor !
+            !      here would create the carbon the overdraw took before the applier could see it. -!
+            lc_new = advance_pool(cohort%leaf_carbon(i),          npp%leaf(i))
+            fc_new = advance_pool(cohort%fineroot_carbon(i),      npp%fineroot(i))
+            wc_new = advance_pool(cohort%wood_carbon(i),          npp%wood(i))
+            nc_new = advance_pool(cohort%nonstructural_carbon(i), npp%nonstructural(i))
             !----- FLIP the geometry from the tentative pools (dbh from wood_carbon, leaf_area    !
             !      from leaf_carbon) into locals, for the growth rate the ring buffer and the     !
             !      diagnostics report; update_cohort_states commits the same flip. ---------------!

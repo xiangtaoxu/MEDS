@@ -331,6 +331,15 @@ before and after.
   `test_mortality_pathways`: a leafless cohort with no storage reaches the floor on its first step,
   its carbon down the background pathway, and is culled at the month boundary; one with storage lives
   through a 150-day dry season on it.
+- **The driver's tentative carbon pools follow the applier's round-off rule** (#394).
+  `update_cohort_derivatives` formed each cohort's new pools as `max(pool + npp, 0)` before backing
+  out the tendency, the same floor the applier had: an overdraw was floored there, so the carbon it
+  took was created before the applier, whose bounds guard reports an overdraw, could see it. It now
+  uses the applier's `advance_pool`: a pool the step empties lands on 0 to round-off, and an overdraw
+  stays negative, reaches the applier, and stops the run naming the pool. Byte-identical on every
+  comparison run (the shipped short cases, a year of the Palo Verde inventory and 20 years of BCI's
+  regeneration from its 1980 checkpoint). `test_carbon_growth` passes a rounded full shed and a 1 %
+  storage overdraw through the driver and the applier.
 
 ### Documentation
 

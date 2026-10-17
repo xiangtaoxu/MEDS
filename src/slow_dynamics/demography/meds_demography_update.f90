@@ -31,7 +31,7 @@ module meds_demography_update
    implicit none
    private
 
-   public :: update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
+   public :: update_cohort_states, fill_cohort_deriv, advance_pool, update_patch_states, update_overtopping_lai
 
    !----- How far past its bound a quantity may land from round-off alone, in epsilons of the      !
    !      magnitudes it touches. A pool's tendency is (new - old)/dt, so the applier reaches a pool  !

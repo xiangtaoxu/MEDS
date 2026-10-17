@@ -4,13 +4,14 @@
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
-   use meds_config,                 only : meds_config_t
+   use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc, cohort_bad_field,    &
                                      cohort_field_name
    use meds_demography_update, only : update_cohort_states
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits
+   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits, &
+                                           update_cohort_derivatives
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_diagnostic_reduce,     only : has_nan
@@ -212,6 +213,31 @@ program test_carbon_growth
       call check(site%cohort%nonstructural_carbon(1) < 0.0_wp, 'applier: a 1 % overdraw is not floored')
       call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nonstructural_carbon', &
                  'applier: the bounds guard names the overdrawn pool')
+   end block
+
+   !=== The driver's tendency follows the applier's rule: a step that empties a pool lands it on  !
+   !    0, and an overdraw reaches the applier as an overdraw, which the bounds guard names. A     !
+   !    floor on the driver's tentative pool would create the carbon before the guard could see it. =!
+   block
+      type(carbon_flux_block) :: npp
+      real(wp) :: dt
+      dt = 1.0_wp / 365.0_wp
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      allocate(npp%leaf(1), npp%fineroot(1), npp%wood(1), npp%nonstructural(1))
+      npp%leaf(1)          = -site%cohort%leaf_carbon(1) * (1.0_wp + 1.0e-15_wp)   ! a rounded full shed
+      npp%fineroot(1)      = 0.0_wp
+      npp%wood(1)          = 0.0_wp
+      npp%nonstructural(1) = -site%cohort%nonstructural_carbon(1) * 1.01_wp        ! a 1 % overdraw
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      call update_cohort_derivatives(site, npp, [0.0_wp], dt, growth_window_steps(cfg), 1_ik)
+      call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+      call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'driver + applier: a rounded full shed lands on 0')
+      call check(site%cohort%nonstructural_carbon(1) < 0.0_wp,                                     &
+                 'driver + applier: a 1 % overdraw reaches the applier, not floored on the way')
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nonstructural_carbon', &
+                 'driver + applier: the bounds guard names the overdrawn pool')
    end block
 
    !=== Re-acclimation to a lower SLA asks storage for more leaf carbon: it takes only what     !
