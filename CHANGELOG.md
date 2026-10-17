@@ -200,6 +200,18 @@ before and after.
   without its enthalpy. And `test_column_dynamics`'s RUN 9 set `time_integrator = "rk45"` for its
   third leg without rebuilding the integrator record the schemes read, so that leg ran ARK; it now
   rebuilds it, as RUN 8 and 8b do, and the snowfall check runs on RK45.
+- **Dead code** (#417, the named items; the unused imports come later). `size_tol` (never read) is gone,
+  and the two end-of-run patch-area checks, `driver_finalize` and `region_finalize`, use `area_tol` in
+  place of the literal `1.0e-5`. Gone too: `surface_tend_t%coh_transp`, written but read only by a test,
+  which now sums the per-cohort `transp_c`; `apply_rt_forcing`'s unused `tcas` and the
+  `cas_temp_of_enthalpy` its caller computed for it; and `meds_run_t%is_open`, set and never read.
+  The allocation kernel's storage refill, misnamed `store_hcap_per_dt`, is `storage_refill`, and
+  `snow_stage_t%t_melt` defaults to the triple point instead of 0 K: a trace pack (below
+  `tiny_snow_mass`, which skips the melt step and so never sets it) valued the ground's inflow at 0 K.
+  Results are byte-identical (no compared run has snow). `veg_energy_balance`'s `t_emit`, which every
+  caller passes as `t_cas`, stays for now: its `(t_cas − t_emit)` terms are exactly zero, but ifx's
+  default floating-point model reassociates the shorter sum left without them, so removing them moves
+  the ifx build's rounding (gfortran's results are unchanged).
 
 ### Fixed
 

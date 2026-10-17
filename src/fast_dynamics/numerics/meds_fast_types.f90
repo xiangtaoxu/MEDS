@@ -21,6 +21,7 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
+   use meds_constants, only : t_3ple
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
@@ -485,7 +486,6 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp) :: cond_enth      = 0.0_wp
       !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
@@ -611,7 +611,7 @@ module meds_fast_types
       !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
       !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
       !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
-      real(wp) :: t_melt     = 0.0_wp    !< [K] effective temperature of the meltwater
+      real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
    end type snow_stage_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!

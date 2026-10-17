@@ -239,7 +239,6 @@ contains
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
       f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + snow%subl_rate
       f%coh_rnet   = coh_rnet
-      f%coh_transp = coh_transp
 
       !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a   !
       !      relaxation of q toward qsat with timescale TAU_COND -- continuous, with only a kink           !

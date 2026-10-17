@@ -352,8 +352,10 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each
   enters the error, and the combinators work on the flat array. The compiler still cannot check
   the list; `test_state_combinators` runs every field through every combinator.
-- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) `size_tol`/`area_tol`, `surface_tend_t%coh_transp`,
-  `apply_rt_forcing`'s `tcas` dummy, `veg_energy_balance`'s `t_emit` generality, and unused imports.
+- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) Most named items are removed. Left: the
+  tree-wide sweep of names that modules import but do not use, and `veg_energy_balance`'s `t_emit`
+  (every caller passes `t_cas`), whose removal is exact in IEEE arithmetic but moves ifx's rounding, so
+  it waits for a change that moves results anyway.
 
 ---
 
