@@ -205,6 +205,45 @@ before and after.
   runs its leaky polygon at its cell's `f_leak` and reads every polygon's `drain_factor` from the
   region files; `test_biophysics_opts_config` loads the two names.
 
+- **Leaf turnover is a rate: `leaf_turnover_rate_toc` replaces the leaf lifespan** (#379, the rename;
+  the sweep's decision D3). A leaf lifespan acted in the carbon path only through its reciprocal, so
+  the rate is now the parameter and the state (`docs/science/plant_traits.md`):
+  - the PFT key `leaf_turnover_rate_toc` [yr⁻¹, > 0] replaces `leaf_lifespan_toc` [yr];
+  - the cohort trait `leaf_turnover_rate` replaces `llspan`, in the state file
+    (`leaf_turnover_rate`), the output (`leaf_turnover_rate_cohort`, yr⁻¹), the C API's cohort field
+    17 and `meds.model`'s `leaf_turnover_rate`;
+  - its shade plasticity is rate = rate_toc · exp(k · LAI above), with `kplastic_leaf_turnover` = k ≤ 0
+    the negative of the old lifespan slope, so one formula serves all four traits and the target is
+    the reciprocal of the old lifespan's; the trait relaxes as a rate, f = 1 − exp(−rate · Δt);
+  - a fusion blends the rate on leaf carbon, so the fused cohort turns over the leaf carbon its two
+    parents did. The leaf-area mean of a lifespan it replaces did not: it is a harmonic mean of the
+    rates, biased toward the slow, shaded parent;
+  - `[trait_dynamics].fineroot_turnover_plastic` scales the fine roots by rate / rate_toc.
+
+  Retired, each refused with its conversion: `pft.leaf_lifespan_toc` (rate = 1 / lifespan),
+  `derived.kplastic_llspan` (`kplastic_leaf_turnover` = −`kplastic_llspan`) and
+  `trait_dynamics.fineroot_lifespan_plastic` (`fineroot_turnover_plastic`). A state file holding
+  `llspan` is read as 1/`llspan`. The shipped configs carry the reciprocals: the reference and example
+  03's [1.0, 2.0, 3.0303] yr are [1.0, 0.5, 0.33] yr⁻¹ (3.0303 was 1/0.33 rounded), examples 04's and
+  the region test's 2 yr are 0.5, and example 05's observed lifespans are written to four decimals,
+  BCI's 0.5/0.7/0.9 yr as 2.0/1.4286/1.1111 and Palo Verde's 0.5/0.5/0.8/1.5 yr as 2/2/1.25/0.6667
+  (2–5×10⁻⁵ from the exact reciprocals). The issue's new turnover form, phenology up-regulating each
+  PFT's baseline rate, is deferred (`docs/ROADMAP.md` §2).
+
+  Before → after, on the integration branch: example 04's ten days on ARK and a month of example 05's
+  Palo Verde inventory run move by under 10⁻¹⁰ and 7×10⁻⁶; example 04 forced to RK45 moves ET by
+  +0.3 % (its step sequence follows the last bit, as with #420); example 05's BCI regeneration from
+  bare ground, 1600–1601, by under 3×10⁻⁶ (leaf and fine-root litter +5×10⁻⁵). Over 1600–1619 that
+  run moves: GPP 2.1687 → 2.1663 kgC m⁻² yr⁻¹ (−0.11 %), LAI 5.047 → 5.012 (−0.68 %; the last year
+  6.318 → 6.226, −1.5 %), leaf litter +0.30 %, AGB 1.5769 → 1.5750 kgC m⁻² (−0.12 %), density 5.689 →
+  5.684 m⁻² (−0.09 %), ET 1314.6 → 1313.8 mm yr⁻¹ (−0.07 %). The rename alone (old fusion and relaxation
+  rebuilt on the rate) moves it by under 6×10⁻⁶; relaxing the rate rather than the lifespan gives LAI
+  −0.12 % and AGB −0.18 %, and the leaf-carbon fusion LAI −0.56 % and GPP −0.08 %: fused cohorts now
+  turn over as fast as their parents did. `test_fusion_cohort` checks that a fusion of cohorts with
+  different SLAs and rates conserves the leaf carbon turned over; `test_state_roundtrip` reads an
+  `llspan` state file as 1/`llspan`; `test_config_keys` the three refusals; `test_plant_trait_dynamics`
+  the rate's gradient, its reciprocal lifespan form and the relaxation.
+
 ### Removed
 
 - **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and
