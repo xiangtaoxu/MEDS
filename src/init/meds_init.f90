@@ -86,7 +86,7 @@ contains
       integer(ik) :: m
       call cohort_ensure_capacity(site%cohort, site%cohort%n + 1_ik)
       m = site%cohort%n + 1_ik
-      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh)
+      call init_cohort(site%cohort, m, cfg%pft, ipft, ip, nplant, dbh, cfg%hydraulics)
       call assign_cohort_id(site, m)
       site%cohort%n = m
    end subroutine add_cohort

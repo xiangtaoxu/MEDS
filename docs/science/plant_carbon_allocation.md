@@ -145,6 +145,25 @@ mutates a pool. The full
 priority order is therefore **maintenance debt → leaf/fine-root growth (NPP then storage) → storage refill
 (NPP only) → reproduction → wood**.
 
+### A cohort with no leaves and no storage
+
+When $`C_{\mathrm{net}} < 0`$ the maintenance debt is paid from storage first; what storage cannot
+cover is the **deficit**. No pool pays it and no tissue is destroyed: the fast loop has already
+respired it, and the driver corrects that on the next step (`plant_respiration.md` §6).
+
+One case is different: a cohort whose deficit is larger than **all the carbon in its leaves**. Its
+storage is spent, and burning every leaf it has could not pay one step of its upkeep, so nothing is
+left to pay for a flush and it cannot recover. It dies. Its mortality for the step
+(`decline_to_floor_mortality`) takes its density to the density floor, `[demography].negligible_nplant`,
+down the path every death takes: its carbon goes to litter and its water to the ground. The next
+monthly cull removes the cohort, so it is gone within a month.
+
+The test needs no threshold: its scale is the cohort's own maintenance respiration. A canopy holds far
+more leaf carbon than one step's upkeep, and a cohort with storage pays it, so a leafless cohort living
+on its reserves through a dry season or a winter is not affected. Every other cohort dies at the
+growth-driven hazard; there is no separate starvation hazard. This case is interim, until a growth- or
+storage-based mortality replaces it (`docs/ROADMAP.md`).
+
 ## 3. Growth respiration on realized growth
 
 Building one unit of **growth tissue** (leaf, fine root, wood, or reproduction), or exporting one unit of
@@ -237,7 +256,7 @@ This is the *only* plant-flux call on the slow carbon path.
 |---|---|
 | per-pool growth `growth_{leaf,fineroot,wood,repro}`, `npp_store` | the driver forms the net per-pool change `growth − shed`, assembles the `carbon_flux_block`, and hands it to `update_cohort_derivatives` → the `wood_carbon → dbh` flip (`meds_allometry.carbon_to_structure`) → the core engine's `update_cohort_states` |
 | `growth_resp` | autotrophic-respiration accounting (with maintenance resp) |
-| `deficit`, `starving` | `deficit` is netted, with the opposite sign, into the patch's `slow_co2_rate` (`plant_respiration.md` §6); no tissue is destroyed |
+| `deficit`, `starving` | `deficit` is netted, with the opposite sign, into the patch's `slow_co2_rate` (`plant_respiration.md` §6); no tissue is destroyed. A deficit larger than the cohort's leaf carbon means it has no leaves and no storage, and it dies (§2) |
 | leaf + fine-root **litter** (`shed`) | the resorbed share to storage, the rest to the patch's litter (`add_necromass`); the exudate to `labile_soil` |
 
 `growth_respiration` lives in `meds_plant_carbon_allocation` beside the allocation kernel; the whole kernel is orthogonal to

@@ -18,11 +18,12 @@
 !==========================================================================================!
 module meds_demography_rates
    use meds_kinds,     only : wp
+   use meds_constants, only : tiny_num
    use meds_allometry, only : allometry_t, wood_to_dbh
    implicit none
    private
 
-   public :: npp_to_growth, camac_mortality, npp_to_recruitment
+   public :: npp_to_growth, camac_mortality, decline_to_floor_mortality, npp_to_recruitment
 
 contains
 
@@ -50,6 +51,18 @@ contains
       g_eff = merge(growth_avg, growth_inst, avg_is_set)
       mort  = mort_gamma + mort_alpha * exp(-mort_beta * g_eff)
    end function camac_mortality
+
+   !----- The hazard [1/yr] that takes a cohort's density down to the density floor over `window`  !
+   !       [yr]: nplant * exp(-mort * window) ends exactly at nplant_floor. It is the death of a     !
+   !       cohort with no leaves and no storage (docs/science/plant_carbon_allocation.md §2), and    !
+   !       zero for a cohort already at the floor. ---------------------------------------------------!
+   elemental pure function decline_to_floor_mortality(nplant, nplant_floor, window) result(mort)
+      real(wp), intent(in) :: nplant         !< [plant/m2] the cohort's density
+      real(wp), intent(in) :: nplant_floor   !< [plant/m2] the density floor (> 0)
+      real(wp), intent(in) :: window         !< [yr] how long the decline takes (> 0)
+      real(wp)             :: mort
+      mort = log(max(nplant, nplant_floor) / max(nplant_floor, tiny_num)) / max(window, tiny_num)
+   end function decline_to_floor_mortality
 
    !----- One cohort's reproduction-carbon recruit contribution [plant/m2/yr]: the per-plant       !
    !       reproduction NPP over the step, as an annual rate, times the density and the            !

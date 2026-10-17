@@ -12,18 +12,18 @@ module meds_slow_dynamics
    use meds_time,                  only : meds_time_t, day_of_year
    use meds_site_state_types, only : site_t
    use meds_demography_update, only : update_patch_states
-   use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand
+   use meds_vegetation_dynamics,   only : vegetation_dynamics, restructure_stand, shed_excess_tissue_water
    use meds_biogeochem_dynamics,   only : advance_biogeochem_dynamics
    use meds_biogeochem_types, only : litter_input_t, soilc_seam_t
    use meds_column_state_types, only : cas_set_depth
    use meds_slow_ledger,           only : slow_ledger_t, slow_ledger_open, slow_ledger_mark,       &
-                                          slow_ledger_rebase,                                     &
+                                          slow_ledger_rebase, slow_tissue_heat,                   &
                                           slow_ledger_declare, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC, &
-                                          KGC_PER_UMOL_C
+                                          SLOW_PHASE_TISSUE_WATER, KGC_PER_UMOL_C
    implicit none
    private
 
-   public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth
+   public :: advance_slow_dynamics, advance_boundary_dynamics, refresh_canopy_depth, settle_tissue_water
 
 contains
 
@@ -95,6 +95,30 @@ contains
       if (present(ledger)) call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_CANOPY)
    end subroutine advance_boundary_dynamics
 
+   !---------------------------------------------------------------------------------------!
+   ! settle_tissue_water -- before the fast loop reads the plants' water, shed what lies above  !
+   ! the capacity their biomass now allows (shed_excess_tissue_water) and book it: the water as !
+   ! a handoff to the ground, the heat it takes as a change in the tissue's thermal mass. It    !
+   ! runs once per step, after the slow step and any calendar boundary have changed the stand,  !
+   ! so it continues their ledger window in a phase of its own. Before a run's first step       !
+   ! there is no window yet, and it takes the reference store, as a resumed run's boundary does. !
+   !---------------------------------------------------------------------------------------!
+   subroutine settle_tissue_water(site, cfg, ledger)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      type(slow_ledger_t), intent(inout), optional :: ledger
+      real(wp) :: water_shed, heat0
+      heat0 = 0.0_wp
+      if (present(ledger)) then
+         if (.not. ledger%has_first) call slow_ledger_rebase(ledger, site, cfg)
+         heat0 = slow_tissue_heat(site)
+      end if
+      call shed_excess_tissue_water(site, cfg, water_shed)
+      if (present(ledger)) then
+         call slow_ledger_declare(ledger, water_out = water_shed, energy_in = slow_tissue_heat(site) - heat0)
+         call slow_ledger_mark(ledger, site, cfg, SLOW_PHASE_TISSUE_WATER)
+      end if
+   end subroutine settle_tissue_water
 
    !---------------------------------------------------------------------------------------!
    ! refresh_canopy_depth -- per-patch CAS depth = tallest cohort height + freeboard, floored.  !
