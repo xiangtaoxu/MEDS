@@ -400,7 +400,7 @@ before and after.
   opened. `meds_main` finalizes before it frees, so runs are unchanged. `test_region` opens a region,
   frees it without finalizing, opens and steps it again in the same variable, and resumes its masked
   region in that variable too, without the second one it kept for this.
-- **Cohorts of one height are one wind layer** (found by #349's split test). The in-canopy wind
+- **Cohorts of one height are one wind layer** (#443, found by #349's split test). The in-canopy wind
   cascade (`canopy_aerodynamics.md` eq. (8)) walked cohort by cohort, so of two cohorts of one height
   the one sorted first sat above the other and took its wind away, while the radiation already treats
   them as one layer. A cohort split into two at half the density met different winds: 0.045 K between
@@ -432,7 +432,9 @@ before and after.
   +0.004 %, ET −0.02 %, H −0.05 %. `test_surface_energy` sweeps a thin tissue (energy closes, half the
   area halves every flux at the same temperature, no area takes the parent's temperature) and a store
   with no coupling; `test_fast_loop` runs the thin stand as one cohort and as two at half density
-  through the whole fast loop (temperatures within 5×10⁻⁸ K, GPP per plant within 10⁻¹³) and a
+  through the whole fast loop with the step controller held off, so both take the same sub-steps
+  (temperatures within 10⁻¹⁰ K, GPP per plant within 10⁻¹¹; the controller itself differs by 10⁻³ K,
+  #444) and a
   leafless tree whose leaves take its wood's temperature.
 - **The wood's heat capacity counts the sapwood share of its water, at a dry specific heat** (#419).
   The wood's thermal water was the sapwood ring at a fixed 1 kg per kg dry (`WOOD_MOIST_FRAC`, and

@@ -41,6 +41,9 @@ to ED-MORE; which issue is in which phase, and why, is in
 | [#429](https://github.com/xiangtaoxu/MEDS/issues/429) | `meds.canopy.Canopy` ignores a config rewritten at the same path | It caches the open model by path, so a loop that rewrites one trial config keeps the first one's parameters. |
 | [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. Meanwhile `post_proc/README.md` says which layout each script reads. |
 | [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
+| [#434](https://github.com/xiangtaoxu/MEDS/issues/434) | Fine-root turnover drains about 35× too much water from the wood store | *Done in beta.* A fine-root loss sheds the fine roots' own share of the store, `wood_water_mass · broot/(bsap + broot)`. |
+| [#443](https://github.com/xiangtaoxu/MEDS/issues/443) | In-canopy wind: cohorts of one height are stacked, not one layer | *Done in beta.* Tied cohorts share one wind layer (`docs/science/canopy_aerodynamics.md` eq. (8)), as they share one radiation layer. |
+| [#444](https://github.com/xiangtaoxu/MEDS/issues/444) | The step controller's error norm is not invariant to splitting a cohort | One cohort and two at half density sub-step differently (1.6×10⁻³ K on a thin stand); the physics agrees to 2×10⁻¹¹ K. Belongs with the numerics work (#415, #356). |
 
 ---
 
@@ -174,6 +177,13 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
   model, whose adaptive controller has already been broken once by a discontinuity here. That is not
   a proportionate trade for a few percent of one denominator term.
+- **`veg_coupling_floor` is in ground-area units.** *Done in beta.* [#349](https://github.com/xiangtaoxu/MEDS/issues/349) The floor and its
+  slaving conductance are gone; the heat-capacity minimum is per unit of the tissue's own area, and a
+  tissue with no area takes the temperature of what it grows from (a leafless leaf its wood's)
+  (`docs/science/vegetation_energy_dynamics.md`, "A thin tissue is a small tissue").
+- **The wood's heat capacity uses a fixed sapwood moisture.** *Done in beta.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The
+  wood's water term is the sapwood share of the network's store, and the dry wood is at a dry specific
+  heat (`docs/science/vegetation_energy_dynamics.md` eq. (8)).
 - **The sub-canopy ground conductance.** *Open question.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
   `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
   (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a
