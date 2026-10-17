@@ -12,7 +12,6 @@ sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 #----- Canopy-element geometry for the aerodynamic boundary layers.
 leaf_width         = [0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02]     # [m]  characteristic branch diameter
-crown_area_frac    = [1.0]      # [--] crown area as a fraction of the patch
 dbh_critical       = [100.0]     # [cm] maximum diameter
 hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3]
@@ -73,7 +72,7 @@ leaf_angle_mean    = [45.0]   # [deg] mean leaf inclination (spherical: mean 57.
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [1.0]
 growth_resp_factor     = [0.3]
-leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
+leaf_turnover_rate_toc = [0.5]   # [1/yr]
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split (values match the reference meds_config_pft.toml's
@@ -96,8 +95,6 @@ b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
-ca_b1      = 0.370
-ca_b2      = 0.464
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5

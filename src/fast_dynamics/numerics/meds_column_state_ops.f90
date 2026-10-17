@@ -10,7 +10,7 @@
 !   * state combinators  -- state_init / state_axpy / state_accum / state_extrap / state_sub /       !
 !                           state_err_diff / zero_like, as operations on the flat array              !
 !   * boundary-flux ledger accumulators -- bflux_zero / bflux_add / bflux_bweight                   !
-!   * stage-domain clamps -- clamp_cas / clamp_soil_energy                                           !
+!   * the stage-domain clamp -- clamp_cas                                                            !
 !   * whole-column store totals for the ledgers -- soil_water_store / soil_energy_store /            !
 !                           plant_water_store / canopy_film_store  (one loop order, so the two       !
 !                           schemes' ledgers are the same arithmetic)                                !
@@ -24,7 +24,7 @@
 module meds_column_state_ops
    use meds_kinds,            only : wp, ik
    use meds_constants,        only : rho_h2o, tiny_num, mmh2o
-   use meds_therm_lib,        only : internal_energy_to_temp, temp_to_internal_energy, cas_temp_of_enthalpy, cas_enthalpy_of_temp
+   use meds_therm_lib,        only : internal_energy_to_temp, cas_temp_of_enthalpy, cas_enthalpy_of_temp
    use meds_fast_types,       only : column_config_t, column_state_t, column_tend_t, column_frozen_t,   &
                                      stage_bflux_t, column_bflux_t, process_mask_t,                    &
                                      GRP_ENTH, GRP_SHV, GRP_CO2, GRP_SE, GRP_THETA, GRP_LEAF_W, GRP_WOOD_W
@@ -37,7 +37,7 @@ module meds_column_state_ops
    public :: state_init, state_axpy, state_accum, state_extrap, state_sub, state_err_diff, zero_like
    public :: bflux_zero, bflux_add, bflux_bweight, transp_per_leaf_area
    public :: assemble_soil_energy_forcing, apply_process_mask
-   public :: clamp_cas, clamp_soil_energy
+   public :: clamp_cas
    public :: soil_water_store, soil_energy_store, plant_water_store, canopy_film_store
    public :: clamp_canopy_film, deposit_condensate, unpack_column_state, diagnose_soil_temps
 
@@ -338,43 +338,6 @@ contains
          if (s%cas_enthalpy /= enth_in) nfire = nfire + 1_ik
       end if
    end subroutine clamp_cas
-
-
-   !----- clamp each soil layer's internal energy into a wide PHYSICAL temperature range, the      !
-   !      soil-column analogue of clamp_cas above: an explicit-stage overshoot in soil_energy         !
-   !      otherwise diagnoses (internal_energy_to_temp) a wild soil temperature that overflows ground_evaporation's  !
-   !      fractional pow() (a negative base to a non-integer exponent is a domain error, not just an     !
-   !      overflow) or qsat. Reconstructs soil_energy (temp_to_internal_energy) at the CLAMPED temperature and the    !
-   !      SAME liquid fraction the (possibly wild) input diagnosed -- an in-range input is untouched, and  !
-   !      the step is rejected normally by the adaptive controller when this bites. Uses the stage's     !
-   !      theta for the water-mass term of the phase-change inverter. ----------------------------------!
-   !      denergy (optional) accumulates |energy| moved, in J/m2 of GROUND -- the energy this clamp    !
-   !      creates or destroys with no ledger entry. -------------------------------------------------!
-   pure subroutine clamp_soil_energy(s, col_config, nsl, nfire, denergy)
-      type(column_state_t),  intent(inout) :: s
-      type(column_config_t), intent(in)    :: col_config
-      integer(ik),           intent(in)    :: nsl
-      integer(ik), optional, intent(inout) :: nfire
-      real(wp),    optional, intent(inout) :: denergy
-      real(wp), parameter :: T_LO = 180.0_wp, T_HI = 350.0_wp
-      real(wp) :: temp, fliq, wmass, e_in
-      integer(ik) :: k
-      do k = 1_ik, nsl
-         wmass = s%theta(k) * rho_h2o
-         e_in  = s%soil_energy(k)
-         call internal_energy_to_temp(s%soil_energy(k), wmass, col_config%soil_thermal%soil_dry_heat_capacity(k), temp, fliq)
-         fliq  = min(max(fliq, 0.0_wp), 1.0_wp)
-         temp  = min(max(temp, T_LO), T_HI)
-         s%soil_energy(k) = temp_to_internal_energy(col_config%soil_thermal%soil_dry_heat_capacity(k), wmass, temp, fliq)
-         !----- compare against the INPUT, not the T bounds: the internal_energy_to_temp/temp_to_internal_energy round trip   !
-         !      is the identity only for an in-range state, so this also catches a clamp that bit       !
-         !      through the liquid-fraction bound rather than the temperature bound. -------------------!
-         if (s%soil_energy(k) /= e_in) then
-            if (present(nfire))   nfire   = nfire   + 1_ik
-            if (present(denergy)) denergy = denergy + abs(s%soil_energy(k) - e_in) * col_config%soil%dz(k)
-         end if
-      end do
-   end subroutine clamp_soil_energy
 
    !----- The embedded error estimate of the ARS(2,2,2) step, err = (Y3 - base3) - (Y2 - y)          !
    !      (docs/science/numerical_scheme.md eq. (2)), for the entries state_entry_rules counts, and  !

@@ -11,10 +11,11 @@ program test_leaf_physiology
    use meds_leaf_opts,          only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : arrhenius_scale, peaked_arrhenius_scale,                        &
                                  kattge_knorr_entropy, kattge_knorr_jv_ratio
-   use meds_leaf_gas_exchange,only : assimilation_demand_c3
+   use meds_leaf_gas_exchange,only : assimilation_demand_c3, rubisco_kinetics
    use meds_leaf_gas_exchange,       only : stomata_gs_medlyn
-   use meds_plant_types, only : leaf_env_t, leaf_flux_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, LIM_C4_PEP
-   use meds_fast_config, only : leaf_gas_exchange
+   use meds_plant_types, only : leaf_env_t, leaf_flux_t, leaf_photo_params_t, LIM_NONE, LIM_RUBISCO, LIM_RUBP, &
+                                LIM_C4_PEP
+   use meds_fast_config, only : leaf_gas_exchange, leaf_photo_params_for_pft
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
 
@@ -352,6 +353,28 @@ program test_leaf_physiology
    call check((an2 - an0) / abs(an0) < -0.15_wp,                                                 &
               'raising O2 to 35% must cut A_net > 15% -- likewise')
    cfg%o2_mol_frac = 0.209_wp                 ! back to the shipped default
+
+   !=== 10. Gamma* as a mole fraction does not depend on pressure (docs/science/leaf_gas_exchange.md!
+   !       eq. (3)): it is proportional to the O2 partial pressure, which scales with pressure as   !
+   !       the CO2 partial pressure does. At 25 C and 21 % O2 it is Bernacchi et al. (2001)'s       !
+   !       42.75 umol/mol at sea level and at 3000 m (70 kPa) alike. Kc and Ko are partial          !
+   !       pressures, so as mole fractions they scale as 1/P. ======================================!
+   block
+      type(leaf_photo_params_t) :: pp
+      real(wp) :: kc_low, ko_low, gstar_low, o2_low, kc_high, ko_high, gstar_high, o2_high
+      call leaf_photo_params_for_pft(cfg, 1_ik, pp)
+      call rubisco_kinetics(pp, t_kelvin + 25.0_wp, 101325.0_wp, kc_low, ko_low, gstar_low, o2_low)
+      call rubisco_kinetics(pp, t_kelvin + 25.0_wp, 70000.0_wp, kc_high, ko_high, gstar_high, o2_high)
+      call check(gstar_high == gstar_low, 'Gamma* in umol/mol does not depend on pressure')
+      call check_close(gstar_low, 42.75_wp, 1.0e-12_wp, 'Gamma* at 25 C and 21 % O2 is 42.75 umol/mol')
+      call check(o2_high == o2_low, 'O2 in umol/mol does not depend on pressure')
+      call check_close(kc_high * 70000.0_wp, kc_low * 101325.0_wp, 1.0e-12_wp, 'Kc is a partial pressure')
+      call check_close(ko_high * 70000.0_wp, ko_low * 101325.0_wp, 1.0e-12_wp, 'Ko is a partial pressure')
+      !----- The same Gamma* at 35 C, where the Arrhenius factor is not 1. -----------------------!
+      call rubisco_kinetics(pp, t_kelvin + 35.0_wp, 101325.0_wp, kc_low, ko_low, gstar_low, o2_low)
+      call rubisco_kinetics(pp, t_kelvin + 35.0_wp, 70000.0_wp, kc_high, ko_high, gstar_high, o2_high)
+      call check(gstar_high == gstar_low, 'Gamma* in umol/mol does not depend on pressure at 35 C')
+   end block
 
    write(*,'(a)') '   PASS'
 

@@ -21,6 +21,7 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
+   use meds_constants, only : t_3ple
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
@@ -31,9 +32,8 @@ module meds_fast_types
    use meds_biogeochem_types, only : n_soil_pool
    use meds_budget_check, only : budget_t
    use meds_spac_solver, only : spac_solver_t
-   use meds_config, only : hydraulics_config_t, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
+   use meds_config, only : hydraulics_config_t, pft_tissue_curves, INTEG_ARK, CTRL_L1_ADAPTIVE, CTRL_I
    use meds_hydr_lib, only : build_hydro_table, wood_kmax_from_density
-   use meds_water_retention, only : water_curve_t
    use meds_pft_params, only : pft_table_t, HYD_UNSET
    use meds_site_state_types, only : DMAX_PSI_LEAF_UNSET
    implicit none
@@ -183,7 +183,7 @@ module meds_fast_types
    type :: column_cohort_t
       integer(ik)              :: n = 0_ik
       integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
-      real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
+      real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
       logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
@@ -293,10 +293,10 @@ module meds_fast_types
       !      30-yr run); a persistently high value flags a genuinely stiff regime RK45 is degrading    !
       !      to ARK for. ------------------------------------------------------------------------------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
-      !----- STAGE-clamp activations: how many layers/stores clamp_cas and clamp_soil_energy bounded in a !
-      !      throwaway stage input so the RHS stays evaluable. Harmless in itself; a rising count means   !
-      !      "this dt is too big", and the step is normally rejected. Nothing clamps the COMMITTED state  !
-      !      on either scheme. ---------------------------------------------------------------------------!
+      !----- STAGE-clamp activations: how many times clamp_cas changed a throwaway stage input's canopy !
+      !      air so the RHS stays evaluable. Harmless in itself; a rising count means "this dt is too   !
+      !      big", and the step is normally rejected. Nothing clamps the COMMITTED state on either      !
+      !      scheme. -------------------------------------------------------------------------------------!
       integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
       !----- CONSTITUTIVE-DOMAIN excursion of theta, max over the sub-steps of one dt_fast, in m3/m3. !
       !      Complements clamp_stage_n rather than duplicating it, in two ways: it is a MAGNITUDE     !
@@ -439,9 +439,9 @@ module meds_fast_types
       real(wp), allocatable :: wood_emiss(:)  !< [-]       wood LW emissivity
       !----- The heat-capacity inputs behind leaf_hcap_per_dt/wood_hcap_per_dt = (dry hcap + water !
       !      mass*cp_liq)/dt (docs/science/vegetation_energy_dynamics.md eq. (8)). ----------------!
-      real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry sapwood heat capacity (floored)
-      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   fresh-sapwood water mass
-      real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity (floored)
+      real(wp), allocatable :: wood_dry_hcap(:)   !< [J/m2/K]  dry wood heat capacity
+      real(wp), allocatable :: wood_wmass(:)      !< [kg/m2]   the sapwood share of the wood store's water
+      real(wp), allocatable :: leaf_dry_hcap(:)   !< [J/m2/K]  dry leaf heat capacity
       real(wp), allocatable :: leaf_wmass(:)      !< [kg/m2]   internal (symplast) leaf water mass
    end type tissue_coefficients_t
 
@@ -485,7 +485,6 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp) :: cond_enth      = 0.0_wp
       !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
@@ -611,7 +610,7 @@ module meds_fast_types
       !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
       !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
       !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
-      real(wp) :: t_melt     = 0.0_wp    !< [K] effective temperature of the meltwater
+      real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
    end type snow_stage_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
@@ -800,7 +799,7 @@ contains
       type(column_cohort_t), intent(out) :: col_cohort
       integer(ik),           intent(in)  :: n
       col_cohort%n = n
-      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
+      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n),                                     &
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
@@ -808,7 +807,7 @@ contains
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
-      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
+      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp
       col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
       col_cohort%is_woody = .true.
       col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
@@ -848,16 +847,11 @@ contains
    !----- Flatten the shared [hydraulics] config into the plant hydro_params_t + rhizosphere      !
    !       conductance, and build the vulnerability lookup table from wood_kexp. The single seam    !
    !       between cfg%hydraulics (shared, TOML-driven) and the fast loop's hydro_params_t (plant),  !
-   !       mirroring how the leaf seam flattens the PFT photosynthesis traits. -------------------!
+   !       mirroring how the leaf seam flattens the PFT photosynthesis traits. The tissue curves    !
+   !       are the caller's: they come per PFT from pft_tissue_curves. --------------------------!
    subroutine fill_hydro_params(hcfg, hydraulics_params)
       type(hydraulics_config_t), intent(in)    :: hcfg
       type(hydro_params_t),      intent(inout) :: hydraulics_params
-      hydraulics_params%leaf_curve = water_curve_t(pi0 = hcfg%leaf_pi0, elastic_mod = hcfg%leaf_elastic_mod,         &
-                                                   apoplast_frac = hcfg%leaf_apoplast_frac,                          &
-                                                   water_sat = hcfg%leaf_water_sat)
-      hydraulics_params%wood_curve = water_curve_t(pi0 = hcfg%wood_pi0, elastic_mod = hcfg%wood_elastic_mod,         &
-                                                   apoplast_frac = hcfg%wood_apoplast_frac,                          &
-                                                   water_sat = hcfg%wood_water_sat)
       hydraulics_params%wood_psi50     = hcfg%wood_psi50     ; hydraulics_params%wood_kexp      = hcfg%wood_kexp
       hydraulics_params%vessel_curl    = hcfg%vessel_curl
       hydraulics_params%root_beta      = hcfg%root_beta      ; hydraulics_params%root_depth_b1  = hcfg%root_depth_b1
@@ -884,14 +878,7 @@ contains
       allocate(table%pft(max(pft%n, 1_ik)))
       do i = 1_ik, pft%n
          call fill_hydro_params(hcfg, table%pft(i))                 ! the shared [hydraulics] defaults
-         call ovr(table%pft(i)%leaf_curve%pi0,           pft%hyd_leaf_pi0(i))
-         call ovr(table%pft(i)%leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod(i))
-         call ovr(table%pft(i)%leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac(i))
-         call ovr(table%pft(i)%leaf_curve%water_sat,     pft%hyd_leaf_water_sat(i))
-         call ovr(table%pft(i)%wood_curve%pi0,           pft%hyd_wood_pi0(i))
-         call ovr(table%pft(i)%wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod(i))
-         call ovr(table%pft(i)%wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac(i))
-         call ovr(table%pft(i)%wood_curve%water_sat,     pft%hyd_wood_water_sat(i))
+         call pft_tissue_curves(hcfg, pft, i, table%pft(i)%leaf_curve, table%pft(i)%wood_curve)   ! the curves
          call ovr(table%pft(i)%wood_psi50,         pft%hyd_wood_psi50(i))
          table%pft(i)%wood_kmax = wood_kmax_from_density(pft%wood_density(i))   ! Xu et al. 2016
          call ovr(table%pft(i)%wood_kmax,          pft%hyd_wood_kmax(i))

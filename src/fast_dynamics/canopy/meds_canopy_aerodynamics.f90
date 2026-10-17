@@ -15,9 +15,10 @@
 ! Monin-Obukhov denominators with a fixed-iteration solve (no root-find, no I/O -> GPU     !
 ! portable); the leaf/wood boundary layers use ED2's forced+free convection Nusselt kernel !
 ! (needed for low-wind free convection); the in-canopy wind uses ED2's per-cohort          !
-! crown-area extinction; the ground conductance uses the CLM4-like dense-canopy form. All  !
-! `pure`; per-cohort outputs are written into caller-owned SoA slices (never an            !
-! array-valued function result passed into a call: see CLAUDE.md).                         !
+! extinction through closed crowns; the ground conductance blends a bare-ground value and  !
+! CLM4's dense-canopy form by the patch's open fraction, as CLM does. All `pure`;          !
+! per-cohort outputs are written into caller-owned SoA slices (never an array-valued       !
+! function result passed into a call: see CLAUDE.md).                                      !
 !==========================================================================================!
 module meds_canopy_aerodynamics
    use meds_kinds,            only : wp, ik
@@ -45,6 +46,7 @@ module meds_canopy_aerodynamics
    public :: reduced_wind                    !< log-profile wind at a height (exposed for tests)
    public :: boundary_gbh_mos                !< Nusselt boundary-layer conductance (exposed for tests)
    public :: cas_atm_conductances            !< CAS<->atmosphere bulk conductances from ustar + profile factors
+   public :: open_canopy_fraction            !< a patch's open fraction W from its leaf and wood area
 
 contains
 
@@ -69,6 +71,14 @@ contains
       g_atm_co2 = can_dmol * ustar * temp_vapour
    end subroutine cas_atm_conductances
 
+   !----- A patch's open fraction W = exp(-(LAI + WAI)), CLM's weight of the bare-ground term in the  !
+   !      ground conductance (docs/science/canopy_aerodynamics.md eq. (6)): 1 on bare ground, 0.0025   !
+   !      at a plant area index of 6. lai and wai are the patch's totals [m2/m2]. ---------------------!
+   elemental real(wp) function open_canopy_fraction(lai, wai) result(w)
+      real(wp), intent(in) :: lai, wai
+      w = safe_exp(-(lai + wai))
+   end function open_canopy_fraction
+
    !----- Roughness length and zero-plane displacement of a patch, from its canopy height with      !
    !      the snow blend (docs/science/canopy_aerodynamics.md eq. (1)). The ONE definition: the     !
    !      aerodynamics uses it, and so does the move of the forcing to the patch's canopy-air       !
@@ -90,18 +100,18 @@ contains
    !  Steps 1-5 below are docs/science/canopy_aerodynamics.md eq. (1), eqs. (2)-(4), eq.   !
    !  (6), eqs. (7)-(8) and eqs. (9)-(10).                                                 !
    !=======================================================================================!
-   pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, crown_area,        &
-                                            leaf_temp, wood_temp, leaf_width, branch_diam, out)
+   pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, leaf_temp, wood_temp,  &
+                                            leaf_width, branch_diam, out)
       type(aero_cfg_t),  intent(in)    :: cfg
       type(aero_env_t),  intent(in)    :: env
       type(aero_geom_t), intent(in)    :: geom
       integer(ik),       intent(in)    :: n
-      real(wp),          intent(in)    :: height(n), lai(n), crown_area(n)
+      real(wp),          intent(in)    :: height(n), lai(n)
       real(wp),          intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)
       type(aero_out_t),  intent(inout) :: out
 
-      real(wp)    :: rough, displace, zldis, uh, ca, ext_half, ext_full, stab, denom
-      integer(ik) :: ico
+      real(wp)    :: rough, displace, zldis, uh, stab, denom, lai_layer
+      integer(ik) :: ico, ico0
 
       !----- 1. Roughness + displacement from canopy height (snow blend). ------------------!
       call canopy_roughness(cfg, geom, rough, displace)
@@ -125,7 +135,9 @@ contains
       out%qstar = out%temp2 * (env%shv_atm   - env%can_shv)
       out%cstar = out%temp2 * (env%co2_atm   - env%can_co2)
 
-      !----- 3. Ground <-> CAS conductances (bare similarity + CLM4 dense-canopy blend). ---!
+      !----- 3. Ground <-> CAS conductances: the bare-ground similarity value and CLM4's dense-canopy !
+      !      one, blended linearly by the patch's open fraction W, as CLM does (eq. (6)). W = 1 is bare  !
+      !      ground, W -> 0 a dense canopy. -------------------------------------------------------------!
       out%ggbare = out%ustar * out%temp1                           ! [m/s] bare-ground scalar conductance
       denom      = (env%can_temp + env%t_ground) * out%ustar ** 2
       stab       = 0.0_wp
@@ -134,22 +146,25 @@ contains
                     * (env%can_temp - env%t_ground) / denom))
       end if
       out%ggveg = cfg%cs_dense * out%ustar / (1.0_wp + cfg%gamma_g * stab)
-      if (geom%opencan_frac > 0.999_wp .or. geom%snowfac >= 0.9_wp) then
-         out%ggnet = out%ggbare
-      else
-         out%ggnet = out%ggbare * out%ggveg                                                     &
-                     / (out%ggveg + (1.0_wp - geom%opencan_frac) * out%ggbare + tiny_num)
-      end if
+      out%ggnet = geom%opencan_frac * out%ggbare + (1.0_wp - geom%opencan_frac) * out%ggveg
 
-      !----- 4. In-canopy wind: top-of-canopy wind, then crown-area extinction top -> bottom. !
+      !----- 4. In-canopy wind: top-of-canopy wind, then extinction through each layer's closed      !
+      !      crowns, top -> bottom (docs/science/canopy_aerodynamics.md eq. (8)). Cohorts of one height !
+      !      are one layer, as in the radiation: each sees the wind of the layer's summed leaf area,   !
+      !      so a cohort split into two of half the density meets the wind the whole one does.        !
+      !      Heights arrive ascending, so a layer's cohorts are consecutive. -----------------------!
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
-      do ico = n, 1_ik, -1_ik
-         ca            = min(max(crown_area(ico), tiny_num), 1.0_wp)
-         ext_half      = ca * safe_exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
-         ext_full      = ca * safe_exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
-         out%wind(ico) = max(cfg%ugbmin, uh * ext_half)          ! wind at crown mid-depth
-         uh            = uh * ext_full                            ! attenuate for the cohort below
+      ico = n
+      do while (ico >= 1_ik)
+         ico0 = ico ; lai_layer = lai(ico)
+         do while (ico0 > 1_ik)
+            if (height(ico0 - 1_ik) /= height(ico)) exit
+            ico0 = ico0 - 1_ik ; lai_layer = lai_layer + lai(ico0)
+         end do
+         out%wind(ico0:ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai_layer))   ! wind at crown mid-depth
+         uh                 = uh * safe_exp(-0.50_wp * lai_layer)                     ! attenuate for the layer below
+         ico = ico0 - 1_ik
       end do
 
       !----- 5. Per-cohort leaf (flat plate) + wood (cylinder) boundary layers [m/s]. ------!

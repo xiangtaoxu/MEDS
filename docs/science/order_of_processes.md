@@ -20,8 +20,9 @@ same way ([§1](#1-a-run)).
 **Setup** (`driver_open`):
 
 1. Read the configuration.
-2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A restart
-   also restores the calendar date and any restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
+2. Build the initial community from `[init].init_mode`: bare ground, a census, or a restart. A census
+   or state file that cannot start the run stops it. A restart also restores the calendar date and any
+   restructuring the checkpoint still owes ([§5](#5-the-calendar-boundary)).
 3. Open the forcing source. Prepare the polygon: the fast context, the forcing cursor, and the fast
    reservoirs (unless the restart restored them); the initial snow; the canopy-air depth, from the
    stand; the steady-state soil carbon (unless restored); and the slow ledger.
@@ -59,15 +60,19 @@ next.
    monthly and yearly restructuring ([§5](#5-the-calendar-boundary)).
 2. **Growth-temperature acclimation** (opt-in, `[leaf_physiology].thermal_acclimation`): advance the running mean
    from the previous step's daily mean air temperature, and refresh the leaf photosynthesis table.
-3. **The fast loop** ([§3](#3-the-fast-loop)), when `fast_biophysics_on`.
-4. **The slow dynamics** ([§4](#4-the-slow-dynamics)), when `slow_on`.
-5. **Output.**
+3. **The tissue water settled**, when `fast_biophysics_on` (`settle_tissue_water`): water above the
+   capacity each cohort's biomass now allows, left by the last slow step or the boundary, is shed to
+   the ground ([soil_plant_water](soil_plant_water.md) §2). The slow ledger books it in a phase of its
+   own, which closes the last step's window.
+4. **The fast loop** ([§3](#3-the-fast-loop)), when `fast_biophysics_on`.
+5. **The slow dynamics** ([§4](#4-the-slow-dynamics)), when `slow_on`.
+6. **Output.**
    - Replay the fast loop's staged sub-step samples into the fast tier.
    - Fold the step into the daily, monthly and annual windows that hold `prev`, then close each period
      `now` has left. A record holds the steps that start in its period ([diagnostics](diagnostics.md) §4).
-6. **Zero the step diagnostic blocks**, which the output has now read. If `now` is a month boundary,
+7. **Zero the step diagnostic blocks**, which the output has now read. If `now` is a month boundary,
    set `restructure_pending`, and at a year boundary `restructure_new_year` as well.
-7. **Guards**, every step:
+8. **Guards**, every step:
    - a NaN check on the stand, the tissue temperatures, the canopy air and the run's energy and water
      ledgers;
    - a bounds check on each cohort's state and, with soil carbon on, each soil-carbon pool. It is
@@ -88,8 +93,7 @@ next.
 
    Also roll over the predawn leaf water potential.
 2. **Size the diagnostic blocks** to today's stand. They are not zeroed here ([§6](#6-output-and-io)).
-3. **Reconcile each cohort's stored tissue water** with the capacity today's biomass allows.
-4. **Sample the forcing** for every sub-step, at `prev + (k − 1 + forcing_sample_frac)·dt_fast` for
+3. **Sample the forcing** for every sub-step, at `prev + (k − 1 + forcing_sample_frac)·dt_fast` for
    `k = 1 … n_fast_per_slow` ([forcing](forcing.md)). The CO₂ is looked up at the same instants,
    on model time ([forcing](forcing.md) §12). Accumulate the polygon's forcing diagnostics.
 
@@ -175,7 +179,8 @@ two steps sit the output tick, the I/O phase and any checkpoint. The restructuri
 **At every month boundary** (`demography_on` and `do_cohort_fissfuse`), in order:
 1. recruitment from the recruit pools;
 2. cohort fusion;
-3. culling of cohorts below the tracking floor;
+3. culling of cohorts below the tracking floor: under its density times AGB floor, or at its density floor
+   (`negligible_nplant`), where mortality stops a cohort that has died out;
 4. splitting;
 5. a re-sort.
 

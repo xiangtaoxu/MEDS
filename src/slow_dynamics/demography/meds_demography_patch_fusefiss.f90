@@ -25,7 +25,7 @@ module meds_demography_patch_fusefiss
                                       scale_cohort_ground_fields,                                  &
                                       patch_ensure_capacity, assign_cohort_id, assign_patch_id,     &
                                       cohort_tissue_heat_capacity, cohort_tissue_water,             &
-                                      TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                      TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    use meds_site_diag_types,  only : patch_diag_reorder, patch_diag_blend,                    &
                                      patch_diag_inherit, PD_DISTURB_AREA,                        &
                                      PD_MORT_C_DISTURB

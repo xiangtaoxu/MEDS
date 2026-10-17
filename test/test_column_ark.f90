@@ -13,7 +13,7 @@
 !==========================================================================================!
 program test_column_ark
    use meds_kinds,               only : wp, ik
-   use meds_constants,           only : rho_h2o
+   use meds_constants,           only : rho_h2o, cp_liq
    use meds_config,              only : meds_config_t, INTEG_ARK, INTEG_RK45
    use meds_time,                only : meds_time_t, solar_cosz
    use meds_therm_lib,              only : cas_enthalpy_of_temp, temp_to_internal_energy, cas_temp_of_enthalpy, &
@@ -22,7 +22,7 @@ program test_column_ark
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
    use meds_water_retention, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max
@@ -203,11 +203,11 @@ program test_column_ark
    !=== H. LEAF/ROOT-TURNOVER SHED WATER: a constant shed_water_rate                                     !
    !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
    call test_ark_shed_water()
-   call test_rk45_shed_water()
    call test_ark_saturated()
    call test_ark_aquifer()
    call test_wood_prognostic(INTEG_ARK, 'ARK ')
    call test_refilling_wood_isothermal()
+   call test_wood_capacity_follows_store()
 
    call test_report('test_column_ark')
 
@@ -272,6 +272,35 @@ contains
       call reset_state()
    end subroutine test_refilling_wood_isothermal
 
+   !----- The wood's heat capacity is its dry wood at the dry specific heat plus the sapwood share of   !
+   !      the water network's store (docs/science/vegetation_energy_dynamics.md eq. (8)), so a store     !
+   !      drained by a fifth holds a fifth less of that water's heat, and the fine roots' share is not  !
+   !      counted at all. ------------------------------------------------------------------------------!
+   subroutine test_wood_capacity_follows_store()
+      type(column_frozen_t) :: fz
+      type(column_state_t)  :: ys
+      real(wp) :: w_store, w_sap, cap_dry, cap_full, cap_drained
+      call reset_state()
+      call set_noon_forcing()
+      w_store = biophys%wood_water_mass(1)
+      w_sap   = w_store * col_cohort%bsap(1) / (col_cohort%bsap(1) + col_cohort%broot(1))
+      cap_dry = max(col_cohort%bwood(1) * col_cohort%nplant(1) * 2.0_wp * col_config%veg_thermal%c_wood_dry,  &
+                    col_config%veg_thermal%veg_hcap_min * col_cohort%wai(1))
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               ws%spac, n, nsl, fz, ys)
+      cap_full = fz%tissue%wood_hcap_per_dt(1) * dt_fast
+      call check_close(cap_full, cap_dry + col_cohort%nplant(1) * w_sap * cp_liq, 1.0e-12_wp * cap_full,       &
+                       'wood heat capacity = dry wood + the sapwood share of the store''s water')
+      call check_true('the fine roots hold part of the store', col_cohort%broot(1) > 0.0_wp, col_cohort%broot(1))
+      biophys%wood_water_mass(1) = 0.8_wp * w_store
+      call build_column_frozen(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, &
+                               ws%spac, n, nsl, fz, ys)
+      cap_drained = fz%tissue%wood_hcap_per_dt(1) * dt_fast
+      call check_close(cap_full - cap_drained, 0.2_wp * col_cohort%nplant(1) * w_sap * cp_liq,                  &
+                       1.0e-9_wp * cap_full, 'a store drained by a fifth holds a fifth less water heat')
+      call reset_state()
+   end subroutine test_wood_capacity_follows_store
+
    !----- The aquifer bottom BC is a head-driven, two-way boundary with no prognostic state, and the   !
    !      ARK commits the water network's theta, so it takes the aquifer like any other face. A column !
    !      started DRY must wet from below with both ledgers closed. -----------------------------------!
@@ -295,7 +324,7 @@ contains
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
               biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
               biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
    !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !
@@ -419,31 +448,6 @@ contains
       call check_true('ARK shed water: whole-column ENERGY still closes (no separate energy wiring needed)',          &
               budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
    end subroutine test_ark_shed_water
-
-   !----- SAME shed-water check as test_ark_shed_water, on RK45. Both schemes take the shed water    !
-   !      through the one build_column_frozen, so this pins RK45's side of the same wiring. ---------!
-   subroutine test_rk45_shed_water()
-      integer(ik) :: istep
-      real(wp)    :: theta_dry, theta_col1
-      call reset_state()
-      cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      call march_dry_day(theta_dry)                       ! the same day without the shed water
-      call reset_state()
-      biophys%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
-      do istep = 1_ik, 24_ik * steps_per_hour
-         call set_diurnal_forcing(istep)
-         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-      end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
-      biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
-              theta_col1 > theta_dry, theta_col1 - theta_dry)
-      call check_true('rk45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
-              budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
-      call check_true('rk45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
-              budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
-   end subroutine test_rk45_shed_water
 
 
    !----- SATURATED column: the ARK twin of test_column_dynamics RUN 7. A column seeded just below       !
@@ -569,11 +573,10 @@ contains
       integer(ik) :: kk
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
-      !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
-      !      seed is reconcile_tissue_water_capacity, run by fast_dynamics, which this driver-level !
-      !      test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created          !
-      !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
-      !      empty pool. -------------------------------------------------------------------------!
+      !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
+      !      production gather overwrites from the cohort block -- give them the water a cohort is   !
+      !      born with, water_content(PSI_INIT,...) (init_cohort), or psi_from_water_content would  !
+      !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
       biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_curve, &

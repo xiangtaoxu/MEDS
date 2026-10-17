@@ -42,8 +42,8 @@ The paths:
   embolised cohort's leaves stay joined to its wood.
 - **Boundaries** — rain into the pond; ground evaporation from layer 1 (Philip's pore humidity with
   the Swenson–Lawrence dry-surface-layer resistance); drainage out of the bottom layer
-  (`[soil].bottom_bc`: free drain, bedrock or a head-driven two-way aquifer); and each cohort's
-  transpiration out of its leaves.
+  (`[soil].bottom_bc`: drainage at a factor of free drainage, 1 to 0 for bedrock, or a head-driven
+  two-way aquifer); and each cohort's transpiration out of its leaves.
 
 Every flow is written with its derivatives in each store's unknown, so Newton's Jacobian is exact.
 Every switch in a flow is smoothed (C¹), so Newton never meets a corner:
@@ -68,13 +68,24 @@ Each store is solved in the unknown in which its curve is best behaved:
   linear in water and has a finite slope $d\psi/dR$ everywhere. A leafless cohort's leaves hold no
   water; their $R$ stays defined.
 - **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
-  the water as it is, and the potential is read again on the new capacity (grown biomass reads as a
-  slightly lower $R$). A store above what today's biomass can hold is clamped to its saturated content,
-  and an empty one is seeded at its starting potential (`reconcile_tissue_water_capacity`; neither
-  amount is booked yet, see `docs/ROADMAP.md`). Tissue lost to turnover takes its water with it, in
-  proportion to the carbon lost (`shed_turnover_water`), and a plant that dies takes all of its own
-  (`shed_mortality_water`); that water reaches the ground as `shed_water_rate`, valued like the
-  precipitation it joins.
+  the water as it is, and the potential is read again on the new capacity (grown wood reads as a
+  slightly lower $R$). **New leaves are the exception.** When a cohort's leaf carbon grows, the new
+  leaf tissue is filled with water moved from the cohort's wood store, at the potential the two then
+  share at rest, the leaf the crown's gravity head below the wood
+  ([plant_hydraulics](plant_hydraulics.md) eq. (2); `fill_new_leaf_water`). The plant's water is
+  unchanged, and a canopy that re-flushes from bare starts at its stem's potential, not at the dry end
+  of its pressure–volume curve (about −1.5×10⁴ MPa), which would close its stomata for the first
+  step. A cohort is born holding the water its tissues hold at its starting potential (`PSI_INIT`); a
+  recruit's water, like its carbon, is drawn from outside the model, and the slow ledger declares it.
+  Tissue lost to turnover takes its water with it, in proportion to the carbon lost
+  (`shed_turnover_water`): shed leaves take that share of the leaf store, and shed fine roots that
+  share of their own part of the wood store, the fraction $`B_{root}/(B_{sap}+B_{root})`$ of it, so the
+  store keeps its water per unit of carbon. A plant that dies takes all of its own
+  (`shed_mortality_water`). An operator that shrinks a store without touching its water (a rising SLA
+  resorbing leaf carbon, a fusion or split re-deriving the sapwood ring) can leave more than the store
+  can hold; before the fast loop, the water above its saturated content is shed as well
+  (`shed_excess_tissue_water`). All of it reaches the ground as `shed_water_rate`, valued like the
+  precipitation it joins, and the slow ledger books every amount.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.
@@ -155,7 +166,10 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
 - A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
   its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference.
+  temperature difference. The wood's capacity counts the sapwood share of the wood store's water
+  ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)); the booking covers the whole
+  store, fine roots included, at the wood's temperature, which is the temperature eq. (4) moves all of
+  the store's water at.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
   leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
   temperature, and the spill leaves at the pond's.

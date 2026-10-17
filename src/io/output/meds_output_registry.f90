@@ -15,7 +15,7 @@ module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
+   use meds_column_params, only : n_soil_layer_max, soil_params_t
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
                                        patch_diag_alloc
@@ -37,7 +37,7 @@ module meds_output_registry
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
         FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_STORAGE_CARBON,       &
-        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN,         &
+        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER,  &
         FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
         FLD_C_SDIAG0,                                                                            &
@@ -199,8 +199,8 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_VCMAX25)
       call add_variable(reg, 'rd25_cohort', 'leaf dark respiration at 25 degC', 'umol/m2/s',     &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_RD25)
-      call add_variable(reg, 'llspan_cohort', 'leaf lifespan', 'yr',                             &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LLSPAN)
+      call add_variable(reg, 'leaf_turnover_rate_cohort', 'baseline leaf turnover rate', '1/yr', &
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_TURNOVER)
       call add_variable(reg, 'leaf_flush_tendency_cohort', 'smoothed leaf flush tendency', '-',          &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_FLUSH)
       call add_variable(reg, 'leaf_shed_tendency_cohort', 'smoothed leaf senescence tendency', '-',      &
@@ -1226,11 +1226,11 @@ contains
       do k = 1_ik, n_soil_layer_max
          dp%theta_sat(k) = params%theta_sat(k)
          dp%theta_res(k) = params%theta_res(k)
-         !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
-         !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
-         !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         dp%par_a(k)     = curve_a(params, k)
-         dp%par_n(k)     = curve_n(params, k)
+         !----- The column's one (a, n) pair, (alpha, n) for van Genuchten and (psi_sat, b) for  !
+         !      Campbell: the pair the water network integrates, so the diagnostic psi comes     !
+         !      from the same curve. ------------------------------------------------------------!
+         dp%par_a(k)     = params%curve_par_a(k)
+         dp%par_n(k)     = params%curve_par_n(k)
          dp%soil_z(k)    = params%z_node(k)
       end do
       dp%n_soil     = params%n_active

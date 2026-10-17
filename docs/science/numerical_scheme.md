@@ -237,13 +237,13 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | sapflow advected enthalpy | present | present | unified |
 | tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
 | per-layer root-sink placement | tracks realized uptake | same | unified — the per-layer path is unconditional |
-| bottom boundary (free-drain / bedrock / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
+| bottom boundary (drainage, free to sealed / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
 | bottom thermal boundary | `geothermal` (prescribed flux, held at 0) or `dirichlet` (deep temperature anchor) | same | unified — one `bottom_heat_face` seam, see [soil_biophysics](soil_biophysics.md) |
 | canopy-air depth | tallest cohort + freeboard, slow-loop owned | same | unified |
 | soil water | the water network's, moved at its steady rate outside the tableau | the network's, at the same rate inside the tableau | unified — both commit the network's θ |
 | canopy-air condensation sink | per-stage rate | per-stage rate | unified |
 | adaptive error norm | one norm over the whole column state | same | unified |
-| stability clamps | extrapolation base only | every stage input | numerics |
+| stability clamps | extrapolation base only (canopy air) | every stage input (canopy air) | numerics |
 
 **There are no *physics* rows.** The two schemes solve the same equations; what remains is one
 numerics row (where clamps apply).
@@ -307,26 +307,57 @@ and the canopy air's vapour credit is the leaves' water debit. Measured on BCI's
 −0.2 W m⁻² and the mean diurnal cycle by at most 1.9 W m⁻² in any hour (refreshing transpiration at
 every stage instead gives +0.3 and 2.9 W m⁻²; at 150 s the two agree to 0.1 W m⁻² in the mean and 0.6
 in any hour). The 3-hour midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s
-(`test_column_ark`). The wood potential, the first day after a restart and a drought season have not
-been scored against `dt_fast` on the network (see `docs/ROADMAP.md`).
+(`test_column_ark`). Over a wet and a dry season at BCI (example 04 on the tower forcing, 2012-08 to
+2013-05, 900 against 150 s) GPP differs by +0.08 %, LE by −0.37 W m⁻² and H by +0.25 W m⁻², and the
+daily leaf and wood potentials by at most 0.004 MPa.
+
+**A drought season carries a bias at 900 s.** Measured on Palo Verde's inventory configuration
+(example 05), restarted from a 150 s state on 2008-12-01 and run at 150, 300, 450 and 900 s:
+
+| month | GPP at 300 / 450 / 900 s vs 150 s | ET at 900 s | `psi_wood` at 900 s |
+|---|---|---|---|
+| Jan | +0.1 / +0.3 / +0.6 % | −0.2 % | +0.024 MPa |
+| Feb | +1.0 / +2.0 / +5.1 % | +5.4 % | +0.076 MPa |
+| Mar | +1.0 / +1.9 / +5.4 % | +3.9 % | +0.032 MPa |
+| Apr | +0.9 / +2.3 / +6.6 % | +8.1 % | +0.051 MPa |
+
+At 900 s February–April GPP is 5.5 % and ET 6.0 % high, the December–May season 1.7 % and the year
+0.8 %, and the drought-deciduous trees shed their leaves 1–2 days late. The bias is linear in
+`dt_fast`, about 1 % at 300 s. It is the per-step freeze, not the water solver (tightening the
+solver's tolerances five-fold changes nothing): the gas exchange and the transpiration demand are set
+from the step-start leaf potential, and the fast water-stress limb amplifies the potential's change
+within the step. **For a run whose purpose is the timing of dry-season leaf habits, use
+`dt_fast = 300 s`**; 900 s stays the default, since a wet site and the annual budgets barely move.
 
 ### 5a′. The stability multiplier, and how to measure it
 
 The quantity that decides stability is the one-step amplification factor of the canopy air,
-`Phi' = ∂H_{n+1}/∂H_n`, measured by perturbing canopy-air enthalpy *before* the pre-pass runs and
-advancing one `dt_fast`. `|Phi'| > 1` means the freeze-cadence map is unstable. With the conductances
-frozen, on five stand heights at `dt_fast = 150 s`:
+`Phi' = ∂H_{n+1}/∂H_n`, measured by perturbing canopy-air enthalpy *before* the pre-pass runs and advancing
+one `dt_fast`. `|Phi'| > 1` means the freeze-cadence map is unstable, and a negative `Phi'` makes a
+perturbation alternate in sign from step to step. With the conductances frozen, on five stand
+heights at `dt_fast = 150 s`:
 
 | stand | 2 m regen | 5 m | 10 m | 18 m | 30 m |
 |---|---|---|---|---|---|
 | `Phi'` frozen | −0.90 | −3.84 | **−8.22** | −4.84 | −4.88 |
-| `Phi'` re-solved | −0.07 | −0.47 | −0.75 | −0.89 | −1.16 |
 
-Two things worth knowing from this. **The worst case is a mid-height canopy, not a short one** — a
-regenerating patch has less canopy-air capacity but also much less leaf area driving it, and `Phi'`
-tracks the ratio. And **amplitude is a bad proxy for stability**: the 2 m stand has the mildest
-multiplier at 900 s and the largest excursion (20 K), because the nonlinearity saturates. Rank by
-`Phi'`, not by peak-to-peak.
+With the conductances re-solved per stage, as both schemes run, a 30 m stand of LAI 4 at noon:
+
+| `u_ref` | 50 s | 100 s | 150 s | 225 s | 300 s | 450 s | 900 s |
+|---|---|---|---|---|---|---|---|
+| 2 m/s | +0.39 | +0.08 | −0.10 | −0.06 | −0.03 | +0.03 | +0.11 |
+| 10 m/s | +0.26 | +0.04 | −0.04 | +0.02 | +0.03 | +0.03 | +0.02 |
+
+`|Phi'|` is at most 0.42 in every other case tried, except a calm night at 1 m/s, where it is +0.91 to
++0.43: a slow relaxation that does not oscillate. The re-solved canopy air is stable at every
+`dt_fast`, in light wind as in strong. A base state for this measurement must itself be spun up with
+the conductances re-solved; one spun up frozen carries the frozen map's state into the multiplier.
+
+Two things worth knowing from the frozen row. **The worst case is a mid-height canopy, not a short
+one** — a regenerating patch has less canopy-air capacity but also much less leaf area driving it,
+and `Phi'` tracks the ratio. And **amplitude is a bad proxy for stability**: the 2 m stand has the
+mildest multiplier at 900 s and the largest excursion (20 K), because the nonlinearity saturates.
+Rank by `Phi'`, not by peak-to-peak.
 
 ### 5b. Conservation
 
@@ -363,13 +394,14 @@ temperature, exfiltration from the top layer in at that layer's temperature, and
 pond's. A pond with no thermal state would shed the enthalpy of every kilogram crossing into it,
 and that energy would leave the column ledger while the water sat on the surface still holding it.
 
-**A weakly coupled tissue passes its energy to the canopy air.** Where a leaf or wood store's coupling
-falls below `veg_coupling_floor`, the diagnostic balance floors it there and routes the deficit to the
-canopy air as an extra conductance, so the floor creates and destroys no energy
-([vegetation_energy_dynamics](vegetation_energy_dynamics.md)). With the budget hard-stop armed
-(`[energy].debug_error`), a forced January month at Ithaca closes with about 5× margin on both schemes:
-worst residuals 285 (ARK) and 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. Tightening the
-tolerance makes the run halt, which shows the guard is live.
+**A thin tissue closes its own balance.** A leaf or wood store's relaxation closes for any coupling,
+however small, since it is written on the start-of-step imbalance with no division by the coupling;
+and a tissue with neither coupling nor heat capacity (no area) takes the temperature of what it grows
+from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eqs. (5), (7)).
+No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
+(`[energy].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
+both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
+(ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 ---
 
@@ -382,15 +414,16 @@ accept** (§5a), so a spin-up and a flux-tower study genuinely want different va
 |---|---|
 | general production, including spin-ups and coupled carbon–water | `ark` at `dt_fast = 900 s` (the default) |
 | sub-daily fidelity — flux-tower comparison, diel cycles, energy partitioning | `ark`, `dt_fast` ≤ 150 s |
-| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for the leaf potential (§5a); check `psi_wood` and the first day after a restart at a shorter step |
+| anything keyed to **leaf water potential** (hydraulic stress, ψ-driven mortality) | `ark` at 900 s for the leaf and wood potentials (§5a); check the first day after a restart at a shorter step |
+| the timing of **dry-season leaf habits** (when drought-deciduous trees shed and flush) | `ark`, `dt_fast = 300 s`: 900 s runs a drought season's GPP and ET ~6 % high (§5a) |
 | a reference solution to check anything else against | `rk45` with `rtol_all = 1e-9`, `atol_scale = 1e-3`, `dt_fast` ≤ 50 s |
 | ED2 comparison at the algorithmic level | `rk45` (but check `work_rk45_rescue_site` first) |
 
 **What the `dt_fast = 900 s` row costs.** Little: canopy-air temperature within 0.16 K of a resolved
 reference, and the latent heat within 0.2 W m⁻² in the mean and 1.9 W m⁻² in any hour of the diurnal
 cycle on BCI's dry season. Soil-surface temperature is the loosest at 0.70 K. Under drought the fast
-water-stress limb reads the step-start leaf potential; how much a drought season moves with
-`dt_fast` is not yet measured (§5a).
+water-stress limb reads the step-start leaf potential, which runs Palo Verde's February–April GPP and
+ET 5.5–6 % high at 900 s, 1.7 % over the season and 0.8 % over the year (§5a).
 
 Configuration essentials:
 
@@ -398,7 +431,8 @@ Configuration essentials:
 [fast]
 time_integrator     = "ark"      # "ark" (default, ESDIRK2) | "rk45" (accuracy baseline)
 dt_fast             = "900s"     # ACCURACY-limited (sec 5a). Warned above 900 s, the measured
-                                 # range; canopy-air temperature is not the constraint.
+                                 # range; canopy-air temperature is not the constraint. 300 s for
+                                 # the timing of dry-season leaf habits.
 ark_rtol            = 1.0e-3     # adaptive schemes only
 rtol_all            = 0.0        # master relative-accuracy dial; 0 = per-group defaults
 atol_scale          = 1.0        # scales every absolute tolerance -- needed, rtol alone saturates
@@ -496,24 +530,30 @@ than a convergence proof.
 
 ## 7. Known limitations and open questions
 
-1. **`psi_wood` and a restart's first day at 900 s are not yet scored on the network.** The midday
-   probe's leaf potential converges in `dt_fast` (§5a); the wood potential and the start-up transient
-   on the first day after a restart have not been re-measured (see `docs/ROADMAP.md`).
+1. **The per-step freeze biases a drought season, and a restart's first day is not scored.** The
+   leaf and wood potentials converge in `dt_fast` at a wet site, but at 900 s Palo Verde's driest
+   months run GPP and ET 5.5–6 % high, linearly in `dt_fast` (§5a). The candidate fix is a
+   predictor–corrector: re-evaluate the gas exchange at the mid-step leaf potential and re-solve the
+   water network once, about one extra pre-pass per step. The start-up transient on the first day
+   after a restart has not been re-measured on the network (see `docs/ROADMAP.md`).
 
-2. **The stability threshold has only been mapped on one forcing.** §5a′ sweeps stand height, but on
-   a single synthetic diurnal cycle at one wind speed. The feedback behind the oscillation is a
-   *stability-dependent* one, and its gain varies strongly with wind: at `u_ref = 10 m/s` the frozen
-   scheme is stable at every `dt_fast`, while at 2 m/s it is not. Light-to-moderate wind is the
-   dangerous band and also the common one, and no forced multi-season run has been scored for it.
+2. **Light wind is no worse.** The feedback behind the oscillation is stability-dependent and its
+   gain varies with wind, so light-to-moderate wind, the common band, is the one that matters. On BCI's
+   tower forcing (example 04, 2012-08 to 2013-05, fast output every step) calm wind below 2 m/s is
+   13 % of the records, and at 900 s the step-to-step alternation of canopy-air temperature is no
+   larger than the 150 s run's at the same instants in any wind band: the lag-1 correlation of its
+   second difference is −0.06, where a period-2 oscillation gives −1. §5a′ gives the multiplier
+   across wind speeds and `dt_fast`. It is scored at one site.
 
 3. **The ARK's error norm carries structurally-zero terms.** Soil moisture and plant water mass are
    operator-split out of its tableau, so their contributions to the norm are exactly zero and only
    dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a
    summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ARK
    tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
-4. **Condensate is deposited into soil layer 1**, not onto foliage, because the canopy film store is
-   optional and carries its enthalpy at a fixed reference temperature. Routing dew onto leaves needs
-   that reference fixed first (see `docs/ROADMAP.md`).
+4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
+   evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
+   canopy film, which is optional and carries its enthalpy at a fixed reference temperature, to carry
+   its own temperature first.
 5. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —

@@ -94,9 +94,6 @@ module meds_column_state_types
       real(wp) :: struct_soil  = 0.0_wp      !< -> X(4) struct_soil (structural fineroot + belowground CWD)
       real(wp) :: lignin_grnd  = 0.0_wp      !< lignin flux to struct_grnd (sets f_lignin of incoming litter)
       real(wp) :: lignin_soil  = 0.0_wp      !< lignin flux to struct_soil
-      ! nitrogen twin: carried, but zero, because no kernel reads n_cycle_on (soil_carbon.md §10)
-      real(wp) :: n_labile_grnd = 0.0_wp, n_labile_soil = 0.0_wp
-      real(wp) :: n_struct_grnd = 0.0_wp, n_struct_soil = 0.0_wp
       ! the same carbon by the tissue it came from (diagnostic; the soil reads the pool streams
       ! above). Leaf litter here is what a litter trap collects: after resorption. Summed, these
       ! equal labile_grnd + labile_soil + struct_grnd + struct_soil.
@@ -118,8 +115,7 @@ module meds_column_state_types
    !  state vector X, ordered litter -> SOM -> passive (n_soil_pool=7 in                      !
    !  meds_biogeochem_types); pack_pool_vector / unpack_pool_vector marshal the named fields  !
    !  to and from the array the kernels use. Lignin is a passive tracer of the structural     !
-   !  pools (0 <= L <= C), outside the carbon-mass vector. The nitrogen twin is carried but   !
-   !  stays zero (no kernel reads n_cycle_on; §10).                                           !
+   !  pools (0 <= L <= C), outside the carbon-mass vector. There is no nitrogen (§10).        !
    !==========================================================================================!
    type :: soil_carbon_t
       ! carbon pools [kgC/m2] -- the matrix state vector X, ordered litter -> SOM -> passive
@@ -133,10 +129,6 @@ module meds_column_state_types
       ! lignin sub-state of the structural pools [kgC/m2] (fraction f_lignin = L/C brakes decomposition)
       real(wp) :: struct_grnd_lignin  = 0.0_wp
       real(wp) :: struct_soil_lignin  = 0.0_wp
-      ! nitrogen twin [kgN/m2] -- carried, but zero (no kernel reads n_cycle_on)
-      real(wp) :: fast_grnd_n = 0.0_wp, fast_soil_n = 0.0_wp
-      real(wp) :: struct_grnd_n = 0.0_wp, struct_soil_n = 0.0_wp
-      real(wp) :: mineralized_n = 0.0_wp
    end type soil_carbon_t
 
    !==========================================================================================!
@@ -255,9 +247,9 @@ contains
    end function blend_snow
 
    !----- Area-weighted mix of two soil-carbon columns (patch fusion / disturbance seed). Every    !
-   !      field is a plain per-area density [kgC/m2] or [kgN/m2] (no diagnosed/re-derived fields,   !
-   !      unlike temp/fliq elsewhere), so a straight area-weighted average of all 12 fields          !
-   !      conserves total site-wide soil carbon/N exactly, mirroring blend_soil_w/blend_soil_e.       !
+   !      field is a plain per-area density [kgC/m2] (no diagnosed/re-derived fields, unlike        !
+   !      temp/fliq elsewhere), so a straight area-weighted average of all nine fields conserves    !
+   !      total site-wide soil carbon exactly, mirroring blend_soil_w/blend_soil_e.                 !
    pure function blend_soil_carbon(w1, a, w2, b) result(c)
       real(wp),             intent(in) :: w1, w2
       type(soil_carbon_t),  intent(in) :: a, b
@@ -271,11 +263,6 @@ contains
       c%passive_carbon     = w1 * a%passive_carbon     + w2 * b%passive_carbon
       c%struct_grnd_lignin = w1 * a%struct_grnd_lignin + w2 * b%struct_grnd_lignin
       c%struct_soil_lignin = w1 * a%struct_soil_lignin + w2 * b%struct_soil_lignin
-      c%fast_grnd_n        = w1 * a%fast_grnd_n        + w2 * b%fast_grnd_n
-      c%fast_soil_n        = w1 * a%fast_soil_n        + w2 * b%fast_soil_n
-      c%struct_grnd_n      = w1 * a%struct_grnd_n      + w2 * b%struct_grnd_n
-      c%struct_soil_n      = w1 * a%struct_soil_n      + w2 * b%struct_soil_n
-      c%mineralized_n      = w1 * a%mineralized_n      + w2 * b%mineralized_n
    end function blend_soil_carbon
 
    !----- Area-weighted mix of two per-patch litter accumulators (patch fusion / disturbance seed).!
@@ -300,10 +287,6 @@ contains
       c%struct_soil   = w1 * a%struct_soil   + w2 * b%struct_soil
       c%lignin_grnd   = w1 * a%lignin_grnd   + w2 * b%lignin_grnd
       c%lignin_soil   = w1 * a%lignin_soil   + w2 * b%lignin_soil
-      c%n_labile_grnd = w1 * a%n_labile_grnd + w2 * b%n_labile_grnd
-      c%n_labile_soil = w1 * a%n_labile_soil + w2 * b%n_labile_soil
-      c%n_struct_grnd = w1 * a%n_struct_grnd + w2 * b%n_struct_grnd
-      c%n_struct_soil = w1 * a%n_struct_soil + w2 * b%n_struct_soil
       c%leaf_c        = w1 * a%leaf_c        + w2 * b%leaf_c
       c%fineroot_c    = w1 * a%fineroot_c    + w2 * b%fineroot_c
       c%wood_c        = w1 * a%wood_c        + w2 * b%wood_c

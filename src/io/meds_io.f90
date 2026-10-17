@@ -24,14 +24,15 @@
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
-   use meds_config,   only : meds_config_t, growth_window_steps
+   use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_site_state_types, only : site_t
    use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
-                                           set_cohort_size_from_carbon
+                                           set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
+   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max, PSI_INIT
+   use meds_water_retention, only : water_curve_t
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts
    implicit none
@@ -39,6 +40,7 @@ module meds_io
 
    public :: state_write_state, io_read_state
    public :: state_file_t, state_file_open, state_file_put, state_file_close, state_file_polygons
+   public :: state_file_refusal
 
    character(len=*), parameter :: STATE_TITLE = 'MEDS instantaneous state (restart) file'
    integer,          parameter :: N_META_INT = 11, N_META_REAL = 2
@@ -137,13 +139,13 @@ contains
       call dv('sla',              NC_DOUBLE, [d_cohort], 'specific leaf area [m2/kgC] (plastic)')
       call dv('vcmax25',          NC_DOUBLE, [d_cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
       call dv('rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
-      call dv('llspan',           NC_DOUBLE, [d_cohort], 'leaf lifespan [yr] (plastic)')
+      call dv('leaf_turnover_rate', NC_DOUBLE, [d_cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
       !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
-      !      a restart EXACT for the fast loop -- without them the restart re-seeds leaf_water_mass to   !
-      !      near-saturated (lazy-init) and leaf/wood_temp to LEAF_TEMP_INIT, whose psi/temperature      !
+      !      a restart EXACT for the fast loop -- without them the restart starts the tissues at their   !
+      !      birth water (PSI_INIT) and leaf/wood_temp at LEAF_TEMP_INIT, whose psi/temperature          !
       !      discontinuity makes the plant-hydraulics solve grind for a few days on a healthy high-LAI   !
       !      restart. OPTIONAL on read (gv_dbl_opt), so a state file without them still restarts, on     !
-      !      those seeds. The leaf-surface (interception) film is stored below with the pools. ----------!
+      !      those values. The leaf-surface (interception) film is stored below with the pools. ---------!
       call dv('leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv('wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
       call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
@@ -367,7 +369,7 @@ contains
             call put_dbl('sla',         c%sla(1:ncoh))
             call put_dbl('vcmax25',     c%vcmax25(1:ncoh))
             call put_dbl('rd25',        c%rd25(1:ncoh))
-            call put_dbl('llspan',      c%llspan(1:ncoh))
+            call put_dbl('leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
             call put_dbl('leaf_water_mass', c%leaf_water_mass(1:ncoh))
             call put_dbl('wood_water_mass', c%wood_water_mass(1:ncoh))
             call put_dbl('leaf_temp',   c%leaf_temp(1:ncoh))
@@ -557,11 +559,43 @@ contains
    end subroutine state_file_polygons
 
    !---------------------------------------------------------------------------------------!
+   ! Why the state file at `path` cannot start a region run (`region`) or a site run, or ''    !
+   ! when it can: it cannot be opened, or it holds the other kind's state. A region's file has  !
+   ! a `polygon` axis, one row per polygon, and a site's has none. io_read_state refuses the    !
+   ! same files, so a caller whose read failed can say why.                                     !
+   !---------------------------------------------------------------------------------------!
+   function state_file_refusal(path, region) result(why)
+      character(len=*), intent(in)  :: path
+      logical,          intent(in)  :: region
+      character(len=:), allocatable :: why
+      integer(c_int) :: ncid, st
+      logical        :: holds_region
+      why = ''
+      if (nc_open_f(trim(path), NC_NOWRITE, ncid) /= NC_NOERR) then
+         why = 'cannot be opened'
+         return
+      end if
+      holds_region = has_polygon_axis(ncid)
+      st = nc_close(ncid)
+      if (holds_region .and. .not. region)                                                         &
+         why = 'is a region''s state file (one row per polygon); a site run restarts from a site''s'
+      if (region .and. .not. holds_region) why = 'is a site''s state file; a region restarts from a region''s'
+   end function state_file_refusal
+
+   !----- Does the open state file hold a region's state, a `polygon` axis ahead of every other? ---!
+   logical function has_polygon_axis(ncid)
+      integer(c_int), intent(in) :: ncid
+      integer(c_size_t) :: n
+      has_polygon_axis = nc_inq_dimlen_f(ncid, 'polygon', n) == NC_NOERR
+   end function has_polygon_axis
+
+   !---------------------------------------------------------------------------------------!
    ! Reconstruct a site from a state file written by state_file_put: a site's file, or with   !
    ! `polygon` (1-based) that row of a region's. The geometry is re-derived from the carbon    !
    ! pools (set_cohort_size_from_carbon); the CSR map and within-patch sort order are rebuilt. !
-   ! found=.false. (no error stop) if the file cannot be opened, so the caller can fall back.  !
-   ! Errors out only on a genuine inconsistency (PFT-count mismatch).                          !
+   ! found=.false. (no error stop) if the file cannot be opened or holds the other kind's      !
+   ! state, a region's read as a site's or a site's as a polygon's (state_file_refusal says    !
+   ! which). Errors out only on a genuine inconsistency (PFT-count mismatch).                  !
    !---------------------------------------------------------------------------------------!
    subroutine io_read_state(site, cfg, path, restart_time, found, fast_found, restructure_pending, &
                             restructure_new_year, polygon)
@@ -596,6 +630,12 @@ contains
       if (region) slot = polygon - 1_ik
       st = nc_open_f(trim(path), NC_NOWRITE, ncid)
       if (st /= NC_NOERR) return
+      !----- A region's variables have a polygon axis ahead of the others, so reading the other     !
+      !      kind's file would take the wrong elements. ----------------------------------------------!
+      if (has_polygon_axis(ncid) .neqv. region) then
+         st = nc_close(ncid)
+         return
+      end if
       pending = 'none'
       if (nc_get_att_text_f(ncid, NC_GLOBAL, 'restructure_pending', pending) /= NC_NOERR) pending = 'none'
       if (present(restructure_pending))  restructure_pending  = trim(pending) == 'month' .or. trim(pending) == 'year'
@@ -636,16 +676,21 @@ contains
                c%sla(i)     = cfg%pft%sla(c%pft(i))
                c%vcmax25(i) = cfg%pft%vcmax25(c%pft(i))
                c%rd25(i)    = cfg%pft%rd25(c%pft(i))
-               c%llspan(i)  = cfg%pft%leaf_lifespan_toc(c%pft(i))
+               c%leaf_turnover_rate(i) = cfg%pft%leaf_turnover_rate_toc(c%pft(i))
             end do
             call gv_dbl_opt(ncid, 'sla',     ncoh, c%sla(1:ncoh))
             call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
             call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
-            call gv_dbl_opt(ncid, 'llspan',  ncoh, c%llspan(1:ncoh))
-            !----- Per-cohort hydraulics/temperature (OPTIONAL): site_alloc has already set the        !
-            !      lazy-init sentinels (leaf/wood_water_mass = 0 -> re-seed near-saturated on first       !
-            !      touch; leaf/wood_temp = LEAF_TEMP_INIT), so a state file without these re-seeds; one   !
-            !      with them overwrites the sentinels with the true state.                                !
+            call gv_dbl_opt(ncid, 'leaf_turnover_rate', ncoh, c%leaf_turnover_rate(1:ncoh))
+            !----- A state file written while this trait was a leaf lifespan [yr] holds that instead, -!
+            !      as `llspan`: the turnover rate is its reciprocal. -----------------------------------!
+            if (nc_inq_varid_f(ncid, 'llspan', vid) == NC_NOERR) then
+               call gv_dbl(ncid, 'llspan', ncoh, c%leaf_turnover_rate(1:ncoh))
+               c%leaf_turnover_rate(1:ncoh) = 1.0_wp / c%leaf_turnover_rate(1:ncoh)
+            end if
+            !----- Per-cohort hydraulics/temperature (OPTIONAL): a state file with them restores the   !
+            !      true state; without them the tissue temperatures stay at site_alloc's LEAF_TEMP_INIT  !
+            !      and the water is the birth water, set below once the pools are known.                 !
             call gv_dbl_opt(ncid, 'leaf_water_mass', ncoh, c%leaf_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
@@ -686,6 +731,17 @@ contains
             do i = 1_ik, ncoh
                call set_cohort_size(site%cohort, i)          ! pools from dbh, then the geometry
             end do
+         end if
+         !----- A state file without the tissue water starts each cohort with the water it is born   !
+         !      with: its tissues at PSI_INIT on its PFT's curves (init_cohort). --------------------!
+         if (nc_inq_varid_f(ncid, 'leaf_water_mass', vid) /= NC_NOERR) then
+            block
+               type(water_curve_t) :: leaf_curve, wood_curve
+               do i = 1_ik, ncoh
+                  call pft_tissue_curves(cfg%hydraulics, cfg%pft, site%cohort%pft(i), leaf_curve, wood_curve)
+                  call set_cohort_tissue_water(site%cohort, i, PSI_INIT, leaf_curve, wood_curve)
+               end do
+            end block
          end if
          olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR
          if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, site%cohort%overtopping_lai(1:ncoh))

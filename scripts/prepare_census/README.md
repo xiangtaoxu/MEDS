@@ -15,6 +15,9 @@ python make_census.py --declaration ../../examples/example04_column_biophysics/b
     --out ../../examples/example04_column_biophysics/data/bci_census2010_meds.csv
 ```
 
+(Example 04's declaration names its tables' folder as `/path/to/bci_census`: point the two paths at
+your copy, or let `examples/example04_column_biophysics/run_example.py --census-dir` do it.)
+
 The declaration TOML names the table, its checksum and how to read it (`[source]`), the plot and the
 cell size (`[plot]`), and optionally a MEDS PFT file (`[pft]`) and an earlier census
 (`[mortality]`). With those two, the summary JSON also carries the stand's steady-state litter input

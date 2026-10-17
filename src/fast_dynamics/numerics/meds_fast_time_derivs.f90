@@ -124,7 +124,7 @@ contains
 
       real(wp)    :: tcas, qcas, qsat_c, dqdt, esat
       real(wp)    :: lw_slope, le_slope, le_ref, dtl, tl, transp_i, dh, drnet
-      real(wp)    :: lw_slope_w, dtw, tw, transp_w                    !< WOOD balance (own store)
+      real(wp)    :: lw_slope_w, dtw, tw, transp_w, dh_w, drnet_w    !< WOOD balance (own store)
       real(wp)    :: coh_h, coh_qw, coh_transp, coh_rnet, coh_film_evap
       real(wp)    :: h_evap_l, h_film_l, h_evap_w, h_film_w   !< [J/kg] energy per kg evaporated (leaf/wood; transp/film)
       real(wp)    :: h_bare, le_soil   !< bare-soil half of the snowfac blend
@@ -176,14 +176,33 @@ contains
          end if
          le_slope_wet = h_film_l * cas%rho * film%g_film_leaf(i) * dqdt
          le_ref_wet   = h_film_l * cas%rho * film%g_film_leaf(i) * (qsat_c - qcas)
-         !----- LEAF: emission base and linearization point = t_cas, relaxing with its own heat store    !
-         !      (leaf_hcap_per_dt, t_leaf0; docs/science/vegetation_energy_dynamics.md eqs. (3)-(6)).    !
-         !      qwflux_wl (sapflow's advected enthalpy) folds in via q_extra -- it shifts the            !
-         !      equilibrium temperature (and hence dh/transp) like any other absorbed energy, but is     !
-         !      kept OUT of drnet (an internal soil<->leaf transfer, not a boundary radiative input; see !
-         !      veg_energy_balance's own doc-comment). --------------------------------------------------!
+         !----- WOOD = the le_slope = le_ref = 0 case of the same kernel (no transpiration), solved     !
+         !      first because a leaf with no area takes its wood's temperature (a bud sits on its      !
+         !      twig), and wood with no area takes the canopy air's                                    !
+         !      (docs/science/vegetation_energy_dynamics.md, "A tissue with no area"). q_wood_net      !
+         !      (qloss - qwflux_wl) folds in via q_extra the same way qwflux_wl does for the leaf      !
+         !      below (kept out of drnet). ------------------------------------------------------------!
+         lw_slope_w = lw_emission_slope(tissue%wood_emiss(i), tcas, tissue%wai(i))
+         h_evap_w = h_evap_l
+         h_film_w = h_evap_w - film%film_liquid_enthalpy
+         le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
+         le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
+         call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
+                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
+                                    tissue%t_wood0(i),                                                &
+                                    dtw, tw, transp_w, dh_w, drnet_w, q_extra=tissue%q_wood_net(i),   &
+                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
+                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i),        &
+                                    h_evap=h_evap_w, h_evap_wet=h_film_w)
+         f%wood_temp(i) = tw
+         !----- LEAF: linearized about t_cas, relaxing with its own heat store (leaf_hcap_per_dt,        !
+         !      t_leaf0; docs/science/vegetation_energy_dynamics.md eqs. (3)-(6)). qwflux_wl (sapflow's  !
+         !      advected enthalpy) folds in via q_extra -- it shifts the equilibrium temperature (and    !
+         !      hence dh/transp) like any other absorbed energy, but is kept OUT of drnet (an internal   !
+         !      soil<->leaf transfer, not a boundary radiative input; see veg_energy_balance's own       !
+         !      doc-comment). ---------------------------------------------------------------------------!
          call veg_energy_balance(tissue%abs_sw(i), tissue%abs_lw(i), tissue%h_coeff_leaf(i), le_slope,          &
-                                    lw_slope, le_ref, tcas, tcas, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),  &
+                                    lw_slope, le_ref, tcas, tw, tissue%leaf_hcap_per_dt(i), tissue%t_leaf0(i),    &
                                     dtl, tl, transp_i, dh, drnet, q_extra=tissue%qwflux_wl(i),        &
                                     f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet,               &
                                     le_ref_wet=le_ref_wet, film_evap=f%film_evap_leaf(i),          &
@@ -195,28 +214,12 @@ contains
          coh_transp = coh_transp + transp_i
          coh_film_evap = coh_film_evap + f%film_evap_leaf(i)
          coh_rnet   = coh_rnet   + drnet
-         !----- WOOD balance (own store; emission base = tcas, no transpiration). Wood sensible and    !
-         !      net LW join coh_h / coh_rnet. ---------------------------------------------------------!
-         lw_slope_w = lw_emission_slope(tissue%wood_emiss(i), tcas, tissue%wai(i))
-         h_evap_w = h_evap_l
-         h_film_w = h_evap_w - film%film_liquid_enthalpy
-         le_slope_wet_w = h_film_w * cas%rho * film%g_film_w(i) * dqdt
-         le_ref_wet_w   = h_film_w * cas%rho * film%g_film_w(i) * (qsat_c - qcas)
-         !----- WOOD = the le_slope = le_ref = 0 case of the same kernel (no transpiration).            !
-         !      q_wood_net (qloss - qwflux_wl) folds in via q_extra the same way qwflux_wl does for the !
-         !      leaf above (kept out of drnet). --------------------------------------------------------!
-         call veg_energy_balance(tissue%abs_sw_wood(i), tissue%abs_lw_wood(i), tissue%h_coeff_w(i),          &
-                                    0.0_wp, lw_slope_w, 0.0_wp, tcas, tcas, tissue%wood_hcap_per_dt(i),        &
-                                    tissue%t_wood0(i),                                                &
-                                    dtw, tw, transp_w, dh, drnet, q_extra=tissue%q_wood_net(i),       &
-                                    f_wet=film%f_wet_c(i), le_slope_wet=le_slope_wet_w,             &
-                                    le_ref_wet=le_ref_wet_w, film_evap=f%film_evap_wood(i),        &
-                                    h_evap=h_evap_w, h_evap_wet=h_film_w)
-         f%wood_temp(i) = tw
-         coh_h    = coh_h    + dh
+         !----- The wood's sensible heat, film evaporation and net longwave join coh_h, coh_qw and   !
+         !      coh_rnet after the leaf's. ---------------------------------------------------------!
+         coh_h    = coh_h    + dh_w
          coh_qw   = coh_qw   + f%film_evap_wood(i) * h_evap_w   ! wood film-evap -> CAS, what the wood paid
          coh_film_evap = coh_film_evap + f%film_evap_wood(i)
-         coh_rnet = coh_rnet + drnet
+         coh_rnet = coh_rnet + drnet_w
       end do
 
       !----- GROUND SURFACE = snowfac-blended snow + (1-snowfac) bare soil. The snow terms come from !
@@ -239,7 +242,6 @@ contains
       f%src_enth   = coh_h + coh_qw + f%h_ground + f%le_ground
       f%src_vap    = coh_transp + coh_film_evap + ground%soil_evap + snow%subl_rate
       f%coh_rnet   = coh_rnet
-      f%coh_transp = coh_transp
 
       !----- SMOOTH condensation sink (dew/fog): when the CAS is supersaturated, condense the excess as a   !
       !      relaxation of q toward qsat with timescale TAU_COND -- continuous, with only a kink           !

@@ -119,7 +119,7 @@ At BCI: GPP filtered at 0.4; LE not filtered (LE/Rnet flat); H not filtered (han
 - **Heights:**
   - **The fluxes are comparable as they are:** in a constant-flux layer, a patch's flux at its canopy-air top equals its contribution at the sensor.
   - **The air that drives them is not:** MEDS moves the forcing to each patch's canopy-air top along a neutral profile. At BCI (patch tops 15–51 m, area-weighted mean 38.3 m, sensor 41 m) this gives midday H errors of −84 to +100 W m⁻² per patch, which net to +1.5 to +7.5 W m⁻² for the site. Where the sensor sits far from the patch tops (a grassland tower below a 5 m minimum canopy-air depth) the error has one sign.
-  - **Filed as #350;** no model change now. The data report prints the share of area whose canopy-air top is above the sensor.
+  - **Filed as #350;** no model change now. The data report does not print the share of area whose canopy-air top is above the sensor; read it from a run's `cas_depth_patch` and `area_patch`, as #350's BCI table was.
 
 ### 2.5 Targets
 

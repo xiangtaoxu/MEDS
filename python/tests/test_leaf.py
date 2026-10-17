@@ -49,21 +49,21 @@ def test_c4_less_ci_sensitive_than_c3():
 
 
 def _kinetics_ppm(p, t_leaf=298.15, pressure=101325.0):
-    """25 C mole-fraction kinetics from a Params, via the exposed arrhenius primitive."""
-    kc = leaf.arrhenius(p.kc25, p.ea_kc, t_leaf) / pressure * 1e6
-    ko = leaf.arrhenius(p.ko25, p.ea_ko, t_leaf) / pressure * 1e6
-    gstar = leaf.arrhenius(p.gstar25, p.ea_gstar, t_leaf) / pressure * 1e6
-    return kc, ko, gstar, p.o2_mol_frac * 1e6
+    """Mole-fraction kinetics from a Params, as the solver computes them."""
+    k = leaf.rubisco_kinetics(p, t_leaf, pressure)
+    return k.kc, k.ko, k.gstar, k.o2
 
 
-def test_demand_primitives_compose_to_the_solver():
+@pytest.mark.parametrize("pressure", [101325.0, 70000.0])
+def test_demand_primitives_compose_to_the_solver(pressure):
     _lib_or_skip()
-    # Composing arrhenius (kinetics) + electron_transport_j (J) + assimilation_demand_c3 at the coupled
-    # solution's Ci must reproduce the solver's net A at the 25 C reference (same kernels, no scaling).
+    # Composing rubisco_kinetics + electron_transport_j (J) + assimilation_demand_c3 at the coupled
+    # solution's Ci must reproduce the solver's net A at the 25 C reference (same kernels, no scaling),
+    # at sea level and at 3000 m.
     p = leaf.c3_params(vcmax25=60.0, jmax25=108.0)
     f = leaf.gas_exchange(par=1500.0, leaf_temp=298.15, vpd=1000.0, ca=400.0, params=p,
-                          colimitation=leaf.Colimitation.QUADRATIC)
-    kc, ko, gstar, o2 = _kinetics_ppm(p)
+                          pressure=pressure, colimitation=leaf.Colimitation.QUADRATIC)
+    kc, ko, gstar, o2 = _kinetics_ppm(p, pressure=pressure)
     j = leaf.electron_transport_j(1500.0, p.jmax25, absorptance=p.absorptance,
                                   phi_psii=p.phi_psii, theta=p.theta_j)
     rd = leaf.arrhenius(p.rd25, p.ea_rd, 298.15)
@@ -71,6 +71,22 @@ def test_demand_primitives_compose_to_the_solver():
                              colimitation=leaf.Colimitation.QUADRATIC,
                              theta_cj=p.theta_cj_c3, theta_ip=p.theta_ip_c3)
     assert abs((r.A_gross - rd) - f.A_net) < 1e-6 * max(1.0, abs(f.A_net))
+
+
+def test_gamma_star_does_not_depend_on_pressure():
+    _lib_or_skip()
+    # Gamma* is proportional to the O2 partial pressure, so as a mole fraction it does not depend on
+    # pressure: Bernacchi et al. (2001)'s 42.75 umol/mol at 25 C at any elevation. Kc and Ko are
+    # partial pressures, so their mole fractions scale as 1/P (docs/science/leaf_gas_exchange.md eq. (3)).
+    p = leaf.c3_params()
+    sea, high = leaf.rubisco_kinetics(p, 298.15, 101325.0), leaf.rubisco_kinetics(p, 298.15, 70000.0)
+    assert sea.gstar == high.gstar
+    assert abs(sea.gstar - 42.75) < 1e-12
+    assert abs(high.kc * 70000.0 - sea.kc * 101325.0) < 1e-12 * sea.kc * 101325.0
+    assert abs(high.ko * 70000.0 - sea.ko * 101325.0) < 1e-12 * sea.ko * 101325.0
+    assert sea.o2 == high.o2 == p.o2_mol_frac * 1e6
+    warm = leaf.rubisco_kinetics(p, 308.15, 70000.0)
+    assert warm.gstar == leaf.rubisco_kinetics(p, 308.15, 101325.0).gstar > sea.gstar
 
 
 def test_demand_sharp_min_and_compensation():

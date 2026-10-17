@@ -107,7 +107,7 @@ before and after.
   - the variables are compressed, since most polygons fill only part of the padded axes.
 
   `init_mode = 2` restarts a region from such a file, finding each polygon's row by its id; the file
-  must hold exactly the region's polygons. The
+  must hold every polygon of the region, and may hold more (#431, below). The
   site's and the region's files are written by the same calls (`state_file_open`, `state_file_put`,
   `state_file_close`) and read by `io_read_state`, which takes a polygon's row. Site state files are
   unchanged. A region no longer refuses `init_mode = 2` or `write_state`; a census start is still
@@ -117,6 +117,16 @@ before and after.
   Optional, 0 by default, which is today's empty start. A positive value gives each patch of a
   bare-ground start one cohort of that PFT with that many plants per m², at `min_cohort_height` on the
   polygon's own height curve (`seed_bare_ground`). The PFT parameter table records it.
+- **A region resumes without a failed cell** (#431). A region restart needed a state file holding
+  exactly the region's polygons, and `meds_main` stops a region at its first failed polygon, so a
+  long region run whose cell failed could not mask that cell and resume. A region now restarts from
+  a state file whose polygons include its own: each polygon finds its row by its id, the cell's
+  index on the forcing grid, as before, and the file may hold more. Masking the failed cell
+  (`[region].cell_mask`) and resuming from the last state file then runs the other polygons on as
+  they would have run. A polygon missing from the file stops the run, naming it. Byte-identical when
+  the two sets are equal. `test_region` resumes its three-polygon state file with one cell masked
+  out: each polygon's stand is its row of the file, and its output equals the full resume's, bit for
+  bit.
 
 ### Changed
 
@@ -150,6 +160,182 @@ before and after.
   output buffers carry their own diagnostic parameters (`bufs%diag`), set from the polygon's own soil,
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
+- **A carbon pool's overdraw stops the run instead of being floored** (#394). The slow applier advanced
+  the four carbon pools as `max(pool + rate·dt, 0)`, so an operator that took more than a pool held had
+  the shortfall created, silently, where the per-step bounds guard could not see it. It now sets a
+  result to 0 only when it is below zero by round-off (at most 4 epsilons of the pool and its change,
+  the four roundings of backing out a rate and applying it), and leaves anything larger negative, so
+  `cohort_bad_field` stops the run on that step naming the pool. `reacclimate_plant_traits`, which kept
+  storage at `max(0, …)` when a lower SLA asked for more leaf carbon than storage held, now gives the
+  leaves only what storage has, and the leaf area falls short by the rest. The floors never bound beyond
+  round-off on the shipped runs (worst 2.5×10⁻¹³ kgC m⁻² in the ledger's remainder), and results are
+  byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
+  re-acclimation conserves the cohort's carbon.
+- **The energy ledgers' absolute floor is 10⁻³ W m⁻²** (#413), from 10⁻² W m⁻² (0.9 J m⁻² per
+  900 s step, from 9). The looser floor was kept for a whole-column residual under a melting snow pack
+  of up to 0.7 J m⁻² per 150 s step that the per-store ledgers did not see; that residual was the dew
+  condensate's enthalpy valued at two temperatures, fixed on 2026-09-08 with #119 (the condensate is
+  now valued at one temperature on both sides), and the note that it was open outlived the fix. The
+  whole-column residual today is at most 7.3×10⁻⁷ J m⁻² per step in `test_column_dynamics` RUN 8 on
+  ARK (8.3×10⁻⁷ on RK45) and 1.3×10⁻⁶ J m⁻² in Ithaca Jan–Mar runs at 150 s and 900 s; the worst step
+  in the 1147 archived v0.3.4 example run logs is 7.8×10⁻⁴ J m⁻². RUN 8's whole-column energy checks,
+  which asked only that no step breach the floor, now ask for closure below 10⁻³ J m⁻² per step, as
+  RUN 8b and 9b do. Every test passes on ifx Release, ifx Debug and gfortran, and results are
+  byte-identical.
+
+- **One drainage factor for the soil's bottom, and the soil maps' leaky base drains as the map says**
+  (#401). Free drainage and bedrock were two cases of `bottom_flux`; they are now the two ends of one,
+  q = f K(θ_N) with f = `soil_opts_t%drain_factor` (`docs/science/soil_biophysics.md`, Boundary
+  conditions): `[soil].bottom_bc = "free_drain"` is f = 1 and `"bedrock"` f = 0, and the aquifer stays
+  its own case. The selectors `SOIL_BC_FREE_DRAIN` and `SOIL_BC_BEDROCK` become one, `SOIL_BC_DRAIN`;
+  the config names are unchanged. A leaky base in the ED soil maps (`bc_class` 2: half the map's cells,
+  82 % of example 06's box) drains at the cell's `f_leak` (0.05 everywhere in ED-SoilMaps v2), where it
+  ran as free drainage, 20 times faster than the map intends. The soil depth map must hold `f_leak`,
+  and a leaky cell whose `f_leak` is outside (0, 1] stops the run, naming the cell. A region's files
+  carry each polygon's `drain_factor` (the fill value on an aquifer), and their `bottom_bc` is 1 for
+  drainage and 2 for an aquifer (a sealed polygon was 3; it is now 1 with `drain_factor` 0). Free-
+  draining site runs, every shipped one, are byte-identical, and so are sealed and aquifer polygons.
+  Before → after, a 3 × 3-cell box of example 06's domain (11.85–12.15° N, 85.85–86.15° W; its 7 land
+  cells all leaky, 1.0–1.6 m of soil), example 05's Palo Verde regrowth from bare ground, the first 5
+  years: drainage 218 → 163 mm yr⁻¹ (−25 %), ET 971 → 1014 mm yr⁻¹ (+4.4 %), column water 0.287 →
+  0.296 m³ m⁻³ (the deepest layer 0.277 → 0.289), LAI 3.38 → 3.59, GPP +4.6 %, AGB +4.1 %.
+  `test_column_hydrology` checks that f = 1 and f = 0 give free drainage and bedrock bit for bit, that
+  the flux scales by f, and that a leaky column's water closes against its drainage;
+  `test_surface_maps` reads each cell's `f_leak` and refuses f_leak = 0 on a leaky cell; `test_region`
+  runs its leaky polygon at its cell's `f_leak` and reads every polygon's `drain_factor` from the
+  region files; `test_biophysics_opts_config` loads the two names.
+
+- **Leaf turnover is a rate: `leaf_turnover_rate_toc` replaces the leaf lifespan** (#379, the rename;
+  the sweep's decision D3). A leaf lifespan acted in the carbon path only through its reciprocal, so
+  the rate is now the parameter and the state (`docs/science/plant_traits.md`):
+  - the PFT key `leaf_turnover_rate_toc` [yr⁻¹, > 0] replaces `leaf_lifespan_toc` [yr];
+  - the cohort trait `leaf_turnover_rate` replaces `llspan`, in the state file
+    (`leaf_turnover_rate`), the output (`leaf_turnover_rate_cohort`, yr⁻¹), the C API's cohort field
+    17 and `meds.model`'s `leaf_turnover_rate`;
+  - its shade plasticity is rate = rate_toc · exp(k · LAI above), with `kplastic_leaf_turnover` = k ≤ 0
+    the negative of the old lifespan slope, so one formula serves all four traits and the target is
+    the reciprocal of the old lifespan's; the trait relaxes as a rate, f = 1 − exp(−rate · Δt);
+  - a fusion blends the rate on leaf carbon, so the fused cohort turns over the leaf carbon its two
+    parents did. The leaf-area mean of a lifespan it replaces did not: it is a harmonic mean of the
+    rates, biased toward the slow, shaded parent;
+  - `[trait_dynamics].fineroot_turnover_plastic` scales the fine roots by rate / rate_toc.
+
+  Retired, each refused with its conversion: `pft.leaf_lifespan_toc` (rate = 1 / lifespan),
+  `derived.kplastic_llspan` (`kplastic_leaf_turnover` = −`kplastic_llspan`) and
+  `trait_dynamics.fineroot_lifespan_plastic` (`fineroot_turnover_plastic`). A state file holding
+  `llspan` is read as 1/`llspan`. The shipped configs carry the reciprocals: the reference and example
+  03's [1.0, 2.0, 3.0303] yr are [1.0, 0.5, 0.33] yr⁻¹ (3.0303 was 1/0.33 rounded), examples 04's and
+  the region test's 2 yr are 0.5, and example 05's observed lifespans are written to four decimals,
+  BCI's 0.5/0.7/0.9 yr as 2.0/1.4286/1.1111 and Palo Verde's 0.5/0.5/0.8/1.5 yr as 2/2/1.25/0.6667
+  (2–5×10⁻⁵ from the exact reciprocals). The issue's new turnover form, phenology up-regulating each
+  PFT's baseline rate, is deferred (`docs/ROADMAP.md` §2).
+
+  Before → after, on the integration branch: example 04's ten days on ARK and a month of example 05's
+  Palo Verde inventory run move by under 10⁻¹⁰ and 7×10⁻⁶; example 04 forced to RK45 moves ET by
+  +0.3 % (its step sequence follows the last bit, as with #420); example 05's BCI regeneration from
+  bare ground, 1600–1601, by under 3×10⁻⁶ (leaf and fine-root litter +5×10⁻⁵). Over 1600–1619 that
+  run moves: GPP 2.1687 → 2.1663 kgC m⁻² yr⁻¹ (−0.11 %), LAI 5.047 → 5.012 (−0.68 %; the last year
+  6.318 → 6.226, −1.5 %), leaf litter +0.30 %, AGB 1.5769 → 1.5750 kgC m⁻² (−0.12 %), density 5.689 →
+  5.684 m⁻² (−0.09 %), ET 1314.6 → 1313.8 mm yr⁻¹ (−0.07 %). The rename alone (old fusion and relaxation
+  rebuilt on the rate) moves it by under 6×10⁻⁶; relaxing the rate rather than the lifespan gives LAI
+  −0.12 % and AGB −0.18 %, and the leaf-carbon fusion LAI −0.56 % and GPP −0.08 %: fused cohorts now
+  turn over as fast as their parents did. `test_fusion_cohort` checks that a fusion of cohorts with
+  different SLAs and rates conserves the leaf carbon turned over; `test_state_roundtrip` reads an
+  `llspan` state file as 1/`llspan`; `test_config_keys` the three refusals; `test_plant_trait_dynamics`
+  the rate's gradient, its reciprocal lifespan form and the relaxation.
+- **One definition of the tissue heat constants.** `C2B_WOOD`, `TISSUE_C_LEAF`, `TISSUE_C_WOOD_DRY` and
+  `TISSUE_HCAP_MIN` live in `meds_column_params`. The fast loop's `veg_thermal_params_t` starts from
+  them, and `meds_fast_frozen` and `meds_site_state_types` no longer keep copies of their own (the
+  copies #419 left). Results are byte-identical.
+- **The examples are rerun after the sweep** (the sweep's decision D7: the contemporary runs only).
+  - Example 01: Γ* no longer depends on pressure (#342), so at 101.325 kPa the compensation point is
+    48 µmol mol⁻¹ (was 47), the A_c/A_j transition 185 (187) and each species' peak A_net 0.4–0.8 %
+    lower (*F. insipida* 21.4 → 21.3 µmol m⁻² s⁻¹); the optimum temperatures are unchanged.
+  - Example 02 reproduces byte for byte, its figure too.
+  - Example 03 reproduces v0.3.4 to round-off: the census run to 3×10⁻¹⁴, the bare-ground run's totals
+    to 10⁻⁸ (its cohort counts by at most 2), so its figures stand.
+  - Example 04 is refitted, since its diurnal H is a calibration target and #419 raised daytime H by
+    about 10 W m⁻²: 836 runs in 28 minutes on 200 cores (validation cost 62,356 → 50,905; v0.3.4's fit
+    63,657 → 52,187). Vcmax25 32.3 → 31.9 µmol m⁻² s⁻¹ (its EEO prior centre 41.0 → 39.9, #342), g1
+    2.82 → 2.79, g0 0.33 → 0.28 mmol m⁻² s⁻¹, leaf angle 54.9 → 56.5°, `z0m_ratio` 0.0528 → 0.0538,
+    κ 0.734 → 0.743. `wstress_sref_stomata` is now screened out as uninformed (posterior/prior sd ratio
+    0.95) and fixed at its prior, 2 (it was fitted to 2.03 at a ratio of 1.00). Validation RMSE, default
+    → calibrated: GPP 2.40 → 1.58, LE 1.67 → 1.60, H 3.82 → 3.95, u\* 1.75 → 0.66, upwelling longwave
+    3.84 → 3.56. Over 2012-08 to 2017-07 the calibrated run's GPP is 8.60 µmol m⁻² s⁻¹ (was 8.65;
+    target 8.12, was 8.15), LE 63.8 W m⁻² (62.9) and H by day 158.1 W m⁻² (146.3; target 166.6); the
+    default's H by day 142.4 (132.7). `leaf_gas_exchange.md` §4.4's g0 example follows the new fit.
+  - Example 05, BCI's census check: GPP 31.3 → 31.2 MgC ha⁻¹ yr⁻¹ (example 04's corrected tower GPP
+    31.3 → 31.1), NPP 12.3 → 12.4, stem respiration 4.6 → 4.5, diameter growth within 0.005 cm yr⁻¹.
+    Palo Verde's inventory check (2008-07 to 2010-12): leaf litter 0.48 → 0.49 kg m⁻² yr⁻¹, March–April
+    LAI 2.1 → 2.2, GPP +0.5 % and NPP +2 % (the soil 0.9 K cooler under the open canopy, #410, cuts root
+    respiration by 6 %); growth and mortality unchanged at the table's precision.
+  - Not rerun (D6, D7): example 05's BCI regeneration 1600–2020 and Palo Verde's 150-year regrowth,
+    and example 06. Their READMEs say that their figures and numbers were made with v0.3.4 (example 06:
+    with the region runtime that followed it) and not repeated after the sweep (D12). Example 05's
+    configs keep example 04's v0.3.4 calibration until those runs are repeated.
+
+### Removed
+
+- **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and
+  the code no longer pretends otherwise: the always-zero nitrogen twin of the soil pools and of the
+  litter input (`soil_carbon_t`'s five N fields, `litter_input_t`'s four), their area blends, the
+  `n_cycle_on` switch and the decomposition's `f_decomp` placeholder (identically 1) are gone. The
+  keys `n_cycle_on`, `c2n_structural`, `c2n_slow`, `c2n_fast` and `n_immobil_supply_scale` are retired
+  and refused, saying the nitrogen cycle is not built and is planned after the move to ED-MORE; so are
+  `agf_fast` and `agf_struct`, which no kernel read, saying the litter is split by tissue with each
+  PFT's `f_labile_leaf`, `f_labile_stem` and `aboveground_frac`. The state file never carried the N
+  fields, and no output variable read them. `test_config_keys` checks the refusals. Results are
+  byte-identical.
+- **The crown area** (#432; the sweep's decision D1). The crown-area allometry `[allometry].ca_b1`/`ca_b2`
+  was a required key that nothing read (`dbh_to_crown_area` was never called), and the PFT trait
+  `crown_area_frac` was 1.0 in every shipped config; its only use was the in-canopy wind's crown cover.
+  All three keys are retired and refused, saying the crowns close over their patch and the wind
+  attenuates by leaf area alone. `dbh_to_crown_area`, the cohort field `p_crown_area_frac` (with its
+  lines in the lockstep reorder, copy, compaction and creation sites), `column_cohort_t%crown` and the
+  wind kernel's crown argument are gone, and `docs/science/canopy_aerodynamics.md` eq. (8) is the
+  closed-crown form, u·exp(−LAI/4) at mid-crown and u·exp(−LAI/2) below. `test_aerodynamics` checks
+  eq. (8) in place of its small-crown test. The keys are removed from every shipped TOML (the root
+  references, the examples, the example 04 calibration file and `test/region`). Results are
+  byte-identical (the crown fraction was 1 everywhere).
+- **The stem respiration's size scaler** (#412, part 3). `stem_resp_size_scaler` was a `wood_params_t`
+  default of 0 that no key could set, applied every step as a factor 10^(0·dbh) = 1 on the stem surface
+  rate. The field and the factor are gone, and `docs/science/plant_respiration.md` eq. (3) drops it. §7
+  said shipped runs have no size scaling of stem respiration; it now says the surface rate has no size
+  factor of its own and that example 05's and 06's PFTs scale stem respiration with size through the
+  sapwood basis. `test_plant_respiration`'s size-scaler test goes with it. Results are byte-identical.
+- **Two test residues** (#421). `test_column_ark.f90` carried a copy of `test_rk45_shed_water`, which
+  `test_column_rk45.f90` runs with one more check; the copy is gone. `test_column_energy`'s
+  `test_mass_correction_neutrality` guarded a post-solve soil-water clip that no longer exists, but the
+  identity it checks (water that leaves or enters a layer with its own enthalpy leaves the layer's
+  temperature unchanged; without it, it does not) is the one every liquid-water flow relies on. It is
+  kept as `test_mass_change_neutrality`, with its checks labelled as water removed or added with and
+  without its enthalpy. And `test_column_dynamics`'s RUN 9 set `time_integrator = "rk45"` for its
+  third leg without rebuilding the integrator record the schemes read, so that leg ran ARK; it now
+  rebuilds it, as RUN 8 and 8b do, and the snowfall check runs on RK45.
+- **Dead code** (#417, the named items; the unused imports come later). `size_tol` (never read) is gone,
+  and the two end-of-run patch-area checks, `driver_finalize` and `region_finalize`, use `area_tol` in
+  place of the literal `1.0e-5`. Gone too: `surface_tend_t%coh_transp`, written but read only by a test,
+  which now sums the per-cohort `transp_c`; `apply_rt_forcing`'s unused `tcas` and the
+  `cas_temp_of_enthalpy` its caller computed for it; and `meds_run_t%is_open`, set and never read.
+  The allocation kernel's storage refill, misnamed `store_hcap_per_dt`, is `storage_refill`, and
+  `snow_stage_t%t_melt` defaults to the triple point instead of 0 K: a trace pack (below
+  `tiny_snow_mass`, which skips the melt step and so never sets it) valued the ground's inflow at 0 K.
+  Results are byte-identical (no compared run has snow). `veg_energy_balance`'s `t_emit`, which every
+  caller passes as `t_cas`, stays for now: its `(t_cas − t_emit)` terms are exactly zero, but ifx's
+  default floating-point model reassociates the shorter sum left without them, so removing them moves
+  the ifx build's rounding (gfortran's results are unchanged).
+- **`clamp_soil_energy`, the RK45 stage clamp on the soil's energy** (#420). It clamped each layer's
+  internal energy to a temperature in [180, 350] K before every RK45 stage, because a wild stage
+  temperature once overflowed ground evaporation's fractional power; ground evaporation is now frozen
+  from the water network for the whole `dt_fast`. Measured before removing it: no stage state reached
+  either bound in the suite (ifx Release, ifx Debug, gfortran) or in a year of example 04 (BCI, 120
+  patches) forced to `rk45`. Its activation counter did register about 34,000 activations in five
+  days of that run, but every one was the clamp's own round trip (energy → temperature → energy)
+  changing an in-range layer by an ulp. It is gone with its `denergy` output and its imports;
+  `clamp_cas` remains the RK45 stage clamp, and the RK45 comment says why the soil needs none. Every
+  shipped config runs `ark` and is byte-identical; a run forced to `rk45` moves, because the ulp
+  changes alter its adaptive step sequence (example 04's five-day `rk45` case: ET over the five days
+  −0.2 % on ifx and −0.5 % on gfortran, hourly sensible and latent heat by up to 9–15 W m⁻²).
 
 ### Fixed
 
@@ -174,6 +360,285 @@ before and after.
   With the intended hours the tiny cohort sees the sun (GPP 0 → 0.030, its leaf at most 0.45 K above
   the canopy air), the drydown takes θ to 0.0786 against θ_res 0.078 (0.0839 before), and the rain
   pulse's peak intercepted water is 0.046 kg m⁻² (0.017 before); the suite takes about a second longer.
+- **Under Campbell retention, a new cohort's predawn potential comes from the Campbell curve**
+  (#427). The pre-pass seeds a cohort's predawn leaf potential, until it has a day of its own, from
+  the top soil layer's potential, and read that layer's van Genuchten parameters, which a Campbell
+  column never set (both zero): the seed was 0 MPa, a fully wet soil, whatever the soil held, and
+  the curve's slope beside it divided by zero, which a Debug build traps. `soil_params_t` now
+  carries one parameter pair, `curve_par_a` and `curve_par_n` (alpha and n for van Genuchten,
+  psi_sat and b for Campbell), in place of `vg_alpha`, `vg_n`, `psi_sat` and `b_camp`, and every
+  reader takes the column's curve from it; the accessors `curve_a` and `curve_n` are gone. Van
+  Genuchten runs, every shipped config among them, are byte-identical. `test_spac_solver` runs a
+  stand on a Campbell clay (each layer's potential the Campbell curve's, finite and below zero;
+  uptake; water closing every step), and `test_column_rk45` checks the seed against the Campbell
+  curve.
+- **A census or state file that cannot start a run stops it** (#428). A site run whose
+  `[init].census_file` (`init_mode = 1`) or `restart_file` (`init_mode = 2`) could not be opened, or
+  whose census held no row for the site, started from near-bare ground, saying so only in a verbose
+  run; a Python run (`verbose=False`) said nothing, so a calibration trial restarted from a missing
+  state file ran on as a plausible wrong trial. The run now stops with a message naming the mode,
+  the file and why (`cannot be opened`, `holds no cohort for the site`): `meds_main` stops and
+  `meds.model.Run` raises `RuntimeError`. Bare ground is `init_mode = 0` only. A site run refuses a
+  region's state file, whose variables it would have read without their polygon axis, and
+  `io_read_state` reads only the kind of file it is asked for. A region says that a missing restart
+  file cannot be opened (it said "is not a region state file"), refuses a site's state file by name,
+  and stops if a polygon's row cannot be read, which it did not check. `init_from_census` gains an
+  optional `why`, and `meds_io` the function `state_file_refusal`. New ctests
+  `init_census_missing_refused`, `init_census_empty_refused` and `init_restart_missing_refused`
+  (`test/check_init_refused.cmake`); `test_region` covers the three state-file cases,
+  `test_init_census` the reasons and `python/tests/test_model.py` the Python error.
+  `docs/configuration.md` no longer documents the fallback. Valid configs are byte-identical.
+- **A new `meds.canopy.Canopy` reads a config rewritten at the same path** (#429). The library holds
+  one configuration at a time, and `Canopy` skipped reopening when the one open came from the same
+  path, so a config rewritten there, as a calibration loop rewrites its trial's, was silently
+  ignored. The open configuration is now tracked by the instance that opened it: a new `Canopy`
+  always reads its files, and one used after another re-reads its own. The module docstring no
+  longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
+  path and sees the change.
+- **One value for the hydrostatic head: `grav_head` is `rho_h2o·grav`** (#416). `grav_head` converts
+  a water head [m] to a potential [MPa] for the soil curves and faces, root uptake, the crown's gravity
+  and the pedotransfer functions. It was the literal 9.804×10⁻³ MPa m⁻¹, 0.03 % below ρ_w g =
+  9.80665×10⁻³ MPa m⁻¹ with standard gravity, the product its comment named; it is now that product
+  (`meds_constants`, `plant_hydraulics.md`). Potentials move by about 3×10⁻⁴ relative and fluxes by
+  far less. Palo Verde's inventory run (2008-07, one month at 900 s): mean leaf ψ −0.16219 →
+  −0.16223 MPa (−2.0×10⁻⁴), wood ψ −2.5×10⁻⁴, soil ψ −2.7×10⁻⁴; GPP −2×10⁻⁶, ET −3×10⁻⁶. Example
+  04 at BCI (20 days on ARK): GPP, LE and H within 3×10⁻⁸. Example 05's regeneration from bare
+  ground at BCI (1600–1601): GPP and LAI −0.13 %, AGB −0.2 %. A five-day RK45 run of example 04
+  moves LE +0.4 % and H −0.4 %, which is RK45's adaptive step sequence reacting to the last bits
+  (every shipped config runs ARK). `test_water_processes` checks that `grav_head` is ρ_w g and that
+  10 m of water is 98.0665 kPa.
+- **Γ* as a mole fraction no longer rises as the pressure falls** (#342). `gstar25` = 4.275 Pa is
+  Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ written as a partial pressure at 100 kPa, and the leaf
+  kernel divided it by the local pressure, so Γ* in µmol mol⁻¹ grew as 1/P: +0.7 % at BCI, +11 % at
+  1000 m and +43 % at 3000 m, where it cut dim-light photosynthesis by about 4 % and 14 %. Γ* is
+  proportional to the O₂ partial pressure, so as a mole fraction it does not depend on pressure; it is
+  now `gstar25` over that 100 kPa (`leaf_gas_exchange.md` eq. (3)), while Kc and Ko, partial
+  pressures, still divide by the local pressure. One routine owns the conversion,
+  `rubisco_kinetics` in `meds_leaf_gas_exchange`, which the solver calls and the C API
+  (`meds_rubisco_kinetics`) and Python (`meds.plant.leaf.rubisco_kinetics`) expose; the Python leaf
+  test and example 01's A–Ci curve use it in place of their own copies, and the calibration priors'
+  library-free copy takes the same reference pressure (it used 101.325 kPa) and is tested against the
+  kernel; at a BCI-like daytime climate (99.3 kPa, 26 °C) that moves the EEO prior centres from
+  vcmax25 47.8 to 46.7 and g1 2.795 to 2.796, against the priors' log-sd of 0.5. Results at the compare cases: example 04 at BCI (99.3 kPa, 20 days on ARK) GPP +0.24 %,
+  LE +0.09 %, H −0.09 %; Palo Verde's inventory run (99.1 kPa, 2008-07) GPP +0.35 %, NPP +0.59 %,
+  ET +0.09 %, H −0.19 %; example 05's regeneration at BCI (ERA5-Land, 99.9 kPa, 1600–1601) GPP
+  +0.20 %, AGB +0.25 %. Example 01 at 101.325 kPa: Γ 47.0 → 47.7 µmol mol⁻¹ and the peak A_net of
+  each species 0.4–0.8 % lower (F. insipida 21.39 → 21.27), its optimum temperatures unchanged; its
+  outputs are regenerated with the batch's rerun. Tests: `test_leaf_physiology` (Γ* in µmol mol⁻¹
+  is the same at 101.3 and 70 kPa, at 25 and 35 °C, and 42.75 at 25 °C; Kc and Ko scale as 1/P),
+  `test_c_api_leaf`, `python/tests/test_leaf.py` (the same, and the primitives compose to the solver
+  at 70 kPa) and `test_calibrate_fast`.
+
+- **The ground couples to the canopy air through the open canopy, as in CLM** (#410). The
+  ground↔canopy-air conductance blended a bare-soil and a dense-canopy term in ED2's series form by an
+  open fraction the driver always passed as 0, so every patch, a cohort-free gap or a sparse regrowing
+  stand among them, coupled its ground as under a closed canopy. Each patch's open fraction
+  W = exp(−(LAI + WAI)) now weighs the two linearly, as CLM does (`docs/science/canopy_aerodynamics.md`
+  eq. (6), `open_canopy_fraction`): a patch without cohorts couples its ground like bare soil, and at
+  LAI 6 (W ≈ 0.0025) the dense form sets it. Snow still never buries the canopy (`snowfac = 0`, see
+  `docs/ROADMAP.md`). The bare-ground coupling, ~17 times stiffer, exposed an overshoot in the snow
+  pack's energy step, which evaluated its fluxes at a linearized temperature, and on the melt plateau
+  explicitly at 0 °C: in `test_region`'s January start from bare ground a 0.25 kg m⁻² pack went from
+  243 K to 91 K and below 0 K in three steps. `snow_energy_step` is now a linearized backward-Euler
+  step on the pack's enthalpy, solved in closed form on the ice line, the melt plateau or the liquid
+  line (`docs/science/snow_biophysics.md`), so a thin pack relaxes to its balance and stops there.
+  Before → after (period means; the ground's sensible heat and evaporation from an instrumented copy
+  of both builds):
+  - BCI regeneration from bare ground, its first 5 years (`meds_config_regeneration.toml`): ground
+    conductance 8.0×10⁻⁴ → 1.33×10⁻² m s⁻¹; ground sensible heat 6.6 → 18.6 W m⁻², ground evaporation
+    28.0 → 54.1 W m⁻²; top-soil temperature 306.1 → 300.2 K (column −4.5 K); ET 791 → 1092 mm yr⁻¹,
+    drainage −14 %, soil water −0.9 %; GPP +6.5 %, LAI 0.91 → 0.97, AGB +11 %.
+  - Palo Verde's inventory run (2008-07 → 2011-01, LAI 4.4): ground conductance 1.3 → 4.0×10⁻³ m s⁻¹;
+    ground sensible heat 4.1 → 8.5 W m⁻², ground evaporation 4.7 → 5.8 W m⁻²; site H 49.7 → 51.3 W m⁻²
+    (+3.2 %), LE 79.4 → 80.3 W m⁻² (+1.1 %); top soil −0.86 K, soil water −0.07 %; LAI +0.3 %, GPP
+    +0.3 %.
+  - BCI, example 04's calibrated run from the census to its window (2012-08 → 2016-04, LAI 5.6): ground
+    conductance +38 % (its gaps); site H −0.14 W m⁻² (−0.2 %), LE +0.71 W m⁻² (+1.05 %); top soil
+    −0.21 K, soil water −0.09 %; LAI +0.02 %, GPP +0.03 %. Its ten-day window (2016-04-20 → 05-01):
+    H and LE +0.4 %, top soil −0.20 K.
+
+  `test_aerodynamics` checks the two limits exactly, the monotone rise between and W itself;
+  `test_snow` adds a cold pack under warm air and a melting pack under cold dry air, each at a
+  bare-ground conductance, which the old step drove hundreds of kelvin past their balance.
+
+- **`region_free` closes what an opened region holds** (#439). It freed the polygons only, so a region
+  freed without `region_finalize` kept its forcing source's month index allocated and its output files
+  open, and opening the same variable again stopped with "allocatable array is already allocated" in
+  `open_archive`. It now closes the output files (a period still open is not written; finalizing
+  writes it) and the forcing source, frees the polygons and leaves the variable as a region never
+  opened. `meds_main` finalizes before it frees, so runs are unchanged. `test_region` opens a region,
+  frees it without finalizing, opens and steps it again in the same variable, and resumes its masked
+  region in that variable too, without the second one it kept for this.
+- **Cohorts of one height are one wind layer** (#443, found by #349's split test). The in-canopy wind
+  cascade (`canopy_aerodynamics.md` eq. (8)) walked cohort by cohort, so of two cohorts of one height
+  the one sorted first sat above the other and took its wind away, while the radiation already treats
+  them as one layer. A cohort split into two at half the density met different winds: 0.045 K between
+  the two halves' leaves in `test_fast_loop`. Tied cohorts now share one layer: each meets the wind of
+  the layer's summed leaf area at its mid-crown, and the layer below sees the wind under the whole
+  layer. A canopy with no ties is byte-identical. Recruits tie bit-exactly, so regrowth moves:
+  example 05's BCI regrowth from bare ground (1600-1601) GPP −0.13 %, LAI −0.14 % (end −0.17 %),
+  70 cohorts at the end instead of 72; example 04 (2012-08-01..20, ARK) ET −0.03 %, H +0.06 %;
+  Palo Verde's inventory month unchanged to 0.001 %. `test_aerodynamics` splits a crown in two.
+- **A thin tissue is no longer floored to the canopy air** (#349; the sweep's decision D9, and N9).
+  `veg_energy_balance` floored a tissue's coupling at 1 W m⁻² K⁻¹ of ground (`veg_coupling_floor`)
+  and routed the deficit to the canopy air as an extra conductance, while every term it floored
+  scales with the tissue's own area, so a thin cohort's leaves and wood were pulled to the canopy-air
+  temperature and two half-density cohorts differed from one (0.53 K in the wood of a 20-stem-per-ha
+  stand). The floor and its conductance are gone: the relaxation is written on the start-of-step
+  imbalance, which needs no division by the coupling and holds as it goes to zero, so the heat store
+  bounds the step (`vegetation_energy_dynamics.md` eqs. (1), (5), (6)). The heat-capacity minimum
+  `veg_hcap_min` (20 J m⁻² K⁻¹) is per m² of the tissue's own area, not of ground, in the fast loop and
+  in `cohort_tissue_heat_capacity` alike. A tissue with no area (no coupling and no heat capacity)
+  takes the temperature of what it grows from: a leafless leaf its wood's, wood with no area the
+  canopy air's. `veg_energy_balance` loses `t_emit` (every caller passed `t_cas`) and takes that
+  parent temperature instead. Young stands move most, as the issue measured (GPP −2.6 %, end LAI −2 %
+  over five years with the floor at 0.01): example 05's BCI regrowth from bare ground, 1600-1601, GPP
+  −10.3 %, NPP −13.2 %, LAI −6.9 % (end −7.3 %), AGB −9.1 %, H −7.6 %, ET −0.45 %, leaves +0.46 K and
+  wood +0.51 K warmer; over 1600-1604, GPP −6.6 % (last month −4.1 %), LAI −6.7 % (end −5.5 %), AGB
+  −9.3 % (end −8.1 %), H −4.1 %, ET −1.4 %. The per-area minimum alone moves these by under 0.1 %.
+  Closed canopies barely move: example 04 (2012-08-01..20, ARK) GPP +0.000 %, ET +0.04 %, H −0.08 %
+  (−0.5 W m⁻² at midday); RK45 (to 08-06) ET +0.5 %, H −0.6 %; Palo Verde's inventory month GPP
+  +0.004 %, ET −0.02 %, H −0.05 %. `test_surface_energy` sweeps a thin tissue (energy closes, half the
+  area halves every flux at the same temperature, no area takes the parent's temperature) and a store
+  with no coupling; `test_fast_loop` runs the thin stand as one cohort and as two at half density
+  through the whole fast loop with the step controller held off, so both take the same sub-steps
+  (temperatures within 10⁻¹⁰ K, GPP per plant within 10⁻¹¹; the controller itself differs by 10⁻³ K,
+  #444) and a
+  leafless tree whose leaves take its wood's temperature.
+- **The wood's heat capacity counts the sapwood share of its water, at a dry specific heat** (#419).
+  The wood's thermal water was the sapwood ring at a fixed 1 kg per kg dry (`WOOD_MOIST_FRAC`, and
+  its copy `WOOD_MOIST_FRAC_ARK` in the fast loop), twice what the default store holds at saturation,
+  while the water network carries the wood's own water; and `c_sapw` = 2700 J kg⁻¹ K⁻¹ was fresh
+  wood's (100 % moisture), applied to dry mass with the water added on top, so the water was counted
+  twice. The water term is now the sapwood share of the network's store, `wood_water_mass ·
+  bsap/(bsap + broot)` (`wood_thermal_water`, one function for `build_column_frozen` and
+  `cohort_tissue_heat_capacity`, so the fusion weights and the slow ledger see the same capacity); the
+  dry wood, heartwood included, is at ED2's dry 1217 J kg⁻¹ K⁻¹ (`c_wood_dry`, `TISSUE_C_WOOD_DRY`);
+  both moisture constants are gone. The fine-root shed declares the heat of the sapwood share it
+  drains. The wood capacity halves and its temperature swings more; daily means barely move
+  (`vegetation_energy_dynamics.md` eq. (8); τ_wood is now 600–760 s with a saturated store). On the
+  issue's windows (example 04's evaluation run, Palo Verde's inventory run), against the code before:
+  - BCI wet, Sep 2012: wood capacity 2.75×10⁵ → 1.31×10⁵ J m⁻² K⁻¹, midday H +20.1 W m⁻² (188.8 →
+    208.9), night H −4.3, wood daily amplitude +0.71 K (4.16 → 4.86), LE −0.9 %, GPP −0.08 %;
+  - BCI dry, Mar–Apr 2013: 2.77×10⁵ → 1.32×10⁵, midday H +25.8 (267.8 → 293.6), night H −6.7,
+    amplitude +0.51 K, LE −0.07 %, GPP −0.09 %;
+  - Palo Verde dry, Dec 2008 – May 2009: 1.62×10⁵ → 0.99×10⁵, midday H +20.5 (250.2 → 270.7), night H
+    −7.3, amplitude +0.71 K (10.2 → 10.9), LE −0.4 %, GPP −0.03 %; Sep 2008: capacity −34 %, midday H
+    +6.2, LE −1.1 %.
+
+  The issue's measured variant predicted +19.7/+25.3/+19.9 W m⁻² at midday and +0.68/+0.49/+0.68 K. On
+  the compare runs: example 04 (2012-08-01..20, ARK) midday H +18.9 W m⁻², night −2.7, ET −0.7 %, GPP
+  −0.07 %; Palo Verde's inventory month ET −1.6 %, H +1.3 W m⁻²; BCI regrowth from bare ground
+  unchanged to 0.01 %. Example 04 is to be refitted, since its diurnal H is in the calibration.
+  `test_column_ark` checks the capacity against the store (a store drained by a fifth holds a fifth
+  less water heat), `test_slow_ledger` that the shed's declared heat is the tissue store's change,
+  and `test_surface_energy` the new wood timescale.
+- **Fine-root turnover sheds the fine roots' own water, not the wood store's** (#434). The fine roots
+  share one water store with the sapwood (`wood_water_mass`, on `bsap + broot`), and a fine-root loss
+  shed the whole store in the proportion the fine roots lost, about 35 times what they hold. It now
+  sheds their own share, `wood_water_mass · broot/(bsap + broot)` times the fraction lost, so the store
+  keeps its water per unit of carbon once the fine roots are gone; the shed's heat declaration (the
+  sapwood share of what drains, #419) follows it. The water cycled from the wood to the ground falls
+  from 3.69 to 0.10 kg m⁻² over example 04's evaluation run (2012-08 to 2013-04; the issue measured
+  3.6) and from 4.65 to 0.13 kg m⁻² over Palo Verde's (2008-07 to 2009-05; 4.5). The wood store
+  rises by under 0.15 % and the dry-season wood potential at Palo Verde by 0.001 MPa (−1.6287 →
+  −1.6275 MPa, Dec–May, plant-weighted; February −2.430 → −2.426), since the network refills the
+  store from the soil each day; fluxes move by under 0.01 % (example 04, Palo Verde, BCI regrowth).
+  `test_carbon_growth` checks the shed against the fine roots' share and that the store keeps its
+  water per unit of carbon.
+- **A cohort that dies out to the density floor is culled** (with #393). The applier stops a cohort's
+  decline at `negligible_nplant`, and the monthly cull kept a cohort whose density was at least that,
+  so a cohort that had died out could sit at the floor for ever (24 such cohorts, dbh ≥ 19 cm, in
+  example 06's final states). The landing was not even exact: `nplant·exp(log(floor/nplant))` is the
+  floor only to an epsilon either side, so in a sample of starting densities 41 % of declines stopped
+  an epsilon above it and 40 % an epsilon below (and were culled). The applier now ends a decline that
+  reaches the floor, to within the round-off of the comparison, exactly on it (`advance_density`), and
+  the cull removes a cohort at the floor as well as below it. The shipped short cases (example 04's
+  window on both integrators, Palo Verde's first month, example 05's first two years) and a year of
+  the Palo Verde inventory are byte-identical. BCI's regeneration restarted from its 1980 checkpoint
+  (v0.3.4) for 20 years culls its cohorts at the floor (3 at the end before, 0 after; mean cohort
+  count 1003.1 → 995.0), with density (8.5144 m⁻²) and AGB (11.3120 kgC m⁻²) unchanged to 10⁻⁶ and
+  every slow-ledger phase closing. `test_carbon_growth` aims 200 declines at the floor and finds every
+  one on it, and culls a cohort at the floor while keeping one an epsilon above.
+- **A cohort with no leaves and no storage dies** (#393). Nothing in the mortality law saw a cohort's
+  carbon, so a cohort that had lost its leaves and spent its storage lived on at the growth-driven
+  hazard of any slow grower, its leaf carbon decaying geometrically (9 % of a BCI spin-up's cohorts;
+  7.7 % and 9.6 % of example 06's final cohorts). The owner's decision is no separate starvation
+  hazard: growth already sets mortality. The special case is a cohort whose unpaid maintenance this
+  step (`deficit`, the debt left after its photosynthesis and all its storage) exceeds all the carbon
+  in its leaves: burning every leaf could not pay one step's upkeep and nothing is left to pay for a
+  flush. Its mortality for the step (`decline_to_floor_mortality`, beside `camac_mortality`) takes its
+  density to `negligible_nplant`, down the background pathway (carbon to litter, water to the ground),
+  and the next monthly cull removes it, so it is gone within a month. The test is scaled by the
+  cohort's own maintenance respiration and needs no threshold; a leafless cohort living on its storage
+  is untouched. Interim, until a growth- or storage-based mortality (`docs/ROADMAP.md`). The shipped
+  short cases and a year of the Palo Verde inventory are byte-identical (no inventory cohort runs out
+  within the year). In example 06's region 2, a 13-cell box (15–16° N, 85–84° W) restarted from its
+  2021 state through the dry season (January–March) ends with 1,367 leafless cohorts before (875 with
+  no storage at all, the rest with a trickle of resorbed carbon, at most 10⁻³ of their fine-root
+  carbon) and none after: cohorts 10,794 → 8,960 (−17 %), mean density 7.893 → 7.510 m⁻² (−4.9 %), AGB
+  10.992 → 10.847 kgC m⁻² (−1.3 %). BCI's regeneration restarted from 1980 for 20 years loses its
+  leafless seedlings (dbh about 1 cm, leaf carbon 10⁻⁶–10⁻³ of its target, no storage): mean cohort
+  count 995.0 → 961.5 (−3.4 %), density 8.5144 → 8.4846 m⁻² (−0.35 %), AGB 11.3120 → 11.3094 kgC m⁻²
+  (−0.02 %), GPP +0.03 %, `psi_leaf_site` unchanged (−0.215 MPa); every slow-ledger phase closes.
+  `test_mortality_pathways`: a leafless cohort with no storage reaches the floor on its first step,
+  its carbon down the background pathway, and is culled at the month boundary; one with storage lives
+  through a 150-day dry season on it.
+- **The driver's tentative carbon pools follow the applier's round-off rule** (#394).
+  `update_cohort_derivatives` formed each cohort's new pools as `max(pool + npp, 0)` before backing
+  out the tendency, the same floor the applier had: an overdraw was floored there, so the carbon it
+  took was created before the applier, whose bounds guard reports an overdraw, could see it. It now
+  uses the applier's `advance_pool`: a pool the step empties lands on 0 to round-off, and an overdraw
+  stays negative, reaches the applier, and stops the run naming the pool. Byte-identical on every
+  comparison run (the shipped short cases, a year of the Palo Verde inventory and 20 years of BCI's
+  regeneration from its 1980 checkpoint). `test_carbon_growth` passes a rounded full shed and a 1 %
+  storage overdraw through the driver and the applier.
+- **Tissue water is booked when it is made, moved or shed** (#395). `reconcile_tissue_water_capacity`
+  ran at the top of the fast loop, between the slow ledger's window and the fast loop's, and wrote
+  each cohort's tissue water outside both: it seeded a store at 0 (a new cohort's sentinel) to its
+  `PSI_INIT` content, creating water, and clamped a store above its capacity, deleting the excess. Its
+  own `seeded`/`discarded` outputs lacked the patch-area weight (they overstated by about the patch
+  count) and no caller read them. The routine is gone. A cohort is now born holding its tissue water
+  at `PSI_INIT` on its PFT's curves (`init_cohort` takes `[hydraulics]`; `pft_tissue_curves` is the
+  one rule for the curves, which `apply_hydraulics_config` and the turgor-loss point now use too), and
+  a recruit's water is declared as drawn in by the recruit phase, with its carbon and heat; a state
+  file without tissue water restarts on the same birth water. Before the fast loop,
+  `settle_tissue_water` sheds water above a store's capacity (`shed_excess_tissue_water`) to the
+  ground through `shed_water_rate`, area-weighted and declared in a slow-ledger phase of its own
+  (`tissue water`). Phase 2 measured both terms at under 10⁻⁵ of transpiration after the first day.
+  Results move in two places. At a census start the birth water is set before the traits acclimate,
+  and the settle sheds what the acclimation leaves above capacity; in a regenerating stand, a recruit
+  fused before its first fast step now brings its water instead of blending zero into the cohort it
+  joins, and a leaf store that had dried to exactly zero, which the seed refilled when it regrew, now
+  regrows empty until the re-flush entry below fills it. Over the shipped short cases: example 04's
+  window ET +0.0075 % on ARK (+0.55 % on RK45, whose adaptive step sequence follows round-off), Palo
+  Verde's July GPP +0.006 %. Over a year of the Palo Verde inventory: GPP +0.0004 %, density −1.5×10⁻⁶
+  relative, `psi_leaf_site` unchanged; the settle sheds 0.30 kg m⁻² in the year, almost all on the
+  first day. BCI's regeneration from bare ground (1600–1602) loses 0.13 % of GPP and 0.21 % of AGB
+  (monthly cohort count 67 → 66.6), which the re-flush entry restores to 10⁻⁵. Twenty years of BCI
+  from 1980: density, AGB and GPP within 10⁻⁶; the recruit phase declares 0.557 kg m⁻² of birth water
+  and the tissue-water phase 1.2×10⁻³ kg m⁻² shed, its water residual summing to 7.5×10⁻¹⁰ kg m⁻² over
+  7,305 marks; every phase closes. `test_slow_ledger` closes the water ledger across a recruitment, a
+  snap to bare and a settle; `test_pft_optics_config`, `test_fast_loop` and `test_disturbance` follow
+  the birth water.
+- **Re-flushing leaves take their water from the wood** (#436). A store kept its water mass across a
+  biomass change, so new leaf capacity started empty: a cohort re-flushing from bare began the next
+  fast step at the dry end of its leaf pressure–volume curve, about −1.6×10⁴ MPa, with its stomata
+  shut for the step, and the leaf-area-weighted `psi_leaf_site` was dragged with it (−6.45 MPa at Palo
+  Verde on 2009-04-04; a flushing cohort's daily-mean ψ_leaf −169 MPa at 900 s, proportional to
+  `dt_fast`). When a cohort's leaf carbon grows, `fill_new_leaf_water` now fills the new tissue with
+  water moved from the cohort's wood store, at the potential the two share at rest (the leaf the
+  crown's gravity head below the wood; `shared_potential`, a bracketed bisection on the two
+  pressure–volume curves): the plant's water is unchanged and the new leaves start at the stem's
+  potential. Palo Verde inventory: `psi_leaf_site` on 2009-04-04 −6.45 → −0.69 MPa and on 2009-05-08,
+  the second re-flush, −2.91 → −0.24 MPa; the April mean −3.39 → −2.96 MPa; the year's minimum is now
+  the dry season's, −4.15 MPa on 2 May (it was the re-flush spike); outside the two re-flushes the
+  days are unchanged; GPP and ET +0.002 %. BCI's regeneration from bare ground (1600–1602): GPP +0.135
+  % and AGB +0.21 %, back within 10⁻⁵ of the run before the tissue-water change. Example 04's window:
+  ET +4×10⁻⁸ relative on ARK. Twenty years of BCI from 1980: within 10⁻⁵ (`psi_leaf_site` −0.2147 MPa
+  either way). `test_slow_ledger` re-flushes a bare cohort from storage and finds its leaves at the
+  wood's potential less the crown head to 10⁻⁹ MPa, the plant's water unchanged and the water ledger
+  closed; `test_plant_hydraulics` checks the shared potential on both branches of the curves.
 
 ### Documentation
 
@@ -216,6 +681,97 @@ before and after.
 - **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
   #381, #393, #394, #395 and #407; the gaps the science pages name that had no issue are filed as
   #410–#415, and the defects and residues the review found but did not fix as #416–#425.
+- **Every example runs without the development cluster's data paths** (#430). Data the repository
+  does not hold are named on the command line or by an environment variable, and a script stops with
+  a message when one is missing, as example 06's do. Example 04's `run_example.py` reads the BCI census
+  tables from `--census-dir` (or `BCI_CENSUS_DIR`) and writes the folder into its copy of
+  `bci_census.toml`, whose paths are now placeholders. Example 05's `run_palo_verde.py` runs a copy of
+  `meds_config_inventory.toml` with `--era5-archive` (or `ERA5LAND_ARCHIVE`) as `[forcing].data_path`,
+  and stops without it unless `--skip-inventory`. Example 02's `make_era5_par_hours.py` takes
+  `--archive` or `ERA5LAND_ARCHIVE`, with no default (and now accepts a relative `--meds-main`).
+  The comments that named the authors' copies of the soil maps and Chave's E map name the maps instead.
+  Results are unchanged: the runs read the same files.
+- **The root `meds_output_pft_parameters.csv` is deleted** (#430): a run's PFT table from July,
+  read by nothing. `.gitignore` now ignores `*_pft_parameters.csv`, the table every run that writes
+  its state leaves beside the state files.
+- **Counts corrected** (#430): `CLAUDE.md`'s suite is 72 tests (73 with the Python library), not 53;
+  `README.md`'s output registry holds 284 variables, not 252.
+- **`docs/ed2_comparison.md` carries a banner** (#422): the page describes v0.3.0, a rewrite is
+  planned, and until then the banner lists what is now different, with links to the science pages:
+  the capacity limb is always on and resorption defaults to 0.3; leaf water potential converges at
+  900 s on the implicit soil–plant water network; each cohort roots to a depth set by its height and
+  its sapwood conductivity follows wood density; height can follow Chave et al. (2014), a soil column
+  can come from a pedotransfer function and the soil maps, and a region runs its polygons on threads.
+- **`post_proc/README.md` says which file each script reads** (#423). `plot_pft_size.py` and the
+  evaluation notebook read `meds_main`'s diagnostic files (`<prefix>-D-YYYYMM.nc`, `-M-YYYYMM.nc`,
+  `-Y.nc`); `plot_site_timeseries.py`, `plot_forest_structure.py`, `plot_landscape_3d.py` and
+  `animate_landscape_growth.py` read only example 03's stand file. The README gave all six a
+  `meds_main` file, which four of them cannot read; its command lines now run. `README.md`'s Quick
+  start ran example 03's config, which writes no output, and then plotted a file no run writes: it
+  now builds the Python library, runs example 03 from near-bare ground (300 years, about a minute)
+  and plots that run's stand file.
+- **Example 05's Palo Verde PFTs say where three values come from** (#424). `stomatal_g0`
+  (0.463 mmol m⁻² s⁻¹), `leaf_angle_mean` (55.1°) and `z0m_ratio` (0.0536) were labelled "example 04's
+  calibration" but are from example 04's fit on a 1.4 m soil column; they are now labelled as the
+  Palo Verde set's own values from that fit (example 04's current fit gives 0.334, 54.9° and 0.0528).
+  The `g1` comment named Lin et al. (2015)'s slope of −3.97 per g cm⁻³; the values follow it scaled to
+  example 04's 2.82 at wood density 0.60, −2.70 per g cm⁻³. The `g0` comment called the value about
+  the mean cuticular conductance of Duursma et al. (2019); it is a tenth of their mean minimum
+  conductance (~5 mmol m⁻² s⁻¹). Values unchanged.
+- **The θ_J borrowing cost in `leaf_gas_exchange.md` §2 is re-measured, with its conditions** (#425).
+  The page gave it as −25.0 % in its table and 30–32 % in the next sentence. Measured with
+  `meds.plant.leaf` at 25 °C, 101.325 kPa and Ci 280 µmol mol⁻¹ against the sharp minimum: at
+  saturating light the gross rate loses 27.4 % with 0.85 on both co-limitations, 23.7 % with 0.85 on
+  Ac/Aj only and 9.8 % with the shipped 0.98/0.95 (−8.2 % before), at every Vcmax25 from 60 to 150;
+  at PAR 1500–2000 the net rate loses 31–34 %, 27–31 % and 12–15 %. The comments in
+  `python/meds/plant/leaf.py` and `meds_pft_params.f90` quote the same numbers. §4.4's example g0 is
+  example 04's current fit (0.33 mmol m⁻² s⁻¹, losing 0.012 mmol m⁻² s⁻¹ at 3.5 kPa; it said 0.46).
+- **`plant_hydraulics.md` eq. (14) answers whether root conductance grows with root length** (#377).
+  A constant absorbing fraction of the root length scales the root length and the root-length
+  density alike, which is exactly a rescaled specific root length: `specific_root_length` is the knob
+  to fit. Uptake that grows less than linearly would be a root conductance in series (#356).
+- **`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §2.4 no longer says the data report prints the share of
+  area whose canopy-air top is above the sensor** (#350): `scripts/calibrate_fast/report.py` does not;
+  the line says to read it from a run's `cas_depth_patch` and `area_patch`.
+- **Doc lines the sweep's review found wrong** (#419, #74). `vegetation_energy_dynamics.md` and
+  `plant_hydraulics.md`'s parameter table said the sapwood ring is both the hydraulic store and the
+  wood's thermal water; the water network's wood store is the sapwood plus the fine roots, with its
+  own prognostic water, which the heat capacity does not read. The example 04 and 05 configs (and
+  example 04's README) said the canopy intercepts rain and dew; the canopy air's condensate goes to
+  soil layer 1, which `numerical_scheme.md` §7 now explains by its size (at most 0.5 % of
+  evapotranspiration at BCI).
+- **`docs/configuration.md` says what a failed polygon does to a region.** It said the failed polygon
+  is reported and the others finish the month; it now adds what follows, as `meds_main` does it: the
+  month's records are written (the fill value where the failed polygon has none), and a state file
+  that falls due at the month's end, and then the run stops with an error, so the region ends after
+  the month in which the polygon failed, with no end-of-run state file.
+- **`docs/ROADMAP.md` brought up to date for the open-issue sweep.** §1 points to the sweep's plan
+  (`docs/dev_plans/MEDS_ISSUE_SWEEP_PLAN.md`) and lists the new issues #427–#429 (#430 and #432 in
+  §12, #431 under the region runtime in §8, the question #433 in §5). #74 is closed (dew is at most
+  0.5 % of ET at BCI) and leaves the table. #265, #268 and #269 move from "Known defects" to §5 as
+  open questions, since they are modelling choices; #269's "1.2 K warmer" site mean, which gap
+  patches dominated, is dropped. #416's row says the soil side uses `grav_head` too (`grav` is only
+  where the acceleration itself is meant). #342 no longer waits for high-elevation sites: 29 % of
+  example 06's cells are above 1000 m. The forcing design is cited from `archive/`, the stale
+  "example 06 as region runs" item goes, and #377, #424, #425 and #430 are marked done in `beta`.
+  `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
+- **`examples/README.md`'s example 06 summary** said 983 cells, each a single-site run; it is 953
+  cells run as two region runs, as example 06's README says.
+- **`dt_fast`: the drought-season bias and the light-wind stability, measured** (#415).
+  `numerical_scheme.md` §5a, which said a drought season was not scored, now gives it: on Palo Verde's
+  inventory configuration restarted on 2008-12-01, 900 s runs February–April GPP 5.5 % and ET 6.0 %
+  above 150 s, linearly in `dt_fast` (about 1 % at 300 s), the December–May season 1.7 % and the year
+  0.8 %, with shedding 1–2 days late; the per-step freeze is the cause, not the water solver. BCI
+  (example 04, 2012-08 to 2013-05) moves by GPP +0.08 %, LE −0.37 W m⁻², H +0.25 W m⁻² and daily ψ by
+  at most 0.004 MPa. The page recommends `dt_fast = 300 s` for runs whose purpose is dry-season
+  leaf-habit timing; 900 s stays the default. §5a′'s re-solved stability multiplier, −0.07 to −1.16
+  by stand height (from a base state spun up with the conductances frozen), is replaced by today's: on
+  a 30 m stand at noon |Φ′| ≤ 0.39 from 50 to 900 s at 2 and 10 m/s (+0.11 and +0.02 at 900 s), at
+  most 0.42 in every other case but a calm night (+0.91 to +0.43, a relaxation that does not
+  oscillate). §7 item 2 records light wind as scored: calm wind is 13 % of BCI's records and 900 s
+  shows no period-2 signal (lag-1 correlation of the canopy-air temperature's second difference
+  −0.06). §6, §7 item 1, the `dt_fast` comment in `meds_config_main.toml`, the ROADMAP's #415 and #162
+  items and `ed2_comparison.md`'s banner follow.
 
 ## [0.3.4] — 2026-10-13
 

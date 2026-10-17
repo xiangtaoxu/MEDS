@@ -24,7 +24,7 @@ module meds_test_era5land_archive
    public :: NLAT, NLON, LAT0, DLAT, LON0, DLON, T0
    public :: is_valid, field, air_temperature, hour_index, write_archive, write_static, write_month
    public :: write_map
-   public :: write_surface_maps, soil_depth_at, bc_class_at, deep_temp_at, chave_e_at, texture_at
+   public :: write_surface_maps, soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, texture_at
    public :: SG_TOP, SG_BOTTOM
 
    integer(ik), parameter :: NLAT = 4_ik, NLON = 18_ik
@@ -197,9 +197,10 @@ contains
 
    !=======================================================================================!
    !  The [maps] files, each value a function of its cell (and layer):                         !
-   !  dir/soil_depth.nc (soil_depth, bc_class, deep_temp), dir/soil_texture.nc and               !
+   !  dir/soil_depth.nc (soil_depth, bc_class, f_leak, deep_temp), dir/soil_texture.nc and       !
    !  dir/soil_chemistry.nc (on SoilGrids' layers, with depth_bnds), dir/chave_e.nc. The no-data  !
-   !  cells are empty; gap = [row, col] also leaves sand empty at that cell.                       !
+   !  cells are empty; gap = [row, col] also leaves sand empty at that cell, and f_leak sets     !
+   !  every cell's leaky drainage factor to one value.                                           !
    !=======================================================================================!
    pure real(wp) function soil_depth_at(r, c) result(x)
       integer(ik), intent(in) :: r, c
@@ -210,6 +211,13 @@ contains
       integer(ik), intent(in) :: r, c
       k = 1_ik + modulo(r + c, 4_ik)
    end function bc_class_at
+
+   !----- A leaky base's drainage factor, in (0, 1] and different between cells (the ED soil maps   !
+   !      hold 0.05 everywhere). --------------------------------------------------------------------!
+   pure real(wp) function f_leak_at(r, c) result(x)
+      integer(ik), intent(in) :: r, c
+      x = 0.02_wp + 0.01_wp * real(modulo(r + 2_ik * c, 5_ik), wp)
+   end function f_leak_at
 
    pure real(wp) function deep_temp_at(r, c) result(x)
       integer(ik), intent(in) :: r, c
@@ -234,18 +242,20 @@ contains
       t%ph           = 5.5_wp + 0.1_wp * real(l, wp)
    end function texture_at
 
-   subroutine write_surface_maps(dir, gap)
+   subroutine write_surface_maps(dir, gap, f_leak)
       character(len=*),      intent(in) :: dir
       integer(ik), optional, intent(in) :: gap(2)
+      real(wp),    optional, intent(in) :: f_leak
       real(wp), parameter :: FILL = -9999.0_wp
-      real(wp) :: v2(NLON, NLAT, 1, 3), v3(NLON, NLAT, 6, 5), vc(NLON, NLAT, 6, 3), ve(NLON, NLAT, 1, 1)
+      real(wp) :: v2(NLON, NLAT, 1, 4), v3(NLON, NLAT, 6, 5), vc(NLON, NLAT, 6, 3), ve(NLON, NLAT, 1, 1)
       type(soil_texture_t) :: t
       integer(ik) :: r, c, l
       v2 = FILL ; v3 = FILL ; vc = FILL ; ve = FILL
       do r = 0_ik, NLAT - 1_ik
          do c = 0_ik, NLON - 1_ik
             if (.not. is_valid(r, c)) cycle
-            v2(c + 1_ik, r + 1_ik, 1, :) = [soil_depth_at(r, c), real(bc_class_at(r, c), wp), deep_temp_at(r, c)]
+            v2(c + 1_ik, r + 1_ik, 1, :) = [soil_depth_at(r, c), real(bc_class_at(r, c), wp), f_leak_at(r, c), &
+                                            deep_temp_at(r, c)]
             ve(c + 1_ik, r + 1_ik, 1, 1) = chave_e_at(r, c)
             do l = 1_ik, 6_ik
                t = texture_at(l, r, c)
@@ -255,9 +265,10 @@ contains
          end do
       end do
       if (present(gap)) v3(gap(2) + 1_ik, gap(1) + 1_ik, :, 1) = FILL
+      if (present(f_leak)) where (v2(:, :, 1, 3) /= FILL) v2(:, :, 1, 3) = f_leak
       call execute_command_line('mkdir -p '//dir)
-      call write_fields(dir//'/soil_depth.nc', [character(len=16) :: 'soil_depth', 'bc_class', 'deep_temp'], &
-                        v2, FILL, .false.)
+      call write_fields(dir//'/soil_depth.nc', [character(len=16) :: 'soil_depth', 'bc_class', 'f_leak',     &
+                        'deep_temp'], v2, FILL, .false.)
       call write_fields(dir//'/soil_texture.nc', [character(len=16) :: 'sand', 'silt', 'clay', 'bulk_density', &
                         'coarse_fragments'], v3, FILL, .true.)
       call write_fields(dir//'/soil_chemistry.nc', [character(len=16) :: 'organic_carbon', 'cec', 'ph_h2o'], &

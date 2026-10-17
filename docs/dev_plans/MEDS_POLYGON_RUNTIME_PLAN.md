@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3 ✅ as threads over polygons (b3bd130; the flattened patch loop deferred, efficiency plan §2.7); R4–R6 replaced by §14's phases RP0–RP7 (a region fills one node: allometry as an argument, per-polygon config and soil, a cell mask, per-cell inputs from maps, a padded state file, a forcing cache, one output file set, a pilot); RP0–RP4 and RP6–RP7 implemented on `feat/region-runtime`, RP5 measured and dropped.
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3 ✅ as threads over polygons (b3bd130; the flattened patch loop deferred, efficiency plan §2.7); R4–R6 replaced by §14's phases RP0–RP7 (a region fills one node: allometry as an argument, per-polygon config and soil, a cell mask, per-cell inputs from maps, a padded state file, a forcing cache, one output file set, a pilot); RP0–RP4 and RP6–RP7 implemented and merged into `beta` as #408, RP5 measured and dropped.
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -740,7 +740,7 @@ regional run (983 cells, v0.3.4) taught. This section replaces R4–R6 (§10). I
 not renumber them, and its phases are RP0–RP7 because R1–R12 are already the 2026-09-27 code
 review's items.
 
-> **Status 2026-10-14: RP0–RP4 and RP6 implemented on `feat/region-runtime`; RP5 implemented,
+> **Status 2026-10-14: RP0–RP4 and RP6 implemented on `feat/region-runtime` (merged into `beta` as #408); RP5 implemented,
 > measured and dropped (below).** Each
 > phase passed the suite in ifx, gfortran and ifx Debug, and every phase ran the six regression
 > cases (`~/claude_workspace/meds_runs/rr`). Every site case stayed byte-identical to v0.3.4

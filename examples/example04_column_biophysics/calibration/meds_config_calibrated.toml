@@ -3,7 +3,7 @@
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
 # KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   aerodynamics.z0m_ratio         0.0528022  (0.13)  EFFECTIVE
+#   aerodynamics.z0m_ratio         0.0537814  (0.13)  EFFECTIVE
 #   leaf_physiology.ds_vcmax       641.129  (650)  KATTGE & KNORR
 #   leaf_physiology.ds_jmax        640.592  (640)  KATTGE & KNORR
 # and these settings of the calibration (calibration.toml [overrides], the variant, [calibrated]):
@@ -27,7 +27,7 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
-canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
+canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 [demography]
 demography_on             = true
@@ -114,7 +114,7 @@ file_chunk = "run"
 override_derived = false
 
 # The leaf traits follow the canopy's light gradient: each cohort's Vcmax25, Rd25, SLA and leaf
-# lifespan are its PFT's top-of-canopy values times exp(k * LAI above it), set at the census start
+# turnover rate are its PFT's top-of-canopy values times exp(k * LAI above it), set at the census start
 # and followed as the canopy changes (docs/science/plant_traits.md §1-§2). The calibration keeps it
 # on (calibration.toml).
 [trait_dynamics]
@@ -209,4 +209,4 @@ deep_depth = 3.145                  # [m] the bottom node (1.75 m) + 1.973 / sqr
                                     #   docs/science/soil_biophysics.md eq. (13)
 
 [aerodynamics]
-z0m_ratio = 0.0528022   # set by calibrate_fast
+z0m_ratio = 0.0537814   # set by calibrate_fast

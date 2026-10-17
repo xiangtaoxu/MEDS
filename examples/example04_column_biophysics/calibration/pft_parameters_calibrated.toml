@@ -3,11 +3,10 @@
 # Every line is the base file's, comments included, except these keys the fit set
 # (calibrated value, the base file's value; EFFECTIVE: its value belongs to this model structure;
 # KATTGE & KNORR: fixed at the growth temperature's value, not fitted):
-#   pft.leaf_angle_mean            54.9255  (45)
-#   pft.vcmax25                    32.3321  (45)
-#   pft.stomatal_g1                2.81978  (3)
-#   pft.stomatal_g0                0.000334162  (0.01)
-#   pft.wstress_sref_stomata       2.02774  (2)  EFFECTIVE
+#   pft.leaf_angle_mean            56.5328  (45)
+#   pft.vcmax25                    31.9471  (45)
+#   pft.stomatal_g1                2.7851  (3)
+#   pft.stomatal_g0                0.00028001  (0.01)
 #   pft.jmax_vcmax_ratio           1.6983  (1.7)  KATTGE & KNORR
 # The PFT of example 04 at Barro Colorado Island: ONE evergreen broadleaf PFT at a mid-successional
 # wood density, for the whole census. Its fast parameters are the calibration's starting point
@@ -26,7 +25,6 @@ sapwood_area_b2    = [1.764]     # [--]        ED2 b2SA
 #----- Canopy-element geometry for the aerodynamic boundary layers.
 leaf_width         = [0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02]     # [m]  characteristic branch diameter
-crown_area_frac    = [1.0]      # [--] crown area as a fraction of the patch
 dbh_critical       = [100.0]     # [cm] maximum diameter
 hgt_max            = [46.0]      # [m] asymptotic max height (allometry cap)
 reproduction_investment_fraction = [0.3]
@@ -38,13 +36,13 @@ reproduction_height_fraction = 0.47440838365101196   # [--] reproduce from this 
                                                      #      (20 m: the power curve's 100 cm tree is 42.16 m)
 # Leaf photosynthesis / stomatal traits (C3).
 photosynthetic_pathway = [1]
-vcmax25            = [32.3321]
+vcmax25            = [31.9471]
 jmax_vcmax_ratio   = [1.6983]
 tpu_vcmax_ratio    = [0.167]
 rd_vcmax_ratio     = [0.015]
 kp25               = [1.0e-9]
-stomatal_g0        = [0.000334162]
-stomatal_g1        = [2.81978]        # Medlyn [kPa^0.5]
+stomatal_g0        = [0.00028001]
+stomatal_g1        = [2.7851]        # Medlyn [kPa^0.5]
 stomatal_d0        = [1500.0]
 quantum_yield_c4   = [0.0]
 theta_j            = [0.70]       # the effective curvature of a mean-light cohort (CLM5, ED2)
@@ -54,7 +52,7 @@ theta_cj_c4        = [0.80]
 theta_ic_c4        = [0.95]
 katul_lambda25     = [800.0]
 wstress_lambda_exp = [1.0]
-wstress_sref_stomata = [2.02774]     # [1/MPa] Sabot stomatal-stress sensitivity
+wstress_sref_stomata = [2.0]     # [1/MPa] Sabot stomatal-stress sensitivity
 # Carbon-dynamics traits.
 sla                    = [13.0]
 root_to_leaf_ratio     = [1.0]
@@ -83,13 +81,13 @@ wood_transmit_nir  = [0.001]   # [--] wood/bark NIR transmittance
 wood_emissivity    = [0.90]    # [--] wood thermal emissivity
 leaf_clumping      = [0.80]    # [--] leaf clumping factor in (0,1]
 wood_clumping      = [0.50]    # [--] wood clumping factor in (0,1]
-leaf_angle_mean    = [54.9255]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
+leaf_angle_mean    = [56.5328]   # [deg] mean leaf inclination (spherical: mean 57.3, std 21.6)
 leaf_angle_std     = [20.0]   # [deg] its standard deviation
 storage_cushion        = [0.5]  # [--] storage target, x (leaf + fine-root target):
                                 #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3]
 retained_carbon_fraction = [0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
-leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
+leaf_turnover_rate_toc = [0.5]   # [1/yr]
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split, as the reference meds_config_pft.toml's mid-successional PFT.
@@ -111,8 +109,6 @@ b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
-ca_b1      = 0.370
-ca_b2      = 0.464
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5

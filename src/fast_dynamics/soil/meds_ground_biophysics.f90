@@ -19,7 +19,7 @@
 module meds_ground_biophysics
    use meds_kinds,              only : wp, ik
    use meds_constants,          only : t_3ple, tiny_num, cp_air, cp_ice, cp_liq, stefan,           &
-                                       latent_heat_vap
+                                       latent_heat_fusion, tsupercool_liq
    use meds_therm_lib,          only : internal_energy_to_temp, sat_specific_humidity,                        &
                                        sat_specific_humidity_temp_deriv, enthalpy_vapor,           &
                                        internal_energy_liquid, precip_enthalpy
@@ -192,13 +192,25 @@ contains
       gcond    = 1.0_wp / max(r_series, tiny_num)
    end function snow_base_conductance
 
-   !----- Advance the snow store one dt by a linearized-implicit (backward-Euler) energy step.        !
-   !      Prognostic = extensive internal energy (J/m2) + water-equivalent mass (swe); temperature +  !
-   !      liquid fraction are read-offs. The store update captures WARMING and MELT together (the     !
-   !      inverter re-partitions), the emission response is made consistent with the linearization    !
-   !      slope (so the update stays bounded and cannot overshoot), and sublimation debits vapour     !
-   !      enthalpy while removing mass. Reports the turbulent/conduction fluxes for the CAS + soil    !
-   !      coupling.                                                                                   !
+   !----- Advance the snow store one dt by a linearized backward-Euler step on its ENTHALPY            !
+   !      (docs/science/snow_biophysics.md, "The energy step"). Prognostic = extensive internal energy !
+   !      (J/m2) + water-equivalent mass (swe); temperature + liquid fraction are read-offs.          !
+   !                                                                                                  !
+   !      Every boundary flux is linearized about T^n, so the net flux into the pack is linear in its  !
+   !      new temperature T and falls as T rises. The pack's enthalpy rises with T: along the ice      !
+   !      line below t_3ple, across the melt plateau at t_3ple, along the liquid line above. Their     !
+   !      balance, swe e(T) = E^n + dt af R(T), therefore has exactly one root, found segment by       !
+   !      segment in closed form: on the plateau when the plateau's enthalpy range holds it, else on   !
+   !      the ice or the liquid line. The update is the linearization's own, so the read-off           !
+   !      temperature is T exactly: a thin pack under a strong coupling relaxes toward its balance and !
+   !      cannot overshoot it, and a melting pack freezes through the plateau and stops where the      !
+   !      balance does, not where an explicit flux at t_3ple would drive it.                           !
+   !                                                                                                  !
+   !      Sublimation takes vapour at its own enthalpy: the latent part comes out of the balance and   !
+   !      the mass leaves with the pack's specific energy, so what stays keeps T. A pack that would    !
+   !      sublimate whole does, and the vapour takes all the energy left. Reports the area-weighted    !
+   !      turbulent + conduction fluxes for the CAS + soil coupling; the energy residual is 0 by       !
+   !      construction.                                                                                !
    pure subroutine snow_energy_step(snow, env, params, dt, area_frac, flux)
       type(snow_column_t), intent(inout) :: snow
       type(snow_env_t),    intent(in)    :: env
@@ -206,9 +218,9 @@ contains
       real(wp),            intent(in)    :: dt
       real(wp),            intent(in)    :: area_frac    !< snow-cover fraction: scales ALL boundary exchange (sub-column)
       type(snow_flux_t),   intent(out)   :: flux
-      real(wp) :: t_n, fliq_n, cap, e_old, swe0, gcond, af
-      real(wp) :: h_n, w_n, le_n, g_n, r_n, drdt, dqsatdt, t_star
-      real(wp) :: h_s, w_s, le_s, g_s, emiss_corr, net_flux
+      real(wp) :: t_n, fliq_n, e_old, swe0, swe1, gcond, af, dtaf
+      real(wp) :: h_n, w_n, le_n, g_n, dh_dt, dw_dt, demit_dt, l_vap, r0, drdt
+      real(wp) :: u_freeze, u_melt, e_bal, t_new, dtemp, h_s, w_s, le_s, g_s, emit, net_flux
 
       flux = snow_flux_t()
       af = max(0.0_wp, min(1.0_wp, area_frac))
@@ -219,51 +231,56 @@ contains
 
       swe0  = snow%swe(1)
       e_old = snow%snow_energy(1)
+      dtaf  = dt * af
       flux%snowfac = af
-      call internal_energy_to_temp(snow%snow_energy(1), snow%swe(1), 0.0_wp, t_n, fliq_n)
+      call internal_energy_to_temp(e_old, swe0, 0.0_wp, t_n, fliq_n)
       gcond = snow_base_conductance(snow%snow_depth(1), env, params)
 
-      !----- Fluxes + linearization slope at T^n (all drdt terms <= 0). ----------------------------!
+      !----- The fluxes at T^n and their slopes. A kilogram of vapour carries enthalpy_vapor; less the    !
+      !      pack's specific energy, that is the latent heat it takes from the pack (sublimation on ice,  !
+      !      evaporation on water). ------------------------------------------------------------------!
       call snow_surface_fluxes(t_n, fliq_n, env, h_n, w_n, le_n)
-      g_n     = gcond * (t_n - env%t_soil_top)
-      r_n     = env%abs_sw + env%abs_lw - h_n - le_n - g_n
-      dqsatdt = sat_specific_humidity_temp_deriv(t_n, env%press, fliq_n)
-      drdt    = -4.0_wp * params%snow_emiss * stefan * t_n ** 3                                     &
-              - env%ggnet * env%rho_air * cp_air                                                    &
-              - latent_heat_vap * env%rho_air * env%ggnet * dqsatdt                                 &
-              - gcond
-      cap     = snow%swe(1) * (fliq_n * cp_liq + (1.0_wp - fliq_n) * cp_ice)   ! sensible heat capacity [J/m2/K]
+      g_n      = gcond * (t_n - env%t_soil_top)
+      dh_dt    = env%ggnet * env%rho_air * cp_air
+      dw_dt    = env%ggnet * env%rho_air * sat_specific_humidity_temp_deriv(t_n, env%press, fliq_n)
+      demit_dt = 4.0_wp * params%snow_emiss * stefan * t_n ** 3
+      l_vap    = enthalpy_vapor(t_n) - e_old / swe0
+      r0       = env%abs_sw + env%abs_lw - h_n - l_vap * w_n - g_n
+      drdt     = -(demit_dt + dh_dt + l_vap * dw_dt + gcond)                ! < 0
 
-      !----- Plateau-aware implicit surface temperature. On the melt plateau (0<fliq<1) the           !
-      !      temperature is PINNED at t_3ple; a warming/cooling step that would cross t_3ple is pinned  !
-      !      there too (the layer starts to melt/freeze -- the excess energy goes to fliq via the        !
-      !      inverter, not to temperature). t_star stays within one Newton step of t_n, so bounded.      !
-      !      Only the AREA-FRACTION af of the surface exchanges (sub-column), so af scales the flux AND   !
-      !      its slope in the implicit estimate (cap = full pack heat capacity is NOT scaled): af -> 0    !
-      !      makes the store a no-op (a thin patchy pack barely exchanges -> stable + continuous).        !
-      if (fliq_n > 0.0_wp .and. fliq_n < 1.0_wp) then
-         t_star = t_3ple
-      else
-         t_star = t_n + af * r_n / (cap / dt - af * drdt)
-         if ((t_n < t_3ple .and. t_star > t_3ple) .or. (t_n > t_3ple .and. t_star < t_3ple)) t_star = t_3ple
+      !----- swe e(T) = E^n + dt af (r0 + drdt (T - T^n)): the plateau first, else the ice or liquid line. --!
+      u_freeze = swe0 * cp_ice * t_3ple
+      u_melt   = u_freeze + swe0 * latent_heat_fusion
+      t_new    = t_3ple
+      e_bal    = e_old + dtaf * (r0 + drdt * (t_3ple - t_n))
+      if (e_bal < u_freeze) then                                             ! frozen: e = cp_ice T
+         t_new = (e_old + dtaf * (r0 - drdt * t_n)) / (swe0 * cp_ice - dtaf * drdt)
+         e_bal = swe0 * cp_ice * t_new
+      else if (e_bal > u_melt) then                                          ! liquid: e = cp_liq (T - T_sc)
+         t_new = (e_old + swe0 * cp_liq * tsupercool_liq + dtaf * (r0 - drdt * t_n))                   &
+                 / (swe0 * cp_liq - dtaf * drdt)
+         e_bal = swe0 * internal_energy_liquid(t_new)
       end if
 
-      !----- Fluxes at t_star; cap sublimation to the available mass (af*w_s*dt <= swe; deposition free). !
-      call snow_surface_fluxes(t_star, fliq_n, env, h_s, w_s, le_s)
-      g_s = gcond * (t_star - env%t_soil_top)
-      if (w_s > 0.0_wp) w_s = min(w_s, snow%swe(1) / (af * dt))
-      le_s = w_s * enthalpy_vapor(t_star)
+      !----- The fluxes at T, on the linearization. ------------------------------------------------!
+      dtemp = t_new - t_n
+      h_s   = h_n + dh_dt * dtemp
+      w_s   = w_n + dw_dt * dtemp
+      g_s   = g_n + gcond * dtemp
+      emit  = demit_dt * dtemp                     ! the emission added as the surface moves from T^n to T
+      if (w_s * dtaf < swe0) then
+         le_s = w_s * (l_vap + e_bal / swe0)       ! the latent heat plus the leaving mass's own energy
+         swe1 = swe0 - w_s * dtaf
+      else                                         ! the whole pack sublimates, with all the energy left
+         w_s  = swe0 / dtaf
+         le_s = e_old / dtaf + env%abs_sw + env%abs_lw - emit - h_s - g_s
+         swe1 = 0.0_wp
+      end if
 
-      !----- Emission response consistent with drdt's -4*eps*sigma*T^3 term: abs_lw is NET at T^n, so  !
-      !      the ADDED emission as the surface moves to t_star is eps*sigma*(t_star^4 - t_n^4).        !
-      !      Including it makes the energy update match the linearization (bounded, no overshoot).     !
-      emiss_corr = params%snow_emiss * stefan * (t_star ** 4 - t_n ** 4)
-      net_flux   = af * (env%abs_sw + env%abs_lw - h_s - le_s - g_s - emiss_corr)   ! sub-column area weight
-
-      !----- ENERGY + MASS update. The inverter downstream re-partitions warming vs melt; sublimation    !
-      !      removes af-scaled mass and its vapour enthalpy (net_flux already debits af*le_s). ---------!
+      !----- ENERGY + MASS update: the pack keeps e(T) per kilogram, so it reads off at T. -----------!
+      net_flux = af * (env%abs_sw + env%abs_lw - emit - h_s - le_s - g_s)   ! sub-column area weight
       snow%snow_energy(1) = e_old + dt * net_flux
-      snow%swe(1)         = swe0 - af * w_s * dt
+      snow%swe(1)         = swe1
       snow%snow_depth(1)  = max(0.0_wp, snow%swe(1)) / params%rho_snow
 
       if (snow%swe(1) > params%tiny_snow_mass) then
@@ -274,15 +291,14 @@ contains
       end if
 
       !----- Report the turbulent + conduction fluxes for the CAS + soil coupling. h_snow + le_snow -> !
-      !      CAS enthalpy; w_flux -> CAS vapour; g_base -> soil top BC. The residual closes by           !
-      !      construction: (energy change) - dt*(net_flux) = 0. -------------------------------------!
-      flux%t_surf  = merge(snow%snow_temp(1), t_star, snow%swe(1) > params%tiny_snow_mass)
+      !      CAS enthalpy; w_flux -> CAS vapour; g_base -> soil top BC. ------------------------------!
+      flux%t_surf  = merge(snow%snow_temp(1), t_new, snow%swe(1) > params%tiny_snow_mass)
       flux%fliq    = snow%snow_fliq(1)
       flux%h_snow  = af * h_s
       flux%le_snow = af * le_s
       flux%w_flux  = af * w_s
       flux%g_base  = af * g_s
-      flux%rnet    = af * (env%abs_sw + env%abs_lw - emiss_corr)   ! snow's area-weighted net radiation into the store
+      flux%rnet    = af * (env%abs_sw + env%abs_lw - emit)   ! snow's area-weighted net radiation into the store
       flux%energy_resid = (snow%snow_energy(1) - e_old) - dt * net_flux
    end subroutine snow_energy_step
 

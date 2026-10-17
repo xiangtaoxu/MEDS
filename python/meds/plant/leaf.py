@@ -30,8 +30,9 @@ from . import _ffi
 
 __all__ = [
     "Stomata", "TempResponse", "Colimitation", "Pathway", "Limitation",
-    "Params", "Flux", "C3Rates", "make_params", "c3_params", "c4_params",
-    "gas_exchange", "gas_exchange_batch", "assimilation_demand_c3", "electron_transport_j",
+    "Params", "Flux", "C3Rates", "Kinetics", "make_params", "c3_params", "c4_params",
+    "gas_exchange", "gas_exchange_batch", "rubisco_kinetics", "assimilation_demand_c3",
+    "electron_transport_j",
     "peaked", "arrhenius", "self_test",
 ]
 
@@ -97,7 +98,7 @@ class Params:
     sref_stomata: float = 2.0      # [1/MPa]  Sabot stomatal water-stress sensitivity (beta_stomata=exp(sref*psi))
     kc25: float = 40.49            # [Pa]  Rubisco CO2 Michaelis constant
     ko25: float = 27840.0          # [Pa]  Rubisco O2 Michaelis constant
-    gstar25: float = 4.275         # [Pa]  CO2 compensation point (no respiration)
+    gstar25: float = 4.275         # [Pa]  CO2 compensation point (no respiration), stated at 100 kPa
     ea_kc: float = 79430.0
     ea_ko: float = 36380.0
     ea_gstar: float = 37830.0
@@ -142,6 +143,15 @@ class C3Rates:
     Ac: float                 # [umol CO2/m2/s]  Rubisco / RuBP-carboxylation-limited gross rate
     Aj: float                 # [umol CO2/m2/s]  RuBP-regeneration (light) limited gross rate
     Ap: float                 # [umol CO2/m2/s]  TPU-product-limited gross rate
+
+
+@dataclass(frozen=True)
+class Kinetics:
+    """C3 Rubisco kinetics at a leaf temperature and pressure, as mole fractions [umol/mol]."""
+    kc: float                 # Michaelis constant for CO2
+    ko: float                 # Michaelis constant for O2
+    gstar: float              # CO2 compensation point without respiration (Gamma*)
+    o2: float                 # ambient O2
 
 
 def make_params(**kwargs) -> Params:
@@ -206,24 +216,34 @@ def gas_exchange_batch(par, leaf_temp, vpd, ca, params, *,
     return {k: np.asarray(v).reshape(shape) for k, v in result.items()}
 
 
+def rubisco_kinetics(params, leaf_temp, pressure=101325.0) -> Kinetics:
+    """The C3 Rubisco kinetics the solver uses, as mole fractions [umol/mol], at leaf_temp [K] and
+    pressure [Pa]: docs/science/leaf_gas_exchange.md eq. (3). Kc and Ko are partial pressures over the
+    air's pressure; Gamma* depends on the O2 mole fraction and not on pressure. The values are the
+    compiled kernel's own, so they compose with assimilation_demand_c3 to reproduce the solver."""
+    return Kinetics(**_ffi.rubisco_kinetics(asdict(params), leaf_temp, pressure))
+
+
 def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
                     colimitation=Colimitation.MINIMUM, theta_cj=0.98, theta_ip=0.95) -> C3Rates:
     """Raw C3 FvCB demand at a PRESCRIBED intercellular CO2 (stomata bypassed, NO temperature scaling):
     docs/science/leaf_gas_exchange.md eq. (2).
 
-    The caller passes already-in-situ values: vcmax [umol/m2/s], j (the electron-transport RATE, from
-    electron_transport_j), tpu, and the mole-fraction [umol/mol] kinetics gstar (compensation point
-    without Rd), kc, ko and o2. Returns the GROSS Ac/Aj/Ap limitation rates and their combination;
-    subtract Rd yourself for net assimilation. Use colimitation=Colimitation.MINIMUM for a sharp
-    min(Ac,Aj,Ap) envelope (the black "limiting rate" curve), or QUADRATIC for the smoothed version.
+    The caller passes already-in-situ values: vcmax [umol/m2/s], j (the electron-transport RATE,
+    from electron_transport_j), tpu, and the mole-fraction [umol/mol] kinetics gstar (compensation
+    point without Rd), kc, ko and o2, which rubisco_kinetics gives at a leaf temperature. Returns
+    the GROSS Ac/Aj/Ap limitation rates and their combination; subtract Rd yourself for net
+    assimilation. Use colimitation=Colimitation.MINIMUM for a sharp min(Ac,Aj,Ap) envelope (the
+    black "limiting rate" curve), or QUADRATIC for the smoothed version.
 
     theta_cj and theta_ip are the two CO-LIMITATION curvatures -- Ac/Aj, then (Ac,Aj)/Ap. They are not
-    theta_j, the electron-transport hyperbola's curvature: theta_j = 0.85 here costs 25-30 % of
-    assimilation against the sharp min() (docs/science/leaf_gas_exchange.md §2, "The co-limitation
-    curvatures are not theta_J").
+    theta_j, the electron-transport hyperbola's curvature: a J curvature of 0.85 on both costs 27 % of
+    gross assimilation against the sharp min() at saturating light and Ci 280, and 31-34 % of net
+    assimilation at PAR 1500-2000 (docs/science/leaf_gas_exchange.md §2, "The co-limitation
+    curvatures are not theta_J", which gives the conditions).
 
-    This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
-    A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.
+    This composes with electron_transport_j (J from Jmax) and rubisco_kinetics (kinetics at leaf T) to
+    draw an A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.
     """
     result = _ffi.assimilation_demand_c3(ci, vcmax, j, tpu, gstar, kc, ko, o2, int(colimitation),
                                   theta_cj, theta_ip)

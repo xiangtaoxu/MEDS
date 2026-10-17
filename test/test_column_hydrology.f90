@@ -10,6 +10,9 @@
 !   2. INTERCEPTION  : the canopy film's capture, capacity and drip.                            !
 !   3. BEDROCK       : a sealed column keeps its water and drains nothing.                       !
 !   4. FREE DRAIN    : a wet column drains, and its water closes against the drainage.          !
+!   4b. LEAKY        : drainage is f K(theta_N): f = 1 is free drainage and f = 0 bedrock, bit   !
+!                      for bit; the flux scales by f; a leaky column drains less than a free     !
+!                      one, and its water closes against the drainage.                           !
 !   5. DOWNPOUR      : rain beyond a wet clay's infiltration ponds, and runs off past the pond.  !
 !   6. REWETTING     : a dried top layer re-wets within 12 h of rain, with little runoff.        !
 !   7. SUB-FREEZING  : rain below the triple point: the pond's enthalpy closes, and what         !
@@ -25,9 +28,9 @@ program test_column_hydrology
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_water_retention, only : soil_theta_from_psi, soil_psi_from_theta
-   use meds_soil_water,       only : ground_evaporation_rate
+   use meds_soil_water,       only : ground_evaporation_rate, bottom_flux
    use meds_spac_solver,    only : spac_solver_t, spac_allocate, spac_set_state,     &
                                      spac_advance, POND
    use meds_plant_types,      only : hydro_params_table_t
@@ -42,6 +45,7 @@ program test_column_hydrology
    call test_interception()
    call test_bedrock_conserve()
    call test_free_drain()
+   call test_leaky_drain()
    call test_downpour()
    call test_dried_surface_rewets()
    call test_pond_subfreezing_inflow()
@@ -140,7 +144,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_bedrock_conserve:'
       call loam_params(params) ; theta = 0.30_wp ; theta(1:3) = 0.40_wp
-      opts%bottom_bc = SOIL_BC_BEDROCK
+      opts%bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 0.0_wp       ! sealed bedrock
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
       w_before = column_water(spac)
       do step = 1_ik, 10_ik
@@ -159,7 +163,7 @@ contains
       integer(ik) :: step
       print '(a)', 'test_free_drain:'
       call loam_params(params) ; theta = 0.40_wp
-      opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      opts%bottom_bc = SOIL_BC_DRAIN ; opts%drain_factor = 1.0_wp       ! free drainage
       call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
       drained = 0.0_wp ; w0 = column_water(spac)
       do step = 1_ik, 20_ik
@@ -170,6 +174,55 @@ contains
       call check_true('a wet column drains', drained > 0.0_wp, drained)
       call check('its water closes against the drainage', w0 - w1, drained, 1.0e-10_wp * w0)
    end subroutine test_free_drain
+
+   !=======================================================================================!
+   subroutine test_leaky_drain()
+      type(soil_params_t)   :: params
+      type(soil_opts_t)     :: opts
+      type(spac_solver_t) :: spac
+      real(wp), parameter :: F_LEAK = 0.05_wp          ! the ED soil maps' factor
+      real(wp), parameter :: K_N = 1.234e-7_wp, PSI_N = -0.37_wp   ! [m/s], [m] a deepest layer's state
+      real(wp) :: q, dq_dpsi, dq_dk, w0, w1, drained, drained_free, theta(10)
+      integer(ik) :: step
+      print '(a)', 'test_leaky_drain:'
+      call loam_params(params)
+      opts%bottom_bc = SOIL_BC_DRAIN
+      !----- At one state: the two ends of the factor are free drainage and bedrock, exactly. -----!
+      opts%drain_factor = 1.0_wp
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call check('f = 1 is free drainage: q = K(theta_N), bit for bit', q, K_N, 0.0_wp)
+      call check('f = 1: dq/dK = 1 and dq/dpsi = 0', abs(dq_dk - 1.0_wp) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
+      opts%drain_factor = 0.0_wp
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call check('f = 0 is sealed bedrock: q = 0 and no derivative, bit for bit',                     &
+                 abs(q) + abs(dq_dk) + abs(dq_dpsi), 0.0_wp, 0.0_wp)
+      opts%drain_factor = F_LEAK
+      call bottom_flux(params, opts, 10_ik, PSI_N, K_N, q, dq_dpsi, dq_dk)
+      call check('a leaky base drains f K(theta_N)', q, F_LEAK * K_N, 0.0_wp)
+      call check('and its flux moves with K(theta_N) by f', dq_dk, F_LEAK, 0.0_wp)
+      !----- A wet column, free and leaky. -------------------------------------------------------!
+      drained_free = 0.0_wp
+      opts%drain_factor = 1.0_wp
+      call loam_params(params) ; theta = 0.40_wp
+      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
+      do step = 1_ik, 20_ik
+         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
+         drained_free = drained_free + spac%drain
+      end do
+      drained = 0.0_wp
+      opts%drain_factor = F_LEAK
+      call soil_network(spac, params, opts, theta, 0.0_wp, 0.0_wp)
+      w0 = column_water(spac)
+      do step = 1_ik, 20_ik
+         call spac_advance(spac, params, opts, humid_air(), no_plants, 600.0_wp)
+         drained = drained + spac%drain
+      end do
+      w1 = column_water(spac)
+      call check_true('a leaky column drains, by about f of what a free one does',                    &
+                      drained > F_LEAK * drained_free .and. drained < 2.0_wp * F_LEAK * drained_free,  &
+                      drained / drained_free)
+      call check('its water closes against the drainage', w0 - w1, drained, 1.0e-10_wp * w0)
+   end subroutine test_leaky_drain
 
    !=======================================================================================!
    !----- WET clay (low Ksat, small suction) under a downpour: infiltration is limited by the     !

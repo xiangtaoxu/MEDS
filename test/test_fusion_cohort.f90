@@ -6,7 +6,7 @@ program test_fusion_cohort
    use meds_config,          only : meds_config_t
    use, intrinsic :: ieee_arithmetic, only : ieee_value, ieee_quiet_nan
    use meds_site_state_types,           only : site_t, set_cohort_size, cohort_tissue_heat_capacity, &
-                                               TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN,       &
+                                               TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN,   &
                                                set_cohort_size_from_carbon, cohort_bad_field,       &
                                                cohort_field_name, cohort_deriv_block,               &
                                                cohort_deriv_alloc, init_cohort
@@ -63,8 +63,8 @@ program test_fusion_cohort
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
    woodmass_exp = (site%cohort%nplant(1)*3.0_wp + site%cohort%nplant(2)*7.0_wp)                     &
                 / (site%cohort%nplant(1) + site%cohort%nplant(2))
-   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl1, cw1)
-   call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, cl2, cw2)
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cl1, cw1)
+   call cohort_tissue_heat_capacity(site%cohort, 2_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, cl2, cw2)
    ltemp_exp = (cl1*300.0_wp + cl2*305.0_wp) / (cl1 + cl2)
    wtemp_exp = (cw1*298.0_wp + cw2*306.0_wp) / (cw1 + cw2)
    e_leaf0   = cl1*300.0_wp + cl2*305.0_wp
@@ -104,7 +104,7 @@ program test_fusion_cohort
    !      energy closes exactly; the WOOD's does not, because set_cohort_size_from_carbon re-derives!
    !      the sapwood ring from the merged diameter -- that residual is a thermal-mass change, of   !
    !      the same kind growth makes, and it is bounded here rather than asserted to zero. ---------!
-   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN, clf, cwf)
+   call cohort_tissue_heat_capacity(site%cohort, 1_ik, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN, clf, cwf)
    call check_close(clf*site%cohort%leaf_temp(1), e_leaf0, 1.0e-12_wp,                              &
                     'cohort fusion must conserve LEAF tissue energy exactly')
    call check(abs(cwf*site%cohort%wood_temp(1) - e_wood0) <= 1.0e-3_wp * abs(e_wood0),              &
@@ -221,20 +221,28 @@ program test_fusion_cohort
 
    !=== 6. Fusion of cohorts with different SLA conserves leaf AREA: sla blends on leaf          !
    !     carbon, the quantity it converts, so sum(nplant*leaf_carbon*sla) is what the fused        !
-   !     cohort shows. A leaf-area-weighted sla would give sum(LA*sla)/sum(LA) instead. ===========!
+   !     cohort shows. A leaf-area-weighted sla would give sum(LA*sla)/sum(LA) instead. The leaf    !
+   !     turnover rate is the share of the leaf carbon lost a year, so it too blends on leaf        !
+   !     carbon, and the fused cohort loses the leaf carbon its two parents did; with the two      !
+   !     SLAs differing, a leaf-area weight would not. =============================================!
    block
-      real(wp) :: lai0
+      real(wp) :: lai0, loss0
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
       call finalize_init(site)
       site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp      ! shade-acclimated donor
+      site%cohort%leaf_turnover_rate(1) = 1.0_wp ; site%cohort%leaf_turnover_rate(2) = 0.4_wp
       call set_cohort_size_from_carbon(site%cohort, 1_ik)
       call set_cohort_size_from_carbon(site%cohort, 2_ik)
       lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      loss0 = site%cohort%nplant(1)*site%cohort%leaf_carbon(1)*site%cohort%leaf_turnover_rate(1)       &
+            + site%cohort%nplant(2)*site%cohort%leaf_carbon(2)*site%cohort%leaf_turnover_rate(2)
       call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
       call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
                        'fusion of cohorts with different SLA must conserve leaf area')
+      call check_close(site%cohort%nplant(1)*site%cohort%leaf_carbon(1)*site%cohort%leaf_turnover_rate(1), &
+                       loss0, 1.0e-12_wp, 'fusion must conserve the leaf carbon turned over a year')
       !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
       !      (as in a BCI run). A blend that skipped weights below 1e-30 would keep one SLA here. -!
       call init_bare_ground(site, cfg, 1_ik)
@@ -301,7 +309,7 @@ program test_fusion_cohort
                  'a window of zero growth averages exactly zero after a large sample left it')
       call check(site%cohort%growth_accum(1) == sum(site%cohort%growth_hist(1:nwin, 1)),             &
                  'the window''s sum is the buffer''s')
-      call init_cohort(site%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp)
+      call init_cohort(site%cohort, 1_ik, cfg%pft, 1_ik, 1_ik, 0.1_wp, 1.0_wp, cfg%hydraulics)
       call check(all(site%cohort%growth_hist(1:nwin, 1) == 0.0_wp) .and.                             &
                  site%cohort%growth_count(1) == 0_ik, 'a recruit in a reused slot starts with an empty window')
    end block
