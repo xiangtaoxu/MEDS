@@ -32,7 +32,10 @@ failure, not from a plan.
 | [#265](https://github.com/xiangtaoxu/MEDS/issues/265) | Sub-canopy conductance: MEDS ports ED2's non-default `icanturb = 4`, giving an 8–16× too-stiff ground resistance | Matters in gaps |
 | [#268](https://github.com/xiangtaoxu/MEDS/issues/268) | No litter layer: no surface organic horizon for the ground energy balance or soil evaporation to act on | |
 | [#269](https://github.com/xiangtaoxu/MEDS/issues/269) | The canopy air space is one well-mixed slab: 1.2 K warmer than the free air at midday, where a real sub-canopy is cooler and steadier | |
-| [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above `K_MIN` to about −2 MPa for a soil of n near 1.4 |
+| [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | Nothing in the mortality law sees a cohort's carbon state, so a cohort that has lost its leaves and its storage persists while its leaf carbon decays geometrically. A carbon deficit destroys no tissue either: it is netted from the CO₂ the cohort owes (`docs/science/plant_carbon_allocation.md` §2). |
+| [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | The slow applier (`update_cohort_states_kernel`) and `reacclimate_plant_traits` keep a pool non-negative with `max(…, 0)`, which creates the carbon an overdraw would have taken; the per-step bounds guard cannot see it. |
+| [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
+| [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
 
 ---
 
@@ -49,7 +52,7 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
 - **The water cue on the model's own predawn potential** — *Planned.* A dry-forest run (Guanacaste)
   with the cue on, since the cue needs the shed → ψ feedback; example02 drives it with a
   soil-moisture surrogate.
-- **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* The background turnover rate is
+- **`leaf_lifespan_toc` → `leaf_turnover_rate_toc`** — *Planned.* [#379](https://github.com/xiangtaoxu/MEDS/issues/379) The background turnover rate is
   the model's parameter; leaf lifespan is emergent (plan D2).
 
 - **Drought-driven fine-root dieback** — *Candidate.* Fine roots age on the leaves' turnover gate and
@@ -124,7 +127,7 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
 - **`psi_wood` at 900 s, and a restart's first day.** *Re-measure on the water network.*
   [#162](https://github.com/xiangtaoxu/MEDS/issues/162) `psi_leaf` converged at 900 s on ARK with the
   transpiration corrector (#91): over July on the established Ithaca stand, daily means at 900 s
-  matched a 12.5 s run to 0.001 MPa on every day after the first (`science/numerical_scheme.md` §5a),
+  matched a 12.5 s run to 0.001 MPa on every day after the first,
   with a start-up transient on the first day after a restart (−1.83 against −0.28 MPa) and 0.17 MPa
   left in `psi_wood` on the 3-hour midday probe through the frozen uptake seam. The water network
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
@@ -161,6 +164,10 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
   model, whose adaptive controller has already been broken once by a discontinuity here. That is not
   a proportionate trade for a few percent of one denominator term.
+- **`veg_coupling_floor` is in ground-area units.** *Candidate.* [#349](https://github.com/xiangtaoxu/MEDS/issues/349) `veg_energy_balance`
+  floors a tissue's coupling conductance at 1 W m⁻² K⁻¹ of ground, while every term it floors scales
+  with the tissue's own area index, so a thin cohort's leaf or wood temperature is slaved to the
+  canopy air. The deficit goes to the canopy air, so energy closes.
 
 ---
 
@@ -220,7 +227,7 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
   per-plant pool distributed by the static `root_beta` profile rather than a prognostic per-layer
   one.
 - **Per-PFT hydraulic traits are shipped** (#179, v0.2.0); what remains is that nothing has
-  *calibrated* them. The thirteen traits are selectable per PFT and default to the shared
+  *calibrated* them. The `[hydraulics]` traits are selectable per PFT and default to the shared
   `[hydraulics]` block, so a run that does not set them is unchanged — which means MEDS ships with
   hydraulically identical PFTs until somebody puts real trait values in. Wood density is the obvious
   axis to derive them from, as the Camac mortality coefficients already are, and `wood_kmax` now
@@ -237,6 +244,17 @@ page: [`science/diagnostics.md`](science/diagnostics.md).
 - **A root radial conductance in series.** *Planned.* [#356](https://github.com/xiangtaoxu/MEDS/issues/356) The soil-to-root path is the
   rhizosphere's Gardner conductance alone; a radial root conductance in series is a different flow
   law for that path in `meds_hydr_lib`.
+- **Γ* with surface pressure.** *Candidate.* [#342](https://github.com/xiangtaoxu/MEDS/issues/342) `gstar25` is a partial pressure at 100 kPa, so
+  Γ* as a mole fraction rises as the pressure falls, where it should not depend on pressure. Negligible
+  at BCI (Γ* +0.7 %, A −0.1 %); to fix before high-elevation sites.
+- **Cohort-level sunlit and shaded leaves.** *Open question.* [#343](https://github.com/xiangtaoxu/MEDS/issues/343) Every leaf of a cohort
+  photosynthesises at the cohort's mean light, as in ED2; FATES and CLM5 split each leaf layer into
+  sunlit and shaded fractions.
+- **Whether the soil-to-root conductance grows in proportion to fine-root length.** *Open question.*
+  [#377](https://github.com/xiangtaoxu/MEDS/issues/377) The Gardner form (`docs/science/plant_hydraulics.md` eq. (14)) makes it linear in root
+  length up to a logarithmic crowding term; real uptake may grow less than linearly.
+- **Size-dependent physiological parameters.** *Open question.* [#381](https://github.com/xiangtaoxu/MEDS/issues/381) Turnover rates, the
+  root-to-shoot ratio and leaf photosynthetic traits vary with plant size; MEDS holds them per PFT.
 
 ---
 
@@ -281,6 +299,14 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   are modules of their own (`meds_met_file_source`, `meds_met_archive_source`), each an open and one
   record's values as stored, over what they share (`meds_met_source_common`). The reader keeps
   opening, the cursor, the stepping and the one ingest. F7-F12 went in with the efficiency sweep.
+- **The shortwave-to-PAR partition.** *Open question.* [#369](https://github.com/xiangtaoxu/MEDS/issues/369) The PAR share, the beam/diffuse
+  split and the Weiss–Norman form are uncertain by about ±10 %: against towers' PAR sensors the
+  `clearidx` fractions give PPFD 3–11 % high, mostly from the diffuse 0.52, and WN85's visible band is
+  the 320–700 nm share of the solar spectrum, near-UV included (`docs/science/forcing.md` §6).
+- **The neutral move to each patch's canopy-air top.** *Open question.* [#350](https://github.com/xiangtaoxu/MEDS/issues/350) The forcing is moved
+  from its own heights to each patch's canopy-air top assuming a neutral surface layer
+  (`docs/science/forcing.md` §8, Step 2): small at BCI, one-sided where the sensor is far above the
+  canopy-air tops.
 
 ---
 
@@ -340,10 +366,33 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 - **A single-precision experiment** (`wp = real32`). *Decided: no.* [#197](https://github.com/xiangtaoxu/MEDS/issues/197) Measured 56× on the device for
   FP32, which is why it was worth asking what MEDS needs; the answer (2026-09-13) is that MEDS stays
   `real64` throughout. Kept here as the record; the issue closes with v0.3.0.
+- **Region runs: read the next month's forcing while the current month steps.** *Planned.*
+  [#407](https://github.com/xiangtaoxu/MEDS/issues/407) Part of [#183](https://github.com/xiangtaoxu/MEDS/issues/183). A region loads each month's forcing on one thread while the others
+  wait; reading and compute never overlap.
 
 ---
 
 ## 12. Smaller residues
 
-*(Emptied by v0.2.0 — every item that was here shipped. New small residues go here as they are
-filed.)*
+Gaps the science pages name that have no issue yet. *Issue to file* means the owner has not yet
+decided whether each one is worth an issue.
+
+- **The snow-burial and open-canopy blends are inactive.** *Issue to file.* The fast-loop driver
+  passes `snowfac = 0` and `opencan_frac = 0` to the aerodynamics, so the snow-burial roughness blend
+  and the open-canopy ground-conductance blend (`docs/science/canopy_aerodynamics.md` §1, §3) never act.
+- **Ground optics are bare soil plus snow.** *Issue to file.* Litter, standing water and soil moisture
+  do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
+- **Maintenance respiration's missing limbs.** *Issue to file.* No maintenance respiration on
+  reproductive tissue, no substrate or moisture limitation of maintenance respiration, and the stem
+  size scaler is σ = 0 (`docs/science/plant_respiration.md` §7).
+- **An unattributed energy residual under a melting snow pack.** *Issue to file.* The whole-column
+  ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
+  about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it
+  is why the energy floor in `meds_budget_check` is 10⁻² W m⁻².
+- **The canopy reflects too much near-infrared at realistic leaf optics.** *Issue to file.* The fast
+  calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
+  meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
+- **Numerics checks not yet scored on the water network.** *Issue to file.* The stability threshold on
+  a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
+  `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
+  §7; #159 mentions the last).

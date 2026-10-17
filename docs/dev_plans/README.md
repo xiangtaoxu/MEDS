@@ -21,9 +21,10 @@ no way to tell from a listing which ones still mattered.
 What changed goes in [`CHANGELOG.md`](../../CHANGELOG.md); what is deferred goes in
 [`docs/ROADMAP.md`](../ROADMAP.md).
 
-**Section numbers are never renumbered**, in either directory. Roughly 170 source comments cite
-these documents by section (`§7.6 #3`, `§10.2.11`, `phase P2`), and most cite by bare filename, so
-a move is safe but a renumber is not.
+**Section numbers are never renumbered**, in either directory. Source comments cite the science pages
+for what they cover; about 50 still cite a plan by section, where the plan is the only written record
+of a design rationale (`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §6.3, `MEDS_NUMERICS_SCOPING.md`
+§11). Most cite by bare filename, so a move is safe but a renumber is not.
 
 ---
 
@@ -45,11 +46,11 @@ a move is safe but a renumber is not.
 
 | Document | Why it stays |
 |---|---|
-| [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions (§1), the straddlers (§5), the placement rules (§6) and §7.6 #3–#4, cited by number from ~20 files; `src/README.md` carries only some of them. §15, the phased remainder, is closed. |
+| [`MEDS_CODE_STRUCTURE_DESIGN.md`](MEDS_CODE_STRUCTURE_DESIGN.md) | The structure decisions (§1), the straddlers (§5), the placement rules (§6) and §7.6 items 3–4, cited by section from 2 source files; `src/README.md` carries only some of them. §15, the phased remainder, is closed. |
 | [`MEDS_FROZEN_SEAM_CONTRACT.md`](MEDS_FROZEN_SEAM_CONTRACT.md) | The Λ criterion for when freezing a store is admissible, the four seams classified against it, the debit-before-credit rule for rate seams, and the arbitration rule for a shared store — stated nowhere else. Design note, no code (#201); no source comment cites it by section, so it moves to `archive/` once folded into the science pages. |
-| [`MEDS_NUMERICS_SCOPING.md`](MEDS_NUMERICS_SCOPING.md) | §5.1 process mask, §11 bare-array convention, §12.6 ED2 `DTLSM` catalogue, §8b–§8g measurements — cited from ~20 files. Its scheme roadmap is superseded; see its header. |
-| [`MEDS_IO_DESIGN.md`](MEDS_IO_DESIGN.md) | §3–§6 describe the registry, integrators and serializer as built. Cited by section from CMake and 9 source files. |
-| [`MEDS_IO_V01_PLAN.md`](MEDS_IO_V01_PLAN.md) | The v0.1 diagnostic layer, cited by section from 12 source and test files. Its deferred list shipped in v0.2.0. |
+| [`MEDS_NUMERICS_SCOPING.md`](MEDS_NUMERICS_SCOPING.md) | §5.1 process mask, §11 bare-array convention, §12.6 ED2 `DTLSM` catalogue, §8b–§8g measurements — §5.1 and §11 cited from 5 source files. Its scheme roadmap is superseded; see its header. |
+| [`MEDS_IO_DESIGN.md`](MEDS_IO_DESIGN.md) | §3–§6 describe the registry, integrators and serializer as built. Cited by section from 4 output modules and `.claude/rules/output.md`. |
+| [`MEDS_IO_V01_PLAN.md`](MEDS_IO_V01_PLAN.md) | The v0.1 diagnostic layer, cited only by `.claude/rules/output.md`; no source comment cites it by section, so it can move to `archive/`. Its deferred list shipped in v0.2.0. |
 
 ## Reviews
 

@@ -59,7 +59,7 @@ and gfortran. Seven traps, each invisible to ifx and each of which has bitten at
 
 - **Never pass an array-valued function result straight into a call.** nvfortran's optimizer
   miscompiles the temporary descriptor — silently wrong at `-O2`, segfault at `-O0`. Bind to a named
-  array first. (Issue #7.)
+  array first.
 - **nvfortran rejects `BLOCK` inside a parallel region.**
 - **ifx builds `private` copies of a derived type through a static mold** every thread writes, which
   is why per-thread scratch is an explicit pool, not a data-sharing clause.
@@ -102,7 +102,7 @@ Four rules, applied in order. The long form, with the library graph and a lookup
   Its geometry (dbh, height, basal area, AGB, leaf area, wood caches) has one writer,
   `set_cohort_size_from_carbon`, called after every operator that moves carbon or SLA; it is never
   integrated, blended or read back from a file on its own. Integrating leaf area beside leaf carbon
-  drifted it to -1e-20 on a leafless cohort and crashed a run 50 years later (#389).
+  drifted it to -1e-20 on a leafless cohort and crashed a run 50 years later.
 - **Bounds hold by construction and are checked every step.** An operator that moves an amount
   limits the outflow to what is there; a clamp's bound comes from a quantity that cannot go
   negative. `cohort_bad_field` and `soil_carbon_bad_pool` stop the run on the step a bound breaks,
@@ -110,10 +110,10 @@ Four rules, applied in order. The long form, with the library graph and a lookup
 - **An intensive quantity blends on the weight that conserves its extensive product**: SLA on leaf
   carbon, vcmax25 on leaf area, tissue temperature on heat capacity. Blend with `pair_mean`, which
   has no size threshold: a leafless cohort's leaf carbon of 1e-193 is still a weight, and a 1e-30
-  cutoff there broke the leaf area fusion conserves (#389).
+  cutoff there broke the leaf area fusion conserves.
 - **A conservation tolerance scales with the terms, not the net.** `conserved(before, after,
   magnitude, rtol)` with magnitude = sum of |terms|: a net near zero turned a 1e-12 relative
-  tolerance into 1e-42 absolute (#389). Its only absolute floor is the format's, tiny/epsilon
+  tolerance into 1e-42 absolute. Its only absolute floor is the format's, tiny/epsilon
   (~1e-292), below which an optimized build flushes the arithmetic to zero.
 - **Conservation is asserted, not assumed** — but **a closed budget proves bookkeeping, not
   plausibility.** Several real leaks sat behind ledgers that balanced, because the ledger declared
@@ -146,7 +146,7 @@ what makes routines unit-testable, thread-safe and reentrant.
 `tiny_num` (or `safe_exp`). A physical threshold is a named setting or parameter, with its source.
 A literal clamp that is right where it is (a solver's step size, a function's domain) says why on the
 line: `! clamp-ok: <reason>`. ctest `clamps_named` (`scripts/lint/check_clamps.py`) enforces it:
-`max(lai, 0.1)` once spread a thin cohort's light over leaf area it did not have (#346).
+`max(lai, 0.1)` once spread a thin cohort's light over leaf area it did not have.
 
 **Test as you port.** Every ported kernel gets a CTest target. A port is not done until it
 reproduces its reference within tolerance.
@@ -155,8 +155,11 @@ reproduces its reference within tolerance.
 
 These are the rules this repository most often broke, so they are stated rather than implied.
 
-1. **A source comment states present-tense rationale.** It may cite an issue number or a science
-   section. It does not say what the code used to do.
+1. **A source comment states present-tense rationale.** It says what the code does and why, and
+   cites the science page it implements (`docs/science/<page>.md §4.1`, `eq. (7)`). It never cites
+   an issue or pull-request number and does not say what the code used to do: that is history.
+   ctest `no_issue_refs` (`scripts/lint/check_issue_refs.py`) keeps issue and pull-request numbers
+   out of every file except `CHANGELOG.md`, `docs/ROADMAP.md` and `docs/dev_plans/`.
 2. **What changed and when goes in [`CHANGELOG.md`](CHANGELOG.md)**, in the same pull request.
 3. **What is deferred goes in [`docs/ROADMAP.md`](docs/ROADMAP.md)** with an issue number — not in a
    `deferred` / `MVP` / `placeholder` comment, which is findable only by grep and goes stale
@@ -164,8 +167,12 @@ These are the rules this repository most often broke, so they are stated rather 
 4. **When a design plan's last open item ships**, give it a tombstone and move it to
    `docs/dev_plans/archive/` in the same pull request.
 
-Design-plan **section numbers are never renumbered**: roughly 170 source comments cite them by
-number. Most cite by bare filename, so moving a file is safe but renumbering it is not.
+Design-plan **section numbers are never renumbered**: about 50 source comments still cite a plan by
+section, where the plan is the only written record of a rationale; everything a science page covers is
+cited there instead. Most cite by bare filename, so moving a file is safe but renumbering it is not.
+**Science-page equation numbers are cited from the code too**: inserting or removing an equation
+renumbers the rest of its page, so update every citation in the same change
+(`.claude/rules/docs-math.md`).
 
 ## Git
 

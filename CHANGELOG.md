@@ -151,6 +151,47 @@ before and after.
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
 
+### Documentation
+
+- **Source comments state rationale, not history, and cite the science pages** (#409). Every
+  issue and pull-request number left the source, the tests, the configs, the scripts, the examples
+  and the reference docs; the history they carried is in this file (the issues closed by #77, #84,
+  #85, #98, #101 and #347 are now named in those entries, and two unrecorded pre-0.1 fixes are added).
+  A comment says what the code does and why, in the present tense, and cites the science page and
+  equation it implements: 699 lines of code, configs and scripts cite `docs/science/`, against 48
+  before. Lines naming a dev plan fell from 268 to 51, kept only where a plan is the only written
+  record of a rationale (the fast-calibration protocol above all). Comments that contradicted the code were corrected (routine, module, key and file names
+  that do not exist; units; defaults; the retired operator-split scheme; the snow and pond paths), and
+  comments that restated the code or told the story of a fix were deleted. Only comments, docstrings
+  and test labels changed, plus five message strings: two error messages name the current forcing
+  format and drop a plan reference, a notice no longer says "no longer", the state file's
+  `t_growth_avg` description drops an issue number, and `install_netcdf.sh` no longer suggests the
+  netCDF-free build that was removed.
+- **Every science page numbers its display equations**, `(N)` per page, so a comment can cite
+  `docs/science/<page>.md eq. (N)`; `.claude/rules/docs-math.md` says how to keep the citations right.
+  The pages lost their change history (issue numbers, "used to", measurements of retired schemes;
+  `docs/ed2_comparison.md` §0) and were checked against the code, which corrected:
+  - `plant_respiration.md` eq. (4): fine-root respiration sums its temperature response over the
+    layers; eq. (6): growth respiration includes the exudate; storage maintenance exists;
+  - `plant_carbon_allocation.md`: a carbon deficit is netted from the CO₂ the cohort owes and destroys
+    no tissue; the kernel takes three demands and the reproduction fraction;
+  - `forcing.md` eq. (1): the reader does not floor the wind (the aerodynamics floors it at `ubmin`);
+  - `canopy_aerodynamics.md`, `canopy_air_space_biophysics.md`, `canopy_radiation_transfer.md`,
+    `vegetation_energy_dynamics.md`, `column_biophysics.md`, `numerical_scheme.md`, `soil_biophysics.md`
+    and `order_of_processes.md`: names, defaults and claims the code no longer bears out (RK45 commits
+    the water network's θ; the wind floor `ubmin`; the canopy-air depth's freeboard; region threading
+    and state files; the slow step need not be a day).
+
+  New on the pages, moved from the comments: the plant water's heat (`soil_plant_water.md` eqs. (4)–(5))
+  and how the ground inflow is valued; how tissue water carries across a slow step; the soil's thermal
+  conductivity (`soil_biophysics.md` eq. (11), so the bottom-boundary equations are now (12)–(13)); the
+  longwave emission base of the tissue energy balance; when `rh_seam_gap` may be nonzero.
+- **ctest `no_issue_refs`** (`scripts/lint/check_issue_refs.py`): an issue or pull-request number
+  anywhere but `CHANGELOG.md`, `docs/ROADMAP.md` and `docs/dev_plans/` fails the suite. `CLAUDE.md`'s
+  documentation rule 1 now says so.
+- **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
+  #381, #393, #394, #395 and #407; §12 lists the gaps the science pages name that have no issue yet.
+
 ## [0.3.4] — 2026-10-13
 
 A **soil–plant water and examples** release. Soil and plant water are solved together, as one
@@ -331,7 +372,7 @@ America, and all are rerun on this release's code (#368, #373, #376, #378, #382,
   the 89 a start from 0.1 seedlings m^-2 reaches. Where the canopy is near `hgt_max` fusion is as
   before; the examples are rerun for the release (below). `test_fusion_cohort` checks a sapling stand and a tall one.
 - **The diameter sink limit is a budget over the growth window, not a cap on each step**
-  (#402; `meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. 1b). `growth_sink_limitation`
+  (#402; `meds_sink_limitation`; `docs/science/plant_carbon_allocation.md` eq. (4)). `growth_sink_limitation`
   takes the window the step closes and the diameter already grown in it, from the cohort's growth ring
   buffer, and the step may grow the diameter by `max_absolute_growth_rate x dbh^c x window` less that.
   A per-step cap threw away every day without spare carbon, so where growth is seasonal a stem could not
@@ -888,7 +929,7 @@ strict patch fusion, canopy interception on, and the evaluation against what the
   BCI storm front, and ~10 W m⁻² every night), and rain on bare ground takes the air's temperature
   (#355).
 - **Leaf light and water stress.** A thin cohort's leaf light is its own, so the biophysics
-  example's spin-up from bare ground grows again (#347); the stomatal water stress begins at an
+  example's spin-up from bare ground grows again (#347, issue #346); the stomatal water stress begins at an
   onset (#341); and the reference leaf's light use follows measurements (`phi_psii` 0.74, θ_J 0.70;
   #351).
 
@@ -995,7 +1036,7 @@ strict patch fusion, canopy interception on, and the evaluation against what the
 - **ctest `clamps_named`** (`scripts/lint/check_clamps.py`): a `max`/`min` against a real literal
   other than 0 or ±1 fails the suite unless the line says why (`! clamp-ok: <reason>`). A guard uses
   `tiny_num` or `safe_exp`; a physical threshold is a named setting with its source (CLAUDE.md, "No
-  bare thresholds") (#347).
+  bare thresholds") (#347, issue #346).
 - **`meds.config`**, the Python API's view of a run's configuration: it reads the main TOML and the
   PFT (plant trait) TOML that `[init].pft_config` names, sets keys (one PFT's element of a trait
   array included), writes the pair for a run, and reads back the run's parameter record. It needs no
@@ -4423,7 +4464,14 @@ output.
   exactly `dt·(transp_pp − transp_bw)`, corrected by a transpiration corrector. Improved
   `psi_leaf` convergence 314×. ARK only; RK45 does not carry the corrector.
 - Stomatal water-stress closure (#98, issue #95): `beta_stomata` was identically 1 until fixed.
-  Restart persistence for the daily-maximum leaf water potential.
+  Restart persistence for the daily-maximum leaf water potential. The same pull request gave every
+  column test the forcing's air temperature as the Monin–Obukhov reference `theta_atm` (issue #97:
+  the tests had measured stability against the type's fixed 298.15 K) and put the pond on the ARK
+  state vector (issue #93, phase 0).
+- `leaf_env_t%psi_soil` became `psi` (#101, issue #99): the field carries the leaf's predawn
+  potential, never a soil one. The same pull request compiled the leaf C-API shim into a ctest target
+  (issue #100), so a shim that no longer matches its kernel fails the build instead of passing a
+  green suite.
 - Pathological hydraulics sub-stepping is now detected (#105): a collapsed, floored wood store
   burned 13× the wall clock, silently (issue #104).
 - The adaptive warm start got per-patch storage (#108, issue #106) — it had been loop-carried,
@@ -4476,6 +4524,13 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
 - **Fast-loop coupling capstone** (#28): the sub-daily loop coupled and owning its own state.
 - **Prognostic leaf and wood energy** (#41) with a separate wood temperature; FAST diurnal
   diagnostics in the same change.
+- **The 2026-07 code review's physical-process fixes** (2026-07-07, b8543df, no PR number).
+  Among them: the canopy-air ↔ atmosphere conductances had dropped the Monin–Obukhov scalar profile
+  factor, which over-coupled the canopy air to the atmosphere and damped the nocturnal sub-canopy
+  CO₂ build-up; all three canopy-air twins now share u* and that factor.
+- **The canopy-air depth follows the stand** (2026-07-31, 5fd8c7b, no PR number). It had been a
+  hard-coded 20 m that nothing assigned, although the aerodynamics computed the right value, so a
+  1 m regenerating gap and a 35 m canopy got the same box.
 - **Snow and temporary surface water** (#42): stateless kernels and a conserving fast-loop
   coupling that closes whole-column mass and energy budgets to machine precision through
   accumulation, sublimation, melt into infiltration, and the snow-albedo ramp.
@@ -4493,7 +4548,11 @@ by date, because the work proceeded as a dozen parallel subsystem builds.
   physics. Along the way: the reference used to score them was mis-timed; ARK and RK45 dropped
   snowfall all winter; `veg_coupling_floor` destroyed energy; the split scheme's soil-energy
   budget was a tautology; the pond held no enthalpy so water crossing into it shed its heat
-  while the books still closed.
+  while the books still closed. Issues closed: #75 (RK45 rebuilds the ponding store from its own
+  trajectory instead of the frozen scratch solve), #76 (ARK and RK45 run the shared pre-column snow
+  stage) and #78 (RK45 advects soil enthalpy on its own interior faces and sends its saturation
+  clip to the pond; the pond gets a prognostic enthalpy, with paired pond–soil, melt and runoff
+  transfers on every scheme, #84, #85).
 - **The operator-split integrator was retired** (#88). It converged to a different limit
   (~0.45 K in canopy-air temperature) that refinement never removed and nobody ever attributed,
   and it could not carry the coupled tissue heat store. `ark` became the default and `rk45` the
