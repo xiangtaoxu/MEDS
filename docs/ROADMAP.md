@@ -374,25 +374,24 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 ## 12. Smaller residues
 
-Gaps the science pages name that have no issue yet. *Issue to file* means the owner has not yet
-decided whether each one is worth an issue.
+Gaps the science pages name, filed from the 2026-10-17 annotation review.
 
-- **The snow-burial and open-canopy blends are inactive.** *Issue to file.* The fast-loop driver
+- **The snow-burial and open-canopy blends are inactive.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver
   passes `snowfac = 0` and `opencan_frac = 0` to the aerodynamics, so the snow-burial roughness blend
   and the open-canopy ground-conductance blend (`docs/science/canopy_aerodynamics.md` §1, §3) never act.
-- **Ground optics are bare soil plus snow.** *Issue to file.* Litter, standing water and soil moisture
+- **Ground optics are bare soil plus snow.** *Candidate.* [#411](https://github.com/xiangtaoxu/MEDS/issues/411) Litter, standing water and soil moisture
   do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
-- **Maintenance respiration's missing limbs.** *Issue to file.* No maintenance respiration on
+- **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412) No maintenance respiration on
   reproductive tissue, no substrate or moisture limitation of maintenance respiration, and the stem
   size scaler is σ = 0 (`docs/science/plant_respiration.md` §7).
-- **An unattributed energy residual under a melting snow pack.** *Issue to file.* The whole-column
+- **An unattributed energy residual under a melting snow pack.** *Open question.* [#413](https://github.com/xiangtaoxu/MEDS/issues/413) The whole-column
   ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
   about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it
   is why the energy floor in `meds_budget_check` is 10⁻² W m⁻².
-- **The canopy reflects too much near-infrared at realistic leaf optics.** *Issue to file.* The fast
+- **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
-- **Numerics checks not yet scored on the water network.** *Issue to file.* The stability threshold on
+- **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
   a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
   `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
   §7; #159 mentions the last).
