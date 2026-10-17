@@ -27,6 +27,7 @@ module meds_column_params
    private
 
    public :: n_soil_layer_max, n_snow_layer_max, LEAF_TEMP_INIT, PSI_INIT
+   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: build_soil_hydr_params_layers, build_soil_therm_params_layers
@@ -54,6 +55,15 @@ module meds_column_params
    !      step).                                                                                   !
    real(wp),    parameter :: LEAF_TEMP_INIT = 288.15_wp     !< [K]   fresh-cohort leaf temperature
    real(wp),    parameter :: PSI_INIT       = -0.1_wp       !< [MPa] fresh-cohort node water potential
+
+   !----- A tissue's dry heat capacity (docs/science/vegetation_energy_dynamics.md eq. (8)). One set  !
+   !      for the fast loop (veg_thermal_params_t starts from it, build_column_frozen) and the slow   !
+   !      side (cohort_tissue_heat_capacity: the fusion weights and the slow ledger), so both weigh  !
+   !      a tissue's heat alike. Hard-coded parameters, not config keys. --------------------------!
+   real(wp),    parameter :: C2B_WOOD          = 2.0_wp    !< [-] carbon -> dry biomass (carbon fraction 0.5)
+   real(wp),    parameter :: TISSUE_C_LEAF     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
+   real(wp),    parameter :: TISSUE_C_WOOD_DRY = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
+   real(wp),    parameter :: TISSUE_HCAP_MIN   = 20.0_wp   !< [J/m2 tissue/K] least dry heat capacity
 
    !----- Per-column geometry + texture (assembled once per site; ED2 negative-z convention:   !
    !      interface elevations z <= 0 below ground; dz, dz_node are positive magnitudes). Fixed- !

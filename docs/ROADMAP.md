@@ -44,6 +44,14 @@ to ED-MORE; which issue is in which phase, and why, is in
 | [#434](https://github.com/xiangtaoxu/MEDS/issues/434) | Fine-root turnover drains about 35× too much water from the wood store | *Done in beta.* A fine-root loss sheds the fine roots' own share of the store, `wood_water_mass · broot/(bsap + broot)`. |
 | [#443](https://github.com/xiangtaoxu/MEDS/issues/443) | In-canopy wind: cohorts of one height are stacked, not one layer | *Done in beta.* Tied cohorts share one wind layer (`docs/science/canopy_aerodynamics.md` eq. (8)), as they share one radiation layer. |
 | [#444](https://github.com/xiangtaoxu/MEDS/issues/444) | The step controller's error norm is not invariant to splitting a cohort | One cohort and two at half density sub-step differently (1.6×10⁻³ K on a thin stand); the physics agrees to 2×10⁻¹¹ K. Belongs with the numerics work (#415, #356). |
+| [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | *Done in beta.* The slow applier, reacclimation and the driver's tentative pools snap only round-off; a real overdraw reaches the bounds guard and stops the run. |
+| [#413](https://github.com/xiangtaoxu/MEDS/issues/413) | Unattributed whole-column energy residual under a melting snow pack | *Done in beta.* It was fixed when the condensate's enthalpy came to be valued at one temperature on both sides; the energy ledgers' floor is back at 10⁻³ W m⁻². |
+| [#418](https://github.com/xiangtaoxu/MEDS/issues/418) | `[soil_carbon]` keys that are read but drive nothing | *Done in beta.* `agf_fast`, `agf_struct` and the nitrogen keys are retired; MEDS is carbon-only until the move to ED-MORE (§3). |
+| [#420](https://github.com/xiangtaoxu/MEDS/issues/420) | Is `clamp_soil_energy` still needed? | *Done in beta.* Removed: it never clamped a real state. |
+| [#421](https://github.com/xiangtaoxu/MEDS/issues/421) | Tests: a duplicate RK45 shed-water test; a neutrality test guarding a removed path | *Done in beta.* |
+| [#435](https://github.com/xiangtaoxu/MEDS/issues/435) | The canopy-air capacity changes between steps without booking the exchange (ED2's "zcan effect") | The canopy-air depth follows the tallest cohort each slow step, and the heat and water the slab gains or loses with it are not booked. Small; not in the sweep. |
+| [#436](https://github.com/xiangtaoxu/MEDS/issues/436) | Re-flushing leaves start nearly empty: a leaf-potential spike on the first step after each daily update | *Done in beta.* New leaves are filled from the wood store at the potential the two share at rest (`docs/science/soil_plant_water.md` §2). |
+| [#439](https://github.com/xiangtaoxu/MEDS/issues/439) | `region_free` does not close an opened region's forcing source and output files | *Done in beta.* |
 
 ---
 

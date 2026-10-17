@@ -17,6 +17,7 @@ module meds_plant_types
    use meds_pft_params, only : PATH_C3, PATH_C4
    use meds_hydr_lib, only : hydro_table_t
    use meds_water_retention, only : water_curve_t
+   use meds_column_params, only : TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    implicit none
    private
 
@@ -216,9 +217,9 @@ module meds_plant_types
       real(wp) :: effarea_heat   = 2.0_wp                   !< [-] sensible sidedness (both leaf sides)
       real(wp) :: effarea_evap   = 1.0_wp                   !< [-] film-evaporation sidedness
       real(wp) :: effarea_transp = 1.0_wp                   !< [-] transpiration sidedness (per PFT)
-      real(wp) :: veg_hcap_min   = 20.0_wp                  !< [J/m2 tissue/K] least dry heat capacity
-      real(wp) :: c_leaf     = 3200.0_wp                    !< [J/kg/K] dry leaf specific heat
-      real(wp) :: c_wood_dry = 1217.0_wp                    !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
+      real(wp) :: veg_hcap_min   = TISSUE_HCAP_MIN          !< [J/m2 tissue/K] least dry heat capacity
+      real(wp) :: c_leaf     = TISSUE_C_LEAF                !< [J/kg/K] dry leaf specific heat
+      real(wp) :: c_wood_dry = TISSUE_C_WOOD_DRY            !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
    end type veg_thermal_params_t
 
 end module meds_plant_types
