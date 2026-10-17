@@ -408,8 +408,10 @@ Gaps and residues found in the 2026-10-17 annotation review.
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
 - **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner. Until the
   rewrite, a banner at the top of the page lists the statements that are now wrong.
-- **Example 05's Palo Verde PFTs** label values "example 04's calibration" that differ from it. *Candidate.*
-  [#424](https://github.com/xiangtaoxu/MEDS/issues/424)
+- **Example 05's Palo Verde PFTs** carry `stomatal_g0`, `leaf_angle_mean` and `z0m_ratio` from example
+  04's fit on a 1.4 m soil column, not its current fit; they are labelled as the set's own values.
+  *Candidate.* [#424](https://github.com/xiangtaoxu/MEDS/issues/424) Taking the current fit needs example
+  05's Palo Verde runs and example 06 repeated (the owner: relabel only, no rerun in the issue sweep).
 - **`leaf_gas_exchange.md` §2 gives the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
   [#425](https://github.com/xiangtaoxu/MEDS/issues/425)
 - **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on

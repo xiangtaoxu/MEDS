@@ -245,6 +245,14 @@ before and after.
   start ran example 03's config, which writes no output, and then plotted a file no run writes: it
   now builds the Python library, runs example 03 from near-bare ground (300 years, about a minute)
   and plots that run's stand file.
+- **Example 05's Palo Verde PFTs say where three values come from** (#424). `stomatal_g0`
+  (0.463 mmol m⁻² s⁻¹), `leaf_angle_mean` (55.1°) and `z0m_ratio` (0.0536) were labelled "example 04's
+  calibration" but are from example 04's fit on a 1.4 m soil column; they are now labelled as the
+  Palo Verde set's own values from that fit (example 04's current fit gives 0.334, 54.9° and 0.0528).
+  The `g1` comment named Lin et al. (2015)'s slope of −3.97 per g cm⁻³; the values follow it scaled to
+  example 04's 2.82 at wood density 0.60, −2.70 per g cm⁻³. The `g0` comment called the value about
+  the mean cuticular conductance of Duursma et al. (2019); it is a tenth of their mean minimum
+  conductance (~5 mmol m⁻² s⁻¹). Values unchanged.
 
 ## [0.3.4] — 2026-10-13
 

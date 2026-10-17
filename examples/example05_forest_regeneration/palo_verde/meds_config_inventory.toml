@@ -137,7 +137,7 @@ leaf_absorptance = 0.85
 phi_psii         = 0.74
 
 [aerodynamics]
-z0m_ratio = 0.0535721             # example 04's calibration
+z0m_ratio = 0.0535721             # the Palo Verde set's own, from example 04's fit on a 1.4 m soil column
 
 #----- The site and its weather. ----------------------------------------------------------------------
 [site]
