@@ -17,7 +17,9 @@ program test_fast_loop
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
-   use meds_water_retention, only : SOIL_RETENTION_VG
+   use meds_water_retention, only : SOIL_RETENTION_VG, water_content
+   use meds_column_params,   only : PSI_INIT
+   use meds_slow_dynamics,   only : settle_tissue_water
    use meds_fast_dynamics,       only : fast_context_t, init_fast_reservoirs, fast_dynamics, &
                                         build_fast_context
    use meds_fast_types,          only : apply_hydraulics_config, apply_canopy_film_config
@@ -73,9 +75,8 @@ program test_fast_loop
 
    t_cas0    = site%patch%cas(1)%can_temp
    theta0_1  = site%patch%soil_w(1)%theta(1)
-   !----- The CORE-layer sentinel (0): the tissue-water seed has not touched this cohort yet        !
-   !      (reconcile_tissue_water_capacity seeds water_content(PSI_INIT,...) INSIDE fast_dynamics   !
-   !      below, before its patch loop). -----------------------------------------------------------!
+   !----- A cohort is born holding its tissue water at PSI_INIT, so the fast loop's first touch     !
+   !      reads a real store, not a sentinel to seed. ----------------------------------------------!
    mass0_leaf = site%cohort%leaf_water_mass(1)
 
    !=== 1+2. Run the fast loop directly; conservation + activity + per-cohort persistence. =!
@@ -89,12 +90,13 @@ program test_fast_loop
    call check(ww < 1.0e-8_wp, 'whole-column water residual tiny')
    call check(abs(t_cas1 - t_cas0) > 0.05_wp, 'CAS temperature evolved under the fast loop')
    call check(site%patch%cas(2)%can_temp > 200.0_wp, 'bare (zero-cohort) patch fast step stayed physical')
-   call check(mass0_leaf == 0.0_wp .and. mass1_leaf > 0.0_wp,                                     &
-              'leaf water mass lazy-init seeded (sentinel 0 -> a physical value) on first touch')
-   !----- A SECOND call starts from mass1_leaf (already seeded, non-sentinel), so its own evolution  !
-   !      is a clean round-trip proof isolated from the first call's one-time lazy-init seeding: the  !
-   !      fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back          !
-   !      (persist) onto the SoA, not just a local/scratch copy. --------------------------------------!
+   call check_close(mass0_leaf, water_content(PSI_INIT, ctx%col_config%hydraulics_table%pft(1)%leaf_curve, &
+                    site%cohort%leaf_carbon(1)), 1.0e-12_wp, 'a cohort is born with its leaf water at PSI_INIT')
+   call check(mass1_leaf > 0.0_wp .and. mass1_leaf /= mass0_leaf,                                 &
+              'the fast loop evolved the birth water and wrote it back')
+   !----- A SECOND call starts from mass1_leaf, so its own evolution is a clean round-trip proof:   !
+   !      the fast loop READ leaf_water_mass from the cohort block, evolved it, and WROTE it back   !
+   !      (persist) onto the SoA, not just a local/scratch copy. -----------------------------------!
    call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
    mass2_leaf = site%cohort%leaf_water_mass(1)
    call check(abs(mass2_leaf - mass1_leaf) > 1.0e-9_wp,                                           &
@@ -497,11 +499,10 @@ program test_fast_loop
       write(*,'(a,i0,a,es10.3,a)') '   (multi-patch cohorts=', ncoh_all, '  min day GPP=', gpp_min, ' kgC/plant)'
    end block
 
-   !=== 8. SEAM CONTINUITY: a forced leaf-carbon collapse (standing in for one slow-loop day of       !
-   !    the phenology dormant-canopy leaf snap-to-bare) between two fast_dynamics calls must trigger  !
-   !    the saturation-ceiling clamp (reconcile_tissue_water_capacity, which fast_dynamics runs       !
-   !    before its patch loop), not just leave the old, now-supersaturated mass sitting unchanged     !
-   !    on the cohort. ===============================================================================!
+   !=== 8. SEAM CONTINUITY: a forced leaf-carbon collapse between two fast_dynamics calls (an        !
+   !    operator that drops leaf carbon without its water) must not reach the fast loop as a          !
+   !    supersaturated store: settle_tissue_water, which the stepper runs before the fast loop, sheds  !
+   !    the water above the new ceiling to the ground, and the fast loop then closes its budgets. ====!
    block
       real(wp) :: mass_before, leaf_carbon_before
 
@@ -511,36 +512,41 @@ program test_fast_loop
       call finalize_init(site)
       call init_fast_reservoirs(site, ctx)
 
-      !----- One normal call: lazy-init seeds + evolves leaf_water_mass to a physical value (the    !
-      !      same round-trip block 1 exercises). ----------------------------------------------------!
+      !----- One normal call evolves the birth water (the round trip block 1 exercises). ----------!
       call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
       mass_before        = site%cohort%leaf_water_mass(1)
       leaf_carbon_before = site%cohort%leaf_carbon(1)
-      call check(mass_before > 0.0_wp, 'seam test: leaf water mass seeded before the forced collapse')
+      call check(mass_before > 0.0_wp, 'seam test: the leaves hold water before the forced collapse')
 
       !----- Force a snap-to-bare-sized leaf-carbon collapse directly on the cohort: bleaf drops to  !
       !      1% of its former value, so the OLD mass is now ~100x above the new ceiling               !
       !      water_sat*bleaf -- exactly the state a real dormant-canopy snap would leave behind.  ----!
       site%cohort%leaf_carbon(1) = leaf_carbon_before * 0.01_wp
 
+      call settle_tissue_water(site, cfg)
+      call check_close(site%cohort%leaf_water_mass(1),                                              &
+                       ctx%col_config%hydraulics_table%pft(1)%leaf_curve%water_sat                  &
+                       * site%cohort%leaf_carbon(1), 1.0e-12_wp,                                    &
+                       'seam test: the settle capped the leaf water at its new saturation')
+      call check(site%patch%shed_water_rate(1) > 0.0_wp, 'seam test: the excess went to the ground')
       call fast_dynamics(site, ctx, cfg, worst_energy=we, worst_water=ww, n_budget_fail=n_budget_fail)
       call check(n_budget_fail == 0_ik, 'seam test: whole-column budgets still close after the forced collapse')
       call check(site%cohort%leaf_water_mass(1) < 0.5_wp*mass_before,                               &
-                 'seam test: leaf water mass dropped sharply (saturation-ceiling clamp fired), not left at the old value')
+                 'seam test: leaf water mass dropped sharply (the excess was shed), not left at the old value')
       write(*,'(a,es10.3,a,es10.3,a)') '   (seam clamp: leaf water mass ', mass_before, ' -> ',      &
                                        site%cohort%leaf_water_mass(1), ' kg/plant after a 100x bleaf collapse)'
 
-      !----- A BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its physical state) must NOT have !
-      !      its wood water re-seeded: guards against one shared sentinel test that re-seeds both     !
-      !      stores at PSI_INIT on every dormant day. Perturb the wood store to a value               !
-      !      the seed cannot produce, run a day with no leaves (no transpiration, so the wood store   !
-      !      barely moves), and assert it carried through. -----------------------------------------!
+      !----- A BARE cohort (leaf_carbon = 0 -> leaf_water_mass = 0, its physical state) keeps its    !
+      !      wood water: nothing resets a store to PSI_INIT, so a dormant cohort carries its deficit   !
+      !      through the winter. Perturb the wood store to a value PSI_INIT cannot produce, run a    !
+      !      day with no leaves (no transpiration, so the wood store barely moves), and assert it    !
+      !      carried through. ----------------------------------------------------------------------!
       block
          real(wp)    :: wood_set, wood_after, dt_fast_save
          integer(ik) :: nsub_save
          site%cohort%leaf_carbon(1)     = 0.0_wp
          site%cohort%leaf_water_mass(1) = 0.0_wp
-         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit the PSI_INIT seed cannot produce
+         wood_set = 0.98_wp * site%cohort%wood_water_mass(1)  ! a 2% deficit PSI_INIT cannot produce
          site%cohort%wood_water_mass(1) = wood_set
          !----- ONE short sub-step with a SMALL deficit: near saturation the PV curve gives a small    !
          !      driving potential, so root uptake moves the store by << 0.5% in 60 s (a 30% deficit,   !

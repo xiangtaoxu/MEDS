@@ -14,7 +14,7 @@ module meds_stepper
    use meds_kinds,                only : wp
    use meds_config,               only : meds_config_t
    use meds_site_state_types, only : site_t
-   use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics
+   use meds_slow_dynamics,        only : advance_slow_dynamics, advance_boundary_dynamics, settle_tissue_water
    use meds_biogeochem_types,     only : soilc_seam_t
    use meds_fast_dynamics,        only : fast_context_t, fast_dynamics
    use meds_time,                 only : meds_time_t
@@ -67,6 +67,10 @@ contains
       if (cfg%fast_biophysics_on) then
          if (.not. present(fast_ctx))                                                              &
             error stop 'advance_one_step: fast_biophysics_on=.true. but no fast_context supplied'
+         !----- The fast loop reads each cohort's tissue water against the capacity its biomass     !
+         !      allows: first shed what the slow step or the boundary left above it, booked by the  !
+         !      slow ledger (docs/science/order_of_processes.md §2). ------------------------------!
+         call settle_tissue_water(site, cfg, slow_ledger)
          call fast_dynamics(site, fast_ctx, cfg, met_src=met_src, met_cur=met_cur,                  &
                             step_start=step_start, out_bufs=out_bufs,                             &
                             run_energy_budget=run_energy_budget, run_water_budget=run_water_budget, &

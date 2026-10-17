@@ -327,7 +327,10 @@ contains
    end subroutine split_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Cull cohorts below the AGB-density floor or the absolute density floor. The ENTIRE           !
+   ! Cull cohorts below the AGB-density floor, and cohorts at or below the absolute density      !
+   ! floor. The applier stops a cohort's decline exactly AT negligible_nplant (it never takes a   !
+   ! density below it), so a cohort that has died out sits on the floor, not under it: the test  !
+   ! must include equality, or such a cohort would be kept for ever. The ENTIRE                   !
    ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed        !
    ! outright, unlike a turnover shed) becomes litter in its own patch's soil-carbon pools when   !
    ! [soil_carbon].soil_carbon_on (default on; docs/science/soil_carbon.md §5) -- added           !
@@ -354,7 +357,7 @@ contains
       associate (cohort => site%cohort, pft => cfg%pft, patch => site%patch)
          do i = 1_ik, n
             keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
-                      (cohort%nplant(i) >= cfg%negligible_nplant)
+                      (cohort%nplant(i) > cfg%negligible_nplant)
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
             !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !
@@ -415,7 +418,7 @@ contains
    ! 12-point sample of a quantity the model computes every day and make the pool's carbon         !
    ! depend on which days are month boundaries. ---------------------------------------------------!
    !---------------------------------------------------------------------------------------!
-   subroutine apply_recruitment(site, cfg, carbon_drawn, heat_drawn)
+   subroutine apply_recruitment(site, cfg, carbon_drawn, heat_drawn, water_drawn)
       type(site_t),        intent(inout) :: site
       type(meds_config_t), intent(in)    :: cfg
       !----- What a recruit brought IN FROM OUTSIDE the modelled system, for the caller to declare  !
@@ -432,15 +435,18 @@ contains
       !      Only the part the model did NOT already pay for is external: `recruit_pool` carries    !
       !      reproduction carbon valued at `carbon_min` per plant, and that much IS debited from    !
       !      the parents (or, for seed rain, declared as it arrives). The remainder of the          !
-      !      endowment is the draw.  --------------------------------------------------------!
+      !      endowment is the draw. A recruit is born holding its tissue water (init_cohort), drawn !
+      !      from outside as its carbon and heat are, for the same reason. ---------------------------!
       real(wp), optional,  intent(out)   :: carbon_drawn  !< [kgC/m2 site]
       real(wp), optional,  intent(out)   :: heat_drawn    !< [J/m2 site]
+      real(wp), optional,  intent(out)   :: water_drawn   !< [kg/m2 site]
       integer(ik) :: ip, pf, np, m, nspawn, n_before, k
-      real(wp)    :: recruit_dbh, c_min, endow, t_birth, cap_leaf, cap_wood, c_tot, e_tot
+      real(wp)    :: recruit_dbh, c_min, endow, t_birth, cap_leaf, cap_wood, c_tot, e_tot, w_tot
 
-      c_tot = 0.0_wp ; e_tot = 0.0_wp
+      c_tot = 0.0_wp ; e_tot = 0.0_wp ; w_tot = 0.0_wp
       if (present(carbon_drawn)) carbon_drawn = 0.0_wp
       if (present(heat_drawn))   heat_drawn   = 0.0_wp
+      if (present(water_drawn))  water_drawn  = 0.0_wp
       np = site%patch%n
       if (np < 1_ik) return
 
@@ -476,7 +482,7 @@ contains
                t_birth = patch%cas(ip)%can_temp
                if (t_birth < 100.0_wp) t_birth = LEAF_TEMP_INIT
                call init_cohort(cohort, m, pft, pf, ip, patch%recruit_pool(pf, ip), recruit_dbh,   &
-                                birth_temp=t_birth)
+                                cfg%hydraulics, birth_temp=t_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
                c_min = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
@@ -486,6 +492,7 @@ contains
                call cohort_tissue_heat_capacity(cohort, m, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,       &
                                                 TISSUE_HCAP_MIN, cap_leaf, cap_wood)
                e_tot = e_tot + patch%area(ip) * (cap_leaf + cap_wood) * t_birth
+               w_tot = w_tot + patch%area(ip) * cohort_tissue_water(cohort, m)
                patch%recruit_pool(pf, ip) = 0.0_wp
             end do
          end do
@@ -494,6 +501,7 @@ contains
 
       if (present(carbon_drawn)) carbon_drawn = c_tot
       if (present(heat_drawn))   heat_drawn   = e_tot
+      if (present(water_drawn))  water_drawn  = w_tot
 
       !----- Stamp each freshly spawned cohort with a persistent global id. ----------------!
       do k = n_before + 1_ik, site%cohort%n

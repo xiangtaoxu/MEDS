@@ -477,6 +477,99 @@ before and after.
   store from the soil each day; fluxes move by under 0.01 % (example 04, Palo Verde, BCI regrowth).
   `test_carbon_growth` checks the shed against the fine roots' share and that the store keeps its
   water per unit of carbon.
+- **A cohort that dies out to the density floor is culled** (with #393). The applier stops a cohort's
+  decline at `negligible_nplant`, and the monthly cull kept a cohort whose density was at least that,
+  so a cohort that had died out could sit at the floor for ever (24 such cohorts, dbh ≥ 19 cm, in
+  example 06's final states). The landing was not even exact: `nplant·exp(log(floor/nplant))` is the
+  floor only to an epsilon either side, so in a sample of starting densities 41 % of declines stopped
+  an epsilon above it and 40 % an epsilon below (and were culled). The applier now ends a decline that
+  reaches the floor, to within the round-off of the comparison, exactly on it (`advance_density`), and
+  the cull removes a cohort at the floor as well as below it. The shipped short cases (example 04's
+  window on both integrators, Palo Verde's first month, example 05's first two years) and a year of
+  the Palo Verde inventory are byte-identical. BCI's regeneration restarted from its 1980 checkpoint
+  (v0.3.4) for 20 years culls its cohorts at the floor (3 at the end before, 0 after; mean cohort
+  count 1003.1 → 995.0), with density (8.5144 m⁻²) and AGB (11.3120 kgC m⁻²) unchanged to 10⁻⁶ and
+  every slow-ledger phase closing. `test_carbon_growth` aims 200 declines at the floor and finds every
+  one on it, and culls a cohort at the floor while keeping one an epsilon above.
+- **A cohort with no leaves and no storage dies** (#393). Nothing in the mortality law saw a cohort's
+  carbon, so a cohort that had lost its leaves and spent its storage lived on at the growth-driven
+  hazard of any slow grower, its leaf carbon decaying geometrically (9 % of a BCI spin-up's cohorts;
+  7.7 % and 9.6 % of example 06's final cohorts). The owner's decision is no separate starvation
+  hazard: growth already sets mortality. The special case is a cohort whose unpaid maintenance this
+  step (`deficit`, the debt left after its photosynthesis and all its storage) exceeds all the carbon
+  in its leaves: burning every leaf could not pay one step's upkeep and nothing is left to pay for a
+  flush. Its mortality for the step (`decline_to_floor_mortality`, beside `camac_mortality`) takes its
+  density to `negligible_nplant`, down the background pathway (carbon to litter, water to the ground),
+  and the next monthly cull removes it, so it is gone within a month. The test is scaled by the
+  cohort's own maintenance respiration and needs no threshold; a leafless cohort living on its storage
+  is untouched. Interim, until a growth- or storage-based mortality (`docs/ROADMAP.md`). The shipped
+  short cases and a year of the Palo Verde inventory are byte-identical (no inventory cohort runs out
+  within the year). In example 06's region 2, a 13-cell box (15–16° N, 85–84° W) restarted from its
+  2021 state through the dry season (January–March) ends with 1,367 leafless cohorts before (875 with
+  no storage at all, the rest with a trickle of resorbed carbon, at most 10⁻³ of their fine-root
+  carbon) and none after: cohorts 10,794 → 8,960 (−17 %), mean density 7.893 → 7.510 m⁻² (−4.9 %), AGB
+  10.992 → 10.847 kgC m⁻² (−1.3 %). BCI's regeneration restarted from 1980 for 20 years loses its
+  leafless seedlings (dbh about 1 cm, leaf carbon 10⁻⁶–10⁻³ of its target, no storage): mean cohort
+  count 995.0 → 961.5 (−3.4 %), density 8.5144 → 8.4846 m⁻² (−0.35 %), AGB 11.3120 → 11.3094 kgC m⁻²
+  (−0.02 %), GPP +0.03 %, `psi_leaf_site` unchanged (−0.215 MPa); every slow-ledger phase closes.
+  `test_mortality_pathways`: a leafless cohort with no storage reaches the floor on its first step,
+  its carbon down the background pathway, and is culled at the month boundary; one with storage lives
+  through a 150-day dry season on it.
+- **The driver's tentative carbon pools follow the applier's round-off rule** (#394).
+  `update_cohort_derivatives` formed each cohort's new pools as `max(pool + npp, 0)` before backing
+  out the tendency, the same floor the applier had: an overdraw was floored there, so the carbon it
+  took was created before the applier, whose bounds guard reports an overdraw, could see it. It now
+  uses the applier's `advance_pool`: a pool the step empties lands on 0 to round-off, and an overdraw
+  stays negative, reaches the applier, and stops the run naming the pool. Byte-identical on every
+  comparison run (the shipped short cases, a year of the Palo Verde inventory and 20 years of BCI's
+  regeneration from its 1980 checkpoint). `test_carbon_growth` passes a rounded full shed and a 1 %
+  storage overdraw through the driver and the applier.
+- **Tissue water is booked when it is made, moved or shed** (#395). `reconcile_tissue_water_capacity`
+  ran at the top of the fast loop, between the slow ledger's window and the fast loop's, and wrote
+  each cohort's tissue water outside both: it seeded a store at 0 (a new cohort's sentinel) to its
+  `PSI_INIT` content, creating water, and clamped a store above its capacity, deleting the excess. Its
+  own `seeded`/`discarded` outputs lacked the patch-area weight (they overstated by about the patch
+  count) and no caller read them. The routine is gone. A cohort is now born holding its tissue water
+  at `PSI_INIT` on its PFT's curves (`init_cohort` takes `[hydraulics]`; `pft_tissue_curves` is the
+  one rule for the curves, which `apply_hydraulics_config` and the turgor-loss point now use too), and
+  a recruit's water is declared as drawn in by the recruit phase, with its carbon and heat; a state
+  file without tissue water restarts on the same birth water. Before the fast loop,
+  `settle_tissue_water` sheds water above a store's capacity (`shed_excess_tissue_water`) to the
+  ground through `shed_water_rate`, area-weighted and declared in a slow-ledger phase of its own
+  (`tissue water`). Phase 2 measured both terms at under 10⁻⁵ of transpiration after the first day.
+  Results move in two places. At a census start the birth water is set before the traits acclimate,
+  and the settle sheds what the acclimation leaves above capacity; in a regenerating stand, a recruit
+  fused before its first fast step now brings its water instead of blending zero into the cohort it
+  joins, and a leaf store that had dried to exactly zero, which the seed refilled when it regrew, now
+  regrows empty until the re-flush entry below fills it. Over the shipped short cases: example 04's
+  window ET +0.0075 % on ARK (+0.55 % on RK45, whose adaptive step sequence follows round-off), Palo
+  Verde's July GPP +0.006 %. Over a year of the Palo Verde inventory: GPP +0.0004 %, density −1.5×10⁻⁶
+  relative, `psi_leaf_site` unchanged; the settle sheds 0.30 kg m⁻² in the year, almost all on the
+  first day. BCI's regeneration from bare ground (1600–1602) loses 0.13 % of GPP and 0.21 % of AGB
+  (monthly cohort count 67 → 66.6), which the re-flush entry restores to 10⁻⁵. Twenty years of BCI
+  from 1980: density, AGB and GPP within 10⁻⁶; the recruit phase declares 0.557 kg m⁻² of birth water
+  and the tissue-water phase 1.2×10⁻³ kg m⁻² shed, its water residual summing to 7.5×10⁻¹⁰ kg m⁻² over
+  7,305 marks; every phase closes. `test_slow_ledger` closes the water ledger across a recruitment, a
+  snap to bare and a settle; `test_pft_optics_config`, `test_fast_loop` and `test_disturbance` follow
+  the birth water.
+- **Re-flushing leaves take their water from the wood** (#436). A store kept its water mass across a
+  biomass change, so new leaf capacity started empty: a cohort re-flushing from bare began the next
+  fast step at the dry end of its leaf pressure–volume curve, about −1.6×10⁴ MPa, with its stomata
+  shut for the step, and the leaf-area-weighted `psi_leaf_site` was dragged with it (−6.45 MPa at Palo
+  Verde on 2009-04-04; a flushing cohort's daily-mean ψ_leaf −169 MPa at 900 s, proportional to
+  `dt_fast`). When a cohort's leaf carbon grows, `fill_new_leaf_water` now fills the new tissue with
+  water moved from the cohort's wood store, at the potential the two share at rest (the leaf the
+  crown's gravity head below the wood; `shared_potential`, a bracketed bisection on the two
+  pressure–volume curves): the plant's water is unchanged and the new leaves start at the stem's
+  potential. Palo Verde inventory: `psi_leaf_site` on 2009-04-04 −6.45 → −0.69 MPa and on 2009-05-08,
+  the second re-flush, −2.91 → −0.24 MPa; the April mean −3.39 → −2.96 MPa; the year's minimum is now
+  the dry season's, −4.15 MPa on 2 May (it was the re-flush spike); outside the two re-flushes the
+  days are unchanged; GPP and ET +0.002 %. BCI's regeneration from bare ground (1600–1602): GPP +0.135
+  % and AGB +0.21 %, back within 10⁻⁵ of the run before the tissue-water change. Example 04's window:
+  ET +4×10⁻⁸ relative on ARK. Twenty years of BCI from 1980: within 10⁻⁵ (`psi_leaf_site` −0.2147 MPa
+  either way). `test_slow_ledger` re-flushes a bare cohort from storage and finds its leaves at the
+  wood's potential less the crown head to 10⁻⁹ MPa, the plant's water unchanged and the water ledger
+  closed; `test_plant_hydraulics` checks the shared potential on both branches of the curves.
 
 ### Documentation
 

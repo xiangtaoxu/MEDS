@@ -4,12 +4,14 @@
 program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
-   use meds_config,                 only : meds_config_t
+   use meds_config,                 only : meds_config_t, growth_window_steps
    use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc, cohort_bad_field,    &
                                      cohort_field_name
    use meds_demography_update, only : update_cohort_states
+   use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits
+   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits, &
+                                           update_cohort_derivatives
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_diagnostic_reduce,     only : has_nan
@@ -222,6 +224,31 @@ program test_carbon_growth
                  'applier: the bounds guard names the overdrawn pool')
    end block
 
+   !=== The driver's tendency follows the applier's rule: a step that empties a pool lands it on  !
+   !    0, and an overdraw reaches the applier as an overdraw, which the bounds guard names. A     !
+   !    floor on the driver's tentative pool would create the carbon before the guard could see it. =!
+   block
+      type(carbon_flux_block) :: npp
+      real(wp) :: dt
+      dt = 1.0_wp / 365.0_wp
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      allocate(npp%leaf(1), npp%fineroot(1), npp%wood(1), npp%nonstructural(1))
+      npp%leaf(1)          = -site%cohort%leaf_carbon(1) * (1.0_wp + 1.0e-15_wp)   ! a rounded full shed
+      npp%fineroot(1)      = 0.0_wp
+      npp%wood(1)          = 0.0_wp
+      npp%nonstructural(1) = -site%cohort%nonstructural_carbon(1) * 1.01_wp        ! a 1 % overdraw
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      call update_cohort_derivatives(site, npp, [0.0_wp], dt, growth_window_steps(cfg), 1_ik)
+      call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+      call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'driver + applier: a rounded full shed lands on 0')
+      call check(site%cohort%nonstructural_carbon(1) < 0.0_wp,                                     &
+                 'driver + applier: a 1 % overdraw reaches the applier, not floored on the way')
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nonstructural_carbon', &
+                 'driver + applier: the bounds guard names the overdrawn pool')
+   end block
+
    !=== Re-acclimation to a lower SLA asks storage for more leaf carbon: it takes only what     !
    !    storage holds, so the cohort's carbon is unchanged and its leaf area falls short. =======!
    block
@@ -240,6 +267,46 @@ program test_carbon_growth
       call check_close(site%cohort%leaf_carbon(1) + site%cohort%nonstructural_carbon(1), carbon0,      &
                        1.0e-12_wp, 'reacclimation conserves the cohort''s leaf and storage carbon')
       call check(site%cohort%leaf_carbon(1) < 2.0_wp * leaf0, 'the leaves take only what storage has')
+   end block
+
+   !=== A density that declines to the floor ends ON it, and the cull removes a cohort there. ====!
+   !    nplant * exp(log(floor/nplant)) is the floor only to an epsilon either side; a cohort an   !
+   !    epsilon above the floor would never be culled, and would decline no further. ===========!
+   block
+      real(wp)    :: dt, n0
+      integer(ik) :: k, n_on, n_cut
+      dt = 1.0_wp / 365.0_wp
+      n_on = 0_ik
+      do k = 1_ik, 200_ik
+         !----- 200 starting densities across six decades, each aimed exactly at the floor. -------!
+         n0 = cfg%negligible_nplant * 10.0_wp ** (6.0_wp * real(k, wp) / 200.0_wp)
+         call init_bare_ground(site, cfg, 1_ik)
+         call add_cohort(site, cfg, 1_ik, 2_ik, n0, 3.0_wp)
+         call finalize_init(site)
+         call cohort_deriv_alloc(site%deriv, site%cohort%n)
+         site%deriv%d_leaf_carbon_dt(1)          = 0.0_wp
+         site%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+         site%deriv%d_wood_carbon_dt(1)          = 0.0_wp
+         site%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
+         site%deriv%dln_nplant_dt(1)             = -(log(n0 / cfg%negligible_nplant) / dt)
+         call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+         if (site%cohort%nplant(1) == cfg%negligible_nplant) n_on = n_on + 1_ik
+      end do
+      call check(n_on == 200_ik, 'applier: a decline aimed at the floor ends exactly on it')
+
+      !----- Two cohorts of a tracked size: one at the floor (culled), one a hair above (kept). ---!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 1.0_wp, 60.0_wp)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 1.0_wp, 61.0_wp)
+      call finalize_init(site)
+      site%cohort%nplant(1) = cfg%negligible_nplant
+      site%cohort%nplant(2) = nearest(cfg%negligible_nplant, 1.0_wp)
+      call check(all(site%cohort%nplant(1:2) * site%cohort%agb(1:2) >= cfg%min_cohort_agb),        &
+                 'cull fixture: both cohorts clear the AGB floor, so only the density floor acts')
+      n_cut = site%cohort%n
+      call terminate_cohorts(site, cfg)
+      call check(site%cohort%n == n_cut - 1_ik, 'cull: exactly one cohort removed')
+      call check(site%cohort%nplant(1) > cfg%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
    end block
 
    write(*,'(a)') '   PASS'
