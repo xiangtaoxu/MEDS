@@ -9,6 +9,8 @@ ground in 953 cells of their box, run as two MEDS region runs. The last ten year
 leaf area, and the same runs give the region's productivity, biomass, canopy height, tree density, water
 use and regrowth ([Additional results](#additional-results)).
 
+The region runs, the figures and the numbers on this page were made with v0.3.4 and the region runtime that followed it; they were not repeated after the 2026-10 sweep.
+
 ![Leaf area and its seasonality, MEDS against MODIS](lai_seasonality_vs_modis.png)
 
 Top: MEDS, the last ten simulated years (June 2011 – May 2021). Bottom: MODIS MCD15A2H at the same cell
