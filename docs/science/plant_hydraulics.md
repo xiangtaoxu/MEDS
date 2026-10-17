@@ -175,8 +175,11 @@ $`r_{\text{half},k}`$ comes from the patch's root-length density in the layer, a
 root length and falls only by the logarithm as roots crowd, so it does not depend on how the soil is
 layered or how a stand is split into cohorts. ED2-hydro's per-layer form, $`K\sqrt{\text{RAI}_k}/(\pi\,
 \Delta z_k)`$ after Katul et al. (2003), depends on both, and connects the thick deep layers one to two
-orders of magnitude more weakly. Whether the absorbing length really grows in proportion to fine-root carbon is
-open (see `docs/ROADMAP.md`).
+orders of magnitude more weakly. Only part of a fine root may absorb water, but a constant absorbing
+fraction of the root length is exactly a rescaled specific root length: it scales $L_k$ and the
+root-length density in $`r_{\text{half},k}`$ alike, so `specific_root_length` is the knob to fit.
+Uptake that grows less than linearly with root length would be a root conductance in series with
+$g_k$ (see `docs/ROADMAP.md`).
 
 Each layer is its own path from the soil to the wood, so the uptake from layer $k$ is
 
@@ -226,7 +229,7 @@ flows themselves, so the plant and soil water budgets close to round-off.
 | $`b_{1Rd}, b_{2Rd}`$ | `root_depth_b1`, `root_depth_b2` | rooting depth $`b_{1Rd}\,h^{b_{2Rd}}`$ [m], capped at the soil column (ED2 IALLOM 1) |
 | SRL | `specific_root_length` | fine-root length per unit fine-root carbon [m kgC⁻¹] |
 | $`r_{\text{root}}`$ | `fine_root_radius` | absorbing-root radius [m] |
-| $`b_{1SA}, b_{2SA}`$ | `pft.sapwood_area_b1`, `pft.sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which is BOTH the hydraulic capacitance and the wood thermal store's internal water |
+| $`b_{1SA}, b_{2SA}`$ | `pft.sapwood_area_b1`, `pft.sapwood_area_b2` | ED2 sapwood-area allometry; sets the sapwood ring, which with the fine roots is the wood water store, and alone holds the wood thermal store's internal water |
 
 ## References
 - Xu, Medvigy, Powers, Becknell & Guan (2016), *New Phytologist* — X16 hydraulics.

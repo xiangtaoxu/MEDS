@@ -218,9 +218,10 @@ def assimilation_demand_c3(ci, vcmax, j, *, tpu=1.0e6, gstar, kc, ko, o2,
     min(Ac,Aj,Ap) envelope (the black "limiting rate" curve), or QUADRATIC for the smoothed version.
 
     theta_cj and theta_ip are the two CO-LIMITATION curvatures -- Ac/Aj, then (Ac,Aj)/Ap. They are not
-    theta_j, the electron-transport hyperbola's curvature: theta_j = 0.85 here costs 25-30 % of
-    assimilation against the sharp min() (docs/science/leaf_gas_exchange.md §2, "The co-limitation
-    curvatures are not theta_J").
+    theta_j, the electron-transport hyperbola's curvature: a J curvature of 0.85 on both costs 27 % of
+    gross assimilation against the sharp min() at saturating light and Ci 280, and 31-34 % of net
+    assimilation at PAR 1500-2000 (docs/science/leaf_gas_exchange.md §2, "The co-limitation
+    curvatures are not theta_J", which gives the conditions).
 
     This composes with electron_transport_j (J from Jmax) and arrhenius (kinetics at leaf T) to draw an
     A-Ci demand curve from Vcmax/Jmax directly, with no capacity temperature-correction.

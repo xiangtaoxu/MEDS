@@ -7,7 +7,8 @@ Steps (the data, the forcing and the census file are kept once made; --force rem
   2. build the forcing file data/bci_forcing.nc from the tower's meteorology
      (scripts/prepare_flux_tower/make_tower_forcing.py); score its longwave fill on hidden
      observations (compare_longwave_fill.py) and draw its fill flags (plot_forcing.py)
-  3. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census)
+  3. build the census file from the 2010 BCI census (bci_census.toml, scripts/prepare_census), whose
+     tables are read from --census-dir (or the environment variable BCI_CENSUS_DIR)
   4. run the five tower years from the census, with hourly output (meds_config_eval.toml)
   5. with --calibrate: fit the fast parameters to the tower (calibration.toml, scripts/calibrate_fast)
      into calibration/; the fit ships with the example, so this is only to redo it
@@ -18,11 +19,11 @@ Steps (the data, the forcing and the census file are kept once made; --force rem
      and draw them (plot_window.py)
 
 Usage:
-  python run_example.py                          # everything
-  python run_example.py --copy-from ~/BCI_flux   # take the tower data from a local copy
-  python run_example.py --forcing-only           # steps 1-2: no model run
+  python run_example.py --census-dir /path/to/bci_census  # everything (the census tables: once, for step 3)
+  python run_example.py --copy-from ~/BCI_flux            # take the tower data from a local copy
+  python run_example.py --forcing-only                    # steps 1-2: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
-  python run_example.py --calibrate --workers 40 # redo the fit: 1,096 runs; a cluster's queue: scripts/calibrate_fast
+  python run_example.py --calibrate --workers 40          # redo the fit: 1,096 runs; a cluster's queue: scripts/calibrate_fast
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
@@ -35,7 +36,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(ROOT, "python"))
-from meds.config import RunConfig  # noqa: E402
+from meds.config import RunConfig, load_toml, write_toml  # noqa: E402
 
 TOOLS = os.path.join(ROOT, "scripts", "prepare_flux_tower")
 CENSUS_TOOL = os.path.join(ROOT, "scripts", "prepare_census", "make_census.py")
@@ -56,6 +57,18 @@ def run(cmd, log=None):
             raise SystemExit(f"ERROR: {cmd[0]} failed; see {log}")
     else:
         subprocess.check_call(cmd, cwd=HERE)
+
+
+def census_declaration(census_dir):
+    """bci_census.toml with its tables in `census_dir`, written to data/: a TOML cannot read the
+    environment, so the census tool gets its own copy, which names the PFT file by its full path."""
+    decl = load_toml(os.path.join(HERE, "bci_census.toml"))
+    for table in ("source", "mortality"):
+        decl[table]["path"] = os.path.join(os.path.abspath(census_dir), os.path.basename(decl[table]["path"]))
+    decl["pft"]["pft_file"] = os.path.join(HERE, decl["pft"]["pft_file"])
+    path = os.path.join(DATA, "bci_census.toml")
+    write_toml(path, decl)
+    return path
 
 
 def run_window(meds_main, config):
@@ -82,6 +95,8 @@ def run_window(meds_main, config):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--copy-from", help="a folder holding BCI_v5.1.csv and README.txt")
+    ap.add_argument("--census-dir", default=os.environ.get("BCI_CENSUS_DIR"),
+                    help="the folder holding the BCI census tables bci_2010.csv and bci_2005.csv (step 3)")
     ap.add_argument("--meds-main", default=os.environ.get("MEDS_MAIN", os.path.join(ROOT, "build-ifx", "meds_main")))
     ap.add_argument("--forcing-only", action="store_true", help="stop after the forcing and its figures")
     ap.add_argument("--force", action="store_true", help="remake the forcing and the census file")
@@ -105,7 +120,10 @@ def main(argv=None):
     if not os.path.exists(args.meds_main):
         raise SystemExit(f"ERROR: no meds_main at {args.meds_main}; build MEDS or pass --meds-main")
     if args.force or not os.path.exists(CENSUS):
-        run([py, CENSUS_TOOL, "--declaration", "bci_census.toml", "--out", CENSUS])
+        if not args.census_dir:
+            raise SystemExit(f"ERROR: no {CENSUS}; pass --census-dir (or set BCI_CENSUS_DIR): the folder "
+                             "holding the BCI census tables bci_2010.csv and bci_2005.csv (README.md, The data)")
+        run([py, CENSUS_TOOL, "--declaration", census_declaration(args.census_dir), "--out", CENSUS])
     run([args.meds_main, "meds_config_eval.toml"], log=os.path.join(OUTPUT, "eval.log"))
     if args.calibrate:
         work = os.path.join(CALIB, "run")

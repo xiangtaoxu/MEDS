@@ -1,5 +1,25 @@
 # MEDS v0.3.0, for people who use ED2
 
+> **This page describes MEDS v0.3.0, and a rewrite against the current code is planned
+> ([`ROADMAP.md`](ROADMAP.md) §12).** Until then, where the page disagrees with this list, the list
+> is right:
+>
+> - **Water stress and resorption.** The non-stomatal capacity limb is always on
+>   ([`leaf_gas_exchange.md`](science/leaf_gas_exchange.md) §4.1), and leaf and fine-root resorption
+>   default to 0.3 ([`plant_carbon_allocation.md`](science/plant_carbon_allocation.md) §1).
+> - **Leaf water potential converges at 900 s.** Soil and plant water are solved together, implicitly
+>   ([`soil_plant_water.md`](science/soil_plant_water.md)); the midday leaf potential agrees between
+>   75 and 900 s ([`numerical_scheme.md`](science/numerical_scheme.md) §5a), so a study of it needs
+>   no shorter `dt_fast`.
+> - **Roots and sapwood.** Each cohort roots to a depth set by its height, and its sapwood's
+>   conductivity follows its wood density ([`plant_hydraulics.md`](science/plant_hydraulics.md) §3–§4).
+> - **Setup.** Height can follow Chave et al. (2014) ([`configuration.md`](configuration.md), "The PFT
+>   file"); a soil column can come from texture through a pedotransfer function, and from the soil
+>   maps ([`soil_biophysics.md`](science/soil_biophysics.md), "Hydraulic parameters from soil texture"
+>   and "The column from the soil maps"); and a region runs its polygons on OpenMP threads, one polygon
+>   per thread ([`configuration.md`](configuration.md), "Regional runs").
+> - **Counts.** The suite has 72 tests and the output registry 284 variables.
+
 MEDS is a ground-up reimplementation of [ED2](https://github.com/EDmodel/ED2) in Fortran 2018. If you
 already run ED2, this page tells you what carried over, what changed, what is missing, and what a MEDS
 run costs you to set up.

@@ -216,6 +216,82 @@ before and after.
 - **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
   #381, #393, #394, #395 and #407; the gaps the science pages name that had no issue are filed as
   #410–#415, and the defects and residues the review found but did not fix as #416–#425.
+- **Every example runs without the development cluster's data paths** (#430). Data the repository
+  does not hold are named on the command line or by an environment variable, and a script stops with
+  a message when one is missing, as example 06's do. Example 04's `run_example.py` reads the BCI census
+  tables from `--census-dir` (or `BCI_CENSUS_DIR`) and writes the folder into its copy of
+  `bci_census.toml`, whose paths are now placeholders. Example 05's `run_palo_verde.py` runs a copy of
+  `meds_config_inventory.toml` with `--era5-archive` (or `ERA5LAND_ARCHIVE`) as `[forcing].data_path`,
+  and stops without it unless `--skip-inventory`. Example 02's `make_era5_par_hours.py` takes
+  `--archive` or `ERA5LAND_ARCHIVE`, with no default (and now accepts a relative `--meds-main`).
+  The comments that named the authors' copies of the soil maps and Chave's E map name the maps instead.
+  Results are unchanged: the runs read the same files.
+- **The root `meds_output_pft_parameters.csv` is deleted** (#430): a run's PFT table from July,
+  read by nothing. `.gitignore` now ignores `*_pft_parameters.csv`, the table every run that writes
+  its state leaves beside the state files.
+- **Counts corrected** (#430): `CLAUDE.md`'s suite is 72 tests (73 with the Python library), not 53;
+  `README.md`'s output registry holds 284 variables, not 252.
+- **`docs/ed2_comparison.md` carries a banner** (#422): the page describes v0.3.0, a rewrite is
+  planned, and until then the banner lists what is now different, with links to the science pages:
+  the capacity limb is always on and resorption defaults to 0.3; leaf water potential converges at
+  900 s on the implicit soil–plant water network; each cohort roots to a depth set by its height and
+  its sapwood conductivity follows wood density; height can follow Chave et al. (2014), a soil column
+  can come from a pedotransfer function and the soil maps, and a region runs its polygons on threads.
+- **`post_proc/README.md` says which file each script reads** (#423). `plot_pft_size.py` and the
+  evaluation notebook read `meds_main`'s diagnostic files (`<prefix>-D-YYYYMM.nc`, `-M-YYYYMM.nc`,
+  `-Y.nc`); `plot_site_timeseries.py`, `plot_forest_structure.py`, `plot_landscape_3d.py` and
+  `animate_landscape_growth.py` read only example 03's stand file. The README gave all six a
+  `meds_main` file, which four of them cannot read; its command lines now run. `README.md`'s Quick
+  start ran example 03's config, which writes no output, and then plotted a file no run writes: it
+  now builds the Python library, runs example 03 from near-bare ground (300 years, about a minute)
+  and plots that run's stand file.
+- **Example 05's Palo Verde PFTs say where three values come from** (#424). `stomatal_g0`
+  (0.463 mmol m⁻² s⁻¹), `leaf_angle_mean` (55.1°) and `z0m_ratio` (0.0536) were labelled "example 04's
+  calibration" but are from example 04's fit on a 1.4 m soil column; they are now labelled as the
+  Palo Verde set's own values from that fit (example 04's current fit gives 0.334, 54.9° and 0.0528).
+  The `g1` comment named Lin et al. (2015)'s slope of −3.97 per g cm⁻³; the values follow it scaled to
+  example 04's 2.82 at wood density 0.60, −2.70 per g cm⁻³. The `g0` comment called the value about
+  the mean cuticular conductance of Duursma et al. (2019); it is a tenth of their mean minimum
+  conductance (~5 mmol m⁻² s⁻¹). Values unchanged.
+- **The θ_J borrowing cost in `leaf_gas_exchange.md` §2 is re-measured, with its conditions** (#425).
+  The page gave it as −25.0 % in its table and 30–32 % in the next sentence. Measured with
+  `meds.plant.leaf` at 25 °C, 101.325 kPa and Ci 280 µmol mol⁻¹ against the sharp minimum: at
+  saturating light the gross rate loses 27.4 % with 0.85 on both co-limitations, 23.7 % with 0.85 on
+  Ac/Aj only and 9.8 % with the shipped 0.98/0.95 (−8.2 % before), at every Vcmax25 from 60 to 150;
+  at PAR 1500–2000 the net rate loses 31–34 %, 27–31 % and 12–15 %. The comments in
+  `python/meds/plant/leaf.py` and `meds_pft_params.f90` quote the same numbers. §4.4's example g0 is
+  example 04's current fit (0.33 mmol m⁻² s⁻¹, losing 0.012 mmol m⁻² s⁻¹ at 3.5 kPa; it said 0.46).
+- **`plant_hydraulics.md` eq. (14) answers whether root conductance grows with root length** (#377).
+  A constant absorbing fraction of the root length scales the root length and the root-length
+  density alike, which is exactly a rescaled specific root length: `specific_root_length` is the knob
+  to fit. Uptake that grows less than linearly would be a root conductance in series (#356).
+- **`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §2.4 no longer says the data report prints the share of
+  area whose canopy-air top is above the sensor** (#350): `scripts/calibrate_fast/report.py` does not;
+  the line says to read it from a run's `cas_depth_patch` and `area_patch`.
+- **Doc lines the sweep's review found wrong** (#419, #74). `vegetation_energy_dynamics.md` and
+  `plant_hydraulics.md`'s parameter table said the sapwood ring is both the hydraulic store and the
+  wood's thermal water; the water network's wood store is the sapwood plus the fine roots, with its
+  own prognostic water, which the heat capacity does not read. The example 04 and 05 configs (and
+  example 04's README) said the canopy intercepts rain and dew; the canopy air's condensate goes to
+  soil layer 1, which `numerical_scheme.md` §7 now explains by its size (at most 0.5 % of
+  evapotranspiration at BCI).
+- **`docs/configuration.md` says what a failed polygon does to a region.** It said the failed polygon
+  is reported and the others finish the month; it now adds what follows, as `meds_main` does it: the
+  month's records are written (the fill value where the failed polygon has none), and a state file
+  that falls due at the month's end, and then the run stops with an error, so the region ends after
+  the month in which the polygon failed, with no end-of-run state file.
+- **`docs/ROADMAP.md` brought up to date for the open-issue sweep.** §1 points to the sweep's plan
+  (`docs/dev_plans/MEDS_ISSUE_SWEEP_PLAN.md`) and lists the new issues #427–#429 (#430 and #432 in
+  §12, #431 under the region runtime in §8, the question #433 in §5). #74 is closed (dew is at most
+  0.5 % of ET at BCI) and leaves the table. #265, #268 and #269 move from "Known defects" to §5 as
+  open questions, since they are modelling choices; #269's "1.2 K warmer" site mean, which gap
+  patches dominated, is dropped. #416's row says the soil side uses `grav_head` too (`grav` is only
+  where the acceleration itself is meant). #342 no longer waits for high-elevation sites: 29 % of
+  example 06's cells are above 1000 m. The forcing design is cited from `archive/`, the stale
+  "example 06 as region runs" item goes, and #377, #424, #425 and #430 are marked done in `beta`.
+  `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
+- **`examples/README.md`'s example 06 summary** said 983 cells, each a single-site run; it is 953
+  cells run as two region runs, as example 06's README says.
 
 ## [0.3.4] — 2026-10-13
 

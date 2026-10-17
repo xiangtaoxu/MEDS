@@ -511,9 +511,10 @@ than a convergence proof.
    dilute it — the ARK therefore runs slightly looser than its stated `ark_rtol`. Measured cost on a
    summer stand: 0–0.5% in accuracy against 9–15% *fewer* sub-steps. Bringing soil water into the ARK
    tableau would remove the dilution, at a cost (see `docs/ROADMAP.md`).
-4. **Condensate is deposited into soil layer 1**, not onto foliage, because the canopy film store is
-   optional and carries its enthalpy at a fixed reference temperature. Routing dew onto leaves needs
-   that reference fixed first (see `docs/ROADMAP.md`).
+4. **Condensate is deposited into soil layer 1**, not onto foliage. It is small, at most 0.5 % of
+   evapotranspiration at BCI, so routing it onto the leaves would change little, and would need the
+   canopy film, which is optional and carries its enthalpy at a fixed reference temperature, to carry
+   its own temperature first.
 5. **Where the forcing is sampled within the sub-step** (`forcing_sample_frac`) is a real accuracy
    knob and a *trade*, not a free win: sampling at the sub-step start improves canopy-air temperature
    and degrades soil temperature, with opposite optima. It does not cause a convergence floor —

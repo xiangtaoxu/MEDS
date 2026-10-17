@@ -7,9 +7,10 @@
 #   - hydraulics, turgor-loss point, P50, Vcmax25 and rooting depth from Xu's wood-density relations;
 #   - storage_cushion 3, three full flushes of leaf and fine root;
 #   - phenology on the water cue alone, shed_rate_max 0.15 / 0.15 / 0.025 / 0.01 per day;
-#   - stomata: g1 on Lin et al. (2015)'s wood-density slope (-3.97 per g/cm3), anchored to example 04's
-#     calibrated 2.82 at 0.60; a stomatal stress slope of 0.4 per MPa (Sabot et al. 2022's fits for
-#     tropical trees) that starts below field capacity; g0 is example 04's;
+#   - stomata: g1 falling with wood density as Lin et al. (2015)'s line does, scaled to example 04's
+#     calibrated 2.82 at 0.60 (-2.70 per g/cm3, where Lin's slope is -3.97); a stomatal stress slope of
+#     0.4 per MPa (Sabot et al. 2022's fits for tropical trees) that starts below field capacity; g0 is
+#     this set's own, from example 04's fit on a 1.4 m soil column (as are leaf_angle_mean and z0m_ratio);
 #   - height: Chave et al. (2014) with the stress index of the Palo Verde forcing cell;
 #   - leaf lifespans 0.5, 0.5, 0.8 and 1.5 yr, and fine-root turnover 1.5 per yr for every PFT, on the
 #     leaves' turnover gate.
@@ -75,17 +76,18 @@ leaf_width         = [0.04, 0.04, 0.04, 0.04]
 branch_diameter    = [0.02, 0.02, 0.02, 0.02]
 crown_area_frac    = [1.0, 1.0, 1.0, 1.0]
 
-#----- Leaf photosynthesis and stomata: example 04's calibration (Vcmax25 is above). -------------------
+#----- Leaf photosynthesis and stomata: example 04's calibrated set but g0 and g1 (Vcmax25 is above). --
 photosynthetic_pathway = [1, 1, 1, 1]
 jmax_vcmax_ratio   = [1.6983, 1.6983, 1.6983, 1.6983]
 tpu_vcmax_ratio    = [0.167, 0.167, 0.167, 0.167]
 rd_vcmax_ratio     = [0.015, 0.015, 0.015, 0.015]
 kp25               = [1.0e-9, 1.0e-9, 1.0e-9, 1.0e-9]
-stomatal_g0        = [0.000463421, 0.000463421, 0.000463421, 0.000463421]   # [mol/m2/s] example 04 calibration,
-                                                                            #   about the mean cuticular conductance
-                                                                            #   (Duursma et al. 2019)
-stomatal_g1        = [3.49, 3.04, 2.44, 2.09]   # Medlyn [kPa^0.5] Lin et al. (2015) WD slope -3.97, anchored to
-                                                #   ex04's 2.82 at WD 0.60
+stomatal_g0        = [0.000463421, 0.000463421, 0.000463421, 0.000463421]   # [mol/m2/s] this set's own, from
+                                                                            #   example 04's fit on a 1.4 m soil column;
+                                                                            #   a tenth of the mean minimum conductance
+                                                                            #   in Duursma et al. (2019), ~5 mmol/m2/s
+stomatal_g1        = [3.49, 3.04, 2.44, 2.09]   # Medlyn [kPa^0.5] 2.82 - 2.70 (WD - 0.60): Lin et al. (2015)'s
+                                                #   slope -3.97 scaled to ex04's 2.82 at WD 0.60
 stomatal_d0        = [1500.0, 1500.0, 1500.0, 1500.0]
 quantum_yield_c4   = [0.0, 0.0, 0.0, 0.0]
 theta_j            = [0.70, 0.70, 0.70, 0.70]
@@ -118,7 +120,7 @@ is_woody           = [1, 1, 1, 1]
 # respiration and the roots' growth respiration.
 root_resp_factor25 = [2.7, 2.7, 2.7, 2.7]     # [umol CO2/kgC fine root/s @25C]
 
-#----- Canopy optics (example 04; leaf_angle_mean is its calibrated value). --------------------------
+#----- Canopy optics (example 04; leaf_angle_mean is this set's own, from example 04's fit on a 1.4 m column).
 leaf_reflect_vis   = [0.10, 0.10, 0.10, 0.10]
 leaf_transmit_vis  = [0.05, 0.05, 0.05, 0.05]
 leaf_reflect_nir   = [0.45, 0.45, 0.45, 0.45]
@@ -131,7 +133,7 @@ wood_transmit_nir  = [0.001, 0.001, 0.001, 0.001]
 wood_emissivity    = [0.90, 0.90, 0.90, 0.90]
 leaf_clumping      = [0.80, 0.80, 0.80, 0.80]
 wood_clumping      = [0.50, 0.50, 0.50, 0.50]
-leaf_angle_mean    = [55.1153, 55.1153, 55.1153, 55.1153]   # [deg]
+leaf_angle_mean    = [55.1153, 55.1153, 55.1153, 55.1153]   # [deg] this set's own: example 04's fit on a 1.4 m column
 leaf_angle_std     = [20.0, 20.0, 20.0, 20.0]
 
 #----- Hydraulics (MEDS_EXAMPLE06_DRY_FOREST_PHENOLOGY_PLAN.md §6.2): ED2 X16 / base relations in WD and SLA. -----#
@@ -177,8 +179,8 @@ kplastic_sla    = [0.199, 0.199, 0.199, 0.199]
 kplastic_llspan = [0.120, 0.120, 0.120, 0.120]
 
 # Height on Chave et al. (2014)'s pantropical curve (eq. 6a) with the stress index E of the Palo Verde
-# forcing cell (10.4 N, 85.3 W) in /ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc, Chave's own E raster
-# on the ERA5-Land grid; leaf area and biomass follow from the height.
+# forcing cell (10.4 N, 85.3 W) in Chave's own E raster on the ERA5-Land grid (example 06's chave_e_map);
+# leaf area and biomass follow from the height.
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899
