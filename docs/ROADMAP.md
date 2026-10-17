@@ -36,7 +36,7 @@ failure, not from a plan.
 | [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | The slow applier (`update_cohort_states_kernel`) and `reacclimate_plant_traits` keep a pool non-negative with `max(…, 0)`, which creates the carbon an overdraw would have taken; the per-step bounds guard cannot see it. |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
 | [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | The plant hydraulics and the pedotransfer functions use one value, the soil water the other; 0.03 %. |
-| [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. |
+| [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. Meanwhile `post_proc/README.md` says which layout each script reads. |
 | [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
 
 ---

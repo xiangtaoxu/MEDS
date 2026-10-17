@@ -237,6 +237,14 @@ before and after.
   900 s on the implicit soil–plant water network; each cohort roots to a depth set by its height and
   its sapwood conductivity follows wood density; height can follow Chave et al. (2014), a soil column
   can come from a pedotransfer function and the soil maps, and a region runs its polygons on threads.
+- **`post_proc/README.md` says which file each script reads** (#423). `plot_pft_size.py` and the
+  evaluation notebook read `meds_main`'s diagnostic files (`<prefix>-D-YYYYMM.nc`, `-M-YYYYMM.nc`,
+  `-Y.nc`); `plot_site_timeseries.py`, `plot_forest_structure.py`, `plot_landscape_3d.py` and
+  `animate_landscape_growth.py` read only example 03's stand file. The README gave all six a
+  `meds_main` file, which four of them cannot read; its command lines now run. `README.md`'s Quick
+  start ran example 03's config, which writes no output, and then plotted a file no run writes: it
+  now builds the Python library, runs example 03 from near-bare ground (300 years, about a minute)
+  and plots that run's stand file.
 
 ## [0.3.4] — 2026-10-13
 
