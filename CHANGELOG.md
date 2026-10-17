@@ -253,6 +253,14 @@ before and after.
   example 04's 2.82 at wood density 0.60, −2.70 per g cm⁻³. The `g0` comment called the value about
   the mean cuticular conductance of Duursma et al. (2019); it is a tenth of their mean minimum
   conductance (~5 mmol m⁻² s⁻¹). Values unchanged.
+- **The θ_J borrowing cost in `leaf_gas_exchange.md` §2 is re-measured, with its conditions** (#425).
+  The page gave it as −25.0 % in its table and 30–32 % in the next sentence. Measured with
+  `meds.plant.leaf` at 25 °C, 101.325 kPa and Ci 280 µmol mol⁻¹ against the sharp minimum: at
+  saturating light the gross rate loses 27.4 % with 0.85 on both co-limitations, 23.7 % with 0.85 on
+  Ac/Aj only and 9.8 % with the shipped 0.98/0.95 (−8.2 % before), at every Vcmax25 from 60 to 150;
+  at PAR 1500–2000 the net rate loses 31–34 %, 27–31 % and 12–15 %. The comments in
+  `python/meds/plant/leaf.py` and `meds_pft_params.f90` quote the same numbers. §4.4's example g0 is
+  example 04's current fit (0.33 mmol m⁻² s⁻¹, losing 0.012 mmol m⁻² s⁻¹ at 3.5 kPa; it said 0.46).
 
 ## [0.3.4] — 2026-10-13
 

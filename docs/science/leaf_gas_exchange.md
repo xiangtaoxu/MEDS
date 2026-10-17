@@ -90,17 +90,24 @@ They share units and a functional form, and nothing else. Implementations genera
 co-limitation curvature much closer to 1 (CLM and FATES use ~0.98 for the C3 $A_c/A_j$ transition)
 than the 0.7–0.9 that fits the $J$ hyperbola.
 
-Using `theta_j` for the co-limitation would cost assimilation exactly where the model spends most of
-its time, because $A_c$ and $A_j$ sit close together at ambient CO₂. At PFT-1 kinetics,
-$C_i = 280$ µmol mol⁻¹, saturating light:
+Using a $J$ curvature for the co-limitation would cost assimilation exactly where the model spends
+most of its time, because $A_c$ and $A_j$ sit close together at ambient CO₂. Measured with
+`meds.plant.leaf` at 25 °C and 101.325 kPa, $C_i = 280$ µmol mol⁻¹, with PFT 1's ratios
+($`J_{max} = 1.8\,V_{cmax}`$, $`\mathrm{TPU} = 0.167\,V_{cmax}`$, $`R_d = 0.015\,V_{cmax}`$),
+against the sharp $\min(A_c,A_j,A_p)$:
 
-| curvature used | $A_g$ | vs $\min(A_c,A_j,A_p) = 14.40$ |
+| `theta_cj_c3` / `theta_ip_c3` | gross $A$, saturating light ($J = J_{max}$) | net $A$, PAR 1500–2000 µmol m⁻² s⁻¹ |
 |---|---|---|
-| `theta_j` = 0.85 (the $J$ curvature) | 10.80 | **−25.0 %** |
-| `theta_cj_c3` = 0.98, `theta_ip_c3` = 0.95 | 13.22 | −8.2 % |
+| 0.85 / 0.85 (a $J$ curvature on both transitions) | **−27.4 %** | **−31 to −34 %** |
+| 0.85 / 0.95 (on $A_c$/$A_j$ only) | −23.7 % | −27 to −31 % |
+| 0.98 / 0.95 (shipped) | −9.8 % | −12 to −15 % |
 
-With `theta_j` the shortfall is nearly independent of $V_{cmax}$ — 30, 31, 31, 32 % at
-$V_{cmax,25}$ = 60, 90, 120, 150 — a systematic offset rather than a regime effect, so **no measured
+At saturating light the shortfall is the same at every $V_{cmax,25}$ from 60 to 150, because all
+three rates scale with $V_{cmax}$ (at $V_{cmax,25}$ = 60 the min is 14.51 µmol m⁻² s⁻¹ and the three
+pairs give 10.53, 11.06 and 13.09). The finite-light column spans PAR 1500 and 2000 and
+$V_{cmax,25}$ = 60, 90, 120, 150, with $J$ from the hyperbola (`theta_j` 0.70, absorptance 0.85,
+$`\phi_{\text{PSII}}`$ 0.74); the net rate loses more than the gross because $R_d$ does not shrink
+with it. Either way the loss is a systematic offset rather than a regime effect, so **no measured
 $V_{cmax}$ would reproduce a measured assimilation rate**. The shipped $V_{cmax,25}$ presets sit
 mid-range for their PFT descriptions and are not tuned to offset a smoothing loss.
 
@@ -304,7 +311,7 @@ $`\beta_s`$ scales $`g_1`$ only, so on its own it leaves a drought-stressed leaf
 $`g_0 + 1.6\,A/C_s`$ (Medlyn's "1 +" term) for as long as it still photosynthesises. The fast control
 removes the $`A`$-driven part as the leaf wilts, so no further factor on $`g_s`$ is needed: what is
 left is $`g_0`$, the cuticular loss, which a real leaf has too. At a VPD of 3.5 kPa a $`g_0`$ of
-0.46 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.016 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
+0.33 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.012 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
 shipped PFT file loses 0.35 mmol m⁻² s⁻¹, which is why $`g_0`$ should be set to a measured minimum
 conductance.
 

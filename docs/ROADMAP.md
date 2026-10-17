@@ -412,8 +412,10 @@ Gaps and residues found in the 2026-10-17 annotation review.
   04's fit on a 1.4 m soil column, not its current fit; they are labelled as the set's own values.
   *Candidate.* [#424](https://github.com/xiangtaoxu/MEDS/issues/424) Taking the current fit needs example
   05's Palo Verde runs and example 06 repeated (the owner: relabel only, no rerun in the issue sweep).
-- **`leaf_gas_exchange.md` §2 gives the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
-  [#425](https://github.com/xiangtaoxu/MEDS/issues/425)
+- **`leaf_gas_exchange.md` §2 gave the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
+  [#425](https://github.com/xiangtaoxu/MEDS/issues/425) Re-measured with `meds.plant.leaf`: the table now
+  states each number's conditions (−27.4 % of gross A at saturating light, −31 to −34 % of net A at PAR
+  1500–2000); nothing is left but closing the issue at the release.
 - **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
   a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
   `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
