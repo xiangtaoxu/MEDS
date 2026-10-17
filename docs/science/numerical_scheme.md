@@ -368,9 +368,9 @@ however small, since it is written on the start-of-step imbalance with no divisi
 and a tissue with neither coupling nor heat capacity (no area) takes the temperature of what it grows
 from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eqs. (5), (7)).
 No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
-(`[energy].debug_error`), a forced January month at Ithaca closes with about 5× margin on both schemes:
-worst residuals 285 (ARK) and 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. Tightening the
-tolerance makes the run halt, which shows the guard is live.
+(`[energy].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
+both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
+(ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 ---
 
