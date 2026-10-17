@@ -23,7 +23,7 @@ program test_column_rk45
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
-   use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max, soil_params_t
@@ -247,7 +247,7 @@ contains
       call reset_state()
       cfg%time_integrator = INTEG_RK45
       col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 0.0_wp
       do istep = 1_ik, 12_ik * steps_per_hour
          call set_diurnal_forcing(istep)
          call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
@@ -280,7 +280,7 @@ contains
       !      an explicit march may not, so report the substep cost rather than assume it. ------------!
       print '(a,i0,a,i0,a,i0)', '   AQUIFER/RK45 last dt_fast: substeps = ', budget%integ_nsteps,     &
             ' , rejects = ', budget%integ_nrej, ' , rescues = ', budget%rk45_rescue
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_rk45_bedrock_and_aquifer
 
    !----- march 24 h of INTEG_RK45 over MOIST free-draining soil and assert the                     !

@@ -86,13 +86,19 @@ season the pond overflows and the soil never re-wets. With the geometric mean th
 state is about 0.1 mm/h, and it rises by an order of magnitude with the first millimetre taken up,
 so the 5 mm pond buffers a storm and the top layer re-wets within hours.
 
-The **bottom** (`[soil].bottom_bc`) is one of three:
+The **bottom** either drains or sits on an aquifer. Drainage is the unit-gradient flux scaled by a
+drainage factor $f \in [0, 1]$, $`q = f\,K(\theta_n)`$, always **downward**; free drainage, a leaky
+base and a sealed one are its values of $f$ (`drain_factor`), not separate cases:
 
 | option | flux at the base | use for |
 |---|---|---|
-| `free_drain` (default) | $`q = K(\theta_n)`$, unit gradient, always **downward** | a deep, unseen water table |
-| `bedrock` | $`q = 0`$ | an impermeable base |
+| `free_drain` (default) | drainage, $f = 1$: $`q = K(\theta_n)`$ | a deep, unseen water table |
+| leaky (soil maps only) | drainage, $`f = f_{leak}`$, the map's (0.05 in ED-SoilMaps v2) | soil on weathered rock that drains slowly |
+| `bedrock` | drainage, $f = 0$: $`q = 0`$ | an impermeable base |
 | `aquifer` | $`q = K_{bot}\,(\psi_n/\Delta + 1)`$, $`\Delta = \Delta z_n/2`$, **two-way** | a shallow water table at the column base |
+
+`[soil].bottom_bc` names `free_drain`, `bedrock` or `aquifer`; a leaky base comes only from the soil
+maps (§ The column from the soil maps), which give each cell its own $`f_{leak}`$.
 
 **`aquifer` is a boundary condition, not a store.** The water table is *defined* to sit at the column
 base, so the modelled soil column **is** the unsaturated zone above it. There is no aquifer bucket, no
@@ -211,10 +217,11 @@ on the ED_ERA5land grid build it the same way.
   $c_{dry}$, the solids' heat capacity per m³ of layer, in J m⁻³ K⁻¹ (MEDS counts the water itself).
 - **The start.** Each layer starts at its own field capacity, $\theta(\psi_{fc})$.
 - **The bottom water boundary** is the map's `bc_class`:
-  - free drain;
-  - sealed, run as bedrock;
-  - aquifer;
-  - leaky, run as free drain: MEDS has no leaky bottom (see `docs/ROADMAP.md`).
+  - free drain, drainage at $f = 1$;
+  - leaky, drainage at the map's `f_leak` (a leaky cell whose `f_leak` is outside (0, 1] stops the
+    run);
+  - sealed, drainage at $f = 0$ (bedrock);
+  - aquifer.
 - **The thermal anchor.** The Dirichlet bottom conducts to the map's `deep_temp`, the cell's mean air
   temperature plus 1 K, at $d/\sqrt2$ below the bottom node, $d = 1.973$ m (§ The bottom thermal
   boundary).

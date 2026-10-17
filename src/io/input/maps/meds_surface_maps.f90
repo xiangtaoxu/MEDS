@@ -33,8 +33,7 @@ module meds_surface_maps
    use meds_column_params,    only : soil_params_t, n_soil_layer_max
    use meds_pedotransfer,     only : soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
    use meds_water_retention,  only : SOIL_RETENTION_VG
-   use meds_biophysics_opts,  only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,               &
-                                     annual_damping_depth
+   use meds_biophysics_opts,  only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
    implicit none
    private
 
@@ -51,7 +50,7 @@ module meds_surface_maps
    character(len=*), parameter :: SOIL_LAYER_DIM = 'depth', SOIL_LAYER_BOUNDS = 'depth_bnds'
    !----- The bottom water boundary of the soil depth map's bc_class. ---------------------------!
    integer(ik), parameter :: BC_FREE_DRAIN = 1_ik   !< q = K(theta)
-   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta): run as free_drain (see docs/ROADMAP.md)
+   integer(ik), parameter :: BC_LEAKY      = 2_ik   !< q = f_leak K(theta)
    integer(ik), parameter :: BC_SEALED     = 3_ik   !< q = 0
    integer(ik), parameter :: BC_AQUIFER    = 4_ik   !< a water table at the column base
 
@@ -62,6 +61,7 @@ module meds_surface_maps
       real(wp), allocatable :: layer_top(:), layer_bottom(:)   !< [m] the soil maps' layers, positive down
       real(wp), allocatable :: soil_depth(:)              !< [m] (cell) the soil column's depth
       real(wp), allocatable :: bc_class(:)                !< [-] (cell) its bottom water boundary, BC_*
+      real(wp), allocatable :: f_leak(:)                  !< [-] (cell) a leaky base's drainage factor
       real(wp), allocatable :: deep_temp(:)               !< [K] (cell) the deep soil temperature
       type(soil_texture_t), allocatable :: texture(:,:)   !< (map layer, cell) each layer's soil
       real(wp), allocatable :: chave_e(:)                 !< [-] (cell) Chave et al. (2014)'s E
@@ -124,8 +124,9 @@ contains
 
    !=======================================================================================!
    !  read_map_inputs -- every [maps] map at every cell: the soil depth map's depth,      !
-   !  bottom boundary and deep temperature, the texture and chemistry maps' layers, and the      !
-   !  Chave map's E. A map that cannot be read, or that holds no value at a cell, is an error:    !
+   !  bottom boundary, leaky drainage factor and deep temperature, the texture and chemistry      !
+   !  maps' layers, and the Chave map's E. A map that cannot be read, or that holds no value at   !
+   !  a cell, is an error (so is a leaky base whose f_leak is outside (0, 1]):                    !
    !  msg says which map, which variable and which cell, and is '' when every value is there.     !
    !=======================================================================================!
    subroutine read_map_inputs(opts, static_path, cells, inp, msg)
@@ -146,6 +147,16 @@ contains
          do k = 1_ik, cells%ncell
             if (all(nint(inp%bc_class(k), ik) /= [BC_FREE_DRAIN, BC_LEAKY, BC_SEALED, BC_AQUIFER])) then
                msg = 'soil map '//trim(opts%soil_depth_map)//': bc_class is not 1-4 at '//cell_name(k)
+               return
+            end if
+         end do
+         call need(opts%soil_depth_map, 'f_leak', '', v) ; if (len(msg) > 0) return
+         inp%f_leak = v(1, :)
+         do k = 1_ik, cells%ncell
+            if (nint(inp%bc_class(k), ik) == BC_LEAKY .and. .not. (inp%f_leak(k) > 0.0_wp .and.           &
+                                                                  inp%f_leak(k) <= 1.0_wp)) then
+               msg = 'soil map '//trim(opts%soil_depth_map)//': f_leak is not in (0, 1] at '//cell_name(k)// &
+                     ', whose base is leaky'
                return
             end if
          end do
@@ -250,8 +261,9 @@ contains
    !    deepest map layer (2 m) the deepest one. Its curve and Ks come from the pedotransfer     !
    !    function, its thermal properties from the same texture (docs/science/soil_biophysics.md  !
    !    §The column from the soil maps).                                                         !
-   !  * The bottom water boundary is the map's: free_drain, bedrock for a sealed base, aquifer;  !
-   !    a leaky base runs as free_drain (see docs/ROADMAP.md).                                    !
+   !  * The bottom water boundary is the map's: drainage with f = 1 on a free-draining base, the  !
+   !    map's f_leak on a leaky one and 0 on a sealed one, or the aquifer                          !
+   !    (docs/science/soil_biophysics.md §Boundary conditions).                                   !
    !  * The Dirichlet thermal anchor sits at the map's deep temperature, annual_damping_depth /  !
    !    sqrt(2) below the bottom node, where it reflects the annual wave least                    !
    !    (docs/science/soil_biophysics.md eq. (13)).                                               !
@@ -284,9 +296,10 @@ contains
             sc%n_layer_values = n
          end associate
          select case (nint(inp%bc_class(k), ik))
-         case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_BEDROCK
          case (BC_AQUIFER) ; cfg%soil%bottom_bc = SOIL_BC_AQUIFER
-         case default      ; cfg%soil%bottom_bc = SOIL_BC_FREE_DRAIN     ! free_drain, and leaky
+         case (BC_LEAKY)   ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = inp%f_leak(k)
+         case (BC_SEALED)  ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 0.0_wp
+         case default      ; cfg%soil%bottom_bc = SOIL_BC_DRAIN ; cfg%soil%drain_factor = 1.0_wp
          end select
          call soil_column_params(cfg%soil_column, soil)
          cfg%energy%deep_temp  = inp%deep_temp(k)

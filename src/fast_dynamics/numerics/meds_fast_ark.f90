@@ -23,7 +23,7 @@
 ! build_column_frozen): the stages move theta at its steady rate, plant water is advanced  !
 ! at its rates once per step, and the end-of-step theta and pond are committed from it     !
 ! once per dt_fast. Whole-column water and energy close to round-off on every bottom BC    !
-! (free-drain, bedrock, aquifer; docs/science/numerical_scheme.md §5b); see                !
+! (drainage, free to sealed, or aquifer; docs/science/numerical_scheme.md §5b); see        !
 ! meds_budget_check and the ledgers at the end of column_fast_step_ark.                    !
 !==========================================================================================!
 module meds_fast_ark
@@ -320,8 +320,8 @@ contains
       !      n_fail counters still run). -----------------------------------------------------------------!
       halt_budgets = col_config%energy%debug_error .and. mask_is_full(col_config%mask)
 
-      !----- All three bottom BCs are pure boundary conditions with no prognostic state behind them      !
-      !      (bedrock, free drainage, a head-driven aquifer); the water network takes each as a boundary  !
+      !----- The bottom BCs are pure boundary conditions with no prognostic state behind them (drainage, !
+      !      free to sealed, or a head-driven aquifer); the water network takes each as a boundary       !
       !      flow, and the ARK commits its theta. -----------------------------------------------------!
       w_surface0 = biophys%soil_w%w_surface
 

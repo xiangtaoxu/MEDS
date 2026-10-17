@@ -12,7 +12,8 @@
 ! The [maps] inputs: a run cell the soil maps leave empty is named; every value is read at        !
 ! its own cell; a column layer takes the map layers it overlaps, weighted by the overlap, and below  !
 ! the deepest map layer that layer's soil; the bottom boundary and the thermal anchor follow the map !
-! (the anchor's distance is docs/science/soil_biophysics.md eq. (13)).                                !
+! (the anchor's distance is docs/science/soil_biophysics.md eq. (13)): a leaky base drains at its    !
+! cell's f_leak, a free one at 1 and a sealed one at 0, and a leaky f_leak outside (0, 1] is refused. !
 ! The work directory is the first argument.                                                          !
 !==========================================================================================!
 program test_surface_maps
@@ -20,7 +21,7 @@ program test_surface_maps
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
    use meds_test_era5land_archive, only : NLAT, NLON, write_static, write_map, write_surface_maps,     &
-                                          soil_depth_at, bc_class_at, deep_temp_at, chave_e_at,         &
+                                          soil_depth_at, bc_class_at, f_leak_at, deep_temp_at, chave_e_at, &
                                           texture_at, SG_TOP, SG_BOTTOM
    use meds_forcing_types,         only : met_cells_t
    use meds_era5land_reader,       only : era5land_select_box, era5land_keep_cells, ERA_OK
@@ -31,8 +32,7 @@ program test_surface_maps
    use meds_maps_opts,          only : maps_opts_t
    use meds_pedotransfer,          only : soil_texture_t, soil_hydraulics_from_texture,               &
                                           soil_thermal_from_texture
-   use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER,          &
-                                          annual_damping_depth
+   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER, annual_damping_depth
    implicit none
 
    real(wp), parameter :: FILL = -9999.0_wp
@@ -160,6 +160,7 @@ program test_surface_maps
       r = masked%row(k) ; c = masked%col(k)
       t5 = texture_at(3_ik, r, c) ; t6 = texture_at(6_ik, r, c)
       ok = ok .and. close(inp%soil_depth(k), soil_depth_at(r, c)) .and. nint(inp%bc_class(k)) == bc_class_at(r, c) &
+              .and. close(inp%f_leak(k), f_leak_at(r, c))                                                         &
               .and. close(inp%deep_temp(k), deep_temp_at(r, c)) .and. close(inp%chave_e(k), chave_e_at(r, c))       &
               .and. close(inp%texture(3, k)%clay, t5%clay) .and. close(inp%texture(6, k)%ph, t6%ph)
    end do
@@ -192,8 +193,9 @@ program test_surface_maps
       call check_true('a layer on one map layer takes that layer''s soil', close(sc%layer_theta_sat(2), ts) &
                       .and. close(sc%layer_ksat(2), ks))
    end associate
-   call check_true('a leaky bottom runs as free_drain', bc_class_at(1_ik, 0_ik) == 2_ik .and.      &
-                   cfg%soil%bottom_bc == SOIL_BC_FREE_DRAIN)
+   call check_true('a leaky bottom drains at its cell''s f_leak', bc_class_at(1_ik, 0_ik) == 2_ik .and. &
+                   cfg%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg%soil%drain_factor == f_leak_at(1_ik, 0_ik) &
+                   .and. f_leak_at(1_ik, 0_ik) < 1.0_wp)
    call check_true('the thermal anchor: the map''s temperature, d/sqrt(2) below the bottom node',          &
                    close(cfg%energy%deep_temp, deep_temp_at(1_ik, 0_ik)) .and.                            &
                    close(cfg%energy%deep_depth, 0.85_wp + annual_damping_depth / sqrt(2.0_wp)))
@@ -212,18 +214,28 @@ program test_surface_maps
    call check_true('a layer below the maps'' 2 m takes the deepest map layer''s soil',                     &
                    cfg2%soil_column%n_layer_values == 8_ik .and. close(cfg2%soil_column%layer_theta_sat(8), ts) &
                    .and. close(cfg2%soil_column%layer_curve_par_n(8), vn))
-   call check_true('a free-draining bottom', bc_class_at(3_ik, 17_ik) == 1_ik .and.                       &
-                   cfg2%soil%bottom_bc == SOIL_BC_FREE_DRAIN)
+   call check_true('a free-draining bottom drains at f = 1', bc_class_at(3_ik, 17_ik) == 1_ik .and.     &
+                   cfg2%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 1.0_wp)
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 3_ik) exit
    end do
    call apply_map_inputs(inp, k, cfg2)
-   call check_true('a sealed bottom runs as bedrock', cfg2%soil%bottom_bc == SOIL_BC_BEDROCK)
+   call check_true('a sealed bottom drains at f = 0, as bedrock',                                       &
+                   cfg2%soil%bottom_bc == SOIL_BC_DRAIN .and. cfg2%soil%drain_factor == 0.0_wp)
    do k = 1_ik, cells%ncell
       if (bc_class_at(cells%row(k), cells%col(k)) == 4_ik) exit
    end do
    call apply_map_inputs(inp, k, cfg2)
    call check_true('an aquifer bottom is an aquifer', cfg2%soil%bottom_bc == SOIL_BC_AQUIFER)
+
+   !----- A leaky base's factor must be a fraction of free drainage: f_leak = 0 is refused, naming   !
+   !      the cell. ------------------------------------------------------------------------------------!
+   call write_surface_maps(trim(work)//'/surface_f0', f_leak=0.0_wp)
+   opts%soil_depth_map     = trim(work)//'/surface_f0/soil_depth.nc'
+   call read_map_inputs(opts, static, cells, inp, msg)
+   call check_true('a leaky base with f_leak = 0 is refused, naming the cell',                          &
+                   index(msg, 'f_leak is not in (0, 1] at the cell (25.00, 120.00) (row 2, col 15), '//   &
+                         'whose base is leaky') > 0)
 
    call test_report('test_surface_maps')
 

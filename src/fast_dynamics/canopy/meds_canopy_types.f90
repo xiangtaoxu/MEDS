@@ -114,7 +114,7 @@ module meds_canopy_types
    !----- Per-patch canopy geometry. -------------------------------------------------------!
    type :: aero_geom_t
       real(wp) :: veg_height   = 20.0_wp            !< [m]  canopy top height
-      real(wp) :: opencan_frac = 0.0_wp             !< [-]  open-sky fraction (0 = closed canopy)
+      real(wp) :: opencan_frac = 0.0_wp             !< [-]  open fraction W = exp(-(LAI+WAI)): 1 bare, 0 dense
       real(wp) :: snowfac      = 0.0_wp             !< [-]  snow burial fraction of the canopy
    end type aero_geom_t
 

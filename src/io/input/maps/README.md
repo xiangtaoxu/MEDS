@@ -28,6 +28,6 @@ The design is `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP2, RP3).
 - **The input maps** (`[maps]`): `meds_region` reads them for every polygon once and gives each
   polygon its cell's; `meds_driver` reads them at a site's forcing cell. A run cell a map leaves empty
   is an error that names the map, the variable and the cell (OR17). The products' variable names are
-  fixed here: ED-SoilMaps v2 (`soil_depth`, `bc_class`, `deep_temp`; `sand`, `silt`, `clay`,
+  fixed here: ED-SoilMaps v2 (`soil_depth`, `bc_class`, `f_leak`, `deep_temp`; `sand`, `silt`, `clay`,
   `bulk_density`, `coarse_fragments`; `organic_carbon`, `cec`, `ph_h2o`, on `depth` with `depth_bnds`)
   and Chave et al. (2014)'s `chave_e`.

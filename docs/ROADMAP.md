@@ -313,12 +313,14 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   - a cell mask, each polygon's soil and Chave E from the `[maps]` files, and a seeded
     bare-ground start (`pft.nbg_init_density`);
   - region state files and restarts;
-  - every variable and tier in the region's one file set (`detail_polygons` retired).
+  - every variable and tier in the region's one file set (`detail_polygons` retired);
+  - *done in beta:* the soil maps' leaky bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401)), one drainage factor $f$ for
+    every draining base ($`q = f\,K`$: free 1, leaky the map's `f_leak`, sealed 0), carried per polygon in
+    the region files.
 
   Not planned: tiles, launchers and MPI; a larger area runs as several regions, one node each.
   Still open:
   - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
-  - a leaky soil bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401));
   - the rest of the runtime consolidation ([#310](https://github.com/xiangtaoxu/MEDS/issues/310));
   - resuming a region from a state file without a failed cell ([#431](https://github.com/xiangtaoxu/MEDS/issues/431)): a restart must hold
     exactly the region's polygons, so a cell that fails cannot be masked out and the run resumed.
@@ -409,9 +411,12 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 Gaps and residues found in the 2026-10-17 annotation review.
 
-- **The snow-burial and open-canopy blends are inactive.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver
-  passes `snowfac = 0` and `opencan_frac = 0` to the aerodynamics, so the snow-burial roughness blend
-  and the open-canopy ground-conductance blend (`docs/science/canopy_aerodynamics.md` §1, §3) never act.
+- **Snow never buries the canopy.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver passes `snowfac = 0`
+  to the aerodynamics, so a pack never lowers the roughness and displacement
+  (`docs/science/canopy_aerodynamics.md` §1) and never raises the ground conductance's open fraction
+  (§3, CLM's exposed leaf and wood area). Trigger: the first snowy site. The open-canopy half is *done
+  in beta*: each patch's open fraction exp(−(LAI + WAI)) blends the bare-soil and dense-canopy ground
+  conductances, as CLM does, so a patch without cohorts couples its ground as bare soil.
 - **Ground optics are bare soil plus snow.** *Candidate.* [#411](https://github.com/xiangtaoxu/MEDS/issues/411) Litter, standing water and soil moisture
   do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
 - **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412) No maintenance respiration on

@@ -49,7 +49,7 @@ module meds_config_io
    use meds_pft_params, only : alloc_pft_table
    use meds_biophysics_opts, only : ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
+                                    SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_biogeochem_opts, only : decomp_opts_t, DECOMP_STEP_EULER, DECOMP_STEP_EXPM,            &
                                     DECOMP_SCHEME_ED2, DECOMP_SCHEME_CENTURY5
    use meds_toml,       only : toml_table_t, toml_parse_file, toml_has, toml_has_section,    &
@@ -217,10 +217,12 @@ contains
       character(len=64) :: str
       if (toml_has(tm, 'soil.bottom_bc')) then
          str = toml_string(tm, 'soil.bottom_bc', '')
+         !----- free_drain and bedrock are the drainage boundary's two ends, f = 1 and f = 0  !
+         !      (docs/science/soil_biophysics.md §Boundary conditions). ---------------------!
          select case (trim(str))
-         case ('free_drain') ; s%bottom_bc = SOIL_BC_FREE_DRAIN
+         case ('free_drain') ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 1.0_wp
+         case ('bedrock')    ; s%bottom_bc = SOIL_BC_DRAIN ; s%drain_factor = 0.0_wp
          case ('aquifer')    ; s%bottom_bc = SOIL_BC_AQUIFER
-         case ('bedrock')    ; s%bottom_bc = SOIL_BC_BEDROCK
          case default ; error stop 'load_meds_config: soil.bottom_bc must be free_drain|aquifer|bedrock'
          end select
       end if

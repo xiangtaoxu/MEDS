@@ -10,7 +10,7 @@ program test_biophysics_opts_config
    use meds_test_assert, only : check, check_true, test_report
    use meds_kinds,           only : wp, ik
    use meds_biophysics_opts, only : soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t,        &
-                                    SOIL_BC_AQUIFER,                                               &
+                                    SOIL_BC_AQUIFER, SOIL_BC_DRAIN,                                &
                                     ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    use meds_toml,            only : toml_table_t, toml_parse_file, toml_write_record
    use meds_config_io,       only : load_soil_opts, load_energy_opts, load_snow_params, load_aero_cfg
@@ -115,6 +115,32 @@ program test_biophysics_opts_config
                       e2%bottom_bc == ENERGY_BC_GEOTHERMAL, real(e2%bottom_bc, wp))
       open(newunit=u, file='test_biophysics_opts_empty.toml', status='old', action='write')
       close(u, status='delete')
+   end block
+
+   !----- The drainage boundary's two named ends (docs/science/soil_biophysics.md §Boundary         !
+   !      conditions): free_drain is drainage at f = 1, the default, and bedrock at f = 0. ------------!
+   block
+      type(toml_table_t) :: tb
+      type(soil_opts_t)  :: s_free, s_rock, s_default
+      logical            :: okb
+      character(len=*), parameter :: NAMES(2) = [character(len=10) :: 'free_drain', 'bedrock']
+      integer(ik) :: i
+      do i = 1_ik, 2_ik
+         open(newunit=u, file='test_biophysics_opts_bc.toml', status='replace', action='write')
+         write(u,'(a)') '[soil]'
+         write(u,'(3a)') 'bottom_bc = "', trim(NAMES(i)), '"'
+         close(u)
+         call toml_parse_file('test_biophysics_opts_bc.toml', tb, okb)
+         if (i == 1_ik) call load_soil_opts(tb, s_free)
+         if (i == 2_ik) call load_soil_opts(tb, s_rock)
+      end do
+      open(newunit=u, file='test_biophysics_opts_bc.toml', status='old', action='write')
+      close(u, status='delete')
+      call check_true('soil.bottom_bc "free_drain" -> drainage at f = 1, the default',                &
+                      s_free%bottom_bc == SOIL_BC_DRAIN .and. s_free%drain_factor == 1.0_wp .and.     &
+                      s_default%bottom_bc == SOIL_BC_DRAIN .and. s_default%drain_factor == 1.0_wp)
+      call check_true('soil.bottom_bc "bedrock" -> drainage at f = 0',                                &
+                      s_rock%bottom_bc == SOIL_BC_DRAIN .and. s_rock%drain_factor == 0.0_wp)
    end block
 
    !----- The parameter record: every key the loaders read, set or defaulted, and no key they did   !

@@ -23,7 +23,7 @@ program test_column_dynamics
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
    use meds_water_retention, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN
    use meds_canopy_types, only : set_aero_env_atm, set_aero_env_canopy
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max
@@ -300,7 +300,8 @@ program test_column_dynamics
    !=====================================================================================!
    theta_seed = 0.425_wp                          ! just below theta_sat = 0.43
    rain_pulse = 2.0e-3_wp                         ! heavy: far above what a sealed column can absorb
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_BEDROCK         ! sealed: the water has nowhere to drain
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN           ! sealed: the water has nowhere to drain
+   col_config%soil_water_opts%drain_factor = 0.0_wp
    call integrate_day()
    call check_true('SATURATED: the column reached theta_sat (saturation path is live)',                               &
            theta_peak_col >= 0.43_wp - 1.0e-12_wp, theta_peak_col)
@@ -340,7 +341,7 @@ program test_column_dynamics
    !  enthalpy or sublimation vapour shows up directly in the residual as an unpaired term.   !
    !=====================================================================================!
    theta_seed = theta0 ; rain_pulse = 0.0_wp      ! no rain: snowfall is the only water input
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    !----- seeded deep enough that the pack SURVIVES the day under every scheme. A pack that ends   !
    !      near zero makes a "pack still present" assertion test the last few percent of the melt   !
    !      energy rather than the wiring. A surviving pack lets the schemes be compared on melt     !
@@ -457,7 +458,7 @@ program test_column_dynamics
    !  difference. The first pass (the default scheme) is the reference the others are compared to.   !
    !=====================================================================================!
    snow_seed = 60.0_wp ; rain_pulse = 0.0_wp ; theta_seed = theta0
-   col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+   col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    snowf_total = 2.0e-5_wp * real(nstep, wp) * dt_fast     ! [kg/m2] the day's frozen-rainfall input
    do isch = 1_ik, 3_ik
       select case (isch)

@@ -183,6 +183,28 @@ before and after.
   RUN 8b and 9b do. Every test passes on ifx Release, ifx Debug and gfortran, and results are
   byte-identical.
 
+- **One drainage factor for the soil's bottom, and the soil maps' leaky base drains as the map says**
+  (#401). Free drainage and bedrock were two cases of `bottom_flux`; they are now the two ends of one,
+  q = f K(θ_N) with f = `soil_opts_t%drain_factor` (`docs/science/soil_biophysics.md`, Boundary
+  conditions): `[soil].bottom_bc = "free_drain"` is f = 1 and `"bedrock"` f = 0, and the aquifer stays
+  its own case. The selectors `SOIL_BC_FREE_DRAIN` and `SOIL_BC_BEDROCK` become one, `SOIL_BC_DRAIN`;
+  the config names are unchanged. A leaky base in the ED soil maps (`bc_class` 2: half the map's cells,
+  82 % of example 06's box) drains at the cell's `f_leak` (0.05 everywhere in ED-SoilMaps v2), where it
+  ran as free drainage, 20 times faster than the map intends. The soil depth map must hold `f_leak`,
+  and a leaky cell whose `f_leak` is outside (0, 1] stops the run, naming the cell. A region's files
+  carry each polygon's `drain_factor` (the fill value on an aquifer), and their `bottom_bc` is 1 for
+  drainage and 2 for an aquifer (a sealed polygon was 3; it is now 1 with `drain_factor` 0). Free-
+  draining site runs, every shipped one, are byte-identical, and so are sealed and aquifer polygons.
+  Before → after, a 3 × 3-cell box of example 06's domain (11.85–12.15° N, 85.85–86.15° W; its 7 land
+  cells all leaky, 1.0–1.6 m of soil), example 05's Palo Verde regrowth from bare ground, the first 5
+  years: drainage 218 → 163 mm yr⁻¹ (−25 %), ET 971 → 1014 mm yr⁻¹ (+4.4 %), column water 0.287 →
+  0.296 m³ m⁻³ (the deepest layer 0.277 → 0.289), LAI 3.38 → 3.59, GPP +4.6 %, AGB +4.1 %.
+  `test_column_hydrology` checks that f = 1 and f = 0 give free drainage and bedrock bit for bit, that
+  the flux scales by f, and that a leaky column's water closes against its drainage;
+  `test_surface_maps` reads each cell's `f_leak` and refuses f_leak = 0 on a leaky cell; `test_region`
+  runs its leaky polygon at its cell's `f_leak` and reads every polygon's `drain_factor` from the
+  region files; `test_biophysics_opts_config` loads the two names.
+
 ### Removed
 
 - **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and
@@ -337,6 +359,47 @@ before and after.
   is the same at 101.3 and 70 kPa, at 25 and 35 °C, and 42.75 at 25 °C; Kc and Ko scale as 1/P),
   `test_c_api_leaf`, `python/tests/test_leaf.py` (the same, and the primitives compose to the solver
   at 70 kPa) and `test_calibrate_fast`.
+
+- **The ground couples to the canopy air through the open canopy, as in CLM** (#410). The
+  ground↔canopy-air conductance blended a bare-soil and a dense-canopy term in ED2's series form by an
+  open fraction the driver always passed as 0, so every patch, a cohort-free gap or a sparse regrowing
+  stand among them, coupled its ground as under a closed canopy. Each patch's open fraction
+  W = exp(−(LAI + WAI)) now weighs the two linearly, as CLM does (`docs/science/canopy_aerodynamics.md`
+  eq. (6), `open_canopy_fraction`): a patch without cohorts couples its ground like bare soil, and at
+  LAI 6 (W ≈ 0.0025) the dense form sets it. Snow still never buries the canopy (`snowfac = 0`, see
+  `docs/ROADMAP.md`). The bare-ground coupling, ~17 times stiffer, exposed an overshoot in the snow
+  pack's energy step, which evaluated its fluxes at a linearized temperature, and on the melt plateau
+  explicitly at 0 °C: in `test_region`'s January start from bare ground a 0.25 kg m⁻² pack went from
+  243 K to 91 K and below 0 K in three steps. `snow_energy_step` is now a linearized backward-Euler
+  step on the pack's enthalpy, solved in closed form on the ice line, the melt plateau or the liquid
+  line (`docs/science/snow_biophysics.md`), so a thin pack relaxes to its balance and stops there.
+  Before → after (period means; the ground's sensible heat and evaporation from an instrumented copy
+  of both builds):
+  - BCI regeneration from bare ground, its first 5 years (`meds_config_regeneration.toml`): ground
+    conductance 8.0×10⁻⁴ → 1.33×10⁻² m s⁻¹; ground sensible heat 6.6 → 18.6 W m⁻², ground evaporation
+    28.0 → 54.1 W m⁻²; top-soil temperature 306.1 → 300.2 K (column −4.5 K); ET 791 → 1092 mm yr⁻¹,
+    drainage −14 %, soil water −0.9 %; GPP +6.5 %, LAI 0.91 → 0.97, AGB +11 %.
+  - Palo Verde's inventory run (2008-07 → 2011-01, LAI 4.4): ground conductance 1.3 → 4.0×10⁻³ m s⁻¹;
+    ground sensible heat 4.1 → 8.5 W m⁻², ground evaporation 4.7 → 5.8 W m⁻²; site H 49.7 → 51.3 W m⁻²
+    (+3.2 %), LE 79.4 → 80.3 W m⁻² (+1.1 %); top soil −0.86 K, soil water −0.07 %; LAI +0.3 %, GPP
+    +0.3 %.
+  - BCI, example 04's calibrated run from the census to its window (2012-08 → 2016-04, LAI 5.6): ground
+    conductance +38 % (its gaps); site H −0.14 W m⁻² (−0.2 %), LE +0.71 W m⁻² (+1.05 %); top soil
+    −0.21 K, soil water −0.09 %; LAI +0.02 %, GPP +0.03 %. Its ten-day window (2016-04-20 → 05-01):
+    H and LE +0.4 %, top soil −0.20 K.
+
+  `test_aerodynamics` checks the two limits exactly, the monotone rise between and W itself;
+  `test_snow` adds a cold pack under warm air and a melting pack under cold dry air, each at a
+  bare-ground conductance, which the old step drove hundreds of kelvin past their balance.
+
+- **`region_free` closes what an opened region holds** (#439). It freed the polygons only, so a region
+  freed without `region_finalize` kept its forcing source's month index allocated and its output files
+  open, and opening the same variable again stopped with "allocatable array is already allocated" in
+  `open_archive`. It now closes the output files (a period still open is not written; finalizing
+  writes it) and the forcing source, frees the polygons and leaves the variable as a region never
+  opened. `meds_main` finalizes before it frees, so runs are unchanged. `test_region` opens a region,
+  frees it without finalizing, opens and steps it again in the same variable, and resumes its masked
+  region in that variable too, without the second one it kept for this.
 
 ### Documentation
 
