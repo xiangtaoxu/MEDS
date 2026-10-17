@@ -293,6 +293,16 @@ before and after.
   always reads its files, and one used after another re-reads its own. The module docstring no
   longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
   path and sees the change.
+- **Cohorts of one height are one wind layer** (found by #349's split test). The in-canopy wind
+  cascade (`canopy_aerodynamics.md` eq. (8)) walked cohort by cohort, so of two cohorts of one height
+  the one sorted first sat above the other and took its wind away, while the radiation already treats
+  them as one layer. A cohort split into two at half the density met different winds: 0.045 K between
+  the two halves' leaves in `test_fast_loop`. Tied cohorts now share one layer: each meets the wind of
+  the layer's summed leaf area at its mid-crown, and the layer below sees the wind under the whole
+  layer. A canopy with no ties is byte-identical. Recruits tie bit-exactly, so regrowth moves:
+  example 05's BCI regrowth from bare ground (1600-1601) GPP −0.13 %, LAI −0.14 % (end −0.17 %),
+  70 cohorts at the end instead of 72; example 04 (2012-08-01..20, ARK) ET −0.03 %, H +0.06 %;
+  Palo Verde's inventory month unchanged to 0.001 %. `test_aerodynamics` splits a crown in two.
 
 ### Documentation
 

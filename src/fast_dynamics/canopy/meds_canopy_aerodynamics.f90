@@ -100,8 +100,8 @@ contains
       real(wp),          intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)
       type(aero_out_t),  intent(inout) :: out
 
-      real(wp)    :: rough, displace, zldis, uh, stab, denom
-      integer(ik) :: ico
+      real(wp)    :: rough, displace, zldis, uh, stab, denom, lai_layer
+      integer(ik) :: ico, ico0
 
       !----- 1. Roughness + displacement from canopy height (snow blend). ------------------!
       call canopy_roughness(cfg, geom, rough, displace)
@@ -141,13 +141,23 @@ contains
                      / (out%ggveg + (1.0_wp - geom%opencan_frac) * out%ggbare + tiny_num)
       end if
 
-      !----- 4. In-canopy wind: top-of-canopy wind, then extinction through each cohort's closed    !
-      !      crowns, top -> bottom (docs/science/canopy_aerodynamics.md eq. (8)). -------------------!
+      !----- 4. In-canopy wind: top-of-canopy wind, then extinction through each layer's closed      !
+      !      crowns, top -> bottom (docs/science/canopy_aerodynamics.md eq. (8)). Cohorts of one height !
+      !      are one layer, as in the radiation: each sees the wind of the layer's summed leaf area,   !
+      !      so a cohort split into two of half the density meets the wind the whole one does.        !
+      !      Heights arrive ascending, so a layer's cohorts are consecutive. -----------------------!
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
-      do ico = n, 1_ik, -1_ik
-         out%wind(ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai(ico)))   ! wind at crown mid-depth
-         uh            = uh * safe_exp(-0.50_wp * lai(ico))                     ! attenuate for the cohort below
+      ico = n
+      do while (ico >= 1_ik)
+         ico0 = ico ; lai_layer = lai(ico)
+         do while (ico0 > 1_ik)
+            if (height(ico0 - 1_ik) /= height(ico)) exit
+            ico0 = ico0 - 1_ik ; lai_layer = lai_layer + lai(ico0)
+         end do
+         out%wind(ico0:ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai_layer))   ! wind at crown mid-depth
+         uh                 = uh * safe_exp(-0.50_wp * lai_layer)                     ! attenuate for the layer below
+         ico = ico0 - 1_ik
       end do
 
       !----- 5. Per-cohort leaf (flat plate) + wood (cylinder) boundary layers [m/s]. ------!
