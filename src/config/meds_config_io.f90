@@ -316,7 +316,6 @@ contains
                           trim(toml_string(tm, 'soil_carbon.decomp_scheme', 'ed2')) == 'century5')
       s%step_solver   = merge(DECOMP_STEP_EXPM, DECOMP_STEP_EULER,                                 &
                           trim(toml_string(tm, 'soil_carbon.step_solver', 'euler')) == 'expm')
-      s%n_cycle_on    = toml_logical(tm, 'soil_carbon.n_cycle_on', s%n_cycle_on)
       s%k_fast   = toml_real(tm, 'soil_carbon.k_fast',   s%k_fast)
       s%k_struct = toml_real(tm, 'soil_carbon.k_struct', s%k_struct)
       s%k_micr   = toml_real(tm, 'soil_carbon.k_micr',   s%k_micr)
@@ -336,8 +335,6 @@ contains
       s%fx_micr_pass_slp = toml_real(tm, 'soil_carbon.fx_micr_pass_slp', s%fx_micr_pass_slp)
       s%fx_slow_pass_int = toml_real(tm, 'soil_carbon.fx_slow_pass_int', s%fx_slow_pass_int)
       s%fx_slow_pass_slp = toml_real(tm, 'soil_carbon.fx_slow_pass_slp', s%fx_slow_pass_slp)
-      s%agf_fast   = toml_real(tm, 'soil_carbon.agf_fast',   s%agf_fast)
-      s%agf_struct = toml_real(tm, 'soil_carbon.agf_struct', s%agf_struct)
       s%rh_q10                = toml_real(tm, 'soil_carbon.rh_q10',                s%rh_q10)
       s%rh_t_ref              = toml_real(tm, 'soil_carbon.rh_t_ref',              s%rh_t_ref)
       s%resp_temp_increase    = toml_real(tm, 'soil_carbon.resp_temp_increase',    s%resp_temp_increase)
@@ -345,10 +342,6 @@ contains
       s%resp_opt_water        = toml_real(tm, 'soil_carbon.resp_opt_water',        s%resp_opt_water)
       s%resp_water_below_opt  = toml_real(tm, 'soil_carbon.resp_water_below_opt',  s%resp_water_below_opt)
       s%resp_water_above_opt  = toml_real(tm, 'soil_carbon.resp_water_above_opt',  s%resp_water_above_opt)
-      s%c2n_structural = toml_real(tm, 'soil_carbon.c2n_structural', s%c2n_structural)
-      s%c2n_slow       = toml_real(tm, 'soil_carbon.c2n_slow',       s%c2n_slow)
-      s%c2n_fast       = toml_real(tm, 'soil_carbon.c2n_fast',       s%c2n_fast)
-      s%n_immobil_supply_scale = toml_real(tm, 'soil_carbon.n_immobil_supply_scale', s%n_immobil_supply_scale)
    end subroutine load_soil_carbon_opts
 
    subroutine req_temp_response(t, key, mode, m)    ! temperature-response string -> TRESP_* mode

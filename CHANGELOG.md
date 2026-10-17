@@ -151,6 +151,19 @@ before and after.
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
 
+### Removed
+
+- **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and
+  the code no longer pretends otherwise: the always-zero nitrogen twin of the soil pools and of the
+  litter input (`soil_carbon_t`'s five N fields, `litter_input_t`'s four), their area blends, the
+  `n_cycle_on` switch and the decomposition's `f_decomp` placeholder (identically 1) are gone. The
+  keys `n_cycle_on`, `c2n_structural`, `c2n_slow`, `c2n_fast` and `n_immobil_supply_scale` are retired
+  and refused, saying the nitrogen cycle is not built and is planned after the move to ED-MORE; so are
+  `agf_fast` and `agf_struct`, which no kernel read, saying the litter is split by tissue with each
+  PFT's `f_labile_leaf`, `f_labile_stem` and `aboveground_frac`. The state file never carried the N
+  fields, and no output variable read them. `test_config_keys` checks the refusals. Results are
+  byte-identical.
+
 ### Fixed
 
 - **A fused cohort's diagnostic leaf and wood temperatures weight on heat capacity** (#409). The cohort

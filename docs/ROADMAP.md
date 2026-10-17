@@ -69,18 +69,15 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
 Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
 [`science/soil_carbon.md`](science/soil_carbon.md).
 
-- **The nitrogen twin.** *Planned.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) Shaped in already: `n_cycle_on` is parsed and the N fields
-  exist on `soil_carbon_t`, but no kernel reads the flag and the restart skips the fields.
-  Needs the decomposition N limitation (`f_decomp`), the mineralization/immobilization flux, and
-  N limitation of NPP on the plant side.
+- **The nitrogen cycle.** *Planned, after the move to ED-MORE.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) MEDS is
+  carbon-only: the inert nitrogen fields and keys were removed (#418). Nitrogen and its coupling to
+  carbon come after the move to ED-MORE: the soil's nitrogen pools, the decomposition N limitation, the
+  mineralization/immobilization flux, and N limitation of NPP on the plant side.
 - **Vertically resolved soil-carbon pools.** *Candidate.* [#155](https://github.com/xiangtaoxu/MEDS/issues/155) The `n = 1` layer is the degenerate
   case of the intended profile.
 - **An explicit coarse woody debris pool.** *Candidate.* [#156](https://github.com/xiangtaoxu/MEDS/issues/156) Today treefall necromass enters the
   structural pools directly.
 - **Fire consumption of the ground pools.** *Candidate.* [#157](https://github.com/xiangtaoxu/MEDS/issues/157) No fire anywhere in MEDS.
-- **`[soil_carbon]` keys that are read but drive nothing.** *Candidate.* [#418](https://github.com/xiangtaoxu/MEDS/issues/418) `agf_fast` and
-  `agf_struct` are never used (the litter is partitioned by tissue), and the nitrogen keys wait for
-  #154; refuse them or document them as inert.
 
 ---
 

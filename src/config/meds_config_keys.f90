@@ -44,6 +44,10 @@ module meds_config_keys
    character(len=*), parameter :: SOIL_NETWORK = 'soil water is solved with the plants'' water as '// &
       'one network (implicit Euler, Newton, its own sub-steps), whose error is set by [soil].rtol '// &
       'and [soil].atol; the Richards solver''s linearization and sub-step controls are gone'
+   character(len=*), parameter :: NITROGEN = 'the nitrogen cycle is not built; it is planned after '// &
+      'the move to ED-MORE, and MEDS is carbon-only until then: delete the key'
+   character(len=*), parameter :: LITTER_SPLIT = 'the litter is split by the tissue it comes from, with '// &
+      'each PFT''s f_labile_leaf, f_labile_stem and aboveground_frac; delete the key'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -169,6 +173,13 @@ module meds_config_keys
       retired_key_t('pft.growth_dbh_cap',   GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_dbh_max',   GROWTH_CURVE_GONE),                                  &
       retired_key_t('pft.growth_lai_slope', GROWTH_CURVE_GONE),                                  &
+      retired_key_t('soil_carbon.agf_fast', LITTER_SPLIT),                                      &
+      retired_key_t('soil_carbon.agf_struct', LITTER_SPLIT),                                    &
+      retired_key_t('soil_carbon.n_cycle_on', NITROGEN),                                        &
+      retired_key_t('soil_carbon.c2n_structural', NITROGEN),                                    &
+      retired_key_t('soil_carbon.c2n_slow', NITROGEN),                                          &
+      retired_key_t('soil_carbon.c2n_fast', NITROGEN),                                          &
+      retired_key_t('soil_carbon.n_immobil_supply_scale', NITROGEN),                            &
       retired_key_t('region.detail_polygons', 'the region files hold every variable and tier for '// &
                     'every polygon, cohort, patch and sub-daily output included; choose the '//      &
                     'variables with [output].io_config') ]

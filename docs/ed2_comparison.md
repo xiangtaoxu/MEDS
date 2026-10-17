@@ -131,7 +131,7 @@ decision to leave the shipped baseline.
 | **Ground evaporation** | Dry-surface-layer resistance formulation | `IED_GRNDVAP` 0–5, default 0 (modified Lee–Pielke) | Different formulation. |
 | **Interception** | Per-cohort Beer-law interception with a per-PAI storage capacity | `LEAF_MAXWHC` | Comparable. |
 | **Soil biogeochemistry** | CENTURY reorganised as an explicit carbon matrix ODE: 7 pools (metabolic and structural litter × above/below, microbial, slow, passive) with a lignin sub-tracer; daily forward Euler on the fast loop's accumulated environmental scalar; exact matrix-exponential and a SASU steady-state solve for spin-up. **On by default** | `DECOMP_SCHEME` 0–5, default 2 (CENTURY-like, 3 active pools); scheme 5 is the 5-pool Bolker CENTURY | MEDS's pool structure corresponds to ED2's `DECOMP_SCHEME = 5`. The matrix form is what makes the fast-loop heterotrophic respiration and the daily pool debit agree **by construction** — the seam closes to ~1e-13. The SASU steady-state solve has no ED2 equivalent and is a real spin-up accelerator. |
-| **Nitrogen** | Scaffolded in the types, **not active** (carbon-only) | `N_PLANT_LIM`, `N_DECOMP_LIM` | |
+| **Nitrogen** | **Not built** (carbon-only); planned after the move to ED-MORE | `N_PLANT_LIM`, `N_DECOMP_LIM` | |
 
 ---
 

@@ -49,9 +49,9 @@ through `f_labile_stem`, ED2's convention.
 
 The structural pools carry a **lignin sub-tracer** `struct_grnd_lignin` / `struct_soil_lignin`, bounded
 $`0\le L_s\le C_s`$. It is not an eighth pool — its carbon is already counted inside the structural
-pools, so it stays outside the mass vector and keeps its own balance (§6). The nitrogen twin is shaped
-into the type but inert (§10); `pack_pool_vector` / `unpack_pool_vector` marshal the named fields to
-and from the length-7 array the kernels use.
+pools, so it stays outside the mass vector and keeps its own balance (§6). There is no nitrogen
+(§10). `pack_pool_vector` / `unpack_pool_vector` marshal the named fields to and from the length-7
+array the kernels use.
 
 ## 3. The transfer matrix, and the respired complement
 
@@ -263,9 +263,9 @@ Euler step produces them routinely — and the ceiling catches divergence, not i
 
 ## 10. What is not here
 
-- **Nitrogen.** `soil_carbon_t` and `litter_input_t` carry N fields and `decomp_opts_t` the C:N ratios
-  and `n_cycle_on`, but **no kernel reads the flag**: $`f_{\mathrm{decomp}}\equiv1`$ and every N field
-  stays zero. The cycle is shaped in, not implemented.
+- **Nitrogen.** The soil is carbon-only: no nitrogen pools, no C:N stoichiometry, no nitrogen
+  limitation of decomposition or of plant growth. The nitrogen cycle and its coupling to carbon are
+  planned after the move to ED-MORE.
 - **DAMM, or any other respiration form.** The matrix form (§7) is the only heterotrophic
   respiration. Davidson's dual Arrhenius/Michaelis–Menten scheme (soluble-C and O₂ limitation, a
   unimodal moisture response *emergent* rather than imposed) is not available, nor are separate Q10
@@ -286,7 +286,6 @@ See `docs/ROADMAP.md` for where these stand.
 | `er_fast`, `er_struct_nonlig`, `er_struct_lig`, `er_slow`, `er_pass`, `e_lignin` | respired fractions + the lignin brake |
 | `er_micr_*`, `xsand`; `fx_micr_pass_*`, `fx_slow_pass_*`, `xclay` | scheme-5 texture control (sand → microbial respired fraction, clay → routing to passive) |
 | `rh_q10`, `rh_t_ref`, `resp_temp_increase`, `resp_temp_ref`, `resp_opt_water`, `resp_water_{below,above}_opt` | the $\xi$ responses, eqs. (3)–(4) |
-| `n_cycle_on`, `c2n_*`, `n_immobil_supply_scale` | nitrogen (shaped in, inert — §10) |
 | `spinup_steady`, `spinup_xi`, `spinup_{labile,struct}_*` | SASU cold start, §8 |
 
 The litter-partition traits are **per PFT**, not run constants: `f_labile_leaf`, `f_labile_stem`,
