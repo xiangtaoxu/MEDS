@@ -175,7 +175,7 @@ recycle_start  = "2003-01-01 01:00:00"
 recycle_end    = "2023-01-01 01:00:00"
 start_clamp    = "error"
 
-#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (/ibstorage/ED-Data/ED-SoilMaps). --
+#----- The soil: the forcing cell (10.4 N, 85.3 W) of the ED soil maps v2 (docs/configuration.md, Input maps). --
 [soil_carbon]
 soil_carbon_on = true             # starts empty; the start file carries no soil pools
 

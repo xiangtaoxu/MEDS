@@ -216,6 +216,16 @@ before and after.
 - **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
   #381, #393, #394, #395 and #407; the gaps the science pages name that had no issue are filed as
   #410–#415, and the defects and residues the review found but did not fix as #416–#425.
+- **Every example runs without the development cluster's data paths** (#430). Data the repository
+  does not hold are named on the command line or by an environment variable, and a script stops with
+  a message when one is missing, as example 06's do. Example 04's `run_example.py` reads the BCI census
+  tables from `--census-dir` (or `BCI_CENSUS_DIR`) and writes the folder into its copy of
+  `bci_census.toml`, whose paths are now placeholders. Example 05's `run_palo_verde.py` runs a copy of
+  `meds_config_inventory.toml` with `--era5-archive` (or `ERA5LAND_ARCHIVE`) as `[forcing].data_path`,
+  and stops without it unless `--skip-inventory`. Example 02's `make_era5_par_hours.py` takes
+  `--archive` or `ERA5LAND_ARCHIVE`, with no default (and now accepts a relative `--meds-main`).
+  The comments that named the authors' copies of the soil maps and Chave's E map name the maps instead.
+  Results are unchanged: the runs read the same files.
 
 ## [0.3.4] — 2026-10-13
 

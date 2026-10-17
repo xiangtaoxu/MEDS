@@ -177,8 +177,8 @@ kplastic_sla    = [0.199, 0.199, 0.199, 0.199]
 kplastic_llspan = [0.120, 0.120, 0.120, 0.120]
 
 # Height on Chave et al. (2014)'s pantropical curve (eq. 6a) with the stress index E of the Palo Verde
-# forcing cell (10.4 N, 85.3 W) in /ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc, Chave's own E raster
-# on the ERA5-Land grid; leaf area and biomass follow from the height.
+# forcing cell (10.4 N, 85.3 W) in Chave's own E raster on the ERA5-Land grid (example 06's chave_e_map);
+# leaf area and biomass follow from the height.
 [allometry]
 b1Ht       = 1.139963
 b2Ht       = 0.564899

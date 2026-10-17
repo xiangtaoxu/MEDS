@@ -1,7 +1,9 @@
 # Examples
 
 Self-contained example runs of MEDS, each in its own folder with the config, outputs, figures, and a
-README that shows how to reproduce it (run from the repository root):
+README that shows how to reproduce it (run from the repository root). Data the repository does not hold
+(the processed ERA5-Land archive, the BCI census tables, the soil maps) are named on the command line or
+by an environment variable, such as `ERA5LAND_ARCHIVE`; each README says which.
 
 - **[`example01_leaf_gas_exchange/`](example01_leaf_gas_exchange/)** — the leaf gas-exchange module
   on its own, driven from Python: C3 photosynthesis, Medlyn stomata and the coupled Cᵢ solve
