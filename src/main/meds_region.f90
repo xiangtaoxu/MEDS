@@ -25,7 +25,7 @@
 !==========================================================================================!
 module meds_region
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : day_sec
+   use meds_constants,              only : day_sec, area_tol
    use meds_numerics,               only : ascending_order
    use meds_config,                 only : meds_config_t, validate_config, INIT_RESTART
    use meds_config_io,              only : load_meds_config
@@ -418,7 +418,7 @@ contains
       do p = 1_ik, size(reg%poly, kind=ik)
          associate (poly => reg%poly(p))
             a1 = total_area(poly%site)
-            if (abs(a1 - 1.0_wp) > 1.0e-5_wp) then
+            if (abs(a1 - 1.0_wp) > area_tol) then
                st = DRIVER_ERR_AREA ; n_bad = n_bad + 1_ik
             end if
             if (reg%verbose)                                                                       &
