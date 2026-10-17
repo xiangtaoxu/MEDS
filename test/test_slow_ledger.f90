@@ -40,6 +40,7 @@ program test_slow_ledger
    use meds_slow_dynamics,      only : settle_tissue_water
    use meds_config,             only : pft_tissue_curves
    use meds_water_retention,    only : water_curve_t, psi_from_water_content
+   use meds_constants,          only : grav_head
    use meds_column_params,      only : PSI_INIT
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
@@ -265,7 +266,54 @@ contains
                  'tissue water (c): the settle phase''s water residual is zero')
       call check(abs(lg%resid_sum(SLOW_PHASE_TISSUE_WATER)%energy) <= 1.0e-12_wp                   &
                  * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%energy, 'tissue water (c): and its energy residual')
+
+      !----- (d) A bare cohort re-flushes from storage: its new leaves take their water from the  !
+      !      wood, at the potential the two share at rest, so the leaves start where the stem is   !
+      !      (less the crown's gravity head) rather than at the dry end of their curve, and the    !
+      !      plant's water is unchanged. --------------------------------------------------------!
+      call check_reflush_water()
    end subroutine check_tissue_water_ledger
+
+   subroutine check_reflush_water()
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      type(slow_ledger_t) :: lg
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp) :: w_plant0, w_plant1, psi_leaf, psi_wood
+      c = build_test_config()
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.
+      c%pft%fineroot_turnover_rate(:) = 0.0_wp      ! no fine-root shed: only the fill moves water
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      call pft_tissue_curves(c%hydraulics, c%pft, 1_ik, leaf_curve, wood_curve)
+      st%cohort%leaf_carbon(1)     = 0.0_wp           ! bare, with its storage, at a drier stem
+      st%cohort%leaf_water_mass(1) = 0.0_wp
+      call set_cohort_size_from_carbon(st%cohort, 1_ik)
+      st%cohort%wood_water_mass(1) = 0.9_wp * st%cohort%wood_water_mass(1)
+      st%cohort%leaf_flush_tendency(1) = 1.0_wp
+      st%cohort%leaf_shed_tendency(1)  = 0.0_wp
+      st%cohort%gpp_accum(1)       = 0.0_wp
+      st%cohort%leaf_resp_accum(1) = 0.0_wp
+      st%cohort%stem_resp_accum(1) = 0.0_wp
+      st%cohort%root_resp_accum(1) = 0.0_wp
+      w_plant0 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call vegetation_dynamics(st, c, ledger=lg)
+      call check(st%cohort%leaf_carbon(1) > 0.0_wp, 'reflush: the bare cohort grew leaves')
+      w_plant1 = st%cohort%leaf_water_mass(1) + st%cohort%wood_water_mass(1)
+      call check_close(w_plant1, w_plant0, 1.0e-14_wp, 'reflush: the plant''s water is unchanged')
+      psi_leaf = psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve, st%cohort%leaf_carbon(1))
+      psi_wood = psi_from_water_content(st%cohort%wood_water_mass(1), wood_curve,                   &
+                                        st%cohort%sapwood_carbon(1) + st%cohort%fineroot_carbon(1))
+      call check(psi_wood < -0.1_wp, 'reflush: the fixture''s stem is drier than the birth potential')
+      call check(abs(psi_leaf - (psi_wood - grav_head * st%cohort%height(1))) <= 1.0e-9_wp,        &
+                 'reflush: the new leaves start at the wood''s potential less the crown head')
+      call check(abs(lg%resid_sum(SLOW_PHASE_GROW)%water) <= 1.0e-12_wp,                           &
+                 'reflush: the fill moves water inside the plant; the ledger sees no residual')
+   end subroutine check_reflush_water
 
    !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
    !       the parents were debited for. Two assertions, one per half of the contract: the       !

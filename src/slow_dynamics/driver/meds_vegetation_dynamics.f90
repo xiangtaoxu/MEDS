@@ -15,9 +15,9 @@
 !==========================================================================================!
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
-   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
+   use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day, grav_head
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
-   use meds_water_retention,      only : water_curve_t, clamp_water_to_capacity
+   use meds_water_retention,      only : water_curve_t, water_content, clamp_water_to_capacity, shared_potential
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
@@ -57,7 +57,8 @@ module meds_vegetation_dynamics
 
    public :: vegetation_dynamics, restructure_stand, advance_leaf_phenology, advance_plant_traits
    public :: reacclimate_plant_traits
-   public :: shed_turnover_water, shed_excess_tissue_water, accumulate_recruit_pool, update_cohort_derivatives
+   public :: shed_turnover_water, shed_excess_tissue_water, fill_new_leaf_water, accumulate_recruit_pool
+   public :: update_cohort_derivatives
 
    !----- Guard: baseline leaf turnover = 1/llspan; floor llspan so a degenerate value cannot divide-by-0.
    real(wp), parameter :: tiny_llspan = 1.0e-6_wp         !< [yr]
@@ -85,7 +86,7 @@ contains
       logical,  allocatable    :: exhausted(:)
       real(wp)                 :: mort_water
       real(wp)                 :: tissue_heat0, tissue_heat1, handover, plastic_heat0
-      real(wp), allocatable    :: nplant_before(:)
+      real(wp), allocatable    :: nplant_before(:), leaf_carbon_before(:)
       real(wp)                 :: seed_rain_carbon
       integer(ik)              :: ip
       type(carbon_flux_block)  :: npp
@@ -179,8 +180,9 @@ contains
       !                                                                                            !
       !      The whole change is declared as ONE exchange because it is one mechanism, and because !
       !      splitting it into a growth part and a mortality part needs a cross-term convention    !
-      !      the physics does not supply. `update_cohort_states` and the mortality water shed      !
-      !      below BOTH leave the temperatures alone, so this is purely the thermal-mass term.     !
+      !      the physics does not supply. `update_cohort_states`, the water new leaves take from    !
+      !      the wood (fill_new_leaf_water) and the mortality water shed below ALL leave the        !
+      !      temperatures alone, so this is purely the thermal-mass term.                          !
       !                                                                                            !
       !      WHY IT IS AN EXCHANGE AND NOT A LEAK: new tissue is assembled from CO2 and water at    !
       !      the plant's own temperature, and it arrives carrying the sensible heat of that mass.  !
@@ -199,7 +201,9 @@ contains
       if (allocated(nplant_before)) deallocate(nplant_before)
       allocate(nplant_before(max(site%cohort%n, 1_ik)))
       nplant_before(1:site%cohort%n) = site%cohort%nplant(1:site%cohort%n)
+      leaf_carbon_before = site%cohort%leaf_carbon(1:site%cohort%n)
       call update_cohort_states(site%cohort, site%deriv, cfg%dt_years, cfg%negligible_nplant)
+      call fill_new_leaf_water(site, cfg, leaf_carbon_before)
       tissue_heat1 = slow_tissue_heat(site)
 
       !----- Mortality's litter and water, on the density the applier actually removed and the     !
@@ -858,6 +862,42 @@ contains
          call slow_ledger_declare(ledger, energy_out = shed_enth)
       end if
    end subroutine shed_turnover_water
+
+   !---------------------------------------------------------------------------------------!
+   ! New leaves take their water from the wood. When a cohort's leaf carbon grows, the new     !
+   ! leaf tissue is filled with the water it holds at rest with the wood store, moved from    !
+   ! that store, so the plant's water is unchanged: the new tissue and the wood end at the    !
+   ! potential they share (shared_potential), the leaf the crown's gravity head below the     !
+   ! wood, as the network holds them with no flow (docs/science/plant_hydraulics.md eqs. (2), !
+   ! (5)). New tissue that started empty would read at the dry end of its pressure-volume     !
+   ! curve: a canopy re-flushing from bare would start the next fast step near -1.5e4 MPa,    !
+   ! its stomata shut for that step and the canopy's mean leaf potential dragged with it. The !
+   ! water moved is bounded by what the wood holds. Runs right after the commit, on the leaf  !
+   ! carbon it added (docs/science/soil_plant_water.md §2).                                   !
+   !---------------------------------------------------------------------------------------!
+   subroutine fill_new_leaf_water(site, cfg, leaf_carbon_before)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(in)    :: leaf_carbon_before(:)   !< [kgC/plant] before the commit
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp)    :: grown, head, psi_wood, moved
+      integer(ik) :: i
+
+      associate (cohort => site%cohort)
+         do i = 1_ik, cohort%n
+            grown = cohort%leaf_carbon(i) - leaf_carbon_before(i)
+            if (grown <= 0.0_wp) cycle
+            call pft_tissue_curves(cfg%hydraulics, cfg%pft, cohort%pft(i), leaf_curve, wood_curve)
+            head     = grav_head * cohort%height(i)          ! the crown above the wood datum [MPa]
+            psi_wood = shared_potential(cohort%wood_water_mass(i), wood_curve,                       &
+                          cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)), &
+                          leaf_curve, grown, head)
+            moved    = min(water_content(psi_wood - head, leaf_curve, grown), cohort%wood_water_mass(i))
+            cohort%leaf_water_mass(i) = cohort%leaf_water_mass(i) + moved
+            cohort%wood_water_mass(i) = cohort%wood_water_mass(i) - moved
+         end do
+      end associate
+   end subroutine fill_new_leaf_water
 
    !---------------------------------------------------------------------------------------!
    ! Tissue water ABOVE the capacity a cohort's biomass now allows goes to the ground. A store   !

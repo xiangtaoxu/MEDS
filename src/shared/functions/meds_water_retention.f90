@@ -27,7 +27,7 @@ module meds_water_retention
    !----- Tissue pressure-volume family. ---------------------------------------------------!
    public :: water_curve_t
    public :: pv_psi_tlp, pv_rwc_tlp, rwc_from_psi, psi_from_rwc
-   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity
+   public :: water_content, capacitance, psi_from_water_content, clamp_water_to_capacity, shared_potential
    !----- Soil retention family: the soil-water analogue of the tissue curve -- theta(psi) and    !
    !      psi(theta) read-offs.                                                                    !
    public :: SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, VG_PORE_CONNECTIVITY
@@ -64,6 +64,10 @@ module meds_water_retention
    !----- Read-off floors, which keep a diagnostic finite; the solver's curves have none. -----!
    real(wp), parameter :: SE_MIN = 1.0e-9_wp      !< effective-saturation floor (residual/air-dry)
    real(wp), parameter :: rwc_floor = 1.0e-4_wp   !< keep R strictly positive in the flaccid tail
+   !----- A cap on shared_potential's halvings. Its bracket, about 1.5e4 MPa wide, reaches the       !
+   !      resolution of the arithmetic at a root near -1 MPa in about 70, where the loop stops; the   !
+   !      cap ends only a root at 0, whose resolution has no floor. ---------------------------------!
+   integer(ik), parameter :: BISECTION_STEPS_MAX = 200_ik
 
    !----- Water a saturated soil layer gains per metre of pressure head [1/m]: the compressibility !
    !      of the soil matrix and of water, a typical value for clays and loams (Freeze and Cherry   !
@@ -185,12 +189,56 @@ contains
       psi   = psi_from_rwc(rwc, curve%pi0, curve%elastic_mod)
    end function psi_from_water_content
 
+   !----- The potential [MPa] at which two tissues holding `w_total` [kg] between them are at rest     !
+   !      with each other: tissue a at psi, tissue b at psi - head_b, b hanging head_b [MPa] above a   !
+   !      (docs/science/plant_hydraulics.md eq. (2) with no flow). Each tissue's water rises with its  !
+   !      potential (eq. (5)), so their sum is monotone in psi and bisection on a bracket finds it:     !
+   !      `lo`, where both curves sit on their dry floor, and `hi`, where tissue a is saturated. A     !
+   !      total beyond the bracket returns its nearer end. The bisection stops when the bracket is     !
+   !      as narrow as the arithmetic can resolve; the caller moves water by the curves at the result, !
+   !      so what it moves is exact whatever the residual. -------------------------------------------!
+   elemental real(wp) function shared_potential(w_total, curve_a, biomass_a, curve_b, biomass_b, head_b)  &
+                                                result(psi)
+      real(wp),            intent(in) :: w_total               !< [kg] the water the two hold together
+      type(water_curve_t), intent(in) :: curve_a, curve_b
+      real(wp),            intent(in) :: biomass_a, biomass_b  !< [kgC]
+      real(wp),            intent(in) :: head_b                !< [MPa] how far b sits below a at rest
+      real(wp)    :: lo, hi
+      integer(ik) :: k
+      lo = min(curve_a%pi0, curve_b%pi0 + head_b) / rwc_floor
+      hi = 0.0_wp
+      if (w_total <= held(lo)) then
+         psi = lo
+         return
+      end if
+      if (w_total >= held(hi)) then
+         psi = hi
+         return
+      end if
+      do k = 1_ik, BISECTION_STEPS_MAX
+         psi = 0.5_wp * (lo + hi)
+         if (held(psi) < w_total) then
+            lo = psi
+         else
+            hi = psi
+         end if
+         if (hi - lo <= epsilon(psi) * max(abs(lo), abs(hi))) exit
+      end do
+      psi = 0.5_wp * (lo + hi)
+   contains
+      pure real(wp) function held(p)
+         real(wp), intent(in) :: p
+         held = water_content(p, curve_a, biomass_a) + water_content(p - head_b, curve_b, biomass_b)
+      end function held
+   end function shared_potential
+
    !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the       !
    !      slow tier's guard before the fast loop (shed_excess_tissue_water;                            !
    !      docs/science/soil_plant_water.md §2). Mass, not psi, is what carries across a biomass        !
-   !      update -- a persisted leaf/wood_water_mass carries forward UNCHANGED into new biomass, so a  !
-   !      capacity GROWTH simply reads as a lower rwc/psi next touch (the signal that draws more water !
-   !      from the soil, not a defect to patch over). Only a capacity SHRINK needs a guard: an         !
+   !      update -- a persisted wood_water_mass carries forward UNCHANGED into new biomass, so the     !
+   !      wood's capacity GROWTH simply reads as a lower rwc/psi next touch (the signal that draws     !
+   !      more water from the soil), and new leaves are filled from the wood (fill_new_leaf_water).    !
+   !      Only a capacity SHRINK needs a guard: an                                                     !
    !      operator that drops biomass without its water (a rising SLA resorbing leaf carbon, a fusion  !
    !      re-deriving the sapwood ring) can leave more mass than the new, smaller ceiling admits -- a  !
    !      tissue state that is not reachable (rwc>1 has no valid inverse on the turgid PV branch).     !

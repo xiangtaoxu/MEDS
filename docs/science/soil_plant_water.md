@@ -68,10 +68,15 @@ Each store is solved in the unknown in which its curve is best behaved:
   linear in water and has a finite slope $d\psi/dR$ everywhere. A leafless cohort's leaves hold no
   water; their $R$ stays defined.
 - **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
-  the water as it is, and the potential is read again on the new capacity (grown biomass reads as a
-  slightly lower $R$). A cohort is born holding the water its tissues hold at its starting potential
-  (`PSI_INIT`); a recruit's water, like its carbon, is drawn from outside the model, and the slow
-  ledger declares it. Tissue lost to turnover takes its water with it, in proportion to the carbon
+  the water as it is, and the potential is read again on the new capacity (grown wood reads as a
+  slightly lower $R$). **New leaves are the exception.** When a cohort's leaf carbon grows, the new
+  leaf tissue is filled with water moved from the cohort's wood store, at the potential the two then
+  share at rest, the leaf the crown's gravity head below the wood ([plant_hydraulics](plant_hydraulics.md) eq. (2);
+  `fill_new_leaf_water`). The plant's water is unchanged, and a canopy that re-flushes from bare
+  starts at its stem's potential, not at the dry end of its pressure–volume curve (about −1.5×10⁴
+  MPa), which would close its stomata for the first step. A cohort is born holding the water its
+  tissues hold at its starting potential (`PSI_INIT`); a recruit's water, like its carbon, is drawn
+  from outside the model, and the slow ledger declares it. Tissue lost to turnover takes its water with it, in proportion to the carbon
   lost (`shed_turnover_water`), and a plant that dies takes all of its own (`shed_mortality_water`).
   An operator that shrinks a store without touching its water (a rising SLA resorbing leaf carbon, a
   fusion or split re-deriving the sapwood ring) can leave more than the store can hold; before the

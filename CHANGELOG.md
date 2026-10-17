@@ -368,6 +368,24 @@ before and after.
   7,305 marks; every phase closes. `test_slow_ledger` closes the water ledger across a recruitment, a
   snap to bare and a settle; `test_pft_optics_config`, `test_fast_loop` and `test_disturbance` follow
   the birth water.
+- **Re-flushing leaves take their water from the wood** (#436). A store kept its water mass across a
+  biomass change, so new leaf capacity started empty: a cohort re-flushing from bare began the next
+  fast step at the dry end of its leaf pressure–volume curve, about −1.6×10⁴ MPa, with its stomata
+  shut for the step, and the leaf-area-weighted `psi_leaf_site` was dragged with it (−6.45 MPa at Palo
+  Verde on 2009-04-04; a flushing cohort's daily-mean ψ_leaf −169 MPa at 900 s, proportional to
+  `dt_fast`). When a cohort's leaf carbon grows, `fill_new_leaf_water` now fills the new tissue with
+  water moved from the cohort's wood store, at the potential the two share at rest (the leaf the
+  crown's gravity head below the wood; `shared_potential`, a bracketed bisection on the two
+  pressure–volume curves): the plant's water is unchanged and the new leaves start at the stem's
+  potential. Palo Verde inventory: `psi_leaf_site` on 2009-04-04 −6.45 → −0.69 MPa and on 2009-05-08,
+  the second re-flush, −2.91 → −0.24 MPa; the April mean −3.39 → −2.96 MPa; the year's minimum is now
+  the dry season's, −4.15 MPa on 2 May (it was the re-flush spike); outside the two re-flushes the
+  days are unchanged; GPP and ET +0.002 %. BCI's regeneration from bare ground (1600–1602): GPP +0.135
+  % and AGB +0.21 %, back within 10⁻⁵ of the run before the tissue-water change. Example 04's window:
+  ET +4×10⁻⁸ relative on ARK. Twenty years of BCI from 1980: within 10⁻⁵ (`psi_leaf_site` −0.2147 MPa
+  either way). `test_slow_ledger` re-flushes a bare cohort from storage and finds its leaves at the
+  wood's potential less the crown head to 10⁻⁹ MPa, the plant's water unchanged and the water ledger
+  closed; `test_plant_hydraulics` checks the shared potential on both branches of the curves.
 
 ### Documentation
 
