@@ -33,7 +33,8 @@ by an environment variable, such as `ERA5LAND_ARCHIVE`; each README says which.
   census's growth and the forest's carbon budget. Palo Verde's dry forest for 150 years: Xu et al.
   (2016)'s four leaf habits, set against the plots' 2009 inventory.
 - **[`example06_regional_run/`](example06_regional_run/)** — the whole model over a region:
-  forests regrow from bare ground for 150 years in 983 cells of Central America, each a single-site run
-  on its own ERA5-Land weather, soil and height allometry, with example 05's four dry-forest leaf
-  habits (Xu et al. 2016) set at Palo Verde. Their seasonal leaf area is set against MODIS, and their biomass
-  after 20 years against Neotropical chronosequences (Poorter et al. 2016).
+  forests regrow from bare ground for 150 years in 953 cells of Central America, run as two MEDS
+  region runs, each cell on its own ERA5-Land weather, soil and height allometry, with example 05's
+  four dry-forest leaf habits (Xu et al. 2016) set at Palo Verde. Their seasonal leaf area is set
+  against MODIS, and their biomass after 20 years against Neotropical chronosequences (Poorter et al.
+  2016).

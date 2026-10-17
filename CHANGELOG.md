@@ -290,6 +290,8 @@ before and after.
   example 06's cells are above 1000 m. The forcing design is cited from `archive/`, the stale
   "example 06 as region runs" item goes, and #377, #424, #425 and #430 are marked done in `beta`.
   `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
+- **`examples/README.md`'s example 06 summary** said 983 cells, each a single-site run; it is 953
+  cells run as two region runs, as example 06's README says.
 
 ## [0.3.4] — 2026-10-13
 
