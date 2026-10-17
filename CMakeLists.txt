@@ -532,6 +532,24 @@ if(MEDS_BUILD_TESTS)
                     -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
                     -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/config_unknown_keys.toml
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_config_refused.cmake)
+   #----- A census or state file that cannot start the run stops it, naming the mode and the     #
+   #      file: one that is not there, and a census with no row. The script explains the rule.    #
+   foreach(case "census_missing;1;no_such_census.csv;OFF;cannot be opened"
+                "census_empty;1;empty_census.csv;ON;holds no cohort for the site"
+                "restart_missing;2;no_such_state.nc;OFF;cannot be opened")
+      list(GET case 0 name)
+      list(GET case 1 mode)
+      list(GET case 2 file)
+      list(GET case 3 empty)
+      list(GET case 4 reason)
+      add_test(NAME init_${name}_refused
+               COMMAND ${CMAKE_COMMAND} -DMEDS_MAIN=$<TARGET_FILE:meds_main>
+                       -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                       -DWORK_FILE=${CMAKE_CURRENT_BINARY_DIR}/init_${name}.toml
+                       -DINIT_MODE=${mode} -DINIT_FILE=${CMAKE_CURRENT_BINARY_DIR}/${file}
+                       -DEMPTY_CENSUS=${empty} "-DREASON=${reason}"
+                       -P ${CMAKE_CURRENT_SOURCE_DIR}/test/check_init_refused.cmake)
+   endforeach()
 
    #----- The [pft] canopy optics reach the two-stream table, and differentiate PFTs. --------#
    add_executable(test_pft_optics_config test/test_pft_optics_config.f90)

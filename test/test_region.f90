@@ -184,15 +184,15 @@ program test_region
    end do
    call check_true('a region restarted from its state file across the recycle wrap writes the whole run''s files', &
                    nbad == 0_ik .and. f2 >= 2_ik)
-   call refused('a region restart needs a region state file', '[init]'//nl()//'init_mode = 2'//nl()//   &
-                'restart_file = "'//trim(work)//'/none.nc"'//nl()//region_block(), .true., .false.,       &
-                'is not a region state file')
 
    !----- A reused run owes no restructuring from the run before it. A run ending on the 1st leaves  !
    !      its boundary's restructuring pending; driver_open must clear that, or the next stand is     !
-   !      restructured at its first step. -------------------------------------------------------------!
+   !      restructured at its first step. It writes a site's state file, which a region refuses     !
+   !      below. -------------------------------------------------------------------------------------!
    call derive(trim(work)//'/reuse.toml', '[run]'//nl()//'end_time = "2021-02-01"'//nl()//            &
-               '[output]'//nl()//'enabled = false'//nl()//site_block(1_ik), region=.false.)
+               '[output]'//nl()//'enabled = false'//nl()//'[state]'//nl()//'write_state = true'//nl()//   &
+               'output_dir = "'//trim(work)//'/state"'//nl()//'output_prefix = "site"'//nl()//          &
+               site_block(1_ik), region=.false.)
    call driver_open(trim(work)//'/reuse.toml', run, ok, verbose=.false.)
    if (.not. ok) error stop 'test_region: the reuse run did not open'
    do while (.not. driver_done(run))
@@ -208,6 +208,18 @@ program test_region
                    all(run%poly%site%patch%cas(1:run%poly%site%patch%n)%can_depth                     &
                        == run%cfg%aero%min_canopy_depth))
    call driver_finalize(run, st) ; call driver_free(run)
+
+   !----- A state file that cannot start the run stops it, naming the file: one that is not there,  !
+   !      a region's in a site run (its variables have a polygon axis), and a site's in a region. ---!
+   call refused('a region restart from a missing state file stops, saying it cannot be opened',     &
+                '[init]'//nl()//'init_mode = 2'//nl()//'restart_file = "'//trim(work)//'/none.nc"'//nl()// &
+                region_block(), .true., .false., trim(work)//'/none.nc cannot be opened')
+   call refused('a site run refuses a region state file', '[init]'//nl()//'init_mode = 2'//nl()//      &
+                'restart_file = "'//trim(work)//'/state/half-S-20230101000000.nc"'//nl()//site_block(1_ik), &
+                .false., .false., 'half-S-20230101000000.nc is a region''s state file')
+   call refused('a region refuses a site state file', '[init]'//nl()//'init_mode = 2'//nl()//          &
+                'restart_file = "'//trim(work)//'/state/site-S-20210201000000.nc"'//nl()//region_block(), &
+                .true., .false., 'site-S-20210201000000.nc is a site''s state file')
 
    !----- A polygon that fails in mid-month. Polygon 2's soil carbon is made impossible after the    !
    !      first month, so its first February step fails. The others finish the month: polygons 1     !

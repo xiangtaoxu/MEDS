@@ -5,6 +5,7 @@
   bit for bit, and the same parameter record.
 - Two runs in one Python process each write their own parameter record.
 - Patch areas weight the cohorts to the site totals the model reports.
+- A census or state file that cannot start the run stops it: opening the run raises.
 
 Each run is two days from the pseudo census in data/census_example.csv on the fast loop's constant
 reference climate. MEDS_MAIN names the executable for the comparison (CTest sets it); without it
@@ -26,9 +27,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MEDS_MAIN = os.environ.get("MEDS_MAIN")
 
 
-def two_days(run_dir: Path, monthly: bool = False) -> Path:
+def two_days(run_dir: Path, monthly: bool = False, overrides: dict | None = None) -> Path:
     """A two-day census run with hourly and daily output (and monthly, which keeps the slow cohort
-    diagnostics), written into run_dir."""
+    diagnostics), written into run_dir; `overrides` sets further keys."""
     cfg = RunConfig.load(ROOT / "meds_config_main.toml")
     for key, value in {"run.start_time": "2001-06-01 00:00:00", "run.end_time": "2001-06-03 00:00:00",
                        "run.n_threads": 1, "fast.fast_biophysics_on": True, "forcing.forcing_on": False,
@@ -36,7 +37,8 @@ def two_days(run_dir: Path, monthly: bool = False) -> Path:
                        "init.census_file": str(ROOT / "data/census_example.csv"),
                        "state.write_state": False, "output.enabled": True, "output.dir": str(run_dir / "out"),
                        "output.prefix": "m", "output.fast.enabled": True, "output.daily.enabled": True,
-                       "output.monthly.enabled": monthly, "output.annual.enabled": False}.items():
+                       "output.monthly.enabled": monthly, "output.annual.enabled": False,
+                       **(overrides or {})}.items():
         cfg.set(key, value)
     (run_dir / "out").mkdir(parents=True, exist_ok=True)
     return cfg.write(run_dir)
@@ -127,3 +129,14 @@ def test_cohort_carbon_closes(tmp_path):
     assert np.allclose(parts, c["npp"], rtol=1e-12, atol=1e-15)
     assert np.allclose(net, c["npp"] + c["growth_resp"] + c["exudate"], rtol=1e-9, atol=1e-12)
     assert (c["leaf_carbon"] > 0.0).all()
+
+
+@pytest.mark.parametrize("mode, key, name", [(1, "init.census_file", "none.csv"),
+                                             (2, "init.restart_file", "none.nc")])
+def test_a_missing_initial_file_stops_the_run(tmp_path, mode, key, name):
+    """A run asked to start from a census or a state file that is not there raises: it never starts
+    from bare ground instead."""
+    from meds.model import Run
+    main = two_days(tmp_path, overrides={"init.init_mode": mode, key: str(tmp_path / name)})
+    with pytest.raises(RuntimeError, match="could not open"):
+        Run(main, verbose=False)

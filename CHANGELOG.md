@@ -186,6 +186,22 @@ before and after.
   stand on a Campbell clay (each layer's potential the Campbell curve's, finite and below zero;
   uptake; water closing every step), and `test_column_rk45` checks the seed against the Campbell
   curve.
+- **A census or state file that cannot start a run stops it** (#428). A site run whose
+  `[init].census_file` (`init_mode = 1`) or `restart_file` (`init_mode = 2`) could not be opened, or
+  whose census held no row for the site, started from near-bare ground, saying so only in a verbose
+  run; a Python run (`verbose=False`) said nothing, so a calibration trial restarted from a missing
+  state file ran on as a plausible wrong trial. The run now stops with a message naming the mode,
+  the file and why (`cannot be opened`, `holds no cohort for the site`): `meds_main` stops and
+  `meds.model.Run` raises `RuntimeError`. Bare ground is `init_mode = 0` only. A site run refuses a
+  region's state file, whose variables it would have read without their polygon axis, and
+  `io_read_state` reads only the kind of file it is asked for. A region says that a missing restart
+  file cannot be opened (it said "is not a region state file"), refuses a site's state file by name,
+  and stops if a polygon's row cannot be read, which it did not check. `init_from_census` gains an
+  optional `why`, and `meds_io` the function `state_file_refusal`. New ctests
+  `init_census_missing_refused`, `init_census_empty_refused` and `init_restart_missing_refused`
+  (`test/check_init_refused.cmake`); `test_region` covers the three state-file cases,
+  `test_init_census` the reasons and `python/tests/test_model.py` the Python error.
+  `docs/configuration.md` no longer documents the fallback. Valid configs are byte-identical.
 
 ### Documentation
 
