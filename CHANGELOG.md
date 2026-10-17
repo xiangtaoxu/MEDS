@@ -249,7 +249,7 @@ before and after.
     lower (*F. insipida* 21.4 → 21.3 µmol m⁻² s⁻¹); the optimum temperatures are unchanged.
   - Example 02 reproduces byte for byte, its figure too.
   - Example 03 reproduces v0.3.4 to round-off: the census run to 3×10⁻¹⁴, the bare-ground run's totals
-    to 10⁻⁸ (its cohort counts by at most 2). Its three post_proc renders are redrawn from this run.
+    to 10⁻⁸ (its cohort counts by at most 2), so its figures stand.
   - Example 04 is refitted, since its diurnal H is a calibration target and #419 raised daytime H by
     about 10 W m⁻²: 836 runs in 28 minutes on 200 cores (validation cost 62,356 → 50,905; v0.3.4's fit
     63,657 → 52,187). Vcmax25 32.3 → 31.9 µmol m⁻² s⁻¹ (its EEO prior centre 41.0 → 39.9, #342), g1

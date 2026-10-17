@@ -23,7 +23,8 @@ Three PFTs, early, mid and late successional, compete for light.
 Aboveground biomass and basal area by PFT, leaf area, the carbon fluxes, evapotranspiration and the
 trees of 10 cm and more, against the 50-ha plot's censuses (circles) and the BCI tower's GPP.
 
-The 420-year run, this figure and its results below were made with v0.3.4; they were not repeated after the 2026-10 sweep.
+The 420-year run, this figure and its results below were made with v0.3.4; they were not repeated
+after the 2026-10 sweep.
 
 ### Results
 
@@ -211,7 +212,8 @@ and Palo Verde's chronosequence at 20 years (Poorter et al. 2016, *Nature* 530: 
 year's highest and lowest monthly leaf area index; the last ten years' leaf area by PFT; GPP; and the
 trees of 10 cm and more.
 
-The 150-year regrowth, this figure and the table below were made with v0.3.4; they were not repeated after the 2026-10 sweep.
+The 150-year regrowth, this figure and the table below were made with v0.3.4; they were not repeated
+after the 2026-10 sweep.
 
 | | MEDS, 150 years | 2009 inventory |
 |---|---|---|
