@@ -27,7 +27,8 @@ module meds_site_state_types
    use meds_pft_params, only : pft_table_t
    use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
                                carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
-   use meds_column_params, only : LEAF_TEMP_INIT, PSI_INIT
+   use meds_column_params, only : LEAF_TEMP_INIT, PSI_INIT, C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, &
+                                  TISSUE_HCAP_MIN
    use meds_config,        only : hydraulics_config_t, pft_tissue_curves
    use meds_water_retention, only : water_curve_t, water_content
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
@@ -46,16 +47,9 @@ module meds_site_state_types
    public :: cohort_tissue_heat_capacity, cohort_tissue_water, cohort_wood_store_carbon, set_cohort_tissue_water
    public :: cohort_bad_field, cohort_field_name
 
-   !----- Mirrors of meds_fast_frozen's tissue constants (see cohort_tissue_heat_capacity),      !
-   !      plus the tissue specific heats (docs/science/vegetation_energy_dynamics.md eq.         !
-   !      (8)). The fast loop reads the latter from `veg_thermal_params_t`, which no config      !
-   !      sets -- these are its initializers. They live here because meds_demography and the     !
-   !      slow driver need them and may not link meds_fast_kernels, and one shared set beats     !
-   !      three private copies. They are hard-coded parameters, not config keys. ----------------!
-   real(wp), parameter, public :: C2B_WOOD          = 2.0_wp    !< carbon -> biomass (carbon fraction 0.5)
-   real(wp), parameter, public :: TISSUE_C_LEAF     = 3200.0_wp !< [J/kg/K] dry leaf specific heat
-   real(wp), parameter, public :: TISSUE_C_WOOD_DRY = 1217.0_wp !< [J/kg/K] dry wood specific heat (ED2's, at 15 C)
-   real(wp), parameter, public :: TISSUE_HCAP_MIN   = 20.0_wp   !< [J/m2 tissue/K] least dry heat capacity
+   !----- The tissue heat constants live in meds_column_params, shared with the fast loop; they are   !
+   !      re-exported here for meds_demography and the slow driver. -------------------------------!
+   public :: C2B_WOOD, TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !

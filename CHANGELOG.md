@@ -243,6 +243,10 @@ before and after.
   different SLAs and rates conserves the leaf carbon turned over; `test_state_roundtrip` reads an
   `llspan` state file as 1/`llspan`; `test_config_keys` the three refusals; `test_plant_trait_dynamics`
   the rate's gradient, its reciprocal lifespan form and the relaxation.
+- **One definition of the tissue heat constants.** `C2B_WOOD`, `TISSUE_C_LEAF`, `TISSUE_C_WOOD_DRY` and
+  `TISSUE_HCAP_MIN` live in `meds_column_params`. The fast loop's `veg_thermal_params_t` starts from
+  them, and `meds_fast_frozen` and `meds_site_state_types` no longer keep copies of their own (the
+  copies #419 left). Results are byte-identical.
 
 ### Removed
 

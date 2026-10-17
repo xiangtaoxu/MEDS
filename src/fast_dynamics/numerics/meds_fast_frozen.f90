@@ -42,13 +42,11 @@ module meds_fast_frozen
    use meds_column_state_types, only : snow_column_t
    use meds_ground_biophysics, only : snow_energy_step
    use meds_fast_types, only : snow_stage_t
+   use meds_column_params, only : C2B_WOOD
    implicit none
    private
 
    public :: build_column_frozen
-
-   !----- Tissue heat-capacity constants. -----------------------------------------------------------!
-   real(wp), parameter :: C2B_WOOD            = 2.0_wp  !< carbon -> biomass (carbon fraction 0.5), leaf and wood
 
 contains
 
