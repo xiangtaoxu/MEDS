@@ -30,12 +30,12 @@ module meds_budget_check
 
    !----- Closure tolerances shared by every ledger (see the header). -------------------------!
    real(wp), parameter :: budget_rtol_flux         = 1.0e-6_wp  !< [-] relative to the gross boundary flux
-   !----- The energy floor is 1e-2 W/m2, not the 1e-3 the water/CO2 floors' precision would suggest:  !
-   !      under a melting snow pack the whole-column ledger carries an unattributed, sign-oscillating  !
-   !      residual of up to ~0.7 J/m2 per 150 s step (5e-3 W/m2; the CAS, soil, pack and pond ledgers  !
-   !      each close to 1e-9 on the same steps). It sums to ~-14 J/m2 over a day and is not round-off: !
-   !      its source is not yet found (see docs/ROADMAP.md). -------------------------------------------!
-   real(wp), parameter :: budget_energy_rate_floor = 1.0e-2_wp  !< [W/m2]      absolute floor, as a rate
+   !----- The energy floor, 1e-3 W/m2, is 0.9 J/m2 over a 900 s step. It sits far above the round-off  !
+   !      of the column's energy stores (each ~1e9 J/m2, so ~1e-7 J/m2 a step; every energy ledger,    !
+   !      the whole column's under a melting snow pack included, closes to ~1e-6 J/m2 a step) and far  !
+   !      below any flux the column resolves. It is the water floor's order: 1e-9 kg/m2/s of           !
+   !      evaporation carries 2.5e-3 W/m2 of latent heat. ---------------------------------------------!
+   real(wp), parameter :: budget_energy_rate_floor = 1.0e-3_wp  !< [W/m2]      absolute floor, as a rate
    real(wp), parameter :: budget_water_rate_floor  = 1.0e-9_wp  !< [kg/m2/s]   (~1e-4 mm/day)
    real(wp), parameter :: budget_co2_rate_floor    = 1.0e-6_wp  !< [umol/m2/s]
 

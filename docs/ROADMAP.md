@@ -417,10 +417,6 @@ Gaps and residues found in the 2026-10-17 annotation review.
   reproductive tissue, and no substrate or moisture limitation of maintenance respiration
   (`docs/science/plant_respiration.md` §7). The stem's unused size scaler is gone; stem respiration
   grows with size through its surface or sapwood basis.
-- **An unattributed energy residual under a melting snow pack.** *Open question.* [#413](https://github.com/xiangtaoxu/MEDS/issues/413) The whole-column
-  ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
-  about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it
-  is why the energy floor in `meds_budget_check` is 10⁻² W m⁻².
 - **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.

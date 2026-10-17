@@ -171,6 +171,17 @@ before and after.
   round-off on the shipped runs (worst 2.5×10⁻¹³ kgC m⁻² in the ledger's remainder), and results are
   byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
   re-acclimation conserves the cohort's carbon.
+- **The energy ledgers' absolute floor is 10⁻³ W m⁻²** (#413), from 10⁻² W m⁻² (0.9 J m⁻² per
+  900 s step, from 9). The looser floor was kept for a whole-column residual under a melting snow pack
+  of up to 0.7 J m⁻² per 150 s step that the per-store ledgers did not see; that residual was the dew
+  condensate's enthalpy valued at two temperatures, fixed on 2026-09-08 with #119 (the condensate is
+  now valued at one temperature on both sides), and the note that it was open outlived the fix. The
+  whole-column residual today is at most 7.3×10⁻⁷ J m⁻² per step in `test_column_dynamics` RUN 8 on
+  ARK (8.3×10⁻⁷ on RK45) and 1.3×10⁻⁶ J m⁻² in Ithaca Jan–Mar runs at 150 s and 900 s; the worst step
+  in the 1147 archived v0.3.4 example run logs is 7.8×10⁻⁴ J m⁻². RUN 8's whole-column energy checks,
+  which asked only that no step breach the floor, now ask for closure below 10⁻³ J m⁻² per step, as
+  RUN 8b and 9b do. Every test passes on ifx Release, ifx Debug and gfortran, and results are
+  byte-identical.
 
 ### Removed
 
