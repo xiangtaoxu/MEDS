@@ -32,7 +32,8 @@ module meds_vegetation_dynamics
    use meds_demography_update, only : update_cohort_states, fill_cohort_deriv, update_overtopping_lai
    use meds_demography_cohort_fusefiss, only : apply_recruitment, new_fuse_cohorts, terminate_cohorts, split_cohorts, sort_cohorts
    use meds_demography_patch_fusefiss, only : apply_patch_disturbance, new_fuse_patches, terminate_patches, sort_patches
-   use meds_demography_rates,    only : npp_to_growth, camac_mortality, npp_to_recruitment
+   use meds_demography_rates,    only : npp_to_growth, camac_mortality, decline_to_floor_mortality,  &
+                                        npp_to_recruitment
    use meds_plant_trait_dynamics, only : light_plastic_traits, update_plastic_trait
    use meds_phenology_types, only : pheno_env_t, pheno_params_t, pheno_state_t, pheno_out_t
    use meds_phenology, only : phenology_kernel, leaf_turnover_step, turnover_gate
@@ -79,6 +80,7 @@ contains
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
       real(wp),            intent(in),    optional :: latitude_deg !< the polygon's (default [site])
       real(wp), allocatable    :: mortality(:), recruitment(:,:), npp_repro(:)
+      logical,  allocatable    :: exhausted(:)
       real(wp)                 :: mort_water
       real(wp)                 :: tissue_heat0, tissue_heat1, handover, plastic_heat0
       real(wp), allocatable    :: nplant_before(:)
@@ -120,7 +122,7 @@ contains
          call cohort_diag_reset(site%cohort%sdiag)
          site%cohort%sdiag%n = site%cohort%n
       end if
-      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, site%patch%litter_in)
+      call compute_carbon_allocation(site, cfg, cfg%dt_years, npp, npp_repro, site%patch%litter_in, exhausted)
 
       !----- 1b. Leaf/fine-root turnover WATER shedding: must run BEFORE update_cohort_states       !
       !          commits this step's new leaf_carbon/fineroot_carbon below, since it needs the PRE-   !
@@ -135,7 +137,7 @@ contains
 
       !----- 2. Carbon vital RATES via the rate laws, PRE-apply: mortality reads the growth_avg    !
       !         of the steps before this one (this step's sample enters the ring buffer below).    !
-      call compute_vital_rates(site, cfg, npp%wood, npp_repro, cfg%dt_years, mortality, recruitment)
+      call compute_vital_rates(site, cfg, npp%wood, npp_repro, exhausted, cfg%dt_years, mortality, recruitment)
 
       !----- 2b0. Credit the recruit pool with THIS STEP's recruitment, every step: the exact      !
       !           integral of a daily quantity, where a monthly credit from one day's rate scaled  !
@@ -462,10 +464,11 @@ contains
    ! reduction + baseline seed rain + the GROWTH_AVG_UNSET test) stays here in the DRIVER, so     !
    ! the laws remain state-free.                                                                  !
    !---------------------------------------------------------------------------------------!
-   subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, dt_yr, mortality, recruitment)
+   subroutine compute_vital_rates(site, cfg, npp_wood, npp_repro, exhausted, dt_yr, mortality, recruitment)
       type(site_t),          intent(in)  :: site
       type(meds_config_t),   intent(in)  :: cfg
       real(wp),              intent(in)  :: npp_wood(:), npp_repro(:), dt_yr
+      logical,               intent(in)  :: exhausted(:)  !< no leaves and no storage (compute_carbon_allocation)
       real(wp), allocatable, intent(out) :: mortality(:)      !< [1/yr] per cohort
       real(wp), allocatable, intent(out) :: recruitment(:,:)  !< [plant/m2/yr] (pft, patch)
       integer(ik) :: n, np, npft, j, pf, ip
@@ -500,6 +503,13 @@ contains
             mortality(j) = camac_mortality(cohort%growth_avg(j), dbh_rate,                          &
                                            cohort%growth_avg(j) /= GROWTH_AVG_UNSET,                &
                                            pft%mort_gamma(pf), pft%mort_alpha(pf), pft%mort_beta(pf))
+            !----- A cohort with no leaves and no storage cannot flush again, so it dies: its density  !
+            !      goes to the floor this step, down the path every death takes (its carbon to        !
+            !      litter, its water to the ground), and the next monthly cull removes it. This is a   !
+            !      special case, not a starvation hazard: a cohort that still has leaves or storage    !
+            !      dies at the rate its growth sets (docs/science/plant_carbon_allocation.md §2). ----!
+            if (exhausted(j)) mortality(j) = max(mortality(j),                                      &
+                    decline_to_floor_mortality(cohort%nplant(j), cfg%negligible_nplant, dt_yr))
             !----- Reproduction carbon -> recruits (an annual rate; accumulate_recruit_pool       !
             !      credits rate x dt each step), gated by include_pft (a disabled PFT must not    !
             !      re-establish). ----------------------------------------------------------------!
@@ -549,7 +559,7 @@ contains
    ! shed). Turnover-first makes the within-step leaf replacement exact (a canopy that is not      !
    ! senescing holds target). docs/science/plant_carbon_allocation.md §1-§2, §5.                   !
    !---------------------------------------------------------------------------------------!
-   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit)
+   subroutine compute_carbon_allocation(site, cfg, dt_yr, npp, npp_repro, lit, exhausted)
       !----- intent(inout) ONLY to record the NPP allocation split into the slow diagnostic block; !
       !      no prognostic state is touched here (the appliers still own that).  ------------------!
       type(site_t),            intent(inout) :: site
@@ -558,6 +568,7 @@ contains
       type(carbon_flux_block), intent(out) :: npp
       real(wp), allocatable,   intent(out) :: npp_repro(:)
       type(litter_input_t),    intent(inout) :: lit(:)   !< per-patch litter accumulator
+      logical,  allocatable,   intent(out) :: exhausted(:)  !< per cohort: no leaves and no storage
       integer(ik) :: n, j, pf, ip
       real(wp)    :: leaf_target, gross_gpp, resp_maint, dt_day, r2l, leaf_turn, root_turn
       real(wp)    :: leaf_demand, fineroot_demand, store_demand, repro_frac
@@ -571,7 +582,7 @@ contains
 
       n = site%cohort%n
       dt_day = cfg%dt_slow / day_sec            ! days in the slow step (phenology rates are [1/day])
-      allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n))
+      allocate(npp%leaf(n), npp%fineroot(n), npp%wood(n), npp%nonstructural(n), npp_repro(n), exhausted(n))
       allocate(co2_owed(site%patch%n)) ; co2_owed = 0.0_wp
       efficiency = cohort_recruit_efficiency(site, cfg)
       !----- The growth ring-buffer slot this step's realized growth will be written to (step 3 of  !
@@ -674,6 +685,14 @@ contains
             !      (docs/science/plant_carbon_allocation.md eq. (3)).                                  !
             npp%nonstructural(j) = npp_store - storage_maint + leaf_retained_c + fineroot_retained_c
             npp_repro(j)         = g_repro
+            !----- NO LEAVES AND NO STORAGE: the maintenance this step's photosynthesis and the whole  !
+            !      storage pool left unpaid (`deficit`, > 0 only once storage is spent) is more than   !
+            !      all the carbon in the cohort's leaves. Burning every leaf could not pay one step's  !
+            !      upkeep, and nothing is left to pay for a flush, so the cohort cannot recover. The  !
+            !      scale is the cohort's own maintenance respiration, so the test needs no threshold; !
+            !      a cohort with a canopy holds far more leaf carbon than one step's upkeep, and one   !
+            !      with storage pays it (docs/science/plant_carbon_allocation.md §2). ----------------!
+            exhausted(j)         = deficit > cohort%leaf_carbon(j)
             !----- SLOW-loop diagnostics: the NPP allocation split, growth respiration, storage       !
             !      maintenance and exudate, so the carbon budget closes from the output file. As      !
             !      RATES [kgC/plant/yr], so they are comparable across slow-step lengths. Written     !

@@ -307,6 +307,30 @@ before and after.
   count 1003.1 → 995.0), with density (8.5144 m⁻²) and AGB (11.3120 kgC m⁻²) unchanged to 10⁻⁶ and
   every slow-ledger phase closing. `test_carbon_growth` aims 200 declines at the floor and finds every
   one on it, and culls a cohort at the floor while keeping one an epsilon above.
+- **A cohort with no leaves and no storage dies** (#393). Nothing in the mortality law saw a cohort's
+  carbon, so a cohort that had lost its leaves and spent its storage lived on at the growth-driven
+  hazard of any slow grower, its leaf carbon decaying geometrically (9 % of a BCI spin-up's cohorts;
+  7.7 % and 9.6 % of example 06's final cohorts). The owner's decision is no separate starvation
+  hazard: growth already sets mortality. The special case is a cohort whose unpaid maintenance this
+  step (`deficit`, the debt left after its photosynthesis and all its storage) exceeds all the carbon
+  in its leaves: burning every leaf could not pay one step's upkeep and nothing is left to pay for a
+  flush. Its mortality for the step (`decline_to_floor_mortality`, beside `camac_mortality`) takes its
+  density to `negligible_nplant`, down the background pathway (carbon to litter, water to the ground),
+  and the next monthly cull removes it, so it is gone within a month. The test is scaled by the
+  cohort's own maintenance respiration and needs no threshold; a leafless cohort living on its storage
+  is untouched. Interim, until a growth- or storage-based mortality (`docs/ROADMAP.md`). The shipped
+  short cases and a year of the Palo Verde inventory are byte-identical (no inventory cohort runs out
+  within the year). In example 06's region 2, a 13-cell box (15–16° N, 85–84° W) restarted from its
+  2021 state through the dry season (January–March) ends with 1,367 leafless cohorts before (875 with
+  no storage at all, the rest with a trickle of resorbed carbon, at most 10⁻³ of their fine-root
+  carbon) and none after: cohorts 10,794 → 8,960 (−17 %), mean density 7.893 → 7.510 m⁻² (−4.9 %), AGB
+  10.992 → 10.847 kgC m⁻² (−1.3 %). BCI's regeneration restarted from 1980 for 20 years loses its
+  leafless seedlings (dbh about 1 cm, leaf carbon 10⁻⁶–10⁻³ of its target, no storage): mean cohort
+  count 995.0 → 961.5 (−3.4 %), density 8.5144 → 8.4846 m⁻² (−0.35 %), AGB 11.3120 → 11.3094 kgC m⁻²
+  (−0.02 %), GPP +0.03 %, `psi_leaf_site` unchanged (−0.215 MPa); every slow-ledger phase closes.
+  `test_mortality_pathways`: a leafless cohort with no storage reaches the floor on its first step,
+  its carbon down the background pathway, and is culled at the month boundary; one with storage lives
+  through a 150-day dry season on it.
 
 ### Documentation
 

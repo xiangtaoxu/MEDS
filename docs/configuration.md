@@ -161,7 +161,9 @@ coefficients, and the `[allometry]` coefficients. **The number of PFTs is the le
 
 Wood density is the primary PFT axis. The Camac-2018 mortality coefficients are derived from it as
 power laws, so low-density PFTs get a higher growth-independent hazard and a steeper low-growth
-penalty. Growth, competition and reproduction parameters are per-PFT but ship uniform.
+penalty. The one exception to the growth-driven hazard is a cohort with no leaves and no storage, which
+dies in the step it is found (`science/plant_carbon_allocation.md` §2). Growth, competition and
+reproduction parameters are per-PFT but ship uniform.
 
 Height follows the pan-tropical power law `exp(b1Ht + b2Ht ln dbh)` by default. With
 `[allometry].height_allometry = "gmm"` it follows the saturating `gmm_a·dbh^gmm_b / (gmm_k + dbh^gmm_b)`
