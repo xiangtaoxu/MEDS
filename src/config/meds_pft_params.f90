@@ -140,7 +140,6 @@ module meds_pft_params
       !      the strongest interspecific axes there is. -------------------------------------------!
       real(wp),    allocatable :: leaf_width(:)             !< [m]  characteristic leaf width (leaf boundary layer)
       real(wp),    allocatable :: branch_diameter(:)        !< [m]  characteristic branch diameter (wood boundary layer)
-      real(wp),    allocatable :: crown_area_frac(:)        !< [--] crown area as a fraction of the patch (0,1]
       real(wp),    allocatable :: root_to_leaf_ratio(:)     !< [--]     fine-root:leaf target ratio (ED2 q)
       real(wp),    allocatable :: huber_value(:)            !< [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
       real(wp),    allocatable :: aboveground_frac(:)       !< [--]     aboveground fraction of woody carbon (ED2 agf_bs)
@@ -289,7 +288,7 @@ contains
       allocate(pft%leaf_surf_water_max(n), pft%wood_surf_water_max(n))
       allocate(pft%jmax25(n), pft%tpu25(n), pft%rd25(n))
       allocate(pft%wai_b1(n), pft%wai_b2(n), pft%sapwood_area_b1(n), pft%sapwood_area_b2(n))
-      allocate(pft%leaf_width(n), pft%branch_diameter(n), pft%crown_area_frac(n))
+      allocate(pft%leaf_width(n), pft%branch_diameter(n))
       allocate(pft%sla(n), pft%root_to_leaf_ratio(n), pft%huber_value(n),                    &
                pft%aboveground_frac(n), pft%storage_cushion(n), pft%growth_resp_factor(n),   &
                pft%storage_turnover_rate(n), pft%retained_carbon_fraction(n),               &

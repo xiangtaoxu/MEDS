@@ -670,13 +670,13 @@ contains
       type(aero_geom_t)     :: g2
       real(wp)              :: lt(2)
       call alloc_column_cohort(c2, 2_ik)
-      c2%height = [18.0_wp, 6.0_wp] ; c2%lai = [2.0_wp, 2.0_wp] ; c2%crown = [0.9_wp, 0.8_wp]   ! DESCENDING
+      c2%height = [18.0_wp, 6.0_wp] ; c2%lai = [2.0_wp, 2.0_wp]   ! DESCENDING
       c2%leaf_width = [0.04_wp, 0.04_wp] ; c2%branch_diam = [0.02_wp, 0.02_wp]
       lt = [300.0_wp, 300.0_wp]
       e2%u_ref = 3.0_wp
       g2%veg_height = 18.0_wp ; g2%opencan_frac = 0.0_wp ; g2%snowfac = 0.0_wp
       call alloc_aero_out(a2, 2_ik)
-      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width,    &
+      call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%leaf_width,    &
                               c2%branch_diam, lt, lt, a2)
       call check_true('aero order: tall cohort (gather idx1=top) gets more wind', a2%wind(1) > a2%wind(2),            &
               a2%wind(1) - a2%wind(2))
@@ -690,11 +690,11 @@ contains
          real(wp) :: tair(2), twarm(2)
          tair = e2%can_temp ; twarm = e2%can_temp + 8.0_wp
          call alloc_aero_out(a_ref, 2_ik) ; call alloc_aero_out(a_warm_leaf, 2_ik) ; call alloc_aero_out(a_warm_wood, 2_ik)
-         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%leaf_width, &
                                  c2%branch_diam, tair, tair, a_ref)
-         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%leaf_width, &
                                  c2%branch_diam, twarm, tair, a_warm_leaf)
-         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%crown, c2%leaf_width, &
+         call aero_bottom_to_top(col_config%aero, e2, g2, 2_ik, c2%height, c2%lai, c2%leaf_width, &
                                  c2%branch_diam, tair, twarm, a_warm_wood)
          call check_true('wood gb ignores the leaf temperature', all(a_warm_leaf%wood_gbh == a_ref%wood_gbh), &
                  maxval(abs(a_warm_leaf%wood_gbh - a_ref%wood_gbh)))
@@ -716,7 +716,7 @@ contains
       type(aero_geom_t)     :: g3
       real(wp)              :: lt(1)
       call alloc_column_cohort(c3, 1_ik)
-      c3%height = [38.0_wp] ; c3%lai = [5.0_wp] ; c3%crown = [0.9_wp]
+      c3%height = [38.0_wp] ; c3%lai = [5.0_wp]
       c3%leaf_width = [0.04_wp] ; c3%branch_diam = [0.02_wp]
       g3%veg_height = 38.0_wp ; g3%opencan_frac = 0.0_wp ; g3%snowfac = 0.0_wp
       e3%u_ref = 3.0_wp ; e3%zref = 43.0_wp
@@ -724,7 +724,7 @@ contains
       call set_aero_env_canopy(e3, 300.0_wp, 0.015_wp, 400.0_wp, 300.0_wp)
       lt = 300.0_wp
       call alloc_aero_out(a3, 1_ik)
-      call aero_bottom_to_top(col_config%aero, e3, g3, 1_ik, c3%height, c3%lai, c3%crown, c3%leaf_width,    &
+      call aero_bottom_to_top(col_config%aero, e3, g3, 1_ik, c3%height, c3%lai, c3%leaf_width,    &
                               c3%branch_diam, lt, lt, a3)
       call check_true('reference level: equal canopy and reference air has no temperature scale',               &
               a3%tstar == 0.0_wp, a3%tstar)

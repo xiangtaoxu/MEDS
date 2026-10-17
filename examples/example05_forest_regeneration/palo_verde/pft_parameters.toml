@@ -73,7 +73,6 @@ sapwood_area_b1    = [1.582, 1.582, 1.582, 1.582]
 sapwood_area_b2    = [1.764, 1.764, 1.764, 1.764]
 leaf_width         = [0.04, 0.04, 0.04, 0.04]
 branch_diameter    = [0.02, 0.02, 0.02, 0.02]
-crown_area_frac    = [1.0, 1.0, 1.0, 1.0]
 
 #----- Leaf photosynthesis and stomata: example 04's calibration (Vcmax25 is above). -------------------
 photosynthetic_pathway = [1, 1, 1, 1]
@@ -184,8 +183,6 @@ b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # Chave et al. (2014) eq. 4
-ca_b1      = 0.370
-ca_b2      = 0.464
 lai_b1     = 0.23384770     # ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495
 light_ext  = 0.5

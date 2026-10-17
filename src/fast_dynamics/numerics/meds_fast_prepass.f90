@@ -153,8 +153,7 @@ contains
       aenv%can_temp = tcas ; aenv%can_theta = tcas ; aenv%can_shv = qcas ; aenv%can_co2 = cas%can_co2
       aenv%t_ground = t_ground
       call aero_bottom_to_top(aero_cfg, aenv, ageom, col_cohort%n, col_cohort%height, col_cohort%lai,      &
-                              col_cohort%crown, col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp,      &
-                              wood_temp, aero)
+                              col_cohort%leaf_width, col_cohort%branch_diam, leaf_temp, wood_temp, aero)
    end subroutine refresh_canopy_aerodynamics
 
    !---------------------------------------------------------------------------------------!
@@ -433,7 +432,7 @@ contains
    ! ord(k) = gather index of the k-th cohort counting from the canopy BOTTOM (ascending_order,     !
    ! which is O(n) on the tallest-first cohort block).                                               !
    !---------------------------------------------------------------------------------------!
-   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, crown, leaf_width, branch_diam,    &
+   subroutine aero_bottom_to_top(acfg, aenv, ageom, n, height, lai, leaf_width, branch_diam,           &
                                  leaf_temp, wood_temp, aero)
       type(aero_cfg_t),      intent(in)    :: acfg
       type(aero_env_t),      intent(in)    :: aenv
@@ -441,7 +440,6 @@ contains
       integer(ik),           intent(in)    :: n
       real(wp),              intent(in)    :: height(:)       !< [m]  cohort height (gather order, top first)
       real(wp),              intent(in)    :: lai(:)          !< [m2/m2] leaf area index
-      real(wp),              intent(in)    :: crown(:)        !< [-]  crown fraction
       real(wp),              intent(in)    :: leaf_width(:)   !< [m]  leaf width (boundary layer)
       real(wp),              intent(in)    :: branch_diam(:)  !< [m]  branch diameter (wood boundary layer)
       real(wp),              intent(in)    :: leaf_temp(:)    !< [K]  leaf temperature
@@ -450,18 +448,18 @@ contains
       real(wp),              intent(in)    :: wood_temp(:)    !< [K]  wood temperature
       type(aero_out_t),      intent(inout) :: aero
       integer(ik) :: ord(n), k, i
-      real(wp)    :: h_bt(n), lai_bt(n), cr_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
+      real(wp)    :: h_bt(n), lai_bt(n), lt_bt(n), wt_bt(n), lw_bt(n), bd_bt(n)
       real(wp)    :: wind_bt(n), lgbh_bt(n), lgbw_bt(n), wgbh_bt(n), wgbw_bt(n)
 
       call ascending_order(height, n, ord)
       do k = 1_ik, n
          i = ord(k)
          h_bt(k)   = height(i)     ; lai_bt(k) = lai(i)
-         cr_bt(k)  = crown(i)      ; lt_bt(k)  = leaf_temp(i) ; wt_bt(k) = wood_temp(i)
+         lt_bt(k)  = leaf_temp(i)  ; wt_bt(k)  = wood_temp(i)
          lw_bt(k)  = leaf_width(i) ; bd_bt(k)  = branch_diam(i)
       end do
 
-      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, cr_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)
+      call canopy_aerodynamics(acfg, aenv, ageom, n, h_bt, lai_bt, lt_bt, wt_bt, lw_bt, bd_bt, aero)
 
       !----- aero%*(k) is now bottom->top; copy out, then scatter back to gather order. ----------!
       do k = 1_ik, n

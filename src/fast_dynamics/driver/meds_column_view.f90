@@ -76,7 +76,6 @@ contains
          cc%rd25(j)          = cohort%rd25(i)
          cc%dmax_psi_leaf(j) = cohort%dmax_psi_leaf(i)
          !----- Canopy-element geometry (per-PFT traits, gathered on the block). ----------!
-         cc%crown(j)         = cohort%p_crown_area_frac(i)
          cc%leaf_width(j)    = cohort%p_leaf_width(i)
          cc%branch_diam(j)   = cohort%p_branch_diameter(i)
          cc%aboveground_frac(j) = cohort%p_aboveground_frac(i)

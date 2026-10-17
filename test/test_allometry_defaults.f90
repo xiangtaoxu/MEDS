@@ -50,8 +50,6 @@ program test_allometry_defaults
    call same('b2Ht', d%b2Ht)
    call same('agb_c1', d%agb_c1)
    call same('agb_c2', d%agb_c2)
-   call same('ca_b1', d%ca_b1)
-   call same('ca_b2', d%ca_b2)
    call same('lai_b1', d%lai_b1)
    call same('lai_b2', d%lai_b2)
    call same('light_ext', d%light_ext)

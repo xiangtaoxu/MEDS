@@ -172,7 +172,7 @@ Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, l
 seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
 polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
 Every curve is capped at
-`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+`[pft].hgt_max`, and biomass and leaf area take the height it gives. A cohort reproduces once
 its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
 height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
 allometry.

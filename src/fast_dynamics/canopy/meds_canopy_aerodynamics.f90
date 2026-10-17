@@ -15,8 +15,8 @@
 ! Monin-Obukhov denominators with a fixed-iteration solve (no root-find, no I/O -> GPU     !
 ! portable); the leaf/wood boundary layers use ED2's forced+free convection Nusselt kernel !
 ! (needed for low-wind free convection); the in-canopy wind uses ED2's per-cohort          !
-! crown-area extinction; the ground conductance uses the CLM4-like dense-canopy form. All  !
-! `pure`; per-cohort outputs are written into caller-owned SoA slices (never an            !
+! extinction through closed crowns; the ground conductance uses the CLM4-like dense-canopy !
+! form. All `pure`; per-cohort outputs are written into caller-owned SoA slices (never an  !
 ! array-valued function result passed into a call: see CLAUDE.md).                         !
 !==========================================================================================!
 module meds_canopy_aerodynamics
@@ -90,17 +90,17 @@ contains
    !  Steps 1-5 below are docs/science/canopy_aerodynamics.md eq. (1), eqs. (2)-(4), eq.   !
    !  (6), eqs. (7)-(8) and eqs. (9)-(10).                                                 !
    !=======================================================================================!
-   pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, crown_area,        &
-                                            leaf_temp, wood_temp, leaf_width, branch_diam, out)
+   pure subroutine canopy_aerodynamics(cfg, env, geom, n, height, lai, leaf_temp, wood_temp,  &
+                                            leaf_width, branch_diam, out)
       type(aero_cfg_t),  intent(in)    :: cfg
       type(aero_env_t),  intent(in)    :: env
       type(aero_geom_t), intent(in)    :: geom
       integer(ik),       intent(in)    :: n
-      real(wp),          intent(in)    :: height(n), lai(n), crown_area(n)
+      real(wp),          intent(in)    :: height(n), lai(n)
       real(wp),          intent(in)    :: leaf_temp(n), wood_temp(n), leaf_width(n), branch_diam(n)
       type(aero_out_t),  intent(inout) :: out
 
-      real(wp)    :: rough, displace, zldis, uh, ca, ext_half, ext_full, stab, denom
+      real(wp)    :: rough, displace, zldis, uh, stab, denom
       integer(ik) :: ico
 
       !----- 1. Roughness + displacement from canopy height (snow blend). ------------------!
@@ -141,15 +141,13 @@ contains
                      / (out%ggveg + (1.0_wp - geom%opencan_frac) * out%ggbare + tiny_num)
       end if
 
-      !----- 4. In-canopy wind: top-of-canopy wind, then crown-area extinction top -> bottom. !
+      !----- 4. In-canopy wind: top-of-canopy wind, then extinction through each cohort's closed    !
+      !      crowns, top -> bottom (docs/science/canopy_aerodynamics.md eq. (8)). -------------------!
       uh     = reduced_wind(cfg, out%ustar, out%zeta, geom%veg_height, displace, rough, zldis)
       out%uh = uh
       do ico = n, 1_ik, -1_ik
-         ca            = min(max(crown_area(ico), tiny_num), 1.0_wp)
-         ext_half      = ca * safe_exp(-0.25_wp * lai(ico) / ca) + (1.0_wp - ca)
-         ext_full      = ca * safe_exp(-0.50_wp * lai(ico) / ca) + (1.0_wp - ca)
-         out%wind(ico) = max(cfg%ugbmin, uh * ext_half)          ! wind at crown mid-depth
-         uh            = uh * ext_full                            ! attenuate for the cohort below
+         out%wind(ico) = max(cfg%ugbmin, uh * safe_exp(-0.25_wp * lai(ico)))   ! wind at crown mid-depth
+         uh            = uh * safe_exp(-0.50_wp * lai(ico))                     ! attenuate for the cohort below
       end do
 
       !----- 5. Per-cohort leaf (flat plate) + wood (cylinder) boundary layers [m/s]. ------!

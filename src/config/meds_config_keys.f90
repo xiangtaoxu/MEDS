@@ -48,6 +48,9 @@ module meds_config_keys
       'the move to ED-MORE, and MEDS is carbon-only until then: delete the key'
    character(len=*), parameter :: LITTER_SPLIT = 'the litter is split by the tissue it comes from, with '// &
       'each PFT''s f_labile_leaf, f_labile_stem and aboveground_frac; delete the key'
+   character(len=*), parameter :: CROWN_AREA = 'every crown closes over its patch (crown area 1, '// &
+      'ED2''s closed-crown path), so the crown-area allometry and the crown fraction are gone; the '// &
+      'in-canopy wind attenuates by leaf area alone: delete the key'
    type :: retired_key_t
       character(len=KEY_LEN) :: key
       character(len=320)     :: why
@@ -180,6 +183,9 @@ module meds_config_keys
       retired_key_t('soil_carbon.c2n_slow', NITROGEN),                                          &
       retired_key_t('soil_carbon.c2n_fast', NITROGEN),                                          &
       retired_key_t('soil_carbon.n_immobil_supply_scale', NITROGEN),                            &
+      retired_key_t('allometry.ca_b1', CROWN_AREA),                                             &
+      retired_key_t('allometry.ca_b2', CROWN_AREA),                                             &
+      retired_key_t('pft.crown_area_frac', CROWN_AREA),                                         &
       retired_key_t('region.detail_polygons', 'the region files hold every variable and tier for '// &
                     'every polygon, cohort, patch and sub-daily output included; choose the '//      &
                     'variables with [output].io_config') ]

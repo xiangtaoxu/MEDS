@@ -163,6 +163,17 @@ before and after.
   PFT's `f_labile_leaf`, `f_labile_stem` and `aboveground_frac`. The state file never carried the N
   fields, and no output variable read them. `test_config_keys` checks the refusals. Results are
   byte-identical.
+- **The crown area** (#432; the sweep's decision D1). The crown-area allometry `[allometry].ca_b1`/`ca_b2`
+  was a required key that nothing read (`dbh_to_crown_area` was never called), and the PFT trait
+  `crown_area_frac` was 1.0 in every shipped config; its only use was the in-canopy wind's crown cover.
+  All three keys are retired and refused, saying the crowns close over their patch and the wind
+  attenuates by leaf area alone. `dbh_to_crown_area`, the cohort field `p_crown_area_frac` (with its
+  lines in the lockstep reorder, copy, compaction and creation sites), `column_cohort_t%crown` and the
+  wind kernel's crown argument are gone, and `docs/science/canopy_aerodynamics.md` eq. (8) is the
+  closed-crown form, u·exp(−LAI/4) at mid-crown and u·exp(−LAI/2) below. `test_aerodynamics` checks
+  eq. (8) in place of its small-crown test. The keys are removed from every shipped TOML (the root
+  references, the examples, the example 04 calibration file and `test/region`). Results are
+  byte-identical (the crown fraction was 1 everywhere).
 
 ### Fixed
 

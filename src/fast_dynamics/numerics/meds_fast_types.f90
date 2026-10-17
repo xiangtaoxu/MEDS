@@ -183,7 +183,7 @@ module meds_fast_types
    type :: column_cohort_t
       integer(ik)              :: n = 0_ik
       integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
-      real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
+      real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
       logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
@@ -800,7 +800,7 @@ contains
       type(column_cohort_t), intent(out) :: col_cohort
       integer(ik),           intent(in)  :: n
       col_cohort%n = n
-      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
+      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n),                                     &
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
@@ -808,7 +808,7 @@ contains
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
-      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
+      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp
       col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
       col_cohort%is_woody = .true.
       col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp
