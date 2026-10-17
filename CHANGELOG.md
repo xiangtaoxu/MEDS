@@ -280,6 +280,16 @@ before and after.
   month's records are written (the fill value where the failed polygon has none), and a state file
   that falls due at the month's end, and then the run stops with an error, so the region ends after
   the month in which the polygon failed, with no end-of-run state file.
+- **`docs/ROADMAP.md` brought up to date for the open-issue sweep.** §1 points to the sweep's plan
+  (`docs/dev_plans/MEDS_ISSUE_SWEEP_PLAN.md`) and lists the new issues #427–#429 (#430 and #432 in
+  §12, #431 under the region runtime in §8, the question #433 in §5). #74 is closed (dew is at most
+  0.5 % of ET at BCI) and leaves the table. #265, #268 and #269 move from "Known defects" to §5 as
+  open questions, since they are modelling choices; #269's "1.2 K warmer" site mean, which gap
+  patches dominated, is dropped. #416's row says the soil side uses `grav_head` too (`grav` is only
+  where the acceleration itself is meant). #342 no longer waits for high-elevation sites: 29 % of
+  example 06's cells are above 1000 m. The forcing design is cited from `archive/`, the stale
+  "example 06 as region runs" item goes, and #377, #424, #425 and #430 are marked done in `beta`.
+  `MEDS_POLYGON_RUNTIME_PLAN.md`'s header says the region runtime was merged into `beta` as #408.
 
 ## [0.3.4] — 2026-10-13
 
