@@ -1,6 +1,6 @@
 # MEDS open-issue sweep — plan
 
-**Revision 3, 2026-10-17. Every decision is taken (§6); Phase 1 is starting.**
+**Revision 3, 2026-10-17. Every decision is taken (§6); work under way, decisions made during it are logged in §8.**
 - Revision 1 read every open issue and proposed three phases and decisions D1–D11.
 - Revision 2 recorded the owner's decisions (§6).
 - Revision 3 records the last four:
@@ -254,6 +254,18 @@ makes half of example 06's cells drain as their map says. Neither forces a rerun
 draft's "comment rewrite" and its lint test are done (#409), and the region runtime is merged (#408).
 
 ---
+
+## 8. Log — decisions made during the work (the owner was away from 2026-10-17)
+
+The owner asked for the work to continue through the phases without waiting, and for every decision
+that differs from this plan to be recorded here.
+
+| | When | Decision | Why |
+|---|---|---|---|
+| L1 | Phase 1 start | Nothing is merged into `beta` while the owner is away. Each piece of work is a PR into `beta`; later phases build on an integration branch that merges the earlier PRs, so they can be reviewed and merged in order. | Merging into `beta` was always the owner's call. |
+| L2 | Phase 1 start | Phase 1 runs as three parallel PRs: 1a (correctness), 1b (clean-ups) and 1c+1d (docs and example hygiene, one PR). The tree-wide unused-import removal (the rest of #417) comes after them, to avoid conflicts in 35 modules. | Parallel work in separate worktrees; one broad mechanical change last. |
+| L3 | Phase 1 start | New issues filed: #427 (N2, Campbell seed), #428 (N3, missing file), #429 (N4, `meds.canopy`), #430 (N5, example paths and hygiene), #431 (N6, region resume), #432 (N10, crown area). N8 (`t_melt` default) has no issue of its own; it rides with #417's PR. | §5: each defect gets an issue when its work starts. |
+| L4 | Phase 2 start | Phase 2 runs alongside Phase 1, except #265, which needs #410 and is measured on Phase 3's branch. | The measurements read beta's behaviour, which Phase 1 does not change. |
 
 ## Appendix — every open issue
 
