@@ -51,8 +51,8 @@ stomata (`leaf.Stomata`), and a plain Arrhenius temperature response (`leaf.Temp
 ![Slot & Winter 2017 reproduced with the MEDS leaf model](slot2017.png)
 
 **(a) A–Cᵢ curve.** Net assimilation is limited by RuBP carboxylation (A_c, red) below
-Cᵢ ≈ 187 µmol mol⁻¹ and by RuBP regeneration (A_j, blue) above it (star). The compensation point is
-Γ = 47 µmol mol⁻¹, and A reaches 44 µmol m⁻² s⁻¹ at Cᵢ = 1400. The transition Cᵢ depends on the
+Cᵢ ≈ 185 µmol mol⁻¹ and by RuBP regeneration (A_j, blue) above it (star). The compensation point is
+Γ = 48 µmol mol⁻¹, and A reaches 44 µmol m⁻² s⁻¹ at Cᵢ = 1400. The transition Cᵢ depends on the
 measurement temperature, which the paper's inset does not give.
 
 **(b–f) Temperature responses.** Vcmax and Jmax are the paper's fits drawn with the model's peaked
@@ -60,9 +60,9 @@ function, so they match the paper exactly. gₛ, A_net and R_light are outputs o
 
 | Species | Vcmax25 | Jmax25 | Vcmax T_opt | Jmax T_opt | gₛ T_opt | A_net T_opt | A_net max |
 |---|---|---|---|---|---|---|---|
-| *F. insipida* | 77.9 | 127.9 | 36.0 | 34.5 | 29.5 | 33.5 | 21.4 |
-| *L. speciosa* | 79.5 | 88.1 | 39.7 | 37.5 | 34.5 | 36.5 | 21.0 |
-| *C. longifolium* | 18.1 | 65.5 | 32.9 | 33.5 | 32.0 | 32.5 | 18.1 |
+| *F. insipida* | 77.9 | 127.9 | 36.0 | 34.5 | 29.5 | 33.5 | 21.3 |
+| *L. speciosa* | 79.5 | 88.1 | 39.7 | 37.5 | 34.5 | 36.5 | 20.8 |
+| *C. longifolium* | 18.1 | 65.5 | 32.9 | 33.5 | 32.0 | 32.5 | 18.0 |
 | *G. madruno* | 26.8 | 32.8 | 37.1 | 35.3 | 29.0 | 32.5 | 7.6 |
 
 Rates in µmol m⁻² s⁻¹, temperatures in °C (gₛ and A_net optima on the 0.5 °C sweep). As in the
