@@ -231,6 +231,12 @@ before and after.
   its state leaves beside the state files.
 - **Counts corrected** (#430): `CLAUDE.md`'s suite is 72 tests (73 with the Python library), not 53;
   `README.md`'s output registry holds 284 variables, not 252.
+- **`docs/ed2_comparison.md` carries a banner** (#422): the page describes v0.3.0, a rewrite is
+  planned, and until then the banner lists what is now different, with links to the science pages:
+  the capacity limb is always on and resorption defaults to 0.3; leaf water potential converges at
+  900 s on the implicit soil–plant water network; each cohort roots to a depth set by its height and
+  its sapwood conductivity follows wood density; height can follow Chave et al. (2014), a soil column
+  can come from a pedotransfer function and the soil maps, and a region runs its polygons on threads.
 
 ## [0.3.4] — 2026-10-13
 

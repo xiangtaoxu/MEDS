@@ -406,7 +406,8 @@ Gaps and residues found in the 2026-10-17 annotation review.
 - **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
-- **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner.
+- **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner. Until the
+  rewrite, a banner at the top of the page lists the statements that are now wrong.
 - **Example 05's Palo Verde PFTs** label values "example 04's calibration" that differ from it. *Candidate.*
   [#424](https://github.com/xiangtaoxu/MEDS/issues/424)
 - **`leaf_gas_exchange.md` §2 gives the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
