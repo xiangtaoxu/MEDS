@@ -78,7 +78,7 @@ storage_cushion        = [0.5]  # [--] storage target, x (leaf + fine-root targe
                                 #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3]
 retained_carbon_fraction = [0.0]   # [--] no resorption, as the example's calibration assumes (default 0.3)
-leaf_lifespan_toc      = [2.0]   # [yr] (= 1/0.5)
+leaf_turnover_rate_toc = [0.5]   # [1/yr]
 fineroot_turnover_rate = [0.8]   # [1/yr]
 wood_carbon_density    = [300.0] # [kgC/m3]
 # Necromass -> litter-destination split, as the reference meds_config_pft.toml's mid-successional PFT.

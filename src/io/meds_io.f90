@@ -138,7 +138,7 @@ contains
       call dv('sla',              NC_DOUBLE, [d_cohort], 'specific leaf area [m2/kgC] (plastic)')
       call dv('vcmax25',          NC_DOUBLE, [d_cohort], 'max carboxylation @25C [umol/m2/s] (plastic)')
       call dv('rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
-      call dv('llspan',           NC_DOUBLE, [d_cohort], 'leaf lifespan [yr] (plastic)')
+      call dv('leaf_turnover_rate', NC_DOUBLE, [d_cohort], 'baseline leaf turnover rate [1/yr] (plastic)')
       !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
       !      a restart EXACT for the fast loop -- without them the restart re-seeds leaf_water_mass to   !
       !      near-saturated (lazy-init) and leaf/wood_temp to LEAF_TEMP_INIT, whose psi/temperature      !
@@ -368,7 +368,7 @@ contains
             call put_dbl('sla',         c%sla(1:ncoh))
             call put_dbl('vcmax25',     c%vcmax25(1:ncoh))
             call put_dbl('rd25',        c%rd25(1:ncoh))
-            call put_dbl('llspan',      c%llspan(1:ncoh))
+            call put_dbl('leaf_turnover_rate', c%leaf_turnover_rate(1:ncoh))
             call put_dbl('leaf_water_mass', c%leaf_water_mass(1:ncoh))
             call put_dbl('wood_water_mass', c%wood_water_mass(1:ncoh))
             call put_dbl('leaf_temp',   c%leaf_temp(1:ncoh))
@@ -675,12 +675,18 @@ contains
                c%sla(i)     = cfg%pft%sla(c%pft(i))
                c%vcmax25(i) = cfg%pft%vcmax25(c%pft(i))
                c%rd25(i)    = cfg%pft%rd25(c%pft(i))
-               c%llspan(i)  = cfg%pft%leaf_lifespan_toc(c%pft(i))
+               c%leaf_turnover_rate(i) = cfg%pft%leaf_turnover_rate_toc(c%pft(i))
             end do
             call gv_dbl_opt(ncid, 'sla',     ncoh, c%sla(1:ncoh))
             call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
             call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
-            call gv_dbl_opt(ncid, 'llspan',  ncoh, c%llspan(1:ncoh))
+            call gv_dbl_opt(ncid, 'leaf_turnover_rate', ncoh, c%leaf_turnover_rate(1:ncoh))
+            !----- A state file written while this trait was a leaf lifespan [yr] holds that instead, -!
+            !      as `llspan`: the turnover rate is its reciprocal. -----------------------------------!
+            if (nc_inq_varid_f(ncid, 'llspan', vid) == NC_NOERR) then
+               call gv_dbl(ncid, 'llspan', ncoh, c%leaf_turnover_rate(1:ncoh))
+               c%leaf_turnover_rate(1:ncoh) = 1.0_wp / c%leaf_turnover_rate(1:ncoh)
+            end if
             !----- Per-cohort hydraulics/temperature (OPTIONAL): site_alloc has already set the        !
             !      lazy-init sentinels (leaf/wood_water_mass = 0 -> re-seed near-saturated on first       !
             !      touch; leaf/wood_temp = LEAF_TEMP_INIT), so a state file without these re-seeds; one   !

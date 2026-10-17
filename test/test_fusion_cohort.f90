@@ -221,20 +221,28 @@ program test_fusion_cohort
 
    !=== 6. Fusion of cohorts with different SLA conserves leaf AREA: sla blends on leaf          !
    !     carbon, the quantity it converts, so sum(nplant*leaf_carbon*sla) is what the fused        !
-   !     cohort shows. A leaf-area-weighted sla would give sum(LA*sla)/sum(LA) instead. ===========!
+   !     cohort shows. A leaf-area-weighted sla would give sum(LA*sla)/sum(LA) instead. The leaf    !
+   !     turnover rate is the share of the leaf carbon lost a year, so it too blends on leaf        !
+   !     carbon, and the fused cohort loses the leaf carbon its two parents did; with the two      !
+   !     SLAs differing, a leaf-area weight would not. =============================================!
    block
-      real(wp) :: lai0
+      real(wp) :: lai0, loss0
       call init_bare_ground(site, cfg, 1_ik)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp, 10.0_wp)
       call add_cohort(site, cfg, 1_ik, 1_ik, 0.3_wp, 12.0_wp)
       call finalize_init(site)
       site%cohort%sla(1) = 12.0_wp ; site%cohort%sla(2) = 24.0_wp      ! shade-acclimated donor
+      site%cohort%leaf_turnover_rate(1) = 1.0_wp ; site%cohort%leaf_turnover_rate(2) = 0.4_wp
       call set_cohort_size_from_carbon(site%cohort, 1_ik)
       call set_cohort_size_from_carbon(site%cohort, 2_ik)
       lai0 = site%cohort%nplant(1)*site%cohort%leaf_area(1) + site%cohort%nplant(2)*site%cohort%leaf_area(2)
+      loss0 = site%cohort%nplant(1)*site%cohort%leaf_carbon(1)*site%cohort%leaf_turnover_rate(1)       &
+            + site%cohort%nplant(2)*site%cohort%leaf_carbon(2)*site%cohort%leaf_turnover_rate(2)
       call fuse_2_cohorts(site, 1_ik, 2_ik, cfg%conservation_tol)
       call check_close(site%cohort%nplant(1)*site%cohort%leaf_area(1), lai0, 1.0e-12_wp,              &
                        'fusion of cohorts with different SLA must conserve leaf area')
+      call check_close(site%cohort%nplant(1)*site%cohort%leaf_carbon(1)*site%cohort%leaf_turnover_rate(1), &
+                       loss0, 1.0e-12_wp, 'fusion must conserve the leaf carbon turned over a year')
       !----- The same at any size: two LEAFLESS cohorts, whose leaf carbon has decayed to ~1e-193   !
       !      (as in a BCI run). A blend that skipped weights below 1e-30 would keep one SLA here. -!
       call init_bare_ground(site, cfg, 1_ik)

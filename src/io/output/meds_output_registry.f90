@@ -37,7 +37,7 @@ module meds_output_registry
         FLD_C_NPLANT, FLD_C_DBH, FLD_C_HEIGHT, FLD_C_BASAL_AREA, FLD_C_AGB, FLD_C_LEAF_AREA,     &
         FLD_C_GROWTH_AVG, FLD_C_PFT, FLD_C_OWNER_PATCH, FLD_C_GLOBAL_ID, FLD_C_LAI, FLD_C_WAI,   &
         FLD_C_LEAF_CARBON, FLD_C_FINEROOT_CARBON, FLD_C_WOOD_CARBON, FLD_C_STORAGE_CARBON,       &
-        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LLSPAN,         &
+        FLD_C_BGB, FLD_C_VEG_CARBON, FLD_C_SLA, FLD_C_VCMAX25, FLD_C_RD25, FLD_C_LEAF_TURNOVER,  &
         FLD_C_OVERTOP_LAI, FLD_C_GPP_ACCUM, FLD_C_NPP_ACCUM, FLD_C_LEAF_RESP, FLD_C_STEM_RESP,   &
         FLD_C_ROOT_RESP, FLD_C_DMAX_PSI_LEAF, FLD_C_PHENO_FLUSH, FLD_C_PHENO_SHED,               &
         FLD_C_SDIAG0,                                                                            &
@@ -199,8 +199,8 @@ contains
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_VCMAX25)
       call add_variable(reg, 'rd25_cohort', 'leaf dark respiration at 25 degC', 'umol/m2/s',     &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_RD25)
-      call add_variable(reg, 'llspan_cohort', 'leaf lifespan', 'yr',                             &
-                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LLSPAN)
+      call add_variable(reg, 'leaf_turnover_rate_cohort', 'baseline leaf turnover rate', '1/yr', &
+                        DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_LEAF_TURNOVER)
       call add_variable(reg, 'leaf_flush_tendency_cohort', 'smoothed leaf flush tendency', '-',          &
                         DIM_COHORT, AGG_MEAN, GRP_STRUCTURE, MON, FLD_C_PHENO_FLUSH)
       call add_variable(reg, 'leaf_shed_tendency_cohort', 'smoothed leaf senescence tendency', '-',      &

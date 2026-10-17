@@ -125,7 +125,7 @@ growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost: th
 # max_absolute_growth_rate = [0.0, 0.0, 0.0]       # [cm/yr] sink limit on diameter growth of a 1 cm stem;
 #                                                  #        with both, the tighter applies; the residual is exuded (0 = off)
 # max_absolute_growth_exponent = [0.0, 0.0, 0.0]   # [--] that limit scales as dbh[cm]^exponent (0 = size-independent)
-leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
+leaf_turnover_rate_toc = [1.0, 0.5, 0.33]          # [1/yr] top-of-canopy baseline leaf turnover (> 0)
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
 # Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter). aboveground_frac
@@ -192,7 +192,7 @@ height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (
 
 # [derived] -- only consulted when [options].override_derived = true in the main config. Pins the
 # mortality-hazard parameters instead of deriving them from wood density, and the light-plasticity
-# slopes instead of deriving them from vcmax25 and leaf_lifespan_toc (a cohort's trait is its PFT's
+# slopes instead of deriving them from vcmax25 and leaf_turnover_rate_toc (a cohort's trait is its PFT's
 # top-of-canopy value times exp(k * LAI above it), k in 1/(m2/m2); docs/science/plant_traits.md
 # eqs. (1), (3)-(4)). Each key is optional:
 # [derived]
@@ -202,7 +202,7 @@ height_allometry = "power"  # "power" (b1Ht, b2Ht above), "gmm" or "chave2014" (
 # kplastic_vcmax  = [...]   # < 0: Vcmax25 falls in shade
 # kplastic_rd     = [...]   # < 0: Rd25 falls in shade (derived: the same as kplastic_vcmax)
 # kplastic_sla    = [...]   # > 0: SLA rises in shade
-# kplastic_llspan = [...]   # >= 0: leaf lifespan lengthens in shade
+# kplastic_leaf_turnover = [...]   # <= 0: leaf turnover slows in shade
 
 # ------------------------------------------------------------------------------------------
 # Leaf-phenology cue parameters (per PFT; docs/science/plant_phenology.md). The gate is the

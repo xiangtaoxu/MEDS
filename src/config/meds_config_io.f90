@@ -1111,7 +1111,7 @@ contains
       !----- Light trait plasticity (opt-in; DEFAULTED false). Leaf phenology always runs;        !
       !      its per-PFT cue params are read by load_phenology_pft. ------------------------------!
       cfg%trait_plasticity_on = toml_logical(tm, 'trait_dynamics.trait_plasticity_on', .false.)
-      cfg%fineroot_lifespan_plastic = toml_logical(tm, 'trait_dynamics.fineroot_lifespan_plastic', .false.)
+      cfg%fineroot_turnover_plastic = toml_logical(tm, 'trait_dynamics.fineroot_turnover_plastic', .false.)
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
@@ -1269,7 +1269,7 @@ contains
       call opt_pa(tp, 'pft.root_depth_b2',       cfg%pft%hyd_root_depth_b2,       npft, miss)
       call opt_pa(tp, 'pft.specific_root_length', cfg%pft%hyd_specific_root_length, npft, miss)
       call opt_pa(tp, 'pft.fine_root_radius',    cfg%pft%hyd_fine_root_radius,    npft, miss)
-      call req_pa(tp, 'pft.leaf_lifespan_toc',      cfg%pft%leaf_lifespan_toc,      npft, miss)
+      call req_pa(tp, 'pft.leaf_turnover_rate_toc', cfg%pft%leaf_turnover_rate_toc, npft, miss)
       call req_pa(tp, 'pft.fineroot_turnover_rate', cfg%pft%fineroot_turnover_rate, npft, miss)
       call req_pa(tp, 'pft.wood_carbon_density',    cfg%pft%wood_carbon_density,    npft, miss)
       call req_pa(tp, 'pft.f_labile_leaf',          cfg%pft%f_labile_leaf,          npft, miss)
@@ -1335,8 +1335,8 @@ contains
          if (nout == npft) cfg%pft%kplastic_rd = buf(1:npft)
          call toml_real_array(tp, 'derived.kplastic_sla', buf, nout)
          if (nout == npft) cfg%pft%kplastic_sla = buf(1:npft)
-         call toml_real_array(tp, 'derived.kplastic_llspan', buf, nout)
-         if (nout == npft) cfg%pft%kplastic_llspan = buf(1:npft)
+         call toml_real_array(tp, 'derived.kplastic_leaf_turnover', buf, nout)
+         if (nout == npft) cfg%pft%kplastic_leaf_turnover = buf(1:npft)
       end if
 
       call validate_config(cfg)
@@ -1368,9 +1368,9 @@ contains
            //'stomata_psi_onset,leaf_surf_water_max,wood_surf_water_max,'                                &
            //'sla,root_to_leaf_ratio,huber_value,aboveground_frac,storage_cushion,growth_resp_factor,' &
            //'storage_turnover_rate,retained_carbon_fraction,'                                     &
-           //'leaf_lifespan_toc,fineroot_turnover_rate,wood_carbon_density,'                 &
+           //'leaf_turnover_rate_toc,fineroot_turnover_rate,wood_carbon_density,'            &
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
-           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
+           //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_leaf_turnover,'                        &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
            //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density'
       associate (p => cfg%pft)
@@ -1394,11 +1394,11 @@ contains
                  p%sla(pf), p%root_to_leaf_ratio(pf), p%huber_value(pf), p%aboveground_frac(pf),        &
                  p%storage_cushion(pf), p%growth_resp_factor(pf), p%storage_turnover_rate(pf),        &
                  p%retained_carbon_fraction(pf),                                                     &
-                 p%leaf_lifespan_toc(pf),                                                            &
+                 p%leaf_turnover_rate_toc(pf),                                                       &
                  p%fineroot_turnover_rate(pf), p%wood_carbon_density(pf),                             &
                  p%f_labile_leaf(pf), p%f_labile_stem(pf), p%struct_lignin_frac(pf),                  &
                  p%recruit_shade_decay(pf), p%kplastic_vm0(pf), p%kplastic_rd(pf),                   &
-                 p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
+                 p%kplastic_sla(pf), p%kplastic_leaf_turnover(pf),                                   &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
                  p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf)

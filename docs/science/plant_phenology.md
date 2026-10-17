@@ -150,10 +150,11 @@ S = \min\!\Big(k_{\mathrm{sh}}\, s\, L\, dt,\ \max\big(0,\ L - B - c_{\min} L_{\
 ```
 
 - **Background turnover** $B$: old leaves replaced while new ones grow, at $`k_{\mathrm{turn}}`$ [yr⁻¹]
-  (the reciprocal of the cohort's leaf lifespan, `leaf_lifespan_toc` with light plasticity). It is
-  scaled by the **turnover gate** $g$ (`turnover_gate`): the flush tendency $f$ while no leaves drop
-  ($`s \le 0.01`$), and 0 while they do. A dormant canopy does not turn over, and the leaves a drought
-  takes are not also aged out: background turnover is the leaf loss of a canopy that drops nothing.
+  (the cohort's leaf turnover rate, `leaf_turnover_rate_toc` with light plasticity, `plant_traits.md`
+  eq. (1)). It is scaled by the **turnover gate** $g$ (`turnover_gate`): the flush tendency $f$ while
+  no leaves drop ($`s \le 0.01`$), and 0 while they do. A dormant canopy does not turn over, and the
+  leaves a drought takes are not also aged out: background turnover is the leaf loss of a canopy that
+  drops nothing.
 - **Senescence** $S$ at the shed potential, which stops where the leaf cover reaches
   $`c_{\min}`$ = `min_leaf_cover`. The two losses add.
 - **Flush cap** $`\Delta_{\mathrm{fl}}`$: the leaf growth demand is $`\min(L_{\mathrm{full}} - L_{\mathrm{post}},\ \Delta_{\mathrm{fl}})`$
@@ -258,7 +259,7 @@ scored years per site do not constrain its year-to-year variation.
 | $`M^{*}_{\mathrm{wet}}, s_{\mathrm{wet}}`$ | `flush_water_sum`, `flush_water_sharpness` | wet sum that permits flushing [MPa day] (optional) |
 | $`M^{*}_{\mathrm{dry}}, s_{\mathrm{dry}}`$ | `shed_water_sum`, `shed_water_sharpness` | dry sum that triggers senescence [MPa day] (optional) |
 | $`\psi_{\mathrm{tlp}}`$ | *(derived)* | turgor-loss point from `leaf_pi0` and `leaf_elastic_mod` |
-| $`k_{\mathrm{turn}}`$ | `leaf_lifespan_toc` ([pft]) | background turnover $`1/\ell`$ [yr⁻¹] |
+| $`k_{\mathrm{turn}}`$ | `leaf_turnover_rate_toc` ([pft]) | background turnover [yr⁻¹] at the canopy top |
 
 The `[phenology]` section is gated by its presence: absent, every PFT keeps the no-cue defaults;
 present, every key above is required except the optional water keys. A sharpness

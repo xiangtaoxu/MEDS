@@ -199,8 +199,7 @@ module meds_pft_params
       real(wp),    allocatable :: leaf_clumping(:), wood_clumping(:)          !< [--] clumping factor in (0,1]
       real(wp),    allocatable :: leaf_angle_mean(:)                          !< [deg] mean leaf inclination
       real(wp),    allocatable :: leaf_angle_std(:)                           !< [deg] its standard deviation
-      real(wp),    allocatable :: leaf_lifespan_toc(:)      !< [yr]     top-of-canopy leaf lifespan; baseline leaf
-                                                            !<          turnover = 1/llspan
+      real(wp),    allocatable :: leaf_turnover_rate_toc(:) !< [1/yr]   top-of-canopy baseline leaf turnover
       real(wp),    allocatable :: fineroot_turnover_rate(:) !< [1/yr]   baseline fine-root turnover
       real(wp),    allocatable :: wood_carbon_density(:)    !< [kgC/m3] wood carbon density (Huber sapwood carbon)
       !----- Necromass -> litter-destination split (meds_litter_partition%necromass_to_litter;      !
@@ -214,7 +213,7 @@ module meds_pft_params
       real(wp),    allocatable :: f_labile_stem(:)          !< [--] labile (vs structural) fraction of wood/CWD necromass
       real(wp),    allocatable :: struct_lignin_frac(:)     !< [--] lignin fraction of the structural-litter stream
       !----- Light trait-PLASTICITY slopes (meds_plant_trait_dynamics): the per-cohort leaf        !
-      !      traits sla / vcmax25 / rd25 / llspan acclimate to cumulative LAI above as             !
+      !      traits sla / vcmax25 / rd25 / leaf_turnover_rate acclimate to cumulative LAI above as !
       !      trait_toc*exp(k*LAI) (docs/science/plant_traits.md eq. (1)). DERIVED from the         !
       !      base traits in derive_pft_rates (ED2 trait_plasticity_scheme=2, Lloyd et al.          !
       !      2010; docs/science/plant_traits.md eqs. (3)-(4)); consumed only when                  !
@@ -222,7 +221,7 @@ module meds_pft_params
       real(wp),    allocatable :: kplastic_sla(:)           !< [1/(m2/m2)] SLA light-response slope (>0)
       real(wp),    allocatable :: kplastic_vm0(:)           !< [1/(m2/m2)] Vcmax light-response slope (<0)
       real(wp),    allocatable :: kplastic_rd(:)            !< [1/(m2/m2)] Rd light-response slope (defaults to vm0)
-      real(wp),    allocatable :: kplastic_llspan(:)        !< [1/(m2/m2)] leaf-lifespan light-response slope
+      real(wp),    allocatable :: kplastic_leaf_turnover(:) !< [1/(m2/m2)] leaf-turnover light-response slope (<=0)
       !----- Leaf-phenology cue params (per PFT; flattened into a pheno_params_t by the slow-loop  !
       !       phenology advance). Read only from a PFT file's [phenology] section; without one a PFT  !
       !       keeps the defaults alloc_pft_table installs: both masks CUE_NONE, i.e. always flushing  !
@@ -305,7 +304,7 @@ contains
                pft%wood_transmit_nir(n), pft%wood_emissivity(n),                             &
                pft%leaf_clumping(n), pft%wood_clumping(n),                                   &
                pft%leaf_angle_mean(n), pft%leaf_angle_std(n),                                &
-               pft%leaf_lifespan_toc(n), pft%fineroot_turnover_rate(n),                      &
+               pft%leaf_turnover_rate_toc(n), pft%fineroot_turnover_rate(n),                  &
                pft%wood_carbon_density(n))
       pft%storage_turnover_rate = 0.0_wp   ! optional key; 0 = no storage maintenance
       allocate(pft%max_relative_growth_rate(n), pft%max_absolute_growth_rate(n),                     &
@@ -333,9 +332,9 @@ contains
       pft%hyd_root_beta = HYD_UNSET ; pft%hyd_root_depth_b1 = HYD_UNSET ; pft%hyd_root_depth_b2 = HYD_UNSET
       pft%hyd_specific_root_length = HYD_UNSET ; pft%hyd_fine_root_radius = HYD_UNSET
       allocate(pft%f_labile_leaf(n), pft%f_labile_stem(n), pft%struct_lignin_frac(n))
-      allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_llspan(n))
-      pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp     ! derived in derive_pft_rates;
-      pft%kplastic_rd  = 0.0_wp ; pft%kplastic_llspan = 0.0_wp  ! 0 => static (plasticity off)
+      allocate(pft%kplastic_sla(n), pft%kplastic_vm0(n), pft%kplastic_rd(n), pft%kplastic_leaf_turnover(n))
+      pft%kplastic_sla = 0.0_wp ; pft%kplastic_vm0 = 0.0_wp            ! derived in derive_pft_rates;
+      pft%kplastic_rd  = 0.0_wp ; pft%kplastic_leaf_turnover = 0.0_wp  ! 0 => static (plasticity off)
       !----- Leaf-phenology cue params: the defaults a PFT without a [phenology] section keeps --   !
       !       both masks CUE_NONE, so only the flush rate, the cue timescales and the background    !
       !       turnover act. They equal the pheno_params_t defaults (meds_phenology_types). ----------!
@@ -389,17 +388,18 @@ contains
       pft%mort_alpha = pft%mort_alpha_0 * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_alpha_exp
       pft%mort_beta  = pft%mort_beta_0  * (pft%wood_density / pft%mort_rho_ref) ** pft%mort_beta_exp
       !----- Light trait-plasticity slopes, ED2 trait_plasticity_scheme=2 (Lloyd et al. 2010).      !
-      !       Vcmax/Rd decrease in shade (slope < 0); SLA and leaf lifespan increase. Consumed only  !
+      !       Vcmax/Rd and leaf turnover decrease in shade (slope < 0); SLA increases. Consumed only !
       !       when trait_plasticity_on; with override_derived the PFT file's [derived] table can    !
       !       pin each one. ------------------------------------------------------------------------!
       lnexp            = max(lnexp_min_pft, min(lnexp_max, -2.788_wp + 0.01439_wp * pft%vcmax25))
       pft%kplastic_vm0 = -exp(lnexp)                                   ! Vcmax down in the understorey
       pft%kplastic_rd  = pft%kplastic_vm0                              ! ED2 default: Rd tracks Vcmax
       pft%kplastic_sla = -pft%kplastic_vm0 * (1.18_wp / 1.10_wp)       ! SLA up (eplastic_sla/eplastic_vm0)
-      !----- Leaf lifespan lengthens in shade for short-lived PFTs; the ED2 fit crosses 0 near     !
-      !       ~2.6 yr. Cap at 0 so long-lived PFTs keep ONE lifespan through the canopy (never       !
-      !       shorten in shade) rather than following the fit negative. ----------------------------!
-      pft%kplastic_llspan = max(0.0_wp, 0.2126_wp - 0.062_wp * log(12.0_wp * pft%leaf_lifespan_toc))
+      !----- Leaf turnover slows in shade for fast-turnover PFTs: the slope is minus ED2's fitted     !
+      !       lifespan slope, which falls with ln(12 / rate) (the lifespan in months) and crosses 0 near !
+      !       a rate of 0.39 /yr. Cap at 0 so slow-turnover PFTs keep ONE rate through the canopy        !
+      !       (never turn over faster in shade). docs/science/plant_traits.md eq. (4). ----------------!
+      pft%kplastic_leaf_turnover = min(0.0_wp, 0.062_wp * log(12.0_wp / pft%leaf_turnover_rate_toc) - 0.2126_wp)
    end subroutine derive_pft_rates
 
    !---------------------------------------------------------------------------------------!

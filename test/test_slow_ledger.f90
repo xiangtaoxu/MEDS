@@ -228,7 +228,7 @@ contains
       c%pft%recruit_carbon_efficiency(:) = repro_eff
       if (present(shade_decay)) c%pft%recruit_shade_decay(:) = shade_decay
       c%pft%seed_rain_recruits(:)      = 0.0_wp
-      c%pft%leaf_lifespan_toc(:)       = 100.0_wp   ! keep turnover from eating the supply
+      c%pft%leaf_turnover_rate_toc(:)  = 0.01_wp    ! [1/yr] keep turnover from eating the supply
       call init_bare_ground(st, c, 1_ik)
       call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 40.0_wp)   ! above the reproduction height
       call finalize_init(st)
@@ -520,12 +520,12 @@ contains
       c%soil_carbon_on     = .true.
       c%pft%growth_resp_factor(:)      = g_resp
       c%pft%recruit_carbon_efficiency(:) = repro_eff
-      !----- A LONG leaf lifespan, so turnover does not eat the whole supply before reproduction  !
+      !----- A SLOW leaf turnover, so turnover does not eat the whole supply before reproduction !
       !      is reached. The allocator's priority order is leaf/root growth, then storage, then    !
-      !      reproduction, then wood -- with the default ~1 yr lifespan this cohort's daily leaf   !
+      !      reproduction, then wood -- with the default ~1 /yr turnover this cohort's daily leaf  !
       !      replacement is 14x the photosynthate below and `avail` reaches zero before any seed   !
       !      is made, so the seed-loss assertion would pass while asserting nothing.               !
-      c%pft%leaf_lifespan_toc(:) = 100.0_wp
+      c%pft%leaf_turnover_rate_toc(:) = 0.01_wp
       if (present(max_rgr)) c%pft%max_relative_growth_rate(:) = max_rgr
       if (present(max_agr)) c%pft%max_absolute_growth_rate(:) = max_agr
       if (present(dt_yr))   dt_yr = c%dt_years

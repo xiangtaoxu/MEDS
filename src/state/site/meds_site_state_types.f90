@@ -183,13 +183,14 @@ module meds_site_state_types
       real(wp),    allocatable :: p_root_resp_factor25(:) !< [umol CO2/kgC root/s @25C]
       real(wp),    allocatable :: p_stem_resp_sapwood25(:) !< [umol CO2/m3 sapwood/s @25C]
       !----- DYNAMIC leaf traits (no p_ prefix => mutable): seeded from the PFT top-of-canopy values !
-      !       at birth and acclimated to light by meds_plant_trait_dynamics; leaf-area-weighted on    !
-      !       cohort fusion. sla enters the leaf carbon<->area map, llspan sets baseline leaf turnover,!
-      !       vcmax25/rd25 feed leaf gas exchange. -------------------------------------------------!
+      !       at birth and acclimated to light by meds_plant_trait_dynamics; blended on cohort fusion  !
+      !       on the quantity each is per (meds_demography_cohort_fusefiss). sla enters the leaf       !
+      !       carbon<->area map, leaf_turnover_rate sets baseline leaf turnover, vcmax25/rd25 feed     !
+      !       leaf gas exchange. ------------------------------------------------------------------!
       real(wp),    allocatable :: sla(:)            !< [m2/kgC]     specific leaf area
       real(wp),    allocatable :: vcmax25(:)        !< [umol/m2/s]  max carboxylation at 25 degC
       real(wp),    allocatable :: rd25(:)           !< [umol/m2/s]  leaf dark respiration at 25 degC
-      real(wp),    allocatable :: llspan(:)         !< [yr]         leaf lifespan (baseline turnover = 1/llspan)
+      real(wp),    allocatable :: leaf_turnover_rate(:) !< [1/yr]   baseline leaf turnover
       !----- PROGNOSTIC fast-biophysics per-cohort state (owned here so it rides the cohort     !
       !      lockstep; mutated by the fast loop, leaf-area-weighted on cohort fusion for the       !
       !      intensive quantities). leaf_temp is a warm-start for the VPD lag. -----------------!
@@ -477,7 +478,7 @@ contains
          site%cohort%dmax_psi_leaf, site%cohort%dmax_psi_leaf_accum,                            &
          site%cohort%growth_hist, site%cohort%p_dbh_critical, site%cohort%p_wood_density,                &
          site%cohort%p_hgt_max, site%cohort%sla, site%cohort%vcmax25, site%cohort%rd25,               &
-         site%cohort%llspan, site%cohort%p_aboveground_frac,                                            &
+         site%cohort%leaf_turnover_rate, site%cohort%p_aboveground_frac,                                &
          site%cohort%p_root_to_leaf_ratio, site%cohort%p_storage_cushion,                                &
          site%cohort%wood_area, site%cohort%sapwood_carbon, site%cohort%sapwood_area,                    &
          site%cohort%p_wai_b1, site%cohort%p_wai_b2, site%cohort%p_sapwood_area_b1,                      &
@@ -524,7 +525,7 @@ contains
       allocate(cohort%p_leaf_width(cap), cohort%p_branch_diameter(cap))
       allocate(cohort%p_is_woody(cap), cohort%p_stem_resp_factor25(cap), cohort%p_root_resp_factor25(cap))
       allocate(cohort%p_stem_resp_sapwood25(cap))
-      allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%llspan(cap))
+      allocate(cohort%vcmax25(cap), cohort%rd25(cap), cohort%leaf_turnover_rate(cap))
       allocate(cohort%leaf_temp(cap), cohort%wood_temp(cap), cohort%gpp_accum(cap), cohort%light_hours_accum(cap))
       allocate(cohort%leaf_water_mass(cap), cohort%wood_water_mass(cap))
       allocate(cohort%leaf_surf_water(cap), cohort%wood_surf_water(cap))
@@ -559,7 +560,7 @@ contains
       cohort%p_is_woody = .true.
       cohort%p_stem_resp_factor25 = 0.0_wp ; cohort%p_root_resp_factor25 = 0.0_wp
       cohort%p_stem_resp_sapwood25 = 0.0_wp
-      cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%llspan = 0.0_wp
+      cohort%vcmax25 = 0.0_wp ; cohort%rd25 = 0.0_wp ; cohort%leaf_turnover_rate = 0.0_wp
    end subroutine cohort_alloc
 
    subroutine patch_alloc(patch, cap, n_pft)
@@ -627,7 +628,7 @@ contains
       tmp%sla(1:m)                 = cohort%sla(1:m)
       tmp%vcmax25(1:m)               = cohort%vcmax25(1:m)
       tmp%rd25(1:m)                  = cohort%rd25(1:m)
-      tmp%llspan(1:m)                = cohort%llspan(1:m)
+      tmp%leaf_turnover_rate(1:m)    = cohort%leaf_turnover_rate(1:m)
       tmp%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(1:m)
       tmp%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(1:m)
       tmp%p_storage_cushion(1:m)     = cohort%p_storage_cushion(1:m)
@@ -699,7 +700,7 @@ contains
       call move_alloc(src%sla, dst%sla)
       call move_alloc(src%vcmax25, dst%vcmax25)
       call move_alloc(src%rd25, dst%rd25)
-      call move_alloc(src%llspan, dst%llspan)
+      call move_alloc(src%leaf_turnover_rate, dst%leaf_turnover_rate)
       call move_alloc(src%p_aboveground_frac, dst%p_aboveground_frac)
       call move_alloc(src%p_root_to_leaf_ratio, dst%p_root_to_leaf_ratio)
       call move_alloc(src%p_storage_cushion, dst%p_storage_cushion)
@@ -823,7 +824,7 @@ contains
       cohort%sla(1:m)                 = cohort%sla(perm(1:m))
       cohort%vcmax25(1:m)               = cohort%vcmax25(perm(1:m))
       cohort%rd25(1:m)                  = cohort%rd25(perm(1:m))
-      cohort%llspan(1:m)                = cohort%llspan(perm(1:m))
+      cohort%leaf_turnover_rate(1:m)    = cohort%leaf_turnover_rate(perm(1:m))
       cohort%p_aboveground_frac(1:m)    = cohort%p_aboveground_frac(perm(1:m))
       cohort%p_root_to_leaf_ratio(1:m)  = cohort%p_root_to_leaf_ratio(perm(1:m))
       cohort%p_storage_cushion(1:m)     = cohort%p_storage_cushion(perm(1:m))
@@ -911,7 +912,7 @@ contains
       cohort%sla(dst)                 = cohort%sla(src)
       cohort%vcmax25(dst)               = cohort%vcmax25(src)
       cohort%rd25(dst)                  = cohort%rd25(src)
-      cohort%llspan(dst)                = cohort%llspan(src)
+      cohort%leaf_turnover_rate(dst)    = cohort%leaf_turnover_rate(src)
       cohort%p_aboveground_frac(dst)    = cohort%p_aboveground_frac(src)
       cohort%p_root_to_leaf_ratio(dst)  = cohort%p_root_to_leaf_ratio(src)
       cohort%p_storage_cushion(dst)     = cohort%p_storage_cushion(src)
@@ -1265,7 +1266,7 @@ contains
       cohort%sla(m)                = pft%sla(ipft)
       cohort%vcmax25(m)              = pft%vcmax25(ipft)          ! dynamic leaf traits born at
       cohort%rd25(m)                 = pft%rd25(ipft)             ! top-of-canopy; plasticity relaxes
-      cohort%llspan(m)               = pft%leaf_lifespan_toc(ipft)! them toward the shaded target
+      cohort%leaf_turnover_rate(m)   = pft%leaf_turnover_rate_toc(ipft) ! them toward the shaded target
       cohort%p_aboveground_frac(m)   = pft%aboveground_frac(ipft)
       cohort%p_root_to_leaf_ratio(m) = pft%root_to_leaf_ratio(ipft)
       cohort%p_storage_cushion(m)    = pft%storage_cushion(ipft)

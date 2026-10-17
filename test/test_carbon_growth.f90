@@ -89,22 +89,23 @@ program test_carbon_growth
                        1.0e-13_wp, 'cached sapwood_area is stale after growth')
    end block
 
-   !=== 3. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, leaf lifespan up. ==!
+   !=== 3. Trait plasticity: a SHADED cohort acclimates -- SLA up, Vcmax down, turnover down. =====!
    block
       real(wp) :: sla0, vc0, ll0, ns0
       cfg%trait_plasticity_on = .true.
       site%cohort%overtopping_lai(1) = 4.0_wp                  ! deep shade
-      sla0 = site%cohort%sla(1) ; vc0 = site%cohort%vcmax25(1) ; ll0 = site%cohort%llspan(1)
+      sla0 = site%cohort%sla(1) ; vc0 = site%cohort%vcmax25(1) ; ll0 = site%cohort%leaf_turnover_rate(1)
       ns0  = site%cohort%nonstructural_carbon(1)
       do istep = 1_ik, 200_ik                                  ! many steps so the slow relaxation shows
          call advance_plant_traits(site, cfg, 1.0_wp)
       end do
       call check(site%cohort%sla(1)     > sla0, 'shaded cohort: SLA acclimates upward')
       call check(site%cohort%vcmax25(1) < vc0,  'shaded cohort: Vcmax acclimates downward')
-      ! PFT 3 (climax) has leaf lifespan ~3 yr > the ~2.6-yr ED2 crossover, so kplastic_llspan is
-      ! capped at 0 (docs/science/plant_traits.md eq. (4)) => a long-lived PFT keeps ONE lifespan
-      ! through the canopy (no shortening).
-      call check_close(site%cohort%llspan(1), ll0, 1.0e-12_wp, 'long-lived PFT: leaf lifespan is canopy-invariant (capped)')
+      ! PFT 3 (climax) turns its leaves over at 0.33 /yr, below the ~0.39 /yr ED2 crossover, so
+      ! kplastic_leaf_turnover is capped at 0 (docs/science/plant_traits.md eq. (4)) => a
+      ! slow-turnover PFT keeps ONE rate through the canopy (never faster in shade).
+      call check_close(site%cohort%leaf_turnover_rate(1), ll0, 1.0e-12_wp,                       &
+                       'slow-turnover PFT: leaf turnover rate is canopy-invariant (capped)')
       ! SLA rose => the leaf pool overshot allometry; the excess was resorbed to storage.
       call check(site%cohort%nonstructural_carbon(1) > ns0, 'SLA overshoot resorbed to storage')
       call check_close(site%cohort%leaf_area(1), site%cohort%leaf_carbon(1) * site%cohort%sla(1),   &

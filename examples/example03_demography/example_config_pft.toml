@@ -74,7 +74,7 @@ storage_cushion        = [0.5, 0.5, 0.5]  # [--] storage target, x (leaf + fine-
                                           #      0.5 is the leaf carbon at root_to_leaf_ratio 1
 growth_resp_factor     = [0.3, 0.3, 0.3]            # [--] construction cost (fraction of metabolic NPP)
 retained_carbon_fraction = [0.0, 0.0, 0.0]   # [--] no resorption, as in examples 04 and 05 (default 0.3)
-leaf_lifespan_toc      = [1.0, 2.0, 3.0303]         # [yr] top-of-canopy leaf lifespan (baseline turnover = 1/llspan)
+leaf_turnover_rate_toc = [1.0, 0.5, 0.33]          # [1/yr] top-of-canopy baseline leaf turnover
 fineroot_turnover_rate = [1.0, 0.8, 0.6]            # [1/yr] baseline fine-root turnover
 wood_carbon_density    = [200.0, 300.0, 425.0]      # [kgC/m3] wood carbon density (Huber sapwood carbon)
 f_labile_leaf          = [0.80, 0.70, 0.60]         # [--] labile fraction of leaf/storage/fine-root necromass

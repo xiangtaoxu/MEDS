@@ -104,6 +104,15 @@ module meds_config_keys
                     'always on now (the freeze/thaw plateau always was); delete the key'),       &
       retired_key_t('output.strict_caps', 'a run always stops at the step its live cohort or '//  &
                     'patch count exceeds output.cohort_max or patch_max; raise the cap'),        &
+      retired_key_t('pft.leaf_lifespan_toc', 'leaves are parameterized by their turnover rate: '// &
+                    'set pft.leaf_turnover_rate_toc [1/yr] = 1 / the lifespan [yr] (a 2-yr '//      &
+                    'lifespan is 0.5)'),                                                         &
+      retired_key_t('derived.kplastic_llspan', 'the leaf turnover rate is plastic in its place: '// &
+                    'set derived.kplastic_leaf_turnover = -kplastic_llspan (<= 0: rate = '//       &
+                    'leaf_turnover_rate_toc * exp(k * LAI above), slower in shade)'),             &
+      retired_key_t('trait_dynamics.fineroot_lifespan_plastic', 'renamed '//                  &
+                    'trait_dynamics.fineroot_turnover_plastic: fine-root turnover x (the '//       &
+                    'cohort''s leaf turnover rate / the top-of-canopy one)'),                    &
       retired_key_t('pft.repro_carbon_efficiency', 'renamed pft.recruit_carbon_efficiency: the '// &
                     'share of reproduction carbon that becomes recruits (seed set, '//         &
                     'germination and seedling survival together)'),                            &

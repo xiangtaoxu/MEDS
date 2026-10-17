@@ -130,14 +130,14 @@ Set for this example:
 | | early | mid | late | from |
 |---|---|---|---|---|
 | wood density [g cm⁻³] | 0.36 | 0.50 | 0.68 | example 03 |
-| leaf lifespan at the canopy top [yr] | 0.5 | 0.7 | 0.9 | Panama's sun leaves (Kitajima et al. 1997, 2005, 2013) |
+| leaf turnover at the canopy top [yr⁻¹] | 2.0 | 1.43 | 1.11 | 1 / the lifespans of Panama's sun leaves, 0.5, 0.7 and 0.9 yr (Kitajima et al. 1997, 2005, 2013) |
 | leaf mass per area [g m⁻²] | 100 | 110 | 120 | Panama's crane leaves (Xu et al. 2017) |
 | fine-root turnover [yr⁻¹] | 3.0 | 2.14 | 1.67 | 1.5 × the leaves' |
 | g_max [cm yr⁻¹] | 0.42 | 0.31 | 0.12 | 2 × the census's 75th percentile in full light |
 
 - **Shade**: Vcmax25, Rd25 and leaf mass per area fall with the leaf area above a cohort as Ma et
-  al. (2025) measured at BCI; leaf lifespan rises at half their rate, 1.8 times longer under 5 m² m⁻²
-  of taller leaves.
+  al. (2025) measured at BCI; leaf turnover slows at half the rate their leaf lifespans lengthen,
+  1.8 times slower under 5 m² m⁻² of taller leaves.
 - **Sink limit**: a cohort's diameter grows at most g_max · dbh^0.5 a year (the census's shape);
   the carbon left over is exuded by the roots.
 - **Respiration**: of the fine roots, whose carbon equals the leaves', and of the stems, on sapwood
