@@ -355,6 +355,19 @@ before and after.
   `test_column_ark` checks the capacity against the store (a store drained by a fifth holds a fifth
   less water heat), `test_slow_ledger` that the shed's declared heat is the tissue store's change,
   and `test_surface_energy` the new wood timescale.
+- **Fine-root turnover sheds the fine roots' own water, not the wood store's** (#434). The fine roots
+  share one water store with the sapwood (`wood_water_mass`, on `bsap + broot`), and a fine-root loss
+  shed the whole store in the proportion the fine roots lost, about 35 times what they hold. It now
+  sheds their own share, `wood_water_mass · broot/(bsap + broot)` times the fraction lost, so the store
+  keeps its water per unit of carbon once the fine roots are gone; the shed's heat declaration (the
+  sapwood share of what drains, #419) follows it. The water cycled from the wood to the ground falls
+  from 3.69 to 0.10 kg m⁻² over example 04's evaluation run (2012-08 to 2013-04; the issue measured
+  3.6) and from 4.65 to 0.13 kg m⁻² over Palo Verde's (2008-07 to 2009-05; 4.5). The wood store
+  rises by under 0.15 % and the dry-season wood potential at Palo Verde by 0.001 MPa (−1.6287 →
+  −1.6275 MPa, Dec–May, plant-weighted; February −2.430 → −2.426), since the network refills the
+  store from the soil each day; fluxes move by under 0.01 % (example 04, Palo Verde, BCI regrowth).
+  `test_carbon_growth` checks the shed against the fine roots' share and that the store keeps its
+  water per unit of carbon.
 
 ### Documentation
 

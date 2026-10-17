@@ -72,7 +72,10 @@ Each store is solved in the unknown in which its curve is best behaved:
   slightly lower $R$). A store above what today's biomass can hold is clamped to its saturated content,
   and an empty one is seeded at its starting potential (`reconcile_tissue_water_capacity`; neither
   amount is booked yet, see `docs/ROADMAP.md`). Tissue lost to turnover takes its water with it, in
-  proportion to the carbon lost (`shed_turnover_water`), and a plant that dies takes all of its own
+  proportion to the carbon lost (`shed_turnover_water`): shed leaves take that share of the leaf
+  store, and shed fine roots that share of their own part of the wood store, the fraction
+  $`B_{root}/(B_{sap}+B_{root})`$ of it, so the store keeps its water per unit of carbon. A plant that
+  dies takes all of its own
   (`shed_mortality_water`); that water reaches the ground as `shed_water_rate`, valued like the
   precipitation it joins.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$

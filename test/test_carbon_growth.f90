@@ -138,11 +138,19 @@ program test_carbon_growth
       npp%fineroot(1) = -0.10_wp * fineroot_carbon0    ! sheds 10% of the fine-root pool
       call shed_turnover_water(site, cfg, npp)
       expect_leaf_shed = leaf_water0 * 0.25_wp
-      expect_wood_shed = wood_water0 * 0.10_wp
+      !----- The fine roots hold their carbon's share of the store they share with the sapwood, and   !
+      !      shed a tenth of that: the store's water per unit of its carbon is unchanged once the     !
+      !      fine roots have lost their tenth. ------------------------------------------------------!
+      expect_wood_shed = wood_water0 * 0.10_wp * fineroot_carbon0                                    &
+                       / (site%cohort%sapwood_carbon(1) + fineroot_carbon0)
       call check_close(site%cohort%leaf_water_mass(1), leaf_water0 - expect_leaf_shed, 1.0e-9_wp, &
                        'shed_turnover_water: leaf water sheds proportional to the carbon loss')
       call check_close(site%cohort%wood_water_mass(1), wood_water0 - expect_wood_shed, 1.0e-9_wp, &
-                       'shed_turnover_water: wood/root water sheds proportional to the carbon loss')
+                       'shed_turnover_water: the fine roots shed their own share of the wood store')
+      call check_close(site%cohort%wood_water_mass(1)                                               &
+                       / (site%cohort%sapwood_carbon(1) + 0.9_wp * fineroot_carbon0),               &
+                       wood_water0 / (site%cohort%sapwood_carbon(1) + fineroot_carbon0), 1.0e-12_wp,   &
+                       'shed_turnover_water: the wood store keeps its water per unit carbon')
       call check_close(site%patch%shed_water_rate(1),                                              &
                        nplant0 * (expect_leaf_shed + expect_wood_shed) / cfg%dt_slow, 1.0e-9_wp,    &
                        'shed_turnover_water: patch rate = nplant-weighted shed amount / dt_slow')
