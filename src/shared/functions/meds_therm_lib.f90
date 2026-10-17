@@ -268,7 +268,7 @@ contains
    !=======================================================================================!
    !  Vapour-pressure deficit. Thermodynamics, not a diagnostic: the fast loop accumulates    !
    !  a dt-weighted CAS VPD (#264) and the output layer reads it back, so both need the SAME  !
-   !  formula and it cannot live in src/io -- a kernel may not depend on the output layer.    !
+   !  formula, which cannot live in src/io/output: a kernel may not depend on the output.   !
    !=======================================================================================!
 
    !----- VPD [Pa] from temperature and ACTUAL vapour pressure. ---------------------------!

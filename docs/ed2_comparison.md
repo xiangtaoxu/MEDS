@@ -454,11 +454,11 @@ interface-continuity two-stream — and replaces the SW/LW duplication and the C
 | Phenology | `src/slow_dynamics/plant/meds_phenology.f90`; [`plant_phenology.md`](science/plant_phenology.md) | `phenology_driv.f90`, `phenology_aux.f90` |
 | Mortality / recruitment | `src/slow_dynamics/demography/meds_demography_rates.f90` | `mortality.f90`, `reproduction.f90` |
 | Disturbance | `src/slow_dynamics/demography/meds_demography_patch_fusefiss.f90` | `disturbance.f90`, `fire.f90`, `forestry.f90` |
-| Forcing | `src/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
+| Forcing | `src/io/input/forcing/`; [`forcing.md`](science/forcing.md) | `ed_met_driver.f90` |
 | Fusion / fission | `src/slow_dynamics/demography/meds_demography_{cohort,patch}_fusefiss.f90` | `fuse_fiss_utils.f90` |
 | Parameters | `src/config/` (TOML, all required); [`docs/configuration.md`](configuration.md) | `ed_params.f90`, the `*_coms` modules, `ED2IN` |
 | State | `src/state/site/meds_site_state_types.f90` | `memory/ed_state_vars.F90` |
-| Output | `src/io/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
+| Output | `src/io/output/`; [`docs/science/diagnostics.md`](science/diagnostics.md) | `io/` |
 
 Background reading for both: Moorcroft et al. 2001 (*Ecol. Monogr.*), Medvigy et al. 2009 (*JGR*),
 and **Longo et al. 2019** (*GMD* 12:4309) — the ED-2.2 technical description, whose Supporting

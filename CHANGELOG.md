@@ -14,6 +14,143 @@ before and after.
 
 ## [Unreleased]
 
+### Added
+
+- **A cell mask for region runs, and one module for static maps** (`MEDS_POLYGON_RUNTIME_PLAN.md`
+  §14, RP2). `[region].cell_mask` names a map on the forcing grid; a cell of the box runs only where
+  its `cell_mask_var` (default `mask`) is at least `cell_mask_min` (default 0.5), and is skipped where
+  it is below or the map holds no value. A 0/1 mask works as it is; a fraction, such as a natural-
+  vegetation share, takes a threshold. Maps are read by one new module,
+  `src/io/input/maps/meds_surface_maps.f90` (library `meds_maps`), and nowhere else: it checks that a
+  map's `lat` and `lon` are the ED_ERA5land static file's (MEDS never regrids), reads a 2-D or layered
+  variable at a list of cells in one hyperslab, and reads a cell the map leaves empty as NaN. The forcing
+  reader gains `era5land_same_grid` and `era5land_keep_cells`. `test_surface_maps` covers the reads,
+  the refusals and the mask; `test_region` runs a masked region and refuses a mask off the grid.
+- **Each polygon's soil and Chave site index from maps, `[maps]`** (§14, RP3). Four keys name the
+  maps (ED-SoilMaps v2 and Chave et al. 2014's E, all on the forcing grid):
+  - `soil_depth_map`: `soil_depth`, `bc_class` and `deep_temp`;
+  - `soil_texture_map`: sand, silt, clay, bulk density and coarse fragments on SoilGrids' layers;
+  - `soil_chemistry_map`: organic carbon, CEC and pH;
+  - `chave_e_map`.
+
+  A region requires the soil maps, and `chave_e_map` with `height_allometry = "chave2014"`. A site may
+  use them at its forcing cell instead of setting `[soil_column]` by hand. Each cell's column:
+  - ends at the map's depth, on the default layers;
+  - gives each layer the overlap-weighted texture of the map layers it covers (below 2 m, the deepest
+    one's), whose curve and Ks come from the pedotransfer function and thermal properties from CLM5's
+    mineral-soil formulas (new: `soil_thermal_from_texture`);
+  - takes its bottom water boundary from `bc_class` (a leaky bottom runs as `free_drain` until #401);
+  - sets the Dirichlet anchor at `deep_temp`, annual damping depth / √2 below the bottom node;
+  - starts each layer at its own field capacity.
+
+  So that a run never holds two values for one quantity, the keys the maps provide are refused while
+  they are set: `[soil_column]` depth, layers, retention and texture, `soil.bottom_bc`,
+  `energy.deep_temp` and `deep_depth`, `init.soil_theta`, and `allometry.chave_e`. A run cell a map
+  leaves empty stops the run, naming the map, the variable and the cell.
+
+  The soil column now takes a texture per layer: `soil_column_config_t` carries per-layer values
+  (`n_layer_values`), and one builder, `soil_column_params`, assembles the column for the fast loop,
+  the slow ledger and validation. Each polygon fills its own layers of a region's files, which carry
+  each polygon's own layer depths and map inputs (below). `test_region` runs its region and its site
+  runs on synthetic maps with three different columns. `test_surface_maps`, `test_pedotransfer` and
+  `test_init_soil_state` cover the overlap weighting, the boundaries, the thermal formulas and the
+  per-layer start.
+- **Example 06 runs as region runs.** Its 953 cells (each 3 x 3 block's most natural cell with valid
+  forcing and complete maps, `make_cell_mask.py`) run as two MEDS region runs, each on a machine of its
+  own (`run_regions.py`: example 05's Palo Verde configuration and PFTs with each cell's inputs from the
+  `[maps]` files, the regions balanced by `cell_hours.csv`, `OMP_STACKSIZE=512M`), instead of 983
+  site runs with forcing cut per cell. Each layer takes its own soil curve, and the bottom boundary is
+  the soil map's class (61 cells over an aquifer). `summarize_regions.py`, `modis_monthly_lai.py` and
+  `plot_regional.py` make the figures from the region files; the output adds ET, runoff and plant
+  density in seven diameter classes, and the README adds maps of tree density (≥ 1 and ≥ 10 cm), ET
+  and runoff. It gives the run's speed and memory: two regions of 606 and 347 cells, about 26 h each on
+  a 128-thread machine, 4 GB each. The scripts take the data paths from options or the environment.
+- **A region's state file is chunked one polygon per chunk.** Each polygon writes its own rows, and
+  netCDF's default chunks spanned up to ~120 polygons, so once a row's chunks outgrew HDF5's chunk
+  cache every polygon's write decompressed and recompressed them: example 06's 606-polygon region
+  spent over four hours on its 1946 checkpoint, whose 1921 one took five minutes. The values in the
+  file are unchanged; only its layout differs.
+- **A region warns at open when `OMP_STACKSIZE` is not set** (with more than one thread). Each polygon
+  steps on an OpenMP worker thread, whose default stack (4 MB with ifx) a grown stand's automatic
+  arrays overflow: example 06's regions died with a segmentation fault after 43 and 51 years of
+  regrowth (the cores showed a worker thread's stack pointer at its 4 MiB stack's guard page).
+  `docs/configuration.md` gives the setting, `OMP_STACKSIZE=512M`.
+- **Runoff output: `runoff_site`, `runoff_surf_site` and `drainage_site`** (period totals, kg/m², water
+  group, site level, like `et_site`). Surface runoff is the pond's spill above its capacity
+  (`w_pond_max`); drainage is the flux through the soil column's bottom: free drainage, 0 on bedrock,
+  and net (negative when water rises) from an aquifer. `runoff_site` is their sum. The water network
+  already moved both every 15-minute step and the whole-column water budget counted them; the column
+  budget now hands them to the fast driver (`runoff_surf_export`, `drainage_export`), which folds
+  them over patches and sub-steps into two site accumulators beside `et_accum`, in the same fixed
+  order, so they do not depend on the thread count.
+- **A region's files carry each polygon's own soil layers and map inputs** (§14, RP3). The soil
+  coordinate of a region file is per polygon: `soil_z (polygon, soil)`, each polygon's layer node
+  depths, with CF bounds `soil_z_bnds (polygon, soil, nv)`, each layer's top and bottom, so a
+  polygon's bottom layer ends at its own soil depth; below it both are the fill value. Before, the
+  files carried one `soil_z`, the deepest polygon's, which put a shallower polygon's cut bottom layer
+  at the wrong depth (in example 06 by a median 7 %, at most 25 %). Each file also carries, per
+  polygon, the inputs its cell's maps gave it as it runs them: `soil_depth`, `bottom_bc` (CF flags;
+  a leaky base runs as free_drain), `deep_temp` and, with the Chave height allometry, `chave_e`.
+  `attach_output` records each polygon's row; `open_output_files` takes a soil column only for a
+  site, so a region no longer picks its deepest polygon. Site files are unchanged. `test_region`
+  checks each polygon's row against its site run's `soil_z`, the bounds against its soil depth, and
+  its bottom boundary and deep temperature against its cell.
+- **A region reports what its forcing reads cost.** Its log gives the time spent loading forcing
+  before each month and the archive months read from file, each year and in all. A recycled window
+  is re-read from file every cycle; the operating system's page cache serves those re-reads (§14
+  RP5 measured a cached copy in MEDS and dropped it: it saved under 2 % of a region's wall time).
+- **Region state files and restarts** (§14, RP4, OR14). With `[state].write_state`, a region writes
+  one state file every `interval_years` and at the end, holding every polygon:
+  - a `polygon` axis leads each variable, and `polygon_id` names the rows;
+  - the cohort and patch axes are the largest polygon's, and `n_cohort`, `n_patch` and `n_window`
+    mark each polygon's live part; `lat` and `lon` give its cell;
+  - the variables are compressed, since most polygons fill only part of the padded axes.
+
+  `init_mode = 2` restarts a region from such a file, finding each polygon's row by its id; the file
+  must hold exactly the region's polygons. The
+  site's and the region's files are written by the same calls (`state_file_open`, `state_file_put`,
+  `state_file_close`) and read by `io_read_state`, which takes a polygon's row. Site state files are
+  unchanged. A region no longer refuses `init_mode = 2` or `write_state`; a census start is still
+  refused. `test_region` runs a region in two halves, across the recycle wrap and a year boundary,
+  and requires the second half's files to equal the whole run's.
+- **A seeded near-bare-ground start, `[pft].nbg_init_density`** (§14 OR18, ED2's `init_density`).
+  Optional, 0 by default, which is today's empty start. A positive value gives each patch of a
+  bare-ground start one cohort of that PFT with that many plants per m², at `min_cohort_height` on the
+  polygon's own height curve (`seed_bare_ground`). The PFT parameter table records it.
+
+### Changed
+
+- **A region's files hold every variable and tier** (§14, RP6, OR13). The region file set now
+  carries the sub-daily tier and the cohort and patch variables, as `(time, polygon, cohort)` and
+  `(time, polygon, patch)`. Each such axis is as long as the largest live count among the polygons
+  when the file opens; `n_cohort(time, polygon)` and `n_patch(time, polygon)` give each polygon's own
+  count, and the entries past it are the fill value. `[region].detail_polygons` is retired and
+  refused, naming `[output].io_config`, so a region has one output path. `region_finalize` writes
+  nothing more once a polygon has failed: before, a library caller that finalized after a failure
+  could flush a stale partial period and recreate an earlier chunk file from scratch.
+  `manager_restrict_region` is gone. `test_region` compares every variable of every tier, cohort and
+  patch ones included, with the site runs, and requires the padding to be the fill value.
+- **One I/O tree, `src/io/`** (`MEDS_POLYGON_RUNTIME_PLAN.md` §14, RP2): every data file a run reads or
+  writes is now handled under `src/io/`. The netCDF bindings and the state file (`meds_io.f90`, written
+  at checkpoints and read at restart) sit at its root, the forcing code moved from `src/forcing/` to
+  `src/io/input/forcing/`, and the output and diagnostic modules to `src/io/output/`. Paths only: every
+  library keeps its name and its links, and results are byte-identical. `.claude/rules/output.md` now
+  applies to `src/io/output/` and the two root files.
+- **The allometry coefficients are an argument, not module state** (§14, RP0; the polygon plan's
+  blocker B2). `meds_allometry` defines one record, `allometry_t`, whose initializers are the shipped
+  pan-tropical defaults, and every routine that reads a coefficient takes it as its first argument.
+  `cfg%allom` is that record (the separate `allometry_config_t` is gone); each site carries a copy on
+  its cohort block (`cohort%allom`), set by `site_alloc`, which now requires it; and `set_allometry` and
+  the module's `protected` coefficients are removed. The two kernels that call the allometry,
+  `npp_to_growth` and `growth_sink_limitation`, take the record too. A region's polygons can therefore
+  each have their own allometry, such as their own Chave stress index. Results are byte-identical.
+- **Each polygon owns its config, and its output its soil curve** (§14, RP1). `meds_polygon_t` holds
+  its own copy of the run's config (`poly%cfg`), which `polygon_prepare` takes and everything that
+  steps the polygon reads; `polygon_step` and `polygon_report` no longer take a config. Each polygon's
+  output buffers carry their own diagnostic parameters (`bufs%diag`), set from the polygon's own soil,
+  so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
+  used to take polygon 1's for every polygon. Results are byte-identical.
+
 ## [0.3.4] — 2026-10-13
 
 A **soil–plant water and examples** release. Soil and plant water are solved together, as one

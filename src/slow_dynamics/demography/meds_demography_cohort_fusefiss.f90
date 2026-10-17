@@ -438,7 +438,7 @@ contains
       if (np < 1_ik) return
 
       !----- All PFTs recruit at the smallest tracked size -> the same diameter. ----------!
-      recruit_dbh = height_to_dbh(cfg%pft%min_cohort_height)
+      recruit_dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
 
       !                                                                                     !
       !      The pool is CREDITED DAILY by the vegetation driver (accumulate_recruit_pool), not  !
@@ -478,7 +478,7 @@ contains
                                 birth_temp=t_birth)
                !----- The external draw: everything the new cohort holds, less the reproduction    !
                !      carbon the pool actually paid for at `carbon_min` per plant. ---------------!
-               c_min = min_cohort_carbon(pft%min_cohort_height, pft%wood_density(pf))
+               c_min = min_cohort_carbon(cohort%allom, pft%min_cohort_height, pft%wood_density(pf))
                endow = cohort%leaf_carbon(m) + cohort%fineroot_carbon(m)                           &
                      + cohort%wood_carbon(m) + cohort%nonstructural_carbon(m)
                c_tot = c_tot + patch%area(ip) * patch%recruit_pool(pf, ip) * (endow - c_min)

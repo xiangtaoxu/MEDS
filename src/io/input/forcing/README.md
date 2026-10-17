@@ -125,8 +125,8 @@ data. `examples/example04_column_biophysics/` is the worked example.
 
 
 The file format, the ERA5-Land de-accumulation recipe (including the hour-zero trap), and all the
-disaggregation math are documented in [`docs/science/forcing.md`](../../docs/science/forcing.md).
-The design record, now archived, is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
+disaggregation math are documented in [`docs/science/forcing.md`](../../../../docs/science/forcing.md).
+The design record, now archived, is [`docs/dev_plans/archive/MEDS_FORCING_DESIGN.md`](../../../../docs/dev_plans/archive/MEDS_FORCING_DESIGN.md).
 
 **Tested** in `test/test_met_driver.f90`: the kernels, the constant backend, a NetCDF round trip
 that writes and reads a two-grid file, with and without the wind vector, and the prescribed CO₂
@@ -138,4 +138,4 @@ each flux is read from, and the round trip of the tower's relative humidity.
 ## Not here yet
 
 The full multi-polygon runtime, and latitude-resolved CO₂ (one global series drives every polygon).
-See [`docs/ROADMAP.md`](../../docs/ROADMAP.md) §8.
+See [`docs/ROADMAP.md`](../../../../docs/ROADMAP.md) §8.

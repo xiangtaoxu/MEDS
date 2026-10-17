@@ -24,6 +24,7 @@ module meds_output_registry
                                    GRP_RADIATION, GRP_ECOPHYS, GRP_BIOGEOCHEM, GRP_NUMERICS,      &
                                    GRP_FORCING
    use meds_output_types,   only : var_desc_t, output_registry_t, output_files_t, output_buffers_t,              &
+                                   diag_params_t,                                                  &
                                    MAX_OUTPUT_VARS, MAX_DBH_CLASS,                                &
                                    AGG_MEAN, AGG_LAST, AGG_TMEAN, AGG_SUM, DIM_SCALAR, DIM_COHORT,&
                                    DIM_PATCH, DIM_SOIL, DIM_PFT, DIM_SIZE, DIM_SOIL_PATCH,        &
@@ -45,6 +46,7 @@ module meds_output_registry
         FLD_P_SOILC_PASSIVE, FLD_P_SOILC_TOTAL, FLD_P_RH,                                        &
         FLD_L_SOIL_TEMP, FLD_L_SOIL_WATER, FLD_L_SOIL_PSI, FLD_L_SOIL_WETNESS, FLD_L_SOIL_FLIQ,  &
         SRC_S_ET, SRC_S_N_COHORT, SRC_S_N_PATCH, SRC_S_CANOPY_HEIGHT,                            &
+        SRC_S_RUNOFF, SRC_S_RUNOFF_SURF, SRC_S_DRAINAGE,                                         &
         SRC_S_WORK_STEPS, SRC_S_WORK_REJ, SRC_S_WORK_WATER_NSUB, SRC_S_WORK_WATER_NEWTON,           &
         SRC_S_WORK_WATER_NFAIL, SRC_S_WORK_WATER_REJECT, SRC_S_WORK_RK45_RESCUE,                     &
         SRC_S_WORK_CLAMP_STAGE,                                                                  &
@@ -81,7 +83,6 @@ module meds_output_registry
    public :: apply_group_toggles, apply_freq_enables, apply_variable_override, apply_axis_toggles
    public :: freq_bit, dim_axis_index, OVR_TRUE, OVR_FALSE, OVR_MASK
    public :: manager_alloc, manager_setup, manager_finalize, manager_alloc_buffers, manager_set_soil_params
-   public :: manager_restrict_region
    public :: activate_site_diag, dump_io_config
 
    !----- Named default stream masks (readable `ior` combinations). DAY_MON_YR deliberately     !
@@ -361,6 +362,15 @@ contains
       type(output_registry_t), intent(inout) :: reg
       call add_variable(reg, 'et_site', 'site evapotranspiration (period total)', 'kg/m2',       &
                         DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_ET)
+      !----- The water leaving the soil column: surface runoff (the pond's spill above its capacity) !
+      !      and drainage (the bottom flux: free drainage, 0 on bedrock, net and signed with an       !
+      !      aquifer), and their sum. ------------------------------------------------------------------!
+      call add_variable(reg, 'runoff_site', 'site runoff: surface runoff + drainage (period total)', 'kg/m2', &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF)
+      call add_variable(reg, 'runoff_surf_site', 'site surface runoff (period total)', 'kg/m2',  &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_RUNOFF_SURF)
+      call add_variable(reg, 'drainage_site', 'site drainage at the soil column''s bottom (period total)', 'kg/m2', &
+                        DIM_SCALAR, AGG_SUM, GRP_WATER, DAY_MON_YR, SRC_S_DRAINAGE)
       !----- Area-weighted SITE soil columns (DIM_SOIL). --------------------------------------!
       call add_variable(reg, 'soil_water_site', 'area-weighted volumetric soil moisture', 'm3/m3', &
                         DIM_SOIL, AGG_TMEAN, GRP_WATER, DAY_MON_YR, FLD_L_SOIL_WATER)
@@ -1173,22 +1183,6 @@ contains
       files%diag%soil_ready = .false.
    end subroutine manager_setup
 
-   !----- A REGION's files hold only FIXED-SHAPE variables (MEDS_POLYGON_RUNTIME_PLAN.md §6, OR1):    !
-   !      site totals, per-PFT, per-size-class and per-soil-layer, which have the same shape in every  !
-   !      polygon. Cohort- and patch-level variables are ragged across polygons, and the fast tier's   !
-   !      volume is only affordable for a few, so both go to detail polygons' own files instead.       !
-   !      Called after manager_setup and the overrides, before manager_finalize, so the slab size      !
-   !      manager_finalize computes drops with the cohort axis, and so does every polygon's buffers. --!
-   subroutine manager_restrict_region(files)
-      type(output_files_t),  intent(inout) :: files
-      integer(ik) :: k
-      do k = 1_ik, files%reg%nvar
-         if (ragged_dim(files%reg%var(k)%dim)) files%reg%var(k)%enabled = .false.
-         files%reg%var(k)%streams = iand(files%reg%var(k)%streams, not(FREQ_FAST))
-      end do
-      call build_freq_index(files%reg)
-   end subroutine manager_restrict_region
-
    !----- Largest slab length any LIVE variable can produce (see manager_finalize). ------------!
    pure integer(ik) function live_max_slab(files) result(cap)
       type(output_files_t),   intent(in) :: files
@@ -1216,25 +1210,26 @@ contains
       end select
    end function dim_capacity
 
-   !----- Install the soil retention parameters the psi/wetness diagnostics need. Called by     !
-   !      meds_main with the SAME soil_params_t the fast loop integrates on.                     !
-   subroutine manager_set_soil_params(files, params)
-      type(output_files_t),   intent(inout) :: files
+   !----- Install the soil retention parameters the psi/wetness diagnostics need, into a file set's    !
+   !      parameters (files%diag, whose layer depths the files carry) or a polygon's buffers' (bufs%diag, !
+   !      which its extraction reads), with the SAME soil_params_t the fast loop integrates on. --------!
+   subroutine manager_set_soil_params(dp, params)
+      type(diag_params_t),    intent(inout) :: dp
       type(soil_params_t),    intent(in)    :: params
       integer(ik) :: k
-      files%diag%retention = params%retention
+      dp%retention = params%retention
       do k = 1_ik, n_soil_layer_max
-         files%diag%theta_sat(k) = params%theta_sat(k)
-         files%diag%theta_res(k) = params%theta_res(k)
+         dp%theta_sat(k) = params%theta_sat(k)
+         dp%theta_res(k) = params%theta_res(k)
          !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
          !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
          !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         files%diag%par_a(k)     = curve_a(params, k)
-         files%diag%par_n(k)     = curve_n(params, k)
-         files%diag%soil_z(k)    = params%z_node(k)
+         dp%par_a(k)     = curve_a(params, k)
+         dp%par_n(k)     = curve_n(params, k)
+         dp%soil_z(k)    = params%z_node(k)
       end do
-      files%diag%n_soil     = params%n_active
-      files%diag%soil_ready = .true.
+      dp%n_soil     = params%n_active
+      dp%soil_ready = .true.
    end subroutine manager_set_soil_params
 
    !----- The size-class edges must be strictly ascending, or dbh_class_index silently mis-bins  !
@@ -1309,6 +1304,7 @@ contains
          bufs%pending(t)%used = .false.
       end do
       bufs%fast_on = files%enabled .and. files%reg%nidx(1) > 0_ik
+      bufs%diag = files%diag
    end subroutine manager_alloc_buffers
 
    !----- Convenience: registry, stream handles and one polygon's buffers in one call (no       !
@@ -1368,8 +1364,7 @@ contains
       !      patch block: in a slow-only run they stay off, and their variables read as missing. -----!
       need_c = need_c .and. files%fast_loop_on ; need_y = need_y .and. files%fast_loop_on
       site%patch%diag%fast_rows = files%fast_loop_on
-      !----- Additive: a site that writes into two file sets (a region's detail polygon) keeps every  !
-      !      block either set needs. ------------------------------------------------------------------!
+      !----- Additive: a block already on stays on. -----------------------------------------------!
       need_c = need_c .or. site%cohort%diag%active  ; need_s = need_s .or. site%cohort%sdiag%active
       need_p = need_p .or. site%patch%diag%active   ; need_y = need_y .or. site%diag%active
       call cohort_diag_alloc(site%cohort%diag,  max(site%cohort%cap, 1_ik), need_c)

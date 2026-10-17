@@ -232,7 +232,7 @@ module meds_output_types
    !==========================================================================================!
    ! The output manager comes in two types (MEDS_POLYGON_RUNTIME_PLAN.md §10.3, R2). Both are        !
    ! netCDF-FREE plain data; only output_serialize touches C.                                        !
-   !   output_files_t   -- one set of output files (a site's, a region's, a detail polygon's) and    !
+   !   output_files_t   -- one set of output files (a site's or a region's) and                      !
    !                       what writing them needs: registry, diagnostic parameters, file settings,  !
    !                       stream handles. Read-only while a step runs.                              !
    !   output_buffers_t -- one polygon's buffers for one set of files: its running reductions, open  !
@@ -264,6 +264,15 @@ module meds_output_types
       integer(ik), allocatable :: polygon_id(:)             !< the cell's row-major index on the forcing grid
       integer(ik), allocatable :: polygon_row(:), polygon_col(:)   !< 0-based grid indices
       real(wp),    allocatable :: polygon_lat(:), polygon_lon(:)   !< [deg] cell centre
+      !----- Each polygon's own soil layers and the inputs its cell's maps gave it (§14 RP3), as it  !
+      !      runs them, recorded by attach_output: its files' soil coordinate and static variables. -!
+      integer(ik), allocatable :: polygon_n_soil(:)          !< active soil layers
+      real(wp),    allocatable :: polygon_soil_z(:,:)        !< (layer, polygon) [m] node depths, <= 0
+      real(wp),    allocatable :: polygon_soil_face(:,:)     !< (layer + 1, polygon) [m] layer faces, <= 0
+      real(wp),    allocatable :: polygon_soil_depth(:)      !< [m] soil column depth
+      integer(ik), allocatable :: polygon_bottom_bc(:)       !< the bottom water boundary (SOIL_BC_*)
+      real(wp),    allocatable :: polygon_deep_temp(:)       !< [K] deep soil temperature
+      real(wp),    allocatable :: polygon_chave_e(:)         !< [-] Chave's E; only with that allometry
    end type output_files_t
 
    type :: output_buffers_t
@@ -300,6 +309,10 @@ module meds_output_types
       integer(ik)          :: fast_n_cohort = 0_ik             !< live site cohorts in the fast cohort slabs
       integer(ik)          :: fast_n_patch  = 0_ik             !< live patches in the fast patch rows
       logical              :: fast_ready   = .false.           !< the staging is filled and awaits replay
+      !----- The diagnostic parameters this polygon's extraction reads: its file set's, with the     !
+      !      polygon's own soil curve (attach_output), so a region's derived soil diagnostics follow   !
+      !      each polygon's soil. ----------------------------------------------------------------!
+      type(diag_params_t)  :: diag
    end type output_buffers_t
 
 contains

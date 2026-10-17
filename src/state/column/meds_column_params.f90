@@ -27,6 +27,7 @@ module meds_column_params
    public :: n_soil_layer_max, n_snow_layer_max, LEAF_TEMP_INIT, PSI_INIT
    public :: soil_params_t, soil_thermal_params_t
    public :: build_soil_hydr_params, build_soil_therm_params
+   public :: build_soil_hydr_params_layers, build_soil_therm_params_layers
    public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
    public :: curve_a, curve_n
 
@@ -120,15 +121,18 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Assemble a per-column soil_params_t: the ED2 negative-z geometry from the layer       !
-   ! bottoms (soil_layer_grid), uniform texture broadcast, and the DERIVED threshold       !
-   ! theta_fc (from the retention curve). The roots are the cohorts' own                   !
-   ! (meds_plant_hydraulics::cohort_root_profile), not the column's.                       !
+   ! bottoms (soil_layer_grid), each layer's own texture, and the DERIVED threshold        !
+   ! theta_fc (from each layer's retention curve). The arrays hold one value per active     !
+   ! layer: from a soil map's layers, or one value broadcast (build_soil_hydr_params). The  !
+   ! roots are the cohorts' own (meds_plant_hydraulics::cohort_root_profile), not the       !
+   ! column's.                                                                              !
    !---------------------------------------------------------------------------------------!
-   pure subroutine build_soil_hydr_params(n_active, retention, layer_bottoms, theta_sat, theta_res,  &
-                                ksat, par_a, par_n, psi_fc_m, params)
+   pure subroutine build_soil_hydr_params_layers(n_active, retention, layer_bottoms, theta_sat,       &
+                                                 theta_res, ksat, par_a, par_n, psi_fc_m, params)
       integer(ik),         intent(in)  :: n_active, retention
       real(wp),            intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
-      real(wp),            intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
+      real(wp),            intent(in)  :: theta_sat(:), theta_res(:), ksat(:), par_a(:), par_n(:)
+      real(wp),            intent(in)  :: psi_fc_m
       type(soil_params_t), intent(out) :: params
       integer(ik) :: k
 
@@ -149,35 +153,55 @@ contains
       end do
       params%dz_node(n_active) = params%dz(n_active)      ! unused at the bottom face; kept > 0
 
-      !----- Uniform texture broadcast to every active layer. -----------------------------!
-      params%theta_sat(1:n_active) = theta_sat
-      params%theta_res(1:n_active) = theta_res
-      params%ksat(1:n_active)      = ksat
+      !----- Each layer's texture. ---------------------------------------------------------!
+      params%theta_sat(1:n_active) = theta_sat(1:n_active)
+      params%theta_res(1:n_active) = theta_res(1:n_active)
+      params%ksat(1:n_active)      = ksat(1:n_active)
       if (retention == SOIL_RETENTION_CAMPBELL) then
-         params%psi_sat(1:n_active) = par_a
-         params%b_camp(1:n_active)  = par_n
+         params%psi_sat(1:n_active) = par_a(1:n_active)
+         params%b_camp(1:n_active)  = par_n(1:n_active)
       else
-         params%vg_alpha(1:n_active) = par_a
-         params%vg_n(1:n_active)     = par_n
+         params%vg_alpha(1:n_active) = par_a(1:n_active)
+         params%vg_n(1:n_active)     = par_n(1:n_active)
       end if
 
-      !----- Derived threshold (from the retention curve). --------------------------------!
-      params%theta_fc(1:n_active) =                                                          &
-         soil_theta_from_psi(retention, psi_fc_m, theta_sat, theta_res, par_a, par_n)
+      !----- Derived threshold (from each layer's retention curve). ----------------------!
+      params%theta_fc(1:n_active) = soil_theta_from_psi(retention, psi_fc_m, theta_sat(1:n_active),    &
+                                        theta_res(1:n_active), par_a(1:n_active), par_n(1:n_active))
+   end subroutine build_soil_hydr_params_layers
+
+   !----- One texture for every layer: the per-layer build with each value broadcast. --------!
+   pure subroutine build_soil_hydr_params(n_active, retention, layer_bottoms, theta_sat, theta_res,  &
+                                ksat, par_a, par_n, psi_fc_m, params)
+      integer(ik),         intent(in)  :: n_active, retention
+      real(wp),            intent(in)  :: layer_bottoms(:)    !< [m] bottoms of the active layers, positive down
+      real(wp),            intent(in)  :: theta_sat, theta_res, ksat, par_a, par_n, psi_fc_m
+      type(soil_params_t), intent(out) :: params
+      real(wp) :: ts(n_active), tr(n_active), ks(n_active), pa(n_active), pn(n_active)
+      ts = theta_sat ; tr = theta_res ; ks = ksat ; pa = par_a ; pn = par_n
+      call build_soil_hydr_params_layers(n_active, retention, layer_bottoms, ts, tr, ks, pa, pn,        &
+                                         psi_fc_m, params)
    end subroutine build_soil_hydr_params
 
-   !---------------------------------------------------------------------------------------!
-   ! Assemble a soil_thermal_params_t from plain (uniform) inputs -- the thermal twin of      !
-   ! build_soil_hydr_params (per-layer texture + TOML land at P3, with hydrology).            !
-   !---------------------------------------------------------------------------------------!
+   !----- The column's thermal texture, one value per active layer. ---------------------------!
+   pure subroutine build_soil_therm_params_layers(n_active, k_solid, k_dry, dry_cvol, therm)
+      integer(ik),                 intent(in)  :: n_active
+      real(wp),                    intent(in)  :: k_solid(:), k_dry(:), dry_cvol(:)
+      type(soil_thermal_params_t), intent(out) :: therm
+      therm%nzg_active = n_active
+      therm%soil_solid_conductivity(1:n_active) = k_solid(1:n_active)
+      therm%soil_dry_conductivity(1:n_active)   = k_dry(1:n_active)
+      therm%soil_dry_heat_capacity(1:n_active)  = dry_cvol(1:n_active)
+   end subroutine build_soil_therm_params_layers
+
+   !----- One thermal texture for every layer. ------------------------------------------------!
    pure subroutine build_soil_therm_params(n_active, k_solid, k_dry, dry_cvol, therm)
       integer(ik),                 intent(in)  :: n_active
       real(wp),                    intent(in)  :: k_solid, k_dry, dry_cvol
       type(soil_thermal_params_t), intent(out) :: therm
-      therm%nzg_active = n_active
-      therm%soil_solid_conductivity(1:n_active) = k_solid
-      therm%soil_dry_conductivity(1:n_active)   = k_dry
-      therm%soil_dry_heat_capacity(1:n_active)  = dry_cvol
+      real(wp) :: ks(n_active), kd(n_active), cv(n_active)
+      ks = k_solid ; kd = k_dry ; cv = dry_cvol
+      call build_soil_therm_params_layers(n_active, ks, kd, cv, therm)
    end subroutine build_soil_therm_params
 
    !=======================================================================================!

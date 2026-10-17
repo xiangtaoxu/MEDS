@@ -3,13 +3,14 @@
 ! meds_init -- helpers to build the initial community a run starts from.                    !
 !                                                                                          !
 ! Two entry points exist: a near-bare-ground site (for spin-up demos and the test suite),  !
-! and a start from a cohort CENSUS file (init_from_census) -- a CSV produced by a previous   !
-! MEDS run or a field inventory. add_cohort/finalize_init are the low-level builders both    !
-! the demo/tests and the census reader share.                                              !
+! which seed_bare_ground plants with each PFT's nbg_init_density, and a start from a cohort !
+! CENSUS file (init_from_census) -- a CSV produced by a previous MEDS run or a field        !
+! inventory. add_cohort/finalize_init are the low-level builders both share.               !
 !==========================================================================================!
 module meds_init
    use meds_kinds,      only : wp, ik
    use meds_config,     only : meds_config_t, DIST_PRIMARY, growth_window_steps
+   use meds_allometry,  only : height_to_dbh
    use meds_site_state_types,      only : site_t, site_alloc, cohort_ensure_capacity, rebuild_csr,  &
                                           assign_cohort_id, assign_patch_id, init_cohort
    use meds_demography_cohort_fusefiss, only : sort_cohorts, new_fuse_cohorts, terminate_cohorts,     &
@@ -18,7 +19,8 @@ module meds_init
    implicit none
    private
 
-   public :: init_bare_ground, add_cohort, finalize_init, init_from_census, restructure_census_stand
+   public :: init_bare_ground, seed_bare_ground, add_cohort, finalize_init, init_from_census
+   public :: restructure_census_stand
 
    !----- The census file's column layout: each index is the column's position, 0 if absent. -!
    integer, parameter :: CENSUS_MAX_COLS = 32, CENSUS_FIELD_LEN = 64
@@ -39,7 +41,7 @@ contains
       integer(ik),         intent(in)  :: n_patch
       integer(ik) :: ip
       call site_alloc(site, cfg%pft%n, coh_cap = 64_ik, pat_cap = max(n_patch, 1_ik),          &
-                      n_growth_window = growth_window_steps(cfg))
+                      n_growth_window = growth_window_steps(cfg), allom = cfg%allom)
       site%patch%n = n_patch
       do ip = 1_ik, n_patch
          site%patch%area(ip)      = 1.0_wp / real(n_patch, wp)
@@ -51,6 +53,27 @@ contains
       site%cohort%n = 0_ik
       call rebuild_csr(site)
    end subroutine init_bare_ground
+
+   !---------------------------------------------------------------------------------------!
+   ! A near-bare-ground start's seedlings (ED2's init_density): every patch gets one cohort of !
+   ! each PFT with nbg_init_density > 0, that many plants per m2, at min_cohort_height on the  !
+   ! site's own height curve, where recruits are born. All densities 0 leave the site empty.   !
+   !---------------------------------------------------------------------------------------!
+   subroutine seed_bare_ground(site, cfg)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp)    :: dbh
+      integer(ik) :: ip, ipft
+      if (.not. any(cfg%pft%nbg_init_density > 0.0_wp)) return
+      dbh = height_to_dbh(site%cohort%allom, cfg%pft%min_cohort_height)
+      do ip = 1_ik, site%patch%n
+         do ipft = 1_ik, cfg%pft%n
+            if (cfg%pft%nbg_init_density(ipft) > 0.0_wp)                                         &
+               call add_cohort(site, cfg, ip, ipft, cfg%pft%nbg_init_density(ipft), dbh)
+         end do
+      end do
+      call finalize_init(site)
+   end subroutine seed_bare_ground
 
    !---------------------------------------------------------------------------------------!
    ! Append one cohort to patch ip (caller invokes finalize_init afterwards).               !

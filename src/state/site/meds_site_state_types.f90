@@ -24,8 +24,8 @@ module meds_site_state_types
    use meds_constants,  only : cp_liq
    use meds_numerics,   only : pair_mean
    use meds_pft_params, only : pft_table_t
-   use meds_allometry,  only : dbh_to_height, size2leaf_carbon, size2wood_carbon, carbon_to_structure, &
-                               dbh_to_wai, sapwood_fraction, storage_carbon_target
+   use meds_allometry,  only : allometry_t, dbh_to_height, size2leaf_carbon, size2wood_carbon,           &
+                               carbon_to_structure, dbh_to_wai, sapwood_fraction, storage_carbon_target
    use meds_column_params, only : LEAF_TEMP_INIT
    use meds_column_state_types, only : cas_state_t, soil_column_t, soil_energy_column_t, snow_column_t, soil_carbon_t, &
                                       xi_accum_t, litter_input_t
@@ -83,6 +83,10 @@ module meds_site_state_types
    ! operator that moves carbon, never integrated or read back on its own (#389).               !
    !---------------------------------------------------------------------------------------!
    type :: cohort_block
+      !----- The site's allometry coefficients (cfg%allom of the config that built the site, set by  !
+      !      site_alloc). One record for the whole block: every cohort of a site shares it, and the   !
+      !      polygons of a region each hold their own. Parameters, not state: never in a state file.  !
+      type(allometry_t) :: allom
       integer(ik) :: n   = 0_ik       !< cohorts in use
       integer(ik) :: cap = 0_ik       !< allocated capacity
       !----- Identity, plant density, and the geometry derived from the carbon pools. --------!
@@ -377,6 +381,10 @@ module meds_site_state_types
       !      slow step (reset each step, mirrors the gpp_accum/pheno lifecycle); read as a diagnostic   !
       !      (total_et) at the output tick. Transient (never restarted).                                !
       real(wp)           :: et_accum       = 0.0_wp
+      !----- And the water the soil column lost the same way [kg/m2 = mm]: the pond's spill (surface   !
+      !      runoff) and the bottom flux (drainage; negative when an aquifer feeds the column). --------!
+      real(wp)           :: runoff_surf_accum = 0.0_wp
+      real(wp)           :: drainage_accum    = 0.0_wp
       !----- Integrator WORK accumulators (MEDS_NUMERICS_SCOPING.md section 5.3): summed over patches   !
       !      and fast sub-steps within a slow step, reset alongside et_accum. These are the COST axis   !
       !      of the scheme benchmark -- wall-clock is too coarse and too machine-dependent to rank      !
@@ -446,10 +454,12 @@ contains
    !=======================================================================================!
    !  Allocation                                                                            !
    !=======================================================================================!
-   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window)
-      type(site_t), intent(out) :: site
-      integer(ik),     intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
+   subroutine site_alloc(site, n_pft, coh_cap, pat_cap, n_growth_window, allom)
+      type(site_t),      intent(out) :: site
+      integer(ik),       intent(in)  :: n_pft, coh_cap, pat_cap, n_growth_window
+      type(allometry_t), intent(in)  :: allom   !< the site's allometry (cfg%allom of its config)
       site%n_pft = n_pft
+      site%cohort%allom = allom
       call cohort_alloc(site%cohort, max(coh_cap, 1_ik), max(n_growth_window, 1_ik))
       call patch_alloc(site%patch, max(pat_cap, 1_ik), n_pft)
    end subroutine site_alloc
@@ -1103,10 +1113,10 @@ contains
       type(cohort_block), intent(inout) :: cohort
       integer(ik),        intent(in)    :: i
       real(wp) :: height
-      height = dbh_to_height(cohort%dbh(i), cohort%p_hgt_max(i))
-      cohort%leaf_carbon(i)          = size2leaf_carbon(cohort%dbh(i), height, cohort%sla(i))
-      cohort%wood_carbon(i)          = size2wood_carbon(cohort%dbh(i), height, cohort%p_wood_density(i), &
-                                                        cohort%p_aboveground_frac(i))
+      height = dbh_to_height(cohort%allom, cohort%dbh(i), cohort%p_hgt_max(i))
+      cohort%leaf_carbon(i)          = size2leaf_carbon(cohort%allom, cohort%dbh(i), height, cohort%sla(i))
+      cohort%wood_carbon(i)          = size2wood_carbon(cohort%allom, cohort%dbh(i), height,              &
+                                                        cohort%p_wood_density(i), cohort%p_aboveground_frac(i))
       cohort%fineroot_carbon(i)      = cohort%p_root_to_leaf_ratio(i) * cohort%leaf_carbon(i)
       cohort%nonstructural_carbon(i) = storage_carbon_target(cohort%p_storage_cushion(i), cohort%leaf_carbon(i),  &
                                                              cohort%fineroot_carbon(i))
@@ -1288,7 +1298,7 @@ contains
       integer(ik),        intent(in)    :: i
       !----- The carbon->geometry flip is now the single shared kernel carbon_to_structure       !
       !       (meds_allometry); this per-slot wrapper just packs/unpacks the SoA fields.           !
-      call carbon_to_structure(cohort%wood_carbon(i), cohort%leaf_carbon(i),                      &
+      call carbon_to_structure(cohort%allom, cohort%wood_carbon(i), cohort%leaf_carbon(i),        &
                                cohort%p_wood_density(i), cohort%p_hgt_max(i),                     &
                                cohort%p_aboveground_frac(i), cohort%sla(i),                     &
                                cohort%dbh(i), cohort%height(i), cohort%basal_area(i),             &

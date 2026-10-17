@@ -14,7 +14,7 @@ module meds_era5land_reader
    use meds_kinds,           only : wp, sp, ik
    use meds_constants,       only : day_sec
    use meds_time,            only : meds_time_t, days_in_month, seconds_between, time_units_base
-   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC
+   use meds_forcing_config,  only : MET_PATH_LEN, ARCHIVE_DT_SEC, forcing_config_t
    use meds_forcing_types,   only : met_cells_t, met_month_t
    use meds_forcing_kernels, only : great_circle_distance
    use meds_netcdf_c,        only : nc_open_f, nc_inq_varid_f, nc_inq_dimlen_f, nc_get_att_text_f, &
@@ -23,8 +23,9 @@ module meds_era5land_reader
    implicit none
    private
 
-   public :: era5land_path, era5land_default_template, era5land_default_static
+   public :: era5land_path, era5land_default_template, era5land_default_static, era5land_static_file
    public :: era5land_select_site, era5land_select_box, era5land_load_month, era5land_month_hours
+   public :: era5land_same_grid, era5land_keep_cells
    public :: ERA_NVAR, ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF, ERA_SWDOWN, ERA_LWDOWN
    public :: ERA_VAR_NAME, ERA_VAR_UNITS, ERA_EPOCH
    public :: ERA_OK, ERA_ERR_OPEN, ERA_ERR_GRID, ERA_ERR_TIME, ERA_ERR_UNITS, ERA_ERR_NAN, ERA_ERR_NO_CELL
@@ -87,6 +88,15 @@ contains
       character(len=MET_PATH_LEN) :: t
       t = '{data_path}/ED_ERA5land_static.nc'
    end function era5land_default_static
+
+   !----- The archive's static file a [forcing] block names: static_file, or the default, in its folder. -!
+   function era5land_static_file(f) result(path)
+      type(forcing_config_t), intent(in) :: f
+      character(len=MET_PATH_LEN) :: path
+      path = f%static_file
+      if (len_trim(path) == 0) path = era5land_default_static()
+      path = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
+   end function era5land_static_file
 
    !----- Every occurrence of `token` in `s` replaced by `value`. ----------------------------------!
    pure function replace_all(s, token, value) result(out)
@@ -229,6 +239,43 @@ contains
       end do
       call group_by_chunk(dom)
    end subroutine era5land_select_box
+
+   !=======================================================================================!
+   !  ON THE ARCHIVE GRID: ERA_OK when the file at `path` has the static file's lat and lon     !
+   !  axes (within GRID_TOL), so a cell's (row, col) indexes both. The static maps a run reads   !
+   !  (meds_surface_maps) must be on this grid: MEDS never regrids.                              !
+   !=======================================================================================!
+   subroutine era5land_same_grid(path, static_path, stat)
+      character(len=*), intent(in)  :: path, static_path
+      integer(ik),      intent(out) :: stat
+      integer(c_int) :: ncid, st
+      real(wp), allocatable :: lat_s(:), lon_s(:), lat_m(:), lon_m(:)
+      call open_static(static_path, ncid, lat_s, lon_s, stat)
+      if (stat /= ERA_OK) return
+      st = nc_close(ncid)
+      call open_static(path, ncid, lat_m, lon_m, stat)
+      if (stat /= ERA_OK) return
+      st = nc_close(ncid)
+      stat = ERA_ERR_GRID
+      if (size(lat_m) /= size(lat_s) .or. size(lon_m) /= size(lon_s)) return
+      if (any(abs(lat_m - lat_s) > GRID_TOL) .or. any(abs(lon_m - lon_s) > GRID_TOL)) return
+      stat = ERA_OK
+   end subroutine era5land_same_grid
+
+   !----- Keep the cells of a domain where `keep` is true, in their order, and regroup them by     !
+   !      chunk (a region's cell mask, meds_surface_maps). -------------------------------------------!
+   subroutine era5land_keep_cells(dom, keep)
+      type(met_cells_t), intent(inout) :: dom
+      logical,           intent(in)    :: keep(:)
+      dom%row = pack(dom%row, keep) ; dom%col = pack(dom%col, keep)
+      dom%lat = pack(dom%lat, keep) ; dom%lon = pack(dom%lon, keep)
+      dom%elevation = pack(dom%elevation, keep)
+      if (allocated(dom%land_fraction)) dom%land_fraction = pack(dom%land_fraction, keep)
+      dom%ncell = int(count(keep), ik)
+      deallocate(dom%chunk_row, dom%chunk_col, dom%chunk_first, dom%chunk_nrow, dom%chunk_ncol,     &
+                 dom%by_chunk)
+      call group_by_chunk(dom)
+   end subroutine era5land_keep_cells
 
    !----- A longitude moved into [lon0, lon0 + 360), the grid's own range. ------------------------!
    pure real(wp) function wrap_longitude(x, lon0) result(y)

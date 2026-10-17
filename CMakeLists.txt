@@ -244,7 +244,7 @@ add_library(meds_demography STATIC ${DEMOGRAPHY_SOURCES})
 target_link_libraries(meds_demography PUBLIC meds_state_site meds_slow_kernels)
 meds_fortran_flags(meds_demography)
 
-#----- Output PREP (src/io -- netCDF + diagnostics only now that toml/config_io have left): the netCDF-FREE half of the output subsystem -- the site-level        #
+#----- Output PREP (src/io/output): the netCDF-FREE half of the output subsystem -- the site-level        #
 #      reductions (meds_diagnostic_{kernels,reduce}) + variable registry + per-tier temporal integrators +   #
 #      the extract switchboard. Links meds_demography (site_t + the reductions) ONLY -- NO netCDF --  #
 #      the stepper edge that ticks the integrators pulls no C dependency (the §2 DAG-hygiene wall).  #
@@ -252,11 +252,11 @@ meds_fortran_flags(meds_demography)
 #      NOTE: this is an EXPLICIT file list, not a file(GLOB) -- adding a diagnostic module here is  #
 #      a required manual edit (unlike src/plant / src/biophysics, which do glob).                    #
 add_library(meds_io_prep STATIC
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_kernels.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_diagnostic_reduce.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_types.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_integrate.f90
-   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_registry.f90)
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_diagnostic_kernels.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_diagnostic_reduce.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_types.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_integrate.f90
+   ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_registry.f90)
 target_link_libraries(meds_io_prep PUBLIC meds_demography)
 meds_fortran_flags(meds_io_prep)
 
@@ -296,13 +296,22 @@ add_library(meds_netcdf_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_netcdf_
 target_link_libraries(meds_netcdf_c PUBLIC meds_shared netCDF::netcdf)
 meds_fortran_flags(meds_netcdf_c)
 
-#----- Meteorological (and future disturbance / land-use) FORCING (src/forcing). The reader +    #
-#      disaggregation kernels + runtime types. Links meds_shared + the netCDF bindings ONLY (NOT   #
-#      demography): a prescribed external driver, low in the DAG. Design MEDS_FORCING_DESIGN.md.    #
-file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/forcing/*.f90)
+#----- Meteorological (and future disturbance / land-use) FORCING (src/io/input/forcing): the    #
+#      reader + disaggregation kernels + runtime types. Links meds_shared + the netCDF bindings    #
+#      ONLY (NOT demography): a prescribed external driver, low in the DAG.                        #
+#      Design MEDS_FORCING_DESIGN.md.                                                              #
+file(GLOB FORCING_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/input/forcing/*.f90)
 add_library(meds_forcing STATIC ${FORCING_SOURCES})
 target_link_libraries(meds_forcing PUBLIC meds_config meds_netcdf_c)
 meds_fortran_flags(meds_forcing)
+#----- Static per-cell MAPS (src/io/input/maps): the one module that opens a map -- the cell mask  #
+#      now, each cell's soil and allometry inputs next (MEDS_POLYGON_RUNTIME_PLAN.md §14, RP2-RP3).  #
+#      Links meds_forcing for the archive grid it checks maps against and the cell list it reads   #
+#      them at; the driver links it.                                                                 #
+file(GLOB MAPS_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/io/input/maps/*.f90)
+add_library(meds_maps STATIC ${MAPS_SOURCES})
+target_link_libraries(meds_maps PUBLIC meds_forcing meds_config meds_netcdf_c)
+meds_fortran_flags(meds_maps)
 
 
 #----- The FAST loop: the integrator machinery (numerics/ -- the state vector, the frozen work  #
@@ -369,14 +378,14 @@ else()
    message(STATUS "MEDS: serial build; [run].n_threads has no effect")
 endif()
 
-#----- Output layer (src/io): the netCDF state/diagnostic writer. Links the promoted netCDF        #
+#----- Output layer (src/io and src/io/output): the netCDF state/diagnostic writer. Links the promoted netCDF        #
 #      bindings (meds_netcdf_c, above) + demography (state serialization). netCDF is always         #
 #      compiled. (The C-binding layer passes array temporaries to the netCDF C `(*)` dummies --      #
 #      correct for interop, but Intel Debug `-check all` emits a harmless arg_temp_created warning   #
 #      per call; build Release (-DCMAKE_BUILD_TYPE=Release) for clean output.)                       #
 add_library(meds_io_stream STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_io.f90
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_stream.f90
-                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/meds_output_manager.f90)
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_stream.f90
+                           ${CMAKE_CURRENT_SOURCE_DIR}/src/io/output/meds_output_manager.f90)
 target_link_libraries(meds_io_stream PUBLIC meds_demography meds_netcdf_c meds_io_prep)
 meds_fortran_flags(meds_io_stream)
 set(MEDS_IO_LIB meds_io_stream)
@@ -391,7 +400,7 @@ message(STATUS "MEDS: netCDF output (always compiled)")
 add_library(meds_driver STATIC ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_polygon.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_driver.f90
                         ${CMAKE_CURRENT_SOURCE_DIR}/src/main/meds_region.f90)
-target_link_libraries(meds_driver PUBLIC meds_model ${MEDS_IO_LIB})
+target_link_libraries(meds_driver PUBLIC meds_model meds_maps ${MEDS_IO_LIB})
 meds_fortran_flags(meds_driver)
 
 #----- The main entry point: parse the command line, drive the model, exit. ----------------#
@@ -702,6 +711,12 @@ if(MEDS_BUILD_TESTS)
    target_link_libraries(test_met_era5land PRIVATE meds_forcing meds_testassert meds_testarchive)
    meds_fortran_flags(test_met_era5land)
    add_test(NAME met_era5land COMMAND test_met_era5land)
+   #----- The static-map reader and the cell mask (MEDS_POLYGON_RUNTIME_PLAN.md §14, RP2), on the  #
+   #      synthetic archive's grid. ---------------------------------------------------------------#
+   add_executable(test_surface_maps test/test_surface_maps.f90)
+   target_link_libraries(test_surface_maps PRIVATE meds_maps meds_testassert meds_testarchive)
+   meds_fortran_flags(test_surface_maps)
+   add_test(NAME surface_maps COMMAND test_surface_maps ${CMAKE_CURRENT_BINARY_DIR}/surface_maps_tmp)
    #      The flux-tower contract of an ED_default file (MEDS_FLUX_TOWER_FORCING_PLAN.md §9 V6).
    add_executable(test_met_tower test/test_met_tower.f90)
    target_link_libraries(test_met_tower PRIVATE meds_forcing meds_testassert)

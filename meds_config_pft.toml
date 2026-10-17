@@ -12,6 +12,8 @@ reproduction_investment_fraction = [0.3, 0.3, 0.3]      # [--] growth fraction d
 recruit_carbon_efficiency          = [1.0e-3, 1.0e-3, 1.0e-3] # [--] share of reproduction carbon that becomes
                                     #      recruits: seed set, germination and seedling survival together
 # recruit_shade_decay = [0.0, 0.0, 0.0]   # [1/(m2/m2)] that share x exp(-k * patch LAI); optional, default 0
+# nbg_init_density = [0.0, 0.0, 0.0]      # [plant/m2] a bare-ground start's seedlings, per patch, at
+                                          #      min_cohort_height (ED2 init_density); optional, default 0
 seed_rain_recruits = [0.01, 0.01, 0.01]    # [plant/m2/yr] baseline external seed rain
 include_pft        = [1, 1, 1]             # 1 = PFT may recruit, 0 = excluded
 min_cohort_height       = 2.0              # [m] smallest tracked cohort; recruits born here (all PFTs)

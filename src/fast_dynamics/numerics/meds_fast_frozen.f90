@@ -415,6 +415,8 @@ contains
       frozen%hydrology%q_top          = (spac%infil - spac%exfil - spac%evap) / (rho_h2o * dt_fast)
       frozen%hydrology%drainage       = spac%drain / dt_fast
       frozen%hydrology%runoff_surf    = spac%spill / dt_fast
+      budget%runoff_surf_export       = spac%spill
+      budget%drainage_export          = spac%drain
       frozen%hydrology%runoff_enth    = spac%spill_enth / dt_fast
       frozen%hydrology%precip_ground  = hforc%precip_ground
       frozen%hydrology%t_pond_inflow  = hforc%t_pond_inflow

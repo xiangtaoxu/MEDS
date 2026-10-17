@@ -15,7 +15,7 @@ module meds_met_archive_source
    use meds_forcing_types, only : met_record_t, met_source_t, met_cursor_t, met_cells_t,          &
                                   HUMIDITY_TDEW
    use meds_era5land_reader, only : era5land_path, era5land_default_template,                     &
-                                    era5land_default_static, era5land_select_site,                &
+                                    era5land_static_file, era5land_select_site,                   &
                                     era5land_load_month, era5land_month_hours, ERA_NVAR,          &
                                     ERA_TAIR, ERA_TDEW, ERA_PSURF, ERA_U10, ERA_V10, ERA_RAINF,   &
                                     ERA_SWDOWN, ERA_LWDOWN, ERA_VAR_NAME, ERA_EPOCH, ERA_OK,      &
@@ -139,9 +139,7 @@ contains
       associate (f => src%fcfg)
       src%file_template = f%file_template
       if (len_trim(src%file_template) == 0) src%file_template = era5land_default_template()
-      path = f%static_file
-      if (len_trim(path) == 0) path = era5land_default_static()
-      src%static_file = era5land_path(path, f%data_path, '', 0_ik, 0_ik)
+      src%static_file = era5land_static_file(f)
 
       if (f%sw_partition == SWPART_PASSTHROUGH) then
          write(*,'(a)') ' met_open: the ED_ERA5land archive carries TOTAL shortwave, but'

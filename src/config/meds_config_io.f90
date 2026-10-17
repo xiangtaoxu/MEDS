@@ -1,7 +1,7 @@
 ! SPDX-License-Identifier: Apache-2.0
 !==========================================================================================!
 ! meds_config_io -- load a run configuration from TWO mandatory TOML files and a presence-map !
-! check. Lives in src/io/ (config input) with NO external dependency, so it is always compiled.!
+! check. In src/config (config input) with NO external dependency, so it is always compiled. !
 !                                                                                          !
 ! Philosophy: NO hard-coded model parameters. Every parameter is supplied by the user via TOML !
 ! (or DERIVED from supplied ones); a missing parameter or a missing file is a HARD ERROR.      !
@@ -21,7 +21,8 @@ module meds_config_io
                                CTRL_L0_FIXED, CTRL_L1_ADAPTIVE, CTRL_L2_STRICT, CTRL_I, CTRL_PI
    use meds_config,     only : soil_column_config_t,                                              &
                                pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
-   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION, MAX_DETAIL_POLYGONS
+   use meds_region_opts, only : RUN_MODE_SITE, RUN_MODE_REGION
+   use meds_maps_opts, only : soil_maps_on
    use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
@@ -449,7 +450,14 @@ contains
          call req_r(t, 'allometry.gmm_k', cfg%allom%gmm_k, m)
       case ('chave2014')
          cfg%allom%height_form = HEIGHT_CHAVE
-         call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+         !----- E is the site's: from [maps].chave_e_map at each polygon's cell, or set here. ---!
+         if (len_trim(cfg%maps%chave_e_map) > 0) then
+            if (toml_has(t, 'allometry.chave_e'))                                                  &
+               error stop 'load_meds_config: allometry.chave_e comes from maps.chave_e_map; '//  &
+                          'remove it from the PFT file'
+         else
+            call req_r(t, 'allometry.chave_e', cfg%allom%chave_e, m)
+         end if
       case default   ; call note_missing(m, 'allometry.height_allometry')
       end select
    end subroutine opt_height_allometry
@@ -640,16 +648,47 @@ contains
          call req_r         (t, 'site.grid_elevation',        cfg%forcing%grid_elevation_m,      m)
    end subroutine load_forcing_config
 
+   !----- [maps] (MEDS_POLYGON_RUNTIME_PLAN.md §14 RP3): the paths of the static maps. The three   !
+   !      soil maps go together: the depth map gives the column, the texture and chemistry maps its    !
+   !      layers. Each key the soil maps provide is refused when they are set, so a run never holds    !
+   !      two values for one quantity (OR12). -----------------------------------------------------!
+   subroutine load_maps_config(t, cfg)
+      type(toml_table_t),  intent(in)    :: t
+      type(meds_config_t), intent(inout) :: cfg
+      character(len=*), parameter :: SOIL_MAP_KEYS(15) = [character(len=32) ::                       &
+         'soil_column.depth', 'soil_column.layer_bottoms', 'soil_column.theta_sat',                  &
+         'soil_column.theta_res', 'soil_column.ksat', 'soil_column.curve_par_a',                     &
+         'soil_column.curve_par_n', 'soil_column.solid_conductivity', 'soil_column.dry_conductivity', &
+         'soil_column.dry_heat_capacity', 'soil_column.retention', 'soil.bottom_bc',                  &
+         'energy.deep_temp', 'energy.deep_depth', 'init.soil_theta']
+      integer(ik) :: i, n_set
+      cfg%maps%soil_depth_map     = toml_string(t, 'maps.soil_depth_map',     '')
+      cfg%maps%soil_texture_map   = toml_string(t, 'maps.soil_texture_map',   '')
+      cfg%maps%soil_chemistry_map = toml_string(t, 'maps.soil_chemistry_map', '')
+      cfg%maps%chave_e_map        = toml_string(t, 'maps.chave_e_map',        '')
+      n_set = count([len_trim(cfg%maps%soil_depth_map) > 0, len_trim(cfg%maps%soil_texture_map) > 0, &
+                     len_trim(cfg%maps%soil_chemistry_map) > 0])
+      if (n_set /= 0_ik .and. n_set /= 3_ik)                                                         &
+         error stop 'load_meds_config: [maps] needs soil_depth_map, soil_texture_map and '//       &
+                    'soil_chemistry_map together'
+      if (.not. soil_maps_on(cfg%maps)) return
+      do i = 1_ik, size(SOIL_MAP_KEYS, kind=ik)
+         if (toml_has(t, trim(SOIL_MAP_KEYS(i))))                                                     &
+            error stop 'load_meds_config: '//trim(SOIL_MAP_KEYS(i))//' comes from the [maps] '//   &
+                       'soil maps; remove it'
+      end do
+   end subroutine load_maps_config
+
    !----- [run].mode and the [region] block (MEDS_POLYGON_RUNTIME_PLAN.md §9). The mode is a        !
    !      DEFAULTED read ("site"), so every existing config runs unchanged. In region mode the box is  !
-   !      required; the selection rule and the detail list default. In site mode a [region] key      !
+   !      required; the selection rule and the cell mask default. In site mode a [region] key        !
    !      would parse and do nothing, so it is rejected.  -------------------------------------------!
    subroutine load_region_config(t, cfg, m)
       type(toml_table_t),  intent(in)    :: t
       type(meds_config_t), intent(inout) :: cfg
       type(keymiss_t),     intent(inout) :: m
-      real(wp)    :: buf(MAX_DETAIL_POLYGONS + 1)
-      integer(ik) :: nout, i
+      real(wp)    :: buf(5)
+      integer(ik) :: nout
       select case (trim(toml_string(t, 'run.mode', 'site')))
       case ('site')   ; cfg%run_mode = RUN_MODE_SITE
       case ('region') ; cfg%run_mode = RUN_MODE_REGION
@@ -667,17 +706,9 @@ contains
          call note_missing(m, 'region.box_nwse')
       end if
       cfg%region%land_fraction_min = toml_real(t, 'region.land_fraction_min', 0.5_wp)
-      if (toml_has(t, 'region.detail_polygons')) then
-         call toml_real_array(t, 'region.detail_polygons', buf, nout)
-         if (nout > MAX_DETAIL_POLYGONS)                                                           &
-            error stop 'load_meds_config: [region].detail_polygons lists more than 64 polygons'
-         do i = 1_ik, nout
-            if (buf(i) < 0.0_wp .or. abs(buf(i) - anint(buf(i))) > 0.0_wp)                          &
-               error stop 'load_meds_config: [region].detail_polygons must be polygon ids (integers >= 0)'
-            cfg%region%detail_polygons(i) = nint(buf(i), ik)
-         end do
-         cfg%region%n_detail = nout
-      end if
+      cfg%region%cell_mask         = toml_string(t, 'region.cell_mask', '')
+      cfg%region%cell_mask_var     = toml_string(t, 'region.cell_mask_var', 'mask')
+      cfg%region%cell_mask_min     = toml_real(t, 'region.cell_mask_min', 0.5_wp)
    end subroutine load_region_config
 
    !----- Load the [output] diagnostic-aggregation block. OPT-IN: gated on output.enabled (a       !
@@ -1091,6 +1122,8 @@ contains
 
       !----- Meteorological forcing (opt-in; gated on forcing.forcing_on, defaulted false). !
       call load_forcing_config(tm, cfg, miss)
+      !----- [maps]: the maps a run takes its soil (and its Chave site index) from. ----------!
+      call load_maps_config(tm, cfg)
 
       !----- Diagnostic-aggregation output (opt-in; gated on output.enabled, defaulted false; !
       !      a config with no [output] block emits no diagnostic stream).  ------------------!
@@ -1150,6 +1183,7 @@ contains
       call req_pa(tp, 'pft.reproduction_investment_fraction', cfg%pft%reproduction_investment_fraction, npft, miss)
       call req_pa(tp, 'pft.recruit_carbon_efficiency',        cfg%pft%recruit_carbon_efficiency,        npft, miss)
       call opt_pa(tp, 'pft.recruit_shade_decay',              cfg%pft%recruit_shade_decay,              npft, miss)
+      call opt_pa(tp, 'pft.nbg_init_density',                 cfg%pft%nbg_init_density,                 npft, miss)
       call req_pa(tp, 'pft.seed_rain_recruits',               cfg%pft%seed_rain_recruits,               npft, miss)
       call req_pa_int(tp, 'pft.include_pft',                  cfg%pft%include_pft,                      npft, miss)
       call req_r(tp, 'pft.min_cohort_height',       cfg%pft%min_cohort_height,       miss)
@@ -1346,14 +1380,14 @@ contains
            //'f_labile_leaf,f_labile_stem,struct_lignin_frac,recruit_shade_decay,'                  &
            //'kplastic_vcmax,kplastic_rd,kplastic_sla,kplastic_llspan,'                               &
            //'stem_resp_factor25,stem_resp_sapwood25,root_resp_factor25,max_relative_growth_rate,'      &
-           //'max_absolute_growth_rate,max_absolute_growth_exponent'
+           //'max_absolute_growth_rate,max_absolute_growth_exponent,nbg_init_density'
       associate (p => cfg%pft)
          do pf = 1_ik, p%n
-            !----- 61 ITEMS: i0 + 9 + i0 + 2 + i0 + 47. A format SHORTER than the value              !
+            !----- 62 ITEMS: i0 + 9 + i0 + 2 + i0 + 48. A format SHORTER than the value              !
             !      list does not fail -- Fortran reverts and re-uses the last repeat group, so an    !
             !      integer slot silently receives a real and prints its bit pattern, and the trailing !
             !      columns vanish. Keep the count here in step with both the header and the list. ---!
-            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,47(",",es15.8))') &
+            write(u,'(i0,9(",",es15.8),",",i0,2(",",es15.8),",",i0,48(",",es15.8))') &
                  pf, p%wood_density(pf), p%dbh_critical(pf), p%hgt_max(pf),                             &
                  p%reproduction_investment_fraction(pf), p%recruit_carbon_efficiency(pf),                &
                  p%mort_gamma(pf), p%mort_alpha(pf), p%mort_beta(pf), p%seed_rain_recruits(pf),         &
@@ -1375,7 +1409,7 @@ contains
                  p%kplastic_sla(pf), p%kplastic_llspan(pf),                                          &
                  p%stem_resp_factor25(pf), p%stem_resp_sapwood25(pf), p%root_resp_factor25(pf),    &
                  p%max_relative_growth_rate(pf), p%max_absolute_growth_rate(pf),                  &
-                 p%max_absolute_growth_exponent(pf)
+                 p%max_absolute_growth_exponent(pf), p%nbg_init_density(pf)
          end do
       end associate
       close(u)

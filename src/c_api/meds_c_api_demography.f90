@@ -184,10 +184,10 @@ contains
                !      than inlining it (#200): these relations used to be copied here from             !
                !      set_cohort_size, so a coefficient change updated the model and not the shim.     !
                dbh_new    = min(cohort%dbh(i) + g(i) * cfg%dt_years, cohort%p_dbh_critical(i))
-               height_new = dbh_to_height(dbh_new, cohort%p_hgt_max(i))
-               lc_new     = size2leaf_carbon(dbh_new, height_new, cohort%sla(i))
-               wc_new     = size2wood_carbon(dbh_new, height_new, cohort%p_wood_density(i),            &
-                                             cohort%p_aboveground_frac(i))
+               height_new = dbh_to_height(cohort%allom, dbh_new, cohort%p_hgt_max(i))
+               lc_new     = size2leaf_carbon(cohort%allom, dbh_new, height_new, cohort%sla(i))
+               wc_new     = size2wood_carbon(cohort%allom, dbh_new, height_new,                        &
+                                             cohort%p_wood_density(i), cohort%p_aboveground_frac(i))
                fc_new     = cohort%p_root_to_leaf_ratio(i) * lc_new
                nc_new     = storage_carbon_target(cohort%p_storage_cushion(i), lc_new, fc_new)
                !----- Back out the tendencies + advance the ring buffer with the SUPPLIED growth     !

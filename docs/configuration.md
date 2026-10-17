@@ -169,7 +169,9 @@ instead, whose coefficients `meds_config_pft.toml` lists at Cano et al. (2019)'s
 Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, ln H = 0.893 − E +
 0.760 ln dbh − 0.0340 (ln dbh)², taken at its mean as BIOMASS's `retrieveH` does, where E
 (`[allometry].chave_e`) is the site's stress index from its climate (Chave's eq. 6b): the drier, more
-seasonal or hotter the site, the larger E and the shorter its trees. Every curve is capped at
+seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
+polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
+Every curve is capped at
 `[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
 its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
 height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
@@ -182,7 +184,7 @@ than removed:
 
 | Mode | Start from | Needs |
 |---|---|---|
-| `0` | **near-bare ground** (the default) | nothing |
+| `0` | **near-bare ground** (the default) | nothing; `[pft].nbg_init_density` seeds it (below) |
 | `1` | a **cohort census** | `[init].census_file` — a CSV with one row per cohort, columns matched by name from its header: `patch_id`, `dbh` [cm], `pft` and `nplant` [plants per m² of the patch] are required; `patch_area`, `site_id`, `cohort_id` and `height` are optional. `dbh` drives the allometry. |
 | `2` | a **state checkpoint** | `[init].restart_file` — a `<prefix>-S-*.nc` written by a previous run. Continues the exact instantaneous state: a run split at a restart ends where the unsplit run ends, bit for bit. |
 
@@ -209,6 +211,12 @@ whose PFT file gives the traits the state already has changes nothing. A calibra
 trial restarts from a shared state this way, so a changed `vcmax25` reaches the cohorts
 (`scripts/calibrate_fast`).
 
+**Near-bare ground is empty unless seeded.** Each patch starts without cohorts, and the stand
+grows from recruitment. `[pft].nbg_init_density` [plants m⁻²], optional and 0 by default, gives
+each patch one cohort of every PFT with a positive value. That many plants per m² start at
+`min_cohort_height`, on the polygon's own height curve, where recruits are born. This is ED2's
+`init_density`; a regional spin-up uses it to start every polygon with the same seedlings.
+
 A census is how you start from a field inventory; see
 [`data/census_example.csv`](../data/census_example.csv)
 and `init_from_census` in [`../src/init/meds_init.f90`](../src/init/meds_init.f90). Unusable input
@@ -219,7 +227,8 @@ every soil layer of every patch starts there, unless a state checkpoint restores
 default to 288 K and 0.30. A run with no spin-up starts from them, so set them to the site: the
 mean annual air temperature, for instance, keeps a warm site's column from starting cold. The
 loader refuses a temperature outside 233–333 K and a water content outside
-(`[soil_column].theta_res`, `theta_sat`].
+(`[soil_column].theta_res`, `theta_sat`]. A column from the soil maps has a texture per layer, so
+each layer starts at its own field capacity instead, and `soil_theta` is refused.
 
 ## Output
 
@@ -324,38 +333,124 @@ site runs (a job array, or one allocation filled with GNU parallel).
 [run]
 mode = "region"
 
+[maps]                                               # required: each polygon's soil (see below)
+soil_depth_map     = "ED_ERA5land_soil_depth_v2.nc"
+soil_texture_map   = "ED_ERA5land_soil_texture_v2.nc"
+soil_chemistry_map = "ED_ERA5land_soil_biogeochemical_properties_v2.nc"
+
 [region]
 box_nwse          = [42.95, -76.95, 41.95, -75.95]   # [N, W, S, E]; may cross 0 or 180 degrees
 land_fraction_min = 0.5                              # skip lakes and fractional coastal cells
-detail_polygons   = [1714634]                        # optional: these also write single-site files
+cell_mask         = "natural_mask.nc"                # optional: a map on the forcing grid ...
+cell_mask_var     = "mask"                           # ... its (lat, lon) variable ...
+cell_mask_min     = 0.5                              # ... and the value a cell needs to run
 ```
 
 - **Selection.** Every cell of the box that the archive has data for and whose static land fraction
   is at least `land_fraction_min` (default 0.5) becomes a polygon, in row-major order. A polygon's
   id is its cell's index on the global grid, `row * 3600 + col` at 0.1 degrees, so ids agree across
   regions.
+- **Cell mask.** With `cell_mask`, a cell of the box runs only where the mask's `cell_mask_var` is at
+  least `cell_mask_min` (default 0.5), and is skipped where it is below or the map holds no value. A
+  0/1 mask works as it is; a fraction, such as a natural-vegetation share, takes a threshold. The mask
+  must be on the forcing grid: the file's `lat` and `lon` must be the ED_ERA5land static file's, or the
+  run stops. MEDS never regrids a map; the run log says how many cells the mask kept.
 - **Output.** One file per tier per time chunk for the whole region, with a `polygon` dimension and
-  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold the variables that
-  have the same shape everywhere: site totals, per PFT, per size class and per soil layer. Cohort
-  and patch variables, and the sub-daily tier, are written only for `detail_polygons`, as ordinary
-  single-site files named `<prefix>-p<polygon id>-...`.
+  the coordinates `polygon_id`, `lat`, `lon`, `row` and `col`. Region files hold every variable and
+  tier a site run writes, the sub-daily one included; `[output].io_config` chooses them, and with
+  them the volume. A cohort or patch variable is `(time, polygon, cohort)` or `(time, polygon,
+  patch)`, its axis as long as the largest live count among the polygons when the file opens;
+  `n_cohort` and `n_patch` `(time, polygon)` give each polygon's own count, and the entries past it
+  are the fill value. `[region].detail_polygons` is retired. Once a polygon has failed, the end of
+  the run writes nothing more, so a closed file is never rewritten.
+- **Each polygon's soil and map inputs in its files.** Polygons have their own layers, so a region
+  file's soil coordinate is per polygon: `soil_z (polygon, soil)` holds each polygon's layer node
+  depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
+  bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
+  below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
+  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2,
+  3 for free_drain, aquifer, bedrock; a leaky base runs as free_drain), `deep_temp` [K] and, with
+  `height_allometry = "chave2014"`, `chave_e`. A site file keeps its one-dimensional `soil_z`.
+- **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
+  maps, which a region requires. With `height_allometry = "chave2014"` it also needs
+  `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
+  configuration is checked on its own.
 - **Rules.** A region needs `[forcing].format = "ED_ERA5land"` with forcing and the fast loop on. It
   takes its locations from its cells, so `[site].latitude`, `longitude`, `elevation`
   and `[forcing].max_distance_km` are refused; the rest of `[site]`, the terrain-lapse switch and
-  rates, still applies. Until restarts of regions exist, a region starts from bare ground
-  (`init_mode = 0`) and writes no checkpoints (`[state].write_state = false`), and it runs without
-  the fast probe. A region loads each month's forcing once, before the month, so a recycle window
-  must start at 00:00 or 01:00 on the 1st of a month.
+  rates, still applies. A region starts from bare ground (`init_mode = 0`) or from a region state
+  file (`init_mode = 2`), never a census, and it runs without the fast probe. A region loads each
+  month's forcing once, before the month, so a recycle window must start at 00:00 or 01:00 on the
+  1st of a month.
+- **Threads.** A region steps its polygons on `[run].n_threads` OpenMP threads, each polygon on one
+  thread. A worker thread's stack is `OMP_STACKSIZE`, 4 MB by default with ifx, not the process's,
+  and a grown stand's automatic arrays overflow it after a few decades of regrowth: the run dies with
+  a segmentation fault. Set `OMP_STACKSIZE=512M` (it reserves address space; only what a thread
+  touches is used). A region with more than one thread warns at open when it is not set.
+- **State files.** With `[state].write_state`, a region writes one state file every
+  `interval_years` and at the end, `<prefix>-S-<date>.nc` like a site's. It holds every polygon: a
+  `polygon` axis leads each variable, `polygon_id` names the rows, the cohort and patch axes are as
+  long as the largest polygon's, and `n_cohort`, `n_patch` and `n_window` mark each polygon's live
+  part (the rest is the fill value); `lat` and `lon` are its cell's centre. A region restarted from
+  it (`init_mode = 2`, `restart_file`) finds each polygon's row by its id, and the file must hold
+  exactly the region's polygons. A restart continues exactly: a region run in two halves, across a
+  recycle wrap, writes the second half as the whole run does. Site state files are unchanged.
 - **Threads.** In a region, `[run].n_threads` runs that many polygons side by side, each with a
   single-threaded patch loop; the results are the same at any thread count. A polygon that fails
   (a NaN, a cohort or soil-carbon state out of bounds) is reported and stops, and the others
   finish the month.
 - **Cost.** Work and memory grow with the polygon count. Output is written between months, so a
   crash loses at most the current month. The 100 cells of a 1° box around Ithaca take 13 minutes a
-  year on one thread and 81 s on 40. A detail polygon costs about four times an ordinary one (its
-  hourly site files and per-cohort diagnostics), so on many threads it sets the month's pace: the
-  same run without one takes 53 s on 40 threads. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md`
-  for the roadmap to restarts and tiles.
+  year on one thread and 81 s on 40 (measured with a detail polygon, before the region files held
+  every variable). The hourly tier's cost grows with the polygons; choose its variables with
+  `[output].io_config`. See `docs/dev_plans/MEDS_POLYGON_RUNTIME_PLAN.md` §14 for the production
+  plan.
+
+## Input maps
+
+`[maps]` names the static maps a run takes its soil from, and Chave's site index E. Each map is
+on the ED_ERA5land grid: its `lat` and `lon` must be the archive's static file's, so a cell's value
+sits at the cell's own row and column, and MEDS never regrids. `src/io/input/maps/meds_surface_maps.f90`
+reads every map and is the only module that does.
+
+| Key | File (ED-SoilMaps v2) | Variables |
+|---|---|---|
+| `soil_depth_map` | `ED_ERA5land_soil_depth_v2.nc` | `soil_depth` [m], `bc_class`, `deep_temp` [K] |
+| `soil_texture_map` | `ED_ERA5land_soil_texture_v2.nc` | `sand`, `silt`, `clay` [%], `bulk_density` [g cm⁻³], `coarse_fragments` [% volume], on SoilGrids' six layers (`depth_bnds` [m]) |
+| `soil_chemistry_map` | `ED_ERA5land_soil_biogeochemical_properties_v2.nc` | `organic_carbon` [g kg⁻¹], `cec` [cmol(c) kg⁻¹], `ph_h2o`, on the same layers |
+| `chave_e_map` | `ED_ERA5land_Chave2014_E.nc` | `chave_e` |
+
+The three soil maps go together. A region needs them. A site may use them as well, read at the
+forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or it sets
+`[soil_column]` by hand. From the maps, each cell's column is built as follows:
+
+- **Depth and layers.** The column ends at `soil_depth`, on the default layers
+  ([`[soil_column]`](#the-main-file)).
+- **Each layer's soil.** A layer takes the map layers it overlaps, weighted by the overlap; below the
+  maps' 2 m, it takes the deepest map layer. Its retention curve and Ks come from MEDS's
+  pedotransfer function, and its thermal properties from the same texture by CLM5's mineral-soil
+  formulas ([`science/soil_biophysics.md`](science/soil_biophysics.md)).
+- **The bottom water boundary** follows `bc_class`:
+  - 1 is `free_drain`;
+  - 3 (sealed) runs as `bedrock`;
+  - 4 is `aquifer`;
+  - 2 (leaky) runs as `free_drain` until a leaky bottom exists (#401).
+- **The thermal anchor** sits at `deep_temp`, annual damping depth / √2 below the bottom node, where it
+  reflects the annual wave least. It is used when `[energy].bottom_bc = "dirichlet"`.
+
+So that a run never holds two values for one quantity, every key the soil maps provide is refused
+while they are set:
+
+- in `[soil_column]`: `depth`, `layer_bottoms`, `retention`, and the texture keys;
+- `[soil].bottom_bc`;
+- `[energy].deep_temp` and `deep_depth`;
+- `[init].soil_theta`.
+
+`[soil_column].psi_fc` still defines field capacity, where each layer starts. With `chave_e_map`,
+`[allometry].chave_e` is refused in the PFT file, and the map needs `height_allometry = "chave2014"`.
+
+**MEDS fills no gaps.** A run cell a map leaves empty stops the run, naming the map, the variable and
+the cell. A product is completed in its own pipeline, not in the model.
 
 ## Worked examples
 

@@ -37,6 +37,7 @@ program test_output_roundtrip
    use meds_config,           only : meds_config_t
    use meds_time,             only : meds_time_t, time_advance_days
    use meds_site_state_types, only : site_t, site_alloc, site_free
+   use meds_allometry,        only : allometry_t
    use meds_output_config,    only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH
    use meds_output_types,     only : output_files_t, output_buffers_t
    use meds_output_registry,  only : manager_alloc
@@ -66,7 +67,7 @@ program test_output_roundtrip
    call banner('output_roundtrip')
 
    !----- A fixed 1-cohort / 1-patch site (constant slot set). -----!
-   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik)
+   call site_alloc(site, 1_ik, 16_ik, 4_ik, 4_ik, allometry_t())
    site%cohort%n = 1_ik ; site%patch%n = 1_ik
    site%cohort%nplant(1) = 1.0_wp ; site%cohort%dbh(1) = 5.0_wp
    site%cohort%height(1) = 4.0_wp ; site%cohort%basal_area(1) = 19.6_wp
@@ -95,7 +96,9 @@ program test_output_roundtrip
    call geometric_layer_bottoms(2.0_wp, N_ACTIVE, 3.0_wp, test_bottoms)
    call build_soil_hydr_params(N_ACTIVE, SOIL_RETENTION_VG, test_bottoms, 0.43_wp, 0.078_wp,     &
                                2.89e-6_wp, 3.6_wp, 1.56_wp, -3.37_wp, soilp)
-   call manager_set_soil_params(files, soilp)
+   !----- The file set's copy gives the files their layer depths; the buffer's, the extraction. --!
+   call manager_set_soil_params(files%diag, soilp)
+   call manager_set_soil_params(bufs(1)%diag, soilp)
    call check(N_ACTIVE < n_soil_layer_max, 'fixture must have an inactive tail to be worth anything')
 
    !----- Walk 3 daily steps of 2000-01, as polygon_step calls the tick: the step from `prev` to  !

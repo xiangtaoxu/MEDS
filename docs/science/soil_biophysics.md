@@ -183,6 +183,44 @@ the available water comes out about 0.04 m³ m⁻³ low (Hyytiälä's topsoil: $
 against 0.07 measured). Like every texture-based function, $K_{sat}$ scatters by about a factor of ten
 and runs low where soil structure adds large pores.
 
+### The column from the soil maps
+
+With the `[maps]` soil maps (ED-SoilMaps v2; `docs/configuration.md` "Input maps"),
+`apply_map_inputs` (`meds_surface_maps`) builds each cell's column. A region's polygons and a site
+on the ED_ERA5land grid build it the same way.
+
+- **The layers.** The column ends at the map's `soil_depth`, on the layers above.
+- **Each layer's soil.** A layer takes the texture and chemistry of the map layers it overlaps (SoilGrids'
+  six, to 2 m), each weighted by the overlap. Below 2 m it takes the deepest map layer's.
+- **Hydraulics and heat, per layer.** Each layer gets its own curve and $K_{sat}$ by (2a–c). Its thermal
+  properties come from the same texture by CLM5's mineral-soil formulas (Lawrence & Slater 2008), with
+  $\theta_{sat}$ the layer's porosity and silt left out as in CLM5:
+
+  ```math
+  k_{solid} = \frac{8.80\,Sa + 2.92\,Cl}{Sa + Cl}, \qquad
+  k_{dry} = \frac{0.135\,\rho_d + 64.7}{2700 - 0.947\,\rho_d}, \qquad
+  c_{dry} = \frac{2.128\,Sa + 2.385\,Cl}{Sa + Cl}\,10^6\,(1-\theta_{sat}) \qquad(2d)
+  ```
+
+  Here $\rho_d = 2700\,(1-\theta_{sat})$ kg m⁻³ is the dry bulk density; $k$ is in W m⁻¹ K⁻¹ and
+  $c_{dry}$, the solids' heat capacity per m³ of layer, in J m⁻³ K⁻¹ (MEDS counts the water itself).
+- **The start.** Each layer starts at its own field capacity, $\theta(\psi_{fc})$.
+- **The bottom water boundary** is the map's `bc_class`:
+  - free drain;
+  - sealed, run as bedrock;
+  - aquifer;
+  - leaky, run as free drain until a leaky bottom exists (#401).
+- **The thermal anchor.** The Dirichlet bottom conducts to the map's `deep_temp`, the cell's mean air
+  temperature plus 1 K, at $d/\sqrt2$ below the bottom node, $d = 1.973$ m (§ The bottom thermal
+  boundary).
+
+A cell whose maps hold no value stops the run, naming the cell. The products are made complete in
+their own pipelines; MEDS does not fill them.
+
+Example 06's site runs fitted one curve to the thickness-weighted column instead, so a map-built
+column differs from them by design: its top layers hold the surface's organic, high-CEC soil and its
+deep layers the subsoil's.
+
 ---
 
 ## The soil thermal column
@@ -342,4 +380,5 @@ and passes the resulting flux into the CO₂ source.
 - Saxton & Rawls (2006), *Soil Sci. Soc. Am. J.* 70:1569 — coarse fragments.
 - Gupta et al. (2021), *Earth Syst. Sci. Data* 13:1593 (SoilKsatDB) and (2022), *Sci. Data* 9:444 (GSHP) — the measurements the function was chosen on.
 - Swenson & Lawrence (2014), *JGR-Atmos.* 119:10299 — dry-surface-layer soil evaporation.
+- Lawrence & Slater (2008), *Clim. Dyn.* 30:145 — the mineral and dry-soil thermal properties CLM uses (2d).
 - Design docs: `MEDS_COLUMN_HYDROLOGY_DESIGN.md`, `MEDS_ENERGY_BALANCE_DESIGN.md`.

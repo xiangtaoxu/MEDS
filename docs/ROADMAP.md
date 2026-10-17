@@ -262,18 +262,21 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   [#303](https://github.com/xiangtaoxu/MEDS/issues/303) Deferred until a study needs them. GDEX
   starts in June 2002, so they come from the CDS, with the tools that already built 2026-04 and
   2026-06.
-- **The multi-polygon runtime.** *Planned.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) Region runs exist since R2 (#289):
+- **The multi-polygon runtime.** *In beta, for one node.* [#183](https://github.com/xiangtaoxu/MEDS/issues/183) Region runs exist since R2 (#289):
   `[run].mode = "region"` runs every selected ED_ERA5land cell of a `[region]` box as its own polygon, in
-  one process, all sharing one forcing reader. What remains is in `MEDS_POLYGON_RUNTIME_PLAN.md` §10:
-  - R3, threads: *done in part* (2026-09-30, `MEDS_EFFICIENCY_SWEEP_PLAN.md` Phase 5). The polygons
-    of a month run side by side on `[run].n_threads` threads (9.7× on 40 threads for 100 cells).
-    The pool of every patch of every polygon is deferred. What remains of the runtime consolidation
-    is in [#310](https://github.com/xiangtaoxu/MEDS/issues/310);
-  - R4, region checkpoints and restarts (a region writes none yet);
-  - R5, batching by tiles (failure isolation is done: a failed polygon stops, the others go on);
-  - R6, a C API and Python entry point, and an example.
+  one process, all sharing one forcing reader. `MEDS_POLYGON_RUNTIME_PLAN.md` §14 (RP0–RP7) made a
+  region fill one node, replacing R4–R6 of its §10:
+  - a cell mask, each polygon's soil and Chave E from the `[maps]` files, and a seeded
+    bare-ground start (`pft.nbg_init_density`);
+  - region state files and restarts;
+  - every variable and tier in the region's one file set (`detail_polygons` retired).
 
-  MPI is not planned: a large region runs as tiles in a job array (§8 of that plan).
+  Not planned: tiles, launchers and MPI; a larger area runs as several regions, one node each.
+  Still open:
+  - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
+  - a leaky soil bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401));
+  - the rest of the runtime consolidation ([#310](https://github.com/xiangtaoxu/MEDS/issues/310));
+  - example 06 as region runs, which awaits the owner's go for its cost.
 - **A source interface for the met reader.** *Done in beta.* [#311](https://github.com/xiangtaoxu/MEDS/issues/311) The two file sources
   are modules of their own (`meds_met_file_source`, `meds_met_archive_source`), each an open and one
   record's values as stored, over what they share (`meds_met_source_common`). The reader keeps

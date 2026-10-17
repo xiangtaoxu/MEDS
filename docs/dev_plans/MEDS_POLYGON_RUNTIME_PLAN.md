@@ -1,6 +1,6 @@
 # MEDS polygon runtime plan — regional runs as an OpenMP loop over polygons, without MPI
 
-> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27. R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3–R6 open.
+> # 📐 DESIGN — written 2026-09-26, revised 2026-09-27, 2026-10-12 and 2026-10-14 (to v0.3.4). R0 ✅ measured (§10.1); R1 ✅ implemented (§10.2); R2 ✅ implemented (#289, §10.3); R3 ✅ as threads over polygons (b3bd130; the flattened patch loop deferred, efficiency plan §2.7); R4–R6 replaced by §14's phases RP0–RP7 (a region fills one node: allometry as an argument, per-polygon config and soil, a cell mask, per-cell inputs from maps, a padded state file, a forcing cache, one output file set, a pilot); RP0–RP4 and RP6–RP7 implemented on `feat/region-runtime`, RP5 measured and dropped.
 >
 > **What this plan does:** lets one MEDS process simulate a contiguous **region** of independent
 > **polygons** (one polygon = one forcing grid cell with its own `site_t`), with the polygons
@@ -106,7 +106,7 @@ From the 2026-09-26 survey, refreshed at `b65c4b8`:
 | # | Blocker (citation at `b65c4b8`) | Resolution |
 |---|---|---|
 | B1 | **netCDF inside the time step.** `driver_step` flushes output twice per day (`output_serialize_pending`, `meds_driver.f90:367` for the fast tier and `:379` for the others) and writes yearly checkpoints (`:420-424`). Forcing is read inside `met_advance` (`meds_fast_dynamics.f90:482`): the archive backend loads a month on demand (`ensure_month`, `meds_met_driver.f90:707`), and the single-file backend reads every value with a 1 × 1 hyperslab (`read_scalar`, `:860`). HDF5 serialises every call under a global lock, and netCDF-C is not thread-safe (`MEDS_IO_DESIGN.md` §5.5). | Split each step into a **compute phase** (no netCDF at all) and an **I/O phase** that runs serially at month boundaries (§4, R1). Forcing is loaded in the I/O phase; the single-file backend holds its cell's whole series in memory. |
-| B2 | **Module-level allometry.** Nine `protected` reals (`src/shared/functions/meds_allometry.f90:50-58`) are written by `set_allometry` from every config load (`meds_config.f90:473`). | Load config **once, serially, before** the parallel loop. All polygons share one parameter set (non-goal: per-polygon parameters). A later refactor moves these into the config type (OR2). |
+| B2 | **Module-level allometry.** Nine `protected` reals (`src/shared/functions/meds_allometry.f90:50-58`) are written by `set_allometry` from every config load (`meds_config.f90:473`). | Load config **once, serially, before** the parallel loop. All polygons share one parameter set (non-goal: per-polygon parameters). A later refactor moves these into the config type (OR2); §14's RP0 does it. |
 | B3 | **Saved state in the fast-loop probe.** `write_fast_probe` keeps `save` variables (`meds_fast_dynamics.f90:919-920`). | Reject `fast_probe` in region mode, as `n_threads > 1` already does (`meds_config.f90:691`). |
 | B4 | **Nested OpenMP.** A polygon `parallel do` around the step nests the patch-loop region. | One level either way: the polygon-outer loop forces `cfg%n_threads = 1` inside polygons (a `validate_config` rule) and sets `omp_set_max_active_levels(1)`; the flattened loop of §10.4 has no inner region at all. The NVHPC `target` loop (`meds_demography_update.f90:128`) must also stay single-level; region mode requires `MEDS_GPU = none` for now. |
 | B5 | **Shared file names.** Output streams `<dir>/<prefix>-<tier>…nc` (`meds_output_stream.f90:176-178`), restarts `<prefix>-S-…nc` and `_pft_parameters.csv` (`meds_driver.f90:254`) would collide between polygons. | Region mode writes **one file per tier with a `polygon` dimension**, and one ragged restart file per checkpoint (§6). There are no per-polygon files except for `detail_polygons`. `ensure_output_dir` (`meds_driver.f90:603`) runs once, serially. |
@@ -343,13 +343,16 @@ memory_limit_gb   = 64            # R5: beyond this, the region runs in batches 
 | **R0** measure and verify ✅ | Cost of a simulated year and of a polygon-month from a spun-up forest; `site_t` memory; the allocator profile (#195); nvfortran on a `BLOCK` in a routine called from a parallel region (B9) | ✅ 2026-09-26: numbers in §10.1. B9 still open (no nvfortran on the development cluster). |
 | **R1** compute/I-O split ✅ | The step split into a compute phase (no netCDF) and a month-boundary I/O phase; per-frequency record queues (B11); forcing loaded only in the I/O phase; a site run otherwise unchanged (§10.2) | ✅ 2026-09-27: suite green; six reference cases byte-identical to `beta` (§10.2 status). |
 | **R2** region and polygon container, serial ✅ | The reader split into a shared source and per-polygon cursors; location in the polygon (B12); the output manager split into file sets and per-polygon buffers; `meds_region_t` and `meds_polygon_t`; the month-synchronous loop without OpenMP; region-dimension output; `detail_polygons` (§10.3) | N polygons run as one region produce outputs **byte-identical** to N separate single-site runs (a 4-polygon synthetic test). ✅ 2026-09-27 (#289): the `region` CTest checks a 3-polygon region on a synthetic archive against 3 site runs, bit for bit. |
-| **R3** OpenMP compute phase | The fast loop over all patches of all polygons, with polygon-loop prologue and epilogue (§10.4, OR9) — or, as the cheaper first step, `!$omp parallel do schedule(dynamic)` over polygons; persistent per-thread scratch pools (#195); the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling and the last-finisher tail measured at 1, 4, 10, 20 and 40 threads on the 100-polygon box (§10.3); nvfortran build green where available. |
+| **R3** OpenMP compute phase ✅ (threads over polygons, b3bd130) | The fast loop over all patches of all polygons, with polygon-loop prologue and epilogue (§10.4, OR9) — or, as the cheaper first step, `!$omp parallel do schedule(dynamic)` over polygons; persistent per-thread scratch pools (#195); the B3, B4 and B7 rules in `validate_config`; fail-fast messages with the polygon id; the write share measured (§6.1) | Byte identity between 1 and 4 threads; scaling and the last-finisher tail measured at 1, 4, 10, 20 and 40 threads on the 100-polygon box (§10.3); nvfortran build green where available. |
 | **R4** ragged restart | Region checkpoint and restart with CF contiguous ragged arrays | A restart round trip is bit-identical to an uninterrupted run. |
 | **R5** robustness and scale | Status-based failure isolation (B6), batching by tiles, the tile job-array recipe, allocator work (B8), per-polygon logs | A failure-injection test: one polygon fails and the rest match the reference. Throughput and memory recorded for a 20,000-polygon box. |
 | **R6** interfaces and docs | Optional C API and Python entry point for region runs (the C API registry holds at most 4 runs and is unsynchronised, `meds_c_api_run.f90:46-47`); docs, including the site-network recipes (§8.1); an example | A documented example runs a small box end to end. |
 
 **Order:** R0 anytime (it opens the R1 work). R1 needs F4, which is done. R2 needs R1, and R3 needs
 R2. R4 and R5 follow R3.
+
+**Revised 2026-10-12:** R3 shipped as threads over polygons (b3bd130); the flattened loop was
+deferred (efficiency plan §2.7). R4–R6 are replaced by the phases RP0–RP7 (§14.4).
 
 ### 10.1 R0 — measure and verify ✅ 2026-09-26
 
@@ -687,6 +690,7 @@ shapes tie, and the small-region and single-site cases are what only the flatten
 - **Restart round trip** of a region with different cohort counts per polygon (R4).
 - **Failure isolation:** inject a NaN into one polygon's forcing; that polygon is flagged and the
   others are unchanged (R5).
+- **Region runs that fill a node:** each of RP0–RP7 lists its acceptance tests (§14.4).
 
 ## 12. Open decisions
 
@@ -705,6 +709,10 @@ shapes tie, and the small-region and single-site cases are what only the flatten
 **Decided 2026-09-27:** the vocabulary of §1.1 (region, always contiguous; polygon; site), and site
 networks as separate processes (§8.1) instead of a `polygons_csv` option.
 
+**Revised 2026-10-12 (§14):** OR3 is settled: a failed cell fails the region. OR8 is replaced by
+RP4 (region restart), and OR2's per-cell soil and allometry by RP3 and RP0. The new decisions are
+OR10–OR16 (§14.6).
+
 ## 13. Relationship to other documents
 
 - **ROADMAP #183** (multi-polygon runtime with MPI): this plan delivers everything except MPI. The
@@ -718,3 +726,509 @@ networks as separate processes (§8.1) instead of a `polygons_csv` option.
   §12.4 (allocator traffic, #195) becomes more pressing with either thread shape (B8).
 - **`MEDS_IO_DESIGN.md`** §5.5 (the HDF5 global lock, the shelved asynchronous writer) and §10 Q5 (the
   leading-axis convention) are resolved by the serial I/O phase, §6.1 and the `polygon` dimension.
+- **`MEDS_EFFICIENCY_SWEEP_PLAN.md`** Phase 5 item 5 (one run container, rv-R3) asks whether
+  `meds_main` stops at a failed polygon or reports it at the end; §14 answers it: it stops, and
+  the region fails. Its deferred R10 (polygon 1's soil stands in for the region) is settled by RP1.
+- **`MEDS_CODE_REVIEW_2026-09-27.md`** items R1–R12 are why §14's phases are called RP0–RP7 rather
+  than R7 onward.
+
+## 14. Region runs to fill one node (revision 2026-10-12)
+
+Written 2026-10-12 from the owner's scope and answers (OR10–OR16). Updated 2026-10-14 to beta =
+main bdbbdd1 (v0.3.4), whose region runtime is unchanged since 19f8312, and to what example 06's
+regional run (983 cells, v0.3.4) taught. This section replaces R4–R6 (§10). It does
+not renumber them, and its phases are RP0–RP7 because R1–R12 are already the 2026-09-27 code
+review's items.
+
+> **Status 2026-10-14: RP0–RP4 and RP6 implemented on `feat/region-runtime`; RP5 implemented,
+> measured and dropped (below).** Each
+> phase passed the suite in ifx, gfortran and ifx Debug, and every phase ran the six regression
+> cases (`~/claude_workspace/meds_runs/rr`). Every site case stayed byte-identical to v0.3.4
+> throughout; the Palo Verde region case changed once, at RP3, when it began reading its soil from
+> the maps. Where the code differs from the text below:
+> - The per-layer column lives in `soil_column_config_t` (`n_layer_values` and per-layer arrays),
+>   built for the fast loop, the slow ledger and validation by `soil_column_params`.
+> - RP3 adds `soil_thermal_from_texture` (CLM5 mineral soil) and `annual_damping_depth`.
+> - A region restart reads each polygon's row by id, and the file must hold exactly the region's
+>   polygons.
+> - The block is `[maps]` (owner, 2026-10-14), not `[surface]`.
+> - **RP3's output list, finished later the same day:** a region file's `soil_z` is
+>   `(polygon, soil)`, each polygon's own nodes, with `soil_z_bnds` (each layer's top and bottom) as
+>   its CF bounds; until then it was the deepest polygon's, which put a shallower polygon's bottom
+>   node off by a median 7 % (at most 25 %) in example 06. `soil_depth`, `bottom_bc`, `deep_temp` and
+>   (with Chave) `chave_e` are static `(polygon)` variables, as each polygon runs them.
+>
+> **RP7, the full pilot (2026-10-15 to 17):** example 06 as two region runs on cbsuxu09/10 (606 and 347
+> cells, 128 threads each, about 26 h each); the free-draining cells reproduce the v0.3.4 site runs
+> (median ratios 0.99-1.00, r about 0.99 for GPP, AGB and LAI) and the 61 aquifer cells differ by design.
+> It found two faults, both fixed: a worker thread's default stack (OMP_STACKSIZE) overflows in grown
+> stands, and the state file's default chunking made a 606-polygon checkpoint take hours.
+>
+> **RP7, the small pilot** (`~/claude_workspace/meds_runs/region_pilot`, one exclusive R128C40 node),
+> ran example 06's cells as region runs: its cell mask, the v2 soil maps, Chave's E and
+> `nbg_init_density = 3`.
+> - **35 cells (10–12° N, 86–84° W), 5 years, 36 threads:** 288 s and 219 MB. A restart from the
+>   1875-01-01 state file reproduced all 17 later months, every variable.
+> - **11 cells, 25 years, past the 20-year recycle wrap:** with and without the forcing cache, the
+>   monthly output and all three state files are identical.
+> - **RP5's cache dropped (owner, 2026-10-14).** The operating system's page cache already holds a
+>   recycled window, so the cache saved only the decompression of each re-read 16 × 16 × 744 chunk,
+>   about 2 ms per chunk and variable. Measured cold and warm through MEDS's reader on months nothing
+>   had read (`run_read_test.sh`):
+>
+>   | | example 06's 978 cells, 73 chunks | a 1.5° box, 162 cells, 4 chunks |
+>   |---|---|---|
+>   | cold month | 10 s | 3.7 s |
+>   | warm re-read | 1.1 s | 0.09 s |
+>   | compute per month, 40 threads | 45 s (young) to ~220 s | 9 s (young) to ~37 s |
+>   | page cache for a 20-year window | ~39 GB | ~12 GB |
+>   | the cache's copy of it | 5.6 GB | 0.9 GB |
+>
+>   A warm re-read is 0.2–2 % of wall time; both windows fit a 128 GB node's page cache, which kept
+>   these files for days. A region's log reports its forcing load time, so a run whose page cache
+>   cannot hold the window (a node shared with memory-hungry jobs, or a far larger region) shows it.
+> - **The cache's benefit, isolated** (`run_cache_test.sh`): 32 cells (12–14° N, 90–87° W), three
+>   model years on a one-year window (2017), each arm on its own fresh node at the same time, timing
+>   the forcing load itself. Output is identical in all three arms.
+>
+>   | Arm | year 1 (from file) | years 2 and 3 | wall |
+>   |---|---|---|---|
+>   | cache on | 17.3 s | 0.00 s, 0.00 s | 92 s |
+>   | cache off: re-reads find the node's page cache | 15.1 s | 1.27 s, 1.25 s | 95 s |
+>   | cache off, page cache dropped every 2 s | 35.6 s | 33.2 s, 33.7 s | 185 s |
+>
+>   A cold month costs about 1.3 s for these cells. A re-read the node's page cache still holds
+>   costs about 0.1 s, so there the cache saves about 5 % of a young stand's 25 s of compute per
+>   model year, and less as stands grow. Where the page cache cannot hold the window, every cycle
+>   pays the cold cost, as much as 60 % of that compute, and the cache removes it. The evicting arm
+>   overstates this: it drops pages during a month's own read as well, which doubles even year 1.
+> - **All 983 forcing cells of example 06 are complete in every map,** so the full region opens.
+>   Their bottoms are 831 leaky (run as free drain, #401), 86 free drain and 66 aquifer.
+>
+> The full pilot (983 cells, 150 years, about seven regions) awaits the owner's go, for its cost.
+
+### 14.1 What a region run is for
+
+- **A region run fills one node.** It runs a box of cells side by side in one process, one thread
+  per cell, as a native feature of `meds_main`: one config, no wrapper. It is not a workflow
+  system. A large area is many independent region jobs, and anything a set of separate Slurm jobs
+  can do is left to them.
+- **Its one computational gain is the forcing read.** The cells share each archive month, and with
+  RP5 each recycled month is read once per run instead of once per simulated year.
+  - In a site run the read costs about 1–2 s per cell-year: R0 measured 24 % of a 7.7 s year, and
+    R1 then removed 0.8 s of it (§10.1).
+  - Example 06's cells cost 7–330 s per cell-year (§14.2). So the read is under 1 % of a wet
+    cell's work, but a sixth to a quarter of the cheapest cells'.
+  - **At scale the read is the bottleneck.** Example 06's 983 site runs did not read the archive
+    themselves.
+    - A Python step (`cut_forcing.py`, `/ibstorage/xiangtao/MEDS_region_test/setup`) read each
+      archive month once over the cells' bounding box and wrote one forcing file per cell (9.6 GB).
+    - That cut was I/O-bound in its turn: 20 tasks on one node starved on the shared link, so it ran
+      one task per node, about 3.6 min per simulated year.
+    - **A region needs no cut.** It already reads the global ED_ERA5land archive directly
+      (`[forcing].format = "ED_ERA5land"` is required, `meds_config.f90:817`), and only the
+      archive chunks its own box touches.
+      - A 150-cell region (about 1.2° square) touches 1–4 of the archive's 16 × 16-cell chunks:
+        about 0.6–2.5 MB compressed per month for all 8 variables.
+      - It reads them once per month today, and with RP5 once per run: 0.15–0.6 GB per region for
+        a 20-year window.
+  - In a threaded region the read runs serially while the other threads wait, so there it costs
+    more. RP5 takes it out of the month loop.
+- **Its other gain is bookkeeping:** one output file set and one state file for the whole region.
+- **It replaces example 06's Python setup with config keys.** Example 06 ran its 983 cells as site
+  runs because region mode has no per-cell soil or stress index yet (#183, status 2026-10-14). Its
+  setup scripts did, per cell:
+  - the cell choice: the mask (RP2);
+  - the soil, Chave E and the deep temperature: the products named in `[maps]`, read and
+    processed per cell by one module (RP2, RP3);
+  - the starting recruits sized on the cell's height curve: `nbg_init_density` (RP3);
+  - the forcing cut: none; the region reads the archive itself (RP5 reads it once).
+- **A failed cell fails the region.** `meds_main` already stops after the month in which any polygon
+  failed, and names it and the date (`meds_main.f90:65-69`, `meds_region.f90:246-251`).
+- **Out of scope:**
+  - surviving a failed cell;
+  - tiles, launchers and merging across regions;
+  - MPI and the flattened patch pool (efficiency plan §2.7).
+
+**How beta threads a region today.** It threads over polygons only. `[run].n_threads` threads run
+the polygons side by side, costliest first (`meds_region.f90:228`). Each polygon's patch loop is
+single-threaded (`patch_threads=1`, `meds_region.f90:137`). Patch threads exist only in site runs
+(`meds_driver.f90:206`).
+
+### 14.2 Region size: any number of cells, three to five per core is best
+
+- **The code takes any number of cells.** This is unchanged.
+- **Each month ends with a barrier.** All polygons step through a month, then the output is written.
+  With one thread per polygon, every thread then waits for the slowest polygon.
+- **What that costs, from example 06's measured cells.** The 983 cells ran as single-core site runs,
+  40 to a node (v0.3.4).
+  - At R128C40 speed a cell took 0.3–13.6 h for 150 years, median 6.2 h. The cost follows the
+    cohorts, about 0.39 s per cohort-year, and wet cells carry about 20 times the cohorts of dry
+    ones.
+  - The node use below comes from scheduling those costs on 40 threads, costliest first, with every
+    month ending at the barrier. A contiguous box lets each sampled cell stand for the 3 × 3 block it
+    was chosen from, since cost follows rainfall and rainfall changes smoothly. The script is
+    `~/claude_workspace/regional_cost/region_node_use.py`, with the run's Slurm record beside it.
+
+| Cells per region | Node use, contiguous box | Node use, cells mixed at random |
+|---|---|---|
+| about 40 | 68 % (36 cells) | 48 % |
+| 80–90 | 84 % (90 cells) | 88 % (80 cells) |
+| 110–120 | 90 % (112 cells) | 96 % (120 cells) |
+| 130–200 | 93–94 % (130–180 cells) | 96–99 % (160–200 cells) |
+
+  - The efficiency plan's earlier simulation on the Ithaca box (§2.6) gave 43 % at 40 polygons,
+    which agrees.
+
+- **The guidance (OR10).** Three to five cells per core (120–200 on a 40-core node) keep the node
+  about 90 % busy.
+  - Count the cells the mask leaves, not the box's area. In the worst tenth of the 130-cell boxes
+    (coasts, broken forest) node use fell to 37 %, because only a few cells remained.
+  - Letting idle threads run the slowest polygons' patches is not planned now; it is filed as #400.
+- **Run length.** A region's wall time is its work over its threads. For the 130-cell boxes the
+  median was 16 hours and the wettest took 3.7 days, so RP4's restart matters for long regions.
+- **Memory is not a limit at that size.** It is 1.3 MB per bare-ground polygon and 0.7 MB for an
+  established temperate stand (§10.1, §10.3). A whole site process peaked under 70 MB in example 06,
+  so even a few MB per 600-cohort polygon is small.
+
+### 14.3 What beta lacks, and which phase supplies it
+
+| Need | Beta today | Phase |
+|---|---|---|
+| Per-cell allometry | The coefficients are one process-wide copy. `set_allometry` writes them from the config (`meds_config.f90:509`); about 20 functions in `meds_allometry.f90` read them, called from 26 places in 7 files; `light_ext` is also read directly in patch fusion. | RP0 |
+| Per-cell config and soil | All polygons use the region's one config (`polygon_step(cfg, …)`, `meds_region.f90:235`). The slow ledger rebuilds the soil from the config's scalars (`meds_slow_ledger.f90:439-452`). The region's soil diagnostics use polygon 1's soil (`meds_region.f90:149`; code review R10). | RP1 |
+| Choosing cells | Every valid cell in `box_nwse` above `land_fraction_min` (`meds_region.f90:94-106`). | RP2 |
+| Per-cell inputs | Only hand-set `[soil_column]`, `[soil]`, `[energy]` and `[allometry]` keys, one value for every cell. `soil_hydraulics_from_texture` exists but nothing calls it. Example 06 built each cell's soil and E in Python. | RP2, RP3 |
+| A seeded start | A bare-ground start has no cohorts (`init_bare_ground`, `meds_init.f90:36-53`). Example 06 wrote a census file per cell: 3 recruits m⁻² of each PFT at the diameter of 1.5 m on that cell's height curve. | RP3 |
+| Region restart | Refused: bare-ground starts and no checkpoints (`meds_config.f90:820-823`; `keep_*` hard-coded at `meds_region.f90:136-137`). | RP4 |
+| Forcing read once | A recycled run re-reads every window month every simulated year (`meds_met_archive_source.f90:74-82`). | RP5 |
+| All output in one file set | Region files hold the fixed-shape variables only. The hourly tier and the cohort and patch variables are dropped (`manager_restrict_region`, `meds_output_registry.f90`) and go to `detail_polygons`' own files. | RP6 |
+
+### 14.4 Phases
+
+Every phase is one pull request into beta with its CHANGELOG entry, and is tested before the next
+one starts. RP2 is two: the move into one I/O tree first, then the map module and mask. Phases RP0,
+RP1, RP2, RP4 and RP5 change no numbers: their acceptance includes byte-identical results for every
+existing site and region test.
+
+#### RP0 — allometry as an argument (B2, OR15) · about 2–3 days
+
+- **Why first.** It is the only process-wide model state. Per-cell `chave_e` needs it gone, and the
+  owner's new height allometry is then written against the new form.
+- **The change.**
+  - The functions in `meds_allometry.f90` take the coefficients as an argument, the config's
+    `allometry_config_t` (`cfg%allom`), instead of reading module variables. A scalar derived-type
+    argument keeps them `elemental pure`.
+  - The 26 call sites in 7 files pass the run's or the polygon's `cfg%allom`. Patch fusion reads
+    `light_ext` from it.
+  - `set_allometry` and the module's `protected` coefficients are removed.
+- **No new state variable.** `chave_e` is a parameter, fixed for the run, not a state.
+  - It already lives in the config's `allometry_config_t` (`meds_config.f90:105-113`). After RP1
+    each polygon holds its own copy (`poly%cfg%allom%chave_e`), set at open from the Chave E map
+    (RP3) or from a site's hand-set key.
+  - A restart reads the config and the maps again, so the state file does not hold it.
+  - The region files carry it as a static per-polygon variable for post-processing (RP3).
+- **Acceptance:**
+  - Every CTest, Python test and example regression is byte-identical.
+  - `meds_allometry.f90` has no module variable left.
+- **Then:** the owner's new height allometry builds on this.
+
+#### RP1 — each polygon owns its config and soil · about 2–3 days · after RP0
+
+- **Config.**
+  - `meds_polygon_t` holds its own copy of the config (`poly%cfg`).
+  - `polygon_prepare`, `polygon_step`, the slow ledger and the allometry calls use it.
+  - A site run's single polygon holds the run's config, so sites and regions keep one code path
+    (`meds_driver.f90:201`).
+- **Soil.** One routine builds a polygon's soil (`soil_params_t`, `soil_thermal_params_t`) once.
+  These all use that soil:
+  - the fast context;
+  - the slow ledger, in place of its rebuild from the config;
+  - the output's soil diagnostics, per polygon in place of the file set's polygon-1 soil.
+- **Acceptance:** every site and region test is byte-identical; all polygons still share one soil.
+
+#### RP2 — one module for spatial maps, and the cell mask · about 1–2 days · independent
+
+- **One source file for every spatial map (OR12).** `src/io/input/maps/meds_surface_maps.f90`
+  holds all of MEDS's code that reads and processes static map inputs, and no other file opens a
+  map.
+- **First, one I/O tree (the owner's layout), as RP2's first pull request.** `src/io/` becomes the
+  home of every data file a run reads or writes:
+
+```
+src/io/
+├── meds_netcdf_c.f90   the netCDF bindings, used by input and output
+├── meds_io.f90         the state file: written at checkpoints, read at restart
+├── input/
+│   ├── forcing/        the time-varying drivers, moved from src/forcing
+│   └── maps/           the static per-cell maps (new in RP2)
+└── output/             meds_output_* and meds_diagnostic_*, moved from src/io
+```
+
+  - **The two diagnostic modules stay with output (owner, 2026-10-14).** They are stages 1 and 3
+    of the output pipeline: derive, capture, reduce, integrate, serialize (`MEDS_IO_V01_PLAN.md`
+    §3.1).
+    - `meds_diagnostic_kernels` is used only by the output code and its test.
+    - `meds_diagnostic_reduce` also lends its stand summaries to code outside output: the polygon's
+      NaN guard and area check (`has_nan`, `total_area`), the drivers' summary lines, the C API's
+      totals and six tests.
+    - Moving those few summaries to `state/site/` would be a small later cleanup with its own
+      byte-identity test, not part of the move.
+  - **What stays out.** Config TOML stays in `config/`: it moved out of `src/io/` once already,
+    because configuration is not data I/O (plan decision #9, `CMakeLists.txt:150-156`). The census
+    reader stays in `init/`, because it builds the starting community.
+  - **The move changes paths only.**
+    - It is `git mv` plus the CMake paths: the explicit file lists of `meds_io_prep` (5 files),
+      `meds_io_stream` (3) and `meds_netcdf_c` (1), and the `forcing` glob.
+    - Every target keeps its name and every link edge stays, so the library graph does not change,
+      and builds and tests are byte-identical.
+  - **Paths to update.** About 25 mentions of `src/io` or `src/forcing` outside history files:
+    - `src/README.md` (tree, graph, placement rows) and two `CMakeLists.txt` comments;
+    - two config comments and a `meds_therm_lib.f90` comment;
+    - `docs/science/diagnostics.md` and `docs/ed2_comparison.md`;
+    - two script docstrings (`make_co2_file.py`, `make_forcing_file.py`).
+
+    The CHANGELOG and the dated plans keep their mentions as history. Source comments cite files
+    by bare name, so moving files is safe (CLAUDE.md).
+  - **One scope to fix.** `.claude/rules/output.md` applies to `src/io/**`. After the move it must
+    apply to `src/io/output/**` and the state file (`src/io/meds_io.f90`), or the output rules
+    would load for input code.
+  - **Libraries.** `io/input/forcing` keeps `meds_forcing`. `io/input/maps` is a new target,
+    `meds_maps`, linking `meds_forcing` (for the ED_ERA5land grid and `read_2d`), `meds_config`
+    and `meds_netcdf_c`. The driver links it, and the library graph stays acyclic.
+  - **Acceptance:**
+    - build and every test byte-identical;
+    - `git log --follow` keeps each file's history;
+    - no stale `src/forcing` or old `src/io/<file>` path outside history files.
+  - **Effort:** about half a day, inside RP2's estimate.
+  - **Grid.** It refuses a map unless its `lat` and `lon` equal the ED_ERA5land static file's. The
+    soil maps, the Chave E map and the CCI land-cover means already do: 1801 × 3600, 90 to −90,
+    −179.9 to 180. MEDS never regrids.
+  - **Reading.** It reads a 2-D or layered variable as the box's slab (a region) or one cell (a
+    site), through the netCDF bindings and the reader's `read_2d` (`meds_era5land_reader.f90:439`),
+    which becomes shared.
+  - **Products.** One table in the module names each product's variables: the ED soil maps v2's
+    `soil_depth`, `sand`, … and the E raster's `chave_e`. A new product is a new row and its
+    processing routine, in this file.
+  - **Processing** (RP3): the layer mapping, the bottom-condition mapping and the per-polygon record.
+    The pedotransfer and thermal functions stay in `shared/functions/` as stateless curves, and the
+    module calls them.
+- **The locations come from the config.** A `[maps]` block names each product's file, wherever
+  it is kept; its options leaf goes in `config/`, as the placement table asks:
+
+```toml
+[maps]
+soil_depth_map     = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_depth_v2.nc"
+soil_texture_map   = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_texture_v2.nc"
+soil_chemistry_map = "/ibstorage/ED-Data/ED-SoilMaps/output/ED_ERA5land_soil_biogeochemical_properties_v2.nc"
+chave_e_map        = "/ibstorage/SharedData/ED_ERA5land_Chave2014_E.nc"
+```
+
+- **The mask (OR11).** The same module reads it. Its keys stay in `[region]`, because choosing
+  cells is a run setting rather than an input:
+  - `[region].cell_mask` names the file, `cell_mask_var` the variable (default `mask`) and
+    `cell_mask_min` the threshold (default 0.5).
+  - A cell in the box runs where the value is at least the threshold, and is skipped where it is
+    below or missing.
+  - `land_fraction_min` still applies. Polygon ids stay the global row-major index.
+  - A cell the mask keeps but the forcing marks invalid is skipped, and the log lists it. A region's
+    polygons are forcing cells. Example 06's site runs instead looked up to 15 km for a forcing
+    cell, and 11 of its cells found none.
+- **Completeness is each product's job, not MEDS's (OR17).** Gaps are filled in the product's own
+  pipeline, on every valid non-ice forcing cell: the ED soil maps' code, and the script that put
+  Chave's E on the ERA5-Land grid.
+  - Today such gaps are 213 cells for E and 157 for soil equatorward of 60°, and none in example
+    06's box.
+  - About 61,000–63,000 non-ice cells poleward of 60° lack E or soil, and a boreal run must settle
+    them first.
+- **Acceptance:**
+  - A 0/1 mask that skips cells of a small box gives the remaining polygons byte-identical results
+    to the unmasked run.
+  - A fraction map with a threshold selects the expected cells.
+  - A box slab and a one-cell read agree at every cell.
+  - Refusals: a map on another grid, and a missing variable.
+
+#### RP3 — each cell's inputs from the maps · about 4–5 days · after RP1 and RP2
+
+- **The inputs (the `[maps]` files, through RP2's module).** For each polygon, at its own forcing
+  cell, the module builds a record of its map values: from the box's slab, read once, in a region,
+  or from one cell in a site. One routine then applies the record to the polygon's copy of the
+  config (RP1). The owning blocks keep their parameters; the record is only the hand-off from data
+  to model.
+- **Soil.** For each cell:
+  - the map's `soil_depth` gives the layers through `soil_column_layers`;
+  - each MEDS layer takes the thickness-weighted texture and chemistry of the SoilGrids layers it
+    overlaps;
+  - `soil_hydraulics_from_texture` gives each layer's θs, θr, α, n and Ks;
+  - a new elemental `soil_thermal_from_texture` (the CLM5 formulas) gives its solid and dry
+    conductivity and dry heat capacity;
+  - `[soil].bottom_bc` comes from `bc_class`: `free_drain`, `sealed` → `bedrock`, `aquifer`. `leaky`
+    runs as `free_drain` (OR16, #401);
+  - `[energy].deep_temp` comes from the map, and `deep_depth` is the bottom node plus d/√2
+    (`meds_biophysics_opts.f90:91-99`). The map's `deep_temp` is the 2003–2022 mean 2 m air
+    temperature + 1 K, the rule example 06 applied by hand;
+  - a bare-ground start fills each layer to its own field capacity (`theta_fc`).
+- **Allometry.** Each cell's `chave_e`, used when `height_allometry = "chave2014"`. A value per
+  polygon is possible after RP0.
+- **An empty value is an input error (OR17).** MEDS fills nothing. If a value the run needs is
+  missing at a polygon's cell, the run stops at open, naming the cell and the variable. Each product
+  is made complete upstream (RP2).
+  - Example 06's 4 empty-E cells were vegetation cells that are not forcing cells (land fraction
+    0.15–0.40). E was read there, not at the forcing cell each run used, where the map has a value.
+  - A region reads every input at the polygon's own forcing cell.
+- **A seeded start (OR18).** A per-PFT parameter, `nbg_init_density`, like ED2's `init_density`.
+  - It is plants per m², default 0, in the PFT file's `[pft]` table, read like the other optional
+    per-PFT values (`opt_pa`).
+  - A bare-ground start (`init_mode = 0`) then holds, in each initial patch, one cohort of each PFT
+    at that density. The cohort sits at `min_cohort_height` on the polygon's own height curve, the
+    size recruitment gives new cohorts (`meds_demography_cohort_fusefiss.f90:441`).
+  - The default keeps today's empty start.
+  - Example 06's PFTs set `min_cohort_height = 1.5`, so `nbg_init_density = 3` reproduces its
+    census start without per-cell files.
+  - Site runs get it too.
+- **The values go into each polygon's own config** (RP1), and `validate_config` then checks it as
+  it checks a site's.
+- **A deliberate difference from example 06.** Example 06 fitted one van Genuchten curve to the whole
+  column; RP3 gives each layer its own curve. RP7 compares the two.
+- **Required in region mode (OR12).**
+  - A region run stops with an error without the three `[maps]` soil maps, or without
+    `chave_e_map` when `height_allometry = "chave2014"`, or when a map lacks a variable it needs.
+  - A region config that also hand-sets a key the maps provide is refused.
+  - A site run takes either the maps (read at its forcing cell) or the hand-set keys, not both.
+- **Output.**
+  - A shallower cell's layers below its bottom are missing values on the `soil` axis, and the layer
+    depths become a `(polygon, soil)` coordinate.
+  - The region files carry each polygon's surface inputs as static `(polygon)` variables (column
+    depth, bottom condition, deep temperature, `chave_e`), for post-processing.
+- **Acceptance:**
+  - A three-cell region with maps is byte-identical to three site runs with the same maps.
+  - One map-built layer matches `test_pedotransfer`'s worked example.
+  - `nbg_init_density = 3` matches example 06's census start (3 m⁻² of each PFT at 1.5 m) at the
+    same E.
+  - Refusals: a region without its `[maps]` files, a hand-set key in a region, and an empty value
+    at a run cell (the error names the cell and the variable).
+
+#### RP4 — the region state file and restart · about 3–4 days · after RP1
+
+- **The layout (OR14).** One file per checkpoint, `<dir>/<prefix>-S-<stamp>.nc`, padded like the
+  output:
+  - every state variable gains a leading `polygon` axis;
+  - the `cohort`, `patch` and `growth_window` axes are sized to the largest polygon;
+  - `n_cohort(polygon)`, `n_patch(polygon)` and `n_window(polygon)` mark each polygon's live part,
+    and the rest is missing values;
+  - `polygon_id`, `lat` and `lon` are coordinates.
+- **The code** (`meds_io.f90`):
+  - **Writer:** its 74 variable definitions (`dv`) are made once with the region's largest counts,
+    then each polygon's slab is written at its index.
+  - **Reader:** its four helpers (`gv_int`, `gv_dbl`, `gv_dbl_opt`, `gv_dbl2_row`) take an optional
+    polygon index.
+  - **Site state files do not change.** calibrate_fast (`trials.py`) and `test_restart_exact.py`
+    read them.
+- **Restart.**
+  - `init_mode = 2` in a region reads each polygon by its id. The file's cells must be the run's, or
+    it is refused.
+  - `keep_fast_state` and `keep_soil_carbon` come from the config.
+  - The forcing cursor is re-derived from model time.
+  - The resumed run's output goes to its own directory or prefix, as for a site restart.
+  - The two region refusals at `meds_config.f90:820-823` go.
+- **Acceptance:**
+  - A region stopped at a checkpoint and resumed is byte-identical to the unbroken run, with archive
+    forcing and a recycle window.
+  - Today's site state files restart byte-identically.
+
+#### RP5 — read each forcing month once · about 1–2 days · independent
+
+> **Dropped 2026-10-14 (owner),** after it was implemented and measured: the page cache already serves
+> a recycled window's re-reads, and the cache saved under 2 % of wall time (§14 status, above).
+
+- **The cache.** When the run recycles a window, keep its months in the shared source's memory:
+  `values(hour, cell, var)` in float32, 23.8 KB per cell-month, or 0.86 GB for a 20-year window and
+  150 cells.
+- **The setting.** `[forcing].cache_mb` (default 4096, 0 = off). The window is cached whole when it
+  fits; otherwise nothing is cached, and the run warns once.
+- **The rule.** The prefetch takes the month from the cache when it holds it. The cursor logic does
+  not change.
+- **Acceptance:**
+  - Cached and uncached runs are byte-identical, including across an RP4 restart (the cache
+    refills).
+  - The serial read's share of a month's wall time, measured before and after.
+
+#### RP6 — the whole region's output in one file set · about 2–4 days · independent
+
+- **The hourly tier.** Stop masking it in `manager_restrict_region`. The `io_config` decides its
+  volume.
+- **Cohort and patch variables (OR13).** Write them as `(time, polygon, cohort)` and
+  `(time, polygon, patch)`, padded to the largest live count among the file's polygons. Entries
+  beyond a polygon's count are missing values.
+  - The one-month cap on files with ragged variables carries over (`meds_output_stream.f90:64-74`).
+- **`[region].detail_polygons` is retired,** so there is one output path.
+- **Cleanup.** `region_finalize` writes nothing more once any polygon has failed. Today a library
+  caller that finalizes after a failure can recreate an earlier chunk file from scratch
+  (`meds_output_manager.f90:58-65`, `meds_output_stream.f90:200`).
+- **Acceptance:**
+  - Every variable of a three-cell region equals the three site runs' values, where the polygon's
+    count reaches.
+  - Padding is missing values.
+  - `test_region`'s failure test checks that nothing is written after the failure.
+
+#### RP7 — pilot: example 06 as region runs, and documentation · about 2–3 days · last
+
+- **The pilot.** Run example 06's 994 chosen cells as a 0/1 mask over its box (5–25° N, 100–80° W),
+  split into about seven regions of 120–200 cells, on R128C40 nodes. Its 983 v0.3.4 site runs are
+  the reference:
+  - forcing, Chave E and deep temperature must match per cell;
+  - the soil differs by design (per-layer curves against one fitted curve), so compare the maps of
+    leaf area, AGB and GPP;
+  - node use against §14.2's table;
+  - the serial read's share, from each region's log;
+  - a kill and resume, which must be byte-identical;
+  - three cells byte-identical to site runs with the same maps.
+- **The docs.**
+  - `docs/configuration.md` covers every new key: `[region].cell_mask*`, `[maps].*_map`,
+    and `pft.nbg_init_density`.
+  - `src/io/input/maps/README.md` covers the map module and the products it reads.
+  - `src/README.md` shows `io/` with `input/forcing`, `input/maps` and `output`, and the new
+    library edge. It gains placement rows: a time-varying driver goes in `io/input/forcing/`, a
+    static spatial input in `io/input/maps/`, an output variable or diagnostic in `io/output/`.
+  - A science page covers the map-built soil.
+  - The plan closes R4–R6 and ROADMAP #183's region items.
+- **After it.** Example 06's pipeline can then be the mask, one config per region and `meds_main`,
+  with no Python setup (the owner's call).
+- **A full-resolution run of the box** would be 5,744 cells: at least 80 % natural, valid forcing,
+  land fraction 0.5 or more. That is about 34,000 core-hours, or about 36 regions of 160 cells.
+
+### 14.5 Order and dependencies
+
+```
+RP0 allometry ──> RP1 polygon config/soil ──┬──> RP3 maps ──┐
+RP2 map module + mask ──────────────────────┘               │
+                          RP1 ──> RP4 state file ───────────┼──> RP7 pilot + docs
+RP5 forcing cache (dropped)                                 │
+RP6 one output file set (independent) ──────────────────────┘
+```
+
+- **Serial order:** RP0, RP1, RP2, RP3, RP4, RP5, RP6, RP7. In all about 17–26 days of work.
+- **Land RP2's I/O move before anything else.** It changes paths only, and RP1 (output
+  diagnostics), RP4 (`meds_io.f90`), RP5 (forcing) and RP6 (output) all edit files it moves.
+  Landing it first means no later pull request is rebased across a move.
+- **What can run in parallel:** RP2, RP5 and RP6 depend on nothing, so they can go alongside. The
+  owner's new height allometry can start as soon as RP0 merges.
+- **Usable along the way:**
+  - after RP3, regions get per-cell soils, `chave2014` heights and seeded starts: example 06 can
+    run as regions;
+  - after RP4, long regions restart;
+  - RP5 and RP6 are efficiency and convenience.
+
+### 14.6 Decisions (OR10–OR16 decided 2026-10-12; OR12 revised and OR17–OR18 added 2026-10-14)
+
+| # | Decision | Answer | Phase |
+|---|---|---|---|
+| OR10 | Cells per region | Any number; three to five per core is the guidance. Patch threads inside a region's polygons: #400, not planned now. | — |
+| OR11 | How cells are chosen | The box, plus a cell mask on the forcing grid. No cell list. | RP2 |
+| OR12 | How a cell gets its own inputs | Natively from data, read at the cell's forcing cell into the polygon's copy of the one config; required in region mode. **Revised 2026-10-14 (owner):** all map reading and processing in one source file (`src/io/input/maps/meds_surface_maps.f90`), in one I/O tree: `src/io/` with `input/forcing` (moved from `src/forcing`), `input/maps` and `output` (the owner's layout), with each product's location given in one `[maps]` block, wherever the product is kept. This replaces map keys spread over the owning blocks. Site runs take the maps or hand-set keys. The block is `[maps]` (owner, 2026-10-14). | RP2, RP3 |
+| OR13 | Cohort and patch variables in the region file | Padded to the largest polygon's count per file. `detail_polygons` retired. | RP6 |
+| OR14 | The state file's layout | The same padded layout, with a leading `polygon` axis. Site state files unchanged. | RP4 |
+| OR15 | Per-cell allometry | B2 first, as its own byte-identical refactor; the owner's new height allometry follows on it. | RP0 |
+| OR16 | The maps' `leaky` bottom | Not added now: leaky cells run as free drainage (#401). | RP3 |
+| OR17 | A cell the map leaves empty | **Decided 2026-10-14:** no fills or special guards in MEDS. Each product is made complete upstream, in its own pipeline (RP2); a missing value the run needs is an input error naming the cell and the variable. | RP2, RP3 |
+| OR18 | The seeded start | **Proposed 2026-10-14 (owner's suggestion):** a per-PFT `nbg_init_density` (ED2's `init_density`) for near-bare-ground starts. A regional census start, using the census reader's `site_id` as the polygon id, is left for inventory-based starts later: for a seeded start it would need per-cell diameters computed outside MEDS. | RP3 |

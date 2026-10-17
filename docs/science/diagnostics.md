@@ -3,7 +3,7 @@
 How MEDS reports itself: what a variable means, how it is aggregated across the demographic
 hierarchy and across time, and how to ask for the ones you want.
 
-Implementation: `src/io/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
+Implementation: `src/io/output/` (`meds_diagnostic_kernels`, `meds_diagnostic_reduce`,
 `meds_output_{types,registry,integrate,stream,manager}`) plus the per-cohort / per-patch
 accumulators in `src/state/site/meds_site_diag_types.f90`. Design and rationale:
 `docs/dev_plans/MEDS_IO_V01_PLAN.md`; the temporal-aggregation engine underneath is
@@ -311,17 +311,17 @@ monotonically climbing count is a config bug. `canopy_height_site` — stand dev
 
 ## 7. Variable inventory
 
-252 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
+255 registered variables. Run `meds_main --dump-io-config` for the authoritative list with units,
 groups, axes and default streams — it is generated from the registry, so it cannot drift.
 
 | group | count | | axis | count |
 |---|---|---|---|---|
-| structure | 67 | | site | 141 |
+| structure | 67 | | site | 144 |
 | energy | 48 | | cohort | 55 |
 | carbon | 34 | | patch | 29 |
 | forcing | 28 | | pft | 9 |
 | ecophys | 24 | | soil | 7 |
-| water | 18 | | dbh_class | 6 |
+| water | 21 | | dbh_class | 6 |
 | biogeochem | 15 | | (patch, soil) | 5 |
 | numerics | 13 | | | |
 | radiation | 5 | | | |

@@ -187,7 +187,7 @@ program test_carbon_growth
       call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
       call check(site%cohort%leaf_carbon(1) == 0.0_wp, 'applier: a full shed leaves no leaf carbon')
       call check(site%cohort%leaf_area(1) == 0.0_wp, 'applier: and exactly no leaf area (#389)')
-      call carbon_to_structure(site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
+      call carbon_to_structure(site%cohort%allom, site%cohort%wood_carbon(1), site%cohort%leaf_carbon(1),              &
                                site%cohort%p_wood_density(1), site%cohort%p_hgt_max(1),             &
                                site%cohort%p_aboveground_frac(1), site%cohort%sla(1),               &
                                dbh_c, h_c, ba_c, agb_c, la_c)

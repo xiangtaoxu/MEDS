@@ -7,9 +7,9 @@
 ! polygon's met_cursor_t, the archive's cell list met_cells_t and month buffer met_month_t, and the  !
 ! prescribed CO2 series co2_series_t.                                                               !
 !                                                                                          !
-! Lives in src/forcing (libmeds_forcing); links meds_shared only (meds_kinds, meds_time for the     !
-! meds_time_t timestamp, meds_forcing_config for the [forcing]/[site] config). No physics library    !
-! ever names these types; the reader (meds_met_driver) owns the only mutable forcing state.           !
+! Lives in src/io/input/forcing (libmeds_forcing); links meds_shared only (meds_kinds, meds_time   !
+! for the meds_time_t timestamp, meds_forcing_config for the [forcing]/[site] config). No physics    !
+! library ever names these types; the reader (meds_met_driver) owns the only mutable forcing state. !
 !==========================================================================================!
 module meds_forcing_types
    use meds_kinds,          only : wp, sp, ik

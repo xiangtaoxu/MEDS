@@ -3,7 +3,7 @@
 ! meds_forcing_config -- the [forcing]/[site] configuration for meteorological forcing, plus  !
 ! the selector codes shared by the config, the reader, and the disaggregation kernels.         !
 !                                                                                          !
-! Placed in src/config (NOT src/forcing) so meds_config -- the DAG ROOT -- can carry            !
+! Placed in src/config (NOT src/io/input/forcing) so meds_config -- the DAG ROOT -- can carry  !
 ! forcing_config_t as a plain-scalar component with NO backward `config -> forcing` edge (the    !
 ! same rule the energy design used for soil_thermal_params_t). Pure DATA + parameters; uses       !
 ! meds_kinds and meds_time only. Defaults are the Ithaca NY / ERA5-Land reference site (design     !

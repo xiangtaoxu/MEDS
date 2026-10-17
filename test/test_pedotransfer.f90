@@ -1,11 +1,12 @@
 ! SPDX-License-Identifier: Apache-2.0
 !----- The soil pedotransfer function (meds_pedotransfer): Hodnett & Tomasella (2002)'s worked !
 !      example, Ottoni et al. (2019)'s Ks of it, coarse fragments, the residual-water floor, and !
-!      the elemental call over a profile against the call per layer.                            !
+!      the elemental call over a profile against the call per layer, and CLM5's thermal          !
+!      properties of a soil (soil_thermal_from_texture).                                          !
 program test_pedotransfer
    use meds_kinds,        only : wp
    use meds_constants,    only : grav_head
-   use meds_pedotransfer, only : soil_texture_t, soil_hydraulics_from_texture
+   use meds_pedotransfer, only : soil_texture_t, soil_hydraulics_from_texture, soil_thermal_from_texture
    use meds_test_assert,  only : banner, check_close, check_true, test_report
    implicit none
 
@@ -14,6 +15,7 @@ program test_pedotransfer
    real(wp)               :: theta_sat_stony, theta_res_stony, alpha_stony, n_stony, ksat_stony
    real(wp), dimension(3) :: theta_sat_p, theta_res_p, alpha_p, n_p, ksat_p
    real(wp)               :: theta_sat_k, theta_res_k, alpha_k, n_k, ksat_k
+   real(wp)               :: k_solid, k_dry, dry_cvol
    logical                :: same
    integer                :: k
 
@@ -63,6 +65,16 @@ program test_pedotransfer
              alpha_p(k) == alpha_k .and. n_p(k) == n_k .and. ksat_p(k) == ksat_k
    end do
    call check_true('elemental call over a profile equals the per-layer calls', same)
+
+   !=== CLM5's mineral soil at Palo Verde's column (sand 33 %, clay 40 %, porosity 0.4456), computed  !
+   !    apart from MEDS: solids (8.80 x 33 + 2.92 x 40) / 73 = 5.57808 W/m/K; dry bulk density 1496.88 !
+   !    kg/m3, so dry soil (0.135 x 1496.88 + 64.7) / (2700 - 0.947 x 1496.88) = 0.208022 W/m/K; and   !
+   !    the solids' heat capacity (2.128 x 33 + 2.385 x 40) / 73 x 1e6 x 0.5544 = 1.257835e6 J/m3/K. ==!
+   call soil_thermal_from_texture(soil_texture_t(sand=33.0_wp, silt=27.0_wp, clay=40.0_wp), 0.4456_wp,   &
+                                  k_solid, k_dry, dry_cvol)
+   call check_close('CLM5 solids conductivity', k_solid, 5.5780822_wp, 1.0e-6_wp)
+   call check_close('CLM5 dry conductivity', k_dry, 0.20802202_wp, 1.0e-7_wp)
+   call check_close('CLM5 solids heat capacity', dry_cvol, 1.2578349e6_wp, 1.0_wp)
 
    call test_report('test_pedotransfer')
 end program test_pedotransfer
