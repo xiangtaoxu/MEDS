@@ -312,12 +312,14 @@ Source: `docs/dev_plans/archive/MEDS_FORCING_DESIGN.md` §5.7, §8. Science page
   - a cell mask, each polygon's soil and Chave E from the `[maps]` files, and a seeded
     bare-ground start (`pft.nbg_init_density`);
   - region state files and restarts;
-  - every variable and tier in the region's one file set (`detail_polygons` retired).
+  - every variable and tier in the region's one file set (`detail_polygons` retired);
+  - *done in beta:* the soil maps' leaky bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401)), one drainage factor $f$ for
+    every draining base ($`q = f\,K`$: free 1, leaky the map's `f_leak`, sealed 0), carried per polygon in
+    the region files.
 
   Not planned: tiles, launchers and MPI; a larger area runs as several regions, one node each.
   Still open:
   - patch threads inside a region's polygons ([#400](https://github.com/xiangtaoxu/MEDS/issues/400));
-  - a leaky soil bottom ([#401](https://github.com/xiangtaoxu/MEDS/issues/401));
   - the rest of the runtime consolidation ([#310](https://github.com/xiangtaoxu/MEDS/issues/310));
   - resuming a region from a state file without a failed cell ([#431](https://github.com/xiangtaoxu/MEDS/issues/431)): a restart must hold
     exactly the region's polygons, so a cell that fails cannot be masked out and the run resumed.

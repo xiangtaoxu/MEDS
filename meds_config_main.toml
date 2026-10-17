@@ -135,7 +135,8 @@ fine_root_radius     = 2.5e-4     # [m]     fine-root radius: tropical fine-root
 # Soil and plant water are solved together as one network (implicit Euler with Newton and its own
 # sub-steps; docs/science/soil_plant_water.md); rtol/atol set its error. This is NOT the soil
 # geometry/texture (see [soil_column]).
-bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition)
+bottom_bc      = "free_drain" # free_drain | aquifer | bedrock   (bottom boundary condition; free_drain
+                              #   and bedrock drain at q = f K, f = 1 and 0; a soil map's leaky base at its f_leak)
 rtol           = 1.0e-3       # [-]      water-network sub-step relative tolerance
 atol           = 1.0e-4       # [-]      water-network sub-step absolute tolerance: water content for soil
                               #          layers and the pond, relative water content for plant tissues
@@ -637,9 +638,9 @@ phi_psii         = 0.74    # [--] electron yield of linear transport in low ligh
 #-------------------------------------------------------------------------------------------------#
 # [maps]
 # soil_depth_map     = "/path/to/ED_ERA5land_soil_depth_v2.nc"
-#                    #   soil_depth [m], bc_class (1 free_drain; 2 leaky, run as free_drain, as there is
-#                    #   no leaky bottom boundary (see docs/ROADMAP.md); 3 sealed, run as bedrock;
-#                    #   4 aquifer) and deep_temp [K], each (lat, lon)
+#                    #   soil_depth [m], bc_class (1 free_drain; 2 leaky, draining at f_leak times free
+#                    #   drainage; 3 sealed, run as bedrock; 4 aquifer), f_leak [-] and deep_temp [K],
+#                    #   each (lat, lon)
 # soil_texture_map   = "/path/to/ED_ERA5land_soil_texture_v2.nc"
 #                    #   sand, silt, clay [%], bulk_density [g/cm3] and coarse_fragments [% volume],
 #                    #   each (depth, lat, lon), with the layers in depth_bnds [m]

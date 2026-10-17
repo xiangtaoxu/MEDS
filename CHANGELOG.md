@@ -172,6 +172,28 @@ before and after.
   byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
   re-acclimation conserves the cohort's carbon.
 
+- **One drainage factor for the soil's bottom, and the soil maps' leaky base drains as the map says**
+  (#401). Free drainage and bedrock were two cases of `bottom_flux`; they are now the two ends of one,
+  q = f K(θ_N) with f = `soil_opts_t%drain_factor` (`docs/science/soil_biophysics.md`, Boundary
+  conditions): `[soil].bottom_bc = "free_drain"` is f = 1 and `"bedrock"` f = 0, and the aquifer stays
+  its own case. The selectors `SOIL_BC_FREE_DRAIN` and `SOIL_BC_BEDROCK` become one, `SOIL_BC_DRAIN`;
+  the config names are unchanged. A leaky base in the ED soil maps (`bc_class` 2: half the map's cells,
+  82 % of example 06's box) drains at the cell's `f_leak` (0.05 everywhere in ED-SoilMaps v2), where it
+  ran as free drainage, 20 times faster than the map intends. The soil depth map must hold `f_leak`,
+  and a leaky cell whose `f_leak` is outside (0, 1] stops the run, naming the cell. A region's files
+  carry each polygon's `drain_factor` (the fill value on an aquifer), and their `bottom_bc` is 1 for
+  drainage and 2 for an aquifer (a sealed polygon was 3; it is now 1 with `drain_factor` 0). Free-
+  draining site runs, every shipped one, are byte-identical, and so are sealed and aquifer polygons.
+  Before → after, a 3 × 3-cell box of example 06's domain (11.85–12.15° N, 85.85–86.15° W; its 7 land
+  cells all leaky, 1.0–1.6 m of soil), example 05's Palo Verde regrowth from bare ground, the first 5
+  years: drainage 218 → 163 mm yr⁻¹ (−25 %), ET 971 → 1014 mm yr⁻¹ (+4.4 %), column water 0.287 →
+  0.296 m³ m⁻³ (the deepest layer 0.277 → 0.289), LAI 3.38 → 3.59, GPP +4.6 %, AGB +4.1 %.
+  `test_column_hydrology` checks that f = 1 and f = 0 give free drainage and bedrock bit for bit, that
+  the flux scales by f, and that a leaky column's water closes against its drainage;
+  `test_surface_maps` reads each cell's `f_leak` and refuses f_leak = 0 on a leaky cell; `test_region`
+  runs its leaky polygon at its cell's `f_leak` and reads every polygon's `drain_factor` from the
+  region files; `test_biophysics_opts_config` loads the two names.
+
 ### Removed
 
 - **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and

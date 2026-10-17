@@ -19,16 +19,18 @@ module meds_biophysics_opts
    private
 
    !----- Soil-water bottom boundary selectors. -------------------------------------------!
-   public :: SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
+   public :: SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    !----- Soil-energy solver selectors. ----------------------------------------------------!
    public :: ENERGY_BC_GEOTHERMAL, ENERGY_BC_DIRICHLET
    public :: annual_damping_depth
    !----- The option / parameter bundles. --------------------------------------------------!
    public :: soil_opts_t, energy_opts_t, snow_params_t, aero_cfg_t
 
-   integer(ik), parameter :: SOIL_BC_FREE_DRAIN = 1_ik     !< unit-gradient q = K(theta_N)  (default)
-   integer(ik), parameter :: SOIL_BC_AQUIFER    = 2_ik     !< water table at the column base (wet sites only)
-   integer(ik), parameter :: SOIL_BC_BEDROCK    = 3_ik     !< no-flow  q = 0
+   !----- The column drains through its base at a fraction f of the deepest layer's conductivity,  !
+   !      q = f K(theta_N) (free drainage f = 1, a leaky base 0 < f < 1, sealed bedrock f = 0), or it !
+   !      sits on an aquifer (docs/science/soil_biophysics.md §Boundary conditions). ----------------!
+   integer(ik), parameter :: SOIL_BC_DRAIN   = 1_ik     !< drainage q = f K(theta_N)  (default)
+   integer(ik), parameter :: SOIL_BC_AQUIFER = 2_ik     !< water table at the column base (wet sites only)
 
    integer(ik), parameter :: ENERGY_BC_GEOTHERMAL   = 1_ik   !< bottom: prescribed flux (Neumann)
    integer(ik), parameter :: ENERGY_BC_DIRICHLET     = 2_ik   !< bottom: conduction to a fixed deep temperature
@@ -40,12 +42,14 @@ module meds_biophysics_opts
    !----- Soil water: the bottom boundary, the soil-plant water network's tolerances, the pond, the !
    !      canopy interception, the ground's evaporation and optics (NOT the whole config). ----!
    type :: soil_opts_t
-      !----- free_drain (default) | bedrock | aquifer.  NOTE: `aquifer` is the WET-SITE boundary --   !
-      !      the water table is DEFINED as the column base, so the bottom face is head-driven against  !
-      !      a saturated zone and supplies water upward without limit.  Right for riparian, floodplain !
-      !      and wetland stands; WRONG for a typical upland one, where free_drain is the correct        !
-      !      choice.  It is not a drop-in "more realistic drainage" option.  ------------------------!
-      integer(ik) :: bottom_bc = SOIL_BC_FREE_DRAIN
+      !----- Drainage (default) | aquifer, with drainage's factor f: [soil].bottom_bc = "free_drain"  !
+      !      is f = 1, "bedrock" f = 0, and a soil map's leaky base its f_leak.  NOTE: `aquifer` is the !
+      !      WET-SITE boundary -- the water table is DEFINED as the column base, so the bottom face is  !
+      !      head-driven against a saturated zone and supplies water upward without limit.  Right for  !
+      !      riparian, floodplain and wetland stands; WRONG for a typical upland one, where free       !
+      !      drainage is the correct choice.  It is not a drop-in "more realistic drainage" option. ---!
+      integer(ik) :: bottom_bc    = SOIL_BC_DRAIN
+      real(wp)    :: drain_factor = 1.0_wp              !< [-] f in [0, 1] of q = f K(theta_N)
       !----- The water network's sub-step tolerances (docs/science/soil_plant_water.md §3): a        !
       !      store's error is weighed against atol of its scale -- water content for soil layers     !
       !      and the pond, relative water content for plant tissues -- plus rtol of its water. ------!

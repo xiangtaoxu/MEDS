@@ -237,7 +237,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | sapflow advected enthalpy | present | present | unified |
 | tissue (leaf + wood) heat store | exact exponential relaxation | same | unified |
 | per-layer root-sink placement | tracks realized uptake | same | unified — the per-layer path is unconditional |
-| bottom boundary (free-drain / bedrock / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
+| bottom boundary (drainage, free to sealed / aquifer) | supported | same | unified — head-driven two-way aquifer, no storage bucket |
 | bottom thermal boundary | `geothermal` (prescribed flux, held at 0) or `dirichlet` (deep temperature anchor) | same | unified — one `bottom_heat_face` seam, see [soil_biophysics](soil_biophysics.md) |
 | canopy-air depth | tallest cohort + freeboard, slow-loop owned | same | unified |
 | soil water | the water network's, moved at its steady rate outside the tableau | the network's, at the same rate inside the tableau | unified — both commit the network's θ |

@@ -22,7 +22,7 @@ program test_column_ark
    use meds_fast_types, only : patch_biophys_t, alloc_patch_biophys
    use meds_column_view,       only : column_cohort_init
    use meds_water_retention, only : SOIL_RETENTION_VG
-   use meds_biophysics_opts, only : SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_canopy_types, only : set_aero_env_atm
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : n_soil_layer_max
@@ -294,7 +294,7 @@ contains
       call check_true('AQUIFER/ARK: dry column wets from below',                                                      &
               biophys%soil_w%theta(col_config%soil%n_active) > theta_bot0,                                            &
               biophys%soil_w%theta(col_config%soil%n_active) - theta_bot0)
-      col_config%soil_water_opts%bottom_bc = SOIL_BC_FREE_DRAIN
+      col_config%soil_water_opts%bottom_bc = SOIL_BC_DRAIN ; col_config%soil_water_opts%drain_factor = 1.0_wp
    end subroutine test_ark_aquifer
 
    !----- march 24 h of INTEG_ARK over MOIST free-draining soil (rainfall==0) and                   !

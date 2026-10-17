@@ -273,6 +273,7 @@ module meds_output_types
       real(wp),    allocatable :: polygon_soil_face(:,:)     !< (layer + 1, polygon) [m] layer faces, <= 0
       real(wp),    allocatable :: polygon_soil_depth(:)      !< [m] soil column depth
       integer(ik), allocatable :: polygon_bottom_bc(:)       !< the bottom water boundary (SOIL_BC_*)
+      real(wp),    allocatable :: polygon_drain_factor(:)    !< [-] drainage's f; MISSING_VALUE on an aquifer
       real(wp),    allocatable :: polygon_deep_temp(:)       !< [K] deep soil temperature
       real(wp),    allocatable :: polygon_chave_e(:)         !< [-] Chave's E; only with that allometry
    end type output_files_t

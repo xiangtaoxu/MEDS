@@ -41,7 +41,7 @@ program test_spac_solver
    use meds_column_params, only : n_soil_layer_max, soil_params_t, build_soil_hydr_params
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_soil_types,    only : chydro_forcing_t
-   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_DRAIN
    implicit none
 
    type(hydro_params_table_t) :: hyd
@@ -301,7 +301,7 @@ contains
       integer(ik) :: step, nsl
       nsl = soil%n_active
       theta = 0.40_wp ; theta(1:3) = 0.425_wp          ! wet: BCI's clay settles in days, not years
-      sealed = sopts ; sealed%bottom_bc = SOIL_BC_BEDROCK
+      sealed = sopts ; sealed%bottom_bc = SOIL_BC_DRAIN ; sealed%drain_factor = 0.0_wp
       still = forc ; still%q_air = 0.05_wp                 ! air wetter than any surface: no evaporation
       call make_stand(spac, 0_ik, theta, 0.0_wp, 0.9_wp, 0.9_wp, 0.0_wp)
       w0 = total_water(spac)

@@ -93,6 +93,12 @@ rather than a crash, so the physical block is validated at load.
 - **Refused keys:** `n_layer` and `grid_growth`.
 - **The science:** [`science/soil_biophysics.md`](science/soil_biophysics.md), "The soil layers".
 
+**The bottom water boundary — `[soil].bottom_bc`.** `free_drain` (default), `bedrock` or `aquifer`.
+The first two are the ends of one drainage boundary, $`q = f\,K(\theta_n)`$ at $f = 1$ and $f = 0$; a
+leaky base, $0 < f < 1$, comes from the soil maps' `f_leak` (Input maps, below). `aquifer` is a water
+table at the column base, for wet sites only ([`science/soil_biophysics.md`](science/soil_biophysics.md),
+"Boundary conditions").
+
 ### The bottom thermal boundary — `[energy].bottom_bc`
 
 The default 2.0 m column sits against an annual thermal damping depth of about 2 m, so the annual
@@ -371,9 +377,11 @@ cell_mask_min     = 0.5                              # ... and the value a cell 
   depths, and its CF bounds `soil_z_bnds (polygon, soil, nv)` each layer's top and bottom, so the
   bottom layer ends at that polygon's own soil depth. Both are negative downward, and the fill value
   below the polygon's bottom layer, as its soil variables are. Each file also carries the inputs the
-  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2,
-  3 for free_drain, aquifer, bedrock; a leaky base runs as free_drain), `deep_temp` [K] and, with
-  `height_allometry = "chave2014"`, `chave_e`. A site file keeps its one-dimensional `soil_z`.
+  cell's maps gave the polygon, as it runs them: `soil_depth` [m], `bottom_bc` (`flag_values` 1, 2
+  for drain, aquifer), `drain_factor` (the drainage factor $f$ of the bottom flux $`q = f\,K`$: 1 on a
+  free-draining base, the cell's `f_leak` on a leaky one, 0 on a sealed one; the fill value on an
+  aquifer), `deep_temp` [K] and, with `height_allometry = "chave2014"`, `chave_e`. A site file keeps
+  its one-dimensional `soil_z`.
 - **Soil.** Every polygon takes its soil column from its own cell, through the `[maps]` soil
   maps, which a region requires. With `height_allometry = "chave2014"` it also needs
   `[maps].chave_e_map`. Each polygon is then a site run with that cell's soil, and its
@@ -425,7 +433,7 @@ reads every map and is the only module that does.
 
 | Key | File (ED-SoilMaps v2) | Variables |
 |---|---|---|
-| `soil_depth_map` | `ED_ERA5land_soil_depth_v2.nc` | `soil_depth` [m], `bc_class`, `deep_temp` [K] |
+| `soil_depth_map` | `ED_ERA5land_soil_depth_v2.nc` | `soil_depth` [m], `bc_class`, `f_leak`, `deep_temp` [K] |
 | `soil_texture_map` | `ED_ERA5land_soil_texture_v2.nc` | `sand`, `silt`, `clay` [%], `bulk_density` [g cm⁻³], `coarse_fragments` [% volume], on SoilGrids' six layers (`depth_bnds` [m]) |
 | `soil_chemistry_map` | `ED_ERA5land_soil_biogeochemical_properties_v2.nc` | `organic_carbon` [g kg⁻¹], `cec` [cmol(c) kg⁻¹], `ph_h2o`, on the same layers |
 | `chave_e_map` | `ED_ERA5land_Chave2014_E.nc` | `chave_e` |
@@ -440,12 +448,13 @@ forcing cell its `[site]` location reads (so with `format = "ED_ERA5land"`), or 
   maps' 2 m, it takes the deepest map layer. Its retention curve and Ks come from MEDS's
   pedotransfer function, and its thermal properties from the same texture by CLM5's mineral-soil
   formulas ([`science/soil_biophysics.md`](science/soil_biophysics.md)).
-- **The bottom water boundary** follows `bc_class`:
-  - 1 is `free_drain`;
-  - 3 (sealed) runs as `bedrock`;
-  - 4 is `aquifer`;
-  - 2 (leaky) runs as `free_drain`: there is no leaky bottom boundary (see [`ROADMAP.md`](ROADMAP.md)
-    §8).
+- **The bottom water boundary** follows `bc_class`. The first three drain through the base at
+  $`q = f\,K(\theta_n)`$ ([`science/soil_biophysics.md`](science/soil_biophysics.md), Boundary
+  conditions):
+  - 1 is `free_drain`, $f = 1$;
+  - 2 (leaky) drains at the cell's `f_leak` (0.05 in ED-SoilMaps v2), which must be in (0, 1];
+  - 3 (sealed) is `bedrock`, $f = 0$;
+  - 4 is `aquifer`.
 - **The thermal anchor** sits at `deep_temp`, annual damping depth / √2 below the bottom node, where it
   reflects the annual wave least. It is used when `[energy].bottom_bc = "dirichlet"`.
 

@@ -9,8 +9,8 @@
 !   * ground_evaporation_rate -- evaporation from the top layer: Philip's pore-space       !
 !                                humidity and the Swenson-Lawrence dry-surface-layer       !
 !                                resistance;                                               !
-!   * bottom_flux             -- drainage through the bottom face: free drainage, a sealed !
-!                                bedrock, or a head-driven aquifer.                        !
+!   * bottom_flux             -- drainage through the bottom face, free or leaky or none   !
+!                                (sealed bedrock), or a head-driven aquifer.               !
 ! How much water a layer holds is in meds_water_retention, the flow from a layer into the  !
 ! roots in meds_hydr_lib; meds_spac_solver solves them together with the plants' water.    !
 ! Canopy interception lives in meds_plant_biophysics (a per-cohort film).                  !
@@ -20,7 +20,7 @@ module meds_soil_water
    use meds_constants,        only : rho_h2o, grav, grav_head, r_wv, tiny_num, p_std, safe_exp
    use meds_soil_types, only : chydro_forcing_t
    use meds_column_params, only : soil_params_t
-   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
+   use meds_biophysics_opts, only : soil_opts_t, SOIL_BC_AQUIFER
    use meds_water_retention,  only : soil_theta_from_psi
    use meds_hydr_lib,         only : smooth_max0
    use meds_therm_lib,        only : sat_specific_humidity
@@ -61,10 +61,12 @@ contains
    end subroutine soil_water_flux
 
    !---------------------------------------------------------------------------------------!
-   ! BOTTOM-FACE Darcy flux [m/s, DOWN-positive]. One authority for all three bottom BCs.      !
+   ! BOTTOM-FACE Darcy flux [m/s, DOWN-positive]. One authority for the bottom boundary        !
+   ! (docs/science/soil_biophysics.md §Boundary conditions).                                   !
    !                                                                                           !
-   !   free_drain : unit gradient, q = K(theta_n).  The DEEP-water-table limit.                !
-   !   bedrock    : sealed, q = 0.                                                             !
+   !   drainage   : q = f K(theta_n), the unit-gradient flux scaled by the drainage factor     !
+   !                f = opts%drain_factor: 1 is free drainage (the DEEP-water-table limit), a  !
+   !                soil map's f_leak a leaky base on weathered rock, 0 a sealed bedrock.      !
    !   aquifer    : head-driven against a SATURATED zone at the column base -- psi_wt = 0 at   !
    !                z_wt = z_bottom, so the soil column IS the unsaturated zone above the      !
    !                water table (docs/science/soil_biophysics.md, "Boundary conditions, and    !
@@ -92,10 +94,7 @@ contains
       qbot = 0.0_wp
       if (present(dq_dpsi)) dq_dpsi = 0.0_wp
       if (present(dq_dk))   dq_dk   = 0.0_wp
-      select case (opts%bottom_bc)
-      case (SOIL_BC_BEDROCK)
-         qbot = 0.0_wp
-      case (SOIL_BC_AQUIFER)
+      if (opts%bottom_bc == SOIL_BC_AQUIFER) then
          delta = 0.5_wp * params%dz(n)                                  ! z_node(n) - z_bottom > 0
          grad  = psi_n / delta + 1.0_wp
          if (grad >= 0.0_wp) then
@@ -106,10 +105,10 @@ contains
          end if
          qbot = k_bot * grad
          if (present(dq_dpsi)) dq_dpsi = k_bot / delta
-      case default                                                      ! SOIL_BC_FREE_DRAIN
-         qbot = k_n
-         if (present(dq_dk)) dq_dk = 1.0_wp
-      end select
+      else                                                              ! drainage, q = f K(theta_n)
+         qbot = opts%drain_factor * k_n
+         if (present(dq_dk)) dq_dk = opts%drain_factor
+      end if
    end subroutine bottom_flux
 
    !---------------------------------------------------------------------------------------!

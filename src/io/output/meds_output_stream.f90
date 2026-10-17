@@ -21,7 +21,7 @@ module meds_output_stream
    use meds_kinds,    only : wp, ik
    use meds_time,     only : meds_time_t, time_to_decimal_year
    use meds_column_params, only : n_soil_layer_max
-   use meds_biophysics_opts, only : SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK
+   use meds_biophysics_opts, only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_netcdf_c
    use meds_output_config, only : FC_DAY, FC_MONTH, FC_YEAR, FC_RUN, SYNC_FLUSH, freq_letter
    use meds_output_types,  only : output_registry_t, stream_file_t, pending_record_t, var_desc_t, slab_col, &
@@ -168,7 +168,7 @@ contains
       character(len=512) :: path
       character(len=16)  :: stamp
       integer(c_int)     :: ncid, dt, dpo, dc, dp, ds, dpf, dsz, dnv, vid, dims1(1), dims2(2), dims3(3)
-      integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col, v_depth, v_bc, v_tdeep, v_chave, v_bnds
+      integer(c_int)     :: v_id, v_lat, v_lon, v_row, v_col, v_depth, v_bc, v_drain, v_tdeep, v_chave, v_bnds
       integer(c_size_t)  :: st1(1), cn1(1)
       integer(ik)        :: j, k, np, cohort_dim, patch_dim
       logical            :: hasc, hasp, hass, haspf, hassz, poly
@@ -273,9 +273,15 @@ contains
          call put_var_text(ncid, v_depth, 'units', 'm')
          call put_var_text(ncid, v_depth, 'long_name', 'soil column depth, the bottom of the deepest layer')
          call nc_check(nc_def_var_f(ncid, 'bottom_bc', NC_INT, 1_c_int, dims1, v_bc), 'def bottom_bc')
-         call put_var_text(ncid, v_bc, 'long_name', 'bottom water boundary as run (a leaky base runs as free_drain)')
-         call put_var_ints(ncid, v_bc, 'flag_values', [SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER, SOIL_BC_BEDROCK])
-         call put_var_text(ncid, v_bc, 'flag_meanings', 'free_drain aquifer bedrock')
+         call put_var_text(ncid, v_bc, 'long_name', 'bottom water boundary as run: drainage at drain_factor, or aquifer')
+         call put_var_ints(ncid, v_bc, 'flag_values', [SOIL_BC_DRAIN, SOIL_BC_AQUIFER])
+         call put_var_text(ncid, v_bc, 'flag_meanings', 'drain aquifer')
+         call nc_check(nc_def_var_f(ncid, 'drain_factor', NC_DOUBLE, 1_c_int, dims1, v_drain), 'def drain_factor')
+         call put_var_text(ncid, v_drain, 'units', '1')
+         call put_var_text(ncid, v_drain, 'long_name', 'drainage factor f of the bottom flux q = f K: 1 free '// &
+                           'drainage, the map''s f_leak on a leaky base, 0 sealed (fill on an aquifer)')
+         call nc_check(nc_put_att_double_f(ncid, v_drain, '_FillValue', NC_DOUBLE, real(MISSING_VALUE, c_double)), &
+                       'fill')
          call nc_check(nc_def_var_f(ncid, 'deep_temp', NC_DOUBLE, 1_c_int, dims1, v_tdeep), 'def deep_temp')
          call put_var_text(ncid, v_tdeep, 'units', 'K')
          call put_var_text(ncid, v_tdeep, 'long_name', 'deep soil temperature, the thermal anchor below the column')
@@ -360,6 +366,8 @@ contains
          call nc_check(nc_put_vara_double(ncid, v_depth, st1, cn1, real(files%polygon_soil_depth, c_double)), &
                        'put soil_depth')
          call nc_check(nc_put_vara_int(ncid, v_bc, st1, cn1, int(files%polygon_bottom_bc, c_int)), 'put bottom_bc')
+         call nc_check(nc_put_vara_double(ncid, v_drain, st1, cn1, real(files%polygon_drain_factor, c_double)), &
+                       'put drain_factor')
          call nc_check(nc_put_vara_double(ncid, v_tdeep, st1, cn1, real(files%polygon_deep_temp, c_double)), &
                        'put deep_temp')
          if (allocated(files%polygon_chave_e))                                                       &

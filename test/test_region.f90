@@ -14,8 +14,9 @@
 ! region with a cell masked out must resume from that file, its polygons running on as     !
 ! they do in the second half. Every run takes its soil from the archive's [maps] files     !
 ! (docs/configuration.md §Input maps), so the three polygons have their own soil depth,    !
-! layers and bottom boundaries, and each site run must find the same soil at its cell; the !
-! region files carry each polygon's own layers and map inputs. Last, meds_main (the second !
+! layers and bottom boundaries (a leaky base drains at its cell's f_leak), and each site   !
+! run must find the same soil at its cell; the region files carry each polygon's own       !
+! layers and map inputs, its drainage factor among them. Last, meds_main (the second       !
 ! argument) must refuse each config that breaks a region-mode rule, with that rule's       !
 ! message.                                                                                 !
 !                                                                                          !
@@ -29,8 +30,8 @@ program test_region
    use meds_kinds,                 only : wp, ik
    use meds_test_assert,           only : check_true, test_report
    use meds_test_era5land_archive, only : write_archive, write_map, write_surface_maps, deep_temp_at, &
-                                          NLAT, NLON
-   use meds_biophysics_opts,       only : SOIL_BC_FREE_DRAIN, SOIL_BC_BEDROCK, SOIL_BC_AQUIFER
+                                          f_leak_at, NLAT, NLON
+   use meds_biophysics_opts,       only : SOIL_BC_DRAIN, SOIL_BC_AQUIFER
    use meds_column_params,         only : n_soil_layer_max
    use meds_netcdf_c
    use meds_output_types,          only : output_registry_t, DIM_SCALAR, DIM_COHORT, DIM_PATCH,   &
@@ -53,11 +54,11 @@ program test_region
    real(wp),    parameter :: ELEV(NP) = [117.0_wp, 100.0_wp, 217.0_wp]
    integer(ik), parameter :: ROW(NP) = [1_ik, 1_ik, 2_ik], COL(NP) = [17_ik, 0_ik, 17_ik]
    !----- Their soil (meds_test_era5land_archive): 1.95, 1.10 and 2.25 m deep, so 7, 5 and 7 layers on  !
-   !      the default ones; sealed (bedrock), leaky (run as free_drain: there is no leaky bottom      !
-   !      boundary, see docs/ROADMAP.md) and aquifer bottoms. ------------------------------------------!
+   !      the default ones; sealed (drainage at f = 0), leaky (drainage at the cell's f_leak) and      !
+   !      aquifer bottoms. ---------------------------------------------------------------------------!
    integer(ik), parameter :: N_LAYER(NP) = [7_ik, 5_ik, 7_ik]
    real(wp),    parameter :: COLUMN_DEPTH(NP) = [1.95_wp, 1.10_wp, 2.25_wp]
-   integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_BEDROCK, SOIL_BC_FREE_DRAIN, SOIL_BC_AQUIFER]
+   integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_DRAIN, SOIL_BC_DRAIN, SOIL_BC_AQUIFER]
 
    character(len=512)  :: work, meds_main
    type(meds_region_t) :: reg, resumed
@@ -95,6 +96,10 @@ program test_region
                          .and. abs(c%energy%deep_temp - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp)
       end associate
    end do
+   call check_true('the sealed polygon drains at f = 0 and the leaky one at its cell''s f_leak',       &
+                   reg%poly(1)%cfg%soil%drain_factor == 0.0_wp .and.                                  &
+                   reg%poly(2)%cfg%soil%drain_factor == f_leak_at(ROW(2), COL(2)) .and.                &
+                   reg%poly(2)%fast_ctx%col_config%soil_water_opts%drain_factor == f_leak_at(ROW(2), COL(2)))
    do while (.not. region_done(reg))
       call region_step_month(reg, st)
       if (st /= DRIVER_OK) error stop 'test_region: a region month failed'
@@ -909,9 +914,9 @@ contains
    subroutine check_polygon_inputs(suffix)
       character(len=*), intent(in) :: suffix
       integer(c_int) :: ncid, sn, vid
-      real(c_double), allocatable :: z(:), b(:), zs(:), depth(:), bc(:), tdeep(:)
+      real(c_double), allocatable :: z(:), b(:), zs(:), depth(:), bc(:), tdeep(:), drain(:)
       real(c_double) :: top(n_soil_layer_max), bot(n_soil_layer_max)
-      logical     :: fz, fb, fd, fc, ft, fs, same_z, edges
+      logical     :: fz, fb, fd, fc, ft, fs, fr, same_z, edges
       integer(ik) :: p, ns, n, k, base
       character(len=24) :: id
       ncid = open_nc(trim(work)//'/out/region'//suffix)
@@ -921,6 +926,7 @@ contains
       call read_var(ncid, 'soil_depth', [NP], depth, fd)
       call read_var(ncid, 'bottom_bc', [NP], bc, fc)
       call read_var(ncid, 'deep_temp', [NP], tdeep, ft)
+      call read_var(ncid, 'drain_factor', [NP], drain, fr)
       same_z = fz .and. ns == n_soil_layer_max
       edges  = fb .and. fd .and. ns == n_soil_layer_max
       do p = 1_ik, NP
@@ -948,6 +954,9 @@ contains
       call check_true('bottom_bc and deep_temp are each polygon''s own',                             &
                       fc .and. ft .and. all(nint(bc, ik) == BOTTOM) .and.                             &
                       all([(abs(tdeep(p) - deep_temp_at(ROW(p), COL(p))) < 1.0e-9_wp, p = 1_ik, NP)]))
+      call check_true('drain_factor is each polygon''s own: 0 sealed, its f_leak leaky, the fill value '// &
+                      'on an aquifer', fr .and. drain(1) == 0.0_c_double .and.                        &
+                      drain(2) == real(f_leak_at(ROW(2), COL(2)), c_double) .and. drain(3) > 1.0e30_c_double)
       call check_true('no chave_e without the Chave height allometry',                               &
                       nc_inq_varid_f(ncid, 'chave_e', vid) /= NC_NOERR)
       call nc_check(nc_close(ncid), 'close')
