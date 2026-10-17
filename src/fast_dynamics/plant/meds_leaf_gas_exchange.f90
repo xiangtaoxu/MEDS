@@ -19,9 +19,13 @@ module meds_leaf_gas_exchange
    use meds_numerics,      only : quadratic_smaller_root
    implicit none
 
-   !----- O2 mole fraction the shipped gstar25 was MEASURED at (Bernacchi et al. 2001). Gamma* is  !
-   !      proportional to O2, so this is the reference the config's o2_mol_frac is scaled against. !
+   !----- The O2 mole fraction and the pressure the shipped gstar25 is stated at: Bernacchi et al. !
+   !      (2001)'s 42.75 umol/mol at 21 % O2, as a partial pressure at 100 kPa (4.275 Pa).         !
+   !      Gamma* is proportional to O2, so o2_mol_frac is scaled against O2_REF_GSTAR; as a mole   !
+   !      fraction it does not depend on pressure, so gstar25 is divided by P_REF_GSTAR, never by  !
+   !      the local pressure (docs/science/leaf_gas_exchange.md eq. (3)). -------------------------!
    real(wp), parameter :: O2_REF_GSTAR = 0.209_wp   !< [mol/mol]
+   real(wp), parameter :: P_REF_GSTAR  = 1.0e5_wp   !< [Pa]
    private
 
    !----- Photosynthetic demand. ---------------------------------------------------------!
@@ -33,7 +37,7 @@ module meds_leaf_gas_exchange
    real(wp), parameter :: beta_floor   = 1.0e-4_wp   !< [--] water-stress floor (bound lambda as beta->0)
 
    !----- The coupled Ci solver. ---------------------------------------------------------!
-   public :: solve_leaf_gas_exchange
+   public :: solve_leaf_gas_exchange, rubisco_kinetics
    public :: leaf_gas_exchange_batch, leaf_params_at_capacity
 
    real(wp),    parameter :: ci_tol_ppm = 1.0e-3_wp    !< [umol/mol] Ci convergence tolerance (~1e-4 Pa)
@@ -201,6 +205,30 @@ contains
    end function katul_lambda
 
 
+   !---------------------------------------------------------------------------------------!
+   ! The C3 Rubisco kinetics at the leaf's temperature, as mole fractions [umol/mol], the  !
+   ! units of the demand (docs/science/leaf_gas_exchange.md eqs. (2)-(3)). Kc and Ko are   !
+   ! Michaelis constants of dissolved CO2 and O2, so they are partial pressures: divided   !
+   ! by the local pressure, and O/Ko is the ratio of the two partial pressures. Gamma* is  !
+   ! set by Rubisco's CO2/O2 specificity, Gamma* = 0.5*O/S_(c/o), proportional to the O2   !
+   ! partial pressure, so as a mole fraction it depends on the O2 mole fraction and not on !
+   ! pressure: gstar25 is divided by the pressure it is stated at. o2_mol_frac thereby     !
+   ! reaches both places O2 enters the C3 demand, Kc(1+O/Ko) and the compensation point;   !
+   ! at the shipped 0.209 the O2 factor is exactly 1.                                      !
+   !---------------------------------------------------------------------------------------!
+   pure subroutine rubisco_kinetics(p, t_leaf, pressure, kc, ko, gstar, o2)
+      type(leaf_photo_params_t), intent(in)  :: p
+      real(wp),                  intent(in)  :: t_leaf      !< [K]
+      real(wp),                  intent(in)  :: pressure    !< [Pa] the air's pressure at the leaf
+      real(wp),                  intent(out) :: kc, ko, gstar, o2   !< [umol/mol]
+      kc    = arrhenius_scale(p%kc25, p%ea_kc, t_leaf) / pressure * mol_2_umol
+      ko    = arrhenius_scale(p%ko25, p%ea_ko, t_leaf) / pressure * mol_2_umol
+      gstar = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / P_REF_GSTAR * mol_2_umol                &
+              * (p%o2_mol_frac / O2_REF_GSTAR)
+      o2    = p%o2_mol_frac * mol_2_umol
+   end subroutine rubisco_kinetics
+
+
    !========== The coupled Ci solver (docs/science/leaf_gas_exchange.md §5) ===============!
 
    !---------------------------------------------------------------------------------------!
@@ -232,20 +260,10 @@ contains
       t_leaf   = env%leaf_temp
       pressure = env%pressure
       ca_ppm   = env%ca
-      o2_ppm   = p%o2_mol_frac * mol_2_umol
       ddef     = env%vpd / pressure                       ! mole-fraction water deficit D
       do_boundary_layer    = use_boundary_layer .and. env%gb > 0.0_wp
 
-      !----- Temperature-scale the biochemistry (Kc/Ko/Gamma* always Arrhenius; Pa -> ppm). -!
-      kc_ppm    = arrhenius_scale(p%kc25,    p%ea_kc,    t_leaf) / pressure * mol_2_umol
-      ko_ppm    = arrhenius_scale(p%ko25,    p%ea_ko,    t_leaf) / pressure * mol_2_umol
-      !----- Gamma* is set by Rubisco's CO2/O2 specificity, Gamma* = 0.5*O/S_(c/o), so it is        !
-      !      PROPORTIONAL to the O2 partial pressure (docs/science/leaf_gas_exchange.md eq. (3)).   !
-      !      Scale it off the O2 the shipped gstar25 was measured at (Bernacchi et al. 2001, 21%    !
-      !      O2), so o2_mol_frac reaches both places O2 enters the C3 demand: Kc(1+O/Ko) and the    !
-      !      compensation point. At the shipped 0.209 the factor is EXACTLY 1.                      !
-      gstar_ppm = arrhenius_scale(p%gstar25, p%ea_gstar, t_leaf) / pressure * mol_2_umol           &
-                  * (p%o2_mol_frac / O2_REF_GSTAR)
+      call rubisco_kinetics(p, t_leaf, pressure, kc_ppm, ko_ppm, gstar_ppm, o2_ppm)
       vcmax = temp_response(tresp, p%vcmax25, p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)
       jmax  = temp_response(tresp, p%jmax25,  p%ea_jmax,  p%hd_jmax,  p%ds_jmax,  t_leaf)
       tpu   = temp_response(tresp, p%tpu25,   p%ea_vcmax, p%hd_vcmax, p%ds_vcmax, t_leaf)

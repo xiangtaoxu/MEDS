@@ -316,6 +316,27 @@ before and after.
   moves LE +0.4 % and H −0.4 %, which is RK45's adaptive step sequence reacting to the last bits
   (every shipped config runs ARK). `test_water_processes` checks that `grav_head` is ρ_w g and that
   10 m of water is 98.0665 kPa.
+- **Γ* as a mole fraction no longer rises as the pressure falls** (#342). `gstar25` = 4.275 Pa is
+  Bernacchi et al. (2001)'s 42.75 µmol mol⁻¹ written as a partial pressure at 100 kPa, and the leaf
+  kernel divided it by the local pressure, so Γ* in µmol mol⁻¹ grew as 1/P: +0.7 % at BCI, +11 % at
+  1000 m and +43 % at 3000 m, where it cut dim-light photosynthesis by about 4 % and 14 %. Γ* is
+  proportional to the O₂ partial pressure, so as a mole fraction it does not depend on pressure; it is
+  now `gstar25` over that 100 kPa (`leaf_gas_exchange.md` eq. (3)), while Kc and Ko, partial
+  pressures, still divide by the local pressure. One routine owns the conversion,
+  `rubisco_kinetics` in `meds_leaf_gas_exchange`, which the solver calls and the C API
+  (`meds_rubisco_kinetics`) and Python (`meds.plant.leaf.rubisco_kinetics`) expose; the Python leaf
+  test and example 01's A–Ci curve use it in place of their own copies, and the calibration priors'
+  library-free copy takes the same reference pressure (it used 101.325 kPa) and is tested against the
+  kernel; at a BCI-like daytime climate (99.3 kPa, 26 °C) that moves the EEO prior centres from
+  vcmax25 47.8 to 46.7 and g1 2.795 to 2.796, against the priors' log-sd of 0.5. Results at the compare cases: example 04 at BCI (99.3 kPa, 20 days on ARK) GPP +0.24 %,
+  LE +0.09 %, H −0.09 %; Palo Verde's inventory run (99.1 kPa, 2008-07) GPP +0.35 %, NPP +0.59 %,
+  ET +0.09 %, H −0.19 %; example 05's regeneration at BCI (ERA5-Land, 99.9 kPa, 1600–1601) GPP
+  +0.20 %, AGB +0.25 %. Example 01 at 101.325 kPa: Γ 47.0 → 47.7 µmol mol⁻¹ and the peak A_net of
+  each species 0.4–0.8 % lower (F. insipida 21.39 → 21.27), its optimum temperatures unchanged; its
+  outputs are regenerated with the batch's rerun. Tests: `test_leaf_physiology` (Γ* in µmol mol⁻¹
+  is the same at 101.3 and 70 kPa, at 25 and 35 °C, and 42.75 at 25 °C; Kc and Ko scale as 1/P),
+  `test_c_api_leaf`, `python/tests/test_leaf.py` (the same, and the primitives compose to the solver
+  at 70 kPa) and `test_calibrate_fast`.
 
 ### Documentation
 
