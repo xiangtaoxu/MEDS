@@ -11,8 +11,9 @@ stores, nonlinear pressure–volume, and Kirchhoff-integrated conductance.
 This page is the plant's processes: the curves and flow laws. They are solved each fast step together
 with the soil's, as one network: [soil_plant_water](soil_plant_water.md).
 
-Total head is $`\Psi_i = \psi_i + \rho g\,z_i`$ with $`\rho g = 9.804\times10^{-3}\ \mathrm{MPa\,m^{-1}}`$
-(`grav_head`). Signs: $\psi \le 0$ (tension), $z$ measured upward.
+Total head is $`\Psi_i = \psi_i + \rho g\,z_i`$ with $`\rho g = 9.80665\times10^{-3}\ \mathrm{MPa\,m^{-1}}`$
+(`grav_head`, water's density times standard gravity; the soil uses the same constant). Signs:
+$\psi \le 0$ (tension), $z$ measured upward.
 
 ## 1. The water balance
 

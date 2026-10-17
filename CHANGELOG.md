@@ -304,6 +304,18 @@ before and after.
   always reads its files, and one used after another re-reads its own. The module docstring no
   longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
   path and sees the change.
+- **One value for the hydrostatic head: `grav_head` is `rho_h2o·grav`** (#416). `grav_head` converts
+  a water head [m] to a potential [MPa] for the soil curves and faces, root uptake, the crown's gravity
+  and the pedotransfer functions. It was the literal 9.804×10⁻³ MPa m⁻¹, 0.03 % below ρ_w g =
+  9.80665×10⁻³ MPa m⁻¹ with standard gravity, the product its comment named; it is now that product
+  (`meds_constants`, `plant_hydraulics.md`). Potentials move by about 3×10⁻⁴ relative and fluxes by
+  far less. Palo Verde's inventory run (2008-07, one month at 900 s): mean leaf ψ −0.16219 →
+  −0.16223 MPa (−2.0×10⁻⁴), wood ψ −2.5×10⁻⁴, soil ψ −2.7×10⁻⁴; GPP −2×10⁻⁶, ET −3×10⁻⁶. Example
+  04 at BCI (20 days on ARK): GPP, LE and H within 3×10⁻⁸. Example 05's regeneration from bare
+  ground at BCI (1600–1601): GPP and LAI −0.13 %, AGB −0.2 %. A five-day RK45 run of example 04
+  moves LE +0.4 % and H −0.4 %, which is RK45's adaptive step sequence reacting to the last bits
+  (every shipped config runs ARK). `test_water_processes` checks that `grav_head` is ρ_w g and that
+  10 m of water is 98.0665 kPa.
 
 ### Documentation
 

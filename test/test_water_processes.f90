@@ -16,6 +16,7 @@
 !                     tabled 3.                                                                 !
 !   7. TRANSPIRATION: zero at an empty leaf, the demand above the closing water content.        !
 !   8. EVAPORATION  : the closed form where no dry surface layer forms.                          !
+!   9. HEAD         : one constant, rho_w g, converts head to potential for soil and plant.      !
 !==========================================================================================!
 program test_water_processes
    use meds_test_assert, only : check_true, check_close, test_report
@@ -46,6 +47,7 @@ program test_water_processes
    call test_xylem()
    call test_transpiration()
    call test_evaporation()
+   call test_hydrostatic_head()
    call test_report('test_water_processes')
 
 contains
@@ -385,5 +387,17 @@ contains
       call check_true('evaporation: derivatives match finite differences', ok_d)
       call check_true('evaporation: the closed form where no dry surface layer forms', ok_v)
    end subroutine test_evaporation
+
+   !=======================================================================================!
+   !----- Head and potential: the soil curves, the soil faces, root uptake and the crown's      !
+   !      gravity all convert with grav_head, which is water's density times standard gravity   !
+   !      (docs/science/plant_hydraulics.md, the total head; soil_plant_water.md). 10 m of water  !
+   !      is 98.0665 kPa. ------------------------------------------------------------------------!
+   subroutine test_hydrostatic_head()
+      call check_close('head: grav_head is rho_w g in MPa per metre', grav_head, rho_h2o * grav * 1.0e-6_wp,      &
+                       epsilon(1.0_wp) * grav_head)
+      call check_close('head: 10 m of water is 98.0665 kPa', 10.0_wp * grav_head, 0.0980665_wp,                  &
+                       4.0_wp * epsilon(1.0_wp) * 0.0980665_wp)
+   end subroutine test_hydrostatic_head
 
 end program test_water_processes
