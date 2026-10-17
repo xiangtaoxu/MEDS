@@ -67,7 +67,7 @@ corrected to the tower. On observations hidden from it, the longwave fill scores
   patches and 2,553 cohorts. One evergreen PFT ([`pft_parameters.toml`](pft_parameters.toml)) with
   MEDS's default allometry puts it at LAI 5.6 and 16.1 kgC m⁻² aboveground (the census's own
   estimate is 15.1).
-- **Leaf traits follow the light** down the canopy, and the canopy holds rain and dew.
+- **Leaf traits follow the light** down the canopy, and the canopy holds the rain it intercepts.
 - **Each tree roots to a depth set by its height** (5 m for a 35 m tree), cut at the soil's base, and
   water rises to its leaves through its sapwood, whose conductivity is set by wood density.
 - **The soil is BCI's clay**, 2 m deep, about the plot's soil above the saprolite; its water retention

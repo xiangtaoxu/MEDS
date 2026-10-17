@@ -268,6 +268,13 @@ before and after.
 - **`MEDS_FAST_CALIBRATION_BEST_PRACTICE.md` §2.4 no longer says the data report prints the share of
   area whose canopy-air top is above the sensor** (#350): `scripts/calibrate_fast/report.py` does not;
   the line says to read it from a run's `cas_depth_patch` and `area_patch`.
+- **Doc lines the sweep's review found wrong** (#419, #74). `vegetation_energy_dynamics.md` and
+  `plant_hydraulics.md`'s parameter table said the sapwood ring is both the hydraulic store and the
+  wood's thermal water; the water network's wood store is the sapwood plus the fine roots, with its
+  own prognostic water, which the heat capacity does not read. The example 04 and 05 configs (and
+  example 04's README) said the canopy intercepts rain and dew; the canopy air's condensate goes to
+  soil layer 1, which `numerical_scheme.md` §7 now explains by its size (at most 0.5 % of
+  evapotranspiration at BCI).
 
 ## [0.3.4] — 2026-10-13
 

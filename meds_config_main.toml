@@ -77,7 +77,7 @@ dt_fast             = "900s"   # fast biophysics timestep, an ACCURACY setting, 
 # ---- Process switches and initial seeds. ----
 # forcing_sample_frac = 0.5          # [-]  where in each sub-step the forcing is sampled, in [0, 1]
 # cas_condensation    = true         # condense canopy-air supersaturation
-# canopy_water_on     = false        # canopy interception film, its evaporation, and dew
+# canopy_water_on     = false        # canopy interception film and its evaporation (condensate goes to soil layer 1)
 # snow_init_swe       = 0.0          # [kg/m2] snow water equivalent seeded at the run start
 # snow_init_temp      = 270.0        # [K]  temperature of that seeded pack
 # fast_probe          = false        # one CSV row per (patch, sub-step), for debugging; needs n_threads = 1

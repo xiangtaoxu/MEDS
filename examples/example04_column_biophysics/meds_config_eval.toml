@@ -17,7 +17,7 @@ dt_fast             = "900s"
 time_integrator     = "ark"
 ark_adaptive        = true
 ark_rtol            = 1.0e-3
-canopy_water_on     = true       # the canopy intercepts rain and dew, and its film evaporates
+canopy_water_on     = true       # the canopy intercepts rain and its film evaporates (condensate goes to soil layer 1)
 
 [demography]
 demography_on             = true

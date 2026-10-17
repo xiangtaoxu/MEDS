@@ -134,8 +134,11 @@ halves across **different** masses, which is a physical distinction and not a de
 - **dry tissue → ALL the wood.** Heartwood is dead structure but still stores sensible heat, and a
   sapwood fraction defined on the bole under-counts branch wood, which is thin enough to be thermally
   active throughout.
-- **internal water → the SAPWOOD RING only.** Heartwood is taken as dry, which is what makes it
-  heartwood. The same ring is the hydraulic capacitance — one quantity, two consumers.
+- **internal water → the SAPWOOD RING only**, at a fixed moisture. Heartwood is taken as dry, which
+  is what makes it heartwood. This is not the hydraulic store: the water network's wood store is the
+  sapwood **plus the fine roots**, and carries its own prognostic water
+  ([plant_hydraulics](plant_hydraulics.md) §1), which the heat capacity does not read (see
+  `docs/ROADMAP.md`).
 
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
