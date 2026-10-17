@@ -12,7 +12,8 @@
 ! give the same files. A region run in two halves, the second restarted from the first's   !
 ! state file, must write the second half's files exactly as the whole run does, and a      !
 ! region with a cell masked out must resume from that file, its polygons running on as     !
-! they do in the second half. Every run takes its soil from the archive's [maps] files     !
+! they do in the second half. A region freed without finalizing must open again in the     !
+! same variable. Every run takes its soil from the archive's [maps] files                  !
 ! (docs/configuration.md §Input maps), so the three polygons have their own soil depth,    !
 ! layers and bottom boundaries (a leaky base drains at its cell's f_leak), and each site   !
 ! run must find the same soil at its cell; the region files carry each polygon's own       !
@@ -61,7 +62,7 @@ program test_region
    integer(ik), parameter :: BOTTOM(NP)  = [SOIL_BC_DRAIN, SOIL_BC_DRAIN, SOIL_BC_AQUIFER]
 
    character(len=512)  :: work, meds_main
-   type(meds_region_t) :: reg, resumed
+   type(meds_region_t) :: reg
    type(meds_run_t)    :: run
    type(output_registry_t) :: reg_region, reg_site
    character(len=64), allocatable :: files(:), files2(:)
@@ -261,6 +262,14 @@ program test_region
    if (ok) call check_true('the mask drops polygon 35 and keeps 18 and 53, in order',                    &
                            size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
    if (ok) call region_free(reg)
+   !----- Freed without finalizing, the region closed its forcing source and files, so the same   !
+   !      variable opens again and steps. ---------------------------------------------------------!
+   call region_open(trim(work)//'/masked.toml', reg, ok, verbose=.false.)
+   st = -1_ik
+   if (ok) call region_step_month(reg, st)
+   call check_true('a region freed without finalizing opens again in the same variable, and steps',   &
+                   ok .and. st == DRIVER_OK)
+   call region_free(reg)
    call write_map(trim(work)//'/archive/offgrid.nc', 'keep', mask, -1.0_wp, lat_shift=0.05_wp)
 
    !----- A region resumes without a cell: the first half's state file holds polygons 35, 18 and 53,  !
@@ -268,19 +277,19 @@ program test_region
    !      exactly as it does in the second half, which resumed all three. ----------------------------!
    call derive(trim(work)//'/half3.toml', '[region]'//nl()//'cell_mask = "'//trim(work)//'/archive/keep.nc"'// &
                nl()//'cell_mask_var = "keep"'//nl()//recycled('half3', '"2023-01-06"', .true.), region=.true.)
-   call region_open(trim(work)//'/half3.toml', resumed, ok, verbose=.false.)
+   call region_open(trim(work)//'/half3.toml', reg, ok, verbose=.false.)
    call check_true('a region resumes from a state file that holds its polygons and more', ok)
    if (.not. ok) error stop 'test_region: the masked region did not resume'
    call check_true('the resumed region holds polygons 18 and 53',                                     &
-                   size(resumed%poly) == 2 .and. all(resumed%poly(:)%id == [18_ik, 53_ik]))
+                   size(reg%poly) == 2 .and. all(reg%poly(:)%id == [18_ik, 53_ik]))
    call check_true('each resumed polygon''s stand is its row of the state file',                     &
-                   rows_resumed(trim(work)//'/state/half-S-20230101000000.nc', resumed))
-   do while (.not. region_done(resumed))
-      call region_step_month(resumed, st)
+                   rows_resumed(trim(work)//'/state/half-S-20230101000000.nc', reg))
+   do while (.not. region_done(reg))
+      call region_step_month(reg, st)
       if (st /= DRIVER_OK) error stop 'test_region: the resumed masked region failed'
    end do
-   call region_finalize(resumed, st)
-   call region_free(resumed)
+   call region_finalize(reg, st)
+   call region_free(reg)
    nbad = 0_ik ; f2 = 0_ik
    do f = 1_ik, nf2
       if (index(files2(f), 'half2-') /= 1) cycle

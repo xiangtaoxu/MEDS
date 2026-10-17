@@ -451,16 +451,23 @@ contains
       if (present(status)) status = st
    end subroutine region_finalize
 
+   !---------------------------------------------------------------------------------------!
+   ! region_free -- release a region, finalized or not: close its output files (a period     !
+   ! still open is not written; region_finalize writes it) and its forcing source, free its    !
+   ! polygons, and leave the variable as a region never opened, which region_open takes again. !
+   !---------------------------------------------------------------------------------------!
    subroutine region_free(reg)
       type(meds_region_t), intent(inout) :: reg
+      type(meds_region_t) :: never_opened     ! default-initialised, not built by a constructor (nvfortran)
       integer(ik) :: p
-      if (.not. allocated(reg%poly)) return
-      do p = 1_ik, size(reg%poly, kind=ik)
-         call site_free(reg%poly(p)%site)
-      end do
-      deallocate(reg%poly)
-      if (allocated(reg%out_bufs)) deallocate(reg%out_bufs)
-      if (allocated(reg%cost))     deallocate(reg%cost)
+      if (allocated(reg%out_bufs)) call output_close(reg%out_files, reg%out_bufs, flush_partial=.false.)
+      call met_close(reg%met_src)
+      if (allocated(reg%poly)) then
+         do p = 1_ik, size(reg%poly, kind=ik)
+            call site_free(reg%poly(p)%site)
+         end do
+      end if
+      reg = never_opened
    end subroutine region_free
 
 end module meds_region

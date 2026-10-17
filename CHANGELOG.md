@@ -348,6 +348,15 @@ before and after.
   `test_snow` adds a cold pack under warm air and a melting pack under cold dry air, each at a
   bare-ground conductance, which the old step drove hundreds of kelvin past their balance.
 
+- **`region_free` closes what an opened region holds** (#439). It freed the polygons only, so a region
+  freed without `region_finalize` kept its forcing source's month index allocated and its output files
+  open, and opening the same variable again stopped with "allocatable array is already allocated" in
+  `open_archive`. It now closes the output files (a period still open is not written; finalizing
+  writes it) and the forcing source, frees the polygons and leaves the variable as a region never
+  opened. `meds_main` finalizes before it frees, so runs are unchanged. `test_region` opens a region,
+  frees it without finalizing, opens and steps it again in the same variable, and resumes its masked
+  region in that variable too, without the second one it kept for this.
+
 ### Documentation
 
 - **Source comments state rationale, not history, and cite the science pages** (#409). Every
