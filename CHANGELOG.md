@@ -212,6 +212,18 @@ before and after.
   caller passes as `t_cas`, stays for now: its `(t_cas − t_emit)` terms are exactly zero, but ifx's
   default floating-point model reassociates the shorter sum left without them, so removing them moves
   the ifx build's rounding (gfortran's results are unchanged).
+- **`clamp_soil_energy`, the RK45 stage clamp on the soil's energy** (#420). It clamped each layer's
+  internal energy to a temperature in [180, 350] K before every RK45 stage, because a wild stage
+  temperature once overflowed ground evaporation's fractional power; ground evaporation is now frozen
+  from the water network for the whole `dt_fast`. Measured before removing it: no stage state reached
+  either bound in the suite (ifx Release, ifx Debug, gfortran) or in a year of example 04 (BCI, 120
+  patches) forced to `rk45`. Its activation counter did register about 34,000 activations in five
+  days of that run, but every one was the clamp's own round trip (energy → temperature → energy)
+  changing an in-range layer by an ulp. It is gone with its `denergy` output and its imports;
+  `clamp_cas` remains the RK45 stage clamp, and the RK45 comment says why the soil needs none. Every
+  shipped config runs `ark` and is byte-identical; a run forced to `rk45` moves, because the ulp
+  changes alter its adaptive step sequence (example 04's five-day `rk45` case: ET over the five days
+  −0.2 % on ifx and −0.5 % on gfortran, hourly sensible and latent heat by up to 9–15 W m⁻²).
 
 ### Fixed
 

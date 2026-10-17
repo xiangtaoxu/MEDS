@@ -294,10 +294,10 @@ module meds_fast_types
       !      30-yr run); a persistently high value flags a genuinely stiff regime RK45 is degrading    !
       !      to ARK for. ------------------------------------------------------------------------------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
-      !----- STAGE-clamp activations: how many layers/stores clamp_cas and clamp_soil_energy bounded in a !
-      !      throwaway stage input so the RHS stays evaluable. Harmless in itself; a rising count means   !
-      !      "this dt is too big", and the step is normally rejected. Nothing clamps the COMMITTED state  !
-      !      on either scheme. ---------------------------------------------------------------------------!
+      !----- STAGE-clamp activations: how many times clamp_cas changed a throwaway stage input's canopy !
+      !      air so the RHS stays evaluable. Harmless in itself; a rising count means "this dt is too   !
+      !      big", and the step is normally rejected. Nothing clamps the COMMITTED state on either      !
+      !      scheme. -------------------------------------------------------------------------------------!
       integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
       !----- CONSTITUTIVE-DOMAIN excursion of theta, max over the sub-steps of one dt_fast, in m3/m3. !
       !      Complements clamp_stage_n rather than duplicating it, in two ways: it is a MAGNITUDE     !

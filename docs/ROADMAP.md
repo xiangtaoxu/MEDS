@@ -134,9 +134,6 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
   midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
   transient are still to be re-measured.
-- **Is `clamp_soil_energy` still needed?** *Open question.* [#420](https://github.com/xiangtaoxu/MEDS/issues/420) Its reason, ground evaporation's
-  `pow()` inside the RK45 stages, is gone (evaporation is frozen from the water network); it moves energy
-  with no ledger entry when it bites. Measure how often it fires, then remove it or restate why.
 
 ---
 
