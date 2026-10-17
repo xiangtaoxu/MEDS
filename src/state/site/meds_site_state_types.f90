@@ -53,7 +53,7 @@ module meds_site_state_types
    real(wp), parameter, public :: WOOD_MOIST_FRAC = 1.0_wp   !< [kg water/kg dry] fresh-sapwood moisture
    real(wp), parameter, public :: TISSUE_C_LEAF   = 3200.0_wp !< [J/kg/K] dry leaf specific heat
    real(wp), parameter, public :: TISSUE_C_SAPW   = 2700.0_wp !< [J/kg/K] dry wood specific heat
-   real(wp), parameter, public :: TISSUE_HCAP_MIN = 20.0_wp   !< [J/m2/K] resolvability floor
+   real(wp), parameter, public :: TISSUE_HCAP_MIN = 20.0_wp   !< [J/m2 tissue/K] least dry heat capacity
    public :: GROWTH_AVG_UNSET, DMAX_PSI_LEAF_UNSET, DMAX_PSI_LEAF_ACCUM_RESET, PHENO_FLUSH_INIT, PHENO_SHED_INIT
 
    !----- Sentinel for a not-yet-sampled moving-average growth: a freshly created cohort holds  !
@@ -1136,21 +1136,23 @@ contains
    ! It reproduces meds_fast_frozen's construction exactly, including two choices worth      !
    ! naming: the WOOD's thermal water is the SAPWOOD ring at a fixed moisture fraction, NOT  !
    ! the hydraulic store `wood_water_mass` (heartwood is taken as dry, which is what makes   !
-   ! it heartwood), and both dry capacities are floored at `hcap_min` so a bare-canopy       !
-   ! cohort stays thermally resolvable. The fast loop builds its own copy                    !
+   ! it heartwood), and each dry capacity is at least `hcap_min` per unit of the tissue's    !
+   ! own area, so a tissue's capacity scales with its area as its fluxes do and splitting a  !
+   ! cohort in two changes neither the sum nor a fusion weight. The fast loop builds its own !
+   ! copy                                                                                    !
    ! (docs/science/vegetation_energy_dynamics.md eq. (8)); this function is the half of that !
    ! pair that three libraries can reach.                                                    !
    !=========================================================================================!
    pure subroutine cohort_tissue_heat_capacity(cohort, i, c_leaf, c_sapw, hcap_min, cap_leaf, cap_wood)
       type(cohort_block), intent(in)  :: cohort
       integer(ik),        intent(in)  :: i
-      real(wp),           intent(in)  :: c_leaf, c_sapw, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2/K]
+      real(wp),           intent(in)  :: c_leaf, c_sapw, hcap_min   !< [J/kg/K], [J/kg/K], [J/m2 tissue/K]
       real(wp),           intent(out) :: cap_leaf, cap_wood         !< [J/m2 ground/K]
       real(wp) :: n
       n = cohort%nplant(i)
-      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min)                      &
+      cap_leaf = max(cohort%leaf_carbon(i) * n * C2B_WOOD * c_leaf, hcap_min * n * cohort%leaf_area(i))   &
                + max(cohort%leaf_water_mass(i), 0.0_wp) * n * cp_liq
-      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_sapw, hcap_min)                      &
+      cap_wood = max(cohort%wood_carbon(i) * n * C2B_WOOD * c_sapw, hcap_min * n * cohort%wood_area(i))   &
                + cohort%sapwood_carbon(i) * n * C2B_WOOD * WOOD_MOIST_FRAC * cp_liq
    end subroutine cohort_tissue_heat_capacity
 

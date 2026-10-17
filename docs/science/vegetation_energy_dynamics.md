@@ -21,12 +21,11 @@ the case without transpiration. Its conductances and absorbed radiation are froz
 (Category 0, [numerical_scheme](numerical_scheme.md) §2), the saturation terms follow the canopy-air
 state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$. The balance is then
 linear in the tissue's offset $`\Delta T = T - T_{cas}`$: a forcing $`\mathrm{numer}`$ that does not
-depend on $`\Delta T`$, and a coupling conductance $`D_0`$ that multiplies it,
+depend on $`\Delta T`$, and a coupling conductance $`\mathrm{denom}`$ that multiplies it,
 
 ```math
 \mathrm{numer} = A_{sw} + A_{lw} + Q_{adv} - \mathrm{LE}_{ref}, \qquad
-D_0 = h + \mathrm{LE}_{slope} + 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}, \qquad
-\mathrm{denom} = \max(D_0,\ D_{min}) \qquad(1)
+\mathrm{denom} = h + \mathrm{LE}_{slope} + 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI} \qquad(1)
 ```
 
 $`A_{sw}`$ and $`A_{lw}`$ are the absorbed shortwave and net longwave from the two-stream; $`Q_{adv}`$ is
@@ -49,14 +48,23 @@ enthalpy the film's liquid arrived with. Wood has only the film pathway. Once th
 fixed the step's transpiration, the dry share carries it as a fixed latent term
 ($`\mathrm{LE}_{slope}=0`$), so the transpiration the leaf reports is exactly the water it lost.
 
-**The coupling floor.** $`D_{min}`$ = 1 W m⁻² K⁻¹ (`veg_coupling_floor`) bounds $`\Delta T`$ for a
-cohort whose area index, and so every conductance in $`D_0`$, is tiny. The deficit
-$`g_{slave}=\mathrm{denom}-D_0`$ is not dropped: it is an extra conductance to the canopy air that the
-sensible flux carries, so a tissue too weakly coupled to resolve passes what it absorbs straight to the
-CAS — ED2's `leaf_resolvable`/`wood_resolvable`, made continuous — and the balance still closes. The
-floor acts on the denominator rather than as a branch on the result, so the right-hand side stays
-continuous in the state (a jump there keeps an embedded-error controller from ever accepting a step),
-and it is inactive for any established canopy.
+**A thin tissue is a small tissue.** Every term of eq. (1), and the heat capacity of eq. (8), is a
+per-plant quantity times the plant density: the absorbed radiation, the sapflow's enthalpy, the
+conductances and the emission slope. A cohort split into two at half the density therefore reaches the
+same temperatures and each half carries half of every flux, however thin the cohort is. For a leaf
+every term also scales with its leaf area, so a small leaf sits at the balance of a large one. Nothing
+floors the coupling: the heat store bounds the step (eq. (5) below). ED2 instead slaves a tissue below
+a resolvable size to the canopy air (`leaf_resolvable`/`wood_resolvable`); a floor of that kind, in
+ground-area units, pulls a thin cohort toward the canopy-air temperature, and two half-density cohorts
+then differ from one.
+
+**A tissue with no area** — a leafless deciduous cohort's leaves, or wood with no wood area — has no
+coupling and no heat capacity, so eq. (1) gives it no temperature. It takes the temperature of what
+it grows from: a leafless leaf takes its wood's (a bud sits on its twig), and wood with no area takes
+the canopy air's. Nothing weights that value, since every flux the tissue carries and its heat
+capacity are zero, and a new leaf reaches its own balance within a step. In the kernel, "no area" is a
+coupling and a heat capacity both below its divide guard (`tiny_num`), which is where a leafless
+cohort's leaf carbon, decaying toward 10⁻¹⁹⁰, puts its leaves.
 
 The tissue relaxes toward the zero-inertia offset $`\Delta T_{diag}=\mathrm{numer}/\mathrm{denom}`$ with
 its own heat capacity (next section), and reports its fluxes over the step average, eqs. (5)–(6).
@@ -65,11 +73,11 @@ its own heat capacity (next section), and reports its fluxes over the step avera
 $`T_{rad}=\big(f_l T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$, $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
 from the start-of-step tissue temperatures ([canopy_radiation_transfer](canopy_radiation_transfer.md)
 §3), so the absorbed longwave $`A_{lw}`$ already contains the tissue's own emission at $`T_{rad}`$.
-`veg_energy_balance` linearizes the change in emission about $`T_{cas}`$ (every caller passes
-`t_emit` $`=T_{cas}`$), so the loss it books is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
+`veg_energy_balance` linearizes the change in emission about $`T_{cas}`$, so the loss it books is
+$`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
 where the consistent one is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{rad})`$: a tissue warmer
 than the canopy air loses an extra $`4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$ and a
-cooler one gains it. Basing the emission on the lagged tissue temperature (`t_emit` $`=T_{rad}`$)
+cooler one gains it. Linearizing about the lagged tissue temperature $`T_{rad}`$ instead
 removes the residual but adds a lagged positive feedback (a warmer leaf raises the next step's $`T_{rad}`$), which drove a single-pass
 integrator to NaN when it was tried (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5) and has
 not been tried under `ark`.
@@ -103,11 +111,16 @@ receives:
 \Delta T_{\rm avg}=(1-w_{\rm avg})\,\Delta T_{\rm diag}+w_{\rm avg}\,\Delta T_{\rm prev} \qquad(5)
 ```
 
-where $`\Delta T_{\rm prev}`$ is the start-of-step offset. The reported sensible heat, evaporation and net
-radiation all use $`\Delta T_{\rm avg}`$:
+where $`\Delta T_{\rm prev}`$ is the start-of-step offset. The kernel evaluates eq. (5) on the start-of-step
+imbalance $`r=\mathrm{numer}-\mathrm{denom}\,\Delta T_{\rm prev}`$, as
+$`\Delta T_{\rm end}=\Delta T_{\rm prev}+w_{\rm avg}\,r/a_{\rm store}`$ and
+$`\Delta T_{\rm avg}=\Delta T_{\rm prev}+\frac{1-w_{\rm avg}}{x}\,r/a_{\rm store}`$, which is the same
+relaxation written with no division by denom: it holds as denom → 0, where a store with no coupling
+warms by $`r\,\Delta t/\mathrm{cap}`$, and it shows that the heat store bounds the step whatever the
+coupling. The reported sensible heat, evaporation and net radiation all use $`\Delta T_{\rm avg}`$:
 
 ```math
-H = (h + g_{slave})\,\Delta T_{\rm avg}, \qquad
+H = h\,\Delta T_{\rm avg}, \qquad
 E = \frac{\mathrm{LE}_{ref}+\mathrm{LE}_{slope}\,\Delta T_{\rm avg}}{h_v}, \qquad
 R_{net} = A_{sw} + A_{lw} - 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}\,\Delta T_{\rm avg} \qquad(6)
 ```
@@ -143,12 +156,13 @@ halves across **different** masses, which is a physical distinction and not a de
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
 ```math
-\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\big) + c_{liq}\,f_{moist}\,B_{sap}, \qquad
-\mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\big) + c_{liq}\,W_{leaf} \qquad(8)
+\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\,\mathrm{WAI}\big) + c_{liq}\,f_{moist}\,B_{sap}, \qquad
+\mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\,\mathrm{LAI}\big) + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
 with $`c_{wood}`$ = 2700 and $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ (`c_sapw`, `c_leaf`),
-$`C_{min}`$ = 20 J m⁻² K⁻¹ (`veg_hcap_min`), a fresh-sapwood moisture $`f_{moist}`$ = 1 kg water per kg
+$`C_{min}`$ = 20 J K⁻¹ per m² of the tissue's own area (`veg_hcap_min`; per area, so the capacity scales
+with the tissue's area as its fluxes do), a fresh-sapwood moisture $`f_{moist}`$ = 1 kg water per kg
 dry wood, and $`W_{leaf}`$ the leaf's internal water from the hydraulics. The intercepted film is a
 separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from the ED2 allometry
 (`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`). Sized this way,

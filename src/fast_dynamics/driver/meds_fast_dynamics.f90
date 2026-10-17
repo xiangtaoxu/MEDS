@@ -1020,8 +1020,8 @@ contains
          !      (start-of-sub-step) tissue temperatures (docs/science/canopy_radiation_transfer.md §3), !
          !      so the longwave field between cohorts, sky and ground sees both tissues. abs_lw below   !
          !      is therefore the NET longwave with the tissue emitting at T_rad, while                  !
-         !      veg_energy_balance linearizes the emission change about T_cas (t_emit = T_cas,          !
-         !      docs/science/vegetation_energy_dynamics.md eq. (1)): emission is not counted exactly    !
+         !      veg_energy_balance linearizes the emission change about T_cas                           !
+         !      (docs/science/vegetation_energy_dynamics.md eq. (1)): emission is not counted exactly   !
          !      once at the tissue's own temperature, a known residual ("The emission base" there). ----!
          lf_bt      = lai(i) / max(lai(i) + wai(i), tiny_num)
          tcan_bt(j) = (lf_bt * leaf_temp(i) ** 4                                             &

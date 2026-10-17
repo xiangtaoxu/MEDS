@@ -37,14 +37,14 @@ contains
    ! the caller accumulates. ONE kernel serves leaf and wood: WOOD is the le_slope =       !
    ! le_ref = 0 case (no transpiration).                                                   !
    !                                                                                       !
-   !   t_emit            -- LW emission base, the temperature lw_slope linearizes emission !
-   !                        about. Every caller passes t_cas, so the (t_cas - t_emit) terms !
-   !                        are exactly 0.                                                 !
    !   store_hcap_per_dt -- the tissue's heat capacity over the step, cap/dt (eq. (8) sizes !
    !                        cap); 0 gives the zero-inertia limit. t_store0 is the          !
    !                        start-of-step tissue temperature the store relaxes from.       !
-   ! drnet groups (t_cas - t_emit) + dt_avg so the t_emit = t_cas case cancels to 0.0 with !
-   ! NO rounding ulp (single authority for that ordering trick).                           !
+   !   t_parent          -- the temperature of what the tissue grows from: its wood for a  !
+   !                        leaf, the canopy air for wood. A tissue with no area has no    !
+   !                        coupling and no heat capacity, and takes this temperature      !
+   !                        (docs/science/vegetation_energy_dynamics.md, "A tissue with no !
+   !                        area"); nothing weights it, since every flux it carries is 0.  !
    !                                                                                       !
    ! WETTED CANOPY (all four OPTIONAL): f_wet splits the latent pathway into a (1-f_wet)   !
    ! DRY share that transpires through boundary layer and stomata in series                !
@@ -53,12 +53,12 @@ contains
    ! film_evap: a wet leaf transpires less and evaporates its film instead. A caller that  !
    ! omits f_wet gets f_wet = 0, which makes the wet share vanish identically. ------------!
    elemental pure subroutine veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref, &
-                                         t_cas, t_emit, store_hcap_per_dt, t_store0,                          &
+                                         t_cas, t_parent, store_hcap_per_dt, t_store0,              &
                                          dt_temp, t_store, transp, dh, drnet,                        &
                                          f_wet, le_slope_wet, le_ref_wet, film_evap, q_extra,      &
                                          h_evap, h_evap_wet)
       real(wp), intent(in)  :: abs_sw, abs_lw, h_coeff, le_slope, lw_slope, le_ref
-      real(wp), intent(in)  :: t_cas, t_emit, store_hcap_per_dt, t_store0
+      real(wp), intent(in)  :: t_cas, t_parent, store_hcap_per_dt, t_store0
       real(wp), intent(out) :: dt_temp    !< temperature offset from the CAS [K]
       real(wp), intent(out) :: t_store    !< diagnosed store temperature (t_cas + dt_temp) [K]
       real(wp), intent(out) :: transp     !< transpiration mass flux (0 for wood) [kg/m2/s]
@@ -84,18 +84,8 @@ contains
       !      receives. ------------------------------------------------------------------------------!
       real(wp), intent(in),  optional :: h_evap      !< [J/kg] for transpiration
       real(wp), intent(in),  optional :: h_evap_wet  !< [J/kg] for film evaporation
-      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, denom_true, g_slave, he, hw
-      real(wp) :: numer, dt_diag, dt_prev, dt_avg, x, w_end, w_avg
-      !----- Coupling ("heat-capacity") FLOOR: h_coeff/les_*/lw_slope all scale with the tissue's own    !
-      !      area index (LAI/WAI), so a just-recruited cohort (or a cohort whose wood area is smaller     !
-      !      still) can present a denominator that is small in absolute W/m2/K terms without ever          !
-      !      tripping the bare divide-by-zero guard (tiny_num). If the numerator carries ANY term that     !
-      !      does not collapse in step (an upstream q_extra/abs_lw glitch, or simply roundoff at these      !
-      !      magnitudes), the ratio is unbounded even though no single input is individually pathological.  !
-      !      The floor bounds that ratio. It is applied to the DENOMINATOR (see below) so the kernel stays   !
-      !      continuous: for any established canopy (les_dry alone typically reaches O(1-10) once stomata    !
-      !      are open) the floor is inactive and the result is the exact unmodified balance. ----------------!
-      real(wp), parameter :: veg_coupling_floor = 1.0_wp   !< [W/m2/K]
+      real(wp) :: fw, les_dry, ler_dry, les_wet, ler_wet, qx, denom, he, hw
+      real(wp) :: numer, imbalance, dt_prev, dt_avg, x, w_avg, w_flux
       fw = 0.0_wp ; les_wet = 0.0_wp ; ler_wet = 0.0_wp ; qx = 0.0_wp
       he = latent_heat_vap ; if (present(h_evap))     he = h_evap
       hw = latent_heat_vap ; if (present(h_evap_wet)) hw = h_evap_wet
@@ -105,50 +95,13 @@ contains
       if (present(q_extra))      qx = q_extra
       les_dry = (1.0_wp - fw) * le_slope
       ler_dry = (1.0_wp - fw) * le_ref
-      !----- The floor is applied to the DENOMINATOR, never as a branch on the result: a branch        !
-      !      (dt_temp/transp/dh forced to 0 below the floor) would put a JUMP DISCONTINUITY in this    !
-      !      kernel -- and so in the whole-column ODE right-hand side -- at denom =                    !
-      !      veg_coupling_floor. That is fatal for an embedded-error adaptive integrator: les_dry      !
-      !      carries the live tcas-dependent dqsat/qsat, so denom moves BETWEEN the stages of a single !
-      !      RK45 step, and a cohort whose coupling sits near the threshold has stages landing on      !
-      !      opposite sides of the jump. The 5th- and 4th-order solutions then differ by an O(1)       !
-      !      amount that does NOT shrink with dt, so the controller can never reach err <= 1 and       !
-      !      halves down to the sub-step floor forever: a growing canopy crossing the threshold stalls !
-      !      the run. max() keeps every output CONTINUOUS in the state while still bounding the ratio: !
-      !      for denom >= floor this is EXACTLY the unfloored formula (no bias for any real canopy),   !
-      !      and below it dt_temp saturates at numer/floor instead of blowing up. Each flux below      !
-      !      still carries its own conductance, which vanishes with LAI/WAI, so a negligible cohort    !
-      !      contributes negligible fluxes without needing a special case. ----------------------------!
-      !----- SLAVING CONDUCTANCE (g_slave, docs/science/vegetation_energy_dynamics.md eq. (1)): the    !
-      !      floor's deficit, made REAL and routed to the CAS. Clamping the denominator alone bounds   !
-      !      dt_temp but leaves every FLUX on its own true conductance, so the tissue's balance would  !
-      !      not close: it would absorb N*(1 - denom_true/veg_coupling_floor) that leaves as nothing   !
-      !      -- energy created from nowhere in the whole-column ledger (~1 W/m2 on a 7-cohort stand;   !
-      !      wood dominates, since WAI ~ 0.2*LAI puts it under the floor first).                       !
-      !                                                                                                !
-      !      The deficit is instead given to the tissue as an explicit extra conductance TO THE CANOPY !
-      !      AIR, and dh carries it. That is exactly what "unresolvable" means physically, and it is   !
-      !      ED2's own treatment (leaf_resolvable/wood_resolvable, stable_cohorts.f90) made            !
-      !      continuous: a tissue too weakly coupled to resolve is thermally SLAVED to the canopy air, !
-      !      so whatever it absorbs passes straight through to the CAS instead of raising its          !
-      !      temperature. ED2 zeroes both the fluxes and the offset (trivially conservative); this     !
-      !      keeps both and stays exact.                                                               !
-      !                                                                                                !
-      !      Properties, all required and all held: EXACTLY conserving by construction (the outgoing   !
-      !      terms and the storage change sum to the numerator, eq. (7), whichever branch max() took); !
-      !      CONTINUOUS in the state (g_slave -> 0 as denom_true -> the floor from below, so there is  !
-      !      no jump); and IDENTICALLY ZERO for any established canopy (denom_true >= floor => g_slave !
-      !      = 0).                                                                                     !
-      !----- COUPLING conductance D0 of eq. (1): everything that ties the tissue to its surroundings.  !
-      !      It EXCLUDES store_hcap_per_dt, which is a property of the tissue's own inertia, not of    !
-      !      the coupling.                                                                             !
-      denom_true = h_coeff + les_dry + les_wet + lw_slope
-      denom      = max(denom_true, veg_coupling_floor)
-      g_slave    = denom - denom_true
 
-      !----- The DIAGNOSTIC (zero-inertia) offset: where the tissue would sit if it had no memory. ---!
-      numer   = abs_sw + abs_lw + qx - (ler_dry + ler_wet) - lw_slope * (t_cas - t_emit)
-      dt_diag = numer / denom
+      !----- COUPLING conductance D0 and FORCING of eq. (1). D0 is everything that ties the tissue to   !
+      !      its surroundings; it EXCLUDES store_hcap_per_dt, which is the tissue's own inertia. Every   !
+      !      term of both scales with the tissue's own area, as its heat capacity does (eq. (8)), so a   !
+      !      thin cohort is simply a small one: splitting a cohort changes no temperature. -------------!
+      denom   = h_coeff + les_dry + les_wet + lw_slope
+      numer   = abs_sw + abs_lw + qx - (ler_dry + ler_wet)
       dt_prev = t_store0 - t_cas
 
       !=========================================================================================!
@@ -158,44 +111,50 @@ contains
       ! step has a closed form, and using it removes the time-stepping error entirely rather    !
       ! than bounding it:                                                                       !
       !                                                                                         !
-      !   x     = dt/tau = denom/store_hcap_per_dt   (store_hcap_per_dt = cap/dt)               !
-      !   w_end = exp(-x)                            weight on the OLD state at the ENDPOINT    !
-      !   w_avg = (1 - exp(-x))/x                    weight on the OLD state, STEP-AVERAGED     !
+      !   x      = dt/tau = denom/store_hcap_per_dt   (store_hcap_per_dt = cap/dt)              !
+      !   w_avg  = (1 - exp(-x))/x                   the ENDPOINT's share of the start-of-step  !
+      !                                              imbalance, per unit of capacity           !
+      !   w_flux = (1 - w_avg)/x                     the same share for the step AVERAGE        !
       !                                                                                         !
-      ! The two weights are NOT interchangeable: the committed STATE is the endpoint, while the !
-      ! flux the canopy air receives is the step AVERAGE, and pairing them closes               !
-      ! store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg == numer identically.               !
-      ! store_hcap_per_dt -> 0 gives x -> infinity, both weights -> 0 and the pure steady       !
-      ! balance: "diagnostic" is this kernel's zero-inertia LIMIT, not a separate branch.       !
+      ! The committed STATE is the endpoint, while the flux the canopy air receives is the step  !
+      ! AVERAGE, and pairing them closes store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg ==  !
+      ! numer identically (eq. (7)). Written on the start-of-step imbalance numer -              !
+      ! denom*dt_prev, the step holds for every x >= 0 with no division by denom: a store with   !
+      ! no coupling (x = 0) warms by numer*dt/cap, and the heat store bounds the step whatever   !
+      ! the coupling. As x grows both shares tend to the zero-inertia balance numer/denom. -----!
       !=========================================================================================!
       if (store_hcap_per_dt > tiny_num) then
          x = denom / store_hcap_per_dt
-         !----- exp(-x) and (1-exp(-x))/x, both accurate across the whole range. Fortran has no      !
-         !      expm1, so the small-x branch uses the series (relative error ~ x^4/120 < 1e-18 at    !
-         !      the threshold) -- without it, 1 - exp(-x) cancels catastrophically as x -> 0, which  !
-         !      is exactly the large-capacity limit a big cohort lives in. The large-x branch avoids  !
-         !      underflow and gives the correct 1/x tail for w_avg. -------------------------------!
+         !----- (1-exp(-x))/x and (x - 1 + exp(-x))/x**2, both accurate across the whole range.        !
+         !      Fortran has no expm1, so the small-x branch uses their series (relative error ~ x**4/120  !
+         !      < 1e-18 at the threshold) -- without it, 1 - exp(-x) cancels catastrophically as         !
+         !      x -> 0, which is exactly the large-capacity limit a big cohort lives in. The large-x     !
+         !      branch avoids underflow and gives the 1/x tails. ------------------------------------!
          if (x < 1.0e-4_wp) then
-            w_end = 1.0_wp - x*(1.0_wp - 0.5_wp*x*(1.0_wp - x/3.0_wp))
-            w_avg = 1.0_wp - 0.5_wp*x*(1.0_wp - x/3.0_wp*(1.0_wp - 0.25_wp*x))
+            w_avg  = 1.0_wp - 0.5_wp*x*(1.0_wp - x/3.0_wp*(1.0_wp - 0.25_wp*x))
+            w_flux = 0.5_wp*(1.0_wp - x/3.0_wp*(1.0_wp - 0.25_wp*x*(1.0_wp - 0.2_wp*x)))
          else if (x > 500.0_wp) then
-            w_end = 0.0_wp
-            w_avg = 1.0_wp / x
+            w_avg  = 1.0_wp / x
+            w_flux = (1.0_wp - w_avg) / x
          else
-            w_end = exp(-x)
-            w_avg = (1.0_wp - w_end) / x
+            w_avg  = (1.0_wp - exp(-x)) / x
+            w_flux = (1.0_wp - w_avg) / x
          end if
+         imbalance = numer - denom * dt_prev
+         dt_temp   = dt_prev + w_avg  * imbalance / store_hcap_per_dt   ! ENDPOINT -> the committed state
+         dt_avg    = dt_prev + w_flux * imbalance / store_hcap_per_dt   ! AVERAGE  -> every reported flux
+      else if (denom > tiny_num) then
+         dt_temp = numer / denom          ! zero heat capacity: the steady balance, at once
+         dt_avg  = dt_temp
       else
-         w_end = 0.0_wp ; w_avg = 0.0_wp            ! zero heat capacity => pure diagnostic
+         dt_temp = t_parent - t_cas       ! no area: no coupling and no heat (eq. (8))
+         dt_avg  = dt_temp
       end if
-
-      dt_temp = (1.0_wp - w_end) * dt_diag + w_end * dt_prev      ! ENDPOINT  -> the committed state
-      dt_avg  = (1.0_wp - w_avg) * dt_diag + w_avg * dt_prev      ! AVERAGE   -> every reported flux
 
       t_store = t_cas + dt_temp
       transp  = (ler_dry + les_dry * dt_avg) / he
-      dh      = (h_coeff + g_slave) * dt_avg
-      drnet   = abs_sw + abs_lw - lw_slope * ((t_cas - t_emit) + dt_avg)
+      dh      = h_coeff * dt_avg
+      drnet   = abs_sw + abs_lw - lw_slope * dt_avg
       if (present(film_evap)) film_evap = (ler_wet + les_wet * dt_avg) / hw
    end subroutine veg_energy_balance
 

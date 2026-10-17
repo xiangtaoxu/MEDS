@@ -7,7 +7,9 @@
 !   3. GROUND fluxes: with t_cas = t_ground and no soil evaporation, H = LE = 0.                   !
 !   4. CAS enthalpy update CONSERVES and moves can_temp toward the warmer atmosphere.              !
 !   5. veg_energy_balance's wetted-canopy extension (f_wet/le_slope_wet/le_ref_wet/film_evap).     !
-!   6. Energy closure of a diagnostic tissue across the coupling floor (veg_coupling_floor).       !
+!   6. A THIN tissue: energy closes at every area index, halving the area halves every flux and    !
+!      keeps the temperature, and a tissue with no area takes the temperature of what it grows     !
+!      from.                                                                                       !
 !==========================================================================================!
 program test_surface_energy
    use meds_test_assert, only : check, check_true, test_report
@@ -27,7 +29,7 @@ program test_surface_energy
    call test_ground_balance()
    call test_cas()
    call test_veg_energy_diagnostic_wetted()
-   call test_veg_energy_diagnostic_floor()
+   call test_veg_energy_thin_tissue()
 
    call test_report('test_surface_energy')
 
@@ -83,7 +85,7 @@ contains
          !      mean two wood temperatures and is deliberately not taken. --------------------!
          dbio_w   = wc(i) * npl(i) * C2B                                ! [kg dry/m2] all wood
          dbio_sap = f_sap * dbio_w                                      ! [kg dry/m2] sapwood ring
-         cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min) + dbio_sap * cp_liq
+         cap    = max(dbio_w * tp%c_sapw, tp%veg_hcap_min * wai) + dbio_sap * cp_liq
          drdt   = 8.0_wp * WOOD_EMISS * stefan * TREF**3 * wai + pi * wai * GBH * RHO * cp_air
          tau    = cap / drdt
          !----- the EXACT endpoint memory the kernel uses (eq. (4)), not backward Euler's 1/(1+x) !
@@ -161,9 +163,8 @@ contains
 
       !----- (c) THE CONSERVATION IDENTITY. The endpoint and step-average weights are different      !
       !          numbers, and pairing them correctly is exactly what makes the balance close:        !
-      !            store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg == numer.                               !
-      !          dt_avg is not returned, so recover it from dh (which carries denom's sensible       !
-      !          share plus g_slave; here denom_true > floor so g_slave = 0 and dh = h*dt_avg). -----!
+      !            store_hcap_per_dt*(dt_end - dt_prev) + denom*dt_avg == numer.                     !
+      !          dt_avg is not returned, so recover it from dh = h*dt_avg. ------------------------!
       cap  = 4.0e4_wp                       ! a big cohort: tau = cap/denom is order dt
       a_st = cap / dt
       tau  = cap / denom
@@ -192,6 +193,14 @@ contains
                                  dtt, ts, tr, dh, drn)
       call check('large-capacity limit stays accurate (series branch)',                             &
            a_st*(dtt - (t0 - t_cas)) + denom*(dh/h), sw + lw - ler, 1.0e-6_wp)
+
+      !----- (f) A store with NO coupling (x = 0) warms by its forcing over the step, numer*dt/cap,  !
+      !          and passes nothing on: the relaxation needs no division by the coupling. ---------!
+      a_st = cap / dt
+      call veg_energy_balance(sw, lw, 0.0_wp, 0.0_wp, 0.0_wp, ler, t_cas, t_cas, a_st, t0,         &
+                                 dtt, ts, tr, dh, drn)
+      call check('no coupling: the store warms by numer*dt/cap', ts, t0 + (sw + lw - ler) / a_st, 1.0e-12_wp)
+      call check_true('no coupling: no sensible heat leaves', dh == 0.0_wp, dh)
    end subroutine test_veg_exponential
 
    subroutine test_ground_balance()
@@ -262,7 +271,7 @@ contains
       real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
       real(wp) :: dt_temp2, t_store2, transp2, dh2, drnet2
       real(wp), parameter :: abs_sw = 400.0_wp, abs_lw = -50.0_wp, h_coeff = 12.0_wp
-      real(wp), parameter :: lw_slope = 6.0_wp, t_cas = 298.0_wp, t_emit = 298.0_wp
+      real(wp), parameter :: lw_slope = 6.0_wp, t_cas = 298.0_wp, t_parent = 298.0_wp
       real(wp), parameter :: le_slope_dry = 8.0_wp,  le_ref_dry = 15.0_wp   ! stomatal (dry) pathway
       real(wp), parameter :: le_slope_w   = 20.0_wp, le_ref_w   = 40.0_wp   ! boundary-layer (wet) pathway
       print '(a)', 'test_veg_energy_diagnostic_wetted:'
@@ -270,9 +279,9 @@ contains
       !----- 1. ABSENT f_wet must be bit-identical to explicitly passing f_wet=0 -- the contract that   !
       !      lets a caller with no film omit the wet extension. ----------------------------------------!
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet)
+                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet)
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_emit, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2, &
+                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2, &
                                  0.0_wp, le_slope_w, le_ref_w, film_evap)
       call check('f_wet=0 explicit == f_wet absent (dt_temp)', dt_temp2, dt_temp, 1.0e-14_wp)
       call check('f_wet=0 explicit == f_wet absent (transp)',  transp2,  transp,  1.0e-14_wp)
@@ -284,10 +293,10 @@ contains
       !      conductance as the PRIMARY (le_slope,le_ref) argument and no wet extension at all -- not       !
       !      just approximately equal (both reduce to the same 2-unknown linear solve). -------------------!
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
+                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
                                  1.0_wp, le_slope_w, le_ref_w, film_evap)
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_w, lw_slope, le_ref_w,               &
-                                 t_cas, t_emit, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2)
+                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp2, t_store2, transp2, dh2, drnet2)
       call check_true('f_wet=1: dry pathway (transp) vanishes', abs(transp) < 1.0e-14_wp, transp)
       call check('f_wet=1: film_evap == swap-equivalent transp', film_evap, transp2, 1.0e-12_wp)
       call check('f_wet=1: dt_temp == swap-equivalent dt_temp',  dt_temp,   dt_temp2, 1.0e-12_wp)
@@ -299,7 +308,7 @@ contains
       !      liquid-enthalpy debit (for transpiration the leaf pays the full vapour enthalpy itself; the     !
       !      surface-water accounting does the same for film_evap). -----------------------------------------!
       call veg_energy_balance(abs_sw, abs_lw, h_coeff, le_slope_dry, lw_slope, le_ref_dry,          &
-                                 t_cas, t_emit, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
+                                 t_cas, t_parent, 0.0_wp, t_cas, dt_temp, t_store, transp, dh, drnet,      &
                                  0.4_wp, le_slope_w, le_ref_w, film_evap)
       call check('partial f_wet: energy balance closes (drnet = dh + latent)', drnet,                  &
                  dh + (transp + film_evap) * latent_heat_vap, 1.0e-9_wp)
@@ -308,73 +317,73 @@ contains
    end subroutine test_veg_energy_diagnostic_wetted
 
 
-   subroutine test_veg_energy_diagnostic_floor()
-      !----- A DIAGNOSTIC tissue is a ROUTER, not a reservoir: within a step everything that enters   !
-      !      must leave, so                                                                           !
+   subroutine test_veg_energy_thin_tissue()
+      !----- Every term of a tissue's balance -- absorbed radiation, the sapflow's enthalpy, the        !
+      !      conductances -- and its heat capacity scale with the tissue's own area                     !
+      !      (docs/science/vegetation_energy_dynamics.md eqs. (1), (8)), so a thin tissue is simply a    !
+      !      small one. Three properties, swept over an area index from 1e-6 to 10 for leaf and wood,    !
+      !      with and without a heat store:                                                             !
       !                                                                                          !
-      !         drnet + q_extra  ==  dh + Lv*(transp + film_evap) + store_hcap_per_dt*(t_store - t_store0)       !
-      !                                                                                          !
-      !      to round-off, for ANY inputs.  surface_derivs relies on this: the                          !
-      !      whole-column ledger books coh_rnet on the input side and coh_h/coh_qw as they reach the    !
-      !      CAS, and NOTHING re-checks the tissue in between -- there is no per-kernel budget for a     !
-      !      store that holds nothing.                                                                  !
-      !                                                                                          !
-      !      test_veg_energy_diagnostic_wetted already asserts this identity, but at h_coeff = 12 and    !
-      !      lw_slope = 6 -- a coupling ~30x the kernel's veg_coupling_floor, i.e. ONLY on the side of    !
-      !      the clamp where the kernel is right.  A check that samples one side of a clamp is green      !
-      !      only on that side.  This sweeps the area index ACROSS the floor, where dt_temp comes from     !
-      !      the FLOORED denominator while every flux keeps its own TRUE conductance.                     !
-      !                                                                                          !
-      !      Sweep design, each axis for a reason:                                                        !
-      !        * area index log-spaced 1e-4..10 -- straddles both crossings (leaf ~0.03, wood ~0.02);      !
-      !        * every coupling term scales WITH the area index, as a real cohort's does, so a failure     !
-      !          is attributable to the floor rather than to an unphysical corner;                         !
-      !        * q_extra deliberately does NOT scale with area -- sapflow enthalpy scales with sap flux,   !
-      !          not leaf area, and it is the term that keeps the numerator alive as the denominator       !
-      !          collapses.  The wetted test never passes q_extra at all;                                  !
-      !        * leaf AND wood: wood has no latent pathway, so its denominator is h_coeff + lw_slope        !
-      !          alone and it crosses the floor at a LARGER area index than the leaf on the same cohort;   !
-      !        * store_hcap_per_dt 0 and veg_hcap_min/dt_fast: the PROGNOSTIC-leaf path calls this same kernel, and   !
-      !          for the small cohorts that trip the floor cap is pinned at veg_hcap_min, contributing      !
-      !          only ~0.011 W/m2/K -- so the storage term must not be assumed to rescue the balance.       !
-      !                                                                                          !
-      !      Asserted on CONSERVATION only.  Whether the floor is active, and what dt_temp it yields, are   !
-      !      implementation choices a fix is free to change; energy closure is not. -------------------------!
+      !        * CONSERVATION: within the step everything that enters leaves or is stored,               !
+      !            drnet + q_extra == dh + Lv*(transp + film_evap) + store_hcap_per_dt*(t_store - t0),   !
+      !          to round-off. surface_derivs relies on it: the whole-column ledger books coh_rnet on    !
+      !          the input side and coh_h/coh_qw as they reach the CAS, and nothing re-checks the        !
+      !          tissue in between.                                                                      !
+      !        * SPLIT INVARIANCE: halving the area (one cohort of two at half density) keeps the        !
+      !          temperature and halves every flux. A floor in ground units on the coupling or the       !
+      !          capacity breaks this for a thin tissue, pulling it toward the canopy air.               !
+      !        * NO AREA: a tissue with no coupling and no heat capacity takes the temperature of what   !
+      !          it grows from (t_parent) and carries no flux. -------------------------------------------!
       real(wp) :: dt_temp, t_store, transp, dh, drnet, film_evap
-      real(wp) :: ai, qx, ast, resid, les, ler, lesw, lerw, hc, lws, worst
-      integer(ik) :: ia, iq, il, is
-      real(wp), parameter :: T_CAS = 298.0_wp, GBH = 0.03_wp, RHO = 1.2_wp, EMISS = 0.97_wp
+      real(wp) :: dt_h, t_h, transp_h, dh_h, drnet_h, film_h
+      real(wp) :: ai, ast, resid, worst, worst_split
+      integer(ik) :: ia, il, is
+      real(wp), parameter :: T_CAS = 298.0_wp, T0 = T_CAS - 0.5_wp, T_PARENT = 301.0_wp
+      real(wp), parameter :: CAP_PER_AREA = 1500.0_wp   !< [J/m2 tissue/K] a leaf's dry tissue and water
       logical :: is_leaf
-      print '(a)', 'test_veg_energy_diagnostic_floor:'
-      worst = 0.0_wp
-      do iq = 0_ik, 1_ik
-         qx = 0.0_wp ; if (iq == 1_ik) qx = 25.0_wp            ! sapflow enthalpy: area-INDEPENDENT
-         do is = 0_ik, 1_ik
-            ast = 0.0_wp ; if (is == 1_ik) ast = 20.0_wp / 1800.0_wp   ! veg_hcap_min / dt_fast
-            do il = 1_ik, 2_ik
-               is_leaf = (il == 1_ik)
-               do ia = 1_ik, 11_ik
-                  ai = 1.0e-4_wp * (10.0_wp ** (0.5_wp * real(ia - 1_ik, wp)))
-                  hc  = merge(2.0_wp, pi, is_leaf) * ai * GBH * RHO * cp_air
-                  lws = 4.0_wp * EMISS * stefan * T_CAS**3 * ai
-                  les  = merge( 8.0_wp * ai, 0.0_wp, is_leaf)    ! stomatal (wood does not transpire)
-                  ler  = merge(15.0_wp * ai, 0.0_wp, is_leaf)
-                  lesw = 20.0_wp * ai                            ! film pathway: both tissues have one
-                  lerw = 40.0_wp * ai
-                  call veg_energy_balance(400.0_wp*ai, -50.0_wp*ai, hc, les, lws, ler,           &
-                                             T_CAS, T_CAS, ast, T_CAS - 0.5_wp,                     &
-                                             dt_temp, t_store, transp, dh, drnet,                   &
-                                             f_wet=0.4_wp, le_slope_wet=lesw, le_ref_wet=lerw,      &
-                                             film_evap=film_evap, q_extra=qx)
-                  resid = drnet + qx - dh - latent_heat_vap*(transp + film_evap)                    &
-                          - ast * (t_store - (T_CAS - 0.5_wp))
-                  worst = max(worst, abs(resid) / max(1.0_wp, abs(drnet)))
-               end do
+      print '(a)', 'test_veg_energy_thin_tissue:'
+      worst = 0.0_wp ; worst_split = 0.0_wp
+      do is = 0_ik, 1_ik
+         do il = 1_ik, 2_ik
+            is_leaf = (il == 1_ik)
+            do ia = 1_ik, 15_ik
+               ai = 1.0e-6_wp * (10.0_wp ** (0.5_wp * real(ia - 1_ik, wp)))
+               ast = 0.0_wp ; if (is == 1_ik) ast = CAP_PER_AREA * ai / 900.0_wp
+               call thin_tissue(ai, ast, is_leaf, dt_temp, t_store, transp, dh, drnet, film_evap)
+               resid = drnet + 25.0_wp*ai - dh - latent_heat_vap*(transp + film_evap) - ast * (t_store - T0)
+               worst = max(worst, abs(resid) / (abs(drnet) + 25.0_wp*ai))
+               call thin_tissue(0.5_wp*ai, 0.5_wp*ast, is_leaf, dt_h, t_h, transp_h, dh_h, drnet_h, film_h)
+               worst_split = max(worst_split, abs(t_h - t_store), abs(2.0_wp*dh_h - dh) / abs(dh),          &
+                                 abs(2.0_wp*drnet_h - drnet) / abs(drnet))
             end do
          end do
       end do
-      call check_true('diagnostic tissue conserves across the coupling floor (88 cases)',           &
-                      worst < 1.0e-9_wp, worst)
-   end subroutine test_veg_energy_diagnostic_floor
+      call check_true('a thin tissue conserves energy at every area index (60 cases)', worst < 1.0e-12_wp, worst)
+      call check_true('half the area: the same temperature, half of every flux', worst_split < 1.0e-12_wp,       &
+                      worst_split)
+      !----- No area: no coupling and no heat capacity. -----------------------------------------!
+      call thin_tissue(0.0_wp, 0.0_wp, .true., dt_temp, t_store, transp, dh, drnet, film_evap)
+      call check('a tissue with no area takes the temperature of what it grows from', t_store, T_PARENT, 0.0_wp)
+      call check_true('a tissue with no area carries no flux',                                                  &
+                      dh == 0.0_wp .and. drnet == 0.0_wp .and. transp == 0.0_wp .and. film_evap == 0.0_wp, dh)
+   end subroutine test_veg_energy_thin_tissue
+
+   !----- One tissue of area index a at 298 K canopy air, starting 0.5 K below it, whose parent sits at  !
+   !      301 K: every coupling and forcing term proportional to a. -----------------------------------!
+   subroutine thin_tissue(a, a_store, leaf, dtt, ts, tr, h_out, rn, fe)
+      real(wp), intent(in)  :: a, a_store
+      logical,  intent(in)  :: leaf
+      real(wp), intent(out) :: dtt, ts, tr, h_out, rn, fe
+      real(wp), parameter   :: GBH = 0.03_wp, RHO = 1.2_wp, EMISS = 0.97_wp
+      real(wp), parameter   :: T_CAS = 298.0_wp, T0 = T_CAS - 0.5_wp, T_PARENT = 301.0_wp
+      real(wp) :: hc, lws, les, ler
+      hc  = merge(2.0_wp, pi, leaf) * a * GBH * RHO * cp_air
+      lws = 4.0_wp * EMISS * stefan * T_CAS**3 * a
+      les = merge( 8.0_wp * a, 0.0_wp, leaf)    ! stomatal (wood does not transpire)
+      ler = merge(15.0_wp * a, 0.0_wp, leaf)
+      call veg_energy_balance(400.0_wp*a, -50.0_wp*a, hc, les, lws, ler, T_CAS, T_PARENT, a_store, T0,    &
+                              dtt, ts, tr, h_out, rn, f_wet=0.4_wp, le_slope_wet=20.0_wp*a,              &
+                              le_ref_wet=40.0_wp*a, film_evap=fe, q_extra=25.0_wp*a)
+   end subroutine thin_tissue
 
 end program test_surface_energy

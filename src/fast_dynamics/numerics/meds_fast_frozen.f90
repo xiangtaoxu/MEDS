@@ -215,10 +215,13 @@ contains
          !      thin enough to be thermally active throughout. INTERNAL WATER is the sapwood ring ONLY   !
          !      (col_cohort%bsap) at the fixed moisture WOOD_MOIST_FRAC_ARK: heartwood is taken as dry,  !
          !      which is what makes it heartwood. (The water network's wood store is sapwood plus fine   !
-         !      roots, at its own prognostic water; run_spac_solver.) -----------------------------------!
+         !      roots, at its own prognostic water; run_spac_solver.)                                    !
+         !      The dry capacity is at least veg_hcap_min per unit of the tissue's own area, so a        !
+         !      tissue's heat capacity scales with its area as its fluxes do                             !
+         !      (docs/science/vegetation_energy_dynamics.md eq. (8)). -----------------------------------!
          frozen%tissue%wood_dry_hcap(i) = max(col_cohort%bwood(i) * col_cohort%nplant(i) * C2B_WOOD             &
                                               * col_config%veg_thermal%c_sapw,                              &
-                                    col_config%veg_thermal%veg_hcap_min)
+                                    col_config%veg_thermal%veg_hcap_min * col_cohort%wai(i))
          frozen%tissue%wood_wmass(i)    = col_cohort%bsap(i)  * col_cohort%nplant(i) * C2B_WOOD * WOOD_MOIST_FRAC_ARK
          !----- LEAF capacity, same two-part construction: dry leaf tissue + the INTERNAL (symplast)     !
          !      water the hydraulics carries, biophys%leaf_water_mass [kg/plant] -> per m2 ground.       !
@@ -229,7 +232,7 @@ contains
          !      capacity would commit to a film that can never freeze. ----------------------------------!
          frozen%tissue%leaf_dry_hcap(i) = max(col_cohort%bleaf(i) * col_cohort%nplant(i) * C2B_WOOD             &
                                               * col_config%veg_thermal%c_leaf,                              &
-                                    col_config%veg_thermal%veg_hcap_min)
+                                    col_config%veg_thermal%veg_hcap_min * col_cohort%lai(i))
          frozen%tissue%leaf_wmass(i)    = max(biophys%leaf_water_mass(i), 0.0_wp) * col_cohort%nplant(i)
          !----- The wood's radiation and sensible coefficient are always filled: there is ONE wood       !
          !      energy balance (surface_derivs), relaxed by the wood's own heat capacity, so these       !

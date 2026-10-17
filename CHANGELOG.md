@@ -303,6 +303,30 @@ before and after.
   example 05's BCI regrowth from bare ground (1600-1601) GPP −0.13 %, LAI −0.14 % (end −0.17 %),
   70 cohorts at the end instead of 72; example 04 (2012-08-01..20, ARK) ET −0.03 %, H +0.06 %;
   Palo Verde's inventory month unchanged to 0.001 %. `test_aerodynamics` splits a crown in two.
+- **A thin tissue is no longer floored to the canopy air** (#349; the sweep's decision D9, and N9).
+  `veg_energy_balance` floored a tissue's coupling at 1 W m⁻² K⁻¹ of ground (`veg_coupling_floor`)
+  and routed the deficit to the canopy air as an extra conductance, while every term it floored
+  scales with the tissue's own area, so a thin cohort's leaves and wood were pulled to the canopy-air
+  temperature and two half-density cohorts differed from one (0.53 K in the wood of a 20-stem-per-ha
+  stand). The floor and its conductance are gone: the relaxation is written on the start-of-step
+  imbalance, which needs no division by the coupling and holds as it goes to zero, so the heat store
+  bounds the step (`vegetation_energy_dynamics.md` eqs. (1), (5), (6)). The heat-capacity minimum
+  `veg_hcap_min` (20 J m⁻² K⁻¹) is per m² of the tissue's own area, not of ground, in the fast loop and
+  in `cohort_tissue_heat_capacity` alike. A tissue with no area (no coupling and no heat capacity)
+  takes the temperature of what it grows from: a leafless leaf its wood's, wood with no area the
+  canopy air's. `veg_energy_balance` loses `t_emit` (every caller passed `t_cas`) and takes that
+  parent temperature instead. Young stands move most, as the issue measured (GPP −2.6 %, end LAI −2 %
+  over five years with the floor at 0.01): example 05's BCI regrowth from bare ground, 1600-1601, GPP
+  −10.3 %, NPP −13.2 %, LAI −6.9 % (end −7.3 %), AGB −9.1 %, H −7.6 %, ET −0.45 %, leaves +0.46 K and
+  wood +0.51 K warmer; over 1600-1604, GPP −6.6 % (last month −4.1 %), LAI −6.7 % (end −5.5 %), AGB
+  −9.3 % (end −8.1 %), H −4.1 %, ET −1.4 %. The per-area minimum alone moves these by under 0.1 %.
+  Closed canopies barely move: example 04 (2012-08-01..20, ARK) GPP +0.000 %, ET +0.04 %, H −0.08 %
+  (−0.5 W m⁻² at midday); RK45 (to 08-06) ET +0.5 %, H −0.6 %; Palo Verde's inventory month GPP
+  +0.004 %, ET −0.02 %, H −0.05 %. `test_surface_energy` sweeps a thin tissue (energy closes, half the
+  area halves every flux at the same temperature, no area takes the parent's temperature) and a store
+  with no coupling; `test_fast_loop` runs the thin stand as one cohort and as two at half density
+  through the whole fast loop (temperatures within 5×10⁻⁸ K, GPP per plant within 10⁻¹³) and a
+  leafless tree whose leaves take its wood's temperature.
 
 ### Documentation
 
