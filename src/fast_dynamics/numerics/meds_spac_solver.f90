@@ -45,7 +45,7 @@ module meds_spac_solver
    use meds_soil_water,      only : soil_water_flux, ground_evaporation_rate, bottom_flux
    use meds_arrowhead_solve, only : arrowhead_system_t, arrowhead_allocate, arrowhead_factor, arrowhead_solve
    use meds_soil_types,      only : chydro_forcing_t
-   use meds_column_params,   only : soil_params_t, curve_a, curve_n
+   use meds_column_params,   only : soil_params_t
    use meds_biophysics_opts, only : soil_opts_t
    use meds_plant_types,     only : hydro_params_table_t
    use meds_therm_lib,       only : internal_energy_liquid, temp_of_liquid_enthalpy
@@ -195,7 +195,7 @@ contains
       real(wp)    :: psi, dpsi, w, dw, kk, dk, head1
       do k = 1_ik, spac%nsl
          call build_soil_layer_curve(params%retention, params%theta_sat(k), params%theta_res(k),              &
-                                     curve_a(params, k), curve_n(params, k), params%ksat(k), params%dz(k),    &
+                                     params%curve_par_a(k), params%curve_par_n(k), params%ksat(k), params%dz(k), &
                                      spac%layer(k))
          spac%z_node(k) = params%z_node(k)
          if (k < spac%nsl) then

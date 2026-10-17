@@ -22,7 +22,7 @@
 !==========================================================================================!
 module meds_column_params
    use meds_kinds,            only : wp, ik
-   use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL
+   use meds_water_retention,  only : soil_theta_from_psi, SOIL_RETENTION_VG
    implicit none
    private
 
@@ -31,7 +31,6 @@ module meds_column_params
    public :: build_soil_hydr_params, build_soil_therm_params
    public :: build_soil_hydr_params_layers, build_soil_therm_params_layers
    public :: SOIL_LAYER_TEMPLATE, soil_layer_grid
-   public :: curve_a, curve_n
 
    integer(ik), parameter :: n_soil_layer_max = 20_ik      !< compile-time soil-column-depth ceiling
    integer(ik), parameter :: n_snow_layer_max = 1_ik        !< one bulk layer (multi-layer snow: see docs/ROADMAP.md)
@@ -69,10 +68,13 @@ module meds_column_params
       real(wp) :: theta_sat(n_soil_layer_max) = 0.0_wp       !< [m3/m3] porosity
       real(wp) :: theta_res(n_soil_layer_max) = 0.0_wp       !< [m3/m3] residual water content
       real(wp) :: ksat(n_soil_layer_max)      = 0.0_wp       !< [m/s] saturated conductivity
-      real(wp) :: vg_alpha(n_soil_layer_max)  = 0.0_wp       !< [1/m] van Genuchten inverse air-entry
-      real(wp) :: vg_n(n_soil_layer_max)      = 0.0_wp       !< [-] van Genuchten pore-size index (> 1)
-      real(wp) :: psi_sat(n_soil_layer_max)   = 0.0_wp       !< [m] Campbell air-entry potential (option)
-      real(wp) :: b_camp(n_soil_layer_max)    = 0.0_wp       !< [-] Campbell exponent (option)
+      !----- The retention curve's two parameters, whose meaning the family sets: van Genuchten's !
+      !      alpha [1/m] and n (> 1), or Campbell's air-entry head psi_sat [m, < 0] and exponent b !
+      !      (docs/science/soil_biophysics.md, "The soil water column"). One pair for both        !
+      !      families, so every reader -- the water network, the predawn seed, the diagnostics -- !
+      !      reads the curve the column was built with. ------------------------------------------!
+      real(wp) :: curve_par_a(n_soil_layer_max) = 0.0_wp     !< [1/m] VG alpha, or [m] Campbell psi_sat
+      real(wp) :: curve_par_n(n_soil_layer_max) = 0.0_wp     !< [-] VG n, or Campbell b
       real(wp) :: theta_fc(n_soil_layer_max)  = 0.0_wp       !< [m3/m3] field capacity (DERIVED)
    end type soil_params_t
 
@@ -159,13 +161,8 @@ contains
       params%theta_sat(1:n_active) = theta_sat(1:n_active)
       params%theta_res(1:n_active) = theta_res(1:n_active)
       params%ksat(1:n_active)      = ksat(1:n_active)
-      if (retention == SOIL_RETENTION_CAMPBELL) then
-         params%psi_sat(1:n_active) = par_a(1:n_active)
-         params%b_camp(1:n_active)  = par_n(1:n_active)
-      else
-         params%vg_alpha(1:n_active) = par_a(1:n_active)
-         params%vg_n(1:n_active)     = par_n(1:n_active)
-      end if
+      params%curve_par_a(1:n_active) = par_a(1:n_active)
+      params%curve_par_n(1:n_active) = par_n(1:n_active)
 
       !----- Derived threshold (from each layer's retention curve). ----------------------!
       params%theta_fc(1:n_active) = soil_theta_from_psi(retention, psi_fc_m, theta_sat(1:n_active),    &
@@ -205,34 +202,5 @@ contains
       ks = k_solid ; kd = k_dry ; cv = dry_cvol
       call build_soil_therm_params_layers(n_active, ks, kd, cv, therm)
    end subroutine build_soil_therm_params
-
-   !=======================================================================================!
-   !  Retention-curve parameter accessors: (alpha, n) for van Genuchten, (psi_sat, b) for  !
-   !  Campbell. They live HERE, beside soil_params_t, because they are a property of that  !
-   !  type -- which family its two generic curve parameters mean. Every consumer (the      !
-   !  water network, the diagnostic psi read-off) shares this ONE mapping, so a family     !
-   !  added later cannot be taught to one caller and not the other.                        !
-   !=======================================================================================!
-   pure function curve_a(params, k) result(a)
-      type(soil_params_t), intent(in) :: params
-      integer(ik),         intent(in) :: k
-      real(wp)                        :: a
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then
-         a = params%psi_sat(k)
-      else
-         a = params%vg_alpha(k)
-      end if
-   end function curve_a
-
-   pure function curve_n(params, k) result(nn)
-      type(soil_params_t), intent(in) :: params
-      integer(ik),         intent(in) :: k
-      real(wp)                        :: nn
-      if (params%retention == SOIL_RETENTION_CAMPBELL) then
-         nn = params%b_camp(k)
-      else
-         nn = params%vg_n(k)
-      end if
-   end function curve_n
 
 end module meds_column_params

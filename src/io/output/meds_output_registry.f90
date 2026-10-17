@@ -15,7 +15,7 @@ module meds_output_registry
    use meds_kinds,          only : wp, ik
    use meds_config,         only : meds_config_t
    use meds_forcing_config, only : MET_BACKEND_ED_ERA5LAND
-   use meds_column_params, only : n_soil_layer_max, soil_params_t, curve_a, curve_n
+   use meds_column_params, only : n_soil_layer_max, soil_params_t
    use meds_site_state_types,   only : site_t
    use meds_site_diag_types,    only : N_CDIAG, N_PDIAG, N_CSDIAG, cohort_diag_alloc,           &
                                        patch_diag_alloc
@@ -1226,11 +1226,11 @@ contains
       do k = 1_ik, n_soil_layer_max
          dp%theta_sat(k) = params%theta_sat(k)
          dp%theta_res(k) = params%theta_res(k)
-         !----- The generic (a, n) pair means (alpha, n) for van Genuchten and (psi_sat, b) for  !
-         !      Campbell. Resolved through the SAME accessors the water network uses, so the      !
-         !      diagnostic psi cannot come from a different curve than the one integrated.  ------!
-         dp%par_a(k)     = curve_a(params, k)
-         dp%par_n(k)     = curve_n(params, k)
+         !----- The column's one (a, n) pair, (alpha, n) for van Genuchten and (psi_sat, b) for  !
+         !      Campbell: the pair the water network integrates, so the diagnostic psi comes     !
+         !      from the same curve. ------------------------------------------------------------!
+         dp%par_a(k)     = params%curve_par_a(k)
+         dp%par_n(k)     = params%curve_par_n(k)
          dp%soil_z(k)    = params%z_node(k)
       end do
       dp%n_soil     = params%n_active

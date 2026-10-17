@@ -174,6 +174,18 @@ before and after.
   With the intended hours the tiny cohort sees the sun (GPP 0 → 0.030, its leaf at most 0.45 K above
   the canopy air), the drydown takes θ to 0.0786 against θ_res 0.078 (0.0839 before), and the rain
   pulse's peak intercepted water is 0.046 kg m⁻² (0.017 before); the suite takes about a second longer.
+- **Under Campbell retention, a new cohort's predawn potential comes from the Campbell curve**
+  (#427). The pre-pass seeds a cohort's predawn leaf potential, until it has a day of its own, from
+  the top soil layer's potential, and read that layer's van Genuchten parameters, which a Campbell
+  column never set (both zero): the seed was 0 MPa, a fully wet soil, whatever the soil held, and
+  the curve's slope beside it divided by zero, which a Debug build traps. `soil_params_t` now
+  carries one parameter pair, `curve_par_a` and `curve_par_n` (alpha and n for van Genuchten,
+  psi_sat and b for Campbell), in place of `vg_alpha`, `vg_n`, `psi_sat` and `b_camp`, and every
+  reader takes the column's curve from it; the accessors `curve_a` and `curve_n` are gone. Van
+  Genuchten runs, every shipped config among them, are byte-identical. `test_spac_solver` runs a
+  stand on a Campbell clay (each layer's potential the Campbell curve's, finite and below zero;
+  uptake; water closing every step), and `test_column_rk45` checks the seed against the Campbell
+  curve.
 
 ### Documentation
 
