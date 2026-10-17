@@ -367,8 +367,8 @@ contains
          tcas_chk = cas_temp_of_enthalpy(y_stage%cas_enthalpy, y_stage%cas_shv)
          canopy_to_cas = surf_tend%src_enth - surf_tend%h_ground - surf_tend%le_ground + surf_tend%cond * &
                internal_energy_liquid(tcas_chk)
-         call check_true('canopy transpires at all in this fixture (test is live)', surf_tend%coh_transp > 1.0e-7_wp, &
-               surf_tend%coh_transp)
+         call check_true('canopy transpires at all in this fixture (test is live)',                          &
+               sum(surf_tend%transp_c(1:n)) > 1.0e-7_wp, sum(surf_tend%transp_c(1:n)))
          call check('canopy is energy-neutral: coh_rnet == sensible + full vapour enthalpy to the CAS (no soil proxy)', &
                     canopy_to_cas, surf_tend%coh_rnet, 1.0e-9_wp * max(abs(surf_tend%coh_rnet), 1.0_wp))
       end block

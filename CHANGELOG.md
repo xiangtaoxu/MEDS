@@ -160,6 +160,80 @@ before and after.
   output buffers carry their own diagnostic parameters (`bufs%diag`), set from the polygon's own soil,
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
+- **A carbon pool's overdraw stops the run instead of being floored** (#394). The slow applier advanced
+  the four carbon pools as `max(pool + rate·dt, 0)`, so an operator that took more than a pool held had
+  the shortfall created, silently, where the per-step bounds guard could not see it. It now sets a
+  result to 0 only when it is below zero by round-off (at most 4 epsilons of the pool and its change,
+  the four roundings of backing out a rate and applying it), and leaves anything larger negative, so
+  `cohort_bad_field` stops the run on that step naming the pool. `reacclimate_plant_traits`, which kept
+  storage at `max(0, …)` when a lower SLA asked for more leaf carbon than storage held, now gives the
+  leaves only what storage has, and the leaf area falls short by the rest. The floors never bound beyond
+  round-off on the shipped runs (worst 2.5×10⁻¹³ kgC m⁻² in the ledger's remainder), and results are
+  byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
+  re-acclimation conserves the cohort's carbon.
+
+### Removed
+
+- **The nitrogen scaffold and the inert `[soil_carbon]` keys** (#418; #154). MEDS is carbon-only, and
+  the code no longer pretends otherwise: the always-zero nitrogen twin of the soil pools and of the
+  litter input (`soil_carbon_t`'s five N fields, `litter_input_t`'s four), their area blends, the
+  `n_cycle_on` switch and the decomposition's `f_decomp` placeholder (identically 1) are gone. The
+  keys `n_cycle_on`, `c2n_structural`, `c2n_slow`, `c2n_fast` and `n_immobil_supply_scale` are retired
+  and refused, saying the nitrogen cycle is not built and is planned after the move to ED-MORE; so are
+  `agf_fast` and `agf_struct`, which no kernel read, saying the litter is split by tissue with each
+  PFT's `f_labile_leaf`, `f_labile_stem` and `aboveground_frac`. The state file never carried the N
+  fields, and no output variable read them. `test_config_keys` checks the refusals. Results are
+  byte-identical.
+- **The crown area** (#432; the sweep's decision D1). The crown-area allometry `[allometry].ca_b1`/`ca_b2`
+  was a required key that nothing read (`dbh_to_crown_area` was never called), and the PFT trait
+  `crown_area_frac` was 1.0 in every shipped config; its only use was the in-canopy wind's crown cover.
+  All three keys are retired and refused, saying the crowns close over their patch and the wind
+  attenuates by leaf area alone. `dbh_to_crown_area`, the cohort field `p_crown_area_frac` (with its
+  lines in the lockstep reorder, copy, compaction and creation sites), `column_cohort_t%crown` and the
+  wind kernel's crown argument are gone, and `docs/science/canopy_aerodynamics.md` eq. (8) is the
+  closed-crown form, u·exp(−LAI/4) at mid-crown and u·exp(−LAI/2) below. `test_aerodynamics` checks
+  eq. (8) in place of its small-crown test. The keys are removed from every shipped TOML (the root
+  references, the examples, the example 04 calibration file and `test/region`). Results are
+  byte-identical (the crown fraction was 1 everywhere).
+- **The stem respiration's size scaler** (#412, part 3). `stem_resp_size_scaler` was a `wood_params_t`
+  default of 0 that no key could set, applied every step as a factor 10^(0·dbh) = 1 on the stem surface
+  rate. The field and the factor are gone, and `docs/science/plant_respiration.md` eq. (3) drops it. §7
+  said shipped runs have no size scaling of stem respiration; it now says the surface rate has no size
+  factor of its own and that example 05's and 06's PFTs scale stem respiration with size through the
+  sapwood basis. `test_plant_respiration`'s size-scaler test goes with it. Results are byte-identical.
+- **Two test residues** (#421). `test_column_ark.f90` carried a copy of `test_rk45_shed_water`, which
+  `test_column_rk45.f90` runs with one more check; the copy is gone. `test_column_energy`'s
+  `test_mass_correction_neutrality` guarded a post-solve soil-water clip that no longer exists, but the
+  identity it checks (water that leaves or enters a layer with its own enthalpy leaves the layer's
+  temperature unchanged; without it, it does not) is the one every liquid-water flow relies on. It is
+  kept as `test_mass_change_neutrality`, with its checks labelled as water removed or added with and
+  without its enthalpy. And `test_column_dynamics`'s RUN 9 set `time_integrator = "rk45"` for its
+  third leg without rebuilding the integrator record the schemes read, so that leg ran ARK; it now
+  rebuilds it, as RUN 8 and 8b do, and the snowfall check runs on RK45.
+- **Dead code** (#417, the named items; the unused imports come later). `size_tol` (never read) is gone,
+  and the two end-of-run patch-area checks, `driver_finalize` and `region_finalize`, use `area_tol` in
+  place of the literal `1.0e-5`. Gone too: `surface_tend_t%coh_transp`, written but read only by a test,
+  which now sums the per-cohort `transp_c`; `apply_rt_forcing`'s unused `tcas` and the
+  `cas_temp_of_enthalpy` its caller computed for it; and `meds_run_t%is_open`, set and never read.
+  The allocation kernel's storage refill, misnamed `store_hcap_per_dt`, is `storage_refill`, and
+  `snow_stage_t%t_melt` defaults to the triple point instead of 0 K: a trace pack (below
+  `tiny_snow_mass`, which skips the melt step and so never sets it) valued the ground's inflow at 0 K.
+  Results are byte-identical (no compared run has snow). `veg_energy_balance`'s `t_emit`, which every
+  caller passes as `t_cas`, stays for now: its `(t_cas − t_emit)` terms are exactly zero, but ifx's
+  default floating-point model reassociates the shorter sum left without them, so removing them moves
+  the ifx build's rounding (gfortran's results are unchanged).
+- **`clamp_soil_energy`, the RK45 stage clamp on the soil's energy** (#420). It clamped each layer's
+  internal energy to a temperature in [180, 350] K before every RK45 stage, because a wild stage
+  temperature once overflowed ground evaporation's fractional power; ground evaporation is now frozen
+  from the water network for the whole `dt_fast`. Measured before removing it: no stage state reached
+  either bound in the suite (ifx Release, ifx Debug, gfortran) or in a year of example 04 (BCI, 120
+  patches) forced to `rk45`. Its activation counter did register about 34,000 activations in five
+  days of that run, but every one was the clamp's own round trip (energy → temperature → energy)
+  changing an in-range layer by an ulp. It is gone with its `denergy` output and its imports;
+  `clamp_cas` remains the RK45 stage clamp, and the RK45 comment says why the soil needs none. Every
+  shipped config runs `ark` and is byte-identical; a run forced to `rk45` moves, because the ulp
+  changes alter its adaptive step sequence (example 04's five-day `rk45` case: ET over the five days
+  −0.2 % on ifx and −0.5 % on gfortran, hourly sensible and latent heat by up to 9–15 W m⁻²).
 
 ### Fixed
 

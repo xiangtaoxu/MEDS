@@ -41,7 +41,6 @@ module meds_biogeochem_opts
    type :: decomp_opts_t
       integer(ik) :: decomp_scheme = DECOMP_SCHEME_ED2    !< DECOMP_SCHEME_ED2 (3-active) or DECOMP_SCHEME_CENTURY5 (5-active)
       integer(ik) :: step_solver   = DECOMP_STEP_EULER    !< {EULER, EXPM}
-      logical     :: n_cycle_on    = .false.              !< nitrogen switch: read, but no kernel reads it (f_decomp = 1)
       !----- Baseline decay rates [1/yr] (ED2 ed_params.f90 decay_rate_*). ------------------------!
       real(wp)    :: k_fast   = 11.0_wp    !< decay_rate_fsc  (scheme 0-4); 12.0 (scheme 5)
       real(wp)    :: k_struct = 4.5_wp     !< decay_rate_stsc (scheme 0-4); 1.5  (scheme 5)
@@ -61,10 +60,6 @@ module meds_biogeochem_opts
       real(wp)    :: xsand = 0.35_wp, xclay = 0.25_wp
       real(wp)    :: fx_micr_pass_int = 0.003_wp, fx_micr_pass_slp = 0.032_wp   !< ex_micr->pass = int + slp*xclay
       real(wp)    :: fx_slow_pass_int = 0.003_wp, fx_slow_pass_slp = 0.009_wp   !< ex_slow->pass = int + slp*xclay
-      !----- Above-ground shares of the fast and structural litter (ED2 agf_fsc/agf_stsc): read,    !
-      !      but used by no kernel. necromass_to_litter splits each cohort's litter with its PFT's  !
-      !      f_labile_leaf, f_labile_stem and aboveground_frac (docs/science/soil_carbon.md §5). ---!
-      real(wp)    :: agf_fast = 0.5_wp, agf_struct = 0.7_wp
       !----- Environmental scalar xi (docs/science/soil_carbon.md eqs. (3)-(4)). ------------------!
       real(wp)    :: rh_q10               = 1.5_wp
       real(wp)    :: rh_t_ref             = 288.15_wp     !< [K] 15 C Q10 reference (scheme 5)
@@ -73,9 +68,6 @@ module meds_biogeochem_opts
       real(wp)    :: resp_opt_water       = 0.8938_wp
       real(wp)    :: resp_water_below_opt = 5.0786_wp
       real(wp)    :: resp_water_above_opt = 4.5139_wp
-      !----- N stoichiometry: read, but no kernel reads it (docs/science/soil_carbon.md §10). ------!
-      real(wp)    :: c2n_structural = 150.0_wp, c2n_slow = 10.0_wp, c2n_fast = 30.0_wp
-      real(wp)    :: n_immobil_supply_scale = 0.0_wp      !< [1/yr] 40.0 in ED2
    end type decomp_opts_t
 
 end module meds_biogeochem_opts

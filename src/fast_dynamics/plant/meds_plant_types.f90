@@ -187,7 +187,6 @@ module meds_plant_types
    !=======================================================================================!
    !----- Woody-tissue (stem) maintenance respiration (ED2 Chambers surface-area form). ----!
    type :: wood_params_t
-      real(wp) :: stem_resp_size_scaler = 0.0_wp       !< [1/cm]   DBH size effect (0 => flat; ED2 ~0.0041)
       real(wp) :: ea                    = 46390.0_wp   !< [J/mol]   peaked-Arrhenius activation energy (leaf ea_rd)
       real(wp) :: hd                    = 200000.0_wp  !< [J/mol]   deactivation energy   (leaf hd_rd)
       real(wp) :: ds                    = 490.0_wp     !< [J/mol/K] entropy term          (leaf ds_rd)

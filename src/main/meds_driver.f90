@@ -18,7 +18,7 @@
 !==========================================================================================!
 module meds_driver
    use meds_kinds,                  only : wp, ik
-   use meds_constants,              only : day_sec, yr_day
+   use meds_constants,              only : day_sec, yr_day, area_tol
    use meds_config,                 only : meds_config_t, INIT_CENSUS, INIT_RESTART, soil_maps_on
    use meds_time,                   only : meds_time_t, time_lt, time_advance_days,            &
                                            time_to_string, years_between
@@ -65,7 +65,6 @@ module meds_driver
       type(meds_time_t)      :: now, prev
       integer(ik)            :: istep = 0_ik, iyear = 0_ik
       integer(ik)            :: step_days = 1_ik, steps_per_year = 365_ik
-      logical                :: is_open = .false.
       logical                :: verbose = .true.  !< the progress lines meds_main prints
    end type meds_run_t
 
@@ -261,7 +260,6 @@ contains
          call print_summary(run%poly%site, 'start')
       end if
 
-      run%is_open = .true.
       ok = .true.
    end subroutine driver_open
 
@@ -352,13 +350,12 @@ contains
          write(*,'(a)') '-----------------------------------------------------------------------------'
          write(*,'(a,f12.9,a,f12.9)') ' site area start=', run%poly%area_start, '  end=', a1
       end if
-      if (abs(a1 - 1.0_wp) > 1.0e-5_wp) st = DRIVER_ERR_AREA
+      if (abs(a1 - 1.0_wp) > area_tol) st = DRIVER_ERR_AREA
 
       if (run%verbose) call polygon_report(run%poly)
 
       if (run%cfg%output%enabled) call output_close(run%out_files, run%out_bufs)
       if (run%cfg%fast_biophysics_on .and. run%cfg%forcing%forcing_on) call met_close(run%met_src)
-      run%is_open = .false.
       if (present(status)) status = st
    end subroutine driver_finalize
 

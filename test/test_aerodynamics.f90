@@ -7,9 +7,9 @@
 !      (warm air aloft) a SMALLER one, at the same wind.                                          !
 !   3. reduced_wind is positive and monotonically INCREASING with height (neutral).               !
 !   4. boundary_gbh_mos is positive, above the floor, and increases with wind (forced convection).!
-!   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom;        !
-!      gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare in the open-canopy limit.       !
-!   6. SMALL CROWN: a cohort's own crown cover, however small, sets its wind extinction.   !
+!   5. MASTER kernel on a 2-cohort patch: positive ustar/ggnet; wind DECREASES top->bottom, by     !
+!      the closed-crown extinction; gbw = gbh_2_gbw*gbh; can_depth floored; and ggnet == ggbare   !
+!      in the open-canopy limit.                                                                 !
 ! The equations are docs/science/canopy_aerodynamics.md §2 and §4 (eqs. (3), (7)-(10)).    !
 !==========================================================================================!
 program test_aerodynamics
@@ -27,7 +27,6 @@ program test_aerodynamics
    call test_wind_profile()
    call test_boundary_layer()
    call test_master()
-   call test_small_crown()
 
    call test_report('test_aerodynamics')
 
@@ -89,16 +88,16 @@ contains
       type(aero_geom_t) :: geom
       type(aero_out_t)  :: out
       integer(ik), parameter :: n = 2_ik
-      real(wp) :: height(n), lai(n), crown(n), tl(n), tw(n), lw(n), bd(n)
+      real(wp) :: height(n), lai(n), tl(n), tw(n), lw(n), bd(n)
       real(wp) :: ggbare_open
       !----- Bottom(1) -> Top(2) ordering (RT convention). ----------------------------------!
-      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp] ; crown = [0.8_wp, 0.9_wp]
+      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 2.0_wp]
       tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
       lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
       geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
 
       call alloc_aero_out(out, n)
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, crown, tl, tw, lw, bd, out)
+      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
 
       call check_true('master ustar > 0', out%ustar > 0.0_wp, out%ustar)
       call check_true('master ggnet > 0', out%ggnet > 0.0_wp, out%ggnet)
@@ -109,38 +108,21 @@ contains
       call check('master can_depth = h_top + freeboard', out%can_depth,                          &
                  max(cfg%min_canopy_depth, 18.0_wp + cfg%canopy_freeboard), 1.0e-12_wp)
       call check_true('wind decreases top->bottom', out%wind(2) > out%wind(1), out%wind(2) - out%wind(1))
+      !----- Each closed crown takes the wind down by exp(-LAI/4) to its mid-depth and exp(-LAI/2)  !
+      !      to its base (docs/science/canopy_aerodynamics.md eq. (8)). ---------------------------!
+      call check('top cohort: mid-crown wind = uh exp(-LAI/4)', out%wind(2),                        &
+                 max(cfg%ugbmin, out%uh * exp(-0.25_wp * 2.0_wp)), 1.0e-12_wp)
+      call check('bottom cohort: under the top crown, then to its own mid-depth', out%wind(1),       &
+                 max(cfg%ugbmin, out%uh * exp(-0.50_wp * 2.0_wp) * exp(-0.25_wp * 1.5_wp)), 1.0e-12_wp)
       call check('leaf gbw = ratio*gbh', out%leaf_gbw(1), cfg%gbh_2_gbw * out%leaf_gbh(1), 1.0e-12_wp)
       call check_true('r_aero = 1/ggnet finite', out%ggnet > 0.0_wp .and. 1.0_wp/out%ggnet < 1.0e6_wp, &
                       1.0_wp / out%ggnet)
 
       !----- Open-canopy limit: ggnet collapses to ggbare. ----------------------------------!
       geom%opencan_frac = 1.0_wp
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, crown, tl, tw, lw, bd, out)
+      call canopy_aerodynamics(cfg, env, geom, n, height, lai, tl, tw, lw, bd, out)
       ggbare_open = out%ggbare
       call check('ggnet == ggbare when open', out%ggnet, ggbare_open, 1.0e-12_wp)
    end subroutine test_master
-
-   !----- A cohort whose crowns cover almost nothing barely slows the wind: its extinction is      !
-   !      ca*exp(-lai/(2 ca)) + (1 - ca) with its own crown cover ca, however small, unfloored   !
-   !      (docs/science/canopy_aerodynamics.md eq. (8)). ----------------------------------------!
-   subroutine test_small_crown()
-      type(aero_cfg_t)  :: cfg
-      type(aero_env_t)  :: env
-      type(aero_geom_t) :: geom
-      type(aero_out_t)  :: out
-      integer(ik), parameter :: n = 2_ik
-      real(wp) :: height(n), lai(n), crown(n), tl(n), tw(n), lw(n), bd(n), ext_top, ext_half_bot
-      print '(a)', 'test_small_crown:'
-      height = [8.0_wp, 18.0_wp] ; lai = [1.5_wp, 0.05_wp] ; crown = [0.8_wp, 0.001_wp]
-      tl = [299.0_wp, 300.0_wp] ; tw = [298.5_wp, 299.0_wp]
-      lw = [0.04_wp, 0.04_wp]   ; bd = [0.02_wp, 0.02_wp]
-      geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
-      call alloc_aero_out(out, n)
-      call canopy_aerodynamics(cfg, env, geom, n, height, lai, crown, tl, tw, lw, bd, out)
-      ext_top      = 0.001_wp * exp(-0.50_wp * 0.05_wp / 0.001_wp) + 0.999_wp
-      ext_half_bot = 0.8_wp * exp(-0.25_wp * 1.5_wp / 0.8_wp) + 0.2_wp
-      call check('tiny-crown cohort: its own crown cover attenuates the wind below it', out%wind(1),  &
-                 max(cfg%ugbmin, out%uh * ext_top * ext_half_bot), 1.0e-12_wp)
-   end subroutine test_small_crown
 
 end program test_aerodynamics

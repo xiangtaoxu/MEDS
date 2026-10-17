@@ -27,7 +27,7 @@ module meds_fast_frozen
    use meds_soil_types, only : chydro_forcing_t, snow_melt_t
    use meds_fast_types, only : patch_biophys_t
    use meds_fast_time_derivs, only : surface_derivs
-   use meds_column_state_ops, only : clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
+   use meds_column_state_ops, only : soil_water_store, soil_energy_store, plant_water_store,                    &
                                      canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
                                      diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
    use meds_fast_prepass, only : column_prepass

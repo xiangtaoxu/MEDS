@@ -172,7 +172,7 @@ Island. With `"chave2014"` it follows Chave et al. (2014)'s pantropical curve, l
 seasonal or hotter the site, the larger E and the shorter its trees. With `[maps].chave_e_map`, each
 polygon takes E from its own cell instead, and `chave_e` is refused ([Input maps](#input-maps)).
 Every curve is capped at
-`[pft].hgt_max`, and biomass, leaf area and crown area take the height it gives. A cohort reproduces once
+`[pft].hgt_max`, and biomass and leaf area take the height it gives. A cohort reproduces once
 its height reaches `[pft].reproduction_height_fraction` (default 0.33) of the local maximum height, the
 height of a 100 cm tree on that curve (capped at `hgt_max`), so its maturity height follows the local
 allometry.
@@ -206,7 +206,8 @@ prints the counts before and after.
 `vcmax25`, `rd25`, leaf lifespan) are then set as a census start sets them from this run's PFT file:
 acclimated to each cohort's leaf area above it, as the state file holds it, with
 `[trait_dynamics].trait_plasticity_on`, and the PFT's top-of-canopy values without it. Leaf area stays
-as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a restart
+as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a lower
+SLA takes at most the storage a cohort holds, and its leaf area then falls short by the rest. A restart
 whose PFT file gives the traits the state already has changes nothing. A calibration
 trial restarts from a shared state this way, so a changed `vcmax25` reaches the cohorts
 (`scripts/calibrate_fast`).

@@ -13,8 +13,7 @@ across the one documented fast/slow kernel seam.
 
 - **`meds_biogeochem_types`** — the shared derived types and selector codes: the decomposition
   options, the litter input record, the carbon and lignin audits, the traceability diagnostics, the
-  seven-pool `soil_carbon_t` with its lignin sub-tracer and optional nitrogen fields, and the pool
-  index and scheme parameters.
+  seven-pool `soil_carbon_t` with its lignin sub-tracer, and the pool index and scheme parameters.
 - **`meds_soil_biogeochem`** — ED2's CENTURY decomposition network, reorganized as the carbon matrix
   ODE `dX/dt = B·I + A·ξ·K·X`, as stateless kernels:
   - `assemble_env_scalar` — the per-pool temperature × moisture × oxygen scalar with the lignin
@@ -54,7 +53,8 @@ temperature and moisture response, and the fast/slow seam reconciliation) and
 
 ## Not here yet
 
-The nitrogen twin is shaped in — the fields exist and the flag parses — but no kernel reads it.
+There is no nitrogen: the soil is carbon-only, and the nitrogen cycle is not built (it is planned
+after the move to ED-MORE).
 There is no DAMM decomposition-moisture alternative; an unwired kernel for it is kept on branch
 `archive/damm-hr`.
 Vertically resolved pools, nitrogen limitation of productivity, fire, and an explicit coarse woody

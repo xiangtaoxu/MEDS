@@ -34,7 +34,6 @@ to ED-MORE; which issue is in which phase, and why, is in
 | [#96](https://github.com/xiangtaoxu/MEDS/issues/96) | Dynamic vapour pressure for leaf transpiration (Kelvin $`e_i`$) | Built, measured, removed; likely route to foliar water uptake |
 | [#254](https://github.com/xiangtaoxu/MEDS/issues/254) | Passive deep **thermal** layers below the hydrologically active column | The Dirichlet anchor shipped and cut the base-layer amplitude error from +82 % to −2 %, but a purely resistive termination cannot reflect less than 0.41 — closing the rest needs heat *capacity* below the column, i.e. a thermal grid that extends past the water grid |
 | [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | Nothing in the mortality law sees a cohort's carbon state, so a cohort that has lost its leaves and its storage persists while its leaf carbon decays geometrically. A carbon deficit destroys no tissue either: it is netted from the CO₂ the cohort owes (`docs/science/plant_carbon_allocation.md` §2). |
-| [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | The slow applier (`update_cohort_states_kernel`) and `reacclimate_plant_traits` keep a pool non-negative with `max(…, 0)`, which creates the carbon an overdraw would have taken; the per-step bounds guard cannot see it. |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
 | [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | Every head-to-pressure conversion, soil and plant alike, uses `grav_head`; `grav` appears only where the acceleration itself is meant (the Kelvin factor of soil evaporation, the aerodynamics, the lapse rate). The two differ by 0.03 %. |
 | [#427](https://github.com/xiangtaoxu/MEDS/issues/427) | Campbell retention: the predawn-potential seed reads van Genuchten parameters | The seed of a new cohort's predawn potential reads 0 MPa (a wet soil) and divides by zero; the water network itself reads the right pair. Van Genuchten runs, every shipped config, are unaffected. |
@@ -73,18 +72,15 @@ run's leaf-area cycle has been scored against an observation yet. That is the be
 Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science page:
 [`science/soil_carbon.md`](science/soil_carbon.md).
 
-- **The nitrogen twin.** *Planned.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) Shaped in already: `n_cycle_on` is parsed and the N fields
-  exist on `soil_carbon_t`, but no kernel reads the flag and the restart skips the fields.
-  Needs the decomposition N limitation (`f_decomp`), the mineralization/immobilization flux, and
-  N limitation of NPP on the plant side.
+- **The nitrogen cycle.** *Planned, after the move to ED-MORE.* [#154](https://github.com/xiangtaoxu/MEDS/issues/154) MEDS is
+  carbon-only: the inert nitrogen fields and keys were removed (#418). Nitrogen and its coupling to
+  carbon come after the move to ED-MORE: the soil's nitrogen pools, the decomposition N limitation, the
+  mineralization/immobilization flux, and N limitation of NPP on the plant side.
 - **Vertically resolved soil-carbon pools.** *Candidate.* [#155](https://github.com/xiangtaoxu/MEDS/issues/155) The `n = 1` layer is the degenerate
   case of the intended profile.
 - **An explicit coarse woody debris pool.** *Candidate.* [#156](https://github.com/xiangtaoxu/MEDS/issues/156) Today treefall necromass enters the
   structural pools directly.
 - **Fire consumption of the ground pools.** *Candidate.* [#157](https://github.com/xiangtaoxu/MEDS/issues/157) No fire anywhere in MEDS.
-- **`[soil_carbon]` keys that are read but drive nothing.** *Candidate.* [#418](https://github.com/xiangtaoxu/MEDS/issues/418) `agf_fast` and
-  `agf_struct` are never used (the litter is partitioned by tissue), and the nitrogen keys wait for
-  #154; refuse them or document them as inert.
 
 ---
 
@@ -142,9 +138,6 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
   midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
   transient are still to be re-measured.
-- **Is `clamp_soil_energy` still needed?** *Open question.* [#420](https://github.com/xiangtaoxu/MEDS/issues/420) Its reason, ground evaporation's
-  `pow()` inside the RK45 stages, is gone (evaporation is frozen from the water network); it moves energy
-  with no ledger entry when it bites. Measure how often it fires, then remove it or restate why.
 
 ---
 
@@ -380,10 +373,10 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each
   enters the error, and the combinators work on the flat array. The compiler still cannot check
   the list; `test_state_combinators` runs every field through every combinator.
-- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) `size_tol`/`area_tol`, `surface_tend_t%coh_transp`,
-  `apply_rt_forcing`'s `tcas` dummy, `veg_energy_balance`'s `t_emit` generality, and unused imports.
-- **Two test residues.** *Candidate.* [#421](https://github.com/xiangtaoxu/MEDS/issues/421) A duplicate `test_rk45_shed_water` in
-  `test_column_ark.f90`, and `test_mass_correction_neutrality`, which guards a removed correction.
+- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) Most named items are removed. Left: the
+  tree-wide sweep of names that modules import but do not use, and `veg_energy_balance`'s `t_emit`
+  (every caller passes `t_cas`), whose removal is exact in IEEE arithmetic but moves ifx's rounding, so
+  it waits for a change that moves results anyway.
 
 ---
 
@@ -421,8 +414,9 @@ Gaps and residues found in the 2026-10-17 annotation review.
 - **Ground optics are bare soil plus snow.** *Candidate.* [#411](https://github.com/xiangtaoxu/MEDS/issues/411) Litter, standing water and soil moisture
   do not change the ground's albedo (`docs/science/canopy_radiation_transfer.md` §4; see also #268).
 - **Maintenance respiration's missing limbs.** *Candidate.* [#412](https://github.com/xiangtaoxu/MEDS/issues/412) No maintenance respiration on
-  reproductive tissue, no substrate or moisture limitation of maintenance respiration, and the stem
-  size scaler is σ = 0 (`docs/science/plant_respiration.md` §7).
+  reproductive tissue, and no substrate or moisture limitation of maintenance respiration
+  (`docs/science/plant_respiration.md` §7). The stem's unused size scaler is gone; stem respiration
+  grows with size through its surface or sapwood basis.
 - **An unattributed energy residual under a melting snow pack.** *Open question.* [#413](https://github.com/xiangtaoxu/MEDS/issues/413) The whole-column
   ledger carries a sign-oscillating residual of up to about 5×10⁻³ W m⁻² (0.7 J m⁻² per 150 s step,
   about −14 J m⁻² over a day) while the canopy-air, soil, pack and pond ledgers each close to 10⁻⁹; it

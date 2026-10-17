@@ -3,7 +3,7 @@
 ! meds_constants -- compile-time constants and a few pure scalar helpers.                  !
 !                                                                                          !
 ! No mutable state lives here. Calendar constants follow ED2 (proleptic Gregorian mean     !
-! year). Tolerances default to the values used by the fusion/fission conservation checks.   !
+! year). area_tol is the tolerance of the end-of-run check that the patch areas sum to one.  !
 !==========================================================================================!
 module meds_constants
    use meds_kinds, only : wp
@@ -78,8 +78,7 @@ module meds_constants
    real(wp), parameter :: lnexp_min  = -38.0_wp               !< clamp for exp() arguments
    real(wp), parameter :: lnexp_max  =  38.0_wp
 
-   !----- Default conservation tolerances. ------------------------------------------------!
-   real(wp), parameter :: size_tol = 0.01_wp                  !< 1% basal-area conservation
+   !----- Conservation tolerance. --------------------------------------------------------!
    real(wp), parameter :: area_tol = 1.0e-5_wp                !< patch-area sum tolerance
 
 contains

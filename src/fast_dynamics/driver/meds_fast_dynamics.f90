@@ -26,8 +26,7 @@ module meds_fast_dynamics
    use meds_config,           only : meds_config_t, soil_column_params
    use meds_budget_check,     only : budget_t, budget_merge
    use meds_biogeochem_types, only : IP_FAST_GRND, IP_FAST_SOIL, IP_STRUCT_GRND, IP_STRUCT_SOIL, IP_MICR, IP_SLOW, IP_PASSIVE
-   use meds_therm_lib,           only : cas_enthalpy_of_temp, cas_temp_of_enthalpy, temp_to_internal_energy, &
-                                       specific_humidity_to_vpd
+   use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_column_view, only : copy_column_cohort
    use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
@@ -600,7 +599,6 @@ contains
             !      apply_rt_forcing). ----------------------------------------------------------------!
             if (do_forcing) call apply_rt_forcing(forc, ncoh, col_cohort%pft, col_cohort%lai, col_cohort%wai,  &
                                  col_cohort%height, biophys%leaf_temp, biophys%wood_temp,                      &
-                                 cas_temp_of_enthalpy(biophys%cas%can_enthalpy, biophys%cas%can_shv),          &
                                  biophys%soil_e%soil_temp(1), biophys%snow, ctx%col_config%snow,               &
                                  ctx%soil_albedo, ctx%soil_emiss, ctx%rad_opt, met, cfg%leaf_absorptance)
             call fill_aenv(aenv, biophys, met_top, z_top)
@@ -980,7 +978,7 @@ contains
    !      two-stream ABSORBED VIS by that same absorptance to hand back an incident-equivalent PAR  !
    !      -- otherwise leaf absorptance would be applied twice. abs_sw stays true ABSORBED SW (the  !
    !      leaf energy balance wants absorbed).                                                      !
-   subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp, tcas,          &
+   subroutine apply_rt_forcing(forc, ncoh, pft, lai, wai, height, leaf_temp, wood_temp,                &
                                soil_temp_top, snow, snow_params, soil_albedo, soil_emiss, rad_opt, met, &
                                leaf_absorptance)
       type(column_forcing_t),  intent(inout) :: forc
@@ -989,7 +987,6 @@ contains
       real(wp),                intent(in)    :: lai(:), wai(:)   !< [m2/m2] leaf / wood area index
       real(wp),                intent(in)    :: height(:)        !< [m] cohort height
       real(wp),                intent(in)    :: leaf_temp(:), wood_temp(:)   !< [K] lagged tissue temperatures
-      real(wp),                intent(in)    :: tcas             !< [K] CAS temperature (unused: the RT emits at T_rad, below)
       real(wp),                intent(in)    :: soil_temp_top    !< [K] top soil-node temperature (ground emission)
       type(snow_column_t),     intent(in)    :: snow             !< pack store (albedo / emissivity ramp)
       type(snow_params_t),     intent(in)    :: snow_params

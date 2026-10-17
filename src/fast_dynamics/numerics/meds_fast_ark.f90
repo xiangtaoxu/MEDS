@@ -37,7 +37,7 @@ module meds_fast_ark
    use meds_fast_types, only : patch_biophys_t
    use meds_fast_time_derivs, only : surface_derivs
    use meds_column_state_ops, only : state_init, state_extrap, state_err_diff, state_sub, bflux_zero, bflux_add, &
-                                     bflux_bweight, clamp_cas, clamp_soil_energy, soil_water_store, &
+                                     bflux_bweight, clamp_cas, soil_water_store,                    &
                                      soil_energy_store, plant_water_store, canopy_film_store, deposit_condensate, &
                                      clamp_canopy_film, unpack_column_state, diagnose_soil_temps, &
                                      assemble_soil_energy_forcing, apply_process_mask, transp_per_leaf_area

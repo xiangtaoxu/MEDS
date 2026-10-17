@@ -3,16 +3,16 @@
 ! meds_demography_update -- APPLY/refresh of (derived) cohort + patch state.                     !
 !                                                                                          !
 ! update_cohort_states is the PURE APPLIER: it advances the cohort's PROGNOSTIC state -- the four  !
-! carbon pools (state += rate*dt, floored at 0) and nplant (nplant *= exp(dln*dt), log-space,      !
-! floored) -- by the per-cohort TENDENCY bundle (cohort_deriv_block) the slow-loop driver computed  !
-! this step, and then DERIVES the geometry (dbh, height, basal area, AGB, leaf area and the wood     !
-! caches) from the committed carbon through the allometry. Geometry is never integrated: it is a   !
-! function of the carbon, so it cannot drift from it or leave its range (a leaf area integrated    !
-! by its own rate can go negative on a bare cohort whose leaf carbon sits at 0). It is MODE-       !
-! AGNOSTIC: whether the tendencies came from the carbon flip or the empirical growth law is the    !
-! driver's concern, invisible here. The derived-type SEAM (host) unpacks the SoA and calls the     !
-! bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads cleanly while    !
-! the host keeps ALL state in normal memory.                                                       !
+! carbon pools (state += rate*dt, round-off below zero snapped to 0) and nplant (nplant *=         !
+! exp(dln*dt), log-space, floored) -- by the per-cohort TENDENCY bundle (cohort_deriv_block) the    !
+! slow-loop driver computed this step, and then DERIVES the geometry (dbh, height, basal area,     !
+! AGB, leaf area and the wood caches) from the committed carbon through the allometry. Geometry is !
+! never integrated: it is a function of the carbon, so it cannot drift from it or leave its range  !
+! (a leaf area integrated by its own rate can go negative on a bare cohort whose leaf carbon sits  !
+! at 0). It is MODE-AGNOSTIC: whether the tendencies came from the carbon flip or the empirical    !
+! growth law is the driver's concern, invisible here. The derived-type SEAM (host) unpacks the SoA !
+! and calls the bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads    !
+! cleanly while the host keeps ALL state in normal memory.                                         !
 !                                                                                          !
 ! fill_cohort_deriv is the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and !
 ! empirical (C-API) computers: given the new carbon pools (however the caller derived them) it     !
@@ -32,6 +32,12 @@ module meds_demography_update
    private
 
    public :: update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
+
+   !----- How far below zero a carbon pool may land from round-off alone, in epsilons of the pool   !
+   !      and its change. A pool's tendency is (new - old)/dt, so the applier reaches a pool the     !
+   !      driver emptied through four roundings (subtract, divide, multiply, add), each within half  !
+   !      an epsilon of the magnitudes it touches: 4 bounds that with a factor of two to spare. -----!
+   real(wp), parameter :: ROUNDOFF_EPSILONS = 4.0_wp
 
 contains
 
@@ -97,7 +103,7 @@ contains
    end subroutine update_cohort_states
 
    !---------------------------------------------------------------------------------------!
-   ! Bare-array OFFLOAD kernel: the carbon pools are additive (state += rate*dt, floored at 0);  !
+   ! Bare-array OFFLOAD kernel: the carbon pools are additive (state += rate*dt, advance_pool);  !
    ! nplant follows the log-space mortality rate (nplant *= exp(dln*dt)), floored downward       !
    ! so density never rises and never drops below `negligible`. Arithmetic-only over plain       !
    ! arrays, so the `map` clauses are clean and the host keeps all state in normal memory.        !
@@ -122,10 +128,10 @@ contains
       !$omp&                    nplant)                                                       &
       !$omp&        private(dln, floor_dln)
       do i = 1_ik, n
-         leaf_carbon(i)          = max(leaf_carbon(i)          + d_leaf_carbon_dt(i)          * dt_yr, 0.0_wp)
-         fineroot_carbon(i)      = max(fineroot_carbon(i)      + d_fineroot_carbon_dt(i)      * dt_yr, 0.0_wp)
-         wood_carbon(i)          = max(wood_carbon(i)          + d_wood_carbon_dt(i)          * dt_yr, 0.0_wp)
-         nonstructural_carbon(i) = max(nonstructural_carbon(i) + d_nonstructural_carbon_dt(i) * dt_yr, 0.0_wp)
+         leaf_carbon(i)          = advance_pool(leaf_carbon(i),          d_leaf_carbon_dt(i)          * dt_yr)
+         fineroot_carbon(i)      = advance_pool(fineroot_carbon(i),      d_fineroot_carbon_dt(i)      * dt_yr)
+         wood_carbon(i)          = advance_pool(wood_carbon(i),          d_wood_carbon_dt(i)          * dt_yr)
+         nonstructural_carbon(i) = advance_pool(nonstructural_carbon(i), d_nonstructural_carbon_dt(i) * dt_yr)
          !----- Mortality in log space: nplant *= exp(dln), floored (downward only) so density   !
          !      never rises and never drops below `negligible`. -------------------------------!
          dln       = dln_nplant_dt(i) * dt_yr
@@ -134,6 +140,21 @@ contains
          nplant(i) = nplant(i) * exp(min(max(dln, lnexp_min), lnexp_max))
       end do
    end subroutine update_cohort_states_kernel
+
+   !---------------------------------------------------------------------------------------!
+   ! A carbon pool advanced by its change over the step. A result below zero by no more than    !
+   ! ROUNDOFF_EPSILONS epsilons of the pool and its change is a pool the driver emptied, carried !
+   ! past zero by rounding: it is 0. Anything further below zero is an overdraw -- an operator   !
+   ! that took more than the pool held, which is a bug -- and is left as it is, so the bounds    !
+   ! guard (cohort_bad_field) stops the run on this step, naming the pool, instead of a clamp    !
+   ! creating the carbon the overdraw took.                                                       !
+   !---------------------------------------------------------------------------------------!
+   elemental pure real(wp) function advance_pool(pool, change) result(pool_new)
+      real(wp), intent(in) :: pool, change    !< [kgC/plant] the pool, and its change over the step
+      pool_new = pool + change
+      if (pool_new < 0.0_wp .and.                                                                  &
+          -pool_new <= ROUNDOFF_EPSILONS * epsilon(pool_new) * (abs(pool) + abs(change))) pool_new = 0.0_wp
+   end function advance_pool
 
    !---------------------------------------------------------------------------------------!
    ! Advance the slow per-PATCH state by one step of length dt_yr: patch AGEING, the             !

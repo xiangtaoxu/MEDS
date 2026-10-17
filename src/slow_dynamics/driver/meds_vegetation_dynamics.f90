@@ -1152,9 +1152,11 @@ contains
    ! plasticity on, each cohort takes the census start's instant acclimation to the LAI above   !
    ! it as the file holds it; with plasticity off, the PFT's top-of-canopy values, as a census   !
    ! start gives. The stand's STRUCTURE is kept: leaf carbon scales by the SLA's change (old /   !
-   ! new), storage taking or giving the difference (never below zero), so leaf area stays as     !
-   ! read to round-off and a trial that changes a trait changes the leaf physiology and not the  !
-   ! LAI -- and a restart whose PFT file gives the traits it already has changes nothing.        !
+   ! new), storage taking or giving the difference, so leaf area stays as read to round-off and  !
+   ! a trial that changes a trait changes the leaf physiology and not the LAI -- and a restart   !
+   ! whose PFT file gives the traits it already has changes nothing. A lower SLA asks storage    !
+   ! for more leaf carbon than it may hold: the leaves then take only what storage has, and the  !
+   ! leaf area falls short by the rest, so no carbon is made.                                    !
    !---------------------------------------------------------------------------------------!
    subroutine reacclimate_plant_traits(site, cfg)
       type(site_t),        intent(inout) :: site
@@ -1180,8 +1182,9 @@ contains
             cohort%llspan(j)  = llspan_t
             if (cohort%sla(j) == sla_old) cycle
             leaf_carbon_new = cohort%leaf_carbon(j) * sla_old / max(cohort%sla(j), tiny_num)
-            cohort%nonstructural_carbon(j) = max(0.0_wp, cohort%nonstructural_carbon(j)              &
-                                                         + cohort%leaf_carbon(j) - leaf_carbon_new)
+            leaf_carbon_new = min(leaf_carbon_new, cohort%leaf_carbon(j) + cohort%nonstructural_carbon(j))
+            cohort%nonstructural_carbon(j) = cohort%nonstructural_carbon(j) + cohort%leaf_carbon(j)        &
+                                             - leaf_carbon_new
             cohort%leaf_carbon(j) = leaf_carbon_new
             call set_cohort_size_from_carbon(cohort, j)
          end do

@@ -243,7 +243,7 @@ you refine; a *bookkeeping* difference is a conservation defect.
 | soil water | the water network's, moved at its steady rate outside the tableau | the network's, at the same rate inside the tableau | unified — both commit the network's θ |
 | canopy-air condensation sink | per-stage rate | per-stage rate | unified |
 | adaptive error norm | one norm over the whole column state | same | unified |
-| stability clamps | extrapolation base only | every stage input | numerics |
+| stability clamps | extrapolation base only (canopy air) | every stage input (canopy air) | numerics |
 
 **There are no *physics* rows.** The two schemes solve the same equations; what remains is one
 numerics row (where clamps apply).

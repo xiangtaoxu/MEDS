@@ -164,13 +164,15 @@ energy balance.
 u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\zeta_0)\big] \qquad(7)
 ```
 
-floored at `ugbmin`. From the top cohort down, the wind attenuates through each crown by ED2's
-per-cohort **crown-area extinction** (crown area $c_a$ bounds the exposure): the wind at a cohort's
-mid-crown (also floored at `ugbmin`) and the value handed to the cohort below are
+floored at `ugbmin`. From the top cohort down, the wind attenuates through each cohort's crowns by
+ED2's per-cohort extinction, here with **closed crowns**: every cohort's crowns cover its patch (crown
+area 1, as in the two-stream radiation, `canopy_radiation_transfer.md` §3), so the wind meets all of the
+cohort's leaf area. The wind at a cohort's mid-crown (also floored at `ugbmin`) and the value handed to
+the cohort below are
 
 ```math
-u_{ico} = u_h\big[c_a\,e^{-0.25\,\mathrm{LAI}/c_a} + (1-c_a)\big], \qquad
-u_h \leftarrow u_h\big[c_a\,e^{-0.50\,\mathrm{LAI}/c_a} + (1-c_a)\big] \qquad(8)
+u_{ico} = u_h\,e^{-0.25\,\mathrm{LAI}}, \qquad
+u_h \leftarrow u_h\,e^{-0.50\,\mathrm{LAI}} \qquad(8)
 ```
 
 so the cascade walks **top → bottom**. The kernel's cohort arrays run bottom → top (the radiation
@@ -244,7 +246,7 @@ forms the molar $`g_{b,mol}=g_{bw}\,\rho_{mol}`$, with $`\rho_{mol}=p/(R\,T_{lea
 | Monin-Obukhov solve ($`u_*`$, temp1, $\zeta$) | `mo_surface_layer` |
 | profile denominators $D_m, D_h$ | `d_mom`, `d_heat` |
 | stability functions $`\Psi_m,\Psi_h`$ | `stabfunc1`, `stabfunc2`, `psim` |
-| canopy-top / in-canopy wind | `reduced_wind` + crown-area extinction (inline) |
+| canopy-top / in-canopy wind | `reduced_wind` + closed-crown extinction (inline) |
 | leaf/wood Nusselt boundary layer | `boundary_gbh_mos` |
 | atm↔CAS conductances, eq. (5) | `cas_atm_conductances` |
 | per-stage re-solve of eq. (5) | `meds_fast_time_derivs`: `refresh_cas_conductances` |

@@ -96,8 +96,8 @@ contains
    !  ENVIRONMENTAL SCALAR xi = temperature x moisture x oxygen, per pool. Grnd pools (1,3) use   !
    !  the SURFACE temperature (ED2 A_decomp); below pools (2,4,5,6,7) the ACTIVE-layer temperature  !
    !  (B_decomp). Structural pools (3,4) additionally carry the lignin brake L = exp(-e_lignin*      !
-   !  f_lignin) and (N on) the immobilization brake f_decomp. Temperature form: scheme 5 = Collatz       !
-   !  Q10 (UNCAPPED; xi can exceed 1), else ED2 scheme-0 capped exp min(1, exp(a*(T-T_sat))).            !
+   !  f_lignin). Temperature form: scheme 5 = Collatz Q10 (UNCAPPED; xi can exceed 1), else ED2         !
+   !  scheme-0 capped exp min(1, exp(a*(T-T_sat))).                                                      !
    !  Moisture is the one-sided exponential about resp_opt_water (dry side) / anoxia (wet side).         !
    !  The fast loop's sub-daily Rh calls this same routine, so xi and the fast Rh reconcile at           !
    !  matched inputs. Invariant: xi > 0 (scheme-0 additionally <= 1). For spin-up, evaluate at           !
@@ -107,10 +107,10 @@ contains
                                        theta_sat, pools, opts, xi)
       real(wp),            intent(in)  :: soil_temp_surf, soil_temp_active     !< [K]
       real(wp),            intent(in)  :: theta_active, theta_dry, theta_sat   !< [m3/m3]
-      type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin (and N f_decomp)
+      type(soil_carbon_t), intent(in)  :: pools                               !< for f_lignin
       type(decomp_opts_t), intent(in)  :: opts
       real(wp),            intent(out) :: xi(n_soil_pool)                     !< [-] diagonal scalar, > 0
-      real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s, f_decomp
+      real(wp) :: f_temp_surf, f_temp_active, f_water, rel, f_lig_g, f_lig_s, brake_g, brake_s
 
       f_temp_surf   = decomp_temperature_factor(soil_temp_surf,   opts)
       f_temp_active = decomp_temperature_factor(soil_temp_active, opts)
@@ -121,12 +121,11 @@ contains
       f_lig_s = lignin_fraction(pools%struct_soil_lignin, pools%struct_soil_carbon)
       brake_g = exp(-opts%e_lignin * f_lig_g)
       brake_s = exp(-opts%e_lignin * f_lig_s)
-      f_decomp = 1.0_wp                                    ! nitrogen is not implemented (see docs/ROADMAP.md)
 
       xi(IP_FAST_GRND)   = f_temp_surf   * f_water
       xi(IP_FAST_SOIL)   = f_temp_active * f_water
-      xi(IP_STRUCT_GRND) = f_temp_surf   * f_water * brake_g * f_decomp
-      xi(IP_STRUCT_SOIL) = f_temp_active * f_water * brake_s * f_decomp
+      xi(IP_STRUCT_GRND) = f_temp_surf   * f_water * brake_g
+      xi(IP_STRUCT_SOIL) = f_temp_active * f_water * brake_s
       xi(IP_MICR)        = f_temp_active * f_water
       xi(IP_SLOW)        = f_temp_active * f_water
       xi(IP_PASSIVE)     = f_temp_active * f_water
@@ -406,9 +405,9 @@ contains
       real(wp)    :: x_ss(n_soil_pool)
       !----- opts is not read: the active set {K_j>0} is derived inside steady_state_vector,           !
       !      which already encodes the scheme via k_micr/k_pass = 0. It stays in the interface for     !
-      !      an iterated scheme-5/nitrogen steady state (see docs/ROADMAP.md). ------------------------!
+      !      an iterated scheme-5 steady state. --------------------------------------------------------!
       call steady_state_vector(a_mat, k_diag, xi_bar, u_bar, x_ss)
-      pools_ss = soil_carbon_t()                       ! zero all (inert pools + lignin + N stay 0)
+      pools_ss = soil_carbon_t()                       ! zero all (inert pools + lignin stay 0)
       call unpack_pool_vector(x_ss, pools_ss)
    end subroutine solve_soil_carbon_steady_state
 

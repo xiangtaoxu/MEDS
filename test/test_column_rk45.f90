@@ -162,10 +162,10 @@ program test_column_rk45
    !       Ithaca run's first recruitment event) guards two RK45-only failure modes a mature-canopy          !
    !       cohort (LAI=3/WAI=0.5, tests A-F above) never exercises: (1) leaf/wood_temp overflowing           !
    !       through a near-zero veg_energy_balance denominator, which the coupling floor prevents             !
-   !       (docs/science/vegetation_energy_dynamics.md eq. (1)), and (2) soil theta/soil_energy              !
-   !       leaving their physical domain within a single explicit stage for a near-bare patch, which         !
-   !       crashes ground_evaporation_rate's fractional power, which clamp_cas/clamp_soil_energy in          !
-   !       every RK45 stage prevent (meds_fast_rk45.f90). A mature canopy, whose                             !
+   !       (docs/science/vegetation_energy_dynamics.md eq. (1)), and (2) the canopy air or the soil          !
+   !       leaving its physical domain within a single explicit stage for a near-bare patch, which the       !
+   !       RK45 stage clamp on the canopy air and the frozen ground evaporation keep evaluable               !
+   !       (meds_fast_rk45.f90). A mature canopy, whose                                                      !
    !       coupling/heat-capacity terms sit far above the floor and whose surface<->soil coupling is far     !
    !       from stiff, trips neither -- this test is the ONLY one in the suite with a cohort that small.     !
    call test_rk45_tiny_cohort()

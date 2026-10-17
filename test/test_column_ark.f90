@@ -203,7 +203,6 @@ program test_column_ark
    !=== H. LEAF/ROOT-TURNOVER SHED WATER: a constant shed_water_rate                                     !
    !       (distinct from rainfall) wets the soil and both whole_water/whole_energy still close. ========!
    call test_ark_shed_water()
-   call test_rk45_shed_water()
    call test_ark_saturated()
    call test_ark_aquifer()
    call test_wood_prognostic(INTEG_ARK, 'ARK ')
@@ -419,31 +418,6 @@ contains
       call check_true('ARK shed water: whole-column ENERGY still closes (no separate energy wiring needed)',          &
               budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
    end subroutine test_ark_shed_water
-
-   !----- SAME shed-water check as test_ark_shed_water, on RK45. Both schemes take the shed water    !
-   !      through the one build_column_frozen, so this pins RK45's side of the same wiring. ---------!
-   subroutine test_rk45_shed_water()
-      integer(ik) :: istep
-      real(wp)    :: theta_dry, theta_col1
-      call reset_state()
-      cfg%time_integrator = INTEG_RK45
-      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
-      call march_dry_day(theta_dry)                       ! the same day without the shed water
-      call reset_state()
-      biophys%shed_water_rate = 8.0e-5_wp                     ! frozen for the whole day (rainfall stays 0)
-      do istep = 1_ik, 24_ik * steps_per_hour
-         call set_diurnal_forcing(istep)
-         call column_fast_step(dt_fast, cfg, col_config, aenv, ageom, col_cohort, forc, biophys, aero, budget, ws, gpp_coh=gpp_coh)
-      end do
-      theta_col1 = sum(biophys%soil_w%theta(1:nsl))
-      biophys%shed_water_rate = 0.0_wp   ! restore default for any test added after this
-      call check_true('rk45 shed water: leaf/root shed water alone wetted the soil column (wetter than without it)', &
-              theta_col1 > theta_dry, theta_col1 - theta_dry)
-      call check_true('rk45 shed water: whole-column WATER still closes with shed_water_rate active',                 &
-              budget%whole_water%n_fail == 0_ik, real(budget%whole_water%n_fail, wp))
-      call check_true('rk45 shed water: whole-column ENERGY still closes (no separate energy wiring needed)',         &
-              budget%whole_energy%n_fail == 0_ik, real(budget%whole_energy%n_fail, wp))
-   end subroutine test_rk45_shed_water
 
 
    !----- SATURATED column: the ARK twin of test_column_dynamics RUN 7. A column seeded just below       !

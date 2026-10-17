@@ -52,7 +52,7 @@ program test_column_energy
    call test_ice_conductivity()
    call test_freeze_plateau()
    call test_thaw_plateau()
-   call test_mass_correction_neutrality()
+   call test_mass_change_neutrality()
    call test_soil_annual_damping()
 
    call test_report('test_column_energy')
@@ -443,11 +443,12 @@ contains
    !  differences are physical. Moving the matching enthalpy with the mass, at the layer's !
    !  OWN temperature, must leave the temperature exactly where it was.                    !
    !                                                                                       !
-   !  Both branches are asserted: uncompensated must MOVE the temperature (so the test     !
-   !  fails if the datum is ever rebased to make u_liq ~ 0), compensated must not. --------!
-   subroutine test_mass_correction_neutrality()
+   !  Both branches are asserted: water moved without its enthalpy must MOVE the          !
+   !  temperature (so the test fails if the datum is ever rebased to make u_liq ~ 0), and  !
+   !  water moved with it must not. --------------------------------------------------------!
+   subroutine test_mass_change_neutrality()
       real(wp) :: dry_hcap, wmass0, wmass1, dw, temp0, temp_raw, temp_fix, fliq0, fliq, uext0, u_liq
-      print '(a)', 'test_mass_correction_neutrality:'
+      print '(a)', 'test_mass_change_neutrality:'
       dry_hcap = 1.3e6_wp                                   ! [J/m3/K] typical dry-soil volumetric capacity
       temp0    = 291.0_wp
       wmass0   = 0.40_wp * rho_h2o                          ! [kg/m3] theta = 0.40 in the layer
@@ -460,22 +461,24 @@ contains
 
       !----- (a) mass removed, energy untouched: the layer's temperature jumps. -------------------!
       call internal_energy_to_temp(uext0, wmass1, dry_hcap, temp_raw, fliq)
-      call check_true('uncompensated clip visibly moves soil temperature',                        &
+      call check_true('water removed without its enthalpy visibly moves soil temperature',       &
                       abs(temp_raw - temp0) > 1.0_wp, temp_raw - temp0)
 
       !----- (b) mass AND its enthalpy removed at the layer's own temperature: T is unchanged. ----!
       !      internal_energy_liquid is what the model values every liquid-water flow with. -------!
       u_liq = internal_energy_liquid(temp0)                      ! [J/kg] ~1.0e6, NOT ~0 -- that is the point
       call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
-      call check('compensated clip leaves soil temperature exactly unchanged', temp_fix, temp0,   &
+      call check('water removed with its enthalpy leaves soil temperature unchanged', temp_fix, temp0, &
                  1.0e-9_wp)
-      call check_true('compensated clip leaves the layer all-liquid', abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
+      call check_true('water removed with its enthalpy leaves the layer all-liquid',                &
+                      abs(fliq - 1.0_wp) < 1.0e-12_wp, fliq)
 
       !----- Same for the OPPOSITE sign (water added to the layer). ------------------------------!
       dw     = 10.0_wp
       wmass1 = wmass0 + dw
       call internal_energy_to_temp(uext0 + dw * u_liq, wmass1, dry_hcap, temp_fix, fliq)
-      call check('compensated floor add is temperature-neutral too', temp_fix, temp0, 1.0e-9_wp)
-   end subroutine test_mass_correction_neutrality
+      call check('water added with its enthalpy leaves soil temperature unchanged', temp_fix, temp0, &
+                 1.0e-9_wp)
+   end subroutine test_mass_change_neutrality
 
 end program test_column_energy

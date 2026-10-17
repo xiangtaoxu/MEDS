@@ -21,6 +21,7 @@
 !==========================================================================================!
 module meds_fast_types
    use meds_kinds, only : wp, ik
+   use meds_constants, only : t_3ple
    use meds_plant_types, only : hydro_params_table_t
    use meds_plant_types, only : veg_thermal_params_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t
@@ -183,7 +184,7 @@ module meds_fast_types
    type :: column_cohort_t
       integer(ik)              :: n = 0_ik
       integer(ik), allocatable :: pft(:)                       !< PFT index (into cfg%pft)
-      real(wp),    allocatable :: lai(:), wai(:), height(:), crown(:)
+      real(wp),    allocatable :: lai(:), wai(:), height(:)
       real(wp),    allocatable :: leaf_width(:), branch_diam(:)
       real(wp),    allocatable :: aboveground_frac(:)          !< [--] gathered per-PFT (stem respiration)
       logical,     allocatable :: is_woody(:)                   !< gathered per-PFT (stem respiration off for grass)
@@ -293,10 +294,10 @@ module meds_fast_types
       !      30-yr run); a persistently high value flags a genuinely stiff regime RK45 is degrading    !
       !      to ARK for. ------------------------------------------------------------------------------!
       integer(ik)    :: rk45_rescue  = 0_ik   !< dt_fast steps rescued RK45->ARK this sub-step (0 on ARK)
-      !----- STAGE-clamp activations: how many layers/stores clamp_cas and clamp_soil_energy bounded in a !
-      !      throwaway stage input so the RHS stays evaluable. Harmless in itself; a rising count means   !
-      !      "this dt is too big", and the step is normally rejected. Nothing clamps the COMMITTED state  !
-      !      on either scheme. ---------------------------------------------------------------------------!
+      !----- STAGE-clamp activations: how many times clamp_cas changed a throwaway stage input's canopy !
+      !      air so the RHS stays evaluable. Harmless in itself; a rising count means "this dt is too   !
+      !      big", and the step is normally rejected. Nothing clamps the COMMITTED state on either      !
+      !      scheme. -------------------------------------------------------------------------------------!
       integer(ik)    :: clamp_stage_n  = 0_ik   !< stage-input clamp activations (layers/stores clamped)
       !----- CONSTITUTIVE-DOMAIN excursion of theta, max over the sub-steps of one dt_fast, in m3/m3. !
       !      Complements clamp_stage_n rather than duplicating it, in two ways: it is a MAGNITUDE     !
@@ -485,7 +486,6 @@ module meds_fast_types
       real(wp) :: h_ground       = 0.0_wp     !< [W/m2]     ground sensible flux to the CAS
       real(wp) :: le_ground      = 0.0_wp     !< [W/m2]     ground latent flux to the CAS
       real(wp) :: coh_rnet       = 0.0_wp     !< [W/m2]     net radiation absorbed by the canopy
-      real(wp) :: coh_transp     = 0.0_wp     !< [kg/m2/s]  total realized transpiration
       real(wp) :: cond           = 0.0_wp     !< [kg/m2/s]  smooth condensation sink (dew) draining CAS supersat
       real(wp) :: cond_enth      = 0.0_wp
       !< [W/m2]     the liquid enthalpy that sink debited from the CAS (one number, both sides)
@@ -611,7 +611,7 @@ module meds_fast_types
       !      The caller hands this to the hydrology kernel as chydro_forcing_t%t_pond_inflow so the pond      !
       !      receives exactly melt_enth when it receives melt_rate*dt of mass -- one number, both        !
       !      sides. Falls back to t_3ple when there is no melt mass to value. ------------------------!
-      real(wp) :: t_melt     = 0.0_wp    !< [K] effective temperature of the meltwater
+      real(wp) :: t_melt     = t_3ple    !< [K] effective temperature of the meltwater
    end type snow_stage_t
 
    !----- THE CONTAINER: everything held constant over one dt_fast, by physical content. -----------!
@@ -800,7 +800,7 @@ contains
       type(column_cohort_t), intent(out) :: col_cohort
       integer(ik),           intent(in)  :: n
       col_cohort%n = n
-      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n), col_cohort%crown(n),                &
+      allocate(col_cohort%pft(n), col_cohort%lai(n), col_cohort%wai(n), col_cohort%height(n),                                     &
                col_cohort%leaf_width(n), col_cohort%branch_diam(n), col_cohort%aboveground_frac(n),                   &
                col_cohort%is_woody(n), col_cohort%stem_resp_factor25(n), col_cohort%root_resp_factor25(n),            &
                col_cohort%stem_resp_sapwood25(n), col_cohort%sap_volume(n),                                         &
@@ -808,7 +808,7 @@ contains
                col_cohort%dbh(n), col_cohort%broot(n), col_cohort%bleaf(n), col_cohort%bsap(n), col_cohort%sap_area(n),           &
                col_cohort%bwood(n), col_cohort%vcmax25(n), col_cohort%rd25(n), col_cohort%dmax_psi_leaf(n))
       col_cohort%pft = 1_ik
-      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp ; col_cohort%crown = 1.0_wp
+      col_cohort%lai = 0.0_wp ; col_cohort%wai = 0.0_wp ; col_cohort%height = 0.0_wp
       col_cohort%leaf_width = 0.04_wp ; col_cohort%branch_diam = 0.02_wp ; col_cohort%aboveground_frac = 0.7_wp
       col_cohort%is_woody = .true.
       col_cohort%stem_resp_factor25 = 0.0_wp ; col_cohort%root_resp_factor25 = 0.0_wp

@@ -80,7 +80,6 @@ sapwood_area_b2        = [1.764, 1.764, 1.764]      # [--]        ED2 b2SA, trop
 #      (docs/science/canopy_aerodynamics.md §4).
 leaf_width         = [0.04, 0.04, 0.04]     # [m]  characteristic leaf width
 branch_diameter    = [0.02, 0.02, 0.02]     # [m]  characteristic branch diameter
-crown_area_frac    = [1.0, 1.0, 1.0]      # [--] crown area as a fraction of the patch
 root_to_leaf_ratio     = [1.0, 1.0, 1.0]            # [--] fine-root:leaf target ratio (ED2 q)
 huber_value            = [1.0e-4, 1.5e-4, 2.0e-4]   # [m2 sap/m2 leaf] sapwood-area:leaf-area (sapwood + hydraulics)
 aboveground_frac       = [0.7, 0.7, 0.7]            # [--] aboveground fraction of woody carbon (ED2 agf_bs)
@@ -171,13 +170,11 @@ mort_beta_exp  = 0.2792     # growth-sensitivity exponent
 [allometry]
 # Pan-tropical (ED2 iallom==3) size allometry. height = exp(b1Ht + b2Ht*ln dbh) capped at the
 # per-PFT [pft].hgt_max; agb = agb_c1 * rho^agb_c2 * (dbh^2*h)^agb_c2; leaf_area = lai_b1 * (dbh^2*h)^lai_b2;
-# crown area = ca_b1 * (dbh^2*h)^ca_b2; light = exp(-light_ext * overtopping_LAI).
+# the light a cohort gets is exp(-light_ext * overtopping_LAI).
 b1Ht       = 1.139963
 b2Ht       = 0.564899
 agb_c1     = 0.03365        # [kgC] AGB scale: Chave et al. (2014) eq. 4, 0.0673 / C2B (dry mass to carbon)
 agb_c2     = 0.976          # AGB exponent on rho and on dbh^2*h: Chave et al. (2014) eq. 4
-ca_b1      = 0.370          # crown-area scale
-ca_b2      = 0.464          # crown-area exponent
 lai_b1     = 0.23384770     # per-stem leaf-area scale: ED2 c14f15_bl_xx / C2B (= ED2 SLA*bleaf)
 lai_b2     = 0.6410495      # per-stem leaf-area exponent
 light_ext  = 0.5            # Beer-Lambert extinction through overtopping LAI

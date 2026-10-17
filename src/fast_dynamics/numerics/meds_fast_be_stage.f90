@@ -26,7 +26,7 @@ module meds_fast_be_stage
    use meds_fast_time_derivs, only : surface_derivs, cas_conductances
    use meds_cas_biophysics, only : cas_column_step_implicit, cas_column_t, cas_source_t
    use meds_column_state_ops, only : state_init, state_sub, bflux_zero, bflux_add, bflux_bweight, clamp_cas, &
-                                     clamp_soil_energy, soil_water_store, soil_energy_store, plant_water_store, &
+                                     soil_water_store, soil_energy_store, plant_water_store,                    &
                                      canopy_film_store, deposit_condensate, clamp_canopy_film, unpack_column_state, &
                                      diagnose_soil_temps, assemble_soil_energy_forcing, apply_process_mask
    use meds_fast_types, only : column_config_t, column_budget_t, alloc_column_cohort, column_state_t, &
