@@ -229,6 +229,8 @@ before and after.
 - **The root `meds_output_pft_parameters.csv` is deleted** (#430): a run's PFT table from July,
   read by nothing. `.gitignore` now ignores `*_pft_parameters.csv`, the table every run that writes
   its state leaves beside the state files.
+- **Counts corrected** (#430): `CLAUDE.md`'s suite is 72 tests (73 with the Python library), not 53;
+  `README.md`'s output registry holds 284 variables, not 252.
 
 ## [0.3.4] — 2026-10-13
 
