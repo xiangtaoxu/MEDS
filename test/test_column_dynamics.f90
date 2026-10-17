@@ -41,8 +41,13 @@ program test_column_dynamics
    implicit none
    real(wp) :: test_bottoms(n_soil_layer_max)   ! the geometric layers these checks were written on
 
-   integer(ik), parameter :: n = 1_ik, nsl = 10_ik, nstep = 576_ik    ! 96 x 900 s = 24 h
+   integer(ik), parameter :: n = 1_ik, nsl = 10_ik
    real(wp),    parameter :: dt_fast = 150.0_wp, lat = 40.0_wp, t0 = 288.0_wp, theta0 = 0.30_wp
+   !----- Durations and times of day are written in hours and turned into steps here, so a change of  !
+   !      dt_fast keeps what each test covers: the march puts step i at (i - 1/2)*dt_fast after       !
+   !      midnight, and the sun follows the clock. ---------------------------------------------------!
+   integer(ik), parameter :: steps_per_hour = nint(3600.0_wp / dt_fast, ik)
+   integer(ik), parameter :: nstep = 24_ik * steps_per_hour      ! one day
    !----- Seed moisture + rain-pulse rate, VARIABLES so RUN 7 can drive the column to saturation.  !
    !      Initialized to the values RUNS 1-6 run on. ----------------------------------------------!
    real(wp) :: theta_seed = theta0, rain_pulse = 1.5e-4_wp
@@ -246,7 +251,7 @@ program test_column_dynamics
 
    !=====================================================================================!
    !  RUN 6 -- opt-in CANOPY-SURFACE WATER: reruns the SAME diurnal-cycle-plus-morning-rain-  !
-   !           pulse forcing (RUN 1's day, rain over istep 72-168) with                       !
+   !           pulse forcing (RUN 1's day, rain over 03:00-07:00) with                        !
    !           col_config%canopy_water_on = .true. whole_water must close exactly and the     !
    !           canopy must actually have intercepted some of the rain (surf_water_peak > 0),  !
    !           proving the WIRING (interception->film->CAS->ledgers) rather than a silent     !
@@ -581,7 +586,8 @@ contains
          forc%abs_sw_ground = 75.0_wp * cosz
          forc%abs_lw_ground = 0.0_wp
          forc%rainfall   = 0.0_wp
-         if (istep >= 72_ik .and. istep <= 168_ik) forc%rainfall = rain_pulse    ! morning rain pulse
+         if (istep >= 3_ik * steps_per_hour .and. istep <= 7_ik * steps_per_hour) &
+            forc%rainfall = rain_pulse                   ! morning rain pulse, 03:00-07:00
          if (rain_rate > 0.0_wp) forc%rainfall = rain_rate                        ! RUN 9b: all-day rain
          !----- RUNS 8-9b: steady light snowfall (tests the accumulate path and the pack's          !
          !      rainfall-enthalpy boundary term). 0 for every other run. ---------------------------!
@@ -625,7 +631,7 @@ contains
                                .and. biophys%soil_e%soil_temp(k) < 340.0_wp
             end do
          end if
-         if (istep == 324_ik) then
+         if (istep == 13_ik * steps_per_hour + steps_per_hour / 2_ik) then     ! 13:30
             ct_noon = biophys%cas%can_temp ; tleaf_noon = biophys%leaf_temp(1) ; co2_noon = biophys%cas%can_co2
             ustar_noon = aero%ustar ; dtheta_noon = biophys%cas%can_temp - aenv%theta_atm
             gpp_noon = budget%gpp_last ; nee_noon = budget%nee_last
@@ -634,7 +640,7 @@ contains
             psileaf_noon = psi_from_water_content(biophys%leaf_water_mass(1), col_config%hydraulics_table%pft(1)%leaf_curve, &
                   col_cohort%bleaf(1))
          end if
-         if (istep == 12_ik) then
+         if (istep == steps_per_hour / 2_ik) then                             ! 00:30
             ct_night = biophys%cas%can_temp ; tleaf_night = biophys%leaf_temp(1) ; co2_night = biophys%cas%can_co2
             psileaf_night = psi_from_water_content(biophys%leaf_water_mass(1), &
                   col_config%hydraulics_table%pft(1)%leaf_curve, col_cohort%bleaf(1))

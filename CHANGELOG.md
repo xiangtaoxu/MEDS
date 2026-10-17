@@ -164,6 +164,16 @@ before and after.
   window with a fusion; the model state is unchanged. `test_diagnostic_reduce` checks each fusion
   weight on its own, and `test_fusion_cohort` that the diagnostic and prognostic temperatures agree
   after a merge.
+- **The column tests march the hours they were written for** (#409). `test_column_rk45`,
+  `test_column_ark` and `test_column_dynamics` counted durations in steps, and when the suite moved
+  from `dt_fast` = 900 s to 150 s only the one-day loops were rescaled. Five tests written as 12 h
+  (bedrock and aquifer on both schemes, the tiny cohort, the dry uptake seam) ran 00:00–02:00 in the
+  dark, the drydown ran 8 h instead of 48 h, the dry-window march 1 h instead of 6 h, and the
+  canopy-water rain pulse fell at 00:47–01:00 with a sixth of its water. Durations and times of day
+  are now written in hours (`steps_per_hour`), so a `dt_fast` change keeps what each test covers.
+  With the intended hours the tiny cohort sees the sun (GPP 0 → 0.030, its leaf at most 0.45 K above
+  the canopy air), the drydown takes θ to 0.0786 against θ_res 0.078 (0.0839 before), and the rain
+  pulse's peak intercepted water is 0.046 kg m⁻² (0.017 before); the suite takes about a second longer.
 
 ### Documentation
 
@@ -205,7 +215,7 @@ before and after.
   documentation rule 1 now says so.
 - **`docs/ROADMAP.md` lists every open issue.** It lacked #342, #343, #349, #350, #369, #377, #379,
   #381, #393, #394, #395 and #407; the gaps the science pages name that had no issue are filed as
-  #410–#415 (ROADMAP §12).
+  #410–#415, and the defects and residues the review found but did not fix as #416–#425.
 
 ## [0.3.4] — 2026-10-13
 
