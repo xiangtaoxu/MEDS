@@ -29,7 +29,6 @@ module meds_fast_dynamics
    use meds_therm_lib,           only : cas_enthalpy_of_temp, temp_to_internal_energy, specific_humidity_to_vpd
    use meds_fast_config, only : build_leaf_photo_table, build_integrator_opts, build_rad_optics
    use meds_column_view, only : copy_column_cohort
-   use meds_fast_reconcile,  only : reconcile_tissue_water_capacity
    use meds_time,             only : meds_time_t, time_advance_seconds, time_to_string
    use meds_output_types,     only : output_buffers_t
    use meds_site_diag_types,  only : N_CDIAG, N_PDIAG, patch_diag_block, polygon_diag_block,     &
@@ -409,12 +408,6 @@ contains
          if (do_cdiag) out_bufs%fast_coh_cdiag = 0.0_wp
       end if
 
-      !----- Reconcile stored tissue water against the capacity today's biomass allows, BEFORE    !
-      !      anything reads it. It WRITES, so it runs once per call, outside every loop: inside   !
-      !      the integrator's inner loop that mass edit would be unbooked, and the whole-column   !
-      !      ledger could not see it. ------------------------------------------------------------!
-      call reconcile_tissue_water_capacity(site, ctx%col_config%hydraulics_table)
-
       ncoh_max = 0_ik
       do ip = 1_ik, npatch
          ncoh_max = max(ncoh_max, site%patch%cohort_count(ip))
@@ -544,12 +537,10 @@ contains
             i = i0 + j - 1_ik
             biophys%leaf_temp(j) = site%cohort%leaf_temp(i)
             biophys%wood_temp(j) = site%cohort%wood_temp(i)
-            !----- Tissue water is READ here, never written. The PSI_INIT seed and the capacity     !
-            !      clamp are a slow-loop concern -- capacity is a function of leaf/sapwood/root     !
-            !      carbon, which only the slow loop changes -- and both WRITE, so they are          !
-            !      `reconcile_tissue_water_capacity`, run once per call before the patch loop.      !
-            !      Capacity is constant across a slow step, so the clamp is idempotent and the seed !
-            !      fires at most once. -------------------------------------------------------------!
+            !----- Tissue water is READ here, never written. Fitting it to the capacity the biomass  !
+            !      allows is the slow tier's: a cohort is born with its water, new leaves take theirs   !
+            !      from the wood, and water above the capacity is shed before the fast loop runs       !
+            !      (docs/science/soil_plant_water.md §2), all booked by the slow ledger. ---------------!
             biophys%leaf_water_mass(j) = site%cohort%leaf_water_mass(i)
             biophys%wood_water_mass(j) = site%cohort%wood_water_mass(i)
             !----- Surface (interception film) water needs no lazy-init seed: 0 (bone dry) is a real  !

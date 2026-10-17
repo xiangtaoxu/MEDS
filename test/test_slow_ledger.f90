@@ -27,7 +27,7 @@ program test_slow_ledger
    use meds_column_state_types, only : cas_set_depth
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
-   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
+   use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity, set_cohort_size_from_carbon, &
                                        TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
@@ -35,7 +35,12 @@ program test_slow_ledger
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
-                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
+                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW, &
+                                       SLOW_PHASE_ALLOCATE, SLOW_PHASE_RECRUIT, SLOW_PHASE_TISSUE_WATER
+   use meds_slow_dynamics,      only : settle_tissue_water
+   use meds_config,             only : pft_tissue_curves
+   use meds_water_retention,    only : water_curve_t, psi_from_water_content
+   use meds_column_params,      only : PSI_INIT
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
@@ -171,9 +176,96 @@ program test_slow_ledger
    !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
    call check_recruit_pool()
 
+   !=== 11. Tissue water is booked when it is made, shed or moved: a recruit's birth water, a    !
+   !        canopy's snap to bare, and water above a store's capacity. ======================!
+   call check_tissue_water_ledger()
+
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
 contains
+
+   !----- Every water amount a slow step moves into or out of the tissue is declared, so the       !
+   !       ledger's water residual is zero across each: (a) a recruitment, whose recruits are born   !
+   !       holding their water at PSI_INIT, drawn from outside like their carbon; (b) a canopy that  !
+   !       snaps to bare, whose leaf water goes to the ground with the leaves; (c) a store left      !
+   !       above its capacity, whose excess the settle before the fast loop sheds to the ground.     !
+   subroutine check_tissue_water_ledger()
+      type(meds_config_t) :: c
+      type(site_t)        :: st
+      type(slow_ledger_t) :: lg
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp) :: shed0, excess, n_new, tol
+      integer(ik) :: p, ph(3)
+
+      c = build_test_config()
+      tol = 1.0e-12_wp
+
+      !----- (a) A recruitment: water in, declared, and the recruit's leaves at PSI_INIT. ----------!
+      call init_bare_ground(st, c, 1_ik)
+      st%patch%recruit_pool(:, 1) = 0.0_wp
+      st%patch%recruit_pool(2, 1) = 5.0_wp * c%min_recruit_size
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call restructure_stand(st, c, .true., .false., lg)
+      call check(st%cohort%n == 1_ik, 'tissue water (a): one recruit is born')
+      call check(lg%decl_gross(SLOW_PHASE_RECRUIT)%water > 0.0_wp,                                 &
+                 'tissue water (a): the recruit''s birth water is declared as drawn in')
+      call check(abs(lg%resid_sum(SLOW_PHASE_RECRUIT)%water) <= tol * lg%decl_gross(SLOW_PHASE_RECRUIT)%water, &
+                 'tissue water (a): the recruit phase''s water residual is zero')
+      call pft_tissue_curves(c%hydraulics, c%pft, 2_ik, leaf_curve, wood_curve)
+      call check_close(psi_from_water_content(st%cohort%leaf_water_mass(1), leaf_curve,            &
+                       st%cohort%leaf_carbon(1)), PSI_INIT, 1.0e-9_wp,                             &
+                       'tissue water (a): a recruit''s leaves are born at PSI_INIT')
+
+      !----- (b) A dormant canopy sheds every leaf in one step, its water with it. ------------------!
+      c%fast_biophysics_on = .true.
+      c%demography_on      = .false.
+      c%pft%pheno_shed_rate_max(:) = 1.0_wp          ! [1/day]: the whole canopy in one day
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      st%cohort%leaf_flush_tendency(1) = 0.0_wp
+      st%cohort%leaf_shed_tendency(1)  = 1.0_wp
+      st%cohort%gpp_accum(1)       = 0.0_wp
+      st%cohort%leaf_resp_accum(1) = 0.0_wp
+      st%cohort%stem_resp_accum(1) = 0.0_wp
+      st%cohort%root_resp_accum(1) = 0.0_wp
+      lg = slow_ledger_t() ; lg%active = .true.
+      call slow_ledger_open(lg, st, c, RHO)
+      call vegetation_dynamics(st, c, ledger=lg)
+      call settle_tissue_water(st, c, lg)
+      call check(st%cohort%leaf_carbon(1) == 0.0_wp .and. st%cohort%leaf_water_mass(1) == 0.0_wp, &
+                 'tissue water (b): the canopy went bare, and its leaves hold no water')
+      ph = [SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_TISSUE_WATER]
+      do p = 1_ik, 3_ik
+         call check(abs(lg%resid_sum(ph(p))%water) <= tol * max(lg%decl_gross(ph(p))%water, 1.0_wp), &
+                    'tissue water (b): the snap to bare closes the water ledger, phase by phase')
+      end do
+      call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%water > 0.0_wp,                                &
+                 'tissue water (b): the shed leaves'' water is declared as leaving')
+
+      !----- (c) Leaf carbon taken without its water: the settle sheds the excess, declared. -----!
+      call init_bare_ground(st, c, 1_ik)
+      call add_cohort(st, c, 1_ik, 1_ik, 0.3_wp, 20.0_wp)
+      call finalize_init(st)
+      call pft_tissue_curves(c%hydraulics, c%pft, 1_ik, leaf_curve, wood_curve)
+      st%cohort%leaf_carbon(1) = 0.5_wp * st%cohort%leaf_carbon(1)
+      call set_cohort_size_from_carbon(st%cohort, 1_ik)
+      excess = st%cohort%leaf_water_mass(1) - leaf_curve%water_sat * st%cohort%leaf_carbon(1)
+      call check(excess > 0.0_wp, 'tissue water (c): the fixture leaves the leaves above their capacity')
+      shed0 = shed_total(st, c)
+      n_new = st%cohort%nplant(1)
+      lg = slow_ledger_t() ; lg%active = .true.            ! no window yet: the settle takes its reference
+      call settle_tissue_water(st, c, lg)
+      call check_close(lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%water, st%patch%area(1) * n_new * excess, &
+                       1.0e-12_wp, 'tissue water (c): the excess is declared as leaving')
+      call check_close(shed_total(st, c) - shed0, st%patch%area(1) * n_new * excess, 1.0e-12_wp,    &
+                       'tissue water (c): and it arrives in the patch shed channel')
+      call check(abs(lg%resid_sum(SLOW_PHASE_TISSUE_WATER)%water) <= tol * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%water, &
+                 'tissue water (c): the settle phase''s water residual is zero')
+      call check(abs(lg%resid_sum(SLOW_PHASE_TISSUE_WATER)%energy) <= 1.0e-12_wp                   &
+                 * lg%decl_gross(SLOW_PHASE_TISSUE_WATER)%energy, 'tissue water (c): and its energy residual')
+   end subroutine check_tissue_water_ledger
 
    !----- The recruit pool is credited EVERY step, and what it holds is the reproduction carbon   !
    !       the parents were debited for. Two assertions, one per half of the contract: the       !
@@ -564,11 +656,11 @@ contains
       integer(ik) :: m
       m = site%cohort%n + 1_ik
       site%patch%cas(1)%can_temp = 268.0_wp        ! a cold patch: LEAF_TEMP_INIT would be 20 K out
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, birth_temp=268.0_wp)
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics, birth_temp=268.0_wp)
       call check_close(site%cohort%leaf_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: leaf starts at the patch temperature')
       call check_close(site%cohort%wood_temp(m), 268.0_wp, 1.0e-12_wp, 'birth: wood starts at the patch temperature')
       !----- and the default is the constant, for a setup call with no environment yet. ----------!
-      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp)
+      call init_cohort(site%cohort, m, cfg%pft, 1_ik, 1_ik, 0.01_wp, 0.45_wp, cfg%hydraulics)
       call check(site%cohort%leaf_temp(m) > 280.0_wp, 'birth: absent a patch temperature, the constant stands')
    end subroutine check_birth_temp
 

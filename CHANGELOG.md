@@ -340,6 +340,34 @@ before and after.
   comparison run (the shipped short cases, a year of the Palo Verde inventory and 20 years of BCI's
   regeneration from its 1980 checkpoint). `test_carbon_growth` passes a rounded full shed and a 1 %
   storage overdraw through the driver and the applier.
+- **Tissue water is booked when it is made, moved or shed** (#395). `reconcile_tissue_water_capacity`
+  ran at the top of the fast loop, between the slow ledger's window and the fast loop's, and wrote
+  each cohort's tissue water outside both: it seeded a store at 0 (a new cohort's sentinel) to its
+  `PSI_INIT` content, creating water, and clamped a store above its capacity, deleting the excess. Its
+  own `seeded`/`discarded` outputs lacked the patch-area weight (they overstated by about the patch
+  count) and no caller read them. The routine is gone. A cohort is now born holding its tissue water
+  at `PSI_INIT` on its PFT's curves (`init_cohort` takes `[hydraulics]`; `pft_tissue_curves` is the
+  one rule for the curves, which `apply_hydraulics_config` and the turgor-loss point now use too), and
+  a recruit's water is declared as drawn in by the recruit phase, with its carbon and heat; a state
+  file without tissue water restarts on the same birth water. Before the fast loop,
+  `settle_tissue_water` sheds water above a store's capacity (`shed_excess_tissue_water`) to the
+  ground through `shed_water_rate`, area-weighted and declared in a slow-ledger phase of its own
+  (`tissue water`). Phase 2 measured both terms at under 10⁻⁵ of transpiration after the first day.
+  Results move in two places. At a census start the birth water is set before the traits acclimate,
+  and the settle sheds what the acclimation leaves above capacity; in a regenerating stand, a recruit
+  fused before its first fast step now brings its water instead of blending zero into the cohort it
+  joins, and a leaf store that had dried to exactly zero, which the seed refilled when it regrew, now
+  regrows empty until the re-flush entry below fills it. Over the shipped short cases: example 04's
+  window ET +0.0075 % on ARK (+0.55 % on RK45, whose adaptive step sequence follows round-off), Palo
+  Verde's July GPP +0.006 %. Over a year of the Palo Verde inventory: GPP +0.0004 %, density −1.5×10⁻⁶
+  relative, `psi_leaf_site` unchanged; the settle sheds 0.30 kg m⁻² in the year, almost all on the
+  first day. BCI's regeneration from bare ground (1600–1602) loses 0.13 % of GPP and 0.21 % of AGB
+  (monthly cohort count 67 → 66.6), which the re-flush entry restores to 10⁻⁵. Twenty years of BCI
+  from 1980: density, AGB and GPP within 10⁻⁶; the recruit phase declares 0.557 kg m⁻² of birth water
+  and the tissue-water phase 1.2×10⁻³ kg m⁻² shed, its water residual summing to 7.5×10⁻¹⁰ kg m⁻² over
+  7,305 marks; every phase closes. `test_slow_ledger` closes the water ledger across a recruitment, a
+  snap to bare and a settle; `test_pft_optics_config`, `test_fast_loop` and `test_disturbance` follow
+  the birth water.
 
 ### Documentation
 

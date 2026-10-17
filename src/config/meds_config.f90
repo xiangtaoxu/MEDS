@@ -17,7 +17,7 @@ module meds_config
                                whole_years_between
    use meds_temp_response, only : TRESP_ARRHENIUS, TRESP_PEAKED
    use meds_leaf_opts,     only : SM_LEUNING, SM_MEDLYN, SM_KATUL, COLIM_MIN, COLIM_QUADRATIC
-   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp
+   use meds_water_retention, only : SOIL_RETENTION_VG, SOIL_RETENTION_CAMPBELL, pv_psi_tlp, water_curve_t
    use meds_column_params, only : n_soil_layer_max, soil_params_t, soil_thermal_params_t,                &
                                   build_soil_hydr_params_layers, build_soil_therm_params_layers,         &
                                   SOIL_LAYER_TEMPLATE, soil_layer_grid
@@ -37,7 +37,7 @@ module meds_config
    public :: derive_config, derive_parameters
    public :: MAX_RECYCLE_YEARS
    public :: validate_config, growth_window_steps, soil_column_layers, soil_column_params
-   public :: pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
+   public :: pft_tissue_curves, pft_leaf_psi_tlp, pft_stomata_psi_onset, pft_wstress_psi_open, pft_wstress_psi_close
    public :: forcing_config_t, output_config_t
    public :: decomp_opts_t
    public :: region_opts_t, RUN_MODE_SITE, RUN_MODE_REGION
@@ -566,22 +566,48 @@ contains
       nw = max(1_ik, nint(cfg%growth_memory_days / (cfg%dt_years * yr_day), ik))
    end function growth_window_steps
 
-   !----- A PFT's leaf turgor-loss point [MPa], from its own pressure-volume traits: the [pft]       !
-   !      leaf_pi0 and leaf_elastic_mod where given, else the shared [hydraulics] ones. That is the   !
-   !      rule apply_hydraulics_config uses for the plant-water solver, so the stomatal closure and   !
-   !      the phenology's drought counter see the curve the solver stores leaf water on. ------------!
+   !----- A PFT's leaf and wood pressure-volume curves (docs/science/plant_hydraulics.md eqs.       !
+   !      (3)-(6)): each trait the [pft] table gives (HYD_UNSET: not given), else the shared           !
+   !      [hydraulics] one. The one rule for the curves: the plant-water solver's table               !
+   !      (apply_hydraulics_config), a cohort's water at birth and the slow step's tissue water all    !
+   !      read them from here, so no two can store water on different curves. -------------------------!
+   pure subroutine pft_tissue_curves(hydraulics, pft, ipft, leaf_curve, wood_curve)
+      type(hydraulics_config_t), intent(in)  :: hydraulics
+      type(pft_table_t),         intent(in)  :: pft
+      integer(ik),               intent(in)  :: ipft
+      type(water_curve_t),       intent(out) :: leaf_curve, wood_curve
+      leaf_curve = water_curve_t(pi0 = hydraulics%leaf_pi0, elastic_mod = hydraulics%leaf_elastic_mod,      &
+                                 apoplast_frac = hydraulics%leaf_apoplast_frac,                             &
+                                 water_sat = hydraulics%leaf_water_sat)
+      wood_curve = water_curve_t(pi0 = hydraulics%wood_pi0, elastic_mod = hydraulics%wood_elastic_mod,      &
+                                 apoplast_frac = hydraulics%wood_apoplast_frac,                             &
+                                 water_sat = hydraulics%wood_water_sat)
+      call take(leaf_curve%pi0,           pft%hyd_leaf_pi0)
+      call take(leaf_curve%elastic_mod,   pft%hyd_leaf_elastic_mod)
+      call take(leaf_curve%apoplast_frac, pft%hyd_leaf_apoplast_frac)
+      call take(leaf_curve%water_sat,     pft%hyd_leaf_water_sat)
+      call take(wood_curve%pi0,           pft%hyd_wood_pi0)
+      call take(wood_curve%elastic_mod,   pft%hyd_wood_elastic_mod)
+      call take(wood_curve%apoplast_frac, pft%hyd_wood_apoplast_frac)
+      call take(wood_curve%water_sat,     pft%hyd_wood_water_sat)
+   contains
+      pure subroutine take(trait, per_pft)
+         real(wp),              intent(inout) :: trait
+         real(wp), allocatable, intent(in)    :: per_pft(:)
+         if (.not. allocated(per_pft)) return
+         if (per_pft(ipft) > HYD_UNSET) trait = per_pft(ipft)
+      end subroutine take
+   end subroutine pft_tissue_curves
+
+   !----- A PFT's leaf turgor-loss point [MPa], from its own leaf pressure-volume curve, so the      !
+   !      stomatal closure and the phenology's drought counter see the curve the solver stores leaf  !
+   !      water on. -----------------------------------------------------------------------------------!
    pure real(wp) function pft_leaf_psi_tlp(cfg, ipft) result(psi_tlp)
       type(meds_config_t), intent(in) :: cfg
       integer(ik),         intent(in) :: ipft
-      real(wp) :: pi0, elastic_mod
-      pi0 = cfg%hydraulics%leaf_pi0 ; elastic_mod = cfg%hydraulics%leaf_elastic_mod
-      if (allocated(cfg%pft%hyd_leaf_pi0)) then
-         if (cfg%pft%hyd_leaf_pi0(ipft) > HYD_UNSET) pi0 = cfg%pft%hyd_leaf_pi0(ipft)
-      end if
-      if (allocated(cfg%pft%hyd_leaf_elastic_mod)) then
-         if (cfg%pft%hyd_leaf_elastic_mod(ipft) > HYD_UNSET) elastic_mod = cfg%pft%hyd_leaf_elastic_mod(ipft)
-      end if
-      psi_tlp = pv_psi_tlp(pi0, elastic_mod)
+      type(water_curve_t) :: leaf_curve, wood_curve
+      call pft_tissue_curves(cfg%hydraulics, cfg%pft, ipft, leaf_curve, wood_curve)
+      psi_tlp = pv_psi_tlp(leaf_curve%pi0, leaf_curve%elastic_mod)
    end function pft_leaf_psi_tlp
 
    !----- Where a PFT's stomatal water stress begins [MPa of predawn leaf potential]: the [pft]       !

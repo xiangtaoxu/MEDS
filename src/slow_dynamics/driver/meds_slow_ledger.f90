@@ -49,7 +49,8 @@ module meds_slow_ledger
    public :: slow_ledger_open, slow_ledger_rebase, slow_ledger_declare, slow_ledger_mark, slow_ledger_report
    public :: N_SLOW_PHASE, slow_phase_name, KGC_PER_UMOL_C
    public :: SLOW_PHASE_ALLOCATE, SLOW_PHASE_GROW, SLOW_PHASE_RECRUIT, SLOW_PHASE_COHORT,          &
-             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC
+             SLOW_PHASE_DISTURB, SLOW_PHASE_PATCH, SLOW_PHASE_CANOPY, SLOW_PHASE_SOILC,              &
+             SLOW_PHASE_TISSUE_WATER
 
    !----- The phases a slow step is divided into. Each is marked at the boundary of the operator  !
    !      group that owns it, so a residual names the operator that produced it. -----------------!
@@ -61,7 +62,8 @@ module meds_slow_ledger
    integer(ik), parameter :: SLOW_PHASE_PATCH    = 6_ik  !< patch sort / fuse / terminate (+ trailing cohort ops)
    integer(ik), parameter :: SLOW_PHASE_CANOPY   = 7_ik  !< refresh_canopy_depth (the open CAS control volume)
    integer(ik), parameter :: SLOW_PHASE_SOILC    = 8_ik  !< the CENTURY daily step
-   integer(ik), parameter :: N_SLOW_PHASE        = 8_ik
+   integer(ik), parameter :: SLOW_PHASE_TISSUE_WATER = 9_ik  !< tissue water above capacity shed, before the fast loop
+   integer(ik), parameter :: N_SLOW_PHASE        = 9_ik
 
    !----- Carbon of one mole of CO2 [kgC/umol]: 1e-6 mol * 0.012 kgC/mol. Turns the CAS mixing     !
    !      ratio into the same currency as the plant and soil pools, so all four carbon stores add. !
@@ -456,6 +458,7 @@ contains
       case (SLOW_PHASE_PATCH)    ; nm = 'patch fuse/term'
       case (SLOW_PHASE_CANOPY)   ; nm = 'canopy depth'
       case (SLOW_PHASE_SOILC)    ; nm = 'soil carbon'
+      case (SLOW_PHASE_TISSUE_WATER) ; nm = 'tissue water'
       case default               ; nm = '?'
       end select
    end function slow_phase_name

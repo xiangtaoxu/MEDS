@@ -16,12 +16,13 @@
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
-   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
+   use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp, pft_tissue_curves
+   use meds_water_retention,      only : water_curve_t, clamp_water_to_capacity
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
                                          set_cohort_size_from_carbon
-   use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
+   use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity, cohort_wood_store_carbon, &
                                      TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
                                      TISSUE_HCAP_MIN
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
@@ -56,7 +57,7 @@ module meds_vegetation_dynamics
 
    public :: vegetation_dynamics, restructure_stand, advance_leaf_phenology, advance_plant_traits
    public :: reacclimate_plant_traits
-   public :: shed_turnover_water, accumulate_recruit_pool, update_cohort_derivatives
+   public :: shed_turnover_water, shed_excess_tissue_water, accumulate_recruit_pool, update_cohort_derivatives
 
    !----- Guard: baseline leaf turnover = 1/llspan; floor llspan so a degenerate value cannot divide-by-0.
    real(wp), parameter :: tiny_llspan = 1.0e-6_wp         !< [yr]
@@ -304,7 +305,7 @@ contains
       type(meds_config_t), intent(in)    :: cfg
       logical,             intent(in)    :: is_new_month, is_new_year
       type(slow_ledger_t), intent(inout), optional :: ledger    !< site conservation ledger (meds_slow_ledger)
-      real(wp) :: cull_water, th0, th1, rec_carbon, rec_heat, dist_water
+      real(wp) :: cull_water, th0, th1, rec_carbon, rec_heat, rec_water, dist_water
       logical  :: do_cohort_fissfuse, do_patch_disturbance, do_patch_fissfuse
 
       !----- The calendar cadence + demography on/off + fiss/fuse switches. -----------------!
@@ -314,9 +315,10 @@ contains
 
       !----- Cohort restructuring (monthly): recruit + fuse/split + sort. -------------------!
       if (do_cohort_fissfuse) then
-            call apply_recruitment(site, cfg, rec_carbon, rec_heat)
+         call apply_recruitment(site, cfg, rec_carbon, rec_heat, rec_water)
          if (present(ledger)) call slow_ledger_declare(ledger, carbon_in = rec_carbon,             &
-                                                               energy_in = rec_heat)
+                                                               energy_in = rec_heat,               &
+                                                               water_in  = rec_water)
          !----- Every structural operator below changes WHICH biomass exists at what temperature, !
          !      so each changes the tissue's thermal mass -- the same exchange the growth commit   !
          !      declares, for the same reason (see there). Fusion and fission re-derive the        !
@@ -856,6 +858,43 @@ contains
          call slow_ledger_declare(ledger, energy_out = shed_enth)
       end if
    end subroutine shed_turnover_water
+
+   !---------------------------------------------------------------------------------------!
+   ! Tissue water ABOVE the capacity a cohort's biomass now allows goes to the ground. A store   !
+   ! keeps its water mass across a change of biomass (docs/science/soil_plant_water.md §2), and   !
+   ! most changes leave it within its capacity: turnover takes its tissue's water with it, and    !
+   ! new leaves are filled from the wood. A few shrink a store's capacity without touching its   !
+   ! water -- a rising SLA resorbing leaf carbon to storage, a census start's acclimation, a      !
+   ! fusion or a split re-deriving the sapwood ring -- and water above saturation is not a state  !
+   ! a tissue can hold. The excess goes down the channel the turnover shed uses                   !
+   ! (patch%shed_water_rate), so it is moved, not deleted; the caller declares it to the ledger.  !
+   !---------------------------------------------------------------------------------------!
+   subroutine shed_excess_tissue_water(site, cfg, water_shed)
+      type(site_t),        intent(inout) :: site
+      type(meds_config_t), intent(in)    :: cfg
+      real(wp),            intent(out)   :: water_shed     !< [kg/m2 site] the water shed
+      type(water_curve_t) :: leaf_curve, wood_curve
+      real(wp)    :: leaf_kept, wood_kept, excess
+      integer(ik) :: i, ip
+
+      water_shed = 0.0_wp
+      associate (cohort => site%cohort, patch => site%patch)
+         do i = 1_ik, cohort%n
+            call pft_tissue_curves(cfg%hydraulics, cfg%pft, cohort%pft(i), leaf_curve, wood_curve)
+            leaf_kept = clamp_water_to_capacity(cohort%leaf_water_mass(i), leaf_curve, cohort%leaf_carbon(i))
+            wood_kept = clamp_water_to_capacity(cohort%wood_water_mass(i), wood_curve,                &
+                           cohort_wood_store_carbon(cohort%sapwood_carbon(i), cohort%fineroot_carbon(i)))
+            excess = (cohort%leaf_water_mass(i) - leaf_kept) + (cohort%wood_water_mass(i) - wood_kept)
+            if (excess <= 0.0_wp) cycle
+            cohort%leaf_water_mass(i) = leaf_kept
+            cohort%wood_water_mass(i) = wood_kept
+            ip = cohort%owner_patch(i)
+            patch%shed_water_rate(ip) = patch%shed_water_rate(ip)                                   &
+                                      + cohort%nplant(i) * excess / max(cfg%dt_slow, tiny_num)
+            water_shed = water_shed + patch%area(ip) * cohort%nplant(i) * excess
+         end do
+      end associate
+   end subroutine shed_excess_tissue_water
 
    !---------------------------------------------------------------------------------------!
    ! Continuous background-mortality WATER. The individuals that die this step take their          !

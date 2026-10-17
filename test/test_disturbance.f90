@@ -18,7 +18,7 @@ program test_disturbance
    integer(ik)         :: ig, ip, i0, i1, i, n_gap_cohorts, n_slot
    real(wp)            :: disturb_rate(8)
    real(wp)            :: n_before, h_tall, h_short, film_before, film_after, frac_expect
-   real(wp)            :: le(8), le_site, cull_before, cull_after
+   real(wp)            :: le(8), le_site, cull_before, cull_after, w_canopy
 
    call banner('treefall patch disturbance')
    cfg = build_test_config()
@@ -42,6 +42,11 @@ program test_disturbance
    !      allocates nothing and every entry point no-ops), so a test that wants to read a slot     !
    !      must ask for it: a slot nothing reads can sit at a silent zero unseen. -------------------!
    call patch_diag_alloc(site%patch%diag, site%patch%n + 1_ik, .true.)
+   !----- The donor's own shed rate, which the gap must not inherit, and the tissue water the dying  !
+   !      canopy holds, which it must receive. ------------------------------------------------------!
+   site%patch%shed_water_rate(1) = 7.0_wp
+   w_canopy = site%cohort%nplant(1) * (site%cohort%leaf_water_mass(1) + site%cohort%wood_water_mass(1))
+   call check(w_canopy > 0.0_wp, 'the dying canopy holds tissue water')
 
    call apply_patch_disturbance(site, cfg, 1.0_wp)
 
@@ -73,8 +78,8 @@ program test_disturbance
    end do
    call check(ig > 0_ik, 'no treefall gap patch found')
    call check_close(site%patch%age(ig), 0.0_wp, 1.0e-12_wp, 'gap patch should have age 0')
-   call check_close(site%patch%shed_water_rate(ig), 0.0_wp, 1.0e-12_wp,                            &
-                    'gap patch should have a fresh (zero) shed_water_rate, like age')
+   call check_close(site%patch%shed_water_rate(ig), w_canopy / cfg%dt_slow, 1.0e-12_wp,             &
+                    'gap patch starts a fresh shed_water_rate, like age, and receives the dead canopy''s water')
 
    !----- The gap holds ONLY survivors (height < threshold): the short cohort. -------------!
    i0 = site%patch%cohort_offset(ig) ; i1 = i0 + site%patch%cohort_count(ig) - 1_ik

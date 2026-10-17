@@ -186,16 +186,15 @@ contains
    end function psi_from_water_content
 
    !----- Cap tissue water mass at the saturation ceiling W_sat = water_sat*biomass (rwc=1): the       !
-   !      slow/fast SEAM guard (meds_fast_reconcile; docs/science/order_of_processes.md §3). Mass,     !
-   !      not psi, is the seam-continuous quantity across a biomass update -- a persisted              !
-   !      leaf/wood_water_mass carries forward UNCHANGED into new biomass, so a capacity GROWTH        !
-   !      simply reads as a lower rwc/psi next touch (the physically-correct signal that draws more    !
-   !      water from the soil, not a defect to patch over). Only a capacity SHRINK needs a guard: a    !
-   !      discontinuous biomass drop (e.g. a dormant canopy's snap to bare in                          !
-   !      meds_phenology%leaf_turnover_step) can leave more mass than the new, smaller ceiling         !
-   !      admits -- a tissue state that is not reachable (rwc>1 has no valid inverse on the turgid     !
-   !      PV branch). The caller bookkeeps the released excess (w - result) rather than silently       !
-   !      retaining a supersaturated pool.                                                             !
+   !      slow tier's guard before the fast loop (shed_excess_tissue_water;                            !
+   !      docs/science/soil_plant_water.md §2). Mass, not psi, is what carries across a biomass        !
+   !      update -- a persisted leaf/wood_water_mass carries forward UNCHANGED into new biomass, so a  !
+   !      capacity GROWTH simply reads as a lower rwc/psi next touch (the signal that draws more water !
+   !      from the soil, not a defect to patch over). Only a capacity SHRINK needs a guard: an         !
+   !      operator that drops biomass without its water (a rising SLA resorbing leaf carbon, a fusion  !
+   !      re-deriving the sapwood ring) can leave more mass than the new, smaller ceiling admits -- a  !
+   !      tissue state that is not reachable (rwc>1 has no valid inverse on the turgid PV branch).     !
+   !      The caller sheds the excess (w - result) to the ground and declares it.                      !
    elemental real(wp) function clamp_water_to_capacity(w, curve, biomass) result(w_capped)
       real(wp),            intent(in) :: w, biomass
       type(water_curve_t), intent(in) :: curve

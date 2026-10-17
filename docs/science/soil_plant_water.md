@@ -69,12 +69,15 @@ Each store is solved in the unknown in which its curve is best behaved:
   water; their $R$ stays defined.
 - **Between slow steps** a tissue keeps its water **mass**, not its potential: a change in biomass leaves
   the water as it is, and the potential is read again on the new capacity (grown biomass reads as a
-  slightly lower $R$). A store above what today's biomass can hold is clamped to its saturated content,
-  and an empty one is seeded at its starting potential (`reconcile_tissue_water_capacity`; neither
-  amount is booked yet, see `docs/ROADMAP.md`). Tissue lost to turnover takes its water with it, in
-  proportion to the carbon lost (`shed_turnover_water`), and a plant that dies takes all of its own
-  (`shed_mortality_water`); that water reaches the ground as `shed_water_rate`, valued like the
-  precipitation it joins.
+  slightly lower $R$). A cohort is born holding the water its tissues hold at its starting potential
+  (`PSI_INIT`); a recruit's water, like its carbon, is drawn from outside the model, and the slow
+  ledger declares it. Tissue lost to turnover takes its water with it, in proportion to the carbon
+  lost (`shed_turnover_water`), and a plant that dies takes all of its own (`shed_mortality_water`).
+  An operator that shrinks a store without touching its water (a rising SLA resorbing leaf carbon, a
+  fusion or split re-deriving the sapwood ring) can leave more than the store can hold; before the
+  fast loop, the water above its saturated content is shed as well (`shed_excess_tissue_water`). All
+  of it reaches the ground as `shed_water_rate`, valued like the precipitation it joins, and the slow
+  ledger books every amount.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
   for $0<h<\delta$, $h-\delta/2$ above. An empty pond holds nothing and its head follows the soil
   below.

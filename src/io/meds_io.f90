@@ -24,14 +24,15 @@
 module meds_io
    use iso_c_binding, only : c_int, c_size_t, c_double
    use meds_kinds,    only : wp, ik
-   use meds_config,   only : meds_config_t, growth_window_steps
+   use meds_config,   only : meds_config_t, growth_window_steps, pft_tissue_curves
    use meds_time,     only : meds_time_t, time_to_string, time_to_stamp, time_to_decimal_year
    use meds_netcdf_c
    use meds_site_state_types, only : site_t
    use meds_site_state_types,       only : site_alloc, gather_pft_params, set_cohort_size, rebuild_csr, &
-                                           set_cohort_size_from_carbon
+                                           set_cohort_size_from_carbon, set_cohort_tissue_water
    use meds_demography_update,      only : update_overtopping_lai
-   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max
+   use meds_column_params, only : n_soil_layer_max, n_snow_layer_max, PSI_INIT
+   use meds_water_retention, only : water_curve_t
    use meds_therm_lib,              only : internal_energy_liquid
    use meds_demography_cohort_fusefiss,   only : sort_cohorts
    implicit none
@@ -140,11 +141,11 @@ contains
       call dv('rd25',             NC_DOUBLE, [d_cohort], 'leaf dark respiration @25C [umol/m2/s] (plastic)')
       call dv('llspan',           NC_DOUBLE, [d_cohort], 'leaf lifespan [yr] (plastic)')
       !----- Per-cohort plant-hydraulics internal water + tissue temperatures. Persisting these makes  !
-      !      a restart EXACT for the fast loop -- without them the restart re-seeds leaf_water_mass to   !
-      !      near-saturated (lazy-init) and leaf/wood_temp to LEAF_TEMP_INIT, whose psi/temperature      !
+      !      a restart EXACT for the fast loop -- without them the restart starts the tissues at their   !
+      !      birth water (PSI_INIT) and leaf/wood_temp at LEAF_TEMP_INIT, whose psi/temperature          !
       !      discontinuity makes the plant-hydraulics solve grind for a few days on a healthy high-LAI   !
       !      restart. OPTIONAL on read (gv_dbl_opt), so a state file without them still restarts, on     !
-      !      those seeds. The leaf-surface (interception) film is stored below with the pools. ----------!
+      !      those values. The leaf-surface (interception) film is stored below with the pools. ---------!
       call dv('leaf_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal leaf water [kg/plant]')
       call dv('wood_water_mass',  NC_DOUBLE, [d_cohort], 'per-cohort internal wood water [kg/plant]')
       call dv('leaf_temp',        NC_DOUBLE, [d_cohort], 'per-cohort leaf temperature [K]')
@@ -681,10 +682,9 @@ contains
             call gv_dbl_opt(ncid, 'vcmax25', ncoh, c%vcmax25(1:ncoh))
             call gv_dbl_opt(ncid, 'rd25',    ncoh, c%rd25(1:ncoh))
             call gv_dbl_opt(ncid, 'llspan',  ncoh, c%llspan(1:ncoh))
-            !----- Per-cohort hydraulics/temperature (OPTIONAL): site_alloc has already set the        !
-            !      lazy-init sentinels (leaf/wood_water_mass = 0 -> re-seed near-saturated on first       !
-            !      touch; leaf/wood_temp = LEAF_TEMP_INIT), so a state file without these re-seeds; one   !
-            !      with them overwrites the sentinels with the true state.                                !
+            !----- Per-cohort hydraulics/temperature (OPTIONAL): a state file with them restores the   !
+            !      true state; without them the tissue temperatures stay at site_alloc's LEAF_TEMP_INIT  !
+            !      and the water is the birth water, set below once the pools are known.                 !
             call gv_dbl_opt(ncid, 'leaf_water_mass', ncoh, c%leaf_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'wood_water_mass', ncoh, c%wood_water_mass(1:ncoh))
             call gv_dbl_opt(ncid, 'leaf_temp',       ncoh, c%leaf_temp(1:ncoh))
@@ -725,6 +725,17 @@ contains
             do i = 1_ik, ncoh
                call set_cohort_size(site%cohort, i)          ! pools from dbh, then the geometry
             end do
+         end if
+         !----- A state file without the tissue water starts each cohort with the water it is born   !
+         !      with: its tissues at PSI_INIT on its PFT's curves (init_cohort). --------------------!
+         if (nc_inq_varid_f(ncid, 'leaf_water_mass', vid) /= NC_NOERR) then
+            block
+               type(water_curve_t) :: leaf_curve, wood_curve
+               do i = 1_ik, ncoh
+                  call pft_tissue_curves(cfg%hydraulics, cfg%pft, site%cohort%pft(i), leaf_curve, wood_curve)
+                  call set_cohort_tissue_water(site%cohort, i, PSI_INIT, leaf_curve, wood_curve)
+               end do
+            end block
          end if
          olai_ok = nc_inq_varid_f(ncid, 'overtopping_lai', vid) == NC_NOERR
          if (olai_ok) call gv_dbl(ncid, 'overtopping_lai', ncoh, site%cohort%overtopping_lai(1:ncoh))

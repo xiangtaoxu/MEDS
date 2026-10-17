@@ -543,11 +543,10 @@ contains
       !----- (Re)seed the prognostic column state. --------------------------------------!
       if (allocated(biophys%leaf_temp)) deallocate(biophys%leaf_temp)
       call alloc_patch_biophys(biophys, n, t0, 0.008_wp, 400.0_wp, t0)
-      !----- alloc_patch_biophys seeds leaf_water_mass/wood_water_mass at a scratch 0 (the real     !
-      !      seed is reconcile_tissue_water_capacity, run by fast_dynamics, which this driver-level !
-      !      test bypasses) -- seed the same water_content(PSI_INIT,...) a freshly-created          !
-      !      cohort gets there, or psi_from_water_content would diagnose an unphysical psi from an   !
-      !      empty pool. -------------------------------------------------------------------------!
+      !----- alloc_patch_biophys starts leaf_water_mass/wood_water_mass at a scratch 0, which the    !
+      !      production gather overwrites from the cohort block -- give them the water a cohort is   !
+      !      born with, water_content(PSI_INIT,...) (init_cohort), or psi_from_water_content would  !
+      !      diagnose an unphysical psi from an empty pool. -----------------------------------------!
       biophys%leaf_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%leaf_curve, &
             col_cohort%bleaf(1:n))
       biophys%wood_water_mass(1:n) = water_content(PSI_INIT, col_config%hydraulics_table%pft(1)%wood_curve, &
