@@ -35,6 +35,8 @@ failure, not from a plan.
 | [#393](https://github.com/xiangtaoxu/MEDS/issues/393) | Leafless cohorts with no storage never die (9 % of BCI cohorts) | Nothing in the mortality law sees a cohort's carbon state, so a cohort that has lost its leaves and its storage persists while its leaf carbon decays geometrically. A carbon deficit destroys no tissue either: it is netted from the CO₂ the cohort owes (`docs/science/plant_carbon_allocation.md` §2). |
 | [#394](https://github.com/xiangtaoxu/MEDS/issues/394) | Pool floors clamp overdraws instead of limiting the outflow | The slow applier (`update_cohort_states_kernel`) and `reacclimate_plant_traits` keep a pool non-negative with `max(…, 0)`, which creates the carbon an overdraw would have taken; the per-step bounds guard cannot see it. |
 | [#395](https://github.com/xiangtaoxu/MEDS/issues/395) | `reconcile_tissue_water_capacity` creates and destroys tissue water without booking it | It computes the seeded and the discarded water (`seeded`, `discarded`), but no caller books them. |
+| [#416](https://github.com/xiangtaoxu/MEDS/issues/416) | `grav_head` (9.804×10⁻³ MPa/m) is not `rho_h2o·grav` (9.80665×10⁻³) | The plant hydraulics and the pedotransfer functions use one value, the soil water the other; 0.03 %. |
+| [#423](https://github.com/xiangtaoxu/MEDS/issues/423) | The `post_proc` readers use example 03's stand-layout names, but the README says to run them on `meds_main` output | Four scripts; deferred by the owner. |
 | [#390](https://github.com/xiangtaoxu/MEDS/issues/390) | Dry-soil conductivity: a film-flow term for the van Genuchten–Mualem curve | Enhancement. Until then the pore connectivity L = −1 (Schaap & Leij 2000) holds K above ED2's floor of 1.16×10⁻¹³ m s⁻¹ to about −2 MPa for a soil of n near 1.4 |
 
 ---
@@ -76,6 +78,9 @@ Source: `docs/dev_plans/archive/MEDS_BIOGEOCHEMISTRY_DESIGN.md` §7. Science pag
 - **An explicit coarse woody debris pool.** *Candidate.* [#156](https://github.com/xiangtaoxu/MEDS/issues/156) Today treefall necromass enters the
   structural pools directly.
 - **Fire consumption of the ground pools.** *Candidate.* [#157](https://github.com/xiangtaoxu/MEDS/issues/157) No fire anywhere in MEDS.
+- **`[soil_carbon]` keys that are read but drive nothing.** *Candidate.* [#418](https://github.com/xiangtaoxu/MEDS/issues/418) `agf_fast` and
+  `agf_struct` are never used (the litter is partitioned by tissue), and the nitrogen keys wait for
+  #154; refuse them or document them as inert.
 
 ---
 
@@ -133,6 +138,9 @@ Source: `docs/dev_plans/MEDS_PRODUCTION_INTEGRATOR_PLAN.md` §5–§8. Science p
   (2026-10) now solves leaf and wood water implicitly with the soil, which removes that seam; the
   midday probe's `psi_leaf` agrees to 0.005 MPa between 75 and 900 s. `psi_wood` and the restart
   transient are still to be re-measured.
+- **Is `clamp_soil_energy` still needed?** *Open question.* [#420](https://github.com/xiangtaoxu/MEDS/issues/420) Its reason, ground evaporation's
+  `pow()` inside the RK45 stages, is gone (evaporation is frozen from the water network); it moves energy
+  with no ledger entry when it bites. Measure how often it fires, then remove it or restate why.
 
 ---
 
@@ -168,6 +176,9 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   floors a tissue's coupling conductance at 1 W m⁻² K⁻¹ of ground, while every term it floors scales
   with the tissue's own area index, so a thin cohort's leaf or wood temperature is slaved to the
   canopy air. The deficit goes to the canopy air, so energy closes.
+- **The wood's heat capacity uses a fixed sapwood moisture.** *Candidate.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The water
+  network carries the wood's own water, and the leaf's capacity already uses its prognostic water; the
+  wood's does not.
 
 ---
 
@@ -345,6 +356,10 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   `array_to_state` and `tend_to_array` list the fields once, `state_entry_rules` says how each
   enters the error, and the combinators work on the flat array. The compiler still cannot check
   the list; `test_state_combinators` runs every field through every combinator.
+- **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) `size_tol`/`area_tol`, `surface_tend_t%coh_transp`,
+  `apply_rt_forcing`'s `tcas` dummy, `veg_energy_balance`'s `t_emit` generality, and unused imports.
+- **Two test residues.** *Candidate.* [#421](https://github.com/xiangtaoxu/MEDS/issues/421) A duplicate `test_rk45_shed_water` in
+  `test_column_ark.f90`, and `test_mass_correction_neutrality`, which guards a removed correction.
 
 ---
 
@@ -374,7 +389,7 @@ Source: `docs/dev_plans/archive/MEDS_GPU_EVALUATION.md` §12.
 
 ## 12. Smaller residues
 
-Gaps the science pages name, filed from the 2026-10-17 annotation review.
+Gaps and residues found in the 2026-10-17 annotation review.
 
 - **The snow-burial and open-canopy blends are inactive.** *Candidate.* [#410](https://github.com/xiangtaoxu/MEDS/issues/410) The fast-loop driver
   passes `snowfac = 0` and `opencan_frac = 0` to the aerodynamics, so the snow-burial roughness blend
@@ -391,6 +406,11 @@ Gaps the science pages name, filed from the 2026-10-17 annotation review.
 - **The canopy reflects too much near-infrared at realistic leaf optics.** *Open question.* [#414](https://github.com/xiangtaoxu/MEDS/issues/414) The fast
   calibration's albedo target stays off (`scripts/calibrate_fast/calibration_reference.toml`) because
   meeting it would move a leaf's optics past its evidence; the canopy structure has to change instead.
+- **`docs/ed2_comparison.md` describes v0.3.0.** *Planned.* [#422](https://github.com/xiangtaoxu/MEDS/issues/422) Deferred by the owner.
+- **Example 05's Palo Verde PFTs** label values "example 04's calibration" that differ from it. *Candidate.*
+  [#424](https://github.com/xiangtaoxu/MEDS/issues/424)
+- **`leaf_gas_exchange.md` §2 gives the θ_J borrowing cost two ways** (−25 % and 30–32 %). *Candidate.*
+  [#425](https://github.com/xiangtaoxu/MEDS/issues/425)
 - **Numerics checks not yet scored on the water network.** *Planned.* [#415](https://github.com/xiangtaoxu/MEDS/issues/415) The stability threshold on
   a forced multi-season run and across wind speeds; a consistent midpoint freeze to replace the
   `forcing_sample_frac` trade; a drought season against `dt_fast` (`docs/science/numerical_scheme.md`
