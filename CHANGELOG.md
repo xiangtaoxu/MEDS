@@ -150,6 +150,17 @@ before and after.
   output buffers carry their own diagnostic parameters (`bufs%diag`), set from the polygon's own soil,
   so a region's derived soil diagnostics (water potential, wetness) follow each cell's soil where they
   used to take polygon 1's for every polygon. Results are byte-identical.
+- **A carbon pool's overdraw stops the run instead of being floored** (#394). The slow applier advanced
+  the four carbon pools as `max(pool + rate·dt, 0)`, so an operator that took more than a pool held had
+  the shortfall created, silently, where the per-step bounds guard could not see it. It now sets a
+  result to 0 only when it is below zero by round-off (at most 4 epsilons of the pool and its change,
+  the four roundings of backing out a rate and applying it), and leaves anything larger negative, so
+  `cohort_bad_field` stops the run on that step naming the pool. `reacclimate_plant_traits`, which kept
+  storage at `max(0, …)` when a lower SLA asked for more leaf carbon than storage held, now gives the
+  leaves only what storage has, and the leaf area falls short by the rest. The floors never bound beyond
+  round-off on the shipped runs (worst 2.5×10⁻¹³ kgC m⁻² in the ledger's remainder), and results are
+  byte-identical. `test_carbon_growth` checks that a 1 % overdraw is reported, not floored, and that
+  re-acclimation conserves the cohort's carbon.
 
 ### Removed
 

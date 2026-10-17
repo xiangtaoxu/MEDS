@@ -206,7 +206,8 @@ prints the counts before and after.
 `vcmax25`, `rd25`, leaf lifespan) are then set as a census start sets them from this run's PFT file:
 acclimated to each cohort's leaf area above it, as the state file holds it, with
 `[trait_dynamics].trait_plasticity_on`, and the PFT's top-of-canopy values without it. Leaf area stays
-as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a restart
+as read, and leaf carbon scales by the SLA's change, with storage taking up the difference; a lower
+SLA takes at most the storage a cohort holds, and its leaf area then falls short by the rest. A restart
 whose PFT file gives the traits the state already has changes nothing. A calibration
 trial restarts from a shared state this way, so a changed `vcmax25` reaches the cohorts
 (`scripts/calibrate_fast`).

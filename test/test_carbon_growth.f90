@@ -5,10 +5,11 @@ program test_carbon_growth
    use meds_kinds,                  only : wp, ik
    use meds_allometry, only : dbh_to_wai, sapwood_fraction, carbon_to_structure
    use meds_config,                 only : meds_config_t
-   use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc
+   use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc, cohort_bad_field,    &
+                                     cohort_field_name
    use meds_demography_update, only : update_cohort_states
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
-   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water
+   use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
    use meds_stepper,                only : advance_one_step
    use meds_diagnostic_reduce,     only : has_nan
@@ -193,6 +194,43 @@ program test_carbon_growth
                                dbh_c, h_c, ba_c, agb_c, la_c)
       call check(site%cohort%dbh(1) == dbh_c .and. site%cohort%height(1) == h_c                     &
                  .and. site%cohort%agb(1) == agb_c, 'applier: geometry is the allometry of the carbon')
+
+      !----- An overdraw beyond round-off is an operator bug: the applier does not floor it (a   !
+      !      floor would create the carbon it took), and the bounds guard names the pool. --------!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      call cohort_deriv_alloc(site%deriv, site%cohort%n)
+      site%deriv%d_leaf_carbon_dt(1)          = 0.0_wp
+      site%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+      site%deriv%d_wood_carbon_dt(1)          = 0.0_wp
+      site%deriv%d_nonstructural_carbon_dt(1) = -site%cohort%nonstructural_carbon(1) / dt * 1.01_wp
+      site%deriv%dln_nplant_dt(1)             = 0.0_wp
+      call check(cohort_bad_field(site%cohort, 1_ik) == 0_ik, 'applier: the cohort starts in bounds')
+      call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+      call check(site%cohort%nonstructural_carbon(1) < 0.0_wp, 'applier: a 1 % overdraw is not floored')
+      call check(trim(cohort_field_name(cohort_bad_field(site%cohort, 1_ik))) == 'nonstructural_carbon', &
+                 'applier: the bounds guard names the overdrawn pool')
+   end block
+
+   !=== Re-acclimation to a lower SLA asks storage for more leaf carbon: it takes only what     !
+   !    storage holds, so the cohort's carbon is unchanged and its leaf area falls short. =======!
+   block
+      real(wp) :: carbon0, leaf0, store0
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 0.5_wp, 3.0_wp)
+      call finalize_init(site)
+      site%cohort%sla(1) = 2.0_wp * cfg%pft%sla(2_ik)       ! the file's SLA is half the cohort's
+      leaf0  = site%cohort%leaf_carbon(1)
+      store0 = 0.25_wp * leaf0                              ! storage covers a quarter of the doubling
+      site%cohort%nonstructural_carbon(1) = store0
+      carbon0 = leaf0 + store0
+      call reacclimate_plant_traits(site, cfg)
+      call check(site%cohort%sla(1) == cfg%pft%sla(2_ik), 'reacclimation takes the file''s SLA')
+      call check(site%cohort%nonstructural_carbon(1) == 0.0_wp, 'reacclimation empties storage, no further')
+      call check_close(site%cohort%leaf_carbon(1) + site%cohort%nonstructural_carbon(1), carbon0,      &
+                       1.0e-12_wp, 'reacclimation conserves the cohort''s leaf and storage carbon')
+      call check(site%cohort%leaf_carbon(1) < 2.0_wp * leaf0, 'the leaves take only what storage has')
    end block
 
    write(*,'(a)') '   PASS'

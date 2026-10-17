@@ -1168,11 +1168,12 @@ contains
    ! The bounds of a cohort's state: its plant density, carbon pools, SLA, and the water it    !
    ! holds (internal stores and the films on its leaves and wood) are amounts, never below     !
    ! zero and never infinite. Every operator keeps them in bounds by construction -- the        !
-   ! applier floors the pools, mortality never takes nplant below `negligible`, the fast loop    !
-   ! clamps the films into [0, capacity] -- so a violation is an operator bug. The driver checks !
-   ! this every step and names the field, so the bug is caught the step it happens instead of   !
-   ! through a quantity derived from it, somewhere else, years later. The geometry is not       !
-   ! checked: it is a function of these. Returns the first bad field's index, 0 if none.        !
+   ! applier zeroes only a pool's round-off, mortality never takes nplant below `negligible`,   !
+   ! the fast loop clamps the films into [0, capacity] -- so a violation is an operator bug.    !
+   ! The driver checks this every step and names the field, so the bug is caught the step it    !
+   ! happens instead of through a quantity derived from it, somewhere else, years later. The    !
+   ! geometry is not checked: it is a function of these. Returns the first bad field's index,   !
+   ! 0 if none.                                                                                 !
    !---------------------------------------------------------------------------------------!
    pure function cohort_bad_field(cohort, i) result(k)
       type(cohort_block), intent(in) :: cohort
