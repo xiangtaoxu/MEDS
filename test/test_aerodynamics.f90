@@ -13,6 +13,8 @@
 !   6. OPEN CANOPY: the ground conductance is the bare-ground value at an open fraction W = 1    !
 !      (a patch with no leaf or wood area), the dense-canopy value at W = 0, and rises            !
 !      monotonically between; W = exp(-(LAI + WAI)).                                             !
+!   7. TIED cohorts (one height) are one wind layer: a crown split into two cohorts of half the    !
+!      leaf area meets the wind the whole crown does, and so does the cohort below.               !
 ! The equations are docs/science/canopy_aerodynamics.md §2-§4 (eqs. (3), (6)-(10)).        !
 !==========================================================================================!
 program test_aerodynamics
@@ -31,6 +33,7 @@ program test_aerodynamics
    call test_boundary_layer()
    call test_master()
    call test_open_canopy()
+   call test_tied_layer()
 
    call test_report('test_aerodynamics')
 
@@ -171,5 +174,30 @@ contains
       call check_true('LAI 6: the ground couples nearly as under the dense form alone',                &
                       out%ggnet - out%ggveg < 0.01_wp * (out%ggbare - out%ggveg), out%ggnet / out%ggveg)
    end subroutine test_open_canopy
+
+   !----- 7. Tied cohorts share one wind layer (docs/science/canopy_aerodynamics.md eq. (8)), as they  !
+   !      share one radiation layer: test_master's stand with its top crown split into two cohorts of  !
+   !      half the leaf area each must give every cohort the wind the unsplit stand gives it. ------!
+   subroutine test_tied_layer()
+      type(aero_cfg_t)  :: cfg
+      type(aero_env_t)  :: env
+      type(aero_geom_t) :: geom
+      type(aero_out_t)  :: one, split
+      real(wp), parameter :: h2(2) = [8.0_wp, 18.0_wp], lai2(2) = [1.5_wp, 2.0_wp]
+      real(wp), parameter :: tl2(2) = [299.0_wp, 300.0_wp], tw2(2) = [298.5_wp, 299.0_wp]
+      real(wp), parameter :: lw2(2) = [0.04_wp, 0.04_wp], bd2(2) = [0.02_wp, 0.02_wp]
+      real(wp), parameter :: h3(3) = [8.0_wp, 18.0_wp, 18.0_wp], lai3(3) = [1.5_wp, 1.0_wp, 1.0_wp]
+      real(wp), parameter :: tl3(3) = [299.0_wp, 300.0_wp, 300.0_wp], tw3(3) = [298.5_wp, 299.0_wp, 299.0_wp]
+      real(wp), parameter :: lw3(3) = [0.04_wp, 0.04_wp, 0.04_wp], bd3(3) = [0.02_wp, 0.02_wp, 0.02_wp]
+      geom%veg_height = 18.0_wp ; geom%opencan_frac = 0.0_wp ; geom%snowfac = 0.0_wp
+      call alloc_aero_out(one, 2_ik) ; call alloc_aero_out(split, 3_ik)
+      call canopy_aerodynamics(cfg, env, geom, 2_ik, h2, lai2, tl2, tw2, lw2, bd2, one)
+      call canopy_aerodynamics(cfg, env, geom, 3_ik, h3, lai3, tl3, tw3, lw3, bd3, split)
+      call check('tied: both halves of the top crown meet its wind', split%wind(2), one%wind(2), 1.0e-14_wp)
+      call check('tied: the two halves meet the same wind', split%wind(3), split%wind(2), 0.0_wp)
+      call check('tied: the cohort below meets the wind it met under the whole crown', split%wind(1),     &
+                 one%wind(1), 1.0e-14_wp)
+      call check('tied: the same leaf boundary layer', split%leaf_gbh(3), one%leaf_gbh(2), 1.0e-14_wp)
+   end subroutine test_tied_layer
 
 end program test_aerodynamics

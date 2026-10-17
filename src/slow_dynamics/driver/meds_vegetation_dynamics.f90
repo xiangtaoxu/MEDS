@@ -16,13 +16,14 @@
 module meds_vegetation_dynamics
    use meds_kinds,                only : wp, ik
    use meds_constants,            only : day_sec, tiny_num, cp_liq, yr_day
+   use meds_water_retention,      only : wood_thermal_water
    use meds_config,               only : meds_config_t, growth_window_steps, pft_leaf_psi_tlp
    use meds_allometry,            only : size2leaf_carbon, carbon_to_structure, min_cohort_carbon,      &
                                          storage_carbon_target, local_hmax
    use meds_site_state_types,      only : carbon_flux_block, cohort_deriv_alloc, GROWTH_AVG_UNSET, &
                                          set_cohort_size_from_carbon
    use meds_site_state_types, only : site_t, cohort_tissue_heat_capacity,                     &
-                                     TISSUE_C_LEAF, TISSUE_C_SAPW,                            &
+                                     TISSUE_C_LEAF, TISSUE_C_WOOD_DRY,                        &
                                      TISSUE_HCAP_MIN
    use meds_slow_ledger,          only : slow_ledger_t, slow_ledger_mark, slow_ledger_declare,     &
                                          slow_fast_carbon_handover, SLOW_PHASE_ALLOCATE,           &
@@ -765,13 +766,13 @@ contains
    ! proportion as the carbon loss, so the REMAINING tissue's rwc is unchanged: mass, not psi, is      !
    ! what a biomass change must not silently perturb. A NET GAIN step touches nothing here -- the      !
    ! fast loop's mass-conserving seam (meds_fast_dynamics) handles that direction (capacity            !
-   ! grows, mass stays put, rwc reads lower next time). Root sheds into the LUMPED wood node's         !
-   ! water (bwood = bsap+broot; only broot sheds under the current turnover model, so                  !
-   ! fineroot_carbon's own fractional loss is used as the proxy for the lumped pool's shed             !
-   ! fraction -- an approximation, since only the fine-root half of the lumped node actually           !
-   ! sheds). MUST run before update_cohort_states commits this step's new                              !
-   ! leaf_carbon/fineroot_carbon (the caller sequences it right after compute_carbon_allocation,       !
-   ! well before that commit), since the shed FRACTION is computed against the PRE-step pool.          !
+   ! grows, mass stays put, rwc reads lower next time). The fine roots share ONE water store with      !
+   ! the sapwood (wood_water_mass, on bsap + broot), so a fine-root loss sheds the fine roots' own     !
+   ! share of it, wood_water_mass * broot/(bsap + broot), in the proportion the fine roots lost: the   !
+   ! store's rwc is then unchanged once the carbon commit has lowered broot. MUST run before           !
+   ! update_cohort_states commits this step's new leaf_carbon/fineroot_carbon (the caller sequences    !
+   ! it right after compute_carbon_allocation, well before that commit), since the shed FRACTION and   !
+   ! the fine roots' share are computed against the PRE-step pools.                                    !
    !                                                                                          !
    ! The shed water is credited (nplant-weighted, summed per patch) to site%patch%shed_water_rate      !
    ! -- a frozen daily RATE the fast loop adds to its ground-water input exactly like throughfall      !
@@ -805,17 +806,25 @@ contains
                !      water takes sensible heat with it, AT THE TISSUE'S TEMPERATURE. The fast loop  !
                !      puts the mass back into the ground valued as the ground inflow it joins: a     !
                !      re-valuation. Declaring the departure here is what makes that difference       !
-               !      measurable rather than absorbed. The WOOD shed contributes nothing: the wood's !
-               !      THERMAL water is the sapwood ring at a fixed moisture fraction, not            !
-               !      wood_water_mass, so draining the hydraulic store moves no heat.                !
+               !      measurable rather than absorbed.                                               !
                shed_enth = shed_enth + site%patch%area(ip) * cohort%nplant(j) * shed_amount          &
                                      * cp_liq * cohort%leaf_temp(j)
             end if
             if (npp%fineroot(j) < 0.0_wp) then
                shed_frac   = min(1.0_wp, -npp%fineroot(j) / max(cohort%fineroot_carbon(j), tiny_num))
-               shed_amount = cohort%wood_water_mass(j) * shed_frac
+               !----- The fine roots' own share of the store: what wood_thermal_water leaves of it. --!
+               shed_amount = (cohort%wood_water_mass(j)                                               &
+                              - wood_thermal_water(cohort%wood_water_mass(j), cohort%sapwood_carbon(j),  &
+                                                   cohort%fineroot_carbon(j))) * shed_frac
                cohort%wood_water_mass(j) = cohort%wood_water_mass(j) - shed_amount
                patch_total(ip) = patch_total(ip) + cohort%nplant(j) * shed_amount
+               !----- LEDGER: the wood's thermal water is the sapwood share of the store              !
+               !      (wood_thermal_water), so draining the store lowers it by that share of the shed, !
+               !      at the wood's temperature, as the leaf's shed does at the leaf's. The carbon     !
+               !      commit's lower broot raises the share back, a thermal-mass change it declares.   !
+               shed_enth = shed_enth + site%patch%area(ip) * cohort%nplant(j) * cp_liq * cohort%wood_temp(j) &
+                                     * wood_thermal_water(shed_amount, cohort%sapwood_carbon(j),        &
+                                                          cohort%fineroot_carbon(j))
             end if
          end do
       end associate

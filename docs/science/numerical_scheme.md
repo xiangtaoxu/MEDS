@@ -394,13 +394,14 @@ temperature, exfiltration from the top layer in at that layer's temperature, and
 pond's. A pond with no thermal state would shed the enthalpy of every kilogram crossing into it,
 and that energy would leave the column ledger while the water sat on the surface still holding it.
 
-**A weakly coupled tissue passes its energy to the canopy air.** Where a leaf or wood store's coupling
-falls below `veg_coupling_floor`, the diagnostic balance floors it there and routes the deficit to the
-canopy air as an extra conductance, so the floor creates and destroys no energy
-([vegetation_energy_dynamics](vegetation_energy_dynamics.md)). With the budget hard-stop armed
-(`[energy].debug_error`), a forced January month at Ithaca closes with about 5× margin on both schemes:
-worst residuals 285 (ARK) and 287 (RK45) J m⁻² against a ~1.39×10³ J m⁻² tolerance. Tightening the
-tolerance makes the run halt, which shows the guard is live.
+**A thin tissue closes its own balance.** A leaf or wood store's relaxation closes for any coupling,
+however small, since it is written on the start-of-step imbalance with no division by the coupling;
+and a tissue with neither coupling nor heat capacity (no area) takes the temperature of what it grows
+from and carries no flux ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eqs. (5), (7)).
+No tissue needs a floor that routes energy elsewhere. With the budget hard-stop armed
+(`[energy].debug_error`), a forced January month at Ithaca (a deciduous stand in winter) closes on
+both schemes: none of the 8928 whole-column checks fails, and the worst residual is 1.2×10⁻⁶ J m⁻²
+(ARK and RK45). Tightening the tolerance makes the run halt, which shows the guard is live.
 
 ---
 

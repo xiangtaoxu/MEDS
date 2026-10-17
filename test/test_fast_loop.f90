@@ -13,7 +13,7 @@
 program test_fast_loop
    use meds_kinds,               only : wp, ik
    use meds_config,              only : meds_config_t
-   use meds_site_state_types,    only : site_t
+   use meds_site_state_types,    only : site_t, set_cohort_size_from_carbon
    use meds_init,                only : init_bare_ground, add_cohort, finalize_init
    use meds_test_soil_grid, only : geometric_layer_bottoms
    use meds_column_params, only : build_soil_hydr_params, build_soil_therm_params, n_soil_layer_max
@@ -391,16 +391,17 @@ program test_fast_loop
       !----- Net-longwave wiring: at night (SW=0) the sky (LWdown=340) is far colder than the surface !
       !      (~sigma*T^4 ~ 385 W/m2), so the two-stream NET longwave (leaf + ground) is a radiative    !
       !      LOSS that drives the canopy air below its ~288 K start and the 288.5-291.5 K atmosphere. !
-      !----- The threshold, measured 2x2 (2 h night window; LW off = abs_lw/abs_lw_ground at 0):      !
+      !----- The threshold, measured 2x2 (2 h night window; LW off = abs_lw/abs_lw_ground at 0;     !
+      !      store off = the leaf and wood heat capacities at 0):                                     !
       !                        LW on     LW off    LW signal                                        !
-      !          store off     286.09    288.48    2.39 K                                           !
-      !          store on      287.66    288.56    0.90 K                                           !
-      !      The tissue heat store warms the night canopy air by 1.57 K, which is REAL: leaf and wood !
-      !      carry ~1.5e4 J/m2/K against the canopy air's ~3.0e4, so tissue shedding a ~3 K excess    !
-      !      lifts the air by ~0.5*3 K -- and the observed 1.57 K matches. It also eats most of the   !
-      !      LW signal, so the threshold has to sit between the store-on pair, not the store-off      !
-      !      pair. 288.0 K discriminates in BOTH configurations (margins 0.34/0.56 K with the store   !
-      !      on, 1.91/0.48 K with it off). Re-measure both controls if either is touched. ------------!
+      !          store off     285.95    288.39    2.44 K                                           !
+      !          store on      286.80    288.41    1.60 K                                           !
+      !      The tissue heat store warms the night canopy air by 0.85 K, which is REAL: leaf and wood !
+      !      carry a heat capacity comparable to the canopy air's, so tissue shedding its excess      !
+      !      lifts the air. It also eats part of the LW signal, so the threshold has to sit between   !
+      !      the store-on pair, not the store-off pair. 288.0 K discriminates in BOTH configurations  !
+      !      (margins 1.20/0.41 K with the store on, 2.05/0.39 K with it off). Re-measure both        !
+      !      controls if either is touched. ----------------------------------------------------------!
       call check(tcas_n < 288.0_wp, 'net longwave wired: canopy air radiatively cools (net-LW loss to the cold sky)')
       write(*,'(a,es10.3,a,es10.3,a)') '   (forcing GPP: night=', gpp_night, '  day=', gpp_day, ' kgC/plant)'
       write(*,'(a,f7.3,a)') '   (night CAS temp=', tcas_n, ' K, radiatively cooled below the ~288 K start)'
@@ -562,6 +563,61 @@ program test_fast_loop
          call check(site%cohort%leaf_water_mass(1) == 0.0_wp,                                        &
                     'dormant seam: a bare cohort holds no leaf water')
       end block
+   end block
+
+   !=== 9. SPLIT INVARIANCE and the LEAFLESS LEAF (docs/science/vegetation_energy_dynamics.md, "A     !
+   !    thin tissue is a small tissue" and "A tissue with no area"). A thin stand -- 20 stems per      !
+   !    hectare of a 20 cm tree, wood area index ~0.01 -- as one cohort and as two cohorts at half the  !
+   !    density, through the whole fast loop (two-stream, aerodynamics, water network, ARK) over a     !
+   !    forced day window: the tissue temperatures, the canopy air and the per-plant GPP must agree.   !
+   !    A floor in ground units on a tissue's coupling or heat capacity, which only the half-density   !
+   !    pair would cross, fails this. Then the same tree without leaves: its leaf temperature is its   !
+   !    wood's (a bud sits on its twig), and the budgets close. ==========================================!
+   block
+      type(met_source_t) :: drv
+      type(met_cursor_t) :: cur
+      integer(ik)        :: icase, nfail(3)
+      real(wp)           :: t_leaf(3), t_wood(3), t_cas(3), gpp(3), d_split
+      real(wp), parameter :: NPLANT_THIN = 0.002_wp, DBH_THIN = 20.0_wp
+      cfg%forcing%forcing_on = .true.
+      call build_fast_context(cfg, ctx)
+      do icase = 1_ik, 3_ik
+         call init_bare_ground(site, cfg, 1_ik)
+         if (icase == 2_ik) then
+            call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
+            call add_cohort(site, cfg, 1_ik, 1_ik, 0.5_wp*NPLANT_THIN, DBH_THIN)
+         else
+            call add_cohort(site, cfg, 1_ik, 1_ik, NPLANT_THIN, DBH_THIN)
+         end if
+         call finalize_init(site)
+         if (icase == 3_ik) then                     ! leafless: no leaf carbon, so no leaf area
+            site%cohort%leaf_carbon(1) = 0.0_wp
+            site%cohort%leaf_water_mass(1) = 0.0_wp
+            call set_cohort_size_from_carbon(site%cohort, 1_ik)
+         end if
+         call met_open(drv, cfg%forcing)
+         call met_cursor_init(drv, cur, 1_ik, cfg%forcing%latitude_deg, cfg%forcing%longitude_deg,        &
+                              cfg%forcing%elevation_m)
+         call init_fast_reservoirs(site, ctx)
+         call fast_dynamics(site, ctx, cfg, met_src=drv, met_cur=cur, step_start=meds_time_t(2020_ik,7_ik,1_ik,15_ik), &
+                            n_budget_fail=nfail(icase))
+         call met_close(drv)
+         t_leaf(icase) = site%cohort%leaf_temp(site%cohort%n) ; t_wood(icase) = site%cohort%wood_temp(site%cohort%n)
+         t_cas(icase)  = site%patch%cas(1)%can_temp          ; gpp(icase)    = site%cohort%gpp_accum(site%cohort%n)
+         if (icase == 2_ik) call check(site%cohort%leaf_temp(1) == site%cohort%leaf_temp(2) .and.              &
+                                       site%cohort%wood_temp(1) == site%cohort%wood_temp(2),                   &
+                                       'split: the two half-density cohorts are identical')
+      end do
+      d_split = max(abs(t_leaf(2) - t_leaf(1)), abs(t_wood(2) - t_wood(1)), abs(t_cas(2) - t_cas(1)))
+      write(*,'(a,es10.3,a,es10.3,a,f8.3,a,f8.3,a)') '   (split: worst temperature difference ', d_split,         &
+            ' K, per-plant GPP ', abs(gpp(2) - gpp(1)) / gpp(1), ' relative; wood ', t_wood(1), ' K, canopy air ', &
+            t_cas(1), ' K)'
+      call check(d_split < 1.0e-6_wp, 'split: one cohort and two at half density reach the same temperatures')
+      call check(abs(gpp(2) - gpp(1)) <= 1.0e-6_wp * gpp(1), 'split: the same GPP per plant')
+      call check(all(nfail(1:3) == 0_ik), 'split and leafless: the whole-column budgets close')
+      call check(site%cohort%leaf_area(1) == 0.0_wp, 'leafless: the cohort has no leaf area')
+      call check(t_leaf(3) == t_wood(3), 'leafless: the leaf takes its wood''s temperature')
+      call check(abs(t_wood(3) - t_cas(3)) > 1.0e-3_wp, 'leafless: the wood is not at the canopy air''s temperature')
    end block
 
    write(*,'(a)')          '   PASS'

@@ -174,13 +174,6 @@ Source: `docs/dev_plans/archive/MEDS_VEG_ENERGY_INTEGRATION_PLAN.md` §6–§7. 
   `τ = cap/denom` together — in the kernel with the most delicate conservation invariant in the
   model, whose adaptive controller has already been broken once by a discontinuity here. That is not
   a proportionate trade for a few percent of one denominator term.
-- **`veg_coupling_floor` is in ground-area units.** *Candidate.* [#349](https://github.com/xiangtaoxu/MEDS/issues/349) `veg_energy_balance`
-  floors a tissue's coupling conductance at 1 W m⁻² K⁻¹ of ground, while every term it floors scales
-  with the tissue's own area index, so a thin cohort's leaf or wood temperature is slaved to the
-  canopy air. The deficit goes to the canopy air, so energy closes.
-- **The wood's heat capacity uses a fixed sapwood moisture.** *Candidate.* [#419](https://github.com/xiangtaoxu/MEDS/issues/419) The water
-  network carries the wood's own water, and the leaf's capacity already uses its prognostic water; the
-  wood's does not.
 - **The sub-canopy ground conductance.** *Open question.* [#265](https://github.com/xiangtaoxu/MEDS/issues/265) MEDS ports ED2's non-default
   `icanturb = 4`, CLM4's dense-canopy form, whose ground resistance is 8–16× that of the Sellers et al.
   (1986) form ED2 ships; it matters most in gaps. It is a faithful port of a published scheme, a
@@ -377,9 +370,7 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   enters the error, and the combinators work on the flat array. The compiler still cannot check
   the list; `test_state_combinators` runs every field through every combinator.
 - **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) Most named items are removed. Left: the
-  tree-wide sweep of names that modules import but do not use, and `veg_energy_balance`'s `t_emit`
-  (every caller passes `t_cas`), whose removal is exact in IEEE arithmetic but moves ifx's rounding, so
-  it waits for a change that moves results anyway.
+  tree-wide sweep of names that modules import but do not use.
 
 ---
 

@@ -72,7 +72,10 @@ Each store is solved in the unknown in which its curve is best behaved:
   slightly lower $R$). A store above what today's biomass can hold is clamped to its saturated content,
   and an empty one is seeded at its starting potential (`reconcile_tissue_water_capacity`; neither
   amount is booked yet, see `docs/ROADMAP.md`). Tissue lost to turnover takes its water with it, in
-  proportion to the carbon lost (`shed_turnover_water`), and a plant that dies takes all of its own
+  proportion to the carbon lost (`shed_turnover_water`): shed leaves take that share of the leaf
+  store, and shed fine roots that share of their own part of the wood store, the fraction
+  $`B_{root}/(B_{sap}+B_{root})`$ of it, so the store keeps its water per unit of carbon. A plant that
+  dies takes all of its own
   (`shed_mortality_water`); that water reaches the ground as `shed_water_rate`, valued like the
   precipitation it joins.
 - The **pond** uses its head $h$, with a 1 mm depression store: $S(h) = 0$ for $h\le0$, $h^2/2\delta$
@@ -155,7 +158,10 @@ The network moves water; the soil-energy solve and the tissue stores carry its e
 - Root uptake leaves each layer at that layer's own temperature (`root_heat`, per layer).
 - A tissue's heat is its frozen capacity times its temperature; the change in its water is booked at
   its start-of-step temperature (`water_store_enth`), and arriving water heats it only by its
-  temperature difference.
+  temperature difference. The wood's capacity counts the sapwood share of the wood store's water
+  ([vegetation_energy_dynamics](vegetation_energy_dynamics.md) eq. (8)); the booking covers the whole
+  store, fine roots included, at the wood's temperature, which is the temperature eq. (4) moves all of
+  the store's water at.
 - The pond carries its own enthalpy through each sub-step: rain joins it first, what infiltrates
   leaves at the mixture's temperature, water the top layer pushes up arrives at that layer's
   temperature, and the spill leaves at the pond's.

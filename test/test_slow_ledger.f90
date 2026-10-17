@@ -23,19 +23,20 @@
 program test_slow_ledger
    use meds_kinds,              only : wp, ik
    use meds_config,             only : meds_config_t, soil_column_layers
-   use meds_site_state_types,   only : site_t
+   use meds_site_state_types,   only : site_t, carbon_flux_block
    use meds_column_state_types, only : cas_set_depth
    use meds_column_params,      only : soil_params_t, build_soil_hydr_params, n_soil_layer_max
    use meds_init,               only : init_bare_ground, add_cohort, finalize_init
    use meds_site_state_types,   only : init_cohort, cohort_tissue_heat_capacity,                  &
-                                       TISSUE_C_LEAF, TISSUE_C_SAPW, TISSUE_HCAP_MIN
+                                       TISSUE_C_LEAF, TISSUE_C_WOOD_DRY, TISSUE_HCAP_MIN
    use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_demography_patch_fusefiss,  only : fuse_2_patches
-   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand
+   use meds_vegetation_dynamics,        only : vegetation_dynamics, restructure_stand, shed_turnover_water
    use meds_biogeochem_types,           only : litter_input_t
    use meds_slow_ledger,        only : slow_store_t, slow_ledger_t, slow_site_store,               &
                                        slow_ledger_open, slow_ledger_declare, slow_ledger_mark,    &
-                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW
+                                       slow_fast_carbon_handover, slow_tissue_heat, SLOW_PHASE_GROW, &
+                                       SLOW_PHASE_ALLOCATE
    use meds_test_support, only : banner, build_test_config, check, check_close
    implicit none
    real(wp)    :: soil_bottoms(n_soil_layer_max)   ! [m] the column's layer bottoms, as the ledger builds them
@@ -170,6 +171,12 @@ program test_slow_ledger
 
    !=== 10. Reproduction carbon reaches the recruit pool, every step and in proportion. =======!
    call check_recruit_pool()
+
+   !=== 11. The turnover shed takes its water's HEAT with it, and declares it. =================!
+   !        The leaf's heat capacity counts its water and the wood's counts the sapwood share of   !
+   !        its store, so shedding either moves the tissue heat store; the declared energy must    !
+   !        explain that move exactly.                                                              !
+   call check_shed_heat()
 
    print '(a)', 'test_slow_ledger: ALL PASSED'
 
@@ -372,6 +379,30 @@ contains
       call check_close(shed1 - shed0, tis0 - tis1, 1.0e-12_wp,                                     &
                        'every kg that leaves tissue must arrive in the patch shed channel')
    end subroutine check_mortality_water
+
+   subroutine check_shed_heat()
+      type(carbon_flux_block) :: npp
+      type(slow_ledger_t)     :: lg
+      integer(ik) :: nc
+      nc = site%cohort%n
+      allocate(npp%leaf(nc), npp%fineroot(nc), npp%wood(nc), npp%nonstructural(nc))
+      npp%wood = 0.0_wp ; npp%nonstructural = 0.0_wp
+      npp%leaf     = -0.25_wp * site%cohort%leaf_carbon(1:nc)       ! a quarter of the leaves shed
+      npp%fineroot = -0.10_wp * site%cohort%fineroot_carbon(1:nc)   ! a tenth of the fine roots
+      site%cohort%leaf_water_mass(1:nc) = 0.7_wp
+      site%cohort%wood_water_mass(1:nc) = 2.3_wp
+      lg%active = .true.
+      call slow_ledger_open(lg, site, cfg, RHO)
+      call shed_turnover_water(site, cfg, npp, lg)
+      call slow_ledger_mark(lg, site, cfg, SLOW_PHASE_ALLOCATE)
+      call check(lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy > 0.0_wp, 'shed heat: the shed declares energy')
+      call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%energy)                                      &
+                 <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%energy,                            &
+                 'shed heat: the declared energy is the tissue heat store''s change')
+      call check(abs(lg%resid_sum(SLOW_PHASE_ALLOCATE)%water)                                       &
+                 <= 1.0e-12_wp * lg%decl_gross(SLOW_PHASE_ALLOCATE)%water,                             &
+                 'shed heat: the declared water is the tissue water store''s change')
+   end subroutine check_shed_heat
 
    pure function tissue_water_total(st) result(w)
       type(site_t), intent(in) :: st

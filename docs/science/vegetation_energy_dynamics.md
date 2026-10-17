@@ -21,12 +21,11 @@ the case without transpiration. Its conductances and absorbed radiation are froz
 (Category 0, [numerical_scheme](numerical_scheme.md) §2), the saturation terms follow the canopy-air
 state, and every flux is linearized about the canopy-air temperature $`T_{cas}`$. The balance is then
 linear in the tissue's offset $`\Delta T = T - T_{cas}`$: a forcing $`\mathrm{numer}`$ that does not
-depend on $`\Delta T`$, and a coupling conductance $`D_0`$ that multiplies it,
+depend on $`\Delta T`$, and a coupling conductance $`\mathrm{denom}`$ that multiplies it,
 
 ```math
 \mathrm{numer} = A_{sw} + A_{lw} + Q_{adv} - \mathrm{LE}_{ref}, \qquad
-D_0 = h + \mathrm{LE}_{slope} + 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}, \qquad
-\mathrm{denom} = \max(D_0,\ D_{min}) \qquad(1)
+\mathrm{denom} = h + \mathrm{LE}_{slope} + 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI} \qquad(1)
 ```
 
 $`A_{sw}`$ and $`A_{lw}`$ are the absorbed shortwave and net longwave from the two-stream; $`Q_{adv}`$ is
@@ -49,14 +48,23 @@ enthalpy the film's liquid arrived with. Wood has only the film pathway. Once th
 fixed the step's transpiration, the dry share carries it as a fixed latent term
 ($`\mathrm{LE}_{slope}=0`$), so the transpiration the leaf reports is exactly the water it lost.
 
-**The coupling floor.** $`D_{min}`$ = 1 W m⁻² K⁻¹ (`veg_coupling_floor`) bounds $`\Delta T`$ for a
-cohort whose area index, and so every conductance in $`D_0`$, is tiny. The deficit
-$`g_{slave}=\mathrm{denom}-D_0`$ is not dropped: it is an extra conductance to the canopy air that the
-sensible flux carries, so a tissue too weakly coupled to resolve passes what it absorbs straight to the
-CAS — ED2's `leaf_resolvable`/`wood_resolvable`, made continuous — and the balance still closes. The
-floor acts on the denominator rather than as a branch on the result, so the right-hand side stays
-continuous in the state (a jump there keeps an embedded-error controller from ever accepting a step),
-and it is inactive for any established canopy.
+**A thin tissue is a small tissue.** Every term of eq. (1), and the heat capacity of eq. (8), is a
+per-plant quantity times the plant density: the absorbed radiation, the sapflow's enthalpy, the
+conductances and the emission slope. A cohort split into two at half the density therefore reaches the
+same temperatures and each half carries half of every flux, however thin the cohort is. For a leaf
+every term also scales with its leaf area, so a small leaf sits at the balance of a large one. Nothing
+floors the coupling: the heat store bounds the step (eq. (5) below). ED2 instead slaves a tissue below
+a resolvable size to the canopy air (`leaf_resolvable`/`wood_resolvable`); a floor of that kind, in
+ground-area units, pulls a thin cohort toward the canopy-air temperature, and two half-density cohorts
+then differ from one.
+
+**A tissue with no area** — a leafless deciduous cohort's leaves, or wood with no wood area — has no
+coupling and no heat capacity, so eq. (1) gives it no temperature. It takes the temperature of what
+it grows from: a leafless leaf takes its wood's (a bud sits on its twig), and wood with no area takes
+the canopy air's. Nothing weights that value, since every flux the tissue carries and its heat
+capacity are zero, and a new leaf reaches its own balance within a step. In the kernel, "no area" is a
+coupling and a heat capacity both below its divide guard (`tiny_num`), which is where a leafless
+cohort's leaf carbon, decaying toward 10⁻¹⁹⁰, puts its leaves.
 
 The tissue relaxes toward the zero-inertia offset $`\Delta T_{diag}=\mathrm{numer}/\mathrm{denom}`$ with
 its own heat capacity (next section), and reports its fluxes over the step average, eqs. (5)–(6).
@@ -65,11 +73,11 @@ its own heat capacity (next section), and reports its fluxes over the step avera
 $`T_{rad}=\big(f_l T_{leaf}^4+(1-f_l)\,T_{wood}^4\big)^{1/4}`$, $`f_l=\mathrm{LAI}/(\mathrm{LAI}+\mathrm{WAI})`$,
 from the start-of-step tissue temperatures ([canopy_radiation_transfer](canopy_radiation_transfer.md)
 §3), so the absorbed longwave $`A_{lw}`$ already contains the tissue's own emission at $`T_{rad}`$.
-`veg_energy_balance` linearizes the change in emission about $`T_{cas}`$ (every caller passes
-`t_emit` $`=T_{cas}`$), so the loss it books is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
+`veg_energy_balance` linearizes the change in emission about $`T_{cas}`$, so the loss it books is
+$`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{cas})`$
 where the consistent one is $`A_{lw}-4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T-T_{rad})`$: a tissue warmer
 than the canopy air loses an extra $`4\varepsilon\sigma T_{cas}^3\,\mathrm{AI}\,(T_{rad}-T_{cas})`$ and a
-cooler one gains it. Basing the emission on the lagged tissue temperature (`t_emit` $`=T_{rad}`$)
+cooler one gains it. Linearizing about the lagged tissue temperature $`T_{rad}`$ instead
 removes the residual but adds a lagged positive feedback (a warmer leaf raises the next step's $`T_{rad}`$), which drove a single-pass
 integrator to NaN when it was tried (`docs/dev_plans/archive/MEDS_LEAF_WOOD_ENERGY_DESIGN.md` §5) and has
 not been tried under `ark`.
@@ -103,11 +111,16 @@ receives:
 \Delta T_{\rm avg}=(1-w_{\rm avg})\,\Delta T_{\rm diag}+w_{\rm avg}\,\Delta T_{\rm prev} \qquad(5)
 ```
 
-where $`\Delta T_{\rm prev}`$ is the start-of-step offset. The reported sensible heat, evaporation and net
-radiation all use $`\Delta T_{\rm avg}`$:
+where $`\Delta T_{\rm prev}`$ is the start-of-step offset. The kernel evaluates eq. (5) on the start-of-step
+imbalance $`r=\mathrm{numer}-\mathrm{denom}\,\Delta T_{\rm prev}`$, as
+$`\Delta T_{\rm end}=\Delta T_{\rm prev}+w_{\rm avg}\,r/a_{\rm store}`$ and
+$`\Delta T_{\rm avg}=\Delta T_{\rm prev}+\frac{1-w_{\rm avg}}{x}\,r/a_{\rm store}`$, which is the same
+relaxation written with no division by denom: it holds as denom → 0, where a store with no coupling
+warms by $`r\,\Delta t/\mathrm{cap}`$, and it shows that the heat store bounds the step whatever the
+coupling. The reported sensible heat, evaporation and net radiation all use $`\Delta T_{\rm avg}`$:
 
 ```math
-H = (h + g_{slave})\,\Delta T_{\rm avg}, \qquad
+H = h\,\Delta T_{\rm avg}, \qquad
 E = \frac{\mathrm{LE}_{ref}+\mathrm{LE}_{slope}\,\Delta T_{\rm avg}}{h_v}, \qquad
 R_{net} = A_{sw} + A_{lw} - 4\,\varepsilon\,\sigma\,T_{cas}^3\,\mathrm{AI}\,\Delta T_{\rm avg} \qquad(6)
 ```
@@ -131,39 +144,48 @@ temperature. Nothing switches; the physics chooses, per cohort, every step, cont
 The store is always on (`build_column_frozen` in `meds_fast_frozen`). The capacity splits its two
 halves across **different** masses, which is a physical distinction and not a detail:
 
-- **dry tissue → ALL the wood.** Heartwood is dead structure but still stores sensible heat, and a
-  sapwood fraction defined on the bole under-counts branch wood, which is thin enough to be thermally
-  active throughout.
-- **internal water → the SAPWOOD RING only**, at a fixed moisture. Heartwood is taken as dry, which
-  is what makes it heartwood. This is not the hydraulic store: the water network's wood store is the
-  sapwood **plus the fine roots**, and carries its own prognostic water
-  ([plant_hydraulics](plant_hydraulics.md) §1), which the heat capacity does not read (see
-  `docs/ROADMAP.md`).
+- **dry tissue → ALL the wood**, at the dry specific heat. Heartwood is dead structure but still
+  stores sensible heat, and a sapwood fraction defined on the bole under-counts branch wood, which is
+  thin enough to be thermally active throughout.
+- **water → the sapwood share of the water network's store.** The network's wood store is the
+  sapwood **plus the fine roots**, with one prognostic water mass $`W_{wood}`$
+  ([plant_hydraulics](plant_hydraulics.md) §1) and a capacity in proportion to their carbon; the
+  heat capacity counts the sapwood's share of it. The fine roots sit in the soil, so their share is
+  not the wood's, and heartwood holds none, which is what makes it heartwood. A store that drains
+  through a dry season holds less heat.
 
 Per unit ground area, with $B$ the dry biomass (carbon × 2 × $`n_{plant}`$):
 
 ```math
-\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\big) + c_{liq}\,f_{moist}\,B_{sap}, \qquad
-\mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\big) + c_{liq}\,W_{leaf} \qquad(8)
+\mathrm{cap}_{wood} = \max\!\big(c_{wood}\,B_{wood},\ C_{min}\,\mathrm{WAI}\big)
+  + c_{liq}\,n_{plant}\,W_{wood}\,\frac{B_{sap}}{B_{sap}+B_{root}}, \qquad
+\mathrm{cap}_{leaf} = \max\!\big(c_{leaf}\,B_{leaf},\ C_{min}\,\mathrm{LAI}\big) + c_{liq}\,W_{leaf} \qquad(8)
 ```
 
-with $`c_{wood}`$ = 2700 and $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ (`c_sapw`, `c_leaf`),
-$`C_{min}`$ = 20 J m⁻² K⁻¹ (`veg_hcap_min`), a fresh-sapwood moisture $`f_{moist}`$ = 1 kg water per kg
-dry wood, and $`W_{leaf}`$ the leaf's internal water from the hydraulics. The intercepted film is a
-separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from the ED2 allometry
-(`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`). Sized this way,
-`τ_wood ≈ 1200–1600 s` and `w_end ≈ 0.23–0.32` at `dt_fast = 1800 s` — wood carries **genuine memory**.
+with $`c_{wood}`$ = 1217 J kg⁻¹ K⁻¹, ED2's specific heat of **dry** wood at 15 °C (`c_wood_dry`;
+103.1 + 3.867 T), $`c_{leaf}`$ = 3200 J kg⁻¹ K⁻¹ for dry leaf (`c_leaf`), $`C_{min}`$ = 20 J K⁻¹ per m²
+of the tissue's own area (`veg_hcap_min`; per area, so the capacity scales with the tissue's area as its
+fluxes do), $`W_{wood}`$ the wood store's water per plant and $`W_{leaf}`$ the leaf's internal water,
+both from the water network. Fresh wood's specific heat (about 2700 J kg⁻¹ K⁻¹ at 100 % moisture) is
+not used: the water is counted on its own, so a fresh-wood value would count it twice. The function
+`wood_thermal_water` gives the water term to both the fast loop and the state layer's
+`cohort_tissue_heat_capacity`, so the fusion weights and the slow ledger use the same capacity. The
+intercepted film is a separate store and is not in $`\mathrm{cap}_{leaf}`$. The wood masses come from
+the ED2 allometry (`dbh_to_wai`, `sapwood_fraction`; PFT traits `wai_b1/b2`, `sapwood_area_b1/b2`).
+Sized this way, with a saturated store (`wood_water_sat` = 1 kg per kg of carbon),
+`τ_wood ≈ 600–760 s` and `w_end ≈ 0.22–0.31` at `dt_fast = 900 s` — wood carries **genuine memory**.
 
-**`τ_wood` is set by the mass, not by the method** — the sapwood ring alone would give 74–102 s. And
-because `w_end` is small for wood while `w_avg` is not, **the store's effect lives in the FLUXES, not
-in the temperature**: "the wood barely lags" does not imply "the wood barely matters", and comparing
-tissue temperatures alone makes the store look negligible.
+**Most of the wood's capacity is the sapwood and its water**: dry wood holds 1217 J kg⁻¹ K⁻¹ against
+water's 4186, so the heartwood adds little. And because `w_end` is small for wood while `w_avg` is
+not, **the store's effect lives in the FLUXES, not in the temperature**: "the wood barely lags" does
+not imply "the wood barely matters", and comparing tissue temperatures alone makes the store look
+negligible.
 
-Measured effect, from a 2×2 over (store, longwave) on a 2 h night window: the store leaves the night
-canopy air **1.57 K warmer** (leaf + wood carry ~1.5×10⁴ J m⁻² K⁻¹ against the canopy air's ~3.0×10⁴,
-so shedding a ~3 K excess should lift the air by ~0.5 × 3 K — and it does). It also absorbs most of
-the net-longwave signal, which is why a test that thresholds nighttime cooling is pinned against the
-store-on control.
+Measured effect, from a 2×2 over (store, longwave) on a 2 h night window (`test_fast_loop`): the store
+leaves the night canopy air **0.85 K warmer**, since leaf and wood carry a heat capacity comparable to
+the canopy air's and pass their stored heat to it as they cool. It also absorbs a third of the
+net-longwave signal (2.44 K without the store, 1.60 K with it), which is why a test that thresholds
+nighttime cooling is pinned against the store-on control.
 
 **Why not backward Euler.** BE is the $`w_{\rm end}=w_{\rm avg}=1/(1+x)`$ approximation. A leaf at
 production `dt_fast` has $`x\approx144`$: the exact endpoint weight is $`\sim 5\times10^{-63}`$ against
@@ -182,9 +204,10 @@ $`\tau_{\rm leaf}\approx 12`$–20 s, and — a useful result — it is **LAI-in
 `denom` both scale with LAI, so every leaf cohort shares one τ and there is no per-cohort structure to
 resolve. A leaf is genuinely at equilibrium at any `dt_fast` the model runs at.
 
-Wood is different. The allometric sizing above gives $`\tau_{\rm wood}\approx 1200`$–1600 s; a physical
-estimate (branch wood plus the bole's diurnal damping depth) is ≈1300 s for branches and ≈3690 s for
-boles — so wood memory at `dt_fast = 1800 s` is real, not negligible. Wood is also treated as
+Wood is different. The allometric sizing above gives $`\tau_{\rm wood}\approx 600`$–760 s with a
+saturated store, less as it drains; a physical estimate (branch wood plus the bole's diurnal damping
+depth) is ≈1300 s for branches and ≈3690 s for boles — so wood memory at `dt_fast = 900 s` is real,
+not negligible. Wood is also treated as
 **internally isothermal**, a deliberate simplification: Bi ≈ 7.45 for a bole skin against the Bi ≪ 0.1
 lumped capacitance needs, so real wood is a diffusion problem with no single τ. That is a limitation of
 the one-node wood store, not of the integrator.

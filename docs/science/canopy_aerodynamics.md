@@ -173,8 +173,10 @@ u_h = \frac{u_*}{\kappa}\big[\ln\tfrac{h-d}{z_{0m}} - \Psi_m(\zeta_h) + \Psi_m(\
 floored at `ugbmin`. From the top cohort down, the wind attenuates through each cohort's crowns by
 ED2's per-cohort extinction, here with **closed crowns**: every cohort's crowns cover its patch (crown
 area 1, as in the two-stream radiation, `canopy_radiation_transfer.md` §3), so the wind meets all of the
-cohort's leaf area. The wind at a cohort's mid-crown (also floored at `ugbmin`) and the value handed to
-the cohort below are
+cohort's leaf area. Cohorts of one height are one layer, as they are in the radiation
+(`canopy_radiation_transfer.md` §4): LAI below is the layer's summed leaf area, every member meets the
+layer's wind, and a cohort split into two of half the density meets the wind the whole one does. The
+wind at a layer's mid-crown (also floored at `ugbmin`) and the value handed to the layer below are
 
 ```math
 u_{ico} = u_h\,e^{-0.25\,\mathrm{LAI}}, \qquad
