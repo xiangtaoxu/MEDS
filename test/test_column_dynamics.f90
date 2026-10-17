@@ -465,6 +465,7 @@ program test_column_dynamics
       case (2_ik) ; cfg%time_integrator = INTEG_ARK   ; schnm = 'SNOWF ark'
       case default; cfg%time_integrator = INTEG_RK45   ; schnm = 'SNOWF r45'
       end select
+      col_config%integrator = build_integrator_opts(cfg)   ! the schemes read the record, not cfg
       !----- snowfall ON: cold air + frozen rainfall. -------------------------------------------!
       snowfall_on = .true. ; snowf_rate = 2.0e-5_wp
       call integrate_day()

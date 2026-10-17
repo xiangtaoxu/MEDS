@@ -354,8 +354,6 @@ Source: `docs/dev_plans/MEDS_CODE_STRUCTURE_DESIGN.md` §15.
   the list; `test_state_combinators` runs every field through every combinator.
 - **Dead code.** *Candidate.* [#417](https://github.com/xiangtaoxu/MEDS/issues/417) `size_tol`/`area_tol`, `surface_tend_t%coh_transp`,
   `apply_rt_forcing`'s `tcas` dummy, `veg_energy_balance`'s `t_emit` generality, and unused imports.
-- **Two test residues.** *Candidate.* [#421](https://github.com/xiangtaoxu/MEDS/issues/421) A duplicate `test_rk45_shed_water` in
-  `test_column_ark.f90`, and `test_mass_correction_neutrality`, which guards a removed correction.
 
 ---
 

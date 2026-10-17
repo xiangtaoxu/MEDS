@@ -191,6 +191,15 @@ before and after.
   said shipped runs have no size scaling of stem respiration; it now says the surface rate has no size
   factor of its own and that example 05's and 06's PFTs scale stem respiration with size through the
   sapwood basis. `test_plant_respiration`'s size-scaler test goes with it. Results are byte-identical.
+- **Two test residues** (#421). `test_column_ark.f90` carried a copy of `test_rk45_shed_water`, which
+  `test_column_rk45.f90` runs with one more check; the copy is gone. `test_column_energy`'s
+  `test_mass_correction_neutrality` guarded a post-solve soil-water clip that no longer exists, but the
+  identity it checks (water that leaves or enters a layer with its own enthalpy leaves the layer's
+  temperature unchanged; without it, it does not) is the one every liquid-water flow relies on. It is
+  kept as `test_mass_change_neutrality`, with its checks labelled as water removed or added with and
+  without its enthalpy. And `test_column_dynamics`'s RUN 9 set `time_integrator = "rk45"` for its
+  third leg without rebuilding the integrator record the schemes read, so that leg ran ARK; it now
+  rebuilds it, as RUN 8 and 8b do, and the snowfall check runs on RK45.
 
 ### Fixed
 
