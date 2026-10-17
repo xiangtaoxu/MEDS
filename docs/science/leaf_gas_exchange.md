@@ -322,7 +322,7 @@ $`\beta_s`$ scales $`g_1`$ only, so on its own it leaves a drought-stressed leaf
 $`g_0 + 1.6\,A/C_s`$ (Medlyn's "1 +" term) for as long as it still photosynthesises. The fast control
 removes the $`A`$-driven part as the leaf wilts, so no further factor on $`g_s`$ is needed: what is
 left is $`g_0`$, the cuticular loss, which a real leaf has too. At a VPD of 3.5 kPa a $`g_0`$ of
-0.33 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.012 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
+0.28 mmol m⁻² s⁻¹ (example 04's calibration) loses 0.010 mmol m⁻² s⁻¹; the 0.01 mol m⁻² s⁻¹ of the
 shipped PFT file loses 0.35 mmol m⁻² s⁻¹, which is why $`g_0`$ should be set to a measured minimum
 conductance.
 

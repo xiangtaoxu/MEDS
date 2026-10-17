@@ -23,7 +23,7 @@ Usage:
   python run_example.py --copy-from ~/BCI_flux            # take the tower data from a local copy
   python run_example.py --forcing-only                    # steps 1-2: no model run
   python run_example.py --meds-main ../../build-ifx/meds_main
-  python run_example.py --calibrate --workers 40          # redo the fit: 1,096 runs; a cluster's queue: scripts/calibrate_fast
+  python run_example.py --calibrate --workers 40          # redo the fit: 836 runs; a cluster's queue: scripts/calibrate_fast
 
 Needs numpy, pandas, netCDF4, matplotlib, and a built meds_main.
 """
