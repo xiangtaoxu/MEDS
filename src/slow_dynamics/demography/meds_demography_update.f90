@@ -4,15 +4,15 @@
 !                                                                                          !
 ! update_cohort_states is the PURE APPLIER: it advances the cohort's PROGNOSTIC state -- the four  !
 ! carbon pools (state += rate*dt, round-off below zero snapped to 0) and nplant (nplant *=         !
-! exp(dln*dt), log-space, floored) -- by the per-cohort TENDENCY bundle (cohort_deriv_block) the    !
-! slow-loop driver computed this step, and then DERIVES the geometry (dbh, height, basal area,     !
-! AGB, leaf area and the wood caches) from the committed carbon through the allometry. Geometry is !
-! never integrated: it is a function of the carbon, so it cannot drift from it or leave its range  !
-! (a leaf area integrated by its own rate can go negative on a bare cohort whose leaf carbon sits  !
-! at 0). It is MODE-AGNOSTIC: whether the tendencies came from the carbon flip or the empirical    !
-! growth law is the driver's concern, invisible here. The derived-type SEAM (host) unpacks the SoA !
-! and calls the bare-array KERNEL, which is wrapped in an OpenMP `target` region so it offloads    !
-! cleanly while the host keeps ALL state in normal memory.                                         !
+! exp(dln*dt), log-space, stopped at the floor) -- by the per-cohort TENDENCY bundle               !
+! (cohort_deriv_block) the slow-loop driver computed this step, and then DERIVES the geometry      !
+! (dbh, height, basal area, AGB, leaf area and the wood caches) from the committed carbon through  !
+! the allometry. Geometry is never integrated: it is a function of the carbon, so it cannot drift  !
+! from it or leave its range (a leaf area integrated by its own rate can go negative on a bare     !
+! cohort whose leaf carbon sits at 0). It is MODE-AGNOSTIC: whether the tendencies came from the   !
+! carbon flip or the empirical growth law is the driver's concern, invisible here. The derived-type !
+! SEAM (host) unpacks the SoA and calls the bare-array KERNEL, which is wrapped in an OpenMP       !
+! `target` region so it offloads cleanly while the host keeps ALL state in normal memory.          !
 !                                                                                          !
 ! fill_cohort_deriv is the shared per-cohort TENDENCY BUILDER used by BOTH the carbon (driver) and !
 ! empirical (C-API) computers: given the new carbon pools (however the caller derived them) it     !
@@ -33,10 +33,11 @@ module meds_demography_update
 
    public :: update_cohort_states, fill_cohort_deriv, update_patch_states, update_overtopping_lai
 
-   !----- How far below zero a carbon pool may land from round-off alone, in epsilons of the pool   !
-   !      and its change. A pool's tendency is (new - old)/dt, so the applier reaches a pool the     !
-   !      driver emptied through four roundings (subtract, divide, multiply, add), each within half  !
-   !      an epsilon of the magnitudes it touches: 4 bounds that with a factor of two to spare. -----!
+   !----- How far past its bound a quantity may land from round-off alone, in epsilons of the      !
+   !      magnitudes it touches. A pool's tendency is (new - old)/dt, so the applier reaches a pool  !
+   !      the driver emptied through four roundings (subtract, divide, multiply, add), each within   !
+   !      half an epsilon: 4 bounds that with a factor of two to spare. A density decline aimed at   !
+   !      the floor is as many (the log of a quotient, a rate divided and multiplied by dt). ------!
    real(wp), parameter :: ROUNDOFF_EPSILONS = 4.0_wp
 
 contains
@@ -104,9 +105,9 @@ contains
 
    !---------------------------------------------------------------------------------------!
    ! Bare-array OFFLOAD kernel: the carbon pools are additive (state += rate*dt, advance_pool);  !
-   ! nplant follows the log-space mortality rate (nplant *= exp(dln*dt)), floored downward       !
-   ! so density never rises and never drops below `negligible`. Arithmetic-only over plain       !
-   ! arrays, so the `map` clauses are clean and the host keeps all state in normal memory.        !
+   ! nplant follows the log-space mortality rate (nplant *= exp(dln*dt)), stopped at the floor   !
+   ! `negligible` (advance_density). Arithmetic-only over plain arrays, so the `map` clauses are  !
+   ! clean and the host keeps all state in normal memory.                                        !
    !---------------------------------------------------------------------------------------!
    subroutine update_cohort_states_kernel(n, leaf_carbon, fineroot_carbon, wood_carbon,           &
                                    nonstructural_carbon, nplant, d_leaf_carbon_dt,                  &
@@ -119,27 +120,43 @@ contains
       real(wp),    intent(in)    :: d_nonstructural_carbon_dt(:), dln_nplant_dt(:)
       real(wp),    intent(in)    :: dt_yr, negligible
       integer(ik) :: i
-      real(wp)    :: dln, floor_dln
 
       !$omp target teams distribute parallel do simd                                        &
       !$omp&        map(to: d_leaf_carbon_dt, d_fineroot_carbon_dt, d_wood_carbon_dt,             &
       !$omp&               d_nonstructural_carbon_dt, dln_nplant_dt)                              &
       !$omp&        map(tofrom: leaf_carbon, fineroot_carbon, wood_carbon, nonstructural_carbon,  &
-      !$omp&                    nplant)                                                       &
-      !$omp&        private(dln, floor_dln)
+      !$omp&                    nplant)
       do i = 1_ik, n
          leaf_carbon(i)          = advance_pool(leaf_carbon(i),          d_leaf_carbon_dt(i)          * dt_yr)
          fineroot_carbon(i)      = advance_pool(fineroot_carbon(i),      d_fineroot_carbon_dt(i)      * dt_yr)
          wood_carbon(i)          = advance_pool(wood_carbon(i),          d_wood_carbon_dt(i)          * dt_yr)
          nonstructural_carbon(i) = advance_pool(nonstructural_carbon(i), d_nonstructural_carbon_dt(i) * dt_yr)
-         !----- Mortality in log space: nplant *= exp(dln), floored (downward only) so density   !
-         !      never rises and never drops below `negligible`. -------------------------------!
-         dln       = dln_nplant_dt(i) * dt_yr
-         floor_dln = min(0.0_wp, log(max(negligible, tiny_num) / max(nplant(i), tiny_num)))
-         dln       = max(dln, floor_dln)
-         nplant(i) = nplant(i) * exp(min(max(dln, lnexp_min), lnexp_max))
+         nplant(i)               = advance_density(nplant(i), dln_nplant_dt(i) * dt_yr, negligible)
       end do
    end subroutine update_cohort_states_kernel
+
+   !---------------------------------------------------------------------------------------!
+   ! A cohort's density after the log-space change `dln` over the step (nplant *= exp(dln)),   !
+   ! stopped AT the density floor. A decline that reaches the floor, to within the round-off   !
+   ! of comparing the two in log space, ends exactly on it: nplant*exp(log(floor/nplant)) is   !
+   ! the floor only to an epsilon either side, and the monthly cull, which removes a cohort at !
+   ! the floor, must find it there, not an epsilon above it for ever. A cohort already at or   !
+   ! below the floor is not taken lower. The `1 +` counts the quotient's own rounding, half an !
+   ! epsilon in its log whatever the log's size.                                               !
+   !---------------------------------------------------------------------------------------!
+   elemental pure real(wp) function advance_density(nplant, dln, floor) result(nplant_new)
+      real(wp), intent(in) :: nplant   !< [plant/m2] the density
+      real(wp), intent(in) :: dln      !< [-] its change in log space over the step, -mortality*dt
+      real(wp), intent(in) :: floor    !< [plant/m2] the density floor, negligible_nplant
+      real(wp) :: floor_dln
+      floor_dln = min(0.0_wp, log(max(floor, tiny_num) / max(nplant, tiny_num)))
+      if (floor_dln < 0.0_wp .and. dln - floor_dln <= ROUNDOFF_EPSILONS * epsilon(dln)              &
+                                                     * (1.0_wp + abs(floor_dln) + abs(dln))) then
+         nplant_new = floor
+      else
+         nplant_new = nplant * exp(min(max(max(dln, floor_dln), lnexp_min), lnexp_max))
+      end if
+   end function advance_density
 
    !---------------------------------------------------------------------------------------!
    ! A carbon pool advanced by its change over the step. A result below zero by no more than    !

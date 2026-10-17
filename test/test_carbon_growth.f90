@@ -8,6 +8,7 @@ program test_carbon_growth
    use meds_site_state_types, only : site_t, carbon_flux_block, cohort_deriv_alloc, cohort_bad_field,    &
                                      cohort_field_name
    use meds_demography_update, only : update_cohort_states
+   use meds_demography_cohort_fusefiss, only : terminate_cohorts
    use meds_plant_carbon_allocation, only : plant_carbon_allocation
    use meds_vegetation_dynamics,    only : advance_plant_traits, shed_turnover_water, reacclimate_plant_traits
    use meds_init,                   only : init_bare_ground, add_cohort, finalize_init
@@ -231,6 +232,46 @@ program test_carbon_growth
       call check_close(site%cohort%leaf_carbon(1) + site%cohort%nonstructural_carbon(1), carbon0,      &
                        1.0e-12_wp, 'reacclimation conserves the cohort''s leaf and storage carbon')
       call check(site%cohort%leaf_carbon(1) < 2.0_wp * leaf0, 'the leaves take only what storage has')
+   end block
+
+   !=== A density that declines to the floor ends ON it, and the cull removes a cohort there. ====!
+   !    nplant * exp(log(floor/nplant)) is the floor only to an epsilon either side; a cohort an   !
+   !    epsilon above the floor would never be culled, and would decline no further. ===========!
+   block
+      real(wp)    :: dt, n0
+      integer(ik) :: k, n_on, n_cut
+      dt = 1.0_wp / 365.0_wp
+      n_on = 0_ik
+      do k = 1_ik, 200_ik
+         !----- 200 starting densities across six decades, each aimed exactly at the floor. -------!
+         n0 = cfg%negligible_nplant * 10.0_wp ** (6.0_wp * real(k, wp) / 200.0_wp)
+         call init_bare_ground(site, cfg, 1_ik)
+         call add_cohort(site, cfg, 1_ik, 2_ik, n0, 3.0_wp)
+         call finalize_init(site)
+         call cohort_deriv_alloc(site%deriv, site%cohort%n)
+         site%deriv%d_leaf_carbon_dt(1)          = 0.0_wp
+         site%deriv%d_fineroot_carbon_dt(1)      = 0.0_wp
+         site%deriv%d_wood_carbon_dt(1)          = 0.0_wp
+         site%deriv%d_nonstructural_carbon_dt(1) = 0.0_wp
+         site%deriv%dln_nplant_dt(1)             = -(log(n0 / cfg%negligible_nplant) / dt)
+         call update_cohort_states(site%cohort, site%deriv, dt, cfg%negligible_nplant)
+         if (site%cohort%nplant(1) == cfg%negligible_nplant) n_on = n_on + 1_ik
+      end do
+      call check(n_on == 200_ik, 'applier: a decline aimed at the floor ends exactly on it')
+
+      !----- Two cohorts of a tracked size: one at the floor (culled), one a hair above (kept). ---!
+      call init_bare_ground(site, cfg, 1_ik)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 1.0_wp, 60.0_wp)
+      call add_cohort(site, cfg, 1_ik, 2_ik, 1.0_wp, 61.0_wp)
+      call finalize_init(site)
+      site%cohort%nplant(1) = cfg%negligible_nplant
+      site%cohort%nplant(2) = nearest(cfg%negligible_nplant, 1.0_wp)
+      call check(all(site%cohort%nplant(1:2) * site%cohort%agb(1:2) >= cfg%min_cohort_agb),        &
+                 'cull fixture: both cohorts clear the AGB floor, so only the density floor acts')
+      n_cut = site%cohort%n
+      call terminate_cohorts(site, cfg)
+      call check(site%cohort%n == n_cut - 1_ik, 'cull: exactly one cohort removed')
+      call check(site%cohort%nplant(1) > cfg%negligible_nplant, 'cull: the cohort AT the floor is the one removed')
    end block
 
    write(*,'(a)') '   PASS'

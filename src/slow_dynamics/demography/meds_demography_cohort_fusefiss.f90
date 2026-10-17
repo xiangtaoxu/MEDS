@@ -324,7 +324,10 @@ contains
    end subroutine split_cohorts
 
    !---------------------------------------------------------------------------------------!
-   ! Cull cohorts below the AGB-density floor or the absolute density floor. The ENTIRE           !
+   ! Cull cohorts below the AGB-density floor, and cohorts at or below the absolute density      !
+   ! floor. The applier stops a cohort's decline exactly AT negligible_nplant (it never takes a   !
+   ! density below it), so a cohort that has died out sits on the floor, not under it: the test  !
+   ! must include equality, or such a cohort would be kept for ever. The ENTIRE                   !
    ! remaining carbon of a culled cohort (leaf/fine-root/wood/storage; it is being removed        !
    ! outright, unlike a turnover shed) becomes litter in its own patch's soil-carbon pools when   !
    ! [soil_carbon].soil_carbon_on (default on; docs/science/soil_carbon.md §5) -- added           !
@@ -351,7 +354,7 @@ contains
       associate (cohort => site%cohort, pft => cfg%pft, patch => site%patch)
          do i = 1_ik, n
             keep(i) = (cohort%nplant(i) * cohort%agb(i) >= cfg%min_cohort_agb) .and.               &
-                      (cohort%nplant(i) >= cfg%negligible_nplant)
+                      (cohort%nplant(i) > cfg%negligible_nplant)
             if (keep(i)) cycle
             ip = cohort%owner_patch(i)
             !----- A culled cohort's WATER goes to the ground, down the same channel turnover      !

@@ -293,6 +293,20 @@ before and after.
   always reads its files, and one used after another re-reads its own. The module docstring no
   longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
   path and sees the change.
+- **A cohort that dies out to the density floor is culled** (with #393). The applier stops a cohort's
+  decline at `negligible_nplant`, and the monthly cull kept a cohort whose density was at least that,
+  so a cohort that had died out could sit at the floor for ever (24 such cohorts, dbh ≥ 19 cm, in
+  example 06's final states). The landing was not even exact: `nplant·exp(log(floor/nplant))` is the
+  floor only to an epsilon either side, so in a sample of starting densities 41 % of declines stopped
+  an epsilon above it and 40 % an epsilon below (and were culled). The applier now ends a decline that
+  reaches the floor, to within the round-off of the comparison, exactly on it (`advance_density`), and
+  the cull removes a cohort at the floor as well as below it. The shipped short cases (example 04's
+  window on both integrators, Palo Verde's first month, example 05's first two years) and a year of
+  the Palo Verde inventory are byte-identical. BCI's regeneration restarted from its 1980 checkpoint
+  (v0.3.4) for 20 years culls its cohorts at the floor (3 at the end before, 0 after; mean cohort
+  count 1003.1 → 995.0), with density (8.5144 m⁻²) and AGB (11.3120 kgC m⁻²) unchanged to 10⁻⁶ and
+  every slow-ledger phase closing. `test_carbon_growth` aims 200 declines at the floor and finds every
+  one on it, and culls a cohort at the floor while keeping one an epsilon above.
 
 ### Documentation
 

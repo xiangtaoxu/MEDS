@@ -176,7 +176,8 @@ two steps sit the output tick, the I/O phase and any checkpoint. The restructuri
 **At every month boundary** (`demography_on` and `do_cohort_fissfuse`), in order:
 1. recruitment from the recruit pools;
 2. cohort fusion;
-3. culling of cohorts below the tracking floor;
+3. culling of cohorts below the tracking floor: under its density times AGB floor, or at its density floor
+   (`negligible_nplant`), where mortality stops a cohort that has died out;
 4. splitting;
 5. a re-sort.
 
