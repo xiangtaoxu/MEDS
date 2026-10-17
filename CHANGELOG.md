@@ -202,6 +202,13 @@ before and after.
   (`test/check_init_refused.cmake`); `test_region` covers the three state-file cases,
   `test_init_census` the reasons and `python/tests/test_model.py` the Python error.
   `docs/configuration.md` no longer documents the fallback. Valid configs are byte-identical.
+- **A new `meds.canopy.Canopy` reads a config rewritten at the same path** (#429). The library holds
+  one configuration at a time, and `Canopy` skipped reopening when the one open came from the same
+  path, so a config rewritten there, as a calibration loop rewrites its trial's, was silently
+  ignored. The open configuration is now tracked by the instance that opened it: a new `Canopy`
+  always reads its files, and one used after another re-reads its own. The module docstring no
+  longer says the fast calibration uses it. `python/tests/test_canopy.py` rewrites a config at one
+  path and sees the change.
 
 ### Documentation
 

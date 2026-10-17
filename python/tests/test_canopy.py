@@ -52,6 +52,20 @@ def test_plastic_traits_follow_the_switch(tmp_path):
     assert off.n_pft >= 1
 
 
+def test_a_config_rewritten_at_the_same_path_is_read_again(tmp_path):
+    """A calibration loop rewrites its trial's config at one path: each new Canopy reads the file
+    as it is now, not the configuration the library last opened from that path."""
+    _lib_or_skip()
+    from meds.canopy import Canopy
+    pft = np.array([1, 1], dtype=np.int32)
+    lai_above = np.array([0.0, 5.0])
+    path = _config(tmp_path, trait_dynamics__trait_plasticity_on=False)
+    v_off, _ = Canopy(path).plastic_traits(pft, lai_above)
+    assert path == _config(tmp_path, trait_dynamics__trait_plasticity_on=True)
+    v_on, _ = Canopy(path).plastic_traits(pft, lai_above)
+    assert v_off[0] == v_off[1] and v_on[0] > v_on[1]
+
+
 def test_the_two_stream_conserves_the_beam(tmp_path):
     _lib_or_skip()
     from meds.canopy import Canopy

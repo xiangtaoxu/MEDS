@@ -13,13 +13,14 @@ outside the model computes what the fast loop computes:
     r = c.radiation(cosz, vis_beam, vis_diff, nir_beam, nir_diff,
                     pft, height, lai, wai)              # one patch, many hours
 
-The fast calibration's optics and photosynthesis stages use it (scripts/calibrate_fast). The leaf
-drivers are those the model reports per cohort as the `gx_*_cohort_fast` outputs; the stand's
-geometry is its restart state plus the `wai_cohort` output.
+The leaf drivers are those the model reports per cohort as the `gx_*_cohort_fast` outputs; the
+stand's geometry is its restart state plus the `wai_cohort` output.
 
-The library holds ONE configuration at a time. Each Canopy re-opens its own before a call when
-another has been opened since, so several can be used in turn (not from threads). A configuration
-with thermal acclimation on is refused: its leaf table depends on model state.
+The library holds ONE configuration at a time. A Canopy reads its configuration's files when it is
+made, and again before a call when another Canopy has been opened since, so several can be used in
+turn (not from threads), and a new Canopy sees a configuration rewritten at the same path, as a
+calibration loop rewrites its trial's. A configuration with thermal acclimation on is refused: its
+leaf table depends on model state.
 """
 from __future__ import annotations
 
@@ -31,7 +32,8 @@ from . import _ffi
 
 __all__ = ["Canopy"]
 
-_OPEN = {"path": None}
+#: the Canopy whose configuration the library holds
+_OPEN = {"owner": None}
 
 
 class Canopy:
@@ -40,17 +42,16 @@ class Canopy:
         self._open()
 
     def _open(self):
-        if _OPEN["path"] == self.path:
+        if _OPEN["owner"] is self:
             return
+        _OPEN["owner"] = None
         status = _ffi.open_config(self.path)
         if status == -1:
-            _OPEN["path"] = None
             raise ValueError(f"{self.path}: thermal acclimation is on; its leaf table depends on model "
                              "state, so meds.canopy cannot reproduce it")
         if status != 0:
-            _OPEN["path"] = None
             raise RuntimeError(f"{self.path}: meds_canopy_open returned {status}")
-        _OPEN["path"] = self.path
+        _OPEN["owner"] = self
 
     @property
     def n_pft(self) -> int:
